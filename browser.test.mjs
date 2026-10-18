@@ -1154,7 +1154,11 @@ try {
   await step('PDF: a vector PDF opens as a drawing (mm, page corner at 0,0), the outline is one click, Keep only, size, Save writes a DXF', async () => {
     await t('picker').setInputFiles('fixtures/vector.pdf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('vector.dxf'), null, { timeout: 60000 });
-    assert.match((await tabs()).at(-1), /^vector\.dxf •/, 'not saved yet');
+    assert.doesNotMatch((await tabs()).at(-1), /•/, 'a PDF opens clean: nothing to save yet');
+    await page.locator('.tabs .dtab.on .x').click();             // closing it asks nothing (an unhandled dialog would hang here)
+    await page.waitForFunction(() => ![...document.querySelectorAll('.tabs .dtab')].some((d) => d.textContent.startsWith('vector.dxf')));
+    await t('picker').setInputFiles('fixtures/vector.pdf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('vector.dxf'), null, { timeout: 60000 });
     assert.match(await t('cmd-prompt').textContent(), /Opened vector\.pdf as a drawing \(page 1 of 1\): \d+ entities, 1 texts, 200 × 120 mm/);
     assert.equal(await page.locator('.tabs .dtab.on').getAttribute('data-kind'), 'drawing');
     await inkedWhen((n) => n > 150);

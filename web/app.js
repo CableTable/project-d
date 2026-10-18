@@ -481,7 +481,7 @@ async function openPdf(name, buf, path = null) {
   }
   const raw = r.doc, fl = flatten(raw);
   const base = name.replace(/\.[^.\\/]*$/, ''), dxfName = base + '.dxf';
-  const doc = { name: dxfName, path: null, dirty: true, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, orig: raw.entities, origBlocks: raw.blocks }, ...tabFields(raw, fl) };
+  const doc = { name: dxfName, path: null, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, orig: raw.entities, origBlocks: raw.blocks }, ...tabFields(raw, fl) };
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${dxfName}` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
