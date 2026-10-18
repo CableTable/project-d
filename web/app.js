@@ -281,6 +281,7 @@ function buildMenus() {
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
+      ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
     View: () => {
       const lay = curLay(), tick = (on, text) => (on ? '✓ ' : '  ') + text;
@@ -4526,6 +4527,22 @@ function layoutKey(e, mod, k) {
   return false;
 }
 
+/** Ctrl+A / Edit → Select all: a drawing's visible entities (the layers switched off are left out), a layout's placed parts. */
+function selectAll() {
+  const lay = curLay(), d = editable();
+  if (lay) {
+    if (!placedNow.length) { note('Nothing to select: no parts on the sheet'); return; }
+    if (sheetSelOn()) selectSheet(false);
+    selectMany(placedNow.map((_, i) => i));
+    update(); note(`${placedNow.length} part${placedNow.length === 1 ? '' : 's'} selected`);
+  } else if (d) {
+    if (drawLive() && DR.toolBusy(state.draw)) return;
+    const all = edIndex(d).shown;
+    if (!all.length) { note('Nothing to select'); return; }
+    setSel(d, new Set(all)); note(`${all.length} entit${all.length === 1 ? 'y' : 'ies'} selected`);
+  }
+}
+
 function editKey(e) {
   if (document.querySelector('[data-testid=pdf-dialog]')) return;
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
@@ -4561,6 +4578,7 @@ function editKey(e) {
   if (mod && !e.altKey && !e.shiftKey && (k === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) { e.preventDefault(); fit(); return; }
   if (!mod && !e.altKey && !e.shiftKey && k === 's') { if (state.tool !== 'select') setTool('select'); return; }
   if (cmpKey(e, mod)) return;
+  if (mod && !e.altKey && !e.shiftKey && k === 'a') { e.preventDefault(); selectAll(); return; }
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (layoutKey(e, mod, k)) return;
   if (!d) return;

@@ -848,6 +848,30 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
   });
 
+  await step('Select all: Ctrl+A and Edit → Select all pick every visible entity of a drawing (not while typing in an input); Delete then works; Ctrl+Z brings them back', async () => {
+    await page.keyboard.press('Control+a');
+    await waitSel('15 selected');
+    await page.keyboard.press('Escape');
+    await waitSel('0 selected');
+    await page.locator('[data-menu=Edit]').click();
+    assert.match(await page.getByRole('menuitem', { name: /^Select all/ }).textContent(), /Ctrl\+A/);
+    await page.getByRole('menuitem', { name: /^Select all/ }).click();
+    await waitSel('15 selected');
+    await page.keyboard.press('Escape');
+    await waitSel('0 selected');
+    const cmd = page.getByLabel('Command line');
+    await cmd.focus();                                           // typing in an input: Ctrl+A is the field's own, not Select all
+    await page.keyboard.press('Control+a');
+    assert.equal(await selCount(), '0 selected');
+    await cmd.blur();
+    await page.keyboard.press('Control+a');
+    await waitSel('15 selected');
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 0');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
+  });
+
   await step('edit: Keep only this leaves just the outline; the size is the plate\'s 100 × 60', async () => {
     await click(50, 0); await waitSel('8 selected');
     await t('keep-only').click();
@@ -1863,7 +1887,7 @@ try {
     assert.equal(await hint('Line'), 'L'); assert.equal(await hint('Text'), 'T');
     await page.keyboard.press('Escape');
     await page.locator('[data-menu=Edit]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'Undo history…', 'DeleteDel']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
     assert.equal(await page.getByRole('menuitem', { name: 'Undo', exact: true }).isDisabled(), true, 'nothing to undo yet');
     assert.equal(await page.getByRole('menuitem', { name: 'Delete', exact: true }).isDisabled(), true, 'nothing selected');
     await page.keyboard.press('Escape');
@@ -2608,6 +2632,23 @@ try {
     const barInner = await t('propbar').evaluate((e) => [e.scrollWidth, e.clientWidth]);
     assert.ok(barInner[0] <= barInner[1], 'no horizontal overflow ' + barInner);
     await page.setViewportSize({ width: 1440, height: 900 });
+  });
+
+  await step('Select all in a layout: Ctrl+A and Edit → Select all pick every placed part; Delete removes them all as one step; Ctrl+Z brings them back', async () => {
+    await page.getByLabel('Command line').blur();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    assert.equal(await t('pp-name').textContent(), '3 parts');
+    assert.equal(await page.locator('[data-group=tools] .pick-badge').count(), 3);
+    await dragMm([40, 700], [60, 690]);                          // an empty corner: back to nothing
+    await page.locator('[data-menu=Edit]').click();
+    await page.getByRole('menuitem', { name: /^Select all/ }).click();
+    assert.equal(await t('pp-name').textContent(), '3 parts');
+    await page.keyboard.press('Delete');
+    await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .pick-badge').length === 0);
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+a');
+    assert.equal(await t('pp-name').textContent(), '3 parts', 'all three are back');
   });
 
   await step('TODO 36: Align left / centre / right / top / middle / bottom, relative to the selection, the sheet and the first selected', async () => {
