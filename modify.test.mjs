@@ -126,6 +126,13 @@ test('Offset: other kinds are refused with a message', () => {
   assert.equal(M.canModify(insert('B', 0, 0)), false);
 });
 
+test('Trim: a polyline side of zero length (a bulged one too) is refused, and an edge with one is still usable', () => {
+  const bad = { t: 'poly', closed: false, pts: [[0, 0, 0], [10, 0, 0.5], [10, 0, 0], [20, 0, 0]] };
+  assert.match(M.trimShape(bad, [{ t: 'line', a: [5, -5], b: [5, 5] }], [2, 0]).error, /without length/);
+  const r = M.trimShape({ t: 'line', a: [0, 0], b: [20, 0] }, [bad, { t: 'line', a: [15, -5], b: [15, 5] }], [18, 0]);
+  assert.ok(r.shapes && r.shapes.every((s) => [s.a, s.b].flat().every(Number.isFinite)));
+});
+
 const X = (ent) => S(ent);
 test('Trim a line between two edges: the middle goes, two lines are left', () => {
   const l = line(0, 0, 100, 0, base);

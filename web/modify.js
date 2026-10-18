@@ -334,10 +334,11 @@ function shapeOfPiece(segs, srcType) {
  */
 export function trimShape(sh, edges, pick) {
   const P = pathOf(sh), n = P.segs.length;
+  if (P.segs.some((s) => dist(s.a, s.b) < 1e-9)) return { error: 'The polyline has a side without length' };
   const cuts = [];
   for (const e of edges) {
     const E = pathOf(e);
-    P.segs.forEach((s, i) => { for (const t of E.segs) for (const h of segInter(s, t)) cuts.push(i + h.fs); });
+    P.segs.forEach((s, i) => { for (const t of E.segs.filter((q) => dist(q.a, q.b) >= 1e-9)) for (const h of segInter(s, t)) cuts.push(i + h.fs); });
   }
   let cs = cuts.map((u) => (P.closed && u >= n - 1e-9 ? 0 : u)).sort((a, b) => a - b);
   if (!P.closed) cs = cs.filter((u) => u > 1e-7 && u < n - 1e-7);
