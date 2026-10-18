@@ -3608,10 +3608,12 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await page.locator('.tabs .dtab .dot').count(), 0, 'nothing drawn yet: still untouched');
   });
 
-  await step('Line: typed x,y and @dx,dy, a length while the rubber band points the way; Esc ends; one labelled undo step; saved as LINEs', async () => {
+  await step('Line: typed x,y and @dx,dy, a length while the rubber band points the way; each segment is made at once, its own undo step; Esc ends; saved as LINEs', async () => {
     await typeCmd('20,20');
     assert.match(await prompt(), /^Next point or length \[Undo\]:?$/);
+    assert.equal(await entCount(), 0, 'the first point makes nothing');
     await typeCmd('@100,0');
+    assert.equal(await entCount(), 1, 'the first segment is in the drawing at once');
     // direct distance entry: the pointer points straight up from the last point (120, 20); type 50
     const p = await at(120, 70);
     await t('tog-ortho').click();                              // ORTHO (a sticky Shift) locks it straight up
@@ -3620,12 +3622,12 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await t('draw-preview').count(), 1, 'the rubber band is drawn');
     await typeCmd('50');
     await t('tog-ortho').click();
-    assert.equal(await entCount(), 0, 'nothing is in the drawing until the line ends');
-    await page.keyboard.press('Escape');                       // Esc ends a line too (Enter and right-click the other ways)
+    assert.equal(await entCount(), 2, 'both segments are in the drawing already');
+    assert.match(await t('cmd-hist').textContent(), /2 segments made/);
+    await page.keyboard.press('Escape');                     // Esc ends the command (Enter and right-click the other ways), nothing is taken back
     assert.equal(await entCount(), 2);
-    assert.match(await t('cmd-hist').textContent(), /Line made on layer 0 \(2 lines\)/);
     assert.equal(await page.locator('.tabs .dtab .dot').count(), 1, 'the tab is marked unsaved now');
-    assert.deepEqual(await histLabels(), ['Start', 'Line']);
+    assert.deepEqual(await histLabels(), ['Start', 'Line', 'Line']);
     const doc = await savedDoc();
     assert.deepEqual(doc.entities.map((e) => e.type), ['LINE', 'LINE']);
     assert.deepEqual([10, 20, 11, 21].map((c) => fieldOf(doc.entities[0], c)), [20, 20, 120, 20]);
@@ -3646,13 +3648,45 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.mouse.move(mid.x, mid.y);
     await page.waitForTimeout(150);
     await page.mouse.click(mid.x, mid.y);
-    await page.mouse.click(mid.x, mid.y, { button: 'right' });  // right-click ends it
+    assert.equal(await entCount(), 3, 'the click made the segment');
+    await page.mouse.click(mid.x, mid.y, { button: 'right' });  // right-click ends the command, the segment stays
     assert.equal(await entCount(), 3);
     const doc = await savedDoc(), e = doc.entities[2];
     assert.deepEqual([10, 20].map((c) => fieldOf(e, c)), [120, 70], 'its start is the snapped end, to the digit');
     assert.deepEqual([11, 21].map((c) => +fieldOf(e, c).toFixed(6)), [70, 20], 'its end is the snapped middle');
     await page.keyboard.press('Control+z');
-    assert.equal(await entCount(), 2, 'one Ctrl+Z took the whole line (one step)');
+    assert.equal(await entCount(), 2, 'one Ctrl+Z took the segment (one step)');
+  });
+
+  await step('Line, the AutoCAD way: Ctrl+Z or U mid-command takes the last segment back and goes on from the one before; Esc after the first point adds nothing; Esc / right-click keep the segments', async () => {
+    await page.locator('[data-tool=line]').click();
+    await typeCmd('300,100');
+    assert.equal(await entCount(), 2, 'the first point adds nothing');
+    await page.keyboard.press('Escape');
+    assert.equal(await entCount(), 2, 'Esc with only the first point: nothing added, nothing taken');
+    assert.equal(await prompt(), 'Specify first point (x,y):');
+    await typeCmd('300,100'); await typeCmd('@50,0'); await typeCmd('@0,50');
+    assert.equal(await entCount(), 4);
+    assert.match(await prompt(), /Close \/ Undo/);
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 3, 'Ctrl+Z mid-command: the last segment is gone');
+    await typeCmd('@0,-20');                                   // carries on from (350, 100), where that segment began
+    assert.equal(await entCount(), 4);
+    let doc = await savedDoc(), e = doc.entities[3];
+    assert.deepEqual([10, 20, 11, 21].map((c) => fieldOf(e, c)), [350, 100, 350, 80]);
+    await typeCmd('u');
+    assert.equal(await entCount(), 3, 'U takes the last segment back too');
+    await typeCmd('u');
+    assert.equal(await entCount(), 2, 'and the one before');
+    await typeCmd('300,100'); await typeCmd('@10,0');
+    await page.keyboard.press('Escape');
+    assert.equal(await entCount(), 3, 'Esc keeps the segment');
+    await page.keyboard.press('Escape'); await page.waitForTimeout(100);
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2, 'back to where this step began');
+    await page.locator('[data-tool=polyline]').click(); await page.locator('[data-tool=line]').click(); await page.keyboard.press('Escape');
   });
 
   await step('Polyline: one LWPOLYLINE; C closes it; U drops the last point', async () => {

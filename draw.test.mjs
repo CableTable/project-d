@@ -80,40 +80,48 @@ test('ellipseParams: the longer axis is the major one', () => {
 
 const click = (T, ...pts) => { let r; for (const p of pts) r = DR.toolClick(T, p); return r; };
 
-test('Line: each click adds a point; Enter ends with a LINE per segment; typed points and direct distance', () => {
+test('Line: each click after the first makes a segment at once and carries on; typed points and direct distance; Enter ends and keeps them', () => {
   const T = DR.createTool('line');
-  assert.equal(click(T, [0, 0]).made, null);
-  assert.equal(click(T, [10, 0]).made, null);
+  assert.equal(click(T, [0, 0]).made, null, 'the first point makes nothing');
+  assert.deepEqual(click(T, [10, 0]).made, [{ t: 'line', a: [0, 0], b: [10, 0] }]);
+  assert.deepEqual(T.pts, [[10, 0]], 'carries on from the last point');
   DR.toolHover(T, [10, 5]);                                            // the rubber band points up
-  assert.equal(DR.toolType(T, '20').made, null);                       // direct distance: 20 straight up from (10, 0)
-  assert.deepEqual(T.pts[2], [10, 20]);
-  DR.toolType(T, '@5,0');
-  assert.deepEqual(T.pts[3], [15, 20]);
-  DR.toolType(T, '30,40');
-  assert.deepEqual(T.pts[4], [30, 40]);
-  DR.toolType(T, '@10<90');
-  assert.deepEqual(T.pts[5].map((v) => +v.toFixed(6)), [30, 50]);
-  const r = DR.toolType(T, '');                                        // Enter
-  assert.equal(r.made.length, 5); assert.ok(r.made.every((s) => s.t === 'line'));
-  assert.deepEqual(r.made[0], { t: 'line', a: [0, 0], b: [10, 0] });
+  assert.deepEqual(DR.toolType(T, '20').made, [{ t: 'line', a: [10, 0], b: [10, 20] }]);   // direct distance: 20 straight up from (10, 0)
+  assert.deepEqual(DR.toolType(T, '@5,0').made, [{ t: 'line', a: [10, 20], b: [15, 20] }]);
+  assert.deepEqual(DR.toolType(T, '30,40').made[0].b, [30, 40]);
+  assert.deepEqual(DR.toolType(T, '@10<90').made[0].b.map((v) => +v.toFixed(6)), [30, 50]);
+  const r = DR.toolType(T, '');                                        // Enter: nothing more is made, nothing is taken back
+  assert.equal(r.made, null);
   assert.deepEqual(T.pts, [], 'ready for the next line');
 });
 
-test('Line: a length with no direction says so; Undo drops the last point; one point is no line; Close adds the last segment', () => {
+test('Line: Esc / Enter after only the first point adds nothing; a length with no direction says so; same point twice is refused', () => {
   const T = DR.createTool('line');
   click(T, [0, 0]);
   assert.match(DR.toolType(T, '10').msg, /Move the pointer/);
   assert.equal(T.pts.length, 1);
-  assert.match(DR.toolFinish(T).msg, /two points/);
-  click(T, [0, 0], [10, 0], [10, 10]);
-  DR.toolType(T, 'u');
-  assert.equal(T.pts.length, 2);
-  click(T, [10, 10]);
-  const r = DR.toolType(T, 'c');                                       // three points: a closed triangle
-  assert.equal(r.made.length, 3);
-  assert.deepEqual(r.made[2], { t: 'line', a: [10, 10], b: [0, 0] });
-  assert.match(DR.toolType(T, 'c').msg, /Close needs three/);
+  const r = DR.toolFinish(T);
+  assert.equal(r.made, null); assert.deepEqual(T.pts, []);
   assert.match(click(DR.createTool('line'), [1, 1], [1, 1]).msg, /last point again/);
+});
+
+test('Line: Undo (U or Ctrl+Z) takes the last segment back and starts from where it began; Close joins the last point to the first', () => {
+  const T = DR.createTool('line');
+  click(T, [0, 0], [10, 0], [10, 10]);
+  assert.equal(T.trail.length, 2);
+  assert.equal(DR.toolType(T, 'u').undoSeg, true, 'the app undoes the document step');
+  assert.equal(DR.toolUndoSeg(T), 'seg');
+  assert.deepEqual(T.pts, [[10, 0]]);
+  click(T, [10, 10]);
+  const r = DR.toolType(T, 'c');                                       // two segments made: Close adds the third, a closed triangle
+  assert.deepEqual(r.made, [{ t: 'line', a: [10, 10], b: [0, 0] }]);
+  assert.deepEqual(T.pts, []);
+  assert.match(DR.toolType(T, 'c').msg, /Close needs two segments/);
+  const U = DR.createTool('line');
+  click(U, [5, 5]);
+  assert.equal(DR.toolUndoSeg(U), 'point'); assert.deepEqual(U.pts, []);
+  assert.equal(DR.toolUndoSeg(U), null);
+  assert.equal(DR.toolUndoSeg(DR.createTool('polyline')), null);
 });
 
 test('Polyline: one LWPOLYLINE; C closes it', () => {

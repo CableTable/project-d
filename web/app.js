@@ -3101,7 +3101,9 @@ function deleteSelection() {
   commit(d, Ed.removeEntities(d.raw, d.sel), `Delete ${n}`);
   note(`Deleted ${n}. Ctrl+Z brings them back`);
 }
-function undo(d) { const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; } restore(d, st); note('Undone'); }
+function undo(d) {
+  if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }   // a Line with only its first point: nothing made to undo
+  const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; } restore(d, st); note('Undone'); if (state.draw) { renderCommand(); paintOverlay(); } }
 function redo(d) { const st = d.hist.redo(snapshotOf(d)); if (!st) { note('Nothing to redo'); return; } restore(d, st); note('Redone'); }
 
 /** Scales the whole drawing by s about the bottom-left of its extents, so it stays where it is on the sheet. */
@@ -3944,6 +3946,7 @@ function drawClick(e) {
 function drawApply(r) {
   const T = state.draw, d = state.drawDoc;
   if (!T || !d) return;
+  if (r.undoSeg) { undo(d); return; }                               // U in a Line: the last segment's step is taken back (undo() steps the tool back too)
   if (r.made) trackClear();                                         // the tool action is over: the acquired points go
   if (T.kind === 'rrect' && T.radius !== state.drawCfg.radius) { state.drawCfg.radius = T.radius; try { localStorage.setItem('pd-rradius', String(T.radius)); } catch { /* ignore */ } }
   if (r.made && r.made.length) { drawCommit(d, T.kind, r.made); return; }
