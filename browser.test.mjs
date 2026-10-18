@@ -180,6 +180,29 @@ try {
     await t('rotate').selectOption('0');
   });
 
+  await step('huge values: a sheet side over 100 000 mm, grippers wider than the sheet, a sheet narrower than its grippers: refused, the field reverts', async () => {
+    const f = (k) => page.locator(`[data-key=${k}]`);
+    const w0 = await f('sheetW').inputValue(), h0 = await f('sheetH').inputValue();
+    await f('sheetW').fill('1e308'); await f('sheetW').blur();
+    assert.equal(await f('sheetW').inputValue(), w0);
+    assert.match(await t('cmd-prompt').textContent(), /Width can be 100000 mm at most/);
+    await f('sheetH').fill('100001'); await f('sheetH').blur();
+    assert.equal(await f('sheetH').inputValue(), h0);
+    const top0 = await grip('Top').inputValue();
+    await grip('Top').fill(String(Number(h0) + 1)); await grip('Top').blur();
+    assert.equal(await grip('Top').inputValue(), top0);
+    assert.match(await t('cmd-prompt').textContent(), /Top can be \d+ mm at most/);
+    await grip('Left').fill('10'); await grip('Right').fill('10');
+    await f('sheetW').fill('15'); await f('sheetW').blur();
+    assert.equal(await f('sheetW').inputValue(), w0, 'narrower than Left + Right: refused');
+    assert.match(await t('cmd-prompt').textContent(), /Width must be 20 mm or more/);
+    await grip('Left').fill('0'); await grip('Right').fill('0');
+    await f('sheetW').fill('2000'); await f('sheetW').blur();
+    assert.equal(await f('sheetW').inputValue(), '2000', 'a sane side is kept');
+    await f('sheetW').fill(w0); await f('sheetW').blur();
+    assert.equal(await page.locator('svg [d*="e+"]').count(), 0, 'no 1e+… in a path');
+  });
+
   await step('preset, gripper sides and top-left align: the count and the first position follow', async () => {
     await t('preset').selectOption('a3');
     assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '420');

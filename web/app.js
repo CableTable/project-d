@@ -196,12 +196,18 @@ const isDark = () => {
 };
 
 // ---- building the page ----
+const MAX_SHEET = 100000;              // mm: a sheet side above this is refused (1e308 made invalid SVG)
 function numField(label, key, opts = {}) {
   const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(state[key]), 'data-key': key });
   // a whole-number field (Rows, Columns) says why a typed value is refused instead of snapping back silently
   const refusal = () => {
     const raw = input.value.trim(), v = Number(raw);
-    if (!opts.int) return '';
+    if (!opts.int) {                      // a sheet side or gripper: kept within what the sheet can hold
+      const hi = opts.cap ? opts.cap() : Infinity, lo = opts.floor ? opts.floor() : -Infinity;
+      if (raw !== '' && Number.isFinite(v) && v > hi) return `${label} can be ${hi} mm at most`;
+      if (raw !== '' && Number.isFinite(v) && v < lo) return `${label} must be ${lo} mm or more`;
+      return '';
+    }
     if (raw === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return `${label} must be ${opts.min ?? 0} or more`;
     if (opts.max && Math.floor(v) > opts.max) return `${label}: ${Math.floor(v)} will not fit on a sheet (${opts.max} at most)`;
     return '';
@@ -774,11 +780,11 @@ function buildPanel() {
     ui.sheetSec = h('section', { 'data-testid': 'sheet-panel' },
       h('h2', { class: 'sec' }, 'Sheet'),
       h('label', { class: 'field' }, 'Preset', ui.preset),
-      h('div', { class: 'grid2' }, numField('Width', 'sheetW', { min: 1 }), numField('Height', 'sheetH', { min: 1 })),
+      h('div', { class: 'grid2' }, numField('Width', 'sheetW', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }), numField('Height', 'sheetH', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) })),
       ui.sheetSelBtn = h('button', { class: 'btn', type: 'button', 'data-testid': 'sheet-select', 'aria-pressed': 'false', title: 'Select the sheet: four handles to drag', onclick: () => selectSheet(!sheetSelOn()) }, 'Select sheet'),
       h('span', { class: 'lbl' }, 'Or click the sheet edge. Drag a side handle to resize.'),
       h('div', { class: 'lbl' }, 'Gripper per side, mm (0 = none)'),
-      h('div', { class: 'grid4' }, numField('Top', GRIP_KEYS.top), numField('Right', GRIP_KEYS.right), numField('Bottom', GRIP_KEYS.bottom), numField('Left', GRIP_KEYS.left)),
+      h('div', { class: 'grid4' }, numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }), numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop }), numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight })),
       h('div', { class: 'checks' }, check('crop', 'Crop marks'), check('reg', 'Reg marks'))),
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
       h('h2', { class: 'sec' }, 'Guides'),
