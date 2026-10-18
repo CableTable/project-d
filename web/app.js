@@ -188,6 +188,7 @@ function setTheme(mode) {
   if (mode === 'light' || mode === 'dark') root.dataset.theme = mode; else delete root.dataset.theme;
   try { localStorage.setItem('pd-theme', mode); } catch { /* storage may be blocked */ }
   if (ui.dcanvas && layout) { paintOverlay(); renderLayers(); }
+  if (cmpDoc()) update(); // Compare colours and drawing tints are per theme
 }
 const isDark = () => {
   const t = document.documentElement.dataset.theme;
