@@ -1,0 +1,123 @@
+# Tests on every PR and push to main; a Windows build of the portable ProjectD.exe;
+# a push to main (or a dispatch, how the merge job's merges release) publishes it to Releases.
+name: Test, build and release
+
+on:
+  pull_request:
+    # Not `labeled`: label an open PR `automerge`, then push, and that run merges it.
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Lint and unit tests
+        run: npm test
+      - name: Chromium, for the browser test
+        run: npx playwright install --with-deps chromium
+      - name: The UI in a browser
+        run: npm run test:browser
+      - name: Keep the screenshot if it failed
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-failure
+          path: shots/
+          if-no-files-found: ignore
+
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - name: Build the portable exe (no installer)
+        run: npx tauri build --no-bundle
+      - name: Smoke start, the exe must stay up for 10 s
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/ProjectD.exe"
+          if (-not (Test-Path $exe)) { throw "$exe was not built" }
+          $p = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) { throw "ProjectD.exe exited early with code $($p.ExitCode)" }
+          Write-Host "ProjectD.exe still running after 10 s."
+          Stop-Process -Id $p.Id -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProjectD-exe
+          path: src-tauri/target/release/ProjectD.exe
+          if-no-files-found: error
+
+  release:
+    needs: [test, build]
+    # workflow_dispatch too: that's how the merge job's merges release.
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ProjectD-exe
+          path: dist
+      - name: Publish the release
+        run: |
+          tag="v0.1.${{ github.run_number }}"
+          gh release create "$tag" dist/ProjectD.exe --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Project D $tag" --notes "Portable ProjectD.exe (no installer, no admin). Built from ${{ github.sha }}."
+
+  # Auto-merge (as in Project R): a PR labelled `automerge` is merged here once test and
+  # build pass, only the commit that was tested; then main is built and released.
+  merge:
+    needs: [test, build]
+    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'automerge') && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Merge, then release main
+        env:
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if ! out=$(gh pr merge "$PR" --repo "$REPO" --merge --match-head-commit "$SHA" 2>&1); then
+            echo "$out"
+            read -r state head mergeable <<< "$(gh pr view "$PR" --repo "$REPO" --json state,headRefOid,mergeable --jq '.state + " " + .headRefOid + " " + .mergeable')"
+            if [ "$state" != "OPEN" ]; then echo "::notice::#$PR is already $state; nothing to merge."; exit 0; fi
+            if [ "$head" != "$SHA" ]; then echo "::notice::A newer commit was pushed to #$PR; its own run tests and merges it."; exit 0; fi
+            if [ "$mergeable" = "CONFLICTING" ]; then echo "::warning::#$PR conflicts with main: merge main into it and push."; exit 0; fi
+            exit 1
+          fi
+          echo "$out"
+          gh workflow run ci.yml --repo "$REPO" --ref main
+          echo "Merged; building and releasing main."
