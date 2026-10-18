@@ -1,4 +1,4 @@
-# Tests on every PR and push to main; a Windows build of the portable ProjectD.exe;
+# `npm test` on every PR and push to main; browser tests on main and on PRs labelled `ready`; a Windows build of the portable ProjectD.exe on main only;
 # a push to main (or a dispatch, how the merge job's merges release) publishes it to Releases.
 name: Test, build and release
 
@@ -32,6 +32,8 @@ jobs:
       - name: Chromium, for the browser test
         run: npx playwright install --with-deps chromium
       - name: The UI in a browser
+        # On a PR only when it is labelled `ready` (saves minutes); always on main.
+        if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ready')
         run: npm run test:browser
       - name: Keep the screenshot if it failed
         if: failure()
@@ -42,6 +44,8 @@ jobs:
           if-no-files-found: ignore
 
   build:
+    # Windows minutes cost 2x: build for main, not on every PR push.
+    if: github.event_name != 'pull_request'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -91,10 +95,10 @@ jobs:
           tag="v0.1.${{ github.run_number }}"
           gh release create "$tag" dist/ProjectD.exe --repo "${{ github.repository }}" --target "${{ github.sha }}" --title "Project D $tag" --notes "Portable ProjectD.exe (no installer, no admin). Built from ${{ github.sha }}."
 
-  # Auto-merge (as in Project R): a PR labelled `automerge` is merged here once test and
-  # build pass, only the commit that was tested; then main is built and released.
+  # Auto-merge (as in Project R): a PR labelled `automerge` is merged here once test
+  # passes, only the commit that was tested; then main is built and released.
   merge:
-    needs: [test, build]
+    needs: [test]
     if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'automerge') && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
