@@ -336,12 +336,12 @@ try {
   });
 
   await step('tools: an unbuilt tool is greyed with a "Not built yet" tooltip and does not become the tool; Select/Step work', async () => {
-    const line = page.locator('[data-tool=trim]');
+    const line = page.locator('[data-tool=nest]');
     assert.match(await line.getAttribute('title'), /Not built yet/);
     assert.equal(await line.getAttribute('aria-disabled'), 'true');
     assert.ok(Number(await line.evaluate((e) => getComputedStyle(e).opacity)) < 0.7, 'greyed');
     await line.click({ force: true });
-    assert.match(await t('cmd-prompt').textContent(), /Trim: not built yet/);
+    assert.match(await t('cmd-prompt').textContent(), /Auto-nest: not built yet/);
     assert.ok(!(await line.getAttribute('class')).split(' ').includes('on'), 'it does not become the tool');
     for (const id of ['select', 'dimension', 'measure', 'step', 'pan']) assert.equal(await page.locator('[data-tool=' + id + ']').getAttribute('aria-disabled'), null, id + ' is built');
     await page.locator('[data-tool=select]').click();
@@ -1857,8 +1857,8 @@ try {
     assert.equal(await page.locator('[data-tool=measure]').getAttribute('title'), 'Measure (M)');
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
     const titles = await page.locator('nav.rail button').evaluateAll((bs) => bs.map((b) => b.getAttribute('title')));
-    assert.ok(titles.every((x) => !/\((O|TR|MI)\)/.test(x)), 'no letter that does nothing: ' + titles.join());
-    for (const id of ['offset', 'trim', 'mirror', 'nest']) {
+    assert.ok(titles.every((x) => !/\((NE|NEST)\)/.test(x)), 'no letter that does nothing: ' + titles.join());
+    for (const id of ['nest']) {
       const b = page.locator('[data-tool=' + id + ']');
       assert.match(await b.getAttribute('title'), /Not built yet/, id); assert.equal(await b.getAttribute('aria-disabled'), 'true', id);
     }
@@ -5539,6 +5539,210 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.screenshot({ path: dir + '/s2-dark.png' });
     await page.locator('[data-menu=View]').click();
     await page.getByRole('menuitem', { name: 'Theme: light' }).click();
+  });
+
+  // ---- Next sessions 6: Offset, Trim and Mirror (modify.js) ----
+  const modDoc = () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 30, 120, 30, { layer: 'Cut' }), dxfCircle(170, 100, 20, { layer: 'Cut' }), roundRect(250, 20, 100, 60, 8, { layer: 'Cut' }));
+    return writeDxf(doc);
+  };
+  const layerOf = (e) => e.r.v[e.r.c.indexOf(8)];
+  await step('Offset, Trim and Mirror: built (their buttons are not greyed, titles with keys); Auto-nest stays greyed; none works on a layout tab', async () => {
+    await openGrips(modDoc(), 'mod.dxf');
+    const titles = {};
+    for (const id of ['offset', 'trim', 'mirror']) { const b = page.locator('[data-tool=' + id + ']'); assert.equal(await b.getAttribute('aria-disabled'), null, id + ' is built'); titles[id] = await b.getAttribute('title'); }
+    assert.deepEqual(titles, { offset: 'Offset (O)', trim: 'Trim (TR)', mirror: 'Mirror (MI)' });
+    assert.equal(await page.locator('[data-tool=nest]').getAttribute('aria-disabled'), 'true');
+    await t('new-layout').click();
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
+    await page.locator('[data-tool=trim]').click();
+    assert.match(await prompt(), /^Trim works on a drawing tab/);
+    assert.notEqual(await t('tool-chip').textContent(), 'Tool: Trim');
+    await page.locator('[data-tool=select]').click();
+    await closeTabs(/Layout/);
+  });
+
+  await step('Offset: the distance is remembered; click an object, click the side; a line, circle and rounded rectangle each make one copy on the same layer, one undo step "Offset"; too much is refused; Esc backs out', async () => {
+    await openGrips(modDoc(), 'mod.dxf');
+    assert.equal(await entCount(), 3);
+    await page.locator('[data-tool=offset]').click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Offset');
+    assert.match(await prompt(), /Select the object to offset, or type the distance <10>/);
+    await typeCmd('15');
+    assert.match(await histLine(), /Distance <15> mm/);
+    await click(70, 30);
+    assert.match(await prompt(), /Click the side to offset to/);
+    const side = await at(70, 70);
+    await page.mouse.move(side.x, side.y);
+    await frames();
+    assert.equal(await t('mod-preview').count(), 1, 'the copy shows before the click');
+    await click(70, 70);
+    assert.equal(await entCount(), 4);
+    assert.match(await prompt(), /Select the object to offset/, 'it goes on with the next object');
+    let doc = await savedDoc(), e = doc.entities[3];
+    assert.equal(e.type, 'LINE'); assert.equal(layerOf(e), 'Cut');
+    assert.deepEqual([10, 20, 11, 21].map((c) => fieldOf(e, c)), [20, 45, 120, 45]);
+    // a circle: inside, the radius shrinks by the distance
+    await click(190, 100); await click(165, 100);
+    assert.equal(await entCount(), 5);
+    doc = await savedDoc(); e = doc.entities[4];
+    assert.equal(e.type, 'CIRCLE'); assert.equal(fieldOf(e, 40), 5);
+    // more than the radius: refused, nothing added, the circle is still held for another side
+    await typeCmd('25');
+    await click(190, 100); await click(165, 100);
+    assert.match(await histLine(), /more than the radius/);
+    assert.equal(await entCount(), 5);
+    // a rounded rectangle: outside, 6 mm (arcs grow)
+    await typeCmd('6');
+    await page.keyboard.press('Escape');                   // back to picking an object
+    assert.match(await prompt(), /Select the object to offset/);
+    await click(300, 20); await click(300, 5);
+    assert.equal(await entCount(), 6);
+    doc = await savedDoc(); e = doc.entities[5];
+    assert.equal(e.type, 'LWPOLYLINE'); assert.equal(layerOf(e), 'Cut');
+    const ys = e.r.c.map((c, i) => (c === 20 ? +e.r.v[i] : null)).filter((v) => v != null);
+    assert.ok(Math.abs(Math.min(...ys) - 14) < 1e-6 && Math.abs(Math.max(...ys) - 86) < 1e-6, 'the outline grew by 6 mm each way: ' + ys.join());
+    assert.equal(e.r.c.filter((c) => c === 42).length > 0, true, 'the corners are still arcs');
+    const labels = await histLabels();
+    assert.deepEqual(labels.slice(-3), ['Offset', 'Offset', 'Offset'], 'one undo step each');
+    // the distance is remembered after switching tools
+    await page.locator('[data-tool=select]').click(); await page.locator('[data-tool=offset]').click();
+    assert.match(await prompt(), /<6>/);
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc with nothing held: back to Select');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 3);
+    await page.keyboard.press('o');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Offset', 'O is Offset');
+    await typeCmd('10');
+    await shotBoth('offset', async () => { await click(70, 30); const p = await at(70, 62); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
+    await page.locator('[data-tool=select]').click();
+  });
+
+  await step('Trim: Enter makes every object a cutting edge, a click cuts the part between the crossings (a line becomes two); one undo step "Trim" each; pieces of an edge still cut', async () => {
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50));
+    await openGrips(writeDxf(doc0), 'trim.dxf');
+    assert.equal(await entCount(), 3);
+    await page.locator('[data-tool=trim]').click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Trim');
+    assert.match(await prompt(), /Select cutting edges.*Enter = all/);
+    await page.keyboard.press('Enter');
+    assert.match(await prompt(), /Click the part to cut away/);
+    const mid = await at(120, 30);
+    await page.mouse.move(mid.x, mid.y); await frames();
+    assert.equal(await t('mod-preview').count(), 2, 'the two pieces that stay show before the click');
+    await click(120, 30);
+    assert.equal(await entCount(), 4);
+    let doc = await savedDoc();
+    const horiz = doc.entities.filter((e) => e.type === 'LINE' && fieldOf(e, 21) === 30 && fieldOf(e, 20) === 30).map((e) => [fieldOf(e, 10), fieldOf(e, 11)].sort((a, b) => a - b));
+    assert.deepEqual(horiz.sort((a, b) => a[0] - b[0]), [[20, 80], [160, 220]]);
+    await click(80, 45);                                       // the upper part of the left vertical (the piece of the line now ends on it)
+    assert.equal(await entCount(), 4, 'a line trimmed to one piece');
+    doc = await savedDoc();
+    const v = doc.entities.find((e) => e.type === 'LINE' && fieldOf(e, 10) === 80 && fieldOf(e, 11) === 80);
+    assert.deepEqual([fieldOf(v, 20), fieldOf(v, 21)].sort((a, b) => a - b), [10, 30]);
+    const labels = await histLabels();
+    assert.deepEqual(labels.slice(-2), ['Trim', 'Trim']);
+    const away = await at(120, 45);
+    await page.mouse.click(away.x, away.y);
+    await frames();
+    assert.match(await histLine(), /nothing there/i);
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Trim');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 3);
+  });
+
+  await step('Trim with picked cutting edges: click toggles an edge; a line nothing crosses says so; a circle between two lines leaves an arc', async () => {
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50), dxfCircle(120, 100, 20), dxfLine(90, 90, 150, 90), dxfLine(90, 110, 150, 110));
+    await openGrips(writeDxf(doc0), 'trim2.dxf');
+    await page.locator('[data-tool=trim]').click();
+    await click(160, 40);
+    assert.match(await histLine(), /Cutting edges: 1/);
+    const hov = await at(160, 40);
+    await page.mouse.move(hov.x, hov.y); await frames();
+    assert.equal(await t('trim-edge').count(), 1, 'the edge is marked');
+    await page.keyboard.press('Enter');
+    await click(100, 30);                                      // only the line at x = 160 cuts: the click is left of it, so the part up to it goes
+    let doc = await savedDoc();
+    const first = doc.entities.find((e) => e.type === 'LINE' && fieldOf(e, 21) === 30 && fieldOf(e, 20) === 30);
+    assert.deepEqual([fieldOf(first, 10), fieldOf(first, 11)].sort((a, b) => a - b), [160, 220]);
+    await click(80, 40);                                        // the other vertical: the one cutting edge (x = 160) does not cross it
+    assert.match(await histLine(), /Nothing crosses it here/);
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tool=trim]').click();
+    await click(90, 91); await click(150, 109);                // two cutting lines for the circle
+    await page.keyboard.press('Enter');
+    const before = await entCount();
+    await click(140, 100);                                      // the right-hand side of the circle, between the two lines
+    doc = await savedDoc();
+    assert.equal(await entCount(), before, 'the circle becomes one arc');
+    assert.equal(doc.entities.filter((e) => e.type === 'ARC').length, 1);
+    assert.equal(doc.entities.filter((e) => e.type === 'CIRCLE').length, 0);
+    await shotBoth('trim', async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=trim]').click(); await page.keyboard.press('Enter'); const p = await at(120, 30); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); });
+    await page.locator('[data-tool=select]').click();
+  });
+
+  await step('Mirror: the selection (or the objects picked, then Enter), two points, Erase Yes / No (default No); text keeps reading the same way; one undo step "Mirror"', async () => {
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfCircle(100, 80, 10, { layer: 'Cut' }), dxfText(30, 10, 5, 'ABC', { layer: 'Cut' }));
+    await openGrips(writeDxf(doc0), 'mirror.dxf');
+    await page.keyboard.press('Control+a');
+    assert.match(await selCount(), /3/);
+    await page.locator('[data-tool=mirror]').click();
+    assert.match(await prompt(), /Specify first point of mirror line/, 'the selection is taken');
+    await click(150, 0);
+    assert.match(await prompt(), /Specify second point of mirror line/);
+    const p2 = await at(150, 100); await page.mouse.move(p2.x, p2.y); await frames();
+    assert.ok(await t('mod-preview').count() >= 2, 'the mirrored copies show before the click');
+    await shotBoth('mirror', async () => { const q = await at(150, 100); await page.mouse.move(q.x, q.y); await frames(); }, async () => {});
+    await click(150, 100);
+    assert.match(await prompt(), /Erase source objects\? \[Yes \/ No\] <No>/);
+    assert.equal(await t('mirror-yes').isVisible(), true); assert.equal(await t('mirror-no').isVisible(), true);
+    await page.keyboard.press('Enter');                         // default: No
+    assert.equal(await entCount(), 6);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.match(await selCount(), /3/, 'the copies are selected');
+    let doc = await savedDoc();
+    const ln = doc.entities.filter((e) => e.type === 'LINE'), tx = doc.entities.filter((e) => e.type === 'TEXT');
+    assert.deepEqual(ln.map((e) => [10, 20, 11, 21].map((c) => Math.round(fieldOf(e, c) / 2) * 2)).sort((a, b) => a[0] - b[0]), [[20, 30, 60, 50], [280, 30, 240, 50]]); // the mirror line is a click, so a pixel off
+    assert.equal(tx.length, 2); assert.equal(tx.filter((e) => e.r.v[e.r.c.indexOf(1)] === 'ABC').length, 2, 'the words are not reversed');
+    assert.ok(tx.some((e) => Math.abs(fieldOf(e, 10) - 270) < 2), 'the text moved to the other side');
+    assert.equal((await histLabels()).at(-1), 'Mirror');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 3, 'one undo step');
+    // Yes: the sources go
+    await page.keyboard.press('Control+a');
+    await page.locator('[data-tool=mirror]').click();
+    await click(150, 0); await click(150, 100);
+    await typeCmd('y');
+    assert.equal(await entCount(), 3);
+    doc = await savedDoc();
+    assert.deepEqual(doc.entities.filter((e) => e.type === 'LINE').map((e) => [10, 20, 11, 21].map((c) => Math.round(fieldOf(e, c) / 2) * 2)), [[280, 30, 240, 50]]);
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    // nothing selected: pick, Enter, then the buttons
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tool=mirror]').click();
+    assert.match(await prompt(), /Select objects/);
+    await page.keyboard.press('Enter');
+    assert.match(await histLine(), /pick at least one/i);
+    await click(100, 90);                                       // the circle
+    await page.keyboard.press('Enter');
+    await click(0, 50); await click(10, 50);                    // a horizontal mirror line: the circle goes below
+    await t('mirror-no').click();
+    assert.equal(await entCount(), 4);
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    await page.locator('[data-tool=mirror]').click();
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc with nothing selected ends Mirror');
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

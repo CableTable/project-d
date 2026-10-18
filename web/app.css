@@ -424,6 +424,9 @@ select.fld { font-family: var(--sans); }
 .canvas > .ovl svg { display: block; width: 100%; height: 100%; }
 .ovl .dr-shape { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .ovl .dr-guide { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.ovl .dr-edge { fill: none; stroke: var(--accent); stroke-width: 4; stroke-opacity: 0.35; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.cmdbar .modask { display: inline-flex; gap: 6px; }
+.cmdbar .modask[hidden] { display: none; }
 .drawtip { position: absolute; z-index: 5; padding: 3px 9px; border-radius: var(--r); background: var(--accent); color: var(--accentink); font: 500 13px var(--mono); white-space: nowrap; pointer-events: none; }
 .drawtip[hidden] { display: none; }
 

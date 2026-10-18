@@ -17,12 +17,12 @@ export const MAX_GRIPS = 2000;
 const DEG = Math.PI / 180;
 const TYPES = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE']);
 
-const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
-const at = (r, code, which = 0) => { let n = -1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === code && ++n === which) return k; return -1; };
-const get = (r, code, which = 0) => { const k = at(r, code, which); return k < 0 ? null : num(r.v[k]); };
+export const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
+export const at = (r, code, which = 0) => { let n = -1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === code && ++n === which) return k; return -1; };
+export const get = (r, code, which = 0) => { const k = at(r, code, which); return k < 0 ? null : num(r.v[k]); };
 const text = (n) => String(+Number(n).toPrecision(15));
 /** The record with these [index, value] pairs changed (the arrays are copied; the rest is shared). */
-function withValues(ent, edits) {
+export function withValues(ent, edits) {
   const v = ent.r.v.slice();
   for (const [k, val] of edits) v[k] = text(val);
   return { ...ent, r: { ...ent.r, v } };
