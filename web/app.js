@@ -1,7 +1,7 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
 import { h } from './dom.js';
 import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
@@ -403,6 +403,58 @@ async function confirmDiscard(name) {
     try { return await t.dialog.ask(text, { title: 'Project D', kind: 'warning', okLabel: 'Close without saving', cancelLabel: 'Keep it open' }); } catch { return false; }
   }
   return window.confirm(text);
+}
+
+// ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
+const dirtyDocs = () => state.docs.filter((d) => d.dirty);
+let closeAsk = null;
+/** The close prompt over the page → 'save' | 'discard' | 'cancel' (Esc and a click outside are Cancel). */
+function askSaveChanges(dirty) {
+  return new Promise((resolve) => {
+    const words = closePrompt(dirty.map((d) => d.name));
+    const done = (answer) => { document.removeEventListener('keydown', onKey, true); back.remove(); closeAsk = null; resolve(answer); };
+    const btn = (label, answer, testid, cls = 'btn') => { const b = h('button', { class: cls, type: 'button', 'data-testid': testid }, label); b.addEventListener('click', () => done(answer)); return b; };
+    const save = btn('Save', 'save', 'close-save', 'btn primary');
+    const dlg = h('div', { class: 'pop-dialog', role: 'alertdialog', 'aria-label': words.title, 'data-testid': 'close-dialog' },
+      h('strong', null, words.title),
+      words.names.length ? h('div', { class: 'lbl' }, words.names.map((n) => h('div', null, n))) : null,
+      h('span', { class: 'lbl' }, "Your changes are lost if you don't save them."),
+      h('div', { class: 'row end' }, btn('Cancel', 'cancel', 'close-cancel'), btn("Don't save", 'discard', 'close-discard'), save));
+    const back = h('div', { class: 'pop-back', 'data-testid': 'close-back' }, dlg);
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel'); } };
+    back.addEventListener('pointerdown', (e) => { if (e.target === back) done('cancel'); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(back);
+    closeAsk = back;
+    save.focus();
+  });
+}
+/** May the window close? Asks when a tab has unsaved changes; Save goes through the usual Save for each (a cancelled Save dialog keeps the window open). */
+async function mayClose() {
+  const dirty = dirtyDocs();
+  if (!dirty.length) return true;
+  if (closeAsk) return false;                                        // already asking
+  const answer = await askSaveChanges(dirty);
+  if (answer === 'cancel') return false;
+  if (answer === 'discard') return true;
+  for (const d of dirty) {
+    const i = state.docs.indexOf(d);
+    if (i < 0) continue;
+    state.doc = i; showDoc();
+    await save();
+    if (d.dirty) return false;                                       // the Save dialog was cancelled, or Save failed (it said why)
+  }
+  return true;
+}
+/** Wires the window's close (the exe) and a page unload (a browser) to mayClose. */
+function guardClose() {
+  const t = window.__TAURI__, w = t && t.window && t.window.getCurrentWindow ? t.window.getCurrentWindow() : null;
+  if (w && w.onCloseRequested) w.onCloseRequested(async (event) => { event.preventDefault(); if (await mayClose()) await w.destroy(); });
+  window.addEventListener('beforeunload', (e) => { if (dirtyDocs().length) { e.preventDefault(); e.returnValue = ''; } });
+  document.addEventListener('keydown', (e) => {                      // in the exe a reload would drop every tab with no question
+    const reload = e.key === 'F5' || ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'r');
+    if (reload && window.__TAURI__ && dirtyDocs().length) { e.preventDefault(); note('Reload is off while a drawing has unsaved changes. Save it first'); }
+  }, true);
 }
 
 async function closeTab(d) {
@@ -5757,6 +5809,7 @@ function init() {
     balDock, buildCommand(), buildStatus()));
   renderTabs();
   attachDrop();
+  guardClose();
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
     editKey(e);

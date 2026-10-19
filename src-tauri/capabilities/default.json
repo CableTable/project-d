@@ -1,10 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core, Open/Save dialogs, and read/write of files the user picks. fs scope: home, Desktop, Documents, Downloads, and any drive letter (A-Z:/**). Dialog-picked paths are also added to the scope at runtime.",
+  "description": "Main window: core, closing the window after the unsaved-changes prompt, Open/Save dialogs, and read/write of files the user picks. fs scope: home, Desktop, Documents, Downloads, and any drive letter (A-Z:/**). Dialog-picked paths are also added to the scope at runtime.",
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:window:allow-destroy",
     "dialog:allow-open",
     "dialog:allow-save",
     "dialog:allow-message",

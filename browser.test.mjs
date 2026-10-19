@@ -5987,6 +5987,57 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await t('nest-cancel').click();
   });
 
+  await step("Closing with unsaved tabs: the exe's close request asks Save / Don't save / Cancel; a browser unload is warned; F5 and Ctrl+R are off in the exe", async () => {
+    const ctx2 = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p2 = await ctx2.newPage();
+    await p2.addInitScript(() => {                                   // a stand-in for the window API of the exe: the close handler is kept, destroy() is counted
+      window.__destroyed = 0;
+      window.__TAURI__ = { window: { getCurrentWindow: () => ({ onCloseRequested: (fn) => { window.__onClose = fn; }, destroy: async () => { window.__destroyed++; } }) } };
+    });
+    const errs2 = [];
+    p2.on('pageerror', (e) => errs2.push(String(e)));
+    await p2.goto(URL_);
+    const close = () => p2.evaluate(() => { window.__prevented = false; return window.__onClose({ preventDefault() { window.__prevented = true; } }).then(() => window.__prevented); });
+    const dlg = p2.locator('[data-testid=close-dialog]'), destroyed = () => p2.evaluate(() => window.__destroyed);
+    assert.equal(await close(), true, 'the exe window is always held until the answer is in');
+    assert.equal(await destroyed(), 1, 'nothing unsaved: it closes without a question');
+    assert.equal(await p2.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), false, 'a browser unload is not warned when nothing is unsaved');
+    await p2.locator('[data-testid=layer-add]').click();             // a change: the tab gets its dot
+    assert.equal(await p2.locator('.tabs .dtab.on .dot').count(), 1);
+    assert.equal(await p2.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), true, 'a browser unload is warned');
+    // Cancel keeps the window
+    const pending = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+    await dlg.waitFor();
+    assert.equal(await p2.locator('[data-testid=close-dialog] strong').textContent(), 'Save changes to "Drawing 1"?');
+    for (const th of ['light', 'dark']) { await p2.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await p2.screenshot({ path: `shots/s16-closeprompt-${th}.png` }); }
+    await p2.locator('[data-testid=close-cancel]').click(); await pending;
+    assert.equal(await destroyed(), 1, 'Cancel: still open'); assert.equal(await p2.locator('.tabs .dtab[data-kind]').count(), 1);
+    // Esc is Cancel too
+    const pending2 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+    await dlg.waitFor(); await p2.keyboard.press('Escape'); await pending2;
+    assert.equal(await destroyed(), 1);
+    // F5 / Ctrl+R in the exe
+    for (const [key, ctrl] of [['F5', false], ['r', true], ['R', true]]) {
+      assert.equal(await p2.evaluate(([k, c]) => { const e = new KeyboardEvent('keydown', { key: k, ctrlKey: c, cancelable: true, bubbles: true }); document.dispatchEvent(e); return e.defaultPrevented; }, [key, ctrl]), true, key);
+    }
+    assert.match(await p2.locator('[data-testid=cmd-prompt]').textContent(), /Reload is off/);
+    // Don't save closes at once
+    const pending3 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+    await dlg.waitFor(); await p2.locator('[data-testid=close-discard]').click(); await pending3;
+    assert.equal(await destroyed(), 2);
+    // Save goes through the usual Save (here a download), and then the window closes
+    const [dl] = await Promise.all([p2.waitForEvent('download'), (async () => {
+      const pending4 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+      await dlg.waitFor(); await p2.locator('[data-testid=close-save]').click(); await pending4;
+    })()]);
+    assert.match(dl.suggestedFilename(), /.dxf$/);
+    assert.equal(await destroyed(), 3);
+    assert.equal(await p2.locator('.tabs .dtab.on .dot').count(), 0, 'saved: no dot');
+    assert.equal(await p2.evaluate(() => { const e = new KeyboardEvent('keydown', { key: 'F5', cancelable: true, bubbles: true }); document.dispatchEvent(e); return e.defaultPrevented; }), false, 'nothing unsaved: F5 is left alone');
+    assert.deepEqual(errs2, []);
+    await ctx2.close();
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;
