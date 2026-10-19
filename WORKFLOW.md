@@ -59,10 +59,15 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # --resume only to finish a run that was cut off mid-work (usage limit), then start fresh again.
 
 # Reviewer (Opus, medium, read-only): the reviewer agent (.claude/agents/reviewer.md: no Edit / Write tools)
-# plus the git denies for Bash, capped at $6.
+# plus the git denies for Bash, capped at $6. It runs in its OWN throwaway worktree at the commit under review, so it can
+# run the tests and time things without touching a builder's folder (2026-10-20, his call). Never add `git -C:*` to the
+# allowlist: `git -C … commit/push` would slip past the commit and push denies.
+WT="E:/Project B/Claude/ProjectD-review"; git worktree add --detach "$WT" <sha>; cd "$WT"; npm.cmd ci --silent  # once per review
 $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 \
   --disallowedTools Agent "Bash(git commit:*)" "Bash(git push:*)" "Bash(git add:*)" "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git stash:*)" "Bash(git restore:*)" "Bash(git pull:*)" \
   $OUT < review.txt > rev.jsonl
+cd -; git worktree remove --force "$WT"                     # after the review
+# A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-review.
 
 # Lookup (Haiku)
 $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format text < question.txt
