@@ -714,4 +714,4 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cb-echo:hover { border-color: var(--accent); }
 .cb-echo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
-@media (max-width: 1280px) { .status .cb-hint { display: none; } }
+@media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* 1024 px: the echo is its icon only, so the status bar fits (CI fonts are wider) */
