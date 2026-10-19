@@ -2269,6 +2269,12 @@ async function recoverOne(c) {
     return true;
   } catch (err) { console.warn('Recover failed for', c.name, err); return false; }
 }
+/** Is this the only window? Two windows share one recovery store, so a second one must not offer (or discard) the first one's live copies.
+ *  The lock is held for as long as the window lives. */
+function ownsRecovery() {
+  if (!navigator.locks) return Promise.resolve(true);
+  return new Promise((resolve) => navigator.locks.request('pd-app', { ifAvailable: true }, (lock) => { resolve(!!lock); return lock ? new Promise(() => {}) : undefined; }));
+}
 async function offerRecovery() {
   let copies;
   try { copies = RC.cleanCopies(await RC.loadCopies()); } catch { return; }
@@ -6183,7 +6189,7 @@ function init() {
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);
-  offerRecovery();
+  ownsRecovery().then((own) => { if (own) offerRecovery(); });
 }
 
 init();

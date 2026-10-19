@@ -6253,6 +6253,33 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await c4.close();
   });
 
+  await step("Audit 6: a second window does not offer (or discard) the first window's recovery copies; once the first is gone, a restart does", async () => {
+    const c5 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const a = await c5.newPage();
+    const count = () => a.evaluate(() => new Promise((res) => {
+      const r = indexedDB.open('project-d-recovery', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('copies', { keyPath: 'id' });
+      r.onsuccess = () => { const q = r.result.transaction('copies').objectStore('copies').count(); q.onsuccess = () => { r.result.close(); res(q.result); }; };
+    }));
+    await a.goto(URL_ + '?autosave=300');
+    await a.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await a.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+    await a.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent === '2');
+    await a.locator('[data-testid=gap-join]').click();
+    for (let i = 0; i < 60 && await count() < 1; i++) await a.waitForTimeout(150);
+    assert.equal(await count(), 1);
+    const b = await c5.newPage();                                    // the exe started a second time
+    await b.goto(URL_);
+    await b.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await b.waitForTimeout(800);
+    assert.equal(await b.locator('[data-testid=recover-dialog]').count(), 0, 'the first window still owns its copies');
+    assert.equal(await count(), 1);
+    await a.close();
+    await b.reload();
+    await b.locator('[data-testid=recover-dialog]').waitFor();
+    await c5.close();
+  });
+
   // ---- TODO 39: the Objects tab (objects.js; mock-up R11a, Option A) ----
   const objDoc = () => {
     const doc = newDoc(4);
