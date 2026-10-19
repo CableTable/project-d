@@ -20,6 +20,7 @@ import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
 import * as CT from './contour.js';
+import * as OB from './objects.js';
 import * as C from './compare.js';
 import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
@@ -129,6 +130,7 @@ const state = {
   guideDrag: null,                       // a guide being dragged out of a ruler or along the sheet: see gdrag
   nudge: 1, dupAxis: 'x', dupGap: 5, dupCount: 3, arrangeRel: 'selection',   // the arrow-key step (mm, remembered on this PC) and the Duplicate section's last values
   panel: 'main',                         // the right panel: 'main' (Layout / Drawing) or 'library' (Parts library)
+  ptab: 'drawing',                       // the right panel's tab: 'drawing' (everything else) or 'objects' (the tree of the open file, mock-up R11a)
   hidden: { parts: false, marks: false, dims: false },
   docs: [], doc: 0,
   snap: true,                      // the SNAP toggle in the status bar (kept for the session)
@@ -848,7 +850,10 @@ function buildPanel() {
   ui.panelMain = h('button', { class: 'seg on', type: 'button', 'data-testid': 'panel-main', onclick: () => { state.panel = 'main'; applyKind(); update(); } }, 'Layout');
   ui.panelLib = h('button', { class: 'seg', type: 'button', 'data-testid': 'panel-library', onclick: () => showLibrary() }, 'Parts library');
 
-  return h('aside', { class: 'panel', 'aria-label': 'Properties' },
+  ui.tabDrawing = h('button', { class: 'ptab on', type: 'button', role: 'tab', 'aria-selected': 'true', 'data-testid': 'ptab-drawing', onclick: () => setPtab('drawing') }, 'Drawing');
+  ui.tabObjects = h('button', { class: 'ptab', type: 'button', role: 'tab', 'aria-selected': 'false', 'data-testid': 'ptab-objects', onclick: () => setPtab('objects') }, 'Objects');
+  return ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Properties', 'data-ptab': 'drawing' },
+    h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab' }, ui.tabDrawing, ui.tabObjects),
     h('div', { class: 'mode panelsw', role: 'group', 'aria-label': 'Panel' }, ui.panelMain, ui.panelLib),
     buildPlacedPanel(),
     ui.sheetSec = h('section', { 'data-testid': 'sheet-panel' },
@@ -900,7 +905,8 @@ function buildPanel() {
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
         h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
-      ui.layerRows));
+      ui.layerRows),
+    buildObjects());
 }
 
 /**
@@ -2154,13 +2160,20 @@ function hideMenu() {
 }
 
 // ---- PDF / Print (export.js is the dialog, pdf-export.js the pages) ----
+/** The layout without the parts hidden in the Objects tab (their places and the grid, if the grid is made of one): what print and PDF use. */
+function shownLayout(d) {
+  const hid = d.hiddenParts;
+  if (!hid || !hid.size) return d.lay;
+  return { ...d.lay, s: { ...d.lay.s, gridPart: hid.has(d.lay.s.gridPart) ? null : d.lay.s.gridPart }, placed: d.lay.placed.filter((p) => !hid.has(p.partId)) };
+}
 /** What the PDF is made from: the active tab's drawing (a layout's Sheet and Marks layers are not artwork), or null (nothing open yet). */
 function exportSource() {
   const d = curDoc();
   if (!d) return null;
   if (d.lay) {                                                       // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
-    if (!placedNow.length) return null;
-    return { name: d.name, fl: flatten(LD.layoutRaw(d.lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, hide: ['Sheet', 'Marks'] };
+    const lay = shownLayout(d);
+    if (!LD.placedAll(lay).length) return null;
+    return { name: d.name, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, hide: ['Sheet', 'Marks'] };
   }
   if (d.fl && partView(d) && !d.bgOnly) {                            // a drawing tab: the drawing and its dimensions alone (never the background or a sheet)
     return partSource({ fl: d.fl, factor: d.factor, off: d.off, name: d.name, hide: [] });
@@ -2394,7 +2407,7 @@ function renderLayers() {
     if (l.live) {
       vis.addEventListener('click', () => {
         if (l.bg) { d.bg.visible = !d.bg.visible; paintOverlay(); } else if (isFile) { if (d.off.has(l.fileLayer)) d.off.delete(l.fileLayer); else d.off.add(l.fileLayer); layersChanged(d); paintOverlay(); } else state.hidden[l.id] = !state.hidden[l.id];
-        renderLayers(); applyHidden(); renderStatus();
+        renderLayers(); applyHidden(); renderStatus();       // (renderLayers also redraws the Objects tab)
       });
     }
     const pick = isFile || l.added || l.zero;
@@ -2404,6 +2417,256 @@ function renderLayers() {
     if (pick) row.addEventListener('click', (e) => { if (e.target.closest('.vis') || e.target.closest('input')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
     return row;
   }));
+  if (state.ptab === 'objects') renderObjects();
+}
+
+// ---- the Objects tab (TODO 39, mock-up R11a Option A): the open file as a tree, layer by layer; the tree itself is objects.js ----
+const OBJ_ICONS = {
+  line: '<path d="M4 20L20 4"/>', rect: '<rect x="4" y="6" width="16" height="12"/>', circle: '<circle cx="12" cy="12" r="8"/>', arc: '<path d="M4 19c4-14 12-14 16 0"/>',
+  poly: '<path d="M4 18l4-10 6 6 6-10"/>', text: '<path d="M5 6h14M12 6v13M9 19h6"/>', block: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/>',
+  other: '<circle cx="12" cy="12" r="2"/><path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>',
+};
+const CHEV_DOWN = '<path d="M6 9l6 6 6-6"/>', CHEV_RIGHT = '<path d="M9 6l6 6-6 6"/>';
+const oIcon = (inner, size = 14) => icon(inner, { size, width: 1.7, cap: 'round', join: 'round' });
+/** The tab's own list state (search, filter, what is open); the layout tab keeps it the same way. */
+const omOf = (d) => d.om || (d.om = { open: null, openB: new Set(), show: new Map(), query: '', filter: 'all', openP: new Set() });
+
+function buildObjects() {
+  ui.objSearch = h('input', { type: 'text', placeholder: 'Search objects…', 'aria-label': 'Search objects', 'data-testid': 'obj-search', autocomplete: 'off', spellcheck: 'false' });
+  ui.objSearch.addEventListener('input', () => { const d = curDoc(); if (d) { omOf(d).query = ui.objSearch.value; renderObjects(); } });
+  const filt = (id, text) => (ui['objF' + id] = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-filter-' + id, 'data-filter': id, 'aria-pressed': 'false', onclick: () => { const d = curDoc(); if (d) { omOf(d).filter = id; renderObjects(); } } }, text));
+  ui.objToggle = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-toggle', 'aria-label': 'Expand or collapse all', title: 'Expand or collapse all', onclick: objToggleAll });
+  ui.objTree = h('div', { class: 'otree', role: 'tree', 'aria-label': 'Objects', 'data-testid': 'obj-tree' });
+  ui.objTree.addEventListener('click', objClick);
+  ui.objTree.addEventListener('dblclick', (e) => { const r = e.target.closest('.or.layer'), d = editable(); if (r && d && !e.target.closest('button')) { d.curLayer = r.dataset.layer; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${d.curLayer}. New shapes and text go on it`); } });
+  ui.objTree.addEventListener('contextmenu', objMenu);
+  ui.objCount = h('span', { 'data-testid': 'obj-count' }); ui.objSelN = h('span', { 'data-testid': 'obj-selected' });
+  return ui.objPanel = h('div', { class: 'objpanel', 'data-testid': 'objects-panel', hidden: true },
+    h('div', { class: 'omtop' },
+      h('div', { class: 'osr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.objSearch),
+      h('div', { class: 'ofs' }, filt('all', 'All'), filt('hidden', ''), filt('locked', ''), h('span', { style: 'flex:1' }), ui.objToggle)),
+    ui.objTree,
+    h('div', { class: 'omfoot' }, ui.objCount, h('span', { style: 'flex:1' }), ui.objSelN));
+}
+
+function setPtab(tab) {
+  state.ptab = tab;
+  ui.panelEl.dataset.ptab = tab;
+  for (const [b, id] of [[ui.tabDrawing, 'drawing'], [ui.tabObjects, 'objects']]) { b.classList.toggle('on', tab === id); b.setAttribute('aria-selected', String(tab === id)); }
+  ui.objPanel.hidden = tab !== 'objects';
+  if (tab === 'objects') renderObjects();
+}
+
+/** The tree for the tab that is open: a drawing's layers and objects, or a layout's parts. */
+function objOpts(d, om) {
+  return { factor: d.factor, off: d.off, hid: d.hid || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: d.addedLayers ? [...d.addedLayers] : [] };
+}
+function objBtn(act, on, label, inner, cls = '') {
+  return h('button', { class: 'oa' + (on ? '' : ' off') + cls, type: 'button', 'data-act': act, 'aria-label': label, title: label }, oIcon(inner, 15));
+}
+function renderObjects(reveal = false) {
+  if (!ui.objTree || state.ptab !== 'objects') return;
+  const d = curDoc(), lay = d && d.lay, ed = lay ? null : editable(), dark = isDark();
+  const filterBtns = (hidden, locked) => {
+    const f = d && d.om ? d.om.filter : 'all';
+    ui.objFall.classList.toggle('on', f === 'all'); ui.objFhidden.classList.toggle('on', f === 'hidden'); ui.objFlocked.classList.toggle('on', f === 'locked');
+    for (const b of [ui.objFall, ui.objFhidden, ui.objFlocked]) b.setAttribute('aria-pressed', String(b.classList.contains('on')));
+    ui.objFhidden.replaceChildren(oIcon(EYE_OFF, 12), `Hidden ${hidden}`); ui.objFlocked.replaceChildren(oIcon(ICONS.lock, 12), `Locked ${locked}`);
+    ui.objFlocked.hidden = !!lay;
+  };
+  const rows = [];
+  if (lay) {
+    const om = omOf(d), hp = d.hiddenParts || new Set(), parts = OB.partsTree(d.lay, placedNow, hp, om.query);
+    if (document.activeElement !== ui.objSearch) ui.objSearch.value = om.query;
+    const shown = om.filter === 'hidden' ? parts.filter((p) => p.hidden) : parts, sel = new Set(selIdxs());
+    for (const p of shown) {
+      const open = !!om.query || om.openP.has(p.id);
+      rows.push(h('div', { class: 'or layer' + (p.hidden ? ' dim' : ''), 'data-part': p.id, role: 'treeitem', 'aria-expanded': String(open) },
+        h('span', { class: 'otw' }, oIcon(open ? CHEV_DOWN : CHEV_RIGHT, 12)), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.block)), h('span', { class: 'onm' }, p.name), h('span', { class: 'ocnt' }, p.count),
+        objBtn('vis', !p.hidden, p.hidden ? 'Show' : 'Hide', p.hidden ? EYE_OFF : EYE)));
+      if (open) for (const pl of p.places) rows.push(h('div', { class: 'or obj' + (sel.has(pl.k) ? ' sel' : '') + (p.hidden ? ' dim' : ''), 'data-place': pl.k, role: 'treeitem', style: 'padding-left:20px' },
+        h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS.rect)), h('span', { class: 'onm' }, pl.label), pl.locked ? h('span', { class: 'chp w' }, 'locked') : null));
+    }
+    filterBtns(parts.filter((p) => p.hidden).length, 0);
+    ui.objToggle.replaceChildren(oIcon(om.openP.size ? CHEV_DOWN : CHEV_RIGHT, 12));
+    ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, parts.length || om.query ? 'Nothing matches.' : 'No parts on this layout yet.')]));
+    ui.objCount.replaceChildren(h('b', null, placedNow.length), ' placed · ', h('b', null, Object.keys(d.lay.parts).length), ' parts'); ui.objSelN.textContent = sel.size + ' selected';
+    return;
+  }
+  if (!ed) {
+    filterBtns(0, 0);
+    ui.objTree.replaceChildren(h('div', { class: 'omempty' }, 'Open a drawing to see its objects.'));
+    ui.objCount.textContent = ''; ui.objSelN.textContent = '';
+    return;
+  }
+  const om = omOf(d);
+  if (!om.open) { const names = d.fl.layers.map((l) => l.name), cur = curLayerName(d); om.open = new Set([names.includes(cur) ? cur : names[0]].filter(Boolean)); }       // the current layer is open, else the first
+  if (document.activeElement !== ui.objSearch) ui.objSearch.value = om.query;
+  let tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
+  if (reveal && d.sel.size && d.sel.size <= 50) {                        // an object picked on the sheet: its layer opens and its row is listed
+    let again = false;
+    for (const e of d.sel) {
+      const l = tree.layers.find((x) => x.name === d.raw.entities[e].layer);
+      if (!l) continue;
+      if (!l.open) { om.open.add(l.name); again = true; } else { const k = l.ents.indexOf(e); if (k >= l.cap) { om.show.set(l.name, k + 1); again = true; } }
+    }
+    if (again) tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
+  }
+  objLast = tree;
+  for (const l of tree.layers) {
+    const sw = h('span', { class: 'osw' });
+    sw.style.background = l.css ? ink(l.css, dark) : 'var(--partline)';
+    rows.push(h('div', { class: 'or layer' + (l.cur ? ' cur' : '') + (l.hidden ? ' dim' : ''), 'data-layer': l.name, role: 'treeitem', 'aria-expanded': String(l.open) },
+      h('span', { class: 'otw' }, oIcon(l.open ? CHEV_DOWN : CHEV_RIGHT, 12)), sw, h('span', { class: 'onm' }, l.name), l.cur ? h('span', { class: 'chp', 'data-testid': 'obj-current' }, 'current') : null, h('span', { class: 'ocnt' }, l.count),
+      l.index >= 0 ? objBtn('vis', !l.hidden, l.hidden ? 'Show' : 'Hide', l.hidden ? EYE_OFF : EYE) : null, objBtn('lock', l.locked, l.locked ? 'Unlock' : 'Lock', l.locked ? ICONS.lock : ICONS.unlock, l.locked ? ' lk' : '')));
+    for (const r of l.rows) {
+      const blockOpen = r.block && om.openB.has(r.e);
+      rows.push(h('div', { class: 'or obj' + (d.sel.has(r.e) ? ' sel' : '') + (r.hidden ? ' dim' : ''), 'data-e': r.e, 'data-layer-of': l.name, role: 'treeitem', style: 'padding-left:20px' },
+        h('span', { class: 'otw', 'data-act': r.block ? 'block' : null }, r.block ? oIcon(blockOpen ? CHEV_DOWN : CHEV_RIGHT, 12) : null), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[r.icon])), h('span', { class: 'onm' }, r.label),
+        r.locked ? h('span', { class: 'chp w' }, 'locked') : null, objBtn('vis', !r.hidden, r.hidden ? 'Show' : 'Hide', r.hidden ? EYE_OFF : EYE)));
+      if (blockOpen) { const m = OB.membersOf(d.raw, d.raw.entities[r.e], d.factor); for (const x of m.rows) rows.push(h('div', { class: 'or member dim0', 'data-e': r.e, style: 'padding-left:36px' }, h('span', { class: 'otw' }), h('span', { class: 'oti' }, oIcon(OBJ_ICONS[x.icon])), h('span', { class: 'onm' }, x.label))); if (m.more) rows.push(h('div', { class: 'or member', style: 'padding-left:36px' }, h('span', { class: 'onm ocnt' }, `+ ${m.more} more`))); }
+    }
+    if (l.more) rows.push(h('button', { class: 'or more', type: 'button', 'data-act': 'more', 'data-layer': l.name, style: 'padding-left:20px' }, `Show ${Math.min(OB.CAP, l.more)} more (${l.more} not listed)`));
+  }
+  filterBtns(tree.hiddenN, tree.lockedN);
+  ui.objToggle.replaceChildren(oIcon(om.open.size ? CHEV_DOWN : CHEV_RIGHT, 12));
+  ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, om.query || om.filter !== 'all' ? 'Nothing matches.' : 'This drawing has no objects.')]));
+  ui.objCount.replaceChildren(h('b', null, tree.objects), ` object${tree.objects === 1 ? '' : 's'} · ${tree.nLayers} layer${tree.nLayers === 1 ? '' : 's'}`);
+  ui.objSelN.textContent = d.sel.size + ' selected';
+  if (reveal) { const s = ui.objTree.querySelector('.or.sel'); if (s && s.scrollIntoView) s.scrollIntoView({ block: 'nearest' }); }
+}
+let objLast = null;                              // the tree as last drawn (its layers' object lists, for Select on a layer)
+
+function objToggleAll() {
+  const d = curDoc(); if (!d) return;
+  const om = omOf(d);
+  if (d.lay) { if (om.openP.size) om.openP.clear(); else for (const id of Object.keys(d.lay.parts)) om.openP.add(id); }
+  else if (om.open && om.open.size) { om.open.clear(); om.openB.clear(); } else if (objLast) om.open = new Set(objLast.layers.map((l) => l.name));
+  renderObjects();
+}
+
+function objClick(e) {
+  const d = curDoc(), row = e.target.closest('.or'), act = e.target.closest('[data-act]');
+  if (!d || !row) return;
+  const om = omOf(d), flip = (set, k) => (set.has(k) ? set.delete(k) : set.add(k));
+  if (d.lay) {
+    if (row.dataset.part) {
+      if (act && act.dataset.act === 'vis') { const hp = d.hiddenParts || (d.hiddenParts = new Set()); flip(hp, row.dataset.part); paintOverlay(); renderObjects(); note(hp.has(row.dataset.part) ? 'Part hidden: it is left out of print and PDF too. The saved file keeps it' : 'Part shown'); } else { flip(om.openP, row.dataset.part); renderObjects(); }
+    } else if (row.dataset.place != null) {
+      state.sel = +row.dataset.place; state.mode = 'select'; state.pivot = centrePivot();
+      renderProps(); renderLayers(); drawSheet(); paintOverlay();
+    }
+    return;
+  }
+  if (act && act.dataset.act === 'more') { om.show.set(act.dataset.layer, (om.show.get(act.dataset.layer) || OB.CAP) + OB.CAP); renderObjects(); return; }
+  if (row.dataset.layer && !row.dataset.e) {
+    const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
+    if (act && act.dataset.act === 'vis') toggleLayerVis(d, idx);
+    else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
+    else { flip(om.open, name); renderObjects(); }
+    return;
+  }
+  const ent = +row.dataset.e;
+  if (act && act.dataset.act === 'vis') objHide(d, [ent]);
+  else if (act && act.dataset.act === 'block') { flip(om.openB, ent); renderObjects(); }
+  else objSelect(d, [ent], e.shiftKey || e.ctrlKey || e.metaKey);
+}
+
+function toggleLayerVis(d, idx) {
+  if (idx < 0) return;
+  if (d.off.has(idx)) d.off.delete(idx); else d.off.add(idx);
+  layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
+}
+function toggleLayerLock(d, name) {
+  const lk = d.locked || (d.locked = new Set());
+  if (lk.has(name)) lk.delete(name); else { lk.add(name); if ([...d.sel].some((e) => lockedEnt(d, e))) { setSel(d, new Set([...d.sel].filter((e) => !lockedEnt(d, e)))); } }
+  renderObjects();
+  note(lk.has(name) ? `Layer ${name} locked: it is still drawn and snapped to, but cannot be picked or changed` : `Layer ${name} unlocked`);
+}
+/** Hides these objects, or shows them again if they are all hidden already. For this session only: the file does not keep it. */
+function objHide(d, ents) {
+  const hid = d.hid || (d.hid = new Set());
+  const off = ents.filter((e) => d.fl.layers.some((l, i) => l.name === d.raw.entities[e].layer && d.off.has(i)));
+  if (off.length === ents.length) { note('Its layer is hidden: show the layer first'); return; }
+  const all = ents.every((e) => hid.has(e));
+  for (const e of ents) { if (all) hid.delete(e); else hid.add(e); }
+  layersChanged(d); paintOverlay(); renderObjects(); renderStatus();
+  note(all ? `${ents.length} shown again` : `${ents.length} hidden for this session: the saved file keeps them`);
+}
+function objSelect(d, ents, add) {
+  const free = ents.filter((e) => !lockedEnt(d, e));
+  if (!free.length) { note(`Layer ${d.raw.entities[ents[0]].layer} is locked: unlock it to select its objects`); return; }
+  const next = new Set(add ? d.sel : []);
+  if (add && free.length === 1 && next.has(free[0])) next.delete(free[0]); else for (const e of free) next.add(e);
+  setSel(d, next);
+  note(`${next.size} selected`);
+}
+const zoomPad = (b) => Math.max(2, 0.15 * Math.max(b[2] - b[0], b[3] - b[1]));
+function objZoom(d, ents) {
+  const b = OB.boxOf(d.fl, ents);
+  if (!b) { note('Nothing to zoom to: it has no shape on the sheet'); return; }
+  const mm = b.map((v) => v * d.factor);
+  zoomToBox(mm, zoomPad(mm));
+}
+function showAllHidden(d) {
+  if (d.lay) { if (d.hiddenParts) d.hiddenParts.clear(); paintOverlay(); renderObjects(); note('All parts are shown'); return; }
+  d.off.clear(); d.hid = new Set();
+  layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
+  note('All layers and objects are shown');
+}
+async function renameLayerNow(d, name) {
+  if (name === '0') { note('Layer 0 cannot be renamed'); return; }
+  const to = await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => Ed.layerNameProblem(v, allLayerNames(d), name) });
+  if (!to || to === name) return;
+  const wasOff = d.off.has(d.fl.layers.findIndex((l) => l.name === name)), hid = d.hid || new Set(), lk = d.locked;
+  commit(d, OB.renameLayer(d.raw, name, to), `Rename layer ${name} → ${to}`);
+  const i = d.fl.layers.findIndex((l) => l.name === to);
+  if (wasOff && i >= 0) d.off.add(i);                                      // restore() keeps hidden layers by name: this one has a new name
+  d.hid = hid;
+  if (lk && lk.delete(name)) lk.add(to);
+  if (d.curLayer === name) d.curLayer = to;
+  if (d.addedLayers && d.addedLayers.delete(name)) d.addedLayers.add(to);
+  layersChanged(d); paintOverlay(); renderLayers(); renderStatus();
+  note(`Layer ${name} is now ${to}. Ctrl+Z takes it back`);
+}
+function moveToLayerMenu(d, x, y) {
+  popMenu(x, y, [...new Set(allLayerNames(d))].map((n) => [n, () => propSet('layer', n)]));
+}
+function objMenu(e) {
+  const d = curDoc(), row = e.target.closest('.or');
+  if (!d || !row || row.classList.contains('more') || row.classList.contains('member')) return;
+  e.preventDefault();
+  const { clientX: x, clientY: y } = e, hid = d.hid || new Set(), sep = '-';
+  if (d.lay) {
+    const id = row.dataset.part || (row.dataset.place != null ? placedNow[+row.dataset.place].partId : null), hp = d.hiddenParts || (d.hiddenParts = new Set());
+    if (row.dataset.place != null) { state.sel = +row.dataset.place; renderProps(); drawSheet(); paintOverlay(); }
+    popMenu(x, y, [
+      ['Select', () => { const k = placedNow.findIndex((p) => p.partId === id); if (k >= 0) { state.sel = k; state.picks = placedNow.map((p, i) => (p.partId === id ? i : -1)).filter((i) => i >= 0); renderProps(); renderLayers(); drawSheet(); paintOverlay(); } }],
+      ['Zoom to', () => { const bs = placedNow.filter((p) => p.partId === id).map((p) => placedBox(d.lay.parts[id], p)); if (bs.length) { const u = A.unionBox(bs); zoomToBox(u, zoomPad(u)); } }],
+      sep, [hp.has(id) ? 'Show' : 'Hide', () => { if (hp.has(id)) hp.delete(id); else hp.add(id); paintOverlay(); renderObjects(); }],
+      sep, ['Show all hidden', () => showAllHidden(d), '', hp.size > 0]]);
+    return;
+  }
+  if (!editable()) return;
+  if (row.dataset.layer && !row.dataset.e) {
+    const name = row.dataset.layer, l = objLast && objLast.layers.find((x) => x.name === name), idx = d.fl.layers.findIndex((q) => q.name === name), locked = !!(d.locked && d.locked.has(name)), hidden = idx >= 0 && d.off.has(idx);
+    popMenu(x, y, [
+      ['Select', () => objSelect(d, l ? l.ents : [], false), '', !!(l && l.ents.length)],
+      ['Zoom to', () => objZoom(d, l ? l.ents : []), '', !!(l && l.ents.length)],
+      sep, [hidden ? 'Show' : 'Hide', () => toggleLayerVis(d, idx), '', idx >= 0], [locked ? 'Unlock' : 'Lock', () => toggleLayerLock(d, name)],
+      sep, ['Rename…', () => renameLayerNow(d, name), '', name !== '0'],
+      sep, ['Show all hidden', () => showAllHidden(d), '', d.off.size > 0 || hid.size > 0]]);
+    return;
+  }
+  const ent = +row.dataset.e, name = d.raw.entities[ent].layer, locked = !!(d.locked && d.locked.has(name));
+  if (!d.sel.has(ent)) objSelect(d, [ent], false);
+  const targets = d.sel.has(ent) ? [...d.sel] : [ent];
+  popMenu(x, y, [
+    ['Select', () => objSelect(d, [ent], false)],
+    ['Zoom to', () => objZoom(d, targets)],
+    sep, [targets.every((t) => hid.has(t)) ? 'Show' : 'Hide', () => objHide(d, targets)], [(locked ? 'Unlock' : 'Lock') + ` layer ${name}`, () => toggleLayerLock(d, name)],
+    sep, ['Move to layer…', () => moveToLayerMenu(d, x, y), '', d.sel.has(ent)],
+    sep, ['Show all hidden', () => showAllHidden(d), '', d.off.size > 0 || hid.size > 0]]);
 }
 
 function buildCommand() {
@@ -2744,6 +3007,14 @@ function applyView() {
   paintOverlay();
 }
 
+/** Entities not painted: the one a grip is dragging (the overlay draws it) and the ones hidden one by one in the Objects tab. */
+function hideNow(d) {
+  const drag = d && state.grip && state.grip.d === d && state.grip.next ? state.grip.e : null;
+  if (!d || (drag == null && !(d.hid && d.hid.size))) return null;
+  const out = new Set(d.hid || []);
+  if (drag != null) out.add(drag);
+  return out;
+}
 // the drawing canvas repaints once per frame, however often the view changes
 let paintQueued = 0;
 function paintOverlay() {
@@ -2761,6 +3032,7 @@ function paintOverlay() {
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
         for (const [id, part] of Object.entries(d.lay.parts)) {
+          if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
           const mine = placedNow.filter((p) => p.partId === id), slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
           if (on.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
@@ -2772,7 +3044,7 @@ function paintOverlay() {
     const L2 = state.setlen || state.meas || state.dim || state.ldr;
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
     paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
-      bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: d && state.grip && state.grip.d === d && state.grip.next ? new Set([state.grip.e]) : null, marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && state.gapShow && d.ed && editable() ? gapsOf(d).map((g) => [g.x, g.y]) : null,
+      bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && state.gapShow && d.ed && editable() ? gapsOf(d).map((g) => [g.x, g.y]) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null, contourCol: getComputedStyle(document.documentElement).getPropertyValue('--contour').trim() || '#0e7c66',
       markCol: getComputedStyle(document.documentElement).getPropertyValue('--mark').trim() || '#c2410c',
       accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#4f46e5',
@@ -3022,6 +3294,7 @@ function renderProps() {
     : whole ? 'A group moves, turns and copies as one part · Ctrl+Shift+G ungroups'
     : many ? 'Rubber-band or Shift-click to select several parts · the number is the pick order'
     : 'Ctrl-drag = copy · Ctrl+Shift-drag = copy straight (along X or Y)';
+  if (lay && state.ptab === 'objects') renderObjects();                    // a part picked on the sheet is lit in the tree
 }
 
 function update(refit = false) {
@@ -3200,7 +3473,10 @@ const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
-function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off); return d.ed; }
+function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, d.hid); return d.ed; }
+/** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
+function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
+const lockedEnt = (d, e) => !!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer);
 /** Builds the index once the page has painted, so the first click is quick. */
 function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
 function layersChanged(d) { d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; warm(d); renderEdit(); }
@@ -3229,20 +3505,22 @@ function setSel(d, sel) {
   d.hl = [];
   for (const e of sel) for (const i of ed.byEnt[e] || []) d.hl.push(ed.items[i]);
   paintOverlay(); renderEdit();
+  if (state.ptab === 'objects') renderObjects(true);
 }
 
 /** A click: the edge under it with everything joined to it end to end; Shift adds it or, if it is in already, takes it out. */
 function clickSelect(d, p, shift) {
   const ed = edIndex(d), e = Ed.hitEntity(ed, p[0], p[1], pickTol(d));
+  if (e >= 0 && lockedEnt(d, e)) { note(`Layer ${d.raw.entities[e].layer} is locked: unlock it in the Objects tab to pick this`); return; }
   if (e < 0) { if (!shift && d.sel.size) setSel(d, new Set()); return; }
-  const chain = Ed.chainAt(ed, e, Ed.chainTol(drawBox(d.fl), d.factor)), next = new Set(shift ? d.sel : []);
+  const chain = Ed.chainAt(ed, e, Ed.chainTol(drawBox(d.fl), d.factor)).filter((c) => !lockedEnt(d, c)), next = new Set(shift ? d.sel : []);
   if (shift && d.sel.has(e)) for (const c of chain) next.delete(c); else for (const c of chain) next.add(c);
   setSel(d, next);
   note(chain.length > 1 ? `${chain.length} entities joined end to end` + (shift ? '' : ' selected') : '1 entity selected');
 }
 /** A dragged box: what lies fully inside it. */
 function boxSelect(d, a, b, add) {
-  const inside = Ed.inBox(edIndex(d), [a[0], a[1], b[0], b[1]]), next = new Set(add ? d.sel : []);
+  const inside = Ed.inBox(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), next = new Set(add ? d.sel : []);
   for (const e of inside) next.add(e);
   setSel(d, next);
   note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + ' inside the box');
@@ -3268,7 +3546,7 @@ function restore(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
-  Object.assign(d, { fl, counts: layerCounts(fl), entities: entityCount(fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
+  Object.assign(d, { fl, counts: layerCounts(fl), entities: entityCount(fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [], hid: new Set() });      // objects hidden one by one come back: entity numbers shift
   showDoc();
   warm(d);
 }
@@ -4218,7 +4496,7 @@ function modSync(d) {
   const back = (e) => { for (let k = 0; e && !have.has(e) && k < 1000; k++) e = m.was.get(e); return e; };
   m.edges = [...new Set(m.edges.map(back).filter(Boolean))];
 }
-const modEntAt = (d, p) => { const i = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return i >= 0 ? d.raw.entities[i] : null; };
+const modEntAt = (d, p) => { const i = hitAt(d, p); return i >= 0 ? d.raw.entities[i] : null; };
 /** The cutting edges: the ones picked, or (Enter with none picked) every line, arc, circle and polyline showing. */
 const trimEdges = (d, m) => (m.all ? edIndex(d).shown.map((i) => d.raw.entities[i]).filter(MD.canModify) : m.edges);
 
@@ -4324,7 +4602,7 @@ function offsetDo(d, p) {
   note(`Offset ${mmText(state.offDist)} mm made on layer ${r.ent.layer}. Pick another object, or Esc ends. Ctrl+Z takes it back`);
 }
 function trimDo(d, p, shift) {
-  const m = state.mod, idx = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d));
+  const m = state.mod, idx = hitAt(d, p);
   if (idx < 0) { note('Trim: nothing there. Click the part to cut away'); return; }
   const ent = d.raw.entities[idx];
   if (!MD.canModify(ent)) { note('Trim takes a line, arc, circle or polyline'); return; }
@@ -4509,7 +4787,7 @@ function textToolDown(e) {
   const d = drawTarget();
   if (!d) return;
   if (textEditing()) { textCommit(); return; }                      // clicking away only ends the one being typed
-  const p = textPick(d, e.clientX, e.clientY), hit = Ed.hitEntity(edIndex(d), ...toDrawing(d, e.clientX, e.clientY), pickTol(d));
+  const p = textPick(d, e.clientX, e.clientY), hit = hitAt(d, toDrawing(d, e.clientX, e.clientY));
   if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) { textOpen(d, p, hit); return; }
   textOpen(d, p);
 }
@@ -4517,7 +4795,7 @@ function textToolDown(e) {
 function textDblClick(e) {
   const d = editable();
   if (!d || state.tool !== 'select' || state.setlen) return;
-  const hit = Ed.hitEntity(edIndex(d), ...toDrawing(d, e.clientX, e.clientY), pickTol(d));
+  const hit = hitAt(d, toDrawing(d, e.clientX, e.clientY));
   if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) textOpen(d, null, hit);
   else if (hit >= 0 && ldrPseudo(d, hit)) ldrEdit(d, hit, ldrPseudo(d, hit).model);
 }
@@ -5539,7 +5817,7 @@ function renderSelection(d) {
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'click an outline in the drawing'; ui['sel-w'].value = '—'; ui['sel-h'].value = '—'; ui.selArea.textContent = ''; return; }
   const ed = edIndex(d);
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const e of d.sel) { if (d.raw.entities[e].layer === Ed.DIM_LAYER) continue; x0 = Math.min(x0, ed.box[e * 4]); y0 = Math.min(y0, ed.box[e * 4 + 1]); x1 = Math.max(x1, ed.box[e * 4 + 2]); y1 = Math.max(y1, ed.box[e * 4 + 3]); }
+  for (const e of d.sel) { if (d.raw.entities[e].layer === Ed.DIM_LAYER || !ed.byEnt[e]) continue; x0 = Math.min(x0, ed.box[e * 4]); y0 = Math.min(y0, ed.box[e * 4 + 1]); x1 = Math.max(x1, ed.box[e * 4 + 2]); y1 = Math.max(y1, ed.box[e * 4 + 3]); }
   const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';        // one wording with the panel's count ("1 selected")
   ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;

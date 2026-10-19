@@ -131,15 +131,15 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
 
 /**
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
- * off: the layer indexes switched off (their entities are not there to pick).
+ * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
  */
-export function makeIndex(raw, fl, off = new Set()) {
+export function makeIndex(raw, fl, off = new Set(), hid = null) {
   const space = spaceOf(fl), n = raw.entities.length, items = fl.items;
   const vis = new Uint8Array(items.length), byEnt = new Array(n), box = new Float64Array(n * 4);
   const areas = [], shown = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.e == null || (it.ps ? 1 : 0) !== space || !itemVisible(it, off)) continue;
+    if (it.e == null || (it.ps ? 1 : 0) !== space || !itemVisible(it, off) || (hid && hid.has(it.e))) continue;
     vis[i] = 1;
     const e = it.e, b = it.b;
     if (!byEnt[e]) { byEnt[e] = []; shown.push(e); box[e * 4] = b[0]; box[e * 4 + 1] = b[1]; box[e * 4 + 2] = b[2]; box[e * 4 + 3] = b[3]; }

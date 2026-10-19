@@ -6038,6 +6038,194 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await ctx2.close();
   });
 
+  // ---- TODO 39: the Objects tab (objects.js; mock-up R11a, Option A) ----
+  const objDoc = () => {
+    const doc = newDoc(4);
+    addLayer(doc, 'Cut', { aci: 7 }); addLayer(doc, 'Engrave', { aci: 5 });
+    addEntities(doc, dxfPoly([[20, 30], [120, 30], [120, 90], [20, 90]], { layer: 'Cut', closed: true }), dxfCircle(170, 100, 20, { layer: 'Cut' }), dxfLine(20, 150, 120, 150, { layer: 'Cut' }), dxfText(60, 120, 5, 'REV A', { layer: 'Engrave' }));
+    return writeDxf(doc);
+  };
+  const oRow = (txt) => page.locator('[data-testid=obj-tree] .or.obj', { hasText: txt });
+  const oLayer = (name) => page.locator(`[data-testid=obj-tree] .or.layer[data-layer="${name}"]`);
+  const oRows = () => page.locator('[data-testid=obj-tree] .or.obj .onm').allTextContents();
+  const oLayers = () => page.locator('[data-testid=obj-tree] .or.layer .onm').allTextContents();
+  const isDim = (loc) => loc.evaluate((e) => e.classList.contains('dim'));
+  const openObjects = async () => { await openGrips(objDoc(), 'objects.dxf'); await t('ptab-objects').click(); await t('objects-panel').waitFor(); };
+
+  await step('Objects tab: two tabs on the right panel; Objects lists the layers and, for the open one, its objects with short labels; the footer counts', async () => {
+    await openGrips(objDoc(), 'objects.dxf');
+    assert.equal(await t('objects-panel').isVisible(), false, 'Drawing is the tab at first');
+    assert.equal(await page.locator('.layers-rows').isVisible(), true);
+    await t('ptab-objects').click(); await t('objects-panel').waitFor();
+    assert.equal(await t('ptab-objects').getAttribute('aria-selected'), 'true'); assert.equal(await t('ptab-drawing').getAttribute('aria-selected'), 'false');
+    assert.equal(await page.locator('.layers-rows').isVisible(), false, 'the Drawing sections are not shown');
+    assert.deepEqual(await oLayers(), ['Cut', 'Engrave']);
+    assert.deepEqual(await oRows(), ['Rectangle 100.0 × 60.0', 'Circle Ø40', 'Line 100.0'], 'the first layer is open; Engrave is closed');
+    assert.equal(await oLayer('Engrave').getAttribute('aria-expanded'), 'false');
+    assert.match(await t('obj-count').textContent(), /^4 objects · 2 layers$/);
+    assert.equal(await t('obj-selected').textContent(), '0 selected');
+    await oLayer('Engrave').click();
+    assert.deepEqual(await oRows(), ['Rectangle 100.0 × 60.0', 'Circle Ø40', 'Line 100.0', "Text 'REV A'"]);
+    await oLayer('Engrave').click();
+    assert.equal((await oRows()).length, 3, 'a click on a layer closes it again');
+    await t('ptab-drawing').click();
+    assert.equal(await page.locator('.layers-rows').isVisible(), true);
+  });
+
+  await step('Objects tab: a click on a row selects that object on the sheet; a pick on the sheet lights its row (its layer opens)', async () => {
+    await t('ptab-objects').click();
+    await oRow('Circle Ø40').click();
+    await waitSel('1 selected');
+    assert.deepEqual(await page.locator('.or.obj.sel .onm').allTextContents(), ['Circle Ø40']);
+    assert.equal(await t('obj-selected').textContent(), '1 selected');
+    await oRow('Line 100.0').click({ modifiers: ['Shift'] });
+    await waitSel('2 selected');
+    await oRow('Line 100.0').click({ modifiers: ['Shift'] });
+    await waitSel('1 selected');
+    await click(70, 150);                                                       // the line, on the sheet
+    await waitSel('1 selected');
+    assert.deepEqual(await page.locator('.or.obj.sel .onm').allTextContents(), ['Line 100.0']);
+    await click(66, 122);                                                       // the text, on another layer that is closed
+    await waitSel('1 selected');
+    assert.deepEqual(await page.locator('.or.obj.sel .onm').allTextContents(), ["Text 'REV A'"]);
+    assert.equal(await oLayer('Engrave').getAttribute('aria-expanded'), 'true');
+    await click(70, 60); await waitSel('0 selected');
+    assert.equal(await page.locator('.or.obj.sel').count(), 0);
+  });
+
+  await step('Objects tab: the eye on an object hides it for this session (not picked, filter Hidden n, Show all hidden); the eye on a layer hides the layer; rows of a hidden layer can still be selected', async () => {
+    await oRow('Circle Ø40').locator('[data-act=vis]').click();
+    assert.equal(await isDim(oRow('Circle Ø40')), true);
+    assert.match(await t('obj-filter-hidden').textContent(), /Hidden 1/);
+    await frames();
+    await click(190, 100); await frames();
+    assert.equal(await selCount(), '0 selected', 'a hidden object cannot be picked on the sheet');
+    await t('obj-filter-hidden').click();
+    assert.deepEqual(await oRows(), ['Circle Ø40'], 'the Hidden filter lists only what is hidden');
+    assert.equal(await t('obj-filter-hidden').getAttribute('aria-pressed'), 'true');
+    await t('obj-filter-all').click();
+    await oRow('Circle Ø40').locator('[data-act=vis]').click();
+    assert.equal(await isDim(oRow('Circle Ø40')), false);
+    await click(190, 100); await waitSel('1 selected');
+    // a layer
+    await oLayer('Cut').locator('[data-act=vis]').click();
+    assert.equal(await isDim(oLayer('Cut')), true);
+    assert.equal(await page.locator('.layers-rows .layer.hidden-layer', { hasText: 'Cut' }).count(), 1, 'the Layers section shows it hidden too');
+    assert.match(await t('obj-filter-hidden').textContent(), /Hidden 3/);
+    await oRow('Line 100.0').click();
+    await waitSel('1 selected');
+    assert.deepEqual(await page.locator('.or.obj.sel .onm').allTextContents(), ['Line 100.0'], 'a row on a hidden layer can be selected');
+    await oLayer('Cut').locator('[data-act=vis]').click();
+    assert.equal(await isDim(oLayer('Cut')), false);
+    // Show all hidden
+    await oRow('Circle Ø40').locator('[data-act=vis]').click();
+    await oRow('Circle Ø40').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Show all hidden' }).click();
+    assert.equal(await page.locator('.or.dim').count(), 0);
+    assert.match(await t('obj-filter-hidden').textContent(), /Hidden 0/);
+  });
+
+  await step('Objects tab: Lock is per layer: its objects cannot be picked on the sheet or from the tree, until unlocked', async () => {
+    await click(70, 60); await waitSel('0 selected');
+    await oLayer('Cut').locator('[data-act=lock]').click();
+    assert.equal(await page.locator('.or.obj .chp.w').count(), 3, 'a "locked" chip on each object of the layer');
+    assert.match(await t('obj-filter-locked').textContent(), /Locked 3/);
+    await click(70, 150); await frames();
+    assert.equal(await selCount(), '0 selected');
+    await oRow('Line 100.0').click();
+    assert.equal(await selCount(), '0 selected');
+    assert.match(await prompt(), /locked/);
+    await t('obj-filter-locked').click();
+    assert.deepEqual(await oLayers(), ['Cut']);
+    await t('obj-filter-all').click();
+    await oLayer('Cut').locator('[data-act=lock]').click();
+    await oRow('Line 100.0').click(); await waitSel('1 selected');
+    await click(70, 60); await waitSel('0 selected');
+  });
+
+  await step('Objects tab: the search box filters the rows by label; clearing it brings the tree back', async () => {
+    await t('obj-search').fill('circ');
+    assert.deepEqual(await oLayers(), ['Cut']);
+    assert.deepEqual(await oRows(), ['Circle Ø40']);
+    await t('obj-search').fill('rev');
+    assert.deepEqual(await oLayers(), ['Engrave']);
+    assert.deepEqual(await oRows(), ["Text 'REV A'"], 'found in a closed layer');
+    await t('obj-search').fill('zzz');
+    assert.equal(await page.locator('.omempty').textContent(), 'Nothing matches.');
+    await t('obj-search').fill('');
+    assert.deepEqual(await oLayers(), ['Cut', 'Engrave']);
+    assert.equal((await oRows()).length, 4, 'Cut and Engrave are both open now');
+  });
+
+  await step('Objects tab: right-click a row: Select, Zoom to, Hide, Lock layer, Move to layer…, Show all hidden; right-click a layer: Rename…', async () => {
+    await oRow('Circle Ø40').click({ button: 'right' });
+    assert.deepEqual(await ctxItems(), ['Select', 'Zoom to', 'Hide', 'Lock layer Cut', 'Move to layer…', 'Show all hidden']);
+    assert.equal(await selCount(), '1 selected', 'the row is selected first');
+    await page.getByRole('menuitem', { name: 'Zoom to' }).click();
+    assert.ok(parseInt(await t('zoom').textContent(), 10) > 150, 'zoomed in on the circle: ' + await t('zoom').textContent());
+    await oRow('Circle Ø40').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Move to layer…' }).click();
+    assert.deepEqual(await ctxItems(), ['0', 'Cut', 'Engrave']);
+    await page.getByRole('menuitem', { name: 'Engrave', exact: true }).click();
+    assert.equal(await oLayer('Cut').locator('.ocnt').textContent(), '2'); assert.equal(await oLayer('Engrave').locator('.ocnt').textContent(), '2');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('.or.layer[data-layer="Cut"] .ocnt').textContent === '3');
+    await oLayer('Cut').click({ button: 'right' });
+    assert.deepEqual(await ctxItems(), ['Select', 'Zoom to', 'Hide', 'Lock', 'Rename…', 'Show all hidden']);
+    await page.getByRole('menuitem', { name: 'Select', exact: true }).click();
+    await waitSel('3 selected');
+    await oLayer('Cut').click({ button: 'right' });
+    await page.getByRole('menuitem', { name: 'Rename…' }).click();
+    await t('name-input').fill('Outline'); await t('name-ok').click();
+    await page.waitForFunction(() => document.querySelector('.or.layer .onm').textContent === 'Outline');
+    assert.deepEqual(await oLayers(), ['Outline', 'Engrave']);
+    assert.equal(await page.locator('.layers-rows .layer', { hasText: 'Outline' }).count(), 1, 'the Layers section follows');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('.or.layer .onm').textContent === 'Cut');
+  });
+
+  await step('Objects tab: a layer with hundreds of objects lists the first 500 and "Show … more"', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, ...Array.from({ length: 620 }, (_, i) => dxfLine(0, i % 300, 10 + (i % 7), i % 300, { layer: 'Cut' })));
+    await openGrips(writeDxf(doc), 'many.dxf');
+    await t('ptab-objects').click();
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 500);
+    assert.match(await t('obj-count').textContent(), /^620 objects · 1 layer$/);
+    await page.locator('.or.more').click();
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 620);
+    assert.equal(await page.locator('.or.more').count(), 0);
+  });
+
+  await step('Objects tab: a layout tab shows its parts; the eye hides a part on the sheet, and a place can be picked from the list', async () => {
+    await t('ptab-drawing').click();
+    await nestLayout();
+    await t('ptab-objects').click();
+    const parts = page.locator('[data-testid=obj-tree] .or.layer[data-part]');
+    assert.deepEqual(await parts.locator('.onm').allTextContents(), ['Plate A', 'Dial']);
+    assert.equal(await page.locator('[data-testid=obj-filter-locked]').isVisible(), false);
+    await parts.first().click();
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj').count(), 1, 'its places are listed');
+    await page.locator('[data-testid=obj-tree] .or.obj').first().click();
+    await page.waitForFunction(() => document.querySelector('.or.obj.sel'));
+    await parts.first().locator('[data-act=vis]').click();
+    assert.equal(await isDim(parts.first()), true);
+    await frames();
+    await parts.first().locator('[data-act=vis]').click();
+    assert.equal(await isDim(parts.first()), false);
+    await t('ptab-drawing').click();
+  });
+
+  await step('Objects tab: screenshots, light and dark', async () => {
+    await openObjects();
+    await oRow('Circle Ø40').click();
+    await oLayer('Engrave').click();
+    const show = async () => { await oRow('Circle Ø40').click({ button: 'right' }); await page.waitForSelector('[data-testid=ctx-menu]'); };
+    await show(); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/s8-objects-light.png` }); await page.keyboard.press('Escape');
+    await menuItem('View', 'Theme: dark'); await show(); await page.waitForTimeout(300); await page.screenshot({ path: `${shotDir}/s8-objects-dark.png` }); await page.keyboard.press('Escape');
+    await menuItem('View', 'Theme: light'); await t('ptab-drawing').click();
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;
