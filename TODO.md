@@ -100,6 +100,12 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
 55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
 56. **Font note on open** (S): name the fonts the file asked for and what is shown instead (check first whether one exists).
 
+From the v0.1.30 exe test (Pip-test, 2026-10-20):
+57. **Many tabs push the whole window sideways** (bug, S): at 1024 px with ~17 tabs, clicking the last tab shifts the menu bar ~470 px left and cuts off the toolbar; it stays shifted after widening (−169 px at 1440); at 1440 with 14 tabs "+ New layout" wraps. The tab strip should scroll on its own. Screenshots: shots/exe/91-last-tab-1024.png, 66-light1024-layout.png.
+58. **Double-click a layer row in the Objects tab does not make it current** (bug, S): the first click rebuilds the rows, so no dblclick arrives. The Layers panel click works.
+59. **Layer counts disagree** (bug, S): sample.dxf: Layers panel NOTES 6, Objects tab NOTES 7 and 20 in total, status bar 19 entities. Find which count is right.
+60. **Exe test of the native dialogs** (test, S): Save, Save As, PDF / Print save, the close prompt (Save / Don't save / Cancel; after Don't save a restart offers no recovery). Pip-test drives the Windows dialogs with UI Automation (PowerShell, by window title, never SendKeys); not reached in the v0.1.30 test.
+
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
 1. ✅ (built, PR #10) Drawing tools: line, polyline, rectangle, rounded rectangle, circle, ellipse, arc, text and dimension, with snaps, ortho and polar tracking, and typed coordinates. (Text: TODO 17. Polar tracking: TODO 21, built in PR #12.)

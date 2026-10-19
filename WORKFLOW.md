@@ -35,6 +35,12 @@ briefs, reading short reports and merging.
 6. **As built:** an AB board in the canvas when the build differs from the mock-up.
 7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR). CI publishes the exe.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
+   Pip-test downloads the release into `shots/exe/`, starts it with `WEBVIEW2_USER_DATA_FOLDER` (an isolated profile:
+   never his real library or recovery copies) and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9233`,
+   and drives it with Playwright `connectOverCDP`. Native Windows dialogs (Open, Save As, the close prompt) are driven
+   with UI Automation from PowerShell, by window title (never SendKeys: keys go to whatever window has focus); until
+   that helper exists, the brief says to skip them, or they pile up on his screen (v0.1.30 test, 2026-10-20).
+   Allow it: `Bash(gh release:*)`, `PowerShell(Stop-Process:*)`. He doesn't use the PC while it runs.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
 
