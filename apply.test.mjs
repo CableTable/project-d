@@ -157,7 +157,7 @@ test('parts from two files that share a block name: the nested reference follows
     return { name, raw: d, space: 0, box: [0, 0, 10, 10], w: 10, h: 10, factor: 1 };
   };
   const a = part('a', [W.insert('LOGO', 0, 0)], { LOGO: [W.line(0, 0, 1, 0)] }, 'Cut');
-  const b = part('b', [W.insert('OUTER', 0, 0)], { Logo: [W.circle(0, 0, 1)], OUTER: [W.insert('Logo', 0, 0)] }, 'CUT');
+  const b = part('b', [W.insert('OUTER', 0, 0)], { Logo: [W.circle(0, 0, 1)], OUTER: [W.insert('logo', 0, 0)] }, 'CUT');   // 'logo': the reference differs in case from the block
   const { doc } = A.buildLayoutDoc({ parts: { a, b }, placed: [{ partId: 'a', x: 0, y: 0 }, { partId: 'b', x: 20, y: 0 }], sheetW: 100, sheetH: 100 });
   const nm = (e) => e.r.v[e.r.c.indexOf(2)];
   assert.ok(doc.blocks.Logo_2 || doc.blocks.LOGO_2, 'the clashing block (ignoring case) was renamed');
