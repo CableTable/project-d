@@ -220,6 +220,14 @@ test('a layer locked in the file stays locked; freezing from the panel still wor
   assert.equal(again.layers.Jig.frozen, true); assert.equal(again.layers.Jig.flags & 4, 4);
 });
 
+test('a layer marked "No plot" (code 290) keeps it; a layer without the code plots', () => {
+  const doc = D.readDxf(tablesDxf(table('LAYER', [[[0, 'LAYER'], [2, 'CONSTR'], [70, 0], [62, 5], [6, 'CONTINUOUS'], [290, 0]], [[0, 'LAYER'], [2, 'CUT'], [70, 0], [62, 1], [6, 'CONTINUOUS']]])));
+  assert.equal(doc.layers.CONSTR.plot, false); assert.equal(doc.layers.CUT.plot, true);
+  const once = W.writeDxf(doc), back = D.readDxf(once);
+  assert.equal(back.layers.CONSTR.plot, false); assert.equal(back.layers.CUT.plot, true);
+  assert.equal(once.split(/\r?\n/).filter((l) => l.trim() === '290').length, 1, 'only the No plot layer gets the code');
+});
+
 test('a line type with text keeps its text (and its text style); layer names that differ only in case make one record', () => {
   const t = tablesDxf(
     table('LTYPE', [[[0, 'LTYPE'], [2, 'GAS_LINE'], [70, 0], [3, ''], [72, 65], [73, 3], [40, 0.9],

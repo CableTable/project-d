@@ -374,7 +374,9 @@ export function writeDxf(doc, opts = {}) {
         rhead('LAYER', name, 'AcDbLayerTableRecord', 'LAYER');
         o.p(70, ((l.flags || 0) & 6) | (l.frozen ? 1 : 0)).p(62, l.off ? -(l.aci || 7) : (l.aci || 7));
         if (l.tc != null) o.p(420, l.tc);
-        o.s(6, l.lt || 'CONTINUOUS').p(370, l.lw ?? -3).s(390, 'F');
+        o.s(6, l.lt || 'CONTINUOUS');
+        if (l.plot === false) o.p(290, 0);                                      // "No plot": helper lines must not print or cut
+        o.p(370, l.lw ?? -3).s(390, 'F');
       }
     });
     table('STYLE', styles.size, () => {

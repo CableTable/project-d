@@ -101,7 +101,7 @@ function tables(doc, recs) {
     if (r.type === 'LAYER' && f[2] != null) {
       const aci = num(f[62], 7);
       doc.layers[f[2].trim()] = { aci: Math.abs(aci) || 7, tc: f[420] != null ? num(f[420]) : null, off: aci < 0,
-        frozen: (num(f[70]) & 1) === 1, flags: num(f[70]) & 6, lt: (f[6] || 'CONTINUOUS').trim(), lw: num(f[370], -3), handle: (f[5] || '').trim().toUpperCase() };
+        frozen: (num(f[70]) & 1) === 1, flags: num(f[70]) & 6, lt: (f[6] || 'CONTINUOUS').trim(), lw: num(f[370], -3), plot: num(f[290], 1) !== 0, handle: (f[5] || '').trim().toUpperCase() };
     } else if (r.type === 'LTYPE' && f[2] != null) {
       const pattern = [], elems = [];
       for (let k = 0; k < r.c.length; k++) {
