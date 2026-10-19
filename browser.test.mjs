@@ -2030,6 +2030,33 @@ try {
     await t('fit-switch').check();
   });
 
+  await step('invalid numbers (text, negative, 0 rows) get a message naming the allowed range, a red mark on the field, and the old value back', async () => {
+    const cases = [['rows', '0', /Rows must be 1 or more \(up to 200\)/], ['rows', 'abc', /Rows must be 1 or more/], ['gapX', 'abc', /Gap X must be a number in mm: 0 or more/], ['gapY', '-4', /Gap Y must be 0 mm or more/],
+      ['sheetW', 'abc', /Width must be a number in mm: \d+ to 100000/], ['sheetH', '0', /Height must be \d+ mm or more/], ['gripLeft', '-5', /Left must be 0 mm or more/]];
+    const key = (k) => page.locator(`[data-key=${k}]`).first();
+    await t('fit-switch').uncheck();
+    for (const [k, v, re] of cases) {
+      const f = key(k), was = await f.inputValue();
+      await t('cmd-prompt').evaluate((el) => { el.textContent = ''; });
+      await f.fill(v); await f.press('Tab');
+      assert.match(await t('cmd-prompt').textContent(), re, `${k} = ${v}`);
+      assert.equal(await f.inputValue(), was, `${k} is reset`);
+      assert.equal(await f.getAttribute('aria-invalid'), 'true', `${k} is marked`);
+      await f.focus();
+      assert.equal(await f.getAttribute('aria-invalid'), null, `${k}: the mark goes when the field is entered again`);
+      await f.press('Tab');
+    }
+    await key('gapX').fill('abc'); await key('gapX').press('Tab');                // leave one mark on screen for the pictures
+    await key('gapX').evaluate((el) => el.scrollIntoView({ block: 'center' }));   // clear of the sticky Apply footer
+    const theme0 = await page.evaluate(() => document.documentElement.dataset.theme || '');
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      await page.screenshot({ path: `shots/s14-invalid-${th}.png` });
+    }
+    await page.evaluate((x) => { if (x) document.documentElement.dataset.theme = x; else delete document.documentElement.dataset.theme; }, theme0);
+    await t('fit-switch').check();
+  });
+
   await step('review: the gripper label never sits on a registration mark; the selected slot\'s width is never drawn over another part', async () => {
     await t('new-layout').click();
     await t('panel-library').click();

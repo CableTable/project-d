@@ -201,19 +201,26 @@ const isDark = () => {
 };
 
 // ---- building the page ----
+/** Marks a number field as refused (red edge, aria-invalid) until it is focused or typed in again. */
+function flagInvalid(input, bad) {
+  input.classList.toggle('invalid', !!bad);
+  if (bad) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
+}
+const clearInvalid = (input) => { input.addEventListener('focus', () => flagInvalid(input, false)); };
 const MAX_SHEET = 100000;              // mm: a sheet side above this is refused (1e308 made invalid SVG)
 function numField(label, key, opts = {}) {
   const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(state[key]), 'data-key': key });
   // a whole-number field (Rows, Columns) says why a typed value is refused instead of snapping back silently
   const refusal = () => {
     const raw = input.value.trim(), v = Number(raw);
-    if (!opts.int) {                      // a sheet side or gripper: kept within what the sheet can hold
-      const hi = opts.cap ? opts.cap() : Infinity, lo = opts.floor ? opts.floor() : -Infinity;
-      if (raw !== '' && Number.isFinite(v) && v > hi) return `${label} can be ${hi} mm at most`;
-      if (raw !== '' && Number.isFinite(v) && v < lo) return `${label} must be ${lo} mm or more`;
+    if (!opts.int) {                      // a sheet side, gripper or gap: kept within what the sheet can hold
+      const hi = opts.cap ? opts.cap() : Infinity, lo = Math.max(opts.floor ? opts.floor() : 0, opts.min ?? 0);
+      if (raw === '' || !Number.isFinite(v)) return `${label} must be a number in mm: ${lo} ${hi < Infinity ? 'to ' + hi : 'or more'}`;
+      if (v > hi) return `${label} can be ${hi} mm at most`;
+      if (v < lo) return `${label} must be ${lo} mm or more`;
       return '';
     }
-    if (raw === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return `${label} must be ${opts.min ?? 0} or more`;
+    if (raw === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return `${label} must be ${opts.min ?? 0} or more${opts.max ? ` (up to ${opts.max})` : ''}`;
     if (opts.max && Math.floor(v) > opts.max) return `${label}: ${Math.floor(v)} will not fit on a sheet (${opts.max} at most)`;
     return '';
   };
@@ -221,6 +228,7 @@ function numField(label, key, opts = {}) {
     const v = Number(input.value.trim());
     if (!curLay()) return;
     const why = refusal();
+    flagInvalid(input, why && input.value.trim() !== '');
     if (why) { if (input.value.trim() !== '') note(why); return; }       // an empty field is only half typed: said when it is left
     if (input.value.trim() === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return;
     if (key === 'sheetW' || key === 'sheetH') pushLay(curDoc(), laySnap(curLay() && curDoc().lay), 'sheetsize', 'Sheet size');
@@ -231,8 +239,9 @@ function numField(label, key, opts = {}) {
   input.addEventListener('change', () => {
     const why = curLay() ? refusal() : '';
     if ((key === 'sheetW' || key === 'sheetH') && curLay() && !Number.isInteger(state[key])) { const was = state[key]; state[key] = Math.round(was); touch(); update(); note(`Sheet ${key === 'sheetW' ? 'width' : 'height'} ${was} rounded to whole mm: ${state[key]}`); }
-    input.value = String(state[key]); if (why) note(why);
+    input.value = String(state[key]); flagInvalid(input, why); if (why) note(why);
   });
+  clearInvalid(input);
   ui[key] = input;
   return h('label', { class: 'field' }, label, input);
 }
@@ -263,7 +272,8 @@ function pfield(attrs, show, apply, enabled = () => true) {
     if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     else if (e.key === 'Escape') { input.value = show(); input.blur(); }
   });
-  input.addEventListener('change', () => { const why = apply(input.value); input.value = show(); if (why) note(why); });
+  input.addEventListener('change', () => { const why = apply(input.value); input.value = show(); flagInvalid(input, why); if (why) note(why); });
+  clearInvalid(input);
   placedFields.push({ input, show, enabled });
   return input;
 }
@@ -3031,11 +3041,19 @@ function renderGaps() {
   ui.gapList.replaceChildren(...items.map(([axis, e]) => {
     const key = axis + e.after;
     const inp = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-gap-field': key, 'aria-label': gapName(axis, e.after) + ', extra mm', placeholder: 'extra', value: e.mm > 0 ? String(e.mm) : '' });
+    const bad = () => { const v = Number(inp.value.trim().replace(',', '.')); return inp.value.trim() !== '' && (!Number.isFinite(v) || v < 0); };
     inp.addEventListener('input', () => {
       const v = Number(inp.value.trim().replace(',', '.'));
+      flagInvalid(inp, bad());
       if (inp.value.trim() === '' || !Number.isFinite(v) || v < 0) { if (inp.value.trim() === '') { e.mm = 0; update(); } return; }
       e.mm = v; update();
     });
+    inp.addEventListener('change', () => {                          // refused: say so, mark it, and show the gap as it still is
+      if (!bad()) return;
+      note(`${gapName(axis, e.after)}: extra gap must be a number in mm, 0 or more`);
+      inp.value = e.mm > 0 ? String(e.mm) : ''; flagInvalid(inp, true);
+    });
+    clearInvalid(inp);
     inp.addEventListener('focus', () => { if (!state.gapSel || state.gapSel.axis !== axis || state.gapSel.after !== e.after) { state.gapSel = { axis, after: e.after }; drawSheet(); } });
     inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') inp.blur(); });
     const x = h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove ' + gapName(axis, e.after), 'data-gap-remove': key, onclick: () => {

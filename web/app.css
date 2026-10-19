@@ -612,3 +612,4 @@ select.fld { font-family: var(--sans); }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; opacity: .7; }
 .nestdlg .pd-footer .mono { white-space: nowrap; }
 .nestdlg .mode { align-self: flex-start; }
+.fld.invalid { border-color: var(--mark); box-shadow: inset 0 0 0 1px var(--mark); }
