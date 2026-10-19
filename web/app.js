@@ -1,5 +1,7 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
 import { h } from './dom.js';
+import * as CB from './cmdbar.js';
+import { buildCmdUI } from './cmdui.js';
 import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
@@ -766,6 +768,7 @@ function setTool(id) {
   if (id === 'measure') state.msg = editable() ? 'Measure: click the first point (it snaps to ends and centres)' : 'Measure: open a drawing tab first';
   if (id === 'step') state.msg = curLay() ? null : 'Step and repeat is on a layout tab: New layout, or Add to layout';
   if (id === 'contour') { state.msg = null; placeContourPanel(); }
+  if (id !== 'select' && id !== 'pan' && ui.cmdUI) ui.cmdUI.ran(id === 'rect' ? 'rectangle' : id);       // Space on the drawing repeats it
   renderCommand(); renderEdit(); paintOverlay();
 }
 
@@ -800,13 +803,14 @@ function buildCanvas() {
   });
   ui.textArea.addEventListener('input', placeTextEditor);
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
-  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.gripHint, ui.matchHint, ui.textEd, ui.rubber, ui.dropHint, ui.hintPill, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
+  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.gripHint, ui.matchHint, ui.textEd, ui.rubber, ui.dropHint, ui.hintPill, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets, ui.cmdUI.fade, ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
       ui.pct,
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, '+'),
       ui.fitBtn));
   attachCanvasEvents();
+  ui.canvas.addEventListener('pointermove', (e) => ui.cmdUI.pointer(e.clientX, e.clientY));
   return ui.canvas;
 }
 
@@ -2697,65 +2701,95 @@ function objMenu(e) {
     sep, ['Show all hidden', () => showAllHidden(d), '', d.off.size > 0 || hid.size > 0]]);
 }
 
+/** The command bar (cmdui.js): the log the app writes to, the floating bar, the fade, the F2 history and the echo button. */
 function buildCommand() {
-  ui.hist = h('div', { class: 'hist', 'data-testid': 'cmd-hist' });
-  ui.prompt = h('span', { class: 'prompt', 'data-testid': 'cmd-prompt' });
+  ui.cmdUI = buildCmdUI({ tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(CB.COMMANDS.find((x) => x.name === name)), canvas: () => ui.canvas, say: note });
+  ui.hist = ui.cmdUI.hist; ui.prompt = ui.cmdUI.prompt; ui.cmd = ui.cmdUI.input;
   ui.keepMeas = h('button', { class: 'btn sm', type: 'button', hidden: true, 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
   ui.modAsk = h('span', { hidden: true, class: 'modask' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-yes', onclick: () => { if (modLive()) modAnswer(editable(), true); } }, 'Yes'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-no', onclick: () => { if (modLive()) modAnswer(editable(), false); } }, 'No'));
-  ui.cmd = h('input', { class: 'fld', type: 'text', 'aria-label': 'Command line', autocomplete: 'off', spellcheck: 'false' });
-  ui.cmd.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter') return;
-    if (state.grip && editable()) { const raw = ui.cmd.value; ui.cmd.value = ''; gripTyped(raw); return; }
-    if (drawLive()) { const raw = ui.cmd.value; ui.cmd.value = ''; drawTyped(raw); return; }
-    if (modLive() && modTyped(editable(), ui.cmd.value)) { ui.cmd.value = ''; return; }
-    if (state.tool === 'text' && editable() && !textEditing()) { const raw = ui.cmd.value; ui.cmd.value = ''; textTyped(raw); return; }
-    const c = ui.cmd.value.trim().toLowerCase();
-    ui.cmd.value = '';
-    if (!c) return;
-    if (state.mode === 'rotate' && curLay() && selectedPlaced()) {
-      if (c === 'pivot' || c === 'p') { note('Pivot: drag ◎ on the sheet, or pick Custom in the Rotate section and type its X and Y'); return; }
-      if (c === 'copy' || c === 'c') { state.rotCopy = !state.rotCopy; renderCommand(); note(state.rotCopy ? 'Copy on: the angle you type now turns a copy, and the part stays' : 'Copy off'); return; }
-      if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
-    }
-    if (curLay() && selIdxs().length > 1) {                           // several selected: the words in the prompt
-      const w = { left: 'left', l: 'left', centre: 'centre', center: 'centre', c: 'centre', right: 'right', r: 'right', top: 'top', t: 'top', middle: 'middle', m: 'middle', bottom: 'bottom', b: 'bottom', horizontal: 'horizontal', h: 'horizontal', vertical: 'vertical', v: 'vertical' }[c];
-      if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
-    }
-    if (state.tool === 'contour' && editable()) {                         // the words in the Contour prompt
-      const m = /^(distance|dist|d|steps|s)\s+(.+)$/.exec(c), cfg = state.contourCfg, set = (k, v) => { cfg[k] = v; saveContourCfg(); renderContour(); renderCommand(); };
-      if (c === 'inside' || c === 'i') { set('dir', 'inside'); return; }
-      if (c === 'outside' || c === 'o') { set('dir', 'outside'); return; }
-      if (c === 'sharp') { set('corners', 'sharp'); return; }
-      if (c === 'rounded' || c === 'round') { set('corners', 'rounded'); return; }
-      if (c === 'apply' || c === 'a') { applyContour(); return; }
-      if (m) { const why = m[1][0] === 'd' ? setContourDist(m[2]) : setContourSteps(m[2]); renderContour(); renderCommand(); if (why) note(why); return; }
-    }
-    if (curLay() && c === 'mx') { mirrorSel('x'); return; }
-    if (curLay() && c === 'my') { mirrorSel('y'); return; }
-    if (curLay() && (c === 'group' || c === 'g')) { groupSel(); return; }
-    if (curLay() && (c === 'ungroup' || c === 'u')) { ungroupSel(); return; }
-    if (curLay() && c === 'lock') { lockSel(true); return; }
-    if (curLay() && c === 'unlock') { lockSel(false); return; }
-    if (state.tool === 'balloon' && editable() && /^\d+$/.test(c)) { balNextTyped(c); return; }
-    if (c === 'b' || c === 'balloon') { if (editable()) setTool('balloon'); else note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
-    if (c === 'dimstyle') { showDimStyle(); return; }
-    if (c === 'le' || c === 'leader') { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); return; }
-    if (DIM_ALIAS[c]) { if (editable()) setDimType(DIM_ALIAS[c]); else note('Dimensions work on a drawing tab: open a drawing first'); return; }
-    if (state.tool === 'dimension' && state.dimType === 'linear' && state.dim.pts.length === 2 && /^(h|horizontal|v|vertical)$/.test(c)) { state.dim.force = c[0]; note('Linear: ' + (c[0] === 'h' ? 'horizontal' : 'vertical') + '. ' + dimPrompt()); paintOverlay(); return; }
-    if (MOD_ALIAS[c]) { setTool(MOD_ALIAS[c]); return; }
-    if (!curLay() && DRAW_ALIAS[c]) { setTool(DRAW_ALIAS[c]); return; }
-    if (c === 'apply' || c === 'a') apply();
-    else if (c === 'extract' || c === 'e') extractPart();
-    else if (c === 'rotate' || c === 'r') {
-      if (!curLay()) { note('Rotate is on a layout tab'); return; }
-      const order = ['best', '0', '90'];
-      state.rotate = order[(order.indexOf(state.rotate) + 1) % 3];
-      ui.rotate.value = state.rotate;
-      touch(); update();
-    } else if (c === 'nest' || c === 'n') openNestDialog();
-    else note('Unknown command: ' + c);
-  });
-  return h('div', { class: 'cmdbar' }, ui.hist, h('label', null, ui.prompt, ui.keepMeas, ui.modAsk, ui.cmd));
+  ui.cmdUI.acts.append(ui.keepMeas, ui.modAsk);
+  return ui.cmdUI.log;
+}
+/** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
+function activeCmd() {
+  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || (curLay() && state.mode === 'rotate');
+  if (!on) return null;
+  const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
+  return { label: m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
+}
+
+/** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
+function cmdEnter(raw) {
+  if (state.grip && editable()) { gripTyped(raw); return; }
+  if (drawLive()) { drawTyped(raw); return; }
+  if (modLive() && modTyped(editable(), raw)) return;
+  if (state.tool === 'text' && editable() && !textEditing()) { textTyped(raw); return; }
+  const c = raw.trim().toLowerCase();
+  if (!c) return;
+  if (state.mode === 'rotate' && curLay() && selectedPlaced()) {
+    if (c === 'pivot' || c === 'p') { note('Pivot: drag ◎ on the sheet, or pick Custom in the Rotate section and type its X and Y'); return; }
+    if (c === 'copy' || c === 'c') { state.rotCopy = !state.rotCopy; renderCommand(); note(state.rotCopy ? 'Copy on: the angle you type now turns a copy, and the part stays' : 'Copy off'); return; }
+    if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
+  }
+  if (curLay() && selIdxs().length > 1) {                           // several selected: the words in the prompt
+    const w = { left: 'left', l: 'left', centre: 'centre', center: 'centre', c: 'centre', right: 'right', r: 'right', top: 'top', t: 'top', middle: 'middle', m: 'middle', bottom: 'bottom', b: 'bottom', horizontal: 'horizontal', h: 'horizontal', vertical: 'vertical', v: 'vertical' }[c];
+    if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
+  }
+  if (state.tool === 'contour' && editable()) {                         // the words in the Contour prompt
+    const m = /^(distance|dist|d|steps|s)\s+(.+)$/.exec(c), cfg = state.contourCfg, set = (k, v) => { cfg[k] = v; saveContourCfg(); renderContour(); renderCommand(); };
+    if (c === 'inside' || c === 'i') { set('dir', 'inside'); return; }
+    if (c === 'outside' || c === 'o') { set('dir', 'outside'); return; }
+    if (c === 'sharp') { set('corners', 'sharp'); return; }
+    if (c === 'rounded' || c === 'round') { set('corners', 'rounded'); return; }
+    if (c === 'apply' || c === 'a') { applyContour(); return; }
+    if (m) { const why = m[1][0] === 'd' ? setContourDist(m[2]) : setContourSteps(m[2]); renderContour(); renderCommand(); if (why) note(why); return; }
+  }
+  if (curLay() && c === 'mx') { mirrorSel('x'); return; }
+  if (curLay() && c === 'my') { mirrorSel('y'); return; }
+  if (curLay() && (c === 'group' || c === 'g')) { groupSel(); return; }
+  if (curLay() && (c === 'ungroup' || c === 'u')) { ungroupSel(); return; }
+  if (curLay() && c === 'lock') { lockSel(true); return; }
+  if (curLay() && c === 'unlock') { lockSel(false); return; }
+  if (state.tool === 'balloon' && editable() && /^\d+$/.test(c)) { balNextTyped(c); return; }
+  if (state.tool === 'dimension' && state.dimType === 'linear' && state.dim.pts.length === 2 && /^(h|horizontal|v|vertical)$/.test(c)) { state.dim.force = c[0]; note('Linear: ' + (c[0] === 'h' ? 'horizontal' : 'vertical') + '. ' + dimPrompt()); paintOverlay(); return; }
+  const cmd = CB.resolve(c, curLay() ? 'layout' : 'draw');
+  if (cmd) runCommand(cmd);
+  else note('Unknown command: ' + c);
+}
+
+// what a command of cmdbar.js does when it is not just "pick that tool" (the tool's id is the command's name, but for rectangle)
+const TOOL_OF = { rectangle: 'rect' };
+const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
+const DO = {
+  dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
+  leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
+  dimstyle: () => showDimStyle(),
+  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(),
+  rotate: () => {
+    const sp = selectedPlaced();
+    if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
+    const order = ['best', '0', '90'];
+    state.rotate = order[(order.indexOf(state.rotate) + 1) % 3];
+    ui.rotate.value = state.rotate;
+    touch(); update();
+  },
+  group: () => groupSel(), ungroup: () => ungroupSel(), lock: () => lockSel(true), unlock: () => lockSel(false), mx: () => mirrorSel('x'), my: () => mirrorSel('y'),
+  newlayout: () => newLayoutTab(), library: () => showLibrary(), open: () => openFile(), save: () => save(false), saveas: () => save(true), pdf: () => exportPdf(), compare: () => cmpStart(),
+  undo: () => { const d = editable(); if (d) undo(d); else undoLay(); },
+  redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
+  history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
+  fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
+};
+/** A command of the table started by its name (typed in the bar, a history line, Space on the drawing). */
+function runCommand(cmd) {
+  if (!cmd) return;
+  const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
+  if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw') { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (DIM_OF[n]) { if (editable()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab: open a drawing first'); }
+  else if (DO[n]) DO[n]();
+  else setTool(TOOL_OF[n] || n);
+  ui.cmdUI.ran(n);
 }
 
 function buildStatus() {
@@ -2792,7 +2826,7 @@ function buildStatus() {
   ui.toolChip = h('span', { class: 'lbl tool-chip', 'data-testid': 'tool-chip', title: 'The tool that is on (Esc or S: back to Select)' },
     'Tool: ' + (TOOLS.find((x) => x.id === state.tool) || { label: 'Select' }).label);
   ui.sheetChip = h('span', { class: 'lbl tool-chip', hidden: true, 'data-testid': 'sheet-chip', title: 'The page of the PDF that is shown' });
-  return h('div', { class: 'status' }, ui.coords, toggles, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
+  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
     ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), h('span', { class: 'lbl' }, 'mm'),
@@ -4392,7 +4426,6 @@ function applyLength() {
 // ---- drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
 const DRAW_ALIAS = { l: 'line', line: 'line', pl: 'polyline', pline: 'polyline', polyline: 'polyline', r: 'rect', rec: 'rect', rect: 'rect', rectangle: 'rect', rr: 'rrect', rrect: 'rrect',
   c: 'circle', circle: 'circle', el: 'ellipse', ellipse: 'ellipse', a: 'arc', arc: 'arc', t: 'text', text: 'text' };
-const DRAW_KEYS = { l: 'line', p: 'polyline', r: 'rect', c: 'circle', a: 'arc', e: 'ellipse', t: 'text' };
 
 /** An empty tab becomes a drawing to draw in (mm, one layer "0"); its first change makes it dirty. */
 function ensureScratch(d) {
@@ -4467,7 +4500,7 @@ function drawCommit(d, kind, shapes) {
 function drawTyped(raw) {
   if (!drawLive()) return false;
   const T = state.draw, word = raw.trim().toLowerCase();
-  if (word && !DR.toolBusy(T) && DRAW_ALIAS[word] && !DR.toolWords(T).has(word) && DRAW_ALIAS[word] !== T.kind) { setTool(DRAW_ALIAS[word]); return true; }
+  if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word) && DRAW_ALIAS[word] !== T.kind) { const cmd = CB.resolve(word, 'draw'); if (cmd) { runCommand(cmd); return true; } }       // a command typed between two shapes
   state.msg = null;
   drawApply(DR.toolType(T, raw));
   return true;
@@ -4504,13 +4537,10 @@ function drawOvl() {
 
 /** Keys while a drawing tool is on or a letter starts one. Returns true when it took the key. */
 function drawKey(e, k) {
-  if (state.grip && /^[-+@.,<\d]$/.test(e.key)) { e.preventDefault(); ui.cmd.focus(); ui.cmd.value += e.key; return true; }       // typing goes to the command line
   if (drawLive()) {
     const T = state.draw;
     if (e.key === 'Enter' || (e.key === ' ' && DR.toolBusy(T))) { e.preventDefault(); state.msg = null; drawFinish(); return true; }
-    if (/^[-+@.,<\d]$/.test(e.key) || (DR.toolBusy(T) && /^[a-z]$/i.test(e.key))) { e.preventDefault(); ui.cmd.focus(); ui.cmd.value += e.key; return true; }       // typing goes to the command line
   }
-  if (!e.shiftKey && DRAW_KEYS[k]) { setTool(DRAW_KEYS[k]); return true; }
   return false;
 }
 
@@ -4981,7 +5011,9 @@ function textTyped(raw) {
   if (c === 'bold' || c === 'b') { textProp({ bold: !c0.bold }); return; }
   const inp = DR.parseInput(raw);
   if (inp.kind === 'xy' && !inp.rel) { const f = d.factor; textOpen(d, [inp.x / f, inp.y / f]); return; }
-  if (DRAW_ALIAS[c] && DRAW_ALIAS[c] !== 'text') { setTool(DRAW_ALIAS[c]); return; }
+  if (/^(height|justify|style)$/.test(c)) { note('Type it with a value: Height 12, Justify Centre, Style Mono'); return; }
+  const cmd = CB.resolve(c, 'draw');
+  if (cmd && cmd.name !== 'text') { runCommand(cmd); return; }
   note(`"${raw.trim()}" is not an option here. Click to place, or type x,y, Height 12, Left / Centre / Right, Style Mono, Bold`);
 }
 const textStatus = () => { const c = state.text.cfg, d = curDoc(); return `Command: TEXT   Height ${fmt(c.h)} · ${TX.FONTS.find((f) => f.id === c.font).label} · ${ALIGN_WORDS[c.ha]}${c.bold ? ' · Bold' : ''} · layer ${d && d.raw ? curLayerName(d) : '0'}`; };
@@ -5223,9 +5255,12 @@ function selectAll() {
 function editKey(e) {
   if (document.querySelector('[data-testid=pdf-dialog]')) return;
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
+  if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
-    if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (in the command line it cancels the tool)
+    if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
+    const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
+    if (shut === 'drawer' || (shut === 'bar' && !wasOn)) return;
     if (gdrag) cancelGuideDrag();
     else if (state.sheetDrag) sheetCancel();
     else if (sheetSelOn() && !pdrag) selectSheet(false);
@@ -5255,22 +5290,17 @@ function editKey(e) {
   if (e.target && e.target.closest && e.target.closest('input, textarea, select')) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   if (mod && !e.altKey && !e.shiftKey && (k === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) { e.preventDefault(); fit(); return; }
-  if (!mod && !e.altKey && !e.shiftKey && k === 's' && !(drawLive() && DR.toolBusy(state.draw))) { if (state.tool !== 'select') setTool('select'); return; }
+  const dialog = !!document.querySelector('.pop-back, .pdlg-back'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
+  if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (cmpKey(e, mod)) return;
   if (mod && !e.altKey && !e.shiftKey && k === 'a') { e.preventDefault(); selectAll(); return; }
   if (!mod && !e.altKey && drawKey(e, k)) return;
+  if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
   if (layoutKey(e, mod, k)) return;
   if (!d) return;
   if (e.key === 'Enter' && state.meas && state.meas.pts.length === 2) { e.preventDefault(); keepMeasure(); return; }
   if (e.key === 'Enter' && state.ldr && state.ldr.pts.length === 2) { e.preventDefault(); ldrNoteOpen(d); return; }
   if (modLive() && e.key === 'Enter') { e.preventDefault(); modEnter(d); return; }
-  if (modLive() && state.mod.kind === 'mirror' && state.mod.stage === 'erase' && !mod && (k === 'y' || k === 'n')) { e.preventDefault(); modAnswer(d, k === 'y'); return; }
-  if (modLive() && state.mod.kind === 'offset' && !mod && !e.altKey && /^[\d.]$/.test(e.key)) { e.preventDefault(); ui.cmd.focus(); ui.cmd.value += e.key; return; }       // a distance typed goes to the command line
-  if (!mod && !e.altKey && k === 'm') { setTool('measure'); return; }
-  if (!mod && !e.altKey && k === 'o') { setTool('offset'); return; }
-  if (!mod && !e.altKey && k === 'b') { setTool('balloon'); return; }
-  if (state.tool === 'balloon' && !mod && !e.altKey && /^\d$/.test(e.key)) { e.preventDefault(); ui.cmd.focus(); ui.cmd.value += e.key; return; }       // a number typed restarts the count
-  if (!mod && !e.altKey && k === 'd') { state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); return; }       // D is the Aligned dimension
   if (e.key === 'Delete' && !mod) { e.preventDefault(); deleteSelection(); }
   else if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(d); else undo(d); }
   else if (mod && !e.altKey && k === 'y') { e.preventDefault(); redo(d); }
@@ -6120,11 +6150,12 @@ function init() {
   state.text.cfg = loadTextCfg();
   state.dimStyles = loadDimStyles();
   try { const v = localStorage.getItem('pd-dimtype'); if (DIM_TYPES.some((x) => x[0] === v)) state.dimType = v; } catch { /* ignore */ }
+  const cmdLog = buildCommand();                           // before the canvas: the bar, the fade and the history sit on it
   const balDock = buildBalloonDock();                      // before the canvas: its picture-only chip and sheet switcher sit on the canvas
   app.append(h('div', { class: 'shell' },
     buildMenus(), buildTabs(), buildPropbar(), buildSelbar(), buildTextbar(),
     h('div', { class: 'main' }, buildRail(), buildCanvas(), buildPanel()),
-    balDock, buildCommand(), buildStatus()));
+    balDock, cmdLog, buildStatus()));
   renderTabs();
   attachDrop();
   guardClose();

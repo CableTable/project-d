@@ -61,7 +61,10 @@ try {
   await page.goto(URL_);
   await page.waitForSelector('[data-testid=count]', { state: 'attached' });
   const t = (id) => page.locator(`[data-testid=${id}]`);
-  const readout = async () => ({ count: Number(await t('count').textContent()), grid: await t('grid').textContent() });
+  // the command bar's input: a letter typed on the drawing or the echo button opens the bar; this opens it by the echo button when it is shut
+  const cmdLine = () => { const i = t('cmd-input'), open = async () => { if (!(await i.isVisible())) { await t('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } }; return { fill: async (v) => { await open(); await i.fill(v); }, press: async (k) => { await open(); await i.press(k); }, inputValue: () => i.inputValue(), focus: open }; };
+  const typeCmd = async (text) => { await cmdLine().fill(text); await cmdLine().press('Enter'); };
+  const readout = async () => ({ count:Number(await t('count').textContent()), grid: await t('grid').textContent() });
 
   mkdirSync('shots', { recursive: true });
   const tabNames = () => page.locator('.tabs .dtab:not([aria-label]) .tname').allTextContents();
@@ -331,7 +334,7 @@ try {
     await page.keyboard.press('Control+0');                           // Ctrl+0 = Fit (TODO 42)
     assert.equal(await t('zoom').textContent(), before);
     assert.equal(await t('tool-chip').textContent(), 'Tool: Pan');     // the active tool chip (TODO 44)
-    await page.keyboard.press('s');
+    await typeCmd('s');                                                 // S is typed at the command bar now
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
   });
 
@@ -885,11 +888,11 @@ try {
     await waitSel('15 selected');
     await page.keyboard.press('Escape');
     await waitSel('0 selected');
-    const cmd = page.getByLabel('Command line');
+    const cmd = cmdLine();
     await cmd.focus();                                           // typing in an input: Ctrl+A is the field's own, not Select all
     await page.keyboard.press('Control+a');
     assert.equal(await selCount(), '0 selected');
-    await cmd.blur();
+    await page.evaluate(() => document.activeElement.blur());
     await page.keyboard.press('Control+a');
     await waitSel('15 selected');
     await page.keyboard.press('Delete');
@@ -1401,7 +1404,7 @@ try {
     const tx = Object.values(r.doc.blocks).flatMap((b) => b.entities).find((e) => e.type === 'TEXT');
     assert.equal(+tx.r.v[tx.r.c.indexOf(40)], 3);
     await page.screenshot({ path: shotDir + '/s11-dimension-text-light.png' });
-    await page.keyboard.press('d');                                        // D picks the Dimension tool
+    await typeCmd('d');                                        // D picks the Dimension tool
     assert.equal(await page.locator('[data-tool=dimension].on').count(), 1);
     await page.locator('.tabs .dtab.on .x').click();
     await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
@@ -1491,7 +1494,6 @@ try {
     await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
   };
   const partRows = () => page.locator('[data-testid=part-rows] .prow').evaluateAll((rs) => rs.map((r) => [...r.querySelectorAll('.nm, .mono')].map((x) => x.textContent).join('|')));
-  const cmdLine = () => page.getByLabel('Command line');
 
   await step('extract: outlines are listed; right-click an outline → Extract part…; the name is pre-filled "<file> 1" and selected; Save to library', async () => {
     await closeTabs(/./);
@@ -1848,7 +1850,7 @@ try {
   });
 
   await step('review: ORTHO is a sticky Shift in Measure, Dimension and Set length; Shift still works', async () => {
-    await page.keyboard.press('m');
+    await typeCmd('m');
     assert.match(await t('cmd-prompt').textContent(), /Measure: click the first point/);
     await click(50, 20); await click(80, 40);
     assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 20/, 'without ORTHO the points are as picked');
@@ -1860,7 +1862,7 @@ try {
     assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 0   Angle 0°/, 'straight along X');
     await click(50, 20); await click(52, 40);
     assert.match(await t('cmd-prompt').textContent(), /ΔX 0   ΔY [\d.]+   Angle 90°/, 'straight along Y');
-    await page.keyboard.press('Escape'); await page.keyboard.press('d');
+    await page.keyboard.press('Escape'); await typeCmd('d');
     await click(50, 20); await click(80, 40);
     assert.match(await t('cmd-prompt').textContent(), /Dimension: move the line/);
     await click(65, 50);
@@ -1868,7 +1870,7 @@ try {
     await page.keyboard.press('Control+z');
     await t('tog-ortho').click();
     assert.equal(await t('tog-ortho').getAttribute('aria-pressed'), 'false');
-    await page.keyboard.press('m');
+    await typeCmd('m');
     await click(50, 20); await click(80, 40);
     assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 20/, 'ORTHO off: as picked again');
     await click(50, 20, { shift: true }); await click(80, 40, { shift: true });
@@ -1884,16 +1886,16 @@ try {
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
     const titles = await page.locator('nav.rail button').evaluateAll((bs) => bs.map((b) => b.getAttribute('title')));
     assert.ok(titles.every((x) => !/\((NE|NEST)\)/.test(x)), 'no letter that does nothing: ' + titles.join());
-    await page.keyboard.press('m'); assert.ok(await on('measure'));
+    await typeCmd('m'); assert.ok(await on('measure'));
     await page.keyboard.press('Escape'); assert.ok(await on('select') && !(await on('measure')), 'Esc with nothing in progress: back to Select');
-    await page.keyboard.press('d'); assert.ok(await on('dimension'));
+    await typeCmd('d'); assert.ok(await on('dimension'));
     await click(10, 0);
     await page.keyboard.press('Escape'); assert.ok(await on('dimension'), 'the first Esc only cancels the pick in progress');
     await page.keyboard.press('Escape'); assert.ok(await on('select'));
-    await page.keyboard.press('m'); await page.keyboard.press('s'); assert.ok(await on('select'), 'S is Select');
+    await typeCmd('m'); await typeCmd('s'); assert.ok(await on('select'), 'S is Select');
     await page.locator('[data-tool=pan]').click();
     assert.equal((await t('cmd-prompt').textContent()).trim(), 'Drag to pan');
-    await page.keyboard.press('s'); assert.ok(await on('select'));
+    await typeCmd('s'); assert.ok(await on('select'));
   });
 
   await step('review: Edit menu has Undo, Redo, Delete; shortcut hints; unbuilt menus are greyed', async () => {
@@ -1938,11 +1940,11 @@ try {
     assert.equal(await page.locator('.selbar .sizelbl').textContent(), 'Selection');
     assert.equal(await page.locator('[data-testid=drawing-panel] .sizelbl').textContent(), 'Whole drawing');
     const n0 = await entitiesN();
-    await page.keyboard.press('d');
+    await typeCmd('d');
     await click(10, 0); await click(90, 0); await click(50, -25);                      // far below the part
     await page.waitForFunction((n) => Number(document.querySelector('[data-testid=entities]').textContent.replace(/\D/g, '')) === n, n0 + 1);
     assert.deepEqual(await sizeNow(), [w0, h0], 'the whole-drawing size leaves the dimension out');
-    await page.keyboard.press('s');
+    await typeCmd('s');
     await click(50, -25);                                                              // the callout's line
     await waitSel('1 selected');
     assert.equal(await t('sel-name').textContent(), '1 selected', 'one wording');
@@ -2685,7 +2687,7 @@ try {
   });
 
   await step('Select all in a layout: Ctrl+A and Edit → Select all pick every placed part; Delete removes them all as one step; Ctrl+Z brings them back', async () => {
-    await page.getByLabel('Command line').blur();
+    await page.evaluate(() => document.activeElement.blur());
     await page.keyboard.press('Escape');
     await page.keyboard.press('Control+a');
     assert.equal(await t('pp-name').textContent(), '3 parts');
@@ -3659,7 +3661,6 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   });
 
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
-  const typeCmd = async (text) => { await cmdLine().fill(text); await cmdLine().press('Enter'); };
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
   const histLabels = async () => {
@@ -3686,7 +3687,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.locator('[data-tool=line]').click();
     assert.match(await prompt(), /^Drawing tools work on a drawing tab:?$/);
     assert.notEqual(await t('tool-chip').textContent(), 'Tool: Line');
-    await page.keyboard.press('c');
+    await typeCmd('c');
     assert.match(await prompt(), /^Drawing tools work on a drawing tab:?$/);
     await closeTabs(/layout/i);
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'drawing');
@@ -3953,6 +3954,138 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await t('draw-preview').count(), 1);
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     await closeTabs(/./);
+  });
+
+  // ---- TODO 47: the floating command bar (cmdbar.js, cmdui.js; mock-up R12b Option B) ----
+  const barOn = () => t('cmd-bar').isVisible();
+  const toolChip = async () => (await t('tool-chip').textContent()).trim();
+  const canvasBox = () => t('canvas').boundingBox();
+  await step('command bar: a letter typed on the drawing opens it at the cursor with autocomplete; Enter starts the command; Esc cancels; the status bar has the echo and the hint', async () => {
+    await closeTabs(/./);
+    assert.equal(await barOn(), false, 'shut at the start');
+    assert.ok((await t('cmd-echo').textContent()).length < 60, 'the echo is the last command and its last answers, not the whole session');
+    assert.match(await page.locator('.cb-hint').textContent(), /Just start typing on the drawing · F2 history/);
+    const cb = await canvasBox();
+    await page.mouse.move(cb.x + 300, cb.y + 200);
+    await page.keyboard.press('l');
+    await t('cmd-bar').waitFor();
+    assert.equal(await t('cmd-input').inputValue(), 'l', 'the letter typed is the first letter in the bar');
+    assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.getAttribute('data-testid')), 'cmd-input');
+    const bb = await t('cmd-bar').boundingBox();
+    assert.ok(Math.abs(bb.x - (cb.x + 320)) < 3 && Math.abs(bb.y - (cb.y + 220)) < 3, `20 px right-below the cursor, got ${bb.x - cb.x - 300},${bb.y - cb.y - 200}`);
+    const row = t('cmd-sugg').first();
+    assert.match(await row.textContent(), /line.*Straight segments.*Draw/i, 'name, alias, description and category');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Line');
+    assert.equal(await barOn(), false, 'Enter starts the command and shuts the bar');
+    assert.match(await t('cmd-fade').textContent(), /Command:\s*l/i, 'the fade shows the command line');
+    assert.match(await t('cmd-echo').textContent(), /LINE/);
+    await page.keyboard.press('Escape');
+    assert.equal(await toolChip(), 'Tool: Select', 'Esc cancels the command');
+  });
+
+  await step('command bar: arrow keys choose, Tab accepts; a flip keeps it inside the canvas; Space repeats the last command; inside a text-entry command Space types a space', async () => {
+    const cb = await canvasBox();
+    await page.mouse.move(cb.x + cb.width - 10, cb.y + cb.height - 10);          // the far corner: the bar flips left and up
+    await page.keyboard.type('re');
+    await t('cmd-bar').waitFor();
+    const bb = await t('cmd-bar').boundingBox();
+    assert.ok(bb.x + bb.width <= cb.x + cb.width + 1 && bb.y + bb.height <= cb.y + cb.height + 1 && bb.x < cb.x + cb.width - 10 - bb.width + 40, 'flipped left / up, still inside the canvas');
+    const names = await t('cmd-sugg').locator('.nm').allTextContents();
+    assert.ok(names.length >= 2, 'several commands start with re: ' + names.join());
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await t('cmd-sugg').nth(1).getAttribute('aria-selected'), 'true');
+    await page.keyboard.press('Tab');
+    assert.equal(await t('cmd-input').inputValue(), names[1], 'Tab puts the chosen command in');
+    await page.keyboard.press('Escape');
+    assert.equal(await barOn(), false);
+    await page.mouse.move(cb.x + 300, cb.y + 200);
+    await typeCmd('circle');                                                    // the full name works as the alias does
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Circle');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Space');                                         // Space on the drawing: the last command (CIRCLE) again
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Circle');
+    assert.match(await t('cmd-fade').textContent(), /repeats CIRCLE/);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await t('cmd-echo').click();                                                // an empty bar: Space is Enter
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Circle');
+    assert.equal(await barOn(), false);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    // Space after a command word accepts it; in a sentence it is a space
+    await t('cmd-echo').click(); await page.keyboard.type('l'); await page.keyboard.press('Space');
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Line');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await page.locator('[data-tool=text]').click();                             // a text-entry command: Space types a space
+    await t('cmd-echo').click();
+    await t('cmd-input').pressSequentially('height 12');
+    assert.equal(await t('cmd-input').inputValue(), 'height 12', 'Space is a space inside what is typed');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal(await toolChip(), 'Tool: Select');
+  });
+
+  await step('command bar: the prompt shows with its option chips; typing the underlined letter picks one; a chip click answers; Esc shuts the bar and cancels', async () => {
+    const cb = await canvasBox();
+    await page.mouse.move(cb.x + 300, cb.y + 200);
+    await typeCmd('c'); await typeCmd('50,50');
+    assert.match(await prompt(), /^Radius \[Diameter\]:?$/);
+    await page.keyboard.press('x');                                             // any key opens the bar during a command
+    await t('cmd-bar').waitFor();
+    assert.match(await t('cmd-bar-prompt').textContent(), /Radius \[Diameter\]/);
+    await page.keyboard.press('Backspace');
+    const chip = t('cmd-chip');
+    assert.equal(await chip.count(), 1);
+    assert.equal(await chip.locator('b').textContent(), 'D', 'the key letter is underlined');
+    assert.equal(await chip.textContent(), 'Diameter');
+    await page.keyboard.type('d');
+    assert.match(await chip.getAttribute('class'), /hit/, 'the typed letter lights its chip');
+    await page.keyboard.press('Backspace');
+    await chip.click();
+    await page.waitForFunction(() => /^Diameter \[Radius\]/.test(document.querySelector('[data-testid=cmd-prompt]').textContent.trim()));
+    assert.equal(await barOn(), false);
+    await page.keyboard.press('d');                                             // reopen, then type the letter and Enter
+    await t('cmd-input').fill('r'); await t('cmd-input').press('Enter');
+    await page.waitForFunction(() => /^Radius \[Diameter\]/.test(document.querySelector('[data-testid=cmd-prompt]').textContent.trim()));
+    await page.keyboard.press('x'); await t('cmd-bar').waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await barOn(), false, 'Esc shuts the bar');
+    assert.equal(await toolChip(), 'Tool: Circle');
+    assert.equal(await entCount(), 0, 'nothing was made');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal(await toolChip(), 'Tool: Select');
+  });
+
+  await step('command bar: F2 opens the history on the right; the filter, Copy history and a click on a line that runs it again; F2 and Esc shut it', async () => {
+    assert.equal(await t('cmd-history').isVisible(), false);
+    await page.keyboard.press('F2');
+    await t('cmd-history').waitFor();
+    const lines = await t('cmd-history-line').allTextContents();
+    assert.ok(lines.some((l) => /Command:\s*l/i.test(l)) && lines.some((l) => /Radius \[Diameter\]/.test(l)), 'the session\'s lines are listed: ' + lines.slice(-4).join(' | '));
+    await t('cmd-history').locator('input').fill('diameter');
+    const some = await t('cmd-history-line').allTextContents();
+    assert.ok(some.length > 0 && some.every((l) => /diameter/i.test(l)), 'the filter keeps only the matching lines');
+    await t('cmd-history').locator('input').fill('');
+    assert.ok(await t('cmd-copy').isVisible());
+    await t('cmd-history-line').filter({ hasText: /Command:\s*l\b/i }).first().click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Line');
+    await page.keyboard.press('Escape');                                         // Esc shuts the drawer first, then cancels
+    assert.equal(await t('cmd-history').isVisible(), false);
+    await page.keyboard.press('Escape');
+    assert.equal(await toolChip(), 'Tool: Select');
+    await page.keyboard.press('F2'); await t('cmd-history').waitFor();
+    await page.keyboard.press('F2');
+    assert.equal(await t('cmd-history').isVisible(), false, 'F2 again shuts it');
+  });
+
+  await step('command bar: screenshots, light and dark (typing with autocomplete; a prompt with chips; the history drawer)', async () => {
+    const cb = await canvasBox();
+    await page.mouse.move(cb.x + 420, cb.y + 260);
+    await shotBoth('cmdbar-typing', async () => { await page.mouse.move(cb.x + 420, cb.y + 260); await page.keyboard.type('ro'); await t('cmd-bar').waitFor(); }, async () => { await page.keyboard.press('Escape'); });
+    await typeCmd('c'); await typeCmd('50,50');
+    await shotBoth('cmdbar-prompt', async () => { await page.mouse.move(cb.x + 420, cb.y + 260); await page.keyboard.press('x'); await t('cmd-bar').waitFor(); await page.keyboard.press('Backspace'); }, async () => { await page.evaluate(() => document.activeElement.blur()); });       // blur shuts the bar and keeps the command
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await shotBoth('cmdbar-history', async () => { await page.keyboard.press('F2'); await t('cmd-history').waitFor(); }, async () => { await page.keyboard.press('Escape'); });
+    assert.equal(await t('cmd-history').isVisible(), false);
   });
 
   // ---- TODO 17: the Text tool (text.js; mock-up R5a Option A) ----
@@ -4737,16 +4870,17 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   await step('Sheet resize: a click on a handle then a click at the new place does it too; typed Width and Height are whole mm', async () => {
     await threeParts();
     await t('sheet-select').click();
-    const a = await handleAt('right'), b = await at(1100, 350);
+    const a = await handleAt('right'), b = await at(1080, 350);       // 1100 is past the canvas's right edge now that the command line no longer takes the bottom 64 px
     await page.mouse.click(a.x, a.y);
     assert.equal(await page.locator('[data-testid=sheet-handle-hot]').count(), 1, 'hot after one click');
     assert.match(await prompt(), /Sheet resize: click the new place, or Esc/);
     await page.mouse.move(b.x, b.y, { steps: 4 });
+    await frames();                                                      // the readout follows the pointer on the next frame
     const ro = await t('sheet-readout').textContent(), mw = /^W (\d+) × H 700 mm$/.exec(ro);
-    assert.ok(mw); near1(Number(mw[1]), 1100, 'width');
+    assert.ok(mw); near1(Number(mw[1]), 1080, 'width');
     await page.mouse.click(b.x, b.y);
     await sizeChanged('sheetW', 1000);
-    near1((await sizeNum())[0], 1100, 'set');
+    near1((await sizeNum())[0], 1080, 'set');
     assert.equal(await page.locator('[data-testid=sheet-handle-hot]').count(), 0);
     await page.locator('[data-key=sheetW]').fill('1000.6'); await page.locator('[data-key=sheetW]').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-key=sheetW]').value === '1001');
@@ -5075,7 +5209,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     await page.locator('[data-tool=dimension]').click();                              // the button itself starts the tool with the last type
     assert.equal(await prompt(), 'Specify first extension line origin:');
-    await page.keyboard.press('d');                                                    // D is the Aligned dimension
+    await typeCmd('d');                                                    // D is the Aligned dimension
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
     assert.match(await prompt(), /Dimension: first point/);
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
@@ -5260,7 +5394,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   });
   await step('dimension styles: new dimensions get the style (text height, arrow, gap, centred text breaking the line), also from Keep; a saved file reads back the same', async () => {
     await openGrips(dimDoc(), 'styles2.dxf');
-    await page.keyboard.press('d'); await click(100, 100); await click(220, 20); await click(180, 90);
+    await typeCmd('d'); await click(100, 100); await click(220, 20); await click(180, 90);
     assert.match(await prompt(), /Dimension placed: 144\.22 mm/);
     let p = await dimLook('PD_DIM_1');
     assert.ok(Math.abs(p.textH - 5) < 1e-5 && Math.abs(p.arrow - 3) < 1e-5 && Math.abs(p.gap - 1.5) < 1e-5 && p.pos === 'centre' && p.units === 'mm', JSON.stringify(p));
@@ -5450,7 +5584,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await page.locator('[data-tool=balloon]').getAttribute('title'), 'Balloon (B)');
     assert.deepEqual(await page.locator('.rail .tool').evaluateAll((a) => a.map((b) => b.dataset.tool).filter((x) => ['dimension', 'leader', 'balloon', 'offset'].includes(x))), ['dimension', 'leader', 'balloon', 'offset']);
     assert.equal(await t('bal-dock').isVisible(), false, 'no table while there is no balloon and the tool is off');
-    await page.keyboard.press('b'); await page.waitForTimeout(200); await frames();                 // the table opens and the canvas is fitted again
+    await typeCmd('b'); await page.waitForTimeout(200); await frames();                 // the table opens and the canvas is fitted again
     assert.equal(await t('tool-chip').textContent(), 'Tool: Balloon'); assert.equal(await histLine(), 'Command: BALLOON   next no. 1');
     assert.equal(await prompt(), 'Click the feature to balloon:');
     assert.equal(await t('bal-dock').isVisible(), true, 'the table shows while the tool is on'); assert.equal(await t('bal-count').textContent(), '0');
@@ -5530,8 +5664,8 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   });
 
   await step('balloons: the table is docked above the command line, resizes, collapses; a row zooms to its balloon; Export CSV and Export Excel write the rows', async () => {
-    const dock = t('bal-dock'), h0 = (await dock.boundingBox()).height, cmd = await page.locator('.cmdbar').boundingBox(), box0 = await dock.boundingBox();
-    assert.ok(Math.abs(box0.y + box0.height - cmd.y) < 2, 'it sits right above the command line');
+    const dock = t('bal-dock'), h0 = (await dock.boundingBox()).height, cmd = await page.locator('.status').boundingBox(), box0 = await dock.boundingBox();
+    assert.ok(Math.abs(box0.y + box0.height - cmd.y) < 2, 'it sits right above the status bar (the command bar floats on the canvas now)');
     const hb = await t('bal-drag').boundingBox();
     await page.mouse.move(hb.x + hb.width / 2, hb.y + 4); await page.mouse.down(); await page.mouse.move(hb.x + hb.width / 2, hb.y - 76, { steps: 4 }); await page.mouse.up();
     assert.ok((await dock.boundingBox()).height > h0 + 50, 'dragging the bar up makes it taller');
@@ -5713,7 +5847,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
     assert.equal(await entCount(), 3);
-    await page.keyboard.press('o');
+    await typeCmd('o');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Offset', 'O is Offset');
     await typeCmd('10');
     await shotBoth('offset', async () => { await click(70, 30); const p = await at(70, 62); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
@@ -6347,7 +6481,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent !== '…');
       assert.match(await prompt(), /pdballoons\.json/, 'the unreadable balloons file is said');
       await page.locator('[data-tool=select]').click();
-      await page.keyboard.press('b'); await page.waitForTimeout(200); await frames();
+      await typeCmd('b'); await page.waitForTimeout(200); await frames();
       await balPlace([101, 62], [130, 80]);
       await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
       assert.equal(await t('bal-count').textContent(), '1');
