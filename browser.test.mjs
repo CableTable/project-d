@@ -6230,6 +6230,29 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await c3.close();
   });
 
+  await step("Audit 4: autosave also copies a change that touches only the layers (a new layer after the first copy)", async () => {
+    const c4 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p4 = await c4.newPage();
+    const dxfs = () => p4.evaluate(() => new Promise((res) => {
+      const r = indexedDB.open('project-d-recovery', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('copies', { keyPath: 'id' });
+      r.onsuccess = () => { const q = r.result.transaction('copies').objectStore('copies').getAll(); q.onsuccess = () => { r.result.close(); res(q.result.map((x) => x.dxf)); }; };
+    }));
+    await p4.goto(URL_ + '?autosave=300');
+    await p4.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await p4.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+    await p4.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent === '2');
+    await p4.locator('[data-testid=gap-join]').click();
+    for (let i = 0; i < 60 && (await dxfs()).length < 1; i++) await p4.waitForTimeout(150);
+    assert.equal((await dxfs()).length, 1, 'the first copy');
+    assert.ok(!/\nLayer1\r?\n/.test((await dxfs())[0]));
+    await p4.locator('[data-testid=layer-add]').click();
+    let has = false;
+    for (let i = 0; i < 60 && !has; i++) { has = /\nLayer1\r?\n/.test((await dxfs())[0]); if (!has) await p4.waitForTimeout(150); }
+    assert.ok(has, 'the copy has the new layer');
+    await c4.close();
+  });
+
   // ---- TODO 39: the Objects tab (objects.js; mock-up R11a, Option A) ----
   const objDoc = () => {
     const doc = newDoc(4);

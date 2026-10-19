@@ -2205,7 +2205,7 @@ const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
 // ?autosave=<ms> in the page address sets another interval (the browser test uses it); 120000 (2 minutes) otherwise.
 let autosaving = false;
 function dropCopy(d) {
-  d.autoEnts = d.autoBlocks = d.autoDxf = null;
+  d.autoEnts = d.autoBlocks = d.autoLayers = d.autoDxf = null;
   if (!d.hasCopy) return;
   d.hasCopy = false;
   RC.removeCopy(d.rid).catch(() => {});
@@ -2220,7 +2220,7 @@ async function autosaveNow() {
     for (const d of state.docs.slice()) {
       if (!d.raw && !d.lay) continue;
       if (!d.dirty) { if (d.hasCopy) { d.hasCopy = false; await RC.removeCopy(d.rid); } continue; }
-      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks) continue;        // a drawing's state is replaced at every change: same one, same copy
+      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers) continue;        // a drawing's state is replaced at every change: same one, same copy
       let dxf;
       try { dxf = writeDxf(d.lay ? LD.layoutRaw(d.lay) : d.raw, { escapeUnicode: true }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
       if (d.lay && d.hasCopy && d.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
@@ -2229,7 +2229,7 @@ async function autosaveNow() {
       await RC.saveCopy({ id: d.rid, name: d.name, path: d.path || null, kind: d.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
         saved: !!d.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!d.acceptedLoss });
       d.hasCopy = true;
-      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; }
+      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; }
       if (!state.docs.includes(d) || !d.dirty) dropCopy(d);                                          // closed or saved while this was being written
     }
   } catch (err) { console.warn('Autosave failed:', err); } finally { autosaving = false; }
