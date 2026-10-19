@@ -2211,10 +2211,16 @@ function dropCopy(d) {
   RC.removeCopy(d.rid).catch(() => {});
 }
 /** Deletes the copies of these tabs and waits for it (the window may close right after). */
-const dropCopiesNow = (docs) => Promise.all(docs.filter((d) => d.hasCopy).map((d) => { d.hasCopy = false; return RC.removeCopy(d.rid).catch(() => {}); }));
+/** The window is closing: no new autosave round, and a copy still being written finishes first, so it is deleted too (up to 2 s). */
+let dropping = false;
+const dropCopiesNow = async (docs) => {
+  dropping = true;
+  for (let i = 0; autosaving && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
+  return Promise.all(docs.filter((d) => d.hasCopy).map((d) => { d.hasCopy = false; return RC.removeCopy(d.rid).catch(() => {}); }));
+};
 /** One round: a copy of every tab with unsaved changes that changed since its last copy; the copy of a tab that is saved now is dropped. */
 async function autosaveNow() {
-  if (autosaving) return;
+  if (autosaving || dropping) return;
   autosaving = true;
   try {
     for (const d of state.docs.slice()) {
