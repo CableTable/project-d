@@ -203,6 +203,20 @@ function polyMarkers(type, flags) {
   return ['AcDbVertex', f & 64 ? 'AcDbPolyFaceMeshVertex' : f & 32 ? 'AcDb3dPolylineVertex' : 'AcDb2dVertex'];
 }
 
+/** A table record's own pairs (name, handles, markers, xdata and { } groups left out). */
+function recPairs(r) {
+  const out = [];
+  let skipGroup = false;
+  for (let k = 0; k < r.c.length; k++) {
+    const c = r.c[k], v = r.v[k];
+    if (c === 102) { skipGroup = !/^\s*\}/.test(v); continue; }
+    if (skipGroup || c === 2 || c === 100 || c >= 1000 || isHandleCode(c)) continue;
+    out.push([c, v]);
+  }
+  return out;
+}
+const ciGet = (o, n) => o && o[Object.keys(o).find((k) => k.toLowerCase() === n.toLowerCase())];
+
 // ---------------------------------------------------------------- the writer
 
 const HDR = [ // [name, kind, code]: what the header carries when the document has it
@@ -227,14 +241,17 @@ export function writeDxf(doc, opts = {}) {
   for (const n of ['*Model_Space', '*Paper_Space']) if (!Object.keys(blocks).some((k) => k.toLowerCase() === n.toLowerCase())) blocks[n] = { base: [0, 0], entities: [] };
   const layerNames = new Set(['0', ...Object.keys(doc.layers || {})]);
   const ltNames = new Map(Object.entries(doc.ltypes || {}).map(([k, v]) => [k.toUpperCase(), v.pattern || []]));
-  const styles = new Set(['Standard']), dimstyles = new Set(['Standard']);
+  const styles = new Set(Object.keys(doc.styles || {})), dimstyles = new Set(Object.keys(doc.dimstyles || {}));
+  const addName = (set, n) => { if (![...set].some((k) => k.toLowerCase() === n.toLowerCase())) set.add(n); };   // names ignore case
+  addName(styles, 'Standard'); addName(dimstyles, 'Standard');
+  for (const lt of Object.values(doc.ltypes || {})) for (const el of lt.elems || []) if (el.style) addName(styles, el.style);
   const refLt = (n) => { n = (n || '').trim().toUpperCase(); if (n && !['BYLAYER', 'BYBLOCK', 'CONTINUOUS'].includes(n) && !ltNames.has(n)) ltNames.set(n, STD_LT[n] || []); };
   const supportedIn = (list) => (list || []).filter((e) => SUPPORTED.has(e.type));
   const scanRec = (r, p) => {
-    layerNames.add(p.layer); refLt(p.lt);
+    addName(layerNames, p.layer); refLt(p.lt);
     for (let k = 0; k < r.c.length; k++) {
-      if (r.c[k] === 7 && r.v[k].trim()) styles.add(r.v[k].trim());
-      if (r.c[k] === 3 && r.type === 'DIMENSION' && r.v[k].trim()) dimstyles.add(r.v[k].trim());
+      if (r.c[k] === 7 && r.v[k].trim()) addName(styles, r.v[k].trim());
+      if (r.c[k] === 3 && r.type === 'DIMENSION' && r.v[k].trim()) addName(dimstyles, r.v[k].trim());
     }
   };
   const scan = (list) => {
@@ -250,6 +267,7 @@ export function writeDxf(doc, opts = {}) {
   // handles for the block records first: entities name their owner
   const rec = new Map();
   for (const name of Object.keys(blocks)) rec.set(name, handle());
+  const styleRec = new Map([...styles].map((n) => [n.toLowerCase(), handle()]));   // up front: a complex line type points at its text style
   const find = (n) => [...rec.keys()].find((k) => k.toLowerCase() === n.toLowerCase());
   const modelRec = rec.get(find('*Model_Space')), paperRec = rec.get(find('*Paper_Space'));
 
@@ -321,7 +339,7 @@ export function writeDxf(doc, opts = {}) {
       if (extra) extra();
       body(); o.s(0, 'ENDTAB');
     };
-    const rhead = (type, name, sub, table2) => o.s(0, type).p(type === 'DIMSTYLE' ? 105 : 5, handle()).p(330, H[table2]).s(100, 'AcDbSymbolTableRecord').s(100, sub).s(2, name);
+    const rhead = (type, name, sub, table2, h = handle()) => o.s(0, type).p(type === 'DIMSTYLE' ? 105 : 5, h).p(330, H[table2]).s(100, 'AcDbSymbolTableRecord').s(100, sub).s(2, name);
     table('VPORT', 1, () => {
       rhead('VPORT', '*Active', 'AcDbViewportTableRecord', 'VPORT');
       o.p(70, 0).p(10, 0).p(20, 0).p(11, 1).p(21, 1).p(12, 0).p(22, 0).p(13, 0).p(23, 0).p(14, 10).p(24, 10).p(15, 10).p(25, 10)
@@ -337,26 +355,44 @@ export function writeDxf(doc, opts = {}) {
         if (lts.includes(n)) continue;
         rhead('LTYPE', n, 'AcDbLinetypeTableRecord', 'LTYPE');
         o.p(70, 0).s(3, '').p(72, 65).p(73, pat.length).p(40, pat.reduce((s, x) => s + Math.abs(x), 0));
-        for (const d of pat) o.p(49, d).p(74, 0);
+        const elems = (doc.ltypes || {})[n]?.elems || [];
+        pat.forEach((d, i) => {
+          const el = elems[i] || {}, fl = el.flags || 0;
+          o.p(49, d).p(74, fl);
+          if (!fl) return;
+          const sh = styleRec.get((el.style || '').toLowerCase());
+          o.p(75, el.shape || 0);
+          if (sh) o.p(340, sh);
+          o.p(46, el.scale ?? 1).p(50, el.rot || 0).p(44, el.x || 0).p(45, el.y || 0);
+          if (fl & 2) o.s(9, el.text || '');
+        });
       }
     });
     table('LAYER', layerNames.size, () => {
       for (const name of layerNames) {
         const l = doc.layers?.[name] || layerDef();
         rhead('LAYER', name, 'AcDbLayerTableRecord', 'LAYER');
-        o.p(70, l.frozen ? 1 : 0).p(62, l.off ? -(l.aci || 7) : (l.aci || 7));
+        o.p(70, ((l.flags || 0) & 6) | (l.frozen ? 1 : 0)).p(62, l.off ? -(l.aci || 7) : (l.aci || 7));
         if (l.tc != null) o.p(420, l.tc);
         o.s(6, l.lt || 'CONTINUOUS').p(370, l.lw ?? -3).s(390, 'F');
       }
     });
     table('STYLE', styles.size, () => {
-      for (const n of styles) { rhead('STYLE', n, 'AcDbTextStyleTableRecord', 'STYLE'); o.p(70, 0).p(40, 0).p(41, 1).p(50, 0).p(71, 0).p(42, 2.5).s(3, FONT_FILES[n] || 'arial.ttf').s(4, ''); }
+      for (const n of styles) {
+        rhead('STYLE', n, 'AcDbTextStyleTableRecord', 'STYLE', styleRec.get(n.toLowerCase()));
+        const kept = ciGet(doc.styles, n);
+        if (kept) { for (const [c, v] of recPairs(kept)) o.p(c, v); continue; }
+        o.p(70, 0).p(40, 0).p(41, 1).p(50, 0).p(71, 0).p(42, 2.5).s(3, FONT_FILES[n] || 'arial.ttf').s(4, '');
+      }
     });
     table('VIEW', 0, () => {});
     table('UCS', 0, () => {});
     table('APPID', 1, () => { rhead('APPID', 'ACAD', 'AcDbRegAppTableRecord', 'APPID'); o.p(70, 0); });
     table('DIMSTYLE', dimstyles.size, () => {
-      for (const n of dimstyles) { rhead('DIMSTYLE', n, 'AcDbDimStyleTableRecord', 'DIMSTYLE'); o.p(70, 0); }
+      for (const n of dimstyles) { rhead('DIMSTYLE', n, 'AcDbDimStyleTableRecord', 'DIMSTYLE');
+        const kept = ciGet(doc.dimstyles, n);
+        if (kept) for (const [c, v] of recPairs(kept)) o.p(c, v); else o.p(70, 0);
+      }
     }, () => o.s(100, 'AcDbDimStyleTable'));
     table('BLOCK_RECORD', rec.size, () => {
       for (const [name, h] of rec) { o.s(0, 'BLOCK_RECORD').p(5, h).p(330, H.BLOCK_RECORD).s(100, 'AcDbSymbolTableRecord').s(100, 'AcDbBlockTableRecord').s(2, name).p(340, 0); }

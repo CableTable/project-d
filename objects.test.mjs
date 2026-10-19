@@ -129,4 +129,16 @@ test('partsTree: parts with their places; a search narrows; hidden parts are mar
   assert.deepEqual(O.partsTree(lay, placed, new Set(), 'brack').map((p) => p.name), ['Bracket']);
 });
 
+test('renameLayer: also the layer of a POLYLINE\'s VERTEX records (an old-style polyline keeps the new layer on Save)', () => {
+  const P = [[0, 'SECTION'], [2, 'ENTITIES'], [0, 'POLYLINE'], [8, 'Cut'], [66, 1], [70, 0], [0, 'VERTEX'], [8, 'Cut'], [10, 0], [20, 0], [0, 'VERTEX'], [8, 'Cut'], [10, 5], [20, 0],
+    [0, 'SEQEND'], [8, 'Cut'], [0, 'ENDSEC']];
+  const raw = readDxf(P.map(([c, v]) => String(c).padStart(3) + '\n' + v).join('\n') + '\n  0\nEOF\n');
+  raw.layers.Cut = { aci: 7, tc: null, off: false, frozen: false, lt: 'CONTINUOUS', lw: -3, handle: '' };
+  const r = O.renameLayer(raw, 'Cut', 'Out');
+  const back = readDxf(writeDxf({ ...raw, ...r }));
+  assert.equal(back.entities[0].layer, 'Out');
+  assert.deepEqual(back.entities[0].kids.map((k) => k.v[k.c.indexOf(8)]), ['Out', 'Out']);
+  assert.deepEqual(raw.entities[0].kids.map((k) => k.v[k.c.indexOf(8)]), ['Cut', 'Cut'], 'the original is not touched');
+});
+
 console.log(n + ' tests passed');

@@ -89,7 +89,8 @@ test('drawing as the part: sample.dxf, copied layers and blocks, units, round tr
   const doc = A.buildLayout({ part, layout: L, ...base, sheetW: 600, sheetH: 400 });
   assert.equal(inserts(doc).length, L.count);
   assert.ok(doc.blocks.sample);
-  for (const n of Object.keys(raw.layers)) assert.ok(doc.layers[n], n);
+  // layer names ignore case: the file's SHEET is the app's Sheet
+  for (const n of Object.keys(raw.layers)) assert.ok(Object.keys(doc.layers).some((k) => k.toLowerCase() === n.toLowerCase()), n);
   for (const n of ['Parts', 'Sheet', 'Marks']) assert.ok(doc.layers[n], n);
   assert.ok(raw.entities.length > 0);
   // the original is untouched
@@ -99,7 +100,9 @@ test('drawing as the part: sample.dxf, copied layers and blocks, units, round tr
   assert.ok(/^[\x00-\x7f]*$/.test(text), 'ASCII only');
   const back = D.readDxf(text);
   assert.equal(back.entities.filter((e) => e.type === 'INSERT').length, L.count);
-  for (const n of ['Parts', 'Sheet', 'Marks', ...Object.keys(raw.layers)]) assert.ok(back.layers[n], n);
+  for (const n of ['Parts', 'Sheet', 'Marks', ...Object.keys(raw.layers)]) assert.ok(Object.keys(back.layers).some((k) => k.toLowerCase() === n.toLowerCase()), n);
+  const lower = Object.keys(back.layers).map((k) => k.toLowerCase());
+  assert.equal(new Set(lower).size, lower.length, 'no two layers with the same name');
   const fb = D.flatten(back), [x0, y0, x1, y1] = fb.boxes.model;
   assert.ok(x0 >= -1e-6 && y0 >= -1e-6 && x1 <= 600 + 1e-6 && y1 <= 400 + 1e-6, [x0, y0, x1, y1].join());
   // the first copy's extents match the part's extents (min corner at the insert point)
@@ -144,4 +147,23 @@ test('preview slots: each copy lands on its slot, its base where Apply puts the 
       near(a[0], ins[i].x, 'insert x'); near(base.sheetH - a[1], ins[i].y, 'insert y');
     });
   }
+});
+
+test('parts from two files that share a block name: the nested reference follows the renamed block; names ignore case', () => {
+  const part = (name, ents, blocks, layer) => {
+    const d = W.newDoc(); for (const [n, e] of Object.entries(blocks)) W.addBlock(d, n, e);
+    if (layer) W.addLayer(d, layer);
+    d.entities = ents;
+    return { name, raw: d, space: 0, box: [0, 0, 10, 10], w: 10, h: 10, factor: 1 };
+  };
+  const a = part('a', [W.insert('LOGO', 0, 0)], { LOGO: [W.line(0, 0, 1, 0)] }, 'Cut');
+  const b = part('b', [W.insert('OUTER', 0, 0)], { Logo: [W.circle(0, 0, 1)], OUTER: [W.insert('Logo', 0, 0)] }, 'CUT');
+  const { doc } = A.buildLayoutDoc({ parts: { a, b }, placed: [{ partId: 'a', x: 0, y: 0 }, { partId: 'b', x: 20, y: 0 }], sheetW: 100, sheetH: 100 });
+  const nm = (e) => e.r.v[e.r.c.indexOf(2)];
+  assert.ok(doc.blocks.Logo_2 || doc.blocks.LOGO_2, 'the clashing block (ignoring case) was renamed');
+  const outer = Object.entries(doc.blocks).find(([k]) => k.toLowerCase() === 'outer')[1];
+  assert.ok(/^logo_2$/i.test(nm(outer.entities[0])), 'OUTER, copied under its own name, points at the renamed block: ' + nm(outer.entities[0]));
+  const back = D.readDxf(W.writeDxf(doc, { escapeUnicode: true }));
+  const lay = Object.keys(back.layers).map((k) => k.toLowerCase()), blk = Object.keys(back.blocks).map((k) => k.toLowerCase());
+  assert.equal(new Set(lay).size, lay.length); assert.equal(new Set(blk).size, blk.length);
 });

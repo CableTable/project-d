@@ -88,17 +88,20 @@ function renameRefs(ents, map) {
 function mergePart(doc, part, origin) {
   const raw = part.raw;
   if (raw.header && raw.header.$LTSCALE != null && doc.header.$LTSCALE == null) doc.header.$LTSCALE = raw.header.$LTSCALE;
-  for (const [n, l] of Object.entries(raw.layers || {})) if (!doc.layers[n]) doc.layers[n] = structuredClone(l);
-  for (const [n, l] of Object.entries(raw.ltypes || {})) if (!doc.ltypes[n]) doc.ltypes[n] = structuredClone(l);
-  const map = {};
+  const has = (o, n) => Object.keys(o).some((k) => k.toLowerCase() === n.toLowerCase());   // names ignore case
+  for (const [n, l] of Object.entries(raw.layers || {})) if (!has(doc.layers, n)) doc.layers[n] = structuredClone(l);
+  for (const [n, l] of Object.entries(raw.ltypes || {})) if (!has(doc.ltypes, n)) doc.ltypes[n] = structuredClone(l);
+  for (const [n, s] of Object.entries(raw.styles || {})) if (!has(doc.styles ||= {}, n)) doc.styles[n] = structuredClone(s);
+  for (const [n, s] of Object.entries(raw.dimstyles || {})) if (!has(doc.dimstyles ||= {}, n)) doc.dimstyles[n] = structuredClone(s);
+  const map = {}, copied = [];
   for (const [n, b] of Object.entries(raw.blocks || {})) {
-    if (!doc.blocks[n]) { doc.blocks[n] = structuredClone(b); origin.set(n, b); continue; }
+    if (!has(doc.blocks, n)) { doc.blocks[n] = structuredClone(b); origin.set(n, b); copied.push(n); continue; }
     if (origin.get(n) === b) continue;                               // the same block of the same drawing
-    let k = 2; while (doc.blocks[n + '_' + k]) k++;
-    map[n] = n + '_' + k; doc.blocks[map[n]] = structuredClone(b); origin.set(map[n], b);
+    let k = 2; while (has(doc.blocks, n + '_' + k)) k++;
+    map[n] = n + '_' + k; doc.blocks[map[n]] = structuredClone(b); origin.set(map[n], b); copied.push(map[n]);
   }
   const renamed = Object.keys(map).length > 0;
-  if (renamed) for (const nm of Object.values(map)) doc.blocks[nm].entities = renameRefs(doc.blocks[nm].entities, map);
+  if (renamed) for (const nm of copied) doc.blocks[nm].entities = renameRefs(doc.blocks[nm].entities, map);   // also the blocks copied under their own name
   const ents = raw.entities.filter((e) => (e.ps ? 1 : 0) === part.space).map((e) => ({ ...structuredClone(e), ps: false }));
   return renamed ? renameRefs(ents, map) : ents;
 }

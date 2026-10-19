@@ -39,7 +39,7 @@ function pathEnds(ops) {
 }
 
 /** An arc op's sweep (radians, signed), as the canvas draws it: clockwise flag 1 = anticlockwise in canvas terms. */
-function arcSweep(a0, a1, acw) {
+function arcSweepOp(a0, a1, acw) {
   const T = 2 * Math.PI;
   let d = a1 - a0;
   if (!acw) { if (d >= T) return T; d %= T; if (d < 0) d += T; } else { if (-d >= T) return -T; d %= T; if (d > 0) d -= T; }
@@ -69,7 +69,7 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
         if (op === 0) { if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false }); cur = []; add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 1) { add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 2) {
-          const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweep(a0, a1, ops[k + 6] === 1);
+          const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweepOp(a0, a1, ops[k + 6] === 1);
           const n = Math.max(2, Math.ceil(Math.abs(sw) / (Math.PI / 720)));         // ¼° steps: well under 0.01 mm on a part
           if (!cur) cur = [];
           for (let s = cur.length ? 1 : 0; s <= n; s++) add(cx + r * Math.cos(a0 + sw * s / n), cy + r * Math.sin(a0 + sw * s / n));

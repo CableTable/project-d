@@ -135,7 +135,9 @@ export function boxOf(fl, ents) {
 
 /** The document with a layer renamed: its table entry, every entity on it (also inside blocks). Nothing else changes. */
 export function renameLayer(raw, from, to) {
-  const re = (ents) => ents.map((e) => (e.layer === from ? { ...e, layer: to } : e));
+  // a POLYLINE's VERTEX and an INSERT's ATTRIB records carry their own layer (code 8)
+  const kid = (k) => ({ ...k, v: k.v.map((v, i) => (k.c[i] === 8 && v.trim() === from ? to : v)) });
+  const re = (ents) => ents.map((e) => (e.layer === from ? { ...e, layer: to } : e)).map((e) => (e.kids ? { ...e, kids: e.kids.map(kid) } : e));
   const layers = Object.fromEntries(Object.entries(raw.layers).map(([k, def]) => [k === from ? to : k, def]));
   const blocks = Object.fromEntries(Object.entries(raw.blocks).map(([k, b]) => [k, b && b.entities ? { ...b, entities: re(b.entities) } : b]));
   return { entities: re(raw.entities), blocks, layers };
