@@ -89,10 +89,10 @@ From the exe review (2026-10-17, session 3):
 
 1. ✅ (built, PR #10) Drawing tools: line, polyline, rectangle, rounded rectangle, circle, ellipse, arc, text and dimension, with snaps, ortho and polar tracking, and typed coordinates. (Text: TODO 17. Polar tracking: TODO 21, built in PR #12.)
 2. Edit tools: offset, trim, mirror, move, copy, rotate, scale, and undo and redo.
-3. Auto-nest of mixed parts.
+3. ✅ (built, session 6, option B of mock-up R10) Auto-nest of mixed parts.
 4. Place by hand.
 5. Import parts from DXF, DWG, CorelDRAW and PDF (mock-up "Import parts").
-6. DWG open through LibreDWG, in its own module.
+6. **Before starting: switch the repo back to private and bring back the CI diet (DECISIONS 2026-10-19).** DWG open through LibreDWG, in its own module.
 7. .cdr open through libcdr. For now (his call, 2026-10-17): CorelDRAW → Export PDF, then open the PDF. He'll send a few .cdr files with their exported PDFs after PR #5; test libcdr on them first, and if it can't read them, write our own .cdr reader for what his files use (outlines, curves, text), checked against the PDFs.
 8. Layers panel editing.
 9. Title block with the revision table.

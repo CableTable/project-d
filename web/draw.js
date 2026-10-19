@@ -175,7 +175,7 @@ export function svgPath(sh, H) {
 export function createTool(kind, cfg = {}) {
   if (!KINDS.includes(kind)) throw new Error('unknown tool ' + kind);
   const radius = cfg.radius > 0 ? cfg.radius : 5;
-  const T = { kind, pts: [], hover: null, dia: false, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
+  const T = { kind, pts: [], trail: [], hover: null, dia: false, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
   return T;
 }
 
@@ -190,25 +190,19 @@ export function toolRef(T) {
 /** How many points are placed (0 = nothing in progress). */
 export const toolBusy = (T) => T.pts.length > 0;
 
-function reset(T) { T.pts = []; T.hover = null; T.dia = false; }
+function reset(T) { T.pts = []; T.trail = []; T.hover = null; T.dia = false; }
 
-/** The line / polyline shape of what is picked (with `extra` as a last point), null when it has fewer than 2 points. */
+/** The polyline of what is picked, null when it has fewer than 2 points (a Line commits each segment as it is picked: see addPoint). */
 function chain(T, closed) {
   const pts = T.pts.map((p) => [p[0], p[1]]);
   if (pts.length < 2) return null;
-  if (T.kind === 'line') {
-    const out = [];
-    for (let i = 0; i + 1 < pts.length; i++) out.push({ t: 'line', a: pts[i], b: pts[i + 1] });
-    if (closed && pts.length > 2) out.push({ t: 'line', a: pts[pts.length - 1], b: pts[0] });
-    return out;
-  }
   return [{ t: 'poly', pts, closed: !!closed && pts.length > 2 }];
 }
 
 function finishChain(T, closed) {
   const made = chain(T, closed);
   reset(T);
-  return made ? done(made) : say(T.kind === 'line' ? 'A line needs two points' : 'A polyline needs two points');
+  return made ? done(made) : say('A polyline needs two points');
 }
 
 /** A point picked or typed. */
@@ -217,6 +211,7 @@ function addPoint(T, p) {
   const k = T.kind, n = T.pts.length;
   if (k === 'line' || k === 'polyline') {
     if (n && dist(T.pts[n - 1], p) < 1e-9) return say('That is the last point again: pick another');
+    if (k === 'line' && n) { const seg = { t: 'line', a: T.pts[0], b: p }; T.trail.push(T.pts[0]); T.pts = [p]; return done([seg]); }     // each click after the first is a segment at once
     T.pts.push(p);
     return say(null);
   }
@@ -281,17 +276,29 @@ export function toolClick(T, p) {
 /** The pointer moved (a snapped point): the rubber band follows. */
 export function toolHover(T, p) { T.hover = p ? [p[0], p[1]] : null; }
 
-/** Enter / Esc / right-click. A line or polyline ends and keeps what it has; the rest cancel the shape in progress. */
+/** Enter / Esc / right-click. A polyline ends and keeps what it has; a line ends (its segments are already made); the rest cancel the shape in progress. */
 export function toolFinish(T) {
   if (T.stage === 'radius') { T.stage = 'pts'; return say(`Corner radius ${n2(T.radius)} mm`); }
-  if (T.kind === 'line' || T.kind === 'polyline') return T.pts.length ? finishChain(T, false) : say(null);
+  if (T.kind === 'line') { reset(T); return say(null); }
+  if (T.kind === 'polyline') return T.pts.length ? finishChain(T, false) : say(null);
   if (T.pts.length) { reset(T); return say('Cancelled'); }
   return say(null);
 }
 
-/** Back to the point before (Undo / U): a line or polyline loses its last point, the others their last pick. */
+/**
+ * Undo (Ctrl+Z, or U in the command line) while a Line has made segments: the app takes the last segment back and calls this, so the next
+ * point starts from where that segment began. → 'seg' (a segment is gone), 'point' (only the first point was picked: it is dropped), or null.
+ */
+export function toolUndoSeg(T) {
+  if (T.kind !== 'line' || !T.pts.length) return null;
+  if (T.trail.length) { T.pts = [T.trail.pop()]; return 'seg'; }
+  reset(T); return 'point';
+}
+
+/** Back to the point before (Undo / U): a polyline loses its last point, the others their last pick. */
 function undoPoint(T) {
   if (!T.pts.length) return say('Nothing to undo');
+  if (T.kind === 'line' && T.trail.length) return { made: null, msg: null, undoSeg: true };         // the app undoes the segment's step
   T.pts.pop();
   return say(null);
 }
@@ -310,6 +317,12 @@ export function toolType(T, text) {
   if (inp.kind === 'word') {
     const [w, arg] = inp.w.split(/\s+/);
     if ((k === 'line' || k === 'polyline') && (w === 'c' || w === 'close')) {
+      if (k === 'line') {
+        if (T.trail.length < 2) return say(`Close needs two segments; there ${T.trail.length === 1 ? 'is' : 'are'} ${T.trail.length}`);
+        const made = [{ t: 'line', a: T.pts[0], b: T.trail[0] }];
+        reset(T);
+        return done(made);
+      }
       if (T.pts.length < 3) return say(`Close needs three points; there ${T.pts.length === 1 ? 'is' : 'are'} ${T.pts.length}`);
       return finishChain(T, true);
     }
@@ -401,7 +414,12 @@ export function toolPrompt(T, layer = '0') {
   const k = T.kind, n = T.pts.length, head = LABELS[k].toUpperCase();
   const st = (extra) => `Command: ${head}   ${extra}`;
   if (T.stage === 'radius') return { status: st(`Corner radius ${n2(T.radius)} mm · layer ${layer}`), prompt: `Corner radius <${n2(T.radius)}>:` };
-  if (k === 'line' || k === 'polyline') {
+  if (k === 'line') {
+    if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify first point (x,y):' };
+    const g = T.trail.length;
+    return { status: st(`${g} segment${g === 1 ? '' : 's'} made · layer ${layer} · Enter ends`), prompt: `Next point or length [${g > 1 ? 'Close / ' : ''}Undo]:` };
+  }
+  if (k === 'polyline') {
     if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify first point (x,y):' };
     return { status: st(`${n} point${n === 1 ? '' : 's'} · layer ${layer} · Enter ends`), prompt: `Next point or length [${n > 2 ? 'Close / ' : ''}Undo]:` };
   }
