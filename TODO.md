@@ -79,7 +79,7 @@ From the exe review (2026-10-17, session 3):
 46. ✅ (built, PR #9) **Fix tiny gaps** in a vector file (his ask, 2026-10-17): find ends that almost meet (within a tolerance he sets,
     e.g. 0.05 mm), mark them on the drawing, and a button joins them (moves the ends together) so outlines close
     properly for area, offset / contour and cutting. Today Area closes a loop across a tiny gap and says so.
-47. **Full command line, AutoCAD style** (his ask, 2026-10-18; after the two Round 5 builds): every tool and action can be
+47. ✅ (built, session 8, Option B of mock-up R12b: the floating command bar; see DECISIONS) **Full command line, AutoCAD style** (his ask, 2026-10-18; after the two Round 5 builds): every tool and action can be
     typed by name or alias (draw, edit, layout, view, file); Enter or Space repeats the last command; ↑ / ↓ go through
     the command history; autocomplete suggestions as you type; options in [brackets] that can be clicked or typed by
     their capital letter; typed coordinates (absolute, `@x,y`, `@len<angle`); Esc cancels; F2 opens the full command

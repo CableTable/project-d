@@ -3,7 +3,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "npx eslint web && node drawing.test.mjs && node geom.test.mjs && node layout.test.mjs && node doc.test.mjs && node dxf-write.test.mjs && node edit.test.mjs && node pdf-read.test.mjs && node apply.test.mjs && node pdf-write.test.mjs && node layoutdoc.test.mjs && node place.test.mjs && node recovery.test.mjs && node arrange.test.mjs && node guides.test.mjs && node contour.test.mjs && node draw.test.mjs && node modify.test.mjs && node text.test.mjs && node grips.test.mjs && node props.test.mjs && node compare.test.mjs && node track.test.mjs && node dims.test.mjs && node leader.test.mjs && node balloons.test.mjs && node nest.test.mjs && node objects.test.mjs && node savepath.test.mjs",
+    "test": "npx eslint web && node tools/unit.mjs",
     "test:browser": "node browser.test.mjs",
     "serve": "node serve.mjs",
     "vendor": "node tools/vendor.mjs",

@@ -139,6 +139,9 @@ test('a drawing that is not one of ours is not a layout; odd settings fall back 
   assert.equal(LD.layoutFromRaw(readDxf(writeDxf(plate(10, 10)))), null);
   const s = LD.cleanSettings({ sheetW: -5, sheetH: 'abc', rotate: '45', align: 'x', rows: 0, cols: 2.7, crop: false, extraCols: [{ after: 0, mm: 5 }, { after: 2, mm: 3 }, null], gridPart: 5 });
   assert.equal(s.sheetW, LD.DEFAULTS.sheetW); assert.equal(s.sheetH, LD.DEFAULTS.sheetH); assert.equal(s.rotate, '0'); assert.equal(s.align, 'centre');
+  const bare = LD.cleanSettings({});
+  assert.equal(bare.crop, false); assert.equal(bare.reg, false, 'marks missing from a file are off, as the defaults say');
+  assert.equal(LD.cleanSettings({ crop: true, reg: true }).crop, true);
   assert.equal(s.rows, 1); assert.equal(s.cols, 2); assert.equal(s.crop, false); assert.deepEqual(s.extraCols, [{ after: 2, mm: 3 }]); assert.equal(s.gridPart, null);
   // a block that was deleted by another app: the part is gone, its placements and the grid with it
   const lay = sample(), raw = LD.layoutRaw(lay);

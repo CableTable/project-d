@@ -148,7 +148,7 @@ export function cleanSettings(s = {}) {
   return {
     sheetW: num(s.sheetW, d.sheetW, 1), sheetH: num(s.sheetH, d.sheetH, 1),
     gripTop: num(s.gripTop, 0, 0), gripRight: num(s.gripRight, 0, 0), gripBottom: num(s.gripBottom, 0, 0), gripLeft: num(s.gripLeft, 0, 0),
-    crop: s.crop !== false, reg: s.reg !== false, gapX: num(s.gapX, d.gapX, 0), gapY: num(s.gapY, d.gapY, 0),
+    crop: s.crop === true, reg: s.reg === true, gapX: num(s.gapX, d.gapX, 0), gapY: num(s.gapY, d.gapY, 0),
     rotate: ['best', '0', '90'].includes(String(s.rotate)) ? String(s.rotate) : '0', align: s.align === 'topleft' ? 'topleft' : 'centre',
     fit: s.fit !== false, rows: Math.max(1, Math.floor(num(s.rows, 1))), cols: Math.max(1, Math.floor(num(s.cols, 1))),
     extraRows: gaps(s.extraRows), extraCols: gaps(s.extraCols), gridPart: typeof s.gridPart === 'string' ? s.gridPart : null,
