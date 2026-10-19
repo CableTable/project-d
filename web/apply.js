@@ -71,12 +71,13 @@ export function placedBox(part, pl) {
 export const gridPlacements = (L, sheetH, partId) => placements(L, sheetH).map((p) => placement1(partId, p.x, p.y, p.rot));
 
 /** Blocks named in `map` renamed where the entities refer to them (INSERT and DIMENSION carry the name in group 2). */
-function renameRefs(ents, map) {
+function renameRefs(ents, map0) {
+  const map = Object.fromEntries(Object.entries(map0).map(([k, v]) => [k.toLowerCase(), v]));   // block names ignore case
   return ents.map((e) => {
     if (!e.r || (e.type !== 'INSERT' && e.type !== 'DIMENSION')) return e;
     const k = e.r.c.indexOf(2), nm = k < 0 ? null : String(e.r.v[k]).trim();
-    if (nm == null || !map[nm]) return e;
-    const v = e.r.v.slice(); v[k] = map[nm];
+    if (nm == null || !map[nm.toLowerCase()]) return e;
+    const v = e.r.v.slice(); v[k] = map[nm.toLowerCase()];
     return { ...e, r: { ...e.r, v } };
   });
 }
