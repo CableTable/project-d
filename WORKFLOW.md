@@ -17,7 +17,7 @@ briefs, reading short reports and merging.
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
 | PC tester | claude2 | Sonnet, high | Downloads the released exe and drives it (WebView2 debug port + Playwright), reports what broke. |
 | Fallback | claude2 | Opus, high | Only when Sonnet has failed at a build. |
-| Research (**Rowan**) | Codex CLI (his ChatGPT Go plan) | gpt-6-luna | **Default for web research**, big or small, and **Rowan-review** (second read-only review of each build); read-only sandbox, live web search. Runs in `~/codex-research`, never the repo. |
+| Research (**Rowan**) | Codex CLI (his ChatGPT Go plan) | gpt-6-luna | **Default for web research**, big or small. **Research only, never reviews** (his call, 2026-10-20: in a blind test on TODO 39 it missed both bugs Pip-review found); read-only sandbox, live web search. Runs in `~/codex-research`, never the repo. |
 | Quick lookup (**Scout**) | Antigravity CLI (`agy`, his Google account, free) | Gemini 3.8 Flash | Web research (specs, libraries, how other apps do X), so Pip's limits go to builds. Runs in `~/agy-research`, never the repo. |
 
 ## The loop for one TODO item
@@ -30,7 +30,7 @@ briefs, reading short reports and merging.
    Mock-ups are never committed. He picks an option; the lead answers open questions with a recommendation.
 3. **Build:** a fresh builder session with a brief (spec = the chosen artboard, decisions for DECISIONS.md,
    tests, screenshots light + dark, tick TODO.md, commit + push, don't stage `mockups/`). Keep its `session_id`.
-4. **Review:** Pip-review and Rowan-review (Codex, read-only) on the build's commits, side by side (ranked findings, "ship as is" / "fix first").
+4. **Review:** a Pip-review session on the build's commits (ranked findings, "ship as is" / "fix first").
 5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run.
 6. **As built:** an AB board in the canvas when the build differs from the mock-up.
 7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR). CI publishes the exe.
@@ -71,11 +71,6 @@ $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format te
 # its own empty folder; never in the repo, never --dangerously-bypass-approvals-and-sandbox. Answer lands in last.txt.
 cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -m gpt-6-luna --skip-git-repo-check -s read-only \
   -c web_search=\"live\" -o last.txt - < question.txt > run.log 2>&1
-# Rowan-review (2026-10-20): a second, read-only review beside Pip-review on a build's commits (a different model
-# catches different bugs). Runs in the repo (-C), still -s read-only; AGENTS.md points it at CLAUDE.md and the reply format.
-# review.txt names the branch and commit range. ~1-3% of the month per review.
-/c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -m gpt-6-luna -s read-only -C "E:/Project B/Claude/Project D" \
-  -o "$TEMP/rowan-review.txt" - < review.txt > "$TEMP/rowan-review.log" 2>&1
 # Usage (headless): the newest ~/.codex/sessions/**/*.jsonl has "rate_limits": primary.used_percent over a
 # 30-day window (Go plan), resets_at in Unix time. 2 test runs = 0.0%.
 
