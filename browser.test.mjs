@@ -687,6 +687,27 @@ try {
     assert.match(await t('cmd-prompt').textContent(), /sample-copy layout\.pdf opened for printing \(\d+ pages\)|opened for printing/);
   });
 
+  await step('Print… in the app asks where to save (the Save dialog, <name>.pdf), not Downloads; Cancel writes nothing', async () => {
+    await page.evaluate(() => {
+      window.__saved = { asked: [], wrote: [] }; window.__pick = 'C:\\prints\\mine';
+      window.__TAURI__ = { dialog: { save: async (o) => { window.__saved.asked.push(o.defaultPath); return window.__pick; } }, fs: { writeFile: async (p) => { window.__saved.wrote.push(p); } }, path: { downloadDir: async () => { throw new Error('Downloads must not be used'); } } };
+    });
+    await openPdf();
+    await page.evaluate(() => { window.__pick = null; });
+    await t('pdf-print').click();                                     // Cancel in the dialog
+    await page.waitForFunction(() => window.__saved.asked.length === 1);
+    assert.equal(await dialog.count(), 1, 'the PDF dialog stays open on Cancel');
+    assert.deepEqual(await page.evaluate(() => window.__saved.wrote), []);
+    await page.evaluate(() => { window.__pick = 'C:\\prints\\mine'; });
+    await t('pdf-print').click();
+    await dialog.waitFor({ state: 'detached' });
+    const got = await page.evaluate(() => window.__saved);
+    assert.match(got.asked[0], /\.pdf$/);
+    assert.deepEqual(got.wrote, ['C:\\prints\\mine.pdf']);
+    assert.match(await t('cmd-prompt').textContent(), /Saved C:\\prints\\mine\.pdf/);
+    await page.evaluate(() => { delete window.__TAURI__; delete window.__saved; });
+  });
+
   await step('A folder at once: choose a folder, the list, Convert makes one PDF per .dxf', async () => {
     await openPdf();
     await t('pdf-tab-batch').click();

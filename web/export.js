@@ -285,18 +285,12 @@ export function openExport(host) {
   async function saveOne(print) {
     const bytes = plan.bytes(), name = fileName();
     if (inApp) {
-      let path;
-      if (print) {
-        const dl = await t.path.downloadDir();
-        path = joinPath(dl, name);
-      } else {
-        path = await t.dialog.save({ defaultPath: settings.dir ? joinPath(settings.dir, name) : name, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
-        if (!path) return null;
-        path = String(path);
-        if (!/\.pdf$/i.test(path)) path += '.pdf';
-      }
+      let path = await t.dialog.save({ defaultPath: settings.dir ? joinPath(settings.dir, name) : name, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+      if (!path) return null;
+      path = String(path);
+      if (!/\.pdf$/i.test(path)) path += '.pdf';
       await t.fs.writeFile(path, bytes);
-      if (!print) settings.dir = dirOf(path);
+      settings.dir = dirOf(path);
       return { path, name: path.split(/[\\/]/).pop(), bytes };
     }
     if (print) {
