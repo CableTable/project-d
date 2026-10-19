@@ -99,6 +99,14 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   (his call, 2026-10-17). **Haiku looks things up** (searches, reading code or logs, screenshot
   checks), each reporting back in a few lines. Subagents work on the session's branch; when two run
   at once they get separate files. The lead says in one line which agents a request uses.
+- **The builder is `claude2`** (2026-10-19, his setup): Claude Code on his 2nd account
+  (`C:\Users\raksh\.local\bin\claude2.cmd`), so builds don't spend the main account. The lead starts
+  it from the shell in the background and keeps the `session_id` from the JSON:
+  `claude2 -p "<brief>" --agent builder --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" --allowedTools "Bash(echo:*)" "Bash(tee:*)" "PowerShell(Select-String:*)" "PowerShell(Select-Object:*)" "PowerShell(Write-Output:*)" --output-format json`.
+  Fixes go to the same session (`--resume <session_id>`, same flags); he can watch or take over with
+  `claude2 --resume <session_id>`. Commands are allowed by `.claude/settings.json`; a refused one
+  shows in `permission_denials` and gets added there. The builder never merges or force-pushes.
+  A new folder (a worktree) needs trusting once: he runs `claude2` there and accepts.
 - **Keep the context lean**: screenshot checks and broad searches go to a helper agent that reports
   back in a few lines. Never print whole logs, diffs or files. Edit CLAUDE.md at most once a
   session, near the end. After a PR merges, suggest `/compact` or a new session.
