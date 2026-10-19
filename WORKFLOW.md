@@ -100,7 +100,9 @@ echo "Reply OK" | $C2 -p --model claude-haiku-5-5 --output-format stream-json --
 
 `unifiedWindows.five_hour.utilization` / `seven_day.utilization` (0–1) and their `resetsAt` (Unix time; convert to IST).
 The same line with `claude` instead of `$C2` gives the main account's usage. Report both.
-Check it before starting big work and after each run. Above ~0.85 of the 5-hour window, don't start a new
+Check it before starting big work and after each run. **After every merge** (a branch into the session branch, or the PR
+into main) report Rook, Pip (5-hour, weekly, resets in IST) and Rowan (month %) as a table, and add a row to
+`mockups/_design/usage-log.md` (his rule, 2026-10-20). Above ~0.85 of the 5-hour window, don't start a new
 Opus run; let running builders finish (a builder cut off mid-work leaves uncommitted changes: resume it after the reset).
 
 **Queuing runs** (2026-10-19: a queued job waited on its own output file and sat idle for hours):
