@@ -288,7 +288,10 @@ export function openExport(host) {
       let path = await t.dialog.save({ defaultPath: settings.dir ? joinPath(settings.dir, name) : name, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
       if (!path) return null;
       path = String(path);
-      if (!/\.pdf$/i.test(path)) path += '.pdf';
+      if (!/\.pdf$/i.test(path)) {                                    // the dialog's Replace? check was for the name without .pdf
+        path += '.pdf';
+        if (await t.fs.exists(path) && !(await t.dialog.ask(`${path.split(/[\\/]/).pop()} already exists. Replace it?`, { title: 'Project D', kind: 'warning', okLabel: 'Replace', cancelLabel: 'Cancel' }))) return null;
+      }
       await t.fs.writeFile(path, bytes);
       settings.dir = dirOf(path);
       return { path, name: path.split(/[\\/]/).pop(), bytes };
