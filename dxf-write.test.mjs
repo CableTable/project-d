@@ -160,7 +160,7 @@ test('a DXF without subclass markers (R12 style) gets them', () => {
 
 test('an independent parser (dxf-parser) reads the written sample', async () => {
   let Parser;
-  try { Parser = (await import('dxf-parser')).default; } catch { return; }
+  try { Parser = (await import('dxf-parser')).default; } catch { if (process.env.CI) throw new Error('dxf-parser did not load: the cross-check would be skipped'); return; }
   const text = W.writeDxf(load('sample.dxf')), p = new Parser().parseSync(text);
   assert.ok(p && p.entities.length >= 10);
   const types = new Set(p.entities.map((e) => e.type));
