@@ -24,6 +24,9 @@ decimals picker; Save never overwrites the opened file; Shift = straight picks. 
 the unticked items in his order of value: Build B = placing parts (2, 9–13, 16; mock-up board R3d), then 36–38
 (align, group / lock, rulers), contour (35), then the rest. Push after every finished item and tick it in TODO.md
 (his rule, 2026-10-17).
+Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare, theme "Modern SaaS", Offset / Trim /
+Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close
+prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). See HISTORY.md.
 
 ## The app
 

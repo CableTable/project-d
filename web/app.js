@@ -407,7 +407,7 @@ async function confirmDiscard(name) {
 
 // ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
 const dirtyDocs = () => state.docs.filter((d) => d.dirty);
-let closeAsk = null;
+let closeAsk = null, closing = false;
 /** The close prompt over the page → 'save' | 'discard' | 'cancel' (Esc and a click outside are Cancel). */
 function askSaveChanges(dirty) {
   return new Promise((resolve) => {
@@ -433,10 +433,12 @@ function askSaveChanges(dirty) {
 async function mayClose() {
   const dirty = dirtyDocs();
   if (!dirty.length) return true;
-  if (closeAsk) return false;                                        // already asking
+  if (closeAsk || closing) return false;                             // already asking, or saving after a Save
   const answer = await askSaveChanges(dirty);
   if (answer === 'cancel') return false;
   if (answer === 'discard') return true;
+  closing = true;
+  try {
   for (const d of dirty) {
     const i = state.docs.indexOf(d);
     if (i < 0) continue;
@@ -444,6 +446,7 @@ async function mayClose() {
     await save();
     if (d.dirty) return false;                                       // the Save dialog was cancelled, or Save failed (it said why)
   }
+  } finally { closing = false; }
   return true;
 }
 /** Wires the window's close (the exe) and a page unload (a browser) to mayClose. */
