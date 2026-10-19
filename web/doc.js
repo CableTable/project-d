@@ -89,3 +89,12 @@ export function addRecent(list, path, max = 8) {
   const key = (p) => String(p).replace(/\//g, '\\').toLowerCase();
   return [path, ...(Array.isArray(list) ? list : []).filter((p) => typeof p === 'string' && key(p) !== key(path))].slice(0, max);
 }
+
+/** The words of the close prompt for the tabs with unsaved changes (names): { title, names } (names are listed only when there are several, five at most). */
+export function closePrompt(names) {
+  const list = names.filter((n) => typeof n === 'string');
+  if (list.length === 1) return { title: `Save changes to "${list[0]}"?`, names: [] };
+  const shown = list.slice(0, 5);
+  if (list.length > shown.length) shown.push(`and ${list.length - shown.length} more`);
+  return { title: `Save changes to ${list.length} drawings?`, names: shown };
+}

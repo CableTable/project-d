@@ -1,7 +1,7 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
 import { h } from './dom.js';
 import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
-import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent } from './doc.js';
+import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
@@ -201,19 +201,26 @@ const isDark = () => {
 };
 
 // ---- building the page ----
+/** Marks a number field as refused (red edge, aria-invalid) until it is focused or typed in again. */
+function flagInvalid(input, bad) {
+  input.classList.toggle('invalid', !!bad);
+  if (bad) input.setAttribute('aria-invalid', 'true'); else input.removeAttribute('aria-invalid');
+}
+const clearInvalid = (input) => { input.addEventListener('focus', () => flagInvalid(input, false)); };
 const MAX_SHEET = 100000;              // mm: a sheet side above this is refused (1e308 made invalid SVG)
 function numField(label, key, opts = {}) {
   const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(state[key]), 'data-key': key });
   // a whole-number field (Rows, Columns) says why a typed value is refused instead of snapping back silently
   const refusal = () => {
     const raw = input.value.trim(), v = Number(raw);
-    if (!opts.int) {                      // a sheet side or gripper: kept within what the sheet can hold
-      const hi = opts.cap ? opts.cap() : Infinity, lo = opts.floor ? opts.floor() : -Infinity;
-      if (raw !== '' && Number.isFinite(v) && v > hi) return `${label} can be ${hi} mm at most`;
-      if (raw !== '' && Number.isFinite(v) && v < lo) return `${label} must be ${lo} mm or more`;
+    if (!opts.int) {                      // a sheet side, gripper or gap: kept within what the sheet can hold
+      const hi = opts.cap ? opts.cap() : Infinity, lo = Math.max(opts.floor ? opts.floor() : 0, opts.min ?? 0);
+      if (raw === '' || !Number.isFinite(v)) return `${label} must be a number in mm: ${lo} ${hi < Infinity ? 'to ' + hi : 'or more'}`;
+      if (v > hi) return `${label} can be ${hi} mm at most`;
+      if (v < lo) return `${label} must be ${lo} mm or more`;
       return '';
     }
-    if (raw === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return `${label} must be ${opts.min ?? 0} or more`;
+    if (raw === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return `${label} must be ${opts.min ?? 0} or more${opts.max ? ` (up to ${opts.max})` : ''}`;
     if (opts.max && Math.floor(v) > opts.max) return `${label}: ${Math.floor(v)} will not fit on a sheet (${opts.max} at most)`;
     return '';
   };
@@ -221,6 +228,7 @@ function numField(label, key, opts = {}) {
     const v = Number(input.value.trim());
     if (!curLay()) return;
     const why = refusal();
+    flagInvalid(input, why && input.value.trim() !== '');
     if (why) { if (input.value.trim() !== '') note(why); return; }       // an empty field is only half typed: said when it is left
     if (input.value.trim() === '' || !Number.isFinite(v) || v < (opts.min ?? 0)) return;
     if (key === 'sheetW' || key === 'sheetH') pushLay(curDoc(), laySnap(curLay() && curDoc().lay), 'sheetsize', 'Sheet size');
@@ -231,8 +239,9 @@ function numField(label, key, opts = {}) {
   input.addEventListener('change', () => {
     const why = curLay() ? refusal() : '';
     if ((key === 'sheetW' || key === 'sheetH') && curLay() && !Number.isInteger(state[key])) { const was = state[key]; state[key] = Math.round(was); touch(); update(); note(`Sheet ${key === 'sheetW' ? 'width' : 'height'} ${was} rounded to whole mm: ${state[key]}`); }
-    input.value = String(state[key]); if (why) note(why);
+    input.value = String(state[key]); flagInvalid(input, why); if (why) note(why);
   });
+  clearInvalid(input);
   ui[key] = input;
   return h('label', { class: 'field' }, label, input);
 }
@@ -263,7 +272,8 @@ function pfield(attrs, show, apply, enabled = () => true) {
     if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
     else if (e.key === 'Escape') { input.value = show(); input.blur(); }
   });
-  input.addEventListener('change', () => { const why = apply(input.value); input.value = show(); if (why) note(why); });
+  input.addEventListener('change', () => { const why = apply(input.value); input.value = show(); flagInvalid(input, why); if (why) note(why); });
+  clearInvalid(input);
   placedFields.push({ input, show, enabled });
   return input;
 }
@@ -393,6 +403,61 @@ async function confirmDiscard(name) {
     try { return await t.dialog.ask(text, { title: 'Project D', kind: 'warning', okLabel: 'Close without saving', cancelLabel: 'Keep it open' }); } catch { return false; }
   }
   return window.confirm(text);
+}
+
+// ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
+const dirtyDocs = () => state.docs.filter((d) => d.dirty);
+let closeAsk = null, closing = false;
+/** The close prompt over the page → 'save' | 'discard' | 'cancel' (Esc and a click outside are Cancel). */
+function askSaveChanges(dirty) {
+  return new Promise((resolve) => {
+    const words = closePrompt(dirty.map((d) => d.name));
+    const done = (answer) => { document.removeEventListener('keydown', onKey, true); back.remove(); closeAsk = null; resolve(answer); };
+    const btn = (label, answer, testid, cls = 'btn') => { const b = h('button', { class: cls, type: 'button', 'data-testid': testid }, label); b.addEventListener('click', () => done(answer)); return b; };
+    const save = btn('Save', 'save', 'close-save', 'btn primary');
+    const dlg = h('div', { class: 'pop-dialog', role: 'alertdialog', 'aria-label': words.title, 'data-testid': 'close-dialog' },
+      h('strong', null, words.title),
+      words.names.length ? h('div', { class: 'lbl' }, words.names.map((n) => h('div', null, n))) : null,
+      h('span', { class: 'lbl' }, "Your changes are lost if you don't save them."),
+      h('div', { class: 'row end' }, btn('Cancel', 'cancel', 'close-cancel'), btn("Don't save", 'discard', 'close-discard'), save));
+    const back = h('div', { class: 'pop-back', 'data-testid': 'close-back' }, dlg);
+    const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done('cancel'); } };
+    back.addEventListener('pointerdown', (e) => { if (e.target === back) done('cancel'); });
+    document.addEventListener('keydown', onKey, true);
+    document.body.append(back);
+    closeAsk = back;
+    save.focus();
+  });
+}
+/** May the window close? Asks when a tab has unsaved changes; Save goes through the usual Save for each (a cancelled Save dialog keeps the window open). */
+async function mayClose() {
+  const dirty = dirtyDocs();
+  if (!dirty.length) return true;
+  if (closeAsk || closing) return false;                             // already asking, or saving after a Save
+  const answer = await askSaveChanges(dirty);
+  if (answer === 'cancel') return false;
+  if (answer === 'discard') return true;
+  closing = true;
+  try {
+  for (const d of dirty) {
+    const i = state.docs.indexOf(d);
+    if (i < 0) continue;
+    state.doc = i; showDoc();
+    await save();
+    if (d.dirty) return false;                                       // the Save dialog was cancelled, or Save failed (it said why)
+  }
+  } finally { closing = false; }
+  return true;
+}
+/** Wires the window's close (the exe) and a page unload (a browser) to mayClose. */
+function guardClose() {
+  const t = window.__TAURI__, w = t && t.window && t.window.getCurrentWindow ? t.window.getCurrentWindow() : null;
+  if (w && w.onCloseRequested) w.onCloseRequested(async (event) => { event.preventDefault(); if (await mayClose()) await w.destroy(); });
+  window.addEventListener('beforeunload', (e) => { if (dirtyDocs().length) { e.preventDefault(); e.returnValue = ''; } });
+  document.addEventListener('keydown', (e) => {                      // in the exe a reload would drop every tab with no question
+    const reload = e.key === 'F5' || ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'r');
+    if (reload && window.__TAURI__ && dirtyDocs().length) { e.preventDefault(); note('Reload is off while a drawing has unsaved changes. Save it first'); }
+  }, true);
 }
 
 async function closeTab(d) {
@@ -834,7 +899,7 @@ function buildPanel() {
     buildLibrary(),
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        h('button', { class: 'tog off', type: 'button', 'aria-label': 'Add layer', title: 'Not built yet', 'aria-disabled': 'true', onclick: () => note('Add layer: not built yet') }, '+ Add')),
+        h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
       ui.layerRows));
 }
 
@@ -2270,8 +2335,52 @@ function layerRows() {
     : [];
   const bgRow = d && d.bg ? [{ id: 'bg', name: 'Background', color: '#9aa5b1', count: 1, eye: EYE, live: true, bg: true }] : [];
   const curName = d && d.raw ? curLayerName(d) : null;                // the layer new shapes go on; "0" has no row until something is on it
-  const virt = curName && !file.some((l) => l.name === curName) ? [{ name: curName, color: 'var(--partline)', count: 0, eye: EYE, live: false }] : [];
+  const added = d && d.raw && d.addedLayers ? [...d.addedLayers].filter((n) => d.raw.layers[n] && !file.some((l) => l.name === n)) : [];      // layers added by hand, still empty
+  const shown = curName && !file.some((l) => l.name === curName) && !added.includes(curName) ? curName : added.length && !file.some((l) => l.name === '0') ? '0' : null;      // "0" stays listed once layers were added, so it can be made current again
+  const virt = shown ? [{ name: shown, color: 'var(--partline)', count: 0, eye: EYE, live: false, zero: shown === '0' }] : [];
+  virt.push(...added.map((n) => ({ name: n, css: layerCss(d.raw.layers[n]), color: ink(layerCss(d.raw.layers[n]), isDark()), count: 0, eye: EYE, live: false, added: true })));
   return [...file.map((l) => ({ ...l, eye: EYE, live: true, chip: d.newLayer === l.name ? 'new' : null })), ...virt, ...bgRow].map((l) => ({ ...l, cur: curName != null && l.name === curName && !l.bg }));
+}
+
+const layerCss = (def) => (def && def.tc != null ? '#' + (def.tc & 0xffffff).toString(16).padStart(6, '0') : ACI[def && def.aci] || '#ffffff');
+const allLayerNames = (d) => [...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)];
+/** + Add: a new layer with the first free name (Layer1, Layer2…); it becomes the current layer, and its name is ready to type over. One undo step. */
+function addLayerNow() {
+  const d = drawTarget();
+  if (!d) { note('Add layer: open a drawing tab first (a layout has its own layers)'); return; }
+  const name = Ed.newLayerName(allLayerNames(d));
+  d.hist.push(snapshotOf(d), 'Add layer ' + name);
+  d.raw.layers = { ...d.raw.layers };
+  addLayer(d.raw, name, { aci: 7 });
+  (d.addedLayers || (d.addedLayers = new Set())).add(name);
+  d.curLayer = name; d.dirty = true;
+  renderLayers(); renderTabs(); renderCommand(); renderEdit();
+  const inp = ui.layerRows.querySelector('[data-testid=layer-name]');
+  if (inp) { inp.focus(); inp.select(); }
+  note(`Added ${name}: it is the current layer. Type a name and pick a colour, or press Enter to keep them. Ctrl+Z takes it away`);
+}
+/** The name of a layer added by hand (empty, so nothing refers to it): typed over in the row; a refused name says why and goes back. */
+function addedName(d, l) {
+  const input = h('input', { class: 'fld lname', type: 'text', value: l.name, 'aria-label': 'Layer name', 'data-testid': 'layer-name', spellcheck: 'false', maxlength: 255 });
+  input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { input.value = l.name; input.blur(); } });
+  input.addEventListener('change', () => {
+    const v = input.value.trim(), why = Ed.layerNameProblem(v, allLayerNames(d), l.name);
+    if (why) { input.value = l.name; flagInvalid(input, true); note(why); return; }
+    if (v === l.name) return;
+    d.raw.layers = Object.fromEntries(Object.entries(d.raw.layers).map(([k, def]) => [k === l.name ? v : k, def]));
+    d.addedLayers.delete(l.name); d.addedLayers.add(v);
+    if (d.curLayer === l.name) d.curLayer = v;
+    d.dirty = true; renderLayers(); renderTabs(); renderCommand(); renderEdit(); note(`Layer renamed to ${v}`);
+  });
+  clearInvalid(input);
+  return input;
+}
+/** The colour of a layer added by hand: a colour box in place of the swatch. */
+function addedSwatch(d, l) {
+  const input = h('input', { class: 'swatch pick', type: 'color', value: l.css, 'aria-label': 'Layer colour', 'data-testid': 'layer-colour', title: 'Layer colour' });
+  input.addEventListener('input', () => { d.raw.layers = { ...d.raw.layers, [l.name]: { ...d.raw.layers[l.name], tc: parseInt(input.value.slice(1), 16) } }; d.dirty = true; });
+  input.addEventListener('change', () => { renderTabs(); renderLayers(); });
+  return input;
 }
 
 function renderLayers() {
@@ -2288,10 +2397,11 @@ function renderLayers() {
         renderLayers(); applyHidden(); renderStatus();
       });
     }
-    const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': isFile || l.cur ? l.name : null, title: isFile || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
-      h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
-      h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
-    if (isFile) row.addEventListener('click', (e) => { if (e.target.closest('.vis')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
+    const pick = isFile || l.added || l.zero;
+    const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': pick || l.cur ? l.name : null, title: pick || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
+      l.added ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
+      l.added ? addedName(d, l) : h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
+    if (pick) row.addEventListener('click', (e) => { if (e.target.closest('.vis') || e.target.closest('input')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
     return row;
   }));
 }
@@ -3031,11 +3141,19 @@ function renderGaps() {
   ui.gapList.replaceChildren(...items.map(([axis, e]) => {
     const key = axis + e.after;
     const inp = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-gap-field': key, 'aria-label': gapName(axis, e.after) + ', extra mm', placeholder: 'extra', value: e.mm > 0 ? String(e.mm) : '' });
+    const bad = () => { const v = Number(inp.value.trim().replace(',', '.')); return inp.value.trim() !== '' && (!Number.isFinite(v) || v < 0); };
     inp.addEventListener('input', () => {
       const v = Number(inp.value.trim().replace(',', '.'));
+      flagInvalid(inp, bad());
       if (inp.value.trim() === '' || !Number.isFinite(v) || v < 0) { if (inp.value.trim() === '') { e.mm = 0; update(); } return; }
       e.mm = v; update();
     });
+    inp.addEventListener('change', () => {                          // refused: say so, mark it, and show the gap as it still is
+      if (!bad()) return;
+      note(`${gapName(axis, e.after)}: extra gap must be a number in mm, 0 or more`);
+      inp.value = e.mm > 0 ? String(e.mm) : ''; flagInvalid(inp, true);
+    });
+    clearInvalid(inp);
     inp.addEventListener('focus', () => { if (!state.gapSel || state.gapSel.axis !== axis || state.gapSel.after !== e.after) { state.gapSel = { axis, after: e.after }; drawSheet(); } });
     inp.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') inp.blur(); });
     const x = h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove ' + gapName(axis, e.after), 'data-gap-remove': key, onclick: () => {
@@ -3080,7 +3198,7 @@ const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl
 const measurable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
+const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off); return d.ed; }
 /** Builds the index once the page has painted, so the first click is quick. */
@@ -3140,6 +3258,7 @@ function hideRubber() { if (ui.rubber) ui.rubber.hidden = true; }
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. */
 function commit(d, next, label) { d.hist.push(snapshotOf(d), label); d.newLayer = null; restore(d, next); }
 function restore(d, st) {
+  if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if ('bl' in st) d.balloons = st.bl;                           // a drawing edit does not carry balloons, an undo step does
   if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     if (st.mm != null && d.bg) d.bg.mm = st.mm;
@@ -5693,6 +5812,7 @@ function init() {
     balDock, buildCommand(), buildStatus()));
   renderTabs();
   attachDrop();
+  guardClose();
   document.addEventListener('keydown', (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
     editKey(e);

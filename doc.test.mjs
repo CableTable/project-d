@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
 import { makeDimension, addDimension } from './web/edit.js';
-import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent } from './web/doc.js';
+import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, closePrompt } from './web/doc.js';
 
 const load = (f) => flatten(readDxf(decodeDxf(readFileSync(f))));
 let n = 0;
@@ -78,5 +78,12 @@ test('recent files: newest first, no repeats (any case or slash), at most 8', ()
   assert.equal(r.length, 8);
   assert.equal(r[0], 'C:\\f9.dxf');
   assert.deepEqual(addRecent(['x', 5, null], 'y'), ['y', 'x']);
+});
+test('closePrompt: one name in quotes, or a count with the names listed', () => {
+  assert.deepEqual(closePrompt(['a.dxf']), { title: 'Save changes to "a.dxf"?', names: [] });
+  assert.deepEqual(closePrompt(['a.dxf', 'b layout']), { title: 'Save changes to 2 drawings?', names: ['a.dxf', 'b layout'] });
+  const r = closePrompt(['1', '2', '3', '4', '5', '6', '7']);
+  assert.equal(r.title, 'Save changes to 7 drawings?');
+  assert.deepEqual(r.names, ['1', '2', '3', '4', '5', 'and 2 more']);
 });
 console.log(n + ' passed');

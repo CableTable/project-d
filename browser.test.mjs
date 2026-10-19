@@ -687,6 +687,27 @@ try {
     assert.match(await t('cmd-prompt').textContent(), /sample-copy layout\.pdf opened for printing \(\d+ pages\)|opened for printing/);
   });
 
+  await step('Print… in the app asks where to save (the Save dialog, <name>.pdf), not Downloads; Cancel writes nothing', async () => {
+    await page.evaluate(() => {
+      window.__saved = { asked: [], wrote: [] }; window.__pick = 'C:\\prints\\mine';
+      window.__TAURI__ = { dialog: { save: async (o) => { window.__saved.asked.push(o.defaultPath); return window.__pick; } }, fs: { writeFile: async (p) => { window.__saved.wrote.push(p); } }, path: { downloadDir: async () => { throw new Error('Downloads must not be used'); } } };
+    });
+    await openPdf();
+    await page.evaluate(() => { window.__pick = null; });
+    await t('pdf-print').click();                                     // Cancel in the dialog
+    await page.waitForFunction(() => window.__saved.asked.length === 1);
+    assert.equal(await dialog.count(), 1, 'the PDF dialog stays open on Cancel');
+    assert.deepEqual(await page.evaluate(() => window.__saved.wrote), []);
+    await page.evaluate(() => { window.__pick = 'C:\\prints\\mine'; });
+    await t('pdf-print').click();
+    await dialog.waitFor({ state: 'detached' });
+    const got = await page.evaluate(() => window.__saved);
+    assert.match(got.asked[0], /\.pdf$/);
+    assert.deepEqual(got.wrote, ['C:\\prints\\mine.pdf']);
+    assert.match(await t('cmd-prompt').textContent(), /Saved C:\\prints\\mine\.pdf/);
+    await page.evaluate(() => { delete window.__TAURI__; delete window.__saved; });
+  });
+
   await step('A folder at once: choose a folder, the list, Convert makes one PDF per .dxf', async () => {
     await openPdf();
     await t('pdf-tab-batch').click();
@@ -2006,6 +2027,33 @@ try {
     await cols.fill('1000'); await cols.press('Tab');
     assert.match(await t('cmd-prompt').textContent(), /Columns: 1000 will not fit/);
     assert.notEqual(await cols.inputValue(), '1000');
+    await t('fit-switch').check();
+  });
+
+  await step('invalid numbers (text, negative, 0 rows) get a message naming the allowed range, a red mark on the field, and the old value back', async () => {
+    const cases = [['rows', '0', /Rows must be 1 or more \(up to 200\)/], ['rows', 'abc', /Rows must be 1 or more/], ['gapX', 'abc', /Gap X must be a number in mm: 0 or more/], ['gapY', '-4', /Gap Y must be 0 mm or more/],
+      ['sheetW', 'abc', /Width must be a number in mm: \d+ to 100000/], ['sheetH', '0', /Height must be \d+ mm or more/], ['gripLeft', '-5', /Left must be 0 mm or more/]];
+    const key = (k) => page.locator(`[data-key=${k}]`).first();
+    await t('fit-switch').uncheck();
+    for (const [k, v, re] of cases) {
+      const f = key(k), was = await f.inputValue();
+      await t('cmd-prompt').evaluate((el) => { el.textContent = ''; });
+      await f.fill(v); await f.press('Tab');
+      assert.match(await t('cmd-prompt').textContent(), re, `${k} = ${v}`);
+      assert.equal(await f.inputValue(), was, `${k} is reset`);
+      assert.equal(await f.getAttribute('aria-invalid'), 'true', `${k} is marked`);
+      await f.focus();
+      assert.equal(await f.getAttribute('aria-invalid'), null, `${k}: the mark goes when the field is entered again`);
+      await f.press('Tab');
+    }
+    await key('gapX').fill('abc'); await key('gapX').press('Tab');                // leave one mark on screen for the pictures
+    await key('gapX').evaluate((el) => el.scrollIntoView({ block: 'center' }));   // clear of the sticky Apply footer
+    const theme0 = await page.evaluate(() => document.documentElement.dataset.theme || '');
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      await page.screenshot({ path: `shots/s14-invalid-${th}.png` });
+    }
+    await page.evaluate((x) => { if (x) document.documentElement.dataset.theme = x; else delete document.documentElement.dataset.theme; }, theme0);
     await t('fit-switch').check();
   });
 
@@ -3839,6 +3887,51 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     const doc = await savedDoc(), c = doc.entities.at(-1);
     assert.equal(c.type, 'CIRCLE'); assert.equal(c.layer, 'Open');
     assert.equal(doc.entities.slice(0, -1).filter((e) => e.layer === 'Plate').length, 2);
+    await page.locator('[data-tool=select]').click();
+  });
+
+  await step('Layers + Add: Layer1, Layer2… become the current layer with the name ready to type; rename and colour; a bad name says why; one undo step; saved in the DXF', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    const add = t('layer-add'), name = t('layer-name'), rows = page.locator('.layer');
+    assert.equal(await add.isDisabled(), false);
+    assert.equal(await add.getAttribute('aria-disabled'), null, '+ Add is built, not greyed');
+    const before = await rows.count();
+    await add.click();
+    assert.equal(await rows.count(), before + 1);
+    assert.equal(await name.inputValue(), 'Layer1');
+    assert.equal(await name.evaluate((el) => document.activeElement === el), true, 'the name is ready to type over');
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').count(), 1, 'the new layer is the current one');
+    await name.press('Enter');
+    await page.keyboard.press('Control+z');                                          // one undo step takes it away
+    await page.waitForFunction(() => !document.querySelector('[data-testid=layer-name]'));
+    assert.equal(await page.locator('.layer.current .nm').textContent(), '0');
+    assert.ok((await histLabels()).includes('Add layer Layer1'));
+    await page.keyboard.press('Control+y');
+    assert.equal(await name.inputValue(), 'Layer1', 'redo brings it back');
+    await add.click();
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Layer2', 'the next free name');
+    // a bad name is refused with a reason and the old name comes back, marked
+    const l2 = page.locator('.layer.current [data-testid=layer-name]');
+    await l2.fill('Plate'); await l2.press('Enter');
+    assert.match(await prompt(), /The layer "Plate" is already there/);
+    assert.equal(await l2.inputValue(), 'Layer2'); assert.equal(await l2.getAttribute('aria-invalid'), 'true');
+    await l2.fill('a/b'); await l2.press('Enter');
+    assert.match(await prompt(), /can't hold/);
+    await l2.fill('Cut line'); await l2.press('Enter');
+    assert.match(await prompt(), /Layer renamed to Cut line/);
+    await t('layer-colour').last().fill('#ff0000');
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Cut line');
+    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `shots/s15-addlayer-${th}.png` }); }
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+    await page.locator('[data-tool=circle]').click();
+    assert.match(await t('cmd-hist').textContent(), /layer Cut line/);
+    await typeCmd('700,150'); await typeCmd('15');
+    const doc = await savedDoc();
+    assert.equal(doc.entities.at(-1).layer, 'Cut line');
+    assert.equal(doc.layers['Cut line'].tc, 0xff0000);
+    assert.ok(doc.layers.Layer1, 'the empty layer is in the file too');
     await page.locator('[data-tool=select]').click();
   });
 
@@ -5892,6 +5985,57 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await t('nest-stop').click(); await nestDone();
     assert.match(await t('nest-placed').textContent(), /^\d+ of 1020 placed( \(stopped\))?$/);
     await t('nest-cancel').click();
+  });
+
+  await step("Closing with unsaved tabs: the exe's close request asks Save / Don't save / Cancel; a browser unload is warned; F5 and Ctrl+R are off in the exe", async () => {
+    const ctx2 = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p2 = await ctx2.newPage();
+    await p2.addInitScript(() => {                                   // a stand-in for the window API of the exe: the close handler is kept, destroy() is counted
+      window.__destroyed = 0;
+      window.__TAURI__ = { window: { getCurrentWindow: () => ({ onCloseRequested: (fn) => { window.__onClose = fn; }, destroy: async () => { window.__destroyed++; } }) } };
+    });
+    const errs2 = [];
+    p2.on('pageerror', (e) => errs2.push(String(e)));
+    await p2.goto(URL_);
+    const close = () => p2.evaluate(() => { window.__prevented = false; return window.__onClose({ preventDefault() { window.__prevented = true; } }).then(() => window.__prevented); });
+    const dlg = p2.locator('[data-testid=close-dialog]'), destroyed = () => p2.evaluate(() => window.__destroyed);
+    assert.equal(await close(), true, 'the exe window is always held until the answer is in');
+    assert.equal(await destroyed(), 1, 'nothing unsaved: it closes without a question');
+    assert.equal(await p2.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), false, 'a browser unload is not warned when nothing is unsaved');
+    await p2.locator('[data-testid=layer-add]').click();             // a change: the tab gets its dot
+    assert.equal(await p2.locator('.tabs .dtab.on .dot').count(), 1);
+    assert.equal(await p2.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), true, 'a browser unload is warned');
+    // Cancel keeps the window
+    const pending = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+    await dlg.waitFor();
+    assert.equal(await p2.locator('[data-testid=close-dialog] strong').textContent(), 'Save changes to "Drawing 1"?');
+    for (const th of ['light', 'dark']) { await p2.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await p2.screenshot({ path: `shots/s16-closeprompt-${th}.png` }); }
+    await p2.locator('[data-testid=close-cancel]').click(); await pending;
+    assert.equal(await destroyed(), 1, 'Cancel: still open'); assert.equal(await p2.locator('.tabs .dtab[data-kind]').count(), 1);
+    // Esc is Cancel too
+    const pending2 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+    await dlg.waitFor(); await p2.keyboard.press('Escape'); await pending2;
+    assert.equal(await destroyed(), 1);
+    // F5 / Ctrl+R in the exe
+    for (const [key, ctrl] of [['F5', false], ['r', true], ['R', true]]) {
+      assert.equal(await p2.evaluate(([k, c]) => { const e = new KeyboardEvent('keydown', { key: k, ctrlKey: c, cancelable: true, bubbles: true }); document.dispatchEvent(e); return e.defaultPrevented; }, [key, ctrl]), true, key);
+    }
+    assert.match(await p2.locator('[data-testid=cmd-prompt]').textContent(), /Reload is off/);
+    // Don't save closes at once
+    const pending3 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+    await dlg.waitFor(); await p2.locator('[data-testid=close-discard]').click(); await pending3;
+    assert.equal(await destroyed(), 2);
+    // Save goes through the usual Save (here a download), and then the window closes
+    const [dl] = await Promise.all([p2.waitForEvent('download'), (async () => {
+      const pending4 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
+      await dlg.waitFor(); await p2.locator('[data-testid=close-save]').click(); await pending4;
+    })()]);
+    assert.match(dl.suggestedFilename(), /.dxf$/);
+    assert.equal(await destroyed(), 3);
+    assert.equal(await p2.locator('.tabs .dtab.on .dot').count(), 0, 'saved: no dot');
+    assert.equal(await p2.evaluate(() => { const e = new KeyboardEvent('keydown', { key: 'F5', cancelable: true, bubbles: true }); document.dispatchEvent(e); return e.defaultPrevented; }), false, 'nothing unsaved: F5 is left alone');
+    assert.deepEqual(errs2, []);
+    await ctx2.close();
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

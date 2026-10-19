@@ -568,3 +568,19 @@ test('joinGaps: lines, polylines and a polyline', () => {
   assert.equal(E.findGaps(ed2, 0.01).length, 0);
   assert.equal(E.chainAt(ed2, 0, 1e-9).length, 3);
 });
+
+test('newLayerName: the first free Layer1, Layer2… (any case)', () => {
+  assert.equal(E.newLayerName(['0']), 'Layer1');
+  assert.equal(E.newLayerName(['0', 'Layer1', 'layer2', 'Layer4']), 'Layer3');
+  assert.equal(E.newLayerName(new Set(['LAYER1'])), 'Layer2');
+});
+
+test('layerNameProblem: empty, bad characters, too long, taken', () => {
+  const names = ['0', 'Cut', 'Layer1'];
+  assert.equal(E.layerNameProblem('Marks', names), '');
+  assert.match(E.layerNameProblem('  ', names), /needs a name/);
+  assert.match(E.layerNameProblem('a/b', names), /can't hold/);
+  assert.match(E.layerNameProblem('x'.repeat(256), names), /255/);
+  assert.match(E.layerNameProblem('cut', names), /already there/);
+  assert.equal(E.layerNameProblem('CUT', names, 'Cut'), '', 'its own name in another case is fine');
+});
