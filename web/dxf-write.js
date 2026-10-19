@@ -112,7 +112,7 @@ export function addBlock(doc, name, entities, base = [0, 0]) {
   return doc.blocks[name];
 }
 /** Adds entities to model space (or the sheet with ps: true on each). */
-export function addEntities(doc, ...ents) { doc.entities.push(...ents.flat()); return doc; }
+export function addEntities(doc, ...ents) { doc.entities = doc.entities.concat(...ents); return doc; }   // not push(...list): a big PDF gives 100 000+ pieces, too many arguments
 
 // ---------------------------------------------------------------- what can't be carried
 
