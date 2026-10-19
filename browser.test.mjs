@@ -3890,6 +3890,51 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('Layers + Add: Layer1, Layer2… become the current layer with the name ready to type; rename and colour; a bad name says why; one undo step; saved in the DXF', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    const add = t('layer-add'), name = t('layer-name'), rows = page.locator('.layer');
+    assert.equal(await add.isDisabled(), false);
+    assert.equal(await add.getAttribute('aria-disabled'), null, '+ Add is built, not greyed');
+    const before = await rows.count();
+    await add.click();
+    assert.equal(await rows.count(), before + 1);
+    assert.equal(await name.inputValue(), 'Layer1');
+    assert.equal(await name.evaluate((el) => document.activeElement === el), true, 'the name is ready to type over');
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').count(), 1, 'the new layer is the current one');
+    await name.press('Enter');
+    await page.keyboard.press('Control+z');                                          // one undo step takes it away
+    await page.waitForFunction(() => !document.querySelector('[data-testid=layer-name]'));
+    assert.equal(await page.locator('.layer.current .nm').textContent(), '0');
+    assert.ok((await histLabels()).includes('Add layer Layer1'));
+    await page.keyboard.press('Control+y');
+    assert.equal(await name.inputValue(), 'Layer1', 'redo brings it back');
+    await add.click();
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Layer2', 'the next free name');
+    // a bad name is refused with a reason and the old name comes back, marked
+    const l2 = page.locator('.layer.current [data-testid=layer-name]');
+    await l2.fill('Plate'); await l2.press('Enter');
+    assert.match(await prompt(), /The layer "Plate" is already there/);
+    assert.equal(await l2.inputValue(), 'Layer2'); assert.equal(await l2.getAttribute('aria-invalid'), 'true');
+    await l2.fill('a/b'); await l2.press('Enter');
+    assert.match(await prompt(), /can't hold/);
+    await l2.fill('Cut line'); await l2.press('Enter');
+    assert.match(await prompt(), /Layer renamed to Cut line/);
+    await t('layer-colour').last().fill('#ff0000');
+    assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Cut line');
+    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `shots/s15-addlayer-${th}.png` }); }
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+    await page.locator('[data-tool=circle]').click();
+    assert.match(await t('cmd-hist').textContent(), /layer Cut line/);
+    await typeCmd('700,150'); await typeCmd('15');
+    const doc = await savedDoc();
+    assert.equal(doc.entities.at(-1).layer, 'Cut line');
+    assert.equal(doc.layers['Cut line'].tc, 0xff0000);
+    assert.ok(doc.layers.Layer1, 'the empty layer is in the file too');
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('drawing tools: screenshots mid-draw, light and dark (the live preview and its readout)', async () => {
     await closeTabs(/./);
     await page.locator('[data-tool=rrect]').click();

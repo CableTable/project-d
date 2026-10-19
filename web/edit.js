@@ -872,3 +872,24 @@ export function addDimension(raw, dim) {
   if (!raw.layers[DIM_LAYER]) addLayer(raw, DIM_LAYER, { aci: 5, tc: 0x0f766e });
   return { entities: [...raw.entities, dim.insert], blocks: { ...raw.blocks, [dim.name]: dim.block } };
 }
+
+// ---- layers added by hand (Layers panel, + Add)
+
+/** The first of Layer1, Layer2… not in names (DXF layer names are not case-sensitive). */
+export function newLayerName(names) {
+  const used = new Set([...names].map((n) => String(n).toLowerCase()));
+  let i = 1;
+  while (used.has('layer' + i)) i++;
+  return 'Layer' + i;
+}
+
+/** '' when name can be a layer's name, else why not: empty, a character a DXF layer name can't hold, too long, or taken (other than by `own`). */
+export function layerNameProblem(name, names, own = null) {
+  const n = String(name).trim();
+  if (!n) return 'A layer needs a name';
+  if (n.length > 255) return 'A layer name can be 255 characters at most';
+  if (/[<>/\\":;?*|,=`]/.test(n)) return 'A layer name can\'t hold < > / \ " : ; ? * | , = or `';
+  const low = n.toLowerCase();
+  if ([...names].some((x) => x !== own && String(x).toLowerCase() === low)) return `The layer "${n}" is already there`;
+  return '';
+}

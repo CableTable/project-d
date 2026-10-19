@@ -844,7 +844,7 @@ function buildPanel() {
     buildLibrary(),
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        h('button', { class: 'tog off', type: 'button', 'aria-label': 'Add layer', title: 'Not built yet', 'aria-disabled': 'true', onclick: () => note('Add layer: not built yet') }, '+ Add')),
+        h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
       ui.layerRows));
 }
 
@@ -2280,8 +2280,52 @@ function layerRows() {
     : [];
   const bgRow = d && d.bg ? [{ id: 'bg', name: 'Background', color: '#9aa5b1', count: 1, eye: EYE, live: true, bg: true }] : [];
   const curName = d && d.raw ? curLayerName(d) : null;                // the layer new shapes go on; "0" has no row until something is on it
-  const virt = curName && !file.some((l) => l.name === curName) ? [{ name: curName, color: 'var(--partline)', count: 0, eye: EYE, live: false }] : [];
+  const added = d && d.raw && d.addedLayers ? [...d.addedLayers].filter((n) => d.raw.layers[n] && !file.some((l) => l.name === n)) : [];      // layers added by hand, still empty
+  const shown = curName && !file.some((l) => l.name === curName) && !added.includes(curName) ? curName : added.length && !file.some((l) => l.name === '0') ? '0' : null;      // "0" stays listed once layers were added, so it can be made current again
+  const virt = shown ? [{ name: shown, color: 'var(--partline)', count: 0, eye: EYE, live: false, zero: shown === '0' }] : [];
+  virt.push(...added.map((n) => ({ name: n, css: layerCss(d.raw.layers[n]), color: ink(layerCss(d.raw.layers[n]), isDark()), count: 0, eye: EYE, live: false, added: true })));
   return [...file.map((l) => ({ ...l, eye: EYE, live: true, chip: d.newLayer === l.name ? 'new' : null })), ...virt, ...bgRow].map((l) => ({ ...l, cur: curName != null && l.name === curName && !l.bg }));
+}
+
+const layerCss = (def) => (def && def.tc != null ? '#' + (def.tc & 0xffffff).toString(16).padStart(6, '0') : ACI[def && def.aci] || '#ffffff');
+const allLayerNames = (d) => [...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)];
+/** + Add: a new layer with the first free name (Layer1, Layer2…); it becomes the current layer, and its name is ready to type over. One undo step. */
+function addLayerNow() {
+  const d = drawTarget();
+  if (!d) { note('Add layer: open a drawing tab first (a layout has its own layers)'); return; }
+  const name = Ed.newLayerName(allLayerNames(d));
+  d.hist.push(snapshotOf(d), 'Add layer ' + name);
+  d.raw.layers = { ...d.raw.layers };
+  addLayer(d.raw, name, { aci: 7 });
+  (d.addedLayers || (d.addedLayers = new Set())).add(name);
+  d.curLayer = name; d.dirty = true;
+  renderLayers(); renderTabs(); renderCommand(); renderEdit();
+  const inp = ui.layerRows.querySelector('[data-testid=layer-name]');
+  if (inp) { inp.focus(); inp.select(); }
+  note(`Added ${name}: it is the current layer. Type a name and pick a colour, or press Enter to keep them. Ctrl+Z takes it away`);
+}
+/** The name of a layer added by hand (empty, so nothing refers to it): typed over in the row; a refused name says why and goes back. */
+function addedName(d, l) {
+  const input = h('input', { class: 'fld lname', type: 'text', value: l.name, 'aria-label': 'Layer name', 'data-testid': 'layer-name', spellcheck: 'false', maxlength: 255 });
+  input.addEventListener('keydown', (e) => { e.stopPropagation(); if (e.key === 'Enter') input.blur(); else if (e.key === 'Escape') { input.value = l.name; input.blur(); } });
+  input.addEventListener('change', () => {
+    const v = input.value.trim(), why = Ed.layerNameProblem(v, allLayerNames(d), l.name);
+    if (why) { input.value = l.name; flagInvalid(input, true); note(why); return; }
+    if (v === l.name) return;
+    d.raw.layers = Object.fromEntries(Object.entries(d.raw.layers).map(([k, def]) => [k === l.name ? v : k, def]));
+    d.addedLayers.delete(l.name); d.addedLayers.add(v);
+    if (d.curLayer === l.name) d.curLayer = v;
+    d.dirty = true; renderLayers(); renderTabs(); renderCommand(); renderEdit(); note(`Layer renamed to ${v}`);
+  });
+  clearInvalid(input);
+  return input;
+}
+/** The colour of a layer added by hand: a colour box in place of the swatch. */
+function addedSwatch(d, l) {
+  const input = h('input', { class: 'swatch pick', type: 'color', value: l.css, 'aria-label': 'Layer colour', 'data-testid': 'layer-colour', title: 'Layer colour' });
+  input.addEventListener('input', () => { d.raw.layers = { ...d.raw.layers, [l.name]: { ...d.raw.layers[l.name], tc: parseInt(input.value.slice(1), 16) } }; d.dirty = true; });
+  input.addEventListener('change', () => { renderTabs(); renderLayers(); });
+  return input;
 }
 
 function renderLayers() {
@@ -2298,10 +2342,11 @@ function renderLayers() {
         renderLayers(); applyHidden(); renderStatus();
       });
     }
-    const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': isFile || l.cur ? l.name : null, title: isFile || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
-      h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
-      h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
-    if (isFile) row.addEventListener('click', (e) => { if (e.target.closest('.vis')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
+    const pick = isFile || l.added || l.zero;
+    const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': pick || l.cur ? l.name : null, title: pick || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
+      l.added ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
+      l.added ? addedName(d, l) : h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
+    if (pick) row.addEventListener('click', (e) => { if (e.target.closest('.vis') || e.target.closest('input')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
     return row;
   }));
 }
@@ -3098,7 +3143,7 @@ const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl
 const measurable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
+const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off); return d.ed; }
 /** Builds the index once the page has painted, so the first click is quick. */
@@ -3158,6 +3203,7 @@ function hideRubber() { if (ui.rubber) ui.rubber.hidden = true; }
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. */
 function commit(d, next, label) { d.hist.push(snapshotOf(d), label); d.newLayer = null; restore(d, next); }
 function restore(d, st) {
+  if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if ('bl' in st) d.balloons = st.bl;                           // a drawing edit does not carry balloons, an undo step does
   if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     if (st.mm != null && d.bg) d.bg.mm = st.mm;
