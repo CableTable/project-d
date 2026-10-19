@@ -5745,6 +5745,27 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc with nothing selected ends Mirror');
   });
 
+  await step('Trim: Ctrl+Z after trimming a cutting edge gives the edge back, so the same edge set still cuts', async () => {
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(80, 10, 80, 50), dxfLine(20, 30, 220, 30));
+    await openGrips(writeDxf(doc0), 'trim3.dxf');
+    await page.locator('[data-tool=trim]').click();
+    await click(80, 15); await click(200, 30);
+    assert.match(await histLine(), /Cutting edges: 2/);
+    await page.keyboard.press('Enter');
+    await click(80, 45);                                       // the vertical (an edge) is cut by the horizontal (an edge)
+    assert.equal((await histLabels()).at(-1), 'Trim');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2);
+    await click(150, 30);                                      // trim the horizontal by the vertical: needs the vertical back as an edge
+    assert.equal((await histLabels()).at(-1), 'Trim', 'the same edge set still cuts: ' + await histLine());
+    const doc = await savedDoc();
+    const h = doc.entities.find((e) => e.type === 'LINE' && fieldOf(e, 20) === 30 && fieldOf(e, 21) === 30);
+    assert.deepEqual([fieldOf(h, 10), fieldOf(h, 11)].sort((a, b) => a - b), [20, 80]);
+    await page.keyboard.press('Escape');
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

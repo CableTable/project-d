@@ -4032,7 +4032,7 @@ function drawKey(e, k) {
 const MOD_KINDS = ['offset', 'trim', 'mirror'], OFFSET_SAVED = 'pd-offset';
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
 /** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => ({ kind, stage: kind === 'offset' ? 'obj' : kind === 'trim' ? 'edges' : 'pick', ent: null, edges: [], all: false, objs: [], p1: null, p2: null, p: null, cur: null });
+const newMod = (kind) => ({ kind, stage: kind === 'offset' ? 'obj' : kind === 'trim' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: false, objs: [], p1: null, p2: null, p: null, cur: null });
 const modLive = () => !!(state.mod && state.modDoc === curDoc() && editable());
 const offDistU = (d) => state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
@@ -4040,7 +4040,9 @@ const mmText = (v) => String(+Number(v).toFixed(3));
 function modSync(d) {
   const m = state.mod, have = new Set(d.raw.entities);
   if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side') m.stage = 'obj'; }
-  m.edges = m.edges.filter((e) => have.has(e));
+  // an undone Trim brings the original entity back, not the pieces it made: an edge that is gone is swapped for the object it was cut from
+  const back = (e) => { for (let k = 0; e && !have.has(e) && k < 1000; k++) e = m.was.get(e); return e; };
+  m.edges = [...new Set(m.edges.map(back).filter(Boolean))];
 }
 const modEntAt = (d, p) => { const i = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return i >= 0 ? d.raw.entities[i] : null; };
 /** The cutting edges: the ones picked, or (Enter with none picked) every line, arc, circle and polyline showing. */
@@ -4155,8 +4157,9 @@ function trimDo(d, p, shift) {
   const r = MD.trimEntity(ent, trimEdges(d, m), p);
   if (r.error) { note(r.error); return; }
   view.fitted = false;
+  // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
+  if (m.edges.includes(ent)) { for (const p of r.ents) m.was.set(p, ent); m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e])); }
   commit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim');
-  if (m.edges.includes(ent)) m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e]));         // the pieces of a cutting edge are still cutting edges
   note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + (shift ? ' (Shift, extend, is not built: this trims.)' : '') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
 }
 /** Mirror: the second point is picked, now Yes (the sources go) or No (they stay). One undo step. */
