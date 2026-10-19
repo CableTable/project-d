@@ -323,7 +323,7 @@ select.fld { font-family: var(--sans); }
 /* the count line and Apply stay in view at the bottom of the layout panel */
 .panel section.stepbox { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; }
 .stepfoot.idle { position: static; }
-.stepfoot.idle .readout, .stepfoot.idle .btnrow { display: none; }
+.stepfoot.idle .readout, .stepfoot.idle .btnrow [data-testid=apply] { display: none; }
 .stepfoot { position: sticky; bottom: 0; z-index: 2; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; margin-top: -10px; padding: 0 10px 10px; border: 1px solid var(--accent); border-top: 0; border-radius: 0 0 var(--r) var(--r); background: var(--sel); }
 .stepfoot[hidden] { display: none; }
 .dim-bg.tag { stroke: var(--dim); stroke-width: .8; }
@@ -611,3 +611,4 @@ select.fld { font-family: var(--sans); }
 .legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--muted); }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; opacity: .7; }
 .nestdlg .pd-footer .mono { white-space: nowrap; }
+.nestdlg .mode { align-self: flex-start; }

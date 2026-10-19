@@ -25,6 +25,8 @@ import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
 import * as RC from './recovery.js';
 import { openExport } from './export.js';
+import { openNest } from './nestdlg.js';
+import { outlineOf } from './nestshape.js';
 import { partSource } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 
@@ -79,7 +81,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', title: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', title: 'Measure (M)', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'offset', 'trim', 'mirror', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'offset', 'trim', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['aligned', 'Aligned', 'D', '<path d="M3 15L13 5M3 15l3-1M3 15l1-3M13 5l-3 1M13 5l1 3"/>', 'DIMALIGNED'],
@@ -631,7 +633,7 @@ function buildRail() {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : t.title, 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
-    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (!b.dataset.held) setTool(t.id); delete b.dataset.held; });
+    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (!b.dataset.held) setTool(t.id); delete b.dataset.held; });
     ui.toolBtns[t.id] = b;
     if (t.id === 'dimension') dimButton(b);
     return b;
@@ -824,7 +826,7 @@ function buildPanel() {
       ui.fitNote, ui.stepHint,
       h('div', { class: 'btnrow' },
         ui.applyBtn = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'apply', onclick: apply }, 'Apply'),
-        h('button', { class: 'btn off', type: 'button', 'aria-disabled': 'true', title: 'Not built yet', 'data-testid': 'nest', onclick: () => note('Auto-nest: not built yet') }, 'Auto-nest…'))),
+        h('button', { class: 'btn', type: 'button', title: 'Pack mixed parts by their real outline', 'data-testid': 'nest', onclick: () => openNestDialog() }, 'Auto-nest…'))),
     ui.gapSec = h('section', { 'data-testid': 'gap-panel' },
       h('h2', { class: 'sec' }, 'Extra gaps'),
       h('span', { class: 'lbl' }, 'Click a gap between two rows or columns.'),
@@ -1006,6 +1008,59 @@ function apply() {
   lay.s.gridPart = null;
   touch(); update();
   note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. Pick a part in Step and repeat to make another grid`);
+}
+
+// ---- Auto-nest (nestdlg.js is the dialog, nest.js the packer): the preview is only applied by Apply, as one undo step ----
+const nestThumbs = new Map();
+/** Opens the Auto-nest dialog for the open layout. `counts` ({ partId: n }) sets how many of each (the left-overs of the sheet before); `autoRun` runs it at once. */
+function openNestDialog(counts = null, autoRun = false) {
+  const d = curDoc(), lay = d && d.lay;
+  if (!lay) { note('Auto-nest is on a layout tab: Add to layout, or New layout'); return; }
+  const s = lay.s, byId = new Map();
+  for (const p of Object.values(lay.parts)) byId.set(p.id, { part: p, thumb: (lib.items.find((r) => r.id === p.id) || {}).thumb || '', inLayout: true });
+  for (const rec of lib.items) if (!byId.has(rec.id)) { const part = libPart(rec); if (part) byId.set(rec.id, { part, thumb: rec.thumb || '', inLayout: false }); }
+  const outlines = new Map(), outlineFor = (part) => { if (!outlines.has(part.id)) outlines.set(part.id, outlineOf(part).poly); return outlines.get(part.id); };
+  const parts = [...byId.values()].map(({ part, thumb, inLayout }) => {
+    if (!thumb) { if (!nestThumbs.has(part.id)) nestThumbs.set(part.id, thumbFor(part)); thumb = nestThumbs.get(part.id); }
+    return { id: part.id, name: part.name, w: part.w, h: part.h, thumb, count: counts ? (counts[part.id] || 0) : (inLayout ? 1 : 0), outline: () => outlineFor(part) };
+  });
+  const fixed = LD.placedAll(lay, LD.gridOf(lay)).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
+  const area = { x: s.gripLeft, y: s.gripBottom, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom };
+  if (!(area.w > 0 && area.h > 0)) { note('Auto-nest: the grippers leave no room on the sheet'); return; }
+  openNest({
+    layName: d.name, sheetW: s.sheetW, sheetH: s.sheetH, area, grips: { top: s.gripTop, right: s.gripRight, bottom: s.gripBottom, left: s.gripLeft },
+    gap: Math.max(s.gapX, s.gapY), parts, fixed, autoRun,
+    onApply: (res) => applyNest(d, res),
+    onNextSheet: (res, left) => nextSheet(d, res, left),
+  });
+}
+/** The packed parts become placed parts of the layout: one undo step, "Auto-nest"; the new parts are selected. Returns how many. */
+function applyNest(d, res) {
+  const lay = d.lay, r6 = (v) => Math.round(v * 1e6) / 1e6;
+  if (!res || !res.placed) return 0;
+  pushLay(d, null, '', 'Auto-nest');
+  const first = lay.placed.length;
+  for (const pl of res.placements) {
+    if (!lay.parts[pl.partId]) { const rec = lib.items.find((r) => r.id === pl.partId), part = rec && libPart(rec); if (!part) continue; lay.parts[pl.partId] = { ...part }; }
+    lay.placed.push(placement1(pl.partId, r6(pl.x), r6(pl.y), pl.rot));
+  }
+  const n = lay.placed.length - first;
+  selLooseMany = Array.from({ length: n }, (_, k) => first + k);
+  touch(); update();
+  note(`Auto-nest: ${n} part${n === 1 ? '' : 's'} placed, ${Math.round(res.usedPct)} % of the usable sheet used. Ctrl+Z takes them off again`);
+  return n;
+}
+/** Applies the nest, then a new layout tab (same sheet, grippers and gap) opens the dialog with the left-overs ready to run. */
+function nextSheet(d, res, left) {
+  const lay = d.lay;
+  applyNest(d, res);
+  const t = freshLayout(baseName(d.name) + ' next sheet');
+  t.lay.s = { ...lay.s, gridPart: null, guides: (lay.s.guides || []).map((g) => ({ ...g })) };
+  for (const id of Object.keys(left)) if (left[id] > 0 && lay.parts[id]) t.lay.parts[id] = { ...lay.parts[id] };
+  state.panel = 'main';
+  addTab(t, false);
+  note('Next sheet: the left-overs are ready to nest on a new layout');
+  openNestDialog(left, true);
 }
 
 /** A part (and every copy of it) leaves the layout. */
@@ -2296,7 +2351,7 @@ function buildCommand() {
       state.rotate = order[(order.indexOf(state.rotate) + 1) % 3];
       ui.rotate.value = state.rotate;
       touch(); update();
-    } else if (c === 'nest' || c === 'n') note('Auto-nest: not built yet');
+    } else if (c === 'nest' || c === 'n') openNestDialog();
     else note('Unknown command: ' + c);
   });
   return h('div', { class: 'cmdbar' }, ui.hist, h('label', null, ui.prompt, ui.keepMeas, ui.modAsk, ui.cmd));

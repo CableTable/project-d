@@ -335,13 +335,15 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
   });
 
-  await step('tools: an unbuilt tool is greyed with a "Not built yet" tooltip and does not become the tool; Select/Step work', async () => {
+  await step('tools: every rail tool is built (none greyed); Auto-nest opens its dialog and does not become the tool; Select/Step work', async () => {
     const line = page.locator('[data-tool=nest]');
-    assert.match(await line.getAttribute('title'), /Not built yet/);
-    assert.equal(await line.getAttribute('aria-disabled'), 'true');
-    assert.ok(Number(await line.evaluate((e) => getComputedStyle(e).opacity)) < 0.7, 'greyed');
-    await line.click({ force: true });
-    assert.match(await t('cmd-prompt').textContent(), /Auto-nest: not built yet/);
+    assert.equal(await line.getAttribute('title'), 'Auto-nest mixed parts');
+    assert.equal(await line.getAttribute('aria-disabled'), null);
+    assert.equal(await page.locator('nav.rail button.off').count(), 0, 'nothing is greyed');
+    await line.click();
+    assert.equal(await page.locator('[data-testid=nest-dialog]').count(), 1, 'it opens the Auto-nest dialog');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('[data-testid=nest-dialog]').count(), 0);
     assert.ok(!(await line.getAttribute('class')).split(' ').includes('on'), 'it does not become the tool');
     for (const id of ['select', 'dimension', 'measure', 'step', 'pan']) assert.equal(await page.locator('[data-tool=' + id + ']').getAttribute('aria-disabled'), null, id + ' is built');
     await page.locator('[data-tool=select]').click();
@@ -1858,10 +1860,6 @@ try {
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
     const titles = await page.locator('nav.rail button').evaluateAll((bs) => bs.map((b) => b.getAttribute('title')));
     assert.ok(titles.every((x) => !/\((NE|NEST)\)/.test(x)), 'no letter that does nothing: ' + titles.join());
-    for (const id of ['nest']) {
-      const b = page.locator('[data-tool=' + id + ']');
-      assert.match(await b.getAttribute('title'), /Not built yet/, id); assert.equal(await b.getAttribute('aria-disabled'), 'true', id);
-    }
     await page.keyboard.press('m'); assert.ok(await on('measure'));
     await page.keyboard.press('Escape'); assert.ok(await on('select') && !(await on('measure')), 'Esc with nothing in progress: back to Select');
     await page.keyboard.press('d'); assert.ok(await on('dimension'));
@@ -5548,12 +5546,12 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     return writeDxf(doc);
   };
   const layerOf = (e) => e.r.v[e.r.c.indexOf(8)];
-  await step('Offset, Trim and Mirror: built (their buttons are not greyed, titles with keys); Auto-nest stays greyed; none works on a layout tab', async () => {
+  await step('Offset, Trim and Mirror: built (their buttons are not greyed, titles with keys); Auto-nest is built too; none works on a layout tab', async () => {
     await openGrips(modDoc(), 'mod.dxf');
     const titles = {};
     for (const id of ['offset', 'trim', 'mirror']) { const b = page.locator('[data-tool=' + id + ']'); assert.equal(await b.getAttribute('aria-disabled'), null, id + ' is built'); titles[id] = await b.getAttribute('title'); }
     assert.deepEqual(titles, { offset: 'Offset (O)', trim: 'Trim (TR)', mirror: 'Mirror (MI)' });
-    assert.equal(await page.locator('[data-tool=nest]').getAttribute('aria-disabled'), 'true');
+    assert.equal(await page.locator('[data-tool=nest]').getAttribute('aria-disabled'), null, 'Auto-nest is built');
     await page.locator('nav.rail').screenshot({ path: `${shotDir}/s12-toolbar-light.png` });
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(300);
     await page.locator('nav.rail').screenshot({ path: `${shotDir}/s12-toolbar-dark.png` });
@@ -5768,6 +5766,132 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     const h = doc.entities.find((e) => e.type === 'LINE' && fieldOf(e, 20) === 30 && fieldOf(e, 21) === 30);
     assert.deepEqual([fieldOf(h, 10), fieldOf(h, 11)].sort((a, b) => a - b), [20, 80]);
     await page.keyboard.press('Escape');
+  });
+
+  // ---- Next sessions 6: Auto-nest (nest.js packs, nestdlg.js is the dialog, option B of mock-up R10) ----
+  const nestPieces = () => page.locator('[data-testid=nest-svg] [data-testid=nest-piece]').count();
+  const nestShot = async (name) => {                     // the dialog covers the menus, so the theme is switched on the page
+    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/r10-${name}-${th}.png` }); }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+  };
+  const nestDone = () => page.waitForFunction(() => document.querySelector('[data-testid=nest-dialog]').dataset.state === 'done', null, { timeout: 30000 });
+  const nestRun = async () => { await t('nest-run').or(t('nest-again')).first().click(); await nestDone(); };
+  const nestSetCount = async (i, n) => { await t('nest-count-' + i).fill(String(n)); await t('nest-count-' + i).press('Tab'); };
+  const sheetParts = () => page.locator('.part-hit').count();
+  const nestLayout = async () => {                       // a fresh layout with Plate A and Dial in it, no grid
+    await closeTabs(/./);
+    await t('new-layout').click();
+    await t('panel-library').click();
+    await libCard('Plate A').locator('[data-testid=lib-add]').click();
+    await libCard('Dial').locator('[data-testid=lib-add]').click();
+    await t('panel-main').click();
+    await t('part').selectOption({ index: 0 });
+  };
+  await step('Auto-nest: the button and the n command open the dialog on a layout tab only; the dialog lists the parts with counts, the rotations (default Every 90°), the gap, and nothing is placed until Apply', async () => {
+    await closeTabs(/./);
+    await openGrips(modDoc(), 'mod.dxf');
+    await page.locator('[data-tool=nest]').click();
+    assert.match(await prompt(), /^Auto-nest is on a layout tab/);
+    assert.equal(await page.locator('[data-testid=nest-dialog]').count(), 0);
+    await nestLayout();
+    const before = await sheetParts();
+    await t('nest').click();
+    const dlg = page.locator('[data-testid=nest-dialog]');
+    assert.equal(await dlg.getAttribute('role'), 'dialog'); assert.equal(await dlg.getAttribute('aria-label'), 'Auto-nest'); assert.equal(await dlg.getAttribute('data-state'), 'idle');
+    assert.match(await t('nest-sub').textContent(), /^Layout \d+ · sheet 1000 × 700 mm · gripper 30 mm · gap 5 mm$/);
+    assert.equal(await t('nest-gap').textContent(), '5 mm');
+    assert.deepEqual(await page.locator('[data-testid^=nest-rot-]').allTextContents(), ['0° only', '0° + 180°', 'Every 90°']);
+    assert.equal(await t('nest-rot-all').getAttribute('aria-pressed'), 'true');
+    assert.match(await t('nest-row-0').textContent(), /Plate A/);
+    assert.equal(await t('nest-count-0').inputValue(), '1'); assert.equal(await t('nest-count-1').inputValue(), '1');
+    assert.match(await t('nest-totals').textContent(), /^2 pieces from 2 parts$/);
+    assert.equal(await t('nest-prelabel').textContent(), 'Preview · not applied yet');
+    assert.equal(await nestPieces(), 0);
+    await t('nest-plus-0').click(); await t('nest-plus-0').click(); await t('nest-minus-0').click();
+    assert.equal(await t('nest-count-0').inputValue(), '2');
+    assert.equal(await sheetParts(), before, 'the dialog does not touch the sheet');
+    await page.keyboard.press('Escape');
+    assert.equal(await page.locator('[data-testid=nest-dialog]').count(), 0, 'Esc closes it');
+    await cmdLine().fill('nest'); await page.keyboard.press('Enter');
+    assert.equal(await page.locator('[data-testid=nest-dialog]').count(), 1, 'the nest command opens it');
+    await t('nest-cancel').click();
+  });
+
+  await step('Auto-nest: Run packs a preview (not on the sheet), Cancel leaves the sheet as it was, Apply puts the parts on as one undo step, Ctrl+Z takes them off', async () => {
+    const before = await sheetParts();
+    await t('nest').click();
+    await nestSetCount(0, 6); await nestSetCount(1, 4);
+    assert.match(await t('nest-totals').textContent(), /^10 pieces from 2 parts$/);
+    await nestRun();
+    assert.equal(await t('nest-placed').textContent(), '10 of 10 placed');
+    assert.match(await t('nest-pct').textContent(), /^\d+ % of the sheet used$/);
+    assert.match(await t('nest-left').textContent(), /Everything fits on this sheet/);
+    assert.equal(await t('nest-next').count(), 0, 'no left-overs, no next sheet');
+    assert.equal(await nestPieces(), 10);
+    assert.equal(await t('nest-prelabel').textContent(), 'Preview · not applied yet');
+    assert.equal(await sheetParts(), before, 'the preview is not on the sheet');
+    await nestShot('nest');
+    await t('nest-cancel').click();
+    assert.equal(await sheetParts(), before, 'Cancel leaves the sheet as it was');
+    await t('nest').click();
+    await nestSetCount(0, 6); await nestSetCount(1, 4);
+    await nestRun();
+    await t('nest-again').click();                                  // Run again: the sheet is still untouched
+    await nestDone();
+    assert.equal(await sheetParts(), before);
+    await t('nest-apply').click();
+    assert.equal(await page.locator('[data-testid=nest-dialog]').count(), 0);
+    assert.equal(await sheetParts(), before + 10);
+    assert.match(await prompt(), /Auto-nest: 10 parts placed, \d+ % of the usable sheet used\. Ctrl\+Z takes them off again/);
+    await page.keyboard.press('Control+z');
+    assert.equal(await sheetParts(), before, 'one undo step takes all ten off');
+    await page.keyboard.press('Control+Shift+z');
+    assert.equal(await sheetParts(), before + 10, 'redo puts them back');
+    await page.keyboard.press('Control+z');
+  });
+
+  await step('Auto-nest: too many for the sheet → left-overs listed ("N × name"); a rotations setting changes the run; the next sheet gets a layout tab with them', async () => {
+    const tabsBefore = (await tabs()).length;
+    await t('nest').click();
+    await nestSetCount(0, 200); await nestSetCount(1, 0);
+    await nestRun();
+    const placed = Number((await t('nest-placed').textContent()).match(/^(\d+) of 200 placed$/)[1]);
+    assert.ok(placed > 20 && placed < 200, 'placed ' + placed);
+    assert.equal(await t('nest-left').textContent(), `Left over (${200 - placed}): ${200 - placed} × Plate A. They do not fit this sheet.`);
+    assert.equal(await nestPieces(), placed);
+    await t('nest-rot-none').click();
+    await t('nest-again').click(); await nestDone();
+    assert.ok(Number((await t('nest-placed').textContent()).match(/^(\d+) of 200/)[1]) > 20, 'rotations: 0° only still packs');
+    await t('nest-rot-all').click();
+    await t('nest-again').click(); await nestDone();
+    await nestShot('nest-leftovers');
+    await t('nest-next').click();
+    await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab:not([aria-label])').length > n, tabsBefore);
+    assert.equal((await tabs()).length, tabsBefore + 1, 'a new layout tab');
+    assert.equal(await page.locator('[data-testid=nest-dialog]').count(), 1, 'the dialog opens on it');
+    assert.match(await t('nest-totals').textContent(), /^\d+ pieces from 1 part$/);
+    await nestDone();
+    assert.match(await t('nest-placed').textContent(), /of \d+ placed$/);
+    await t('nest-cancel').click();
+  });
+
+  await step('Auto-nest: Stop keeps what was placed so far; a run of 50 parts stays well under 10 s', async () => {
+    await nestLayout();
+    await t('nest').click();
+    await nestSetCount(0, 30); await nestSetCount(1, 20);
+    const t0 = Date.now();
+    await t('nest-run').click(); await nestDone();
+    assert.ok(Date.now() - t0 < 10000, 'took ' + (Date.now() - t0) + ' ms');
+    await nestSetCount(0, 1000);
+    await t('nest-again').click();
+    assert.equal(await page.locator('[data-testid=nest-dialog]').getAttribute('data-state'), 'run');
+    assert.equal(await t('nest-prelabel').textContent(), 'Preview · placing…');
+    assert.equal(await t('nest-apply').isDisabled(), true, 'Apply waits for the run');
+    assert.match(await t('nest-status').textContent(), /^Placing \d+ of 1020…/);
+    assert.equal(await page.locator('[role=progressbar]').count(), 1);
+    await t('nest-stop').click(); await nestDone();
+    assert.match(await t('nest-placed').textContent(), /^\d+ of 1020 placed( \(stopped\))?$/);
+    await t('nest-cancel').click();
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
