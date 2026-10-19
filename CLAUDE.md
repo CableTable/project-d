@@ -26,7 +26,9 @@ the unticked items in his order of value: Build B = placing parts (2, 9–13, 16
 (his rule, 2026-10-17).
 Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare, theme "Modern SaaS", Offset / Trim /
 Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close
-prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). See HISTORY.md.
+prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). Session 8
+(2026-10-19/20, PR #3): Objects tab (39), floating command bar (47), three review rounds and a whole-repo audit
+(recovery, No plot, big PDFs, one storage helper), and the Rook / Pip / Rowan / Scout workflow. See HISTORY.md.
 
 ## The app
 
@@ -92,21 +94,16 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 - Times for Rakshith are in **IST** (UTC+5:30).
 - Say when a Windows menu path is a guess. Keep answers short, because he often reads from his phone.
 - Windows: PowerShell 5.1 has no `<` redirect and blocks `.ps1` shims, so use `npm.cmd` there.
-- **Subagents for everything** (2026-10-17, his rule for Project D; replaces Project R's "only when they pay"):
-  the lead (Opus) is the orchestrator. It plans, writes the briefs, reviews, runs the final checks
-  and merges. **Sonnet builds** the big pieces (a feature, a mock-up, a multi-file change); fixes and
-  edits under ~20 lines the lead does itself, since a cold-start agent costs more limit than the fix
-  (his call, 2026-10-17). **Haiku looks things up** (searches, reading code or logs, screenshot
-  checks), each reporting back in a few lines. Subagents work on the session's branch; when two run
-  at once they get separate files. The lead says in one line which agents a request uses.
-- **The builder is `claude2`** (2026-10-19, his setup): Claude Code on his 2nd account
-  (`C:\Users\raksh\.local\bin\claude2.cmd`), so builds don't spend the main account. The lead starts
-  it from the shell in the background and keeps the `session_id` from the JSON:
-  `claude2 -p "<brief>" --agent builder --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" --allowedTools "Bash(echo:*)" "Bash(tee:*)" "PowerShell(Select-String:*)" "PowerShell(Select-Object:*)" "PowerShell(Write-Output:*)" --output-format json`.
-  Fixes go to the same session (`--resume <session_id>`, same flags); he can watch or take over with
-  `claude2 --resume <session_id>`. Commands are allowed by `.claude/settings.json`; a refused one
-  shows in `permission_denials` and gets added there. The builder never merges or force-pushes.
-  A new folder (a worktree) needs trusting once: he runs `claude2` there and accepts.
+- **How a session runs: WORKFLOW.md** (the roles, the exact commands, the loop, the budgets). In short:
+  **Rook** is the lead (Opus, main account, this session): plans, writes briefs, reads short reports,
+  merges, and fixes review findings under ~20 lines itself. **Pip** is everything on the 2nd account
+  (`claude2`): Pip-build (Sonnet high, a FRESH session per build or fix round, capped with
+  `--max-budget-usd`), Pip-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
+  build gets one), Pip-look (Haiku), Pip-test (the exe on his PC). **Rowan** (Codex, his ChatGPT Go
+  plan) does web research only, never reviews. **Scout** (Antigravity) only quick lookups.
+  Pip never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
+  **Pip's budget:** at most 14% of its weekly limit per day (above only with his OK); after every
+  merge, report Rook / Pip / Rowan usage. A new worktree folder needs trusting once on account 2.
 - **Keep the context lean**: screenshot checks and broad searches go to a helper agent that reports
   back in a few lines. Never print whole logs, diffs or files. Edit CLAUDE.md at most once a
   session, near the end. After a PR merges, suggest `/compact` or a new session.
