@@ -4,37 +4,21 @@
 //
 // A record: { id (the tab's recovery id), name, path, kind ('drawing' | 'layout'), dxf (the text Save would write), t (ms),
 //             saved, fromFile, fromPdf, acceptedLoss (the tab's Save state, so Save works as before after a recovery) }.
-const DB = 'project-d-recovery', STORE = 'copies';
-let opened = null;
+import { idbStore } from './idbstore.js';
 
-function open() {
-  if (!opened) {
-    opened = new Promise((resolve, reject) => {
-      if (typeof indexedDB === 'undefined') { reject(new Error('no IndexedDB here')); return; }
-      const r = indexedDB.open(DB, 1);
-      r.onupgradeneeded = () => { r.result.createObjectStore(STORE, { keyPath: 'id' }); };
-      r.onsuccess = () => resolve(r.result);
-      r.onerror = () => reject(r.error || new Error('could not open the recovery store'));
-      r.onblocked = () => reject(new Error('the recovery store is blocked'));
-    });
-    opened.catch(() => { opened = null; });                  // try again next time
-  }
-  return opened;
-}
-const done = (req) => new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
-const tx = async (mode) => (await open()).transaction(STORE, mode).objectStore(STORE);
+const store = idbStore('project-d-recovery', 'copies', 'the recovery store');
 
 /** Every recovery copy, oldest first. */
 export async function loadCopies() {
-  const all = await done((await tx('readonly')).getAll());
+  const all = await store.all();
   return all.sort((a, b) => (a.t || 0) - (b.t || 0));
 }
-/** Adds or replaces a copy. */
-export async function saveCopy(rec) { await done((await tx('readwrite')).put(rec)); }
+/** Adds or replaces a copy (done when it is really on disk). */
+export const saveCopy = (rec) => store.put(rec);
 /** Removes the copy of one tab. */
-export async function removeCopy(id) { await done((await tx('readwrite')).delete(id)); }
+export const removeCopy = (id) => store.del(id);
 /** Removes every copy. */
-export async function clearCopies() { await done((await tx('readwrite')).clear()); }
+export const clearCopies = () => store.clear();
 
 const two = (n) => String(n).padStart(2, '0');
 /** A time for the prompt: "14:05" today, "17 Oct 14:05" on another day (local time). */
