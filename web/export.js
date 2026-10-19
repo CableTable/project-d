@@ -2,7 +2,7 @@
 // A folder at once. The pages themselves are planned and drawn by pdf-export.js (pure); this file is the UI, saving and
 // printing. Settings are kept for the session (this object), never in a file. Text from a file goes in as text, via h().
 import { h, fill } from './dom.js';
-import { planPdf, DEFAULT_OPTIONS, tileGrid, checkFit, scaleText, PAPERS, PART_BORDER } from './pdf-export.js';
+import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, checkFit, scaleText, PAPERS, PART_BORDER } from './pdf-export.js';
 import { drawingBoxMm, startHidden, unitFactor } from './doc.js';
 
 const layoutSettings = {
@@ -395,8 +395,8 @@ export function openExport(host) {
         let out = baseName(e.name) + '.pdf';
         if (e.path) {
           const dir = outDir || e.dir;
-          let n = 2, want = joinPath(dir, out);
-          while (used.has(want.toLowerCase())) want = joinPath(dir, baseName(out) + ` (${n++}).pdf`);
+          // not a name used in this run, and not a file already on disk (a customer's bracket.pdf next to bracket.dxf)
+          const want = joinPath(dir, await freePdfName(baseName(out), async (nm) => { const p = joinPath(dir, nm); return used.has(p.toLowerCase()) || await t.fs.exists(p); }));
           used.add(want.toLowerCase());
           await t.fs.writeFile(want, bytes);
           out = want;

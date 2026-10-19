@@ -4,7 +4,7 @@
 //
 //   readPdf(bytes, { page, pdfjs })   → { doc, paths, texts, pages, page, mm: [w, h] }   (the drawing, in mm)
 //   renderPdfPage(bytes, { page, dpi }) → { canvas, w, h, mmPerPx, pages }              (the page as a picture)
-//   pdfToDoc({ ops, text, view }, OPS) → { doc, paths, texts }                          (the pure part)
+//   pdfToDoc({ ops, text, view, rotate }, OPS) → { doc, paths, texts }                  (the pure part; rotate: the page's /Rotate)
 import { newDoc, addEntities, line, arc, lwpoly, text } from './dxf-write.js';
 
 /** mm in one PDF point. */
@@ -41,15 +41,21 @@ export function bezierArc(p0, p1, p2, p3) {
  * pdf.js's operator list ({ fnArray, argsArray }), text items and the page's view [x0, y0, x1, y1] (points) → a drawing
  * in mm with the page's bottom-left at 0,0. Every stroked or filled path piece is a LINE, an ARC (a circular Bézier) or a
  * short polyline (any other curve); a rectangle is a closed polyline; text is TEXT at its place and size.
+ * rotate: the page's /Rotate (clockwise degrees), so a portrait plotter page with /Rotate 90 comes out landscape, as it is shown.
  * OPS: pdf.js's operator numbers.
  */
-export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0] }, OPS) {
+export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 0 }, OPS) {
   const doc = newDoc(4), ents = [];
-  const ox = view[0], oy = view[1];
-  const P = (x, y, m) => [((m[0] * x + m[2] * y + m[4]) - ox) * PT, ((m[1] * x + m[3] * y + m[5]) - oy) * PT];
+  const ox = view[0], oy = view[1], rot90 = ((Math.round(rotate / 90) % 4) + 4) % 4;
+  const W = (view[2] - view[0]) * PT, H = (view[3] - view[1]) * PT;
+  const P = (x, y, m) => {
+    const px = ((m[0] * x + m[2] * y + m[4]) - ox) * PT, py = ((m[1] * x + m[3] * y + m[5]) - oy) * PT;
+    return rot90 === 0 ? [px, py] : rot90 === 1 ? [py, W - px] : rot90 === 2 ? [W - px, H - py] : [H - py, px];
+  };
   let ctm = [1, 0, 0, 1, 0, 0];
   const stack = [];
   let path = [];                                       // pieces of the path being built, already in mm
+  let last = null, sub = null;                         // the current point and the sub-path's start, mm (kept across ops)
   let paths = 0;
   const pieces = (list) => {
     let cur = null, start = null;
@@ -85,24 +91,24 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0] }, OPS) {
     else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) ctm = stack.pop(); }
     else if (fn === OPS.constructPath) {
       const [codes, c] = a;
-      let k = 0, last = null;
+      let k = 0;
       for (const code of codes) {
-        if (code === OPS.moveTo) { last = P(c[k], c[k + 1], ctm); path.push({ k: 'm', p: last }); k += 2; }
+        if (code === OPS.moveTo) { last = sub = P(c[k], c[k + 1], ctm); path.push({ k: 'm', p: last }); k += 2; }
         else if (code === OPS.lineTo) { last = P(c[k], c[k + 1], ctm); path.push({ k: 'l', p: last }); k += 2; }
         else if (code === OPS.curveTo) { const p1 = P(c[k], c[k + 1], ctm), p2 = P(c[k + 2], c[k + 3], ctm), p3 = P(c[k + 4], c[k + 5], ctm); path.push({ k: 'c', p1, p2, p3 }); last = p3; k += 6; }
         else if (code === OPS.curveTo2) { const p2 = P(c[k], c[k + 1], ctm), p3 = P(c[k + 2], c[k + 3], ctm); path.push({ k: 'c', p1: last || p2, p2, p3 }); last = p3; k += 4; }
         else if (code === OPS.curveTo3) { const p1 = P(c[k], c[k + 1], ctm), p3 = P(c[k + 2], c[k + 3], ctm); path.push({ k: 'c', p1, p2: p3, p3 }); last = p3; k += 4; }
-        else if (code === OPS.closePath) path.push({ k: 'h' });
+        else if (code === OPS.closePath) { path.push({ k: 'h' }); last = sub; }
         else if (code === OPS.rectangle) {
           const x = c[k], y = c[k + 1], w = c[k + 2], h = c[k + 3];
-          path.push({ k: 'r', pts: [P(x, y, ctm), P(x + w, y, ctm), P(x + w, y + h, ctm), P(x, y + h, ctm)] }); k += 4;
+          path.push({ k: 'r', pts: [P(x, y, ctm), P(x + w, y, ctm), P(x + w, y + h, ctm), P(x, y + h, ctm)] }); last = sub = path[path.length - 1].pts[0]; k += 4;
         }
       }
     } else if (fn === OPS.stroke || fn === OPS.closeStroke || fn === OPS.fill || fn === OPS.eoFill || fn === OPS.fillStroke || fn === OPS.eoFillStroke ||
       fn === OPS.closeFillStroke || fn === OPS.closeEOFillStroke) {
       if (fn === OPS.closeStroke || fn === OPS.closeFillStroke || fn === OPS.closeEOFillStroke) path.push({ k: 'h' });
-      pieces(path); path = [];
-    } else if (fn === OPS.endPath) path = [];            // a clip, or nothing
+      pieces(path); path = []; last = sub = null;
+    } else if (fn === OPS.endPath) { path = []; last = sub = null; }            // a clip, or nothing
   }
   let texts = 0;
   for (const it of items) {
@@ -111,7 +117,8 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0] }, OPS) {
     const t = it.transform, size = Math.hypot(t[2], t[3]) || it.height || 0;
     if (!(size > 0)) continue;
     const rot = Math.atan2(t[1], t[0]) * 180 / Math.PI, [x, y] = P(0, 0, [1, 0, 0, 1, t[4], t[5]]);
-    ents.push(text(x, y, size * PT * CAP, s, { rot: Math.abs(rot) < 1e-6 ? 0 : rot }));
+    const r = rot - rot90 * 90;
+    ents.push(text(x, y, size * PT * CAP, s, { rot: Math.abs(r) < 1e-6 ? 0 : r }));
     texts++;
   }
   addEntities(doc, ents);
@@ -138,8 +145,8 @@ export async function readPdf(bytes, { page = 1, pdfjs = null } = {}) {
   try {
     const n = Math.min(Math.max(1, page), pdf.numPages), pg = await pdf.getPage(n);
     const [ops, tc] = await Promise.all([pg.getOperatorList(), pg.getTextContent()]);
-    const r = pdfToDoc({ ops, text: tc.items, view: pg.view }, lib.OPS);
-    return { ...r, pages: pdf.numPages, page: n, mm: [(pg.view[2] - pg.view[0]) * PT, (pg.view[3] - pg.view[1]) * PT] };
+    const r = pdfToDoc({ ops, text: tc.items, view: pg.view, rotate: pg.rotate }, lib.OPS), w = (pg.view[2] - pg.view[0]) * PT, h = (pg.view[3] - pg.view[1]) * PT;
+    return { ...r, pages: pdf.numPages, page: n, mm: Math.round(pg.rotate / 90) % 2 ? [h, w] : [w, h] };
   } finally { try { await pdf.destroy(); } catch { /* already gone */ } }
 }
 

@@ -33,6 +33,13 @@ const trimNum = (n, d = 2) => String(Number(n.toFixed(d)));
 
 // ---------------------------------------------------------------- the plan
 
+/** The first of "base.pdf", "base (2).pdf", … that `taken(name)` (async) says is free: a batch never replaces a PDF that is already there. */
+export async function freePdfName(base, taken) {
+  let name = base + '.pdf', n = 2;
+  while (await taken(name)) name = `${base} (${n++}).pdf`;
+  return name;
+}
+
 /** Tiles of a sheet w × h on a paper pw × ph: the printable size and how many across and down. */
 export function tileGrid(w, h, pw, ph) {
   const tw = pw - 2 * TILE.margin, th = ph - 2 * TILE.margin;

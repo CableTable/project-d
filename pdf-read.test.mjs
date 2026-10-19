@@ -6,6 +6,7 @@ const R = await import('./web/pdf-read.js');
 const D = await import('./web/drawing.js');
 const E = await import('./web/edit.js');
 const W = await import('./web/dxf-write.js');
+const P = await import('./web/pdf-write.js');
 const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
 const near = (a, b, m, eps = 1e-3) => assert.ok(Math.abs(a - b) <= eps * (1 + Math.abs(b)), `${m || ''} ${a} !~ ${b}`);
@@ -78,3 +79,36 @@ test('a PDF is told by its first bytes', () => {
   assert.equal(R.isPdf(new Uint8Array([0x30, 0x0a])), false);
 });
 
+
+test('a page with /Rotate: drawn as it is shown (a portrait page turned 90° is landscape), text turns with it', async () => {
+  const OPS = pdfjs.OPS, view = [0, 0, 100, 200];
+  const ops = { fnArray: [OPS.constructPath, OPS.stroke], argsArray: [[[OPS.moveTo, OPS.lineTo], [0, 0, 50, 0]], null] };
+  const text = [{ str: 'AB', transform: [10, 0, 0, 10, 20, 30] }];
+  const ends = (rotate) => {
+    const { doc } = R.pdfToDoc({ ops, text, view, rotate }, OPS), l = doc.entities[0], f = (c) => +l.r.v[l.r.c.indexOf(c)];
+    return [f(10), f(20), f(11), f(21)].map((v) => +(v / R.PT).toFixed(3));
+  };
+  assert.deepEqual(ends(0), [0, 0, 50, 0]);
+  assert.deepEqual(ends(90), [0, 100, 0, 50], 'bottom-left goes to top-left, the line runs down');
+  assert.deepEqual(ends(180), [100, 200, 50, 200]);
+  assert.deepEqual(ends(270), [200, 0, 200, 50]);
+  const t90 = R.pdfToDoc({ ops, text, view, rotate: 90 }, OPS).doc.entities[1];
+  near(+t90.r.v[t90.r.c.indexOf(50)], -90, 'text turns clockwise with the page');
+  // a real file: the page size comes out swapped
+  const bytes = P.writePdf([Object.assign(new P.Page(100, 200), {})]);
+  const turned = new Uint8Array(Buffer.from(Buffer.from(bytes).toString('latin1').replace('/MediaBox', '/Rotate 90 /MediaBox'), 'latin1'));
+  const r = await R.readPdf(turned, { pdfjs });
+  near(r.mm[0], 200, 'w', 1e-3); near(r.mm[1], 100, 'h', 1e-3);
+});
+
+test('a v curve (no first control point) starts at the current point, also when the path goes on in a later op', () => {
+  const OPS = pdfjs.OPS, r = 10;
+  // a quarter circle (r, 0) → (0, r) written as m, then c split across two ops: m in the first, v (curveTo2) in the second
+  const ops = { fnArray: [OPS.constructPath, OPS.constructPath, OPS.stroke], argsArray: [[[OPS.moveTo], [r, 0]], [[OPS.curveTo2], [r, r, 0, r]], null] };
+  const { doc } = R.pdfToDoc({ ops, text: [], view: [0, 0, 100, 100] }, OPS);
+  assert.ok(doc.entities.length === 1 && doc.entities[0].type === 'LWPOLYLINE', 'a curve with a first control point at the start is not a circle arc: ' + doc.entities.map((e) => e.type));
+  // the same curve as a c with the first control point at the start gives the identical points
+  const ops2 = { fnArray: [OPS.constructPath, OPS.stroke], argsArray: [[[OPS.moveTo, OPS.curveTo], [r, 0, r, 0, r, r, 0, r]], null] };
+  const b = R.pdfToDoc({ ops: ops2, text: [], view: [0, 0, 100, 100] }, OPS).doc.entities[0];
+  assert.deepEqual(doc.entities[0].r.v.map(Number), b.r.v.map(Number));
+});

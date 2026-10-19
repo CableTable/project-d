@@ -14,7 +14,7 @@ import { newDoc, addEntities, addLayer, text as dxfText, roundRect, circle as dx
 import * as GR from './web/grips.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
-const PORT = 5181;
+const PORT = Number(process.argv[2]) || 5181;                  // npm run test:browser -- 5291: another run can use its own port
 const URL_ = `http://localhost:${PORT}/`;
 const server = spawn(process.execPath, ['serve.mjs', String(PORT)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(PORT) } });
 let browser;
@@ -520,7 +520,8 @@ try {
     assert.equal(dl.name, 'sample-copy layout.dxf');
     const doc = readDxf(dl.text);
     assert.equal(doc.entities.filter((e) => e.type === 'INSERT').length, applied);
-    for (const n of ['Parts', 'Sheet', 'Marks', ...fixtureLayers('sample.dxf')]) assert.ok(doc.layers[n], n);
+    // layer names ignore case: the part's SHEET layer is the layout's Sheet (one record, not a duplicate)
+    for (const n of ['Parts', 'Sheet', 'Marks', ...fixtureLayers('sample.dxf')]) assert.ok(Object.keys(doc.layers).some((k) => k.toLowerCase() === n.toLowerCase()), n);
     assert.ok(doc.entities.some((e) => e.layer === 'Sheet'));
     assert.ok(doc.blocks.PD_LAYOUT, 'the layout\'s settings are inside the file');
     assert.ok(!(await tabs()).some((x) => x.includes('•')), 'dot should be gone');
