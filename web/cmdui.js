@@ -5,6 +5,7 @@ import { h } from './dom.js';
 import * as CB from './cmdbar.js';
 
 const NS = 'http://www.w3.org/2000/svg';
+const VALUED = /^(distance|steps|height|justify|style)$/i;       // the option words that take a value
 const PATH = {
   term: 'M4 6l6 6-6 6M12 18h8', search: 'M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0M16 16l4 4', close: 'M6 6l12 12M18 6L6 18',
   Draw: 'M4 20l4-1 11-11-3-3L5 16z', Annotate: 'M4 8v10M20 8v10M4 13h16', Edit: 'M20 12a8 8 0 1 1-3-6.2M20 4v5h-5',
@@ -69,6 +70,7 @@ export function buildCmdUI(hooks) {
   /** The bar shows what the text means now: the command that is on with its prompt and option chips, and the commands the text could be. */
   function update() {
     const act = hooks.active(), tab = hooks.tab(), text = input.value.trim();
+    let def;
     const opts = act ? CB.parseOptions(act.prompt) : [], hit = CB.matchOption(opts, text);
     lab.hidden = !act; if (act) lab.textContent = act.label;
     promptEl.hidden = !act; promptEl.textContent = act ? act.prompt : '';
@@ -81,7 +83,8 @@ export function buildCmdUI(hooks) {
       svg(s.cmd.cat), h('span', { class: 'nm' }, h('b', null, s.cmd.name.slice(0, s.hit)), s.cmd.name.slice(s.hit)), s.alias ? h('kbd', null, s.alias) : null, h('span', { class: 'ds' }, s.cmd.desc), h('span', { class: 'ct' }, s.cmd.cat))));
     foot.replaceChildren(...(sugg.length
       ? [h('span', null, h('kbd', null, '↑'), h('kbd', null, '↓'), ' choose'), h('span', null, h('kbd', null, 'Tab'), ' or ', h('kbd', null, 'Enter'), ' accept'), lastName ? h('span', null, h('kbd', null, 'Space'), ' on an empty bar repeats ' + labelOf(lastName)) : null]
-      : act ? [h('span', null, 'Type a value, ', h('kbd', null, 'x,y'), ', ', h('kbd', null, '@dx,dy'), ' or ', h('kbd', null, '@len<angle')), h('span', null, h('kbd', null, 'Enter'), ' finishes the step')]
+      : act ? [h('span', null, /angle/i.test(act.prompt) ? 'Type an angle, ' : 'Type a value, ', h('kbd', null, 'x,y'), ', ', h('kbd', null, '@dx,dy'), ' or ', h('kbd', null, '@len<angle')),
+        (def = /<([^<>]+)>/.exec(act.prompt)) ? h('span', null, h('kbd', null, 'Enter'), ' takes <' + def[1] + '>') : h('span', null, h('kbd', null, 'Enter'), ' finishes the step')]
         : [h('span', null, 'Type a command or its alias, e.g. ', h('kbd', null, 'L'), ' ', h('kbd', null, 'OFFSET')), lastName ? h('span', null, h('kbd', null, 'Space'), ' repeats ' + labelOf(lastName)) : null]));
     place();
   }
@@ -131,9 +134,10 @@ export function buildCmdUI(hooks) {
       if (lastName) { addLine('Command:', '↵ (repeats ' + labelOf(lastName) + ')', 'cm', lastName); close(); hooks.runName(lastName); return; }
       close(); return;
     }
+    if (picked && VALUED.test(picked.word)) { chip(picked); return; }       // it needs a value: the bar waits for it, as the chip does
     let send = text;
     if (picked) send = picked.word.toLowerCase();
-    else if (/^[a-z][a-z0-9]*$/i.test(text) && !CB.resolve(text, tab)) { const s = CB.suggest(text, tab); if (s.length && s[Math.min(hi, s.length - 1)].hit) send = s[Math.min(hi, s.length - 1)].cmd.name; }
+    else if (!act && /^[a-z][a-z0-9]*$/i.test(text) && !CB.resolve(text, tab)) { const s = CB.suggest(text, tab); if (s.length && s[Math.min(hi, s.length - 1)].hit) send = s[Math.min(hi, s.length - 1)].cmd.name; }
     const isCmd = !picked && !!CB.resolve(send, tab);
     addLine(act && !isCmd ? act.prompt : 'Command:', text, act && !isCmd ? '' : 'cm', isCmd ? send : '');
     if (typed[typed.length - 1] !== text) typed.push(text);
@@ -141,7 +145,7 @@ export function buildCmdUI(hooks) {
   }
   /** A chip: a word that needs a value waits in the bar for it, any other goes at once. */
   function chip(o) {
-    if (/^(distance|steps|height|justify|style)$/i.test(o.word)) { input.value = o.word.toLowerCase() + ' '; hi = 0; update(); input.focus(); return; }
+    if (VALUED.test(o.word)) { input.value = o.word.toLowerCase() + ' '; hi = 0; update(); input.focus(); return; }
     go(o.word);
   }
 

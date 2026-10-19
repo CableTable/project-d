@@ -4077,6 +4077,32 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await t('cmd-history').isVisible(), false, 'F2 again shuts it');
   });
 
+  await step('command bar: in Contour a bare option that takes a value waits for it (no "Unknown command"); `d 7` sets the distance; Esc with the bar open cancels the command; the footer says what Enter takes', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
+    await page.locator('[data-tool=contour]').click();
+    const cb = await canvasBox();
+    await page.mouse.move(cb.x + 300, cb.y + 200);
+    await page.keyboard.press('d'); await t('cmd-bar').waitFor();
+    await page.keyboard.press('Enter');                                          // the bare option: the bar keeps waiting for the value
+    assert.equal(await barOn(), true, 'the bar stays open');
+    assert.equal(await t('cmd-input').inputValue(), 'distance ');
+    assert.doesNotMatch(await t('cmd-hist').textContent(), /Unknown command/);
+    await page.keyboard.type('7'); await page.keyboard.press('Enter');
+    assert.equal(await barOn(), false);
+    assert.equal(await t('contour-dist').inputValue(), '7.0');
+    await page.keyboard.press('d'); await t('cmd-input').fill('d 5'); await page.keyboard.press('Enter');
+    assert.equal(await t('contour-dist').inputValue(), '5.0', '`d 5` through the bar');
+    assert.doesNotMatch(await t('cmd-hist').textContent(), /Unknown command/);
+    await page.keyboard.press('s'); await t('cmd-bar').waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await barOn(), false);
+    assert.equal(await toolChip(), 'Tool: Select', 'Esc with the bar open cancels the command that is on');
+    assert.equal(await t('contour-panel').isVisible(), false);
+    await closeTabs(/./);
+  });
+
   await step('command bar: screenshots, light and dark (typing with autocomplete; a prompt with chips; the history drawer)', async () => {
     const cb = await canvasBox();
     await page.mouse.move(cb.x + 420, cb.y + 260);
@@ -6512,6 +6538,29 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\work\\a-edited.dxf']);
     } finally {
       await page.evaluate(() => { delete window.__TAURI__; delete window.__log; localStorage.removeItem('pd-recent'); });
+    }
+  });
+
+  await step('Save in the exe: a cancelled balloons Save dialog writes nothing', async () => {
+    await closeTabs(/./);
+    page.once('dialog', (dlg) => dlg.accept());
+    await t('picker').setInputFiles('fixtures/text-only.pdf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('text-only.pdf'), null, { timeout: 60000 });
+    await page.locator('[data-tool=balloon]').click();
+    const b = await page.locator('rect.sheet').boundingBox(), sc = b.height / Number(await page.locator('[data-key=sheetH]').inputValue());
+    for (const [x, y] of [[50, 50], [90, 80]]) await page.mouse.click(b.x + x * sc, b.y + b.height - y * sc);
+    assert.deepEqual(await balNums(), ['1']);
+    await page.evaluate(() => {
+      const log = window.__log = { wrote: [], dlg: [] };
+      window.__TAURI__ = { dialog: { save: async (o) => { log.dlg.push(o.defaultPath); return null; } }, fs: { writeTextFile: async (p) => { log.wrote.push(p); }, writeFile: async (p) => { log.wrote.push(p); } } };
+    });
+    try {
+      const dls = await downloadsUtf8(() => page.keyboard.press('Control+s'), 1);
+      assert.deepEqual(await page.evaluate(() => window.__log.dlg), ['text-only.pdballoons.json'], 'it asked where to put the balloons');
+      assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'cancelled: nothing written');
+      assert.deepEqual(dls, [], 'and nothing downloaded instead');
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__log; });
     }
   });
 
