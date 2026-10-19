@@ -14,7 +14,8 @@ export function startNest(job, onStep = () => {}, { useWorker = true } = {}) {
       if (ended) return;
       const s = performance.now();
       while (performance.now() - s < 30) {
-        const r = gen.next();
+        let r;
+        try { r = gen.next(); } catch (err) { console.error('Auto-nest failed:', err); finish({ ...summary(job, last.placements.slice()), stopped: true, error: String(err) }); return; }
         if (r.done) { onStep({ done: r.value.total, total: r.value.total, placements: r.value.placements }); finish(r.value); return; }
         last = r.value;
       }
