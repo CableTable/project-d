@@ -40,7 +40,10 @@ briefs, reading short reports and merging.
    and drives it with Playwright `connectOverCDP`. Native Windows dialogs (Open, Save As, the close prompt) are driven
    with UI Automation from PowerShell, by window title (never SendKeys: keys go to whatever window has focus); until
    that helper exists, the brief says to skip them, or they pile up on his screen (v0.1.30 test, 2026-10-20).
-   Allow it: `Bash(gh release:*)`, `PowerShell(Stop-Process:*)`. He doesn't use the PC while it runs.
+   His call (2026-10-20): Pip controls these pop-ups itself. He doesn't use the PC during the test and minimizes the
+   other windows; before any key press Pip brings the Project D window to the front and checks the foreground window's
+   title, and stops if it isn't Project D or its dialog.
+   Allow it: `Bash(gh release:*)`, `PowerShell(Stop-Process:*)`.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
 
