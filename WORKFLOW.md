@@ -102,7 +102,10 @@ echo "Reply OK" | $C2 -p --model claude-haiku-5-5 --output-format stream-json --
 The same line with `claude` instead of `$C2` gives the main account's usage. Report both.
 Check it before starting big work and after each run. **After every merge** (a branch into the session branch, or the PR
 into main) report Rook, Pip (5-hour, weekly, resets in IST) and Rowan (month %) as a table, and add a row to
-`mockups/_design/usage-log.md` (his rule, 2026-10-20). Above ~0.85 of the 5-hour window, don't start a new
+`mockups/_design/usage-log.md` (his rule, 2026-10-20).
+**Pip's daily budget** (his rule, 2026-10-20): at most 13% of the weekly limit per day, so the week lasts 7 days. The week
+resets Mon 15:30 IST; by the end of day k (reset + k×24 h) Pip's weekly use may be at most 13% × k (unused budget carries
+over). Check before each Pip run; a run that would cross today's cap waits. Going above needs his OK, each time. Above ~0.85 of the 5-hour window, don't start a new
 Opus run; let running builders finish (a builder cut off mid-work leaves uncommitted changes: resume it after the reset).
 
 **Queuing runs** (2026-10-19: a queued job waited on its own output file and sat idle for hours):
