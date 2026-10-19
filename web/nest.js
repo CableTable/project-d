@@ -266,3 +266,23 @@ export function pack(job) {
   const g = packSteps(job);
   for (;;) { const r = g.next(); if (r.done) return r.value; }
 }
+
+/**
+ * The result of a run that was stopped part-way: `placements` is what was placed so far, the rest of the pieces are left over.
+ * Same shape as pack()'s result (plus stopped: true).
+ */
+export function summary(job, placements) {
+  const area = job.area, left = {};
+  let total = 0, usedArea = 0;
+  for (const f of job.fixed || []) if (f && f.length >= 3) usedArea += polyArea(f);
+  const placedOf = {};
+  for (const p of placements) placedOf[p.partId] = (placedOf[p.partId] || 0) + 1;
+  for (const it of job.items) {
+    const want = Math.min(MAX_PIECES, Math.max(0, Math.floor(it.count) || 0)), got = placedOf[it.id] || 0;
+    total += want;
+    if (want > got) left[it.id] = want - got;
+    usedArea += got * (it.poly && it.poly.length >= 3 ? polyArea(it.poly) : 0);
+  }
+  const areaTotal = area.w * area.h;
+  return { placements, placed: placements.length, total, left, usedArea, areaTotal, usedPct: areaTotal > 0 ? (usedArea / areaTotal) * 100 : 0, cell: job.cell > 0 ? job.cell : cellFor(area), stopped: true };
+}

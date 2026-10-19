@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { newDoc, addEntities, lwpoly, rect as dxfRect, line, circle as dxfCircle, text as dxfText } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import { outlineOf, hull } from './web/nestshape.js';
-import { pack, packSteps, polyAt, polyArea, polyBox, clear, edgeDistance, overlaps, ROTATIONS } from './web/nest.js';
+import { pack, packSteps, summary, polyAt, polyArea, polyBox, clear, edgeDistance, overlaps, ROTATIONS } from './web/nest.js';
 
 let n = 0;
 const t = (name, fn) => { fn(); n++; };
@@ -118,6 +118,20 @@ t('packSteps gives a partial result after each piece, and the same end as pack',
   while (!(s = g.next()).done) seen.push([s.value.done, s.value.placements.length]);
   assert.deepEqual(seen.map((v) => v[0]), [1, 2, 3, 4, 5, 6, 7]);
   assert.deepEqual(s.value, pack(job));
+});
+
+t('summary: a run stopped part-way keeps what was placed, the rest is left over', () => {
+  const job = { area: AREA, gap: 5, rotations: 'all', items: [{ id: 'r', count: 7, poly: rect(100, 60) }, { id: 'c', count: 3, poly: circle(30) }] };
+  const g = packSteps(job);
+  let s;
+  for (let i = 0; i < 4; i++) s = g.next();
+  const part = summary(job, s.value.placements.slice());
+  assert.equal(part.placed, 4); assert.equal(part.total, 10); assert.equal(part.stopped, true);
+  assert.equal(Object.values(part.left).reduce((a, b) => a + b, 0), 6);
+  assert.ok(Math.abs(part.usedPct - (4 * 6000 / (AREA.w * AREA.h)) * 100) < 1e-9);
+  const full = pack(job);
+  assert.equal(summary(job, full.placements).placed, full.placed);
+  assert.deepEqual(summary(job, full.placements).left, full.left);
 });
 
 t('50 parts of mixed shapes in a few seconds, and all of it valid', () => {
