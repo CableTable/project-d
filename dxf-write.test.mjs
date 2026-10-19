@@ -160,7 +160,7 @@ test('a DXF without subclass markers (R12 style) gets them', () => {
 
 test('an independent parser (dxf-parser) reads the written sample', async () => {
   let Parser;
-  try { Parser = (await import('dxf-parser')).default; } catch { return; }
+  try { Parser = (await import('dxf-parser')).default; } catch { if (process.env.CI) throw new Error('dxf-parser did not load: the cross-check would be skipped'); return; }
   const text = W.writeDxf(load('sample.dxf')), p = new Parser().parseSync(text);
   assert.ok(p && p.entities.length >= 10);
   const types = new Set(p.entities.map((e) => e.type));
@@ -176,4 +176,82 @@ test('roundRect: arcs bulge outward at the corners and the drawn box is exactly 
   const doc = W.addEntities(W.newDoc(), W.roundRect(5, 7, 120, 80, 6));
   const b = D.flatten(doc).boxes.model;
   for (const [got, want] of [[b[0], 5], [b[1], 7], [b[2], 125], [b[3], 87]]) assert.ok(Math.abs(got - want) < 1e-6, b.join());
+});
+
+// a hand-made DXF from [code, value] pairs
+const dxfOf = (pairs) => pairs.map(([c, v]) => String(c).padStart(3) + '\n' + v).join('\n') + '\n  0\nEOF\n';
+const tablesDxf = (...recs) => dxfOf([[0, 'SECTION'], [2, 'TABLES'], ...recs.flat(), [0, 'ENDSEC']]);
+const table = (name, recs) => [[0, 'TABLE'], [2, name], [70, recs.length], ...recs.flat(), [0, 'ENDTAB']];
+
+test('non-ASCII layer and block names survive Save and reopen (written as \\U+XXXX, read back as the characters)', () => {
+  const d = W.newDoc();
+  W.addLayer(d, 'H\u00f6he', { aci: 3 });
+  W.addBlock(d, 'Teil_\u00dc', [W.line(0, 0, 5, 0, { layer: 'H\u00f6he' })]);
+  W.addEntities(d, W.insert('Teil_\u00dc', 1, 1, { layer: 'H\u00f6he' }), W.text(0, 0, 2, 'Gr\u00f6\u00dfe'));
+  const t = W.writeDxf(d, { escapeUnicode: true });
+  assert.ok(/^[\x00-\x7f]*$/.test(t) && t.includes('H\\U+00F6he'));
+  const back = D.readDxf(t);
+  assert.ok(back.layers['H\u00f6he'] && back.blocks['Teil_\u00dc']);
+  assert.equal(back.entities[0].layer, 'H\u00f6he');
+  assert.equal(back.entities[0].r.v[back.entities[0].r.c.indexOf(2)], 'Teil_\u00dc');
+  assert.equal(W.writeDxf(back, { escapeUnicode: true }), t, 'a second round trip changes nothing');
+});
+
+test('STYLE and DIMSTYLE records are written back as they were (font file, width, oblique; dimension variables)', () => {
+  const t = tablesDxf(
+    table('STYLE', [[[0, 'STYLE'], [5, '11'], [2, 'ROMANS'], [70, 0], [40, 0], [41, 0.8], [50, 15], [71, 0], [42, 2.5], [3, 'romans.shx'], [4, '']]]),
+    table('DIMSTYLE', [[[0, 'DIMSTYLE'], [105, '12'], [2, 'ISO-25'], [70, 0], [3, 'mm'], [40, 1], [41, 2.5], [140, 3.5], [147, 0.8], [340, '11']]]));
+  const back = reread(D.readDxf(t));
+  const get = (rec, c) => rec.v[rec.c.indexOf(c)];
+  assert.equal(get(back.styles.ROMANS, 3), 'romans.shx'); assert.equal(+get(back.styles.ROMANS, 41), 0.8); assert.equal(+get(back.styles.ROMANS, 50), 15);
+  assert.equal(+get(back.dimstyles['ISO-25'], 140), 3.5); assert.equal(get(back.dimstyles['ISO-25'], 3), 'mm');
+  assert.equal(+get(back.dimstyles['ISO-25'], 147), 0.8);
+  assert.ok(back.styles.Standard || back.styles.STANDARD, 'Standard is still there');
+});
+
+test('a layer locked in the file stays locked; freezing from the panel still works', () => {
+  const t = tablesDxf(table('LAYER', [[[0, 'LAYER'], [2, 'Jig'], [70, 4], [62, 5], [6, 'CONTINUOUS']], [[0, 'LAYER'], [2, 'Hold'], [70, 5], [62, 5], [6, 'CONTINUOUS']]]));
+  const doc = D.readDxf(t);
+  const back = reread(doc);
+  assert.equal(back.layers.Jig.flags & 4, 4); assert.equal(back.layers.Jig.frozen, false);
+  assert.equal(back.layers.Hold.flags & 4, 4); assert.equal(back.layers.Hold.frozen, true);
+  doc.layers.Jig.frozen = true;
+  const again = reread(doc);
+  assert.equal(again.layers.Jig.frozen, true); assert.equal(again.layers.Jig.flags & 4, 4);
+});
+
+test('a layer marked "No plot" (code 290) keeps it; a layer without the code plots', () => {
+  const doc = D.readDxf(tablesDxf(table('LAYER', [[[0, 'LAYER'], [2, 'CONSTR'], [70, 0], [62, 5], [6, 'CONTINUOUS'], [290, 0]], [[0, 'LAYER'], [2, 'CUT'], [70, 0], [62, 1], [6, 'CONTINUOUS']]])));
+  assert.equal(doc.layers.CONSTR.plot, false); assert.equal(doc.layers.CUT.plot, true);
+  const once = W.writeDxf(doc), back = D.readDxf(once);
+  assert.equal(back.layers.CONSTR.plot, false); assert.equal(back.layers.CUT.plot, true);
+  assert.equal(once.split(/\r?\n/).filter((l) => l.trim() === '290').length, 1, 'only the No plot layer gets the code');
+});
+
+test('a big file writes: 20 000 polylines × 50 points on 300 layers, extents handed in', () => {
+  const doc = W.newDoc(4);
+  const ents = [];
+  for (let i = 0; i < 20000; i++) ents.push(W.lwpoly(Array.from({ length: 50 }, (_, k) => [i % 100 + k, Math.floor(i / 100) + (k % 2)]), { layer: 'Layer' + (i % 300) }));
+  W.addEntities(doc, ents);
+  const text = W.writeDxf(doc, { extents: [0, 0, 150, 201] });        // no time limit: it was ~1.5 s in the suite, a flaky check on CI
+  const back = D.readDxf(text);
+  assert.equal(Object.keys(back.layers).length, 301, 'every layer has its record');
+  assert.match(text, /\$EXTMAX\r\n 10\r\n150\r\n 20\r\n201\r\n/, 'the extents handed in are the header\'s');
+});
+
+test('a line type with text keeps its text (and its text style); layer names that differ only in case make one record', () => {
+  const t = tablesDxf(
+    table('LTYPE', [[[0, 'LTYPE'], [2, 'GAS_LINE'], [70, 0], [3, ''], [72, 65], [73, 3], [40, 0.9],
+      [49, 0.5], [74, 0], [49, -0.2], [74, 2], [75, 0], [340, '11'], [46, 0.1], [50, 0], [44, -0.1], [45, -0.05], [9, 'GAS'], [49, -0.2], [74, 0]]]),
+    table('STYLE', [[[0, 'STYLE'], [5, '11'], [2, 'Standard'], [70, 0], [3, 'txt']]]));
+  const doc = D.readDxf(t);
+  assert.equal(doc.ltypes.GAS_LINE.elems[1].text, 'GAS'); assert.equal(doc.ltypes.GAS_LINE.elems[1].style, 'Standard');
+  const back = reread(doc);
+  assert.deepEqual(back.ltypes.GAS_LINE.pattern, [0.5, -0.2, -0.2]);
+  assert.equal(back.ltypes.GAS_LINE.elems[1].text, 'GAS'); assert.equal(back.ltypes.GAS_LINE.elems[1].style, 'Standard');
+  assert.equal(back.ltypes.GAS_LINE.elems[1].scale, 0.1);
+  const d = W.newDoc();
+  W.addLayer(d, 'Cut'); W.addEntities(d, W.line(0, 0, 1, 1, { layer: 'CUT' }));
+  const names = Object.keys(reread(d).layers).map((k) => k.toLowerCase());
+  assert.equal(names.filter((k) => k === 'cut').length, 1);
 });

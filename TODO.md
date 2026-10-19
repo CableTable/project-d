@@ -63,7 +63,7 @@ CorelDRAW-style additions (his picks, 2026-10-17):
 36. ✅ (built, PR #9) **Align and Distribute**: line up left edges, centres or tops; space parts evenly.
 37. ✅ (built, PR #9) **Group / Ungroup and Lock**: move several parts as one; lock things so they can't be bumped.
 38. ✅ (built, PR #9) **Rulers and guidelines**: drag guides out of the rulers and snap to them.
-39. **Object Manager**: a tree of everything in the file, layer by layer, with show, hide and lock.
+39. ✅ (built, session 8, Option A of mock-up R11) **Object Manager**: a tree of everything in the file, layer by layer, with show, hide and lock.
 40. **Trace a bitmap** (CorelDRAW's PowerTRACE): a photo or scan of artwork → vector outlines.
 41. ✅ (built, PR #10) **Compare parts by colour**: give each part's outline its own colour (e.g. one red, one blue) and lay them over each
     other to see where they differ, e.g. two revisions of the same part. A button lines them up (same corner, or
@@ -79,11 +79,26 @@ From the exe review (2026-10-17, session 3):
 46. ✅ (built, PR #9) **Fix tiny gaps** in a vector file (his ask, 2026-10-17): find ends that almost meet (within a tolerance he sets,
     e.g. 0.05 mm), mark them on the drawing, and a button joins them (moves the ends together) so outlines close
     properly for area, offset / contour and cutting. Today Area closes a loop across a tiny gap and says so.
-47. **Full command line, AutoCAD style** (his ask, 2026-10-18; after the two Round 5 builds): every tool and action can be
+47. ✅ (built, session 8, Option B of mock-up R12b: the floating command bar; see DECISIONS) **Full command line, AutoCAD style** (his ask, 2026-10-18; after the two Round 5 builds): every tool and action can be
     typed by name or alias (draw, edit, layout, view, file); Enter or Space repeats the last command; ↑ / ↓ go through
     the command history; autocomplete suggestions as you type; options in [brackets] that can be clicked or typed by
     their capital letter; typed coordinates (absolute, `@x,y`, `@len<angle`); Esc cancels; F2 opens the full command
     history. Mock-up first. TODO 34 (own aliases) builds on it.
+48. **Line width, CorelDRAW style** (his ask, 2026-10-19): an outline-width picker for the selected objects (preset
+    widths plus a typed value, in the drawing's units), shown on screen at true width and kept on Save (DXF lineweight /
+    polyline width) and in PDF / Print. Mock-up first. Note: the second-pass review found Mirror / Offset / Trim drop a
+    polyline's width; that fix lands first.
+
+From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"; S/M/L = size; mock-up first where UI is new):
+49. **Remove duplicate / overlapping lines** (S–M): stops double cuts and double ink. Builds on Fix tiny gaps (46): report the count, then remove.
+50. **Preflight check before PDF / film / DXF** (M): one list of duplicates, open paths on a cut layer, tiny gaps, parts off
+    the sheet, lines wider than a hairline, text not outlined; each row selects the offenders.
+51. **One-click unit fix, ×25.4 / ÷25.4** (S), next to Set length: the commonest "my file is the wrong size" cause.
+52. **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
+53. **Text to outlines** (L): removes font problems for film and cut files (needs font outlines without a build step).
+54. **Wireframe (outline-only) view** (S): one toggle that shows objects stacked or hidden behind fills.
+55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
+56. **Font note on open** (S): name the fonts the file asked for and what is shown instead (check first whether one exists).
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

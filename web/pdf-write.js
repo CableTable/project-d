@@ -112,9 +112,9 @@ export class Page {
 }
 
 /** A page's content stream. */
-export function contentStream(page) {
+export function contentStream(page, unit = 1) {
   const n = num;
-  const out = [`${num(MM, 6)} 0 0 ${num(MM, 6)} 0 0 cm`, '1 J 1 j'];
+  const out = [`${num(MM / unit, 6)} 0 0 ${num(MM / unit, 6)} 0 0 cm`, '1 J 1 j'];
   for (const c of page.cmds) {
     switch (c[0]) {
       case 'q': case 'Q': case 'h': case 'S': case 'f': case 'f*': out.push(c[0]); break;
@@ -144,13 +144,17 @@ export function writePdf(pages, meta = {}) {
   objs.push(`<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
   objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
   objs.push(`<< /Title ${pdfString(winAnsi(meta.title || 'Project D'))} /Producer ${pdfString('Project D')} >>`);
+  let v16 = false;
   pages.forEach((p, i) => {
-    objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(p.w * MM, 3)} ${num(p.h * MM, 3)}] ` +
+    // PDF 1.4 pages stop at 14400 pt (200 in): above that the page is drawn in units of `unit` points
+    const unit = Math.max(1, Math.ceil(Math.max(p.w, p.h) * MM / 14400));
+    if (unit > 1) v16 = true;
+    objs.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${num(p.w * MM / unit, 3)} ${num(p.h * MM / unit, 3)}] ${unit > 1 ? `/UserUnit ${unit} ` : ''}` +
       `/Resources << /Font << /F1 3 0 R >> >> /Contents ${6 + 2 * i} 0 R >>`);
-    const body = contentStream(p);
+    const body = contentStream(p, unit);
     objs.push(`<< /Length ${body.length} >>\nstream\n${body}endstream`);
   });
-  let out = '%PDF-1.4\n%\xE2\xE3\xCF\xD3\n';
+  let out = `%PDF-1.${v16 ? 6 : 4}\n%\xE2\xE3\xCF\xD3\n`;
   const at = [];
   objs.forEach((o, i) => { at.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
   const xref = out.length;

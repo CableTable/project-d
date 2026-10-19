@@ -4,6 +4,7 @@ const assert = (await import('node:assert/strict')).default;
 const fs = await import('node:fs');
 const D = await import('./web/drawing.js');
 const G = await import('./web/geom.js');
+const W = await import('./web/dxf-write.js');
 
 const near = (a, b, tol = 1e-6) => assert.ok(Math.abs(a - b) <= tol, a + ' ≠ ' + b);
 const g = (...pairs) => pairs.map(([c, v]) => c + '\n' + v).join('\n');
@@ -195,4 +196,15 @@ test('arc helpers: a sweep, a box over the extremes', () => {
   const [s, sw] = D.arcSweep(0, -Math.PI / 2, 1);
   near(s, -Math.PI / 2); near(sw, Math.PI / 2);
   assert.deepEqual(D.opsBox([0, 1, 0, 2, 0, 0, 1, 0, Math.PI, 0]).map((x) => Math.round(x * 1e9) / 1e9), [-1, 0, 1, 1]);
+});
+
+test('nested arrays of empty blocks stop at a limit (truncated) instead of hanging', () => {
+  const doc = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [] };
+  const arr = (name) => W.insert(name, 0, 0, { cols: 100, rows: 100, dx: 1, dy: 1 });
+  doc.blocks.E = { base: [0, 0], xref: false, entities: [] };
+  doc.blocks.B = { base: [0, 0], xref: false, entities: [arr('E')] };
+  doc.blocks.C = { base: [0, 0], xref: false, entities: [arr('B')] };
+  doc.entities = [arr('C')];
+  const fl = D.flatten(doc);
+  assert.equal(fl.truncated, true);
 });

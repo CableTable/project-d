@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>Round 11 · Object Manager</title>
+<script>(function(){var m=/[?&]theme=(dark|light)/.exec(location.search);if(m)document.documentElement.setAttribute('data-theme',m[1]);})();</script>
+<style>/* Project D, Round 11 (TODO 39). Tokens are the app's "Modern SaaS" theme, as R10. */
+:root {
+  --app: #f7f7f8; --panel: #ffffff; --line: #e4e4e7; --text: #18181b; --muted: #62626b;
+  --canvas: #ececef; --sheet: #ffffff; --sheetline: #a1a1aa; --partline: #18181b;
+  --accent: #4f46e5; --accentink: #ffffff; --sel: #eceeff; --mark: #c2410c; --field: #ffffff;
+  --dim: #0f766e; --shadow: rgba(0,0,0,.18); --ok: #1d7a3a; --r: 5px;
+  --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, 'DejaVu Sans Mono', monospace;
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  --app: #0b0b0d; --panel: #131316; --line: #26262b; --text: #ededef; --muted: #a0a0ab;
+  --canvas: #0e0e10; --sheet: #18181b; --sheetline: #5b5b66; --partline: #e8e8ec;
+  --accent: #8a8fff; --accentink: #0b0b14; --sel: #1d1f3d; --mark: #fb923c; --field: #0b0b0d;
+  --dim: #5eead4; --shadow: rgba(0,0,0,.5); --ok: #5fcf86; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--app); color: var(--text); font: 13px var(--sans); }
+.mono { font-family: var(--mono); }
+button, input { font: inherit; color: inherit; }
+.board { width: 1480px; padding: 32px 20px 40px; }
+.board h1 { font-size: 26px; margin: 0 0 4px; }
+.board h2 { font-size: 20px; margin: 36px 0 4px; }
+.lead { color: var(--muted); max-width: 1100px; margin: 0 0 14px; font-size: 14px; line-height: 1.45; }
+.cap { font-weight: 600; margin: 0 0 6px; font-size: 14px; }
+
+/* the app shell, as R6 / R10 */
+.shell { display: flex; flex-direction: column; height: 700px; width: 1440px; overflow: hidden; border: 1px solid var(--line); background: var(--app); position: relative; }
+.menubar { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--panel); flex: none; }
+.menubar strong { margin-right: 12px; }
+.menu { padding: 4px 8px; border-radius: var(--r); }
+.menu.on { background: var(--sel); color: var(--accent); }
+.tabrow { display: flex; gap: 4px; padding: 6px 8px 0; border-bottom: 1px solid var(--line); background: var(--app); flex: none; }
+.tab { padding: 4px 12px; border: 1px solid var(--line); border-bottom: 0; border-radius: var(--r) var(--r) 0 0; background: var(--app); color: var(--muted); }
+.tab.on { background: var(--panel); color: var(--text); font-weight: 600; }
+.body { flex: 1; display: flex; min-height: 0; }
+.rail { width: 46px; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; }
+.tl { width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: var(--r); color: var(--muted); }
+.tl.on { background: var(--sel); border-color: var(--accent); color: var(--accent); }
+.canvas { flex: 1; background: var(--canvas); position: relative; min-width: 0; }
+.canvas > svg { display: block; width: 100%; height: 100%; }
+.side { width: 330px; border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; flex: none; }
+.side.narrow { width: 268px; }
+.status { height: 26px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 12px; padding: 0 10px; font-size: 12px; color: var(--muted); flex: none; }
+.status .chip { margin-left: auto; }
+.chip { font-size: 11px; padding: 2px 7px; border-radius: 9px; background: var(--sel); color: var(--accent); font-weight: 600; white-space: nowrap; }
+.chip.warn { color: var(--mark); }
+h3 { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+
+/* panel tabs (A) */
+.ptabs { display: flex; border-bottom: 1px solid var(--line); flex: none; }
+.ptab { flex: 1; text-align: center; padding: 8px 0; color: var(--muted); border-bottom: 2px solid transparent; }
+.ptab.on { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+
+/* Object Manager */
+.om { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.omtop { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); flex: none; }
+.search { display: flex; align-items: center; gap: 6px; height: 26px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 0 7px; color: var(--muted); }
+.search.f { border-color: var(--accent); color: var(--text); }
+.search span { flex: 1; font-family: var(--mono); font-size: 12px; }
+.filters { display: flex; gap: 4px; align-items: center; }
+.fb { height: 20px; padding: 0 8px; border-radius: var(--r); color: var(--muted); font-weight: 600; font-size: 11px; display: inline-flex; align-items: center; gap: 4px; }
+.fb.on { background: var(--sel); color: var(--accent); }
+.tree { overflow: hidden; padding: 4px 4px 0; flex: 1; position: relative; }
+.row { display: flex; align-items: center; gap: 6px; height: 24px; padding: 0 6px 0 4px; border-radius: var(--r); white-space: nowrap; }
+.row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.row .n { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.row .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.row .tw { width: 14px; display: inline-flex; justify-content: center; color: var(--muted); flex: none; }
+.row .ti { color: var(--muted); display: inline-flex; flex: none; }
+.row .a { width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; color: var(--text); flex: none; }
+.row .a.off { opacity: .28; }
+.row.layer { font-weight: 600; margin-top: 2px; }
+.row.layer.cur { background: var(--sel); }
+.row.sel { background: var(--sel); box-shadow: inset 2px 0 0 var(--accent); }
+.row.sel .nm { color: var(--accent); font-weight: 600; }
+.row.dimmed .nm, .row.dimmed .n, .row.dimmed .ti, .row.dimmed .sw { opacity: .45; }
+.row.locked .nm { font-style: normal; }
+.row.hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.row .lk { color: var(--mark); }
+.guide { border-left: 1px solid var(--line); margin-left: 15px; padding-left: 0; }
+.omfoot { border-top: 1px solid var(--line); padding: 6px 10px; display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; flex: none; }
+.omfoot b { color: var(--text); }
+
+/* right-click menu */
+.ctx { position: absolute; z-index: 5; width: 188px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: 0 8px 24px var(--shadow); font-size: 13px; }
+.ctx div { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border-radius: var(--r); }
+.ctx div.hot { background: var(--sel); color: var(--accent); }
+.ctx div u { margin-left: auto; text-decoration: none; font: 11px var(--mono); color: var(--muted); }
+.ctx hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+
+/* floating panel (B) */
+.float { position: absolute; z-index: 4; width: 300px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 32px var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
+.ftitle { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 6px 0 10px; border-bottom: 1px solid var(--line); background: var(--app); cursor: grab; flex: none; }
+.ftitle b { flex: 1; font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.ftitle .a { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r); color: var(--muted); }
+.ftitle .a.on { background: var(--sel); color: var(--accent); }
+.dock { position: absolute; z-index: 3; border: 2px dashed var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); border-radius: 6px; color: var(--accent); font-weight: 600; font-size: 12px; display: flex; align-items: center; justify-content: center; }
+
+/* pros, cons, questions */
+.cols { display: grid; grid-template-columns: 1fr 1fr 1.3fr; gap: 24px; margin-top: 14px; max-width: 1440px; }
+.cols h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); }
+.cols ul { margin: 0; padding-left: 18px; line-height: 1.5; }
+.cols .q { background: var(--sel); border-radius: var(--r); padding: 10px 14px; }
+.cols .q h4 { color: var(--accent); }
+.note { display: flex; gap: 18px; flex-wrap: wrap; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+.note span { display: inline-flex; align-items: center; gap: 6px; }
+</style>
+</head>
+<body>
+<div class="board">
+<h1>Round 11 · Object Manager (TODO 39)</h1>
+<p class="lead">A tree of everything in the open file, layer by layer, like CorelDRAW's Object Manager. Each layer opens to its objects; blocks and groups open to their members. Eye = show / hide, padlock = lock, click a row = select that object on the sheet. Same drawing in both options: <b>bracket-plate.dxf</b>. Two options for where it lives; the tree itself is the same.</p>
+<div class="note">
+  <span>Shown on every board:</span>
+  <span><i class="ic" data-i="eyeoff"></i> hidden layer, dimmed (Construction)</span>
+  <span><i class="ic" data-i="lock"></i> locked object (Line 120.0) and locked layer (Frame)</span>
+  <span>selected row = that object lit on the sheet (Circle Ø40)</span>
+  <span>search box and Show / Locked filters</span>
+  <span>right-click menu</span>
+</div>
+
+<h2>Option A · a tab in the right panel</h2>
+<p class="lead">The right panel gets two tabs: <b>Drawing</b> (everything it has today) and <b>Objects</b> (the tree). Docked, always in the same place, shares the panel's width. Layers stay in Drawing for quick colour and current-layer changes; the Objects tab has the same eye and padlock per layer.</p>
+<div class="cap">A · layer tree, Circle Ø40 selected, right-click on a row</div>
+<div id="A"></div>
+<div class="cols">
+  <div><h4>Pros</h4><ul>
+    <li>Fits the app as it is: the panel is already on the right, no new window to lose.</li>
+    <li>Nothing covers the sheet.</li>
+    <li>Simplest to build: one more panel tab.</li>
+  </ul></div>
+  <div><h4>Cons</h4><ul>
+    <li>Shares the panel with Drawing: you cannot see Properties and the tree at once.</li>
+    <li>Fixed width; long labels get cut.</li>
+    <li>On a 1024 px window the tree is short (about 14 rows).</li>
+  </ul></div>
+  <div class="q"><h4>Questions for Rakshith</h4><ul>
+    <li>Is hiding a <b>single object</b> saved in the DXF? Today only layers hide and save (layer off). Saving one hidden object would need a mark the other CAD programs may not read. Or it stays on screen only and comes back visible on reopen?</li>
+    <li>Lock: <b>per object</b> (as locked parts today) or only per <b>layer</b> (what AutoCAD does)? Per object is saved in the app's own block of settings, not in the DXF.</li>
+    <li>Should selecting a row in a <b>hidden</b> layer be allowed (it cannot be seen on the sheet)?</li>
+  </ul></div>
+</div>
+
+<h2>Option B · a floating, dockable panel</h2>
+<p class="lead">View → Object Manager (Ctrl+3) opens a panel you can drag anywhere on the sheet area, resize, or snap to the left or right edge (the dashed zone). The right panel keeps showing Drawing, Layers and Properties at the same time. Position is remembered on this PC.</p>
+<div class="cap">B · floating panel over the sheet, filtered by "circle", right-click on a row</div>
+<div id="B"></div>
+<div class="cols">
+  <div><h4>Pros</h4><ul>
+    <li>Tree and Properties on screen together: select in the tree, edit in Properties.</li>
+    <li>Can be made tall and wide, or put on a second screen area.</li>
+    <li>Same pattern as the Contour and Auto-nest panels.</li>
+  </ul></div>
+  <div><h4>Cons</h4><ul>
+    <li>It covers part of the sheet until you move it.</li>
+    <li>More to build: drag, resize, docking, remembered position.</li>
+    <li>On a small window it competes with the sheet for room.</li>
+  </ul></div>
+  <div class="q"><h4>Questions for Rakshith</h4><ul>
+    <li>Same two as A: is a hidden object saved in the DXF, and is lock per object or per layer?</li>
+    <li>Should the panel float only, or also dock into the right panel (the dashed zone) like A?</li>
+    <li>On a <b>layout tab</b> the tree shows Parts (and their groups). Hide a part = it is not printed or exported. OK?</li>
+  </ul></div>
+</div>
+</div>
+
+<script>
+// ---- mock-up only: icons, the sample tree and the two artboards
+var P = {
+  eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff: '<path d="M3 3l18 18"/><path d="M10.6 6.1A10 10 0 0 1 12 5c6 0 10 7 10 7a17 17 0 0 1-3.2 4M6.5 6.8C3.8 8.6 2 12 2 12s4 7 10 7c1.6 0 3-.4 4.3-1"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  unlock: '<rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/>',
+  right: '<path d="M9 6l6 6-6 6"/>', down: '<path d="M6 9l6 6 6-6"/>',
+  line: '<path d="M4 20L20 4"/>', circle: '<circle cx="12" cy="12" r="8"/>', arc: '<path d="M4 19c4-14 12-14 16 0"/>',
+  rect: '<rect x="4" y="6" width="16" height="12"/>', poly: '<path d="M4 18l4-10 6 6 6-10"/>', text: '<path d="M5 6h14M12 6v13M9 19h6"/>',
+  block: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 10h16M10 10v10"/>', dim: '<path d="M4 17h16M4 17V9M20 17V9M8 13h8"/>',
+  part: '<rect x="4" y="6" width="16" height="12" rx="3"/>', group: '<rect x="3" y="3" width="11" height="11" rx="1"/><rect x="10" y="10" width="11" height="11" rx="1"/>',
+  search: '<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>', move: '<path d="M12 3v18M3 12h18"/>',
+  pen: '<path d="M4 20l1-4L16 5l3 3L8 19z"/>', zoom: '<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4M9 11h4M11 9v4"/>',
+  layers: '<path d="M12 4l9 5-9 5-9-5zM3 14l9 5 9-5"/>', sel: '<path d="M5 3l14 8-6 2-2 6z"/>', close: '<path d="M6 6l12 12M18 6L6 18"/>',
+  dockl: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>', dockr: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/>', float: '<rect x="4" y="4" width="12" height="10" rx="1"/><rect x="8" y="10" width="12" height="10" rx="1"/>'
+};
+function ic(n, s) { s = s || 14; return '<svg width="' + s + '" height="' + s + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + P[n] + '</svg>'; }
+document.querySelectorAll('.ic').forEach(function (e) { e.style.display = 'inline-flex'; e.innerHTML = ic(e.dataset.i, 14); });
+
+// layer: [name, colour, count, flags]; object: [type, label, flags, depth]; flags: s = selected, L = locked, k = hover/context target
+var COLS = { Cut: 'var(--text)', Engrave: 'var(--accent)', Hardware: 'var(--mark)', Dimensions: 'var(--dim)', Construction: '#9ca3af', Frame: '#6b7280' };
+var TREE = [
+  ['Cut', 14, 'cur open', [
+    ['rect', 'Rectangle 200.0 × 140.0', '', 1],
+    ['circle', 'Circle Ø40', 's', 1],
+    ['circle', 'Circle Ø8', '', 1], ['circle', 'Circle Ø8', '', 1],
+    ['line', 'Line 120.0', 'L', 1],
+    ['poly', 'Polyline Slot, 8 pts', '', 1],
+    ['arc', 'Arc R10 · 90°', '', 1]]],
+  ['Engrave', 6, 'open', [
+    ['text', "Text 'REV A'", '', 1],
+    ['block', 'Block LOGO · 3', 'open', 1],
+    ['line', 'Line 12.0', '', 2], ['arc', 'Arc R4 · 180°', '', 2], ['text', "Text 'CT'", '', 2]]],
+  ['Hardware', 8, 'open', [
+    ['block', 'Block M6-bolt ×4', '', 1]]],
+  ['Dimensions', 5, '', []],
+  ['Construction', 9, 'hid', []],
+  ['Frame', 3, 'lockedlayer', []]
+];
+
+function eyeBtn(off) { return '<span class="a' + (off ? ' off' : '') + '" title="Show / hide">' + ic(off ? 'eyeoff' : 'eye', 15) + '</span>'; }
+function lockBtn(on) { return '<span class="a' + (on ? ' lk' : ' off') + '" title="Lock / unlock">' + ic(on ? 'lock' : 'unlock', 14) + '</span>'; }
+function tree(opt) {
+  var o = '';
+  TREE.forEach(function (l) {
+    var f = l[2], hid = /hid/.test(f), ll = /lockedlayer/.test(f), op = /open/.test(f) || opt.filter;
+    if (opt.filter) {
+      var kids = l[3].filter(function (x) { return opt.filter.test(x[1]); });
+      if (!kids.length) return;
+      l = [l[0], l[1], 'open', kids];
+    }
+    o += '<div class="row layer' + (/cur/.test(f) ? ' cur' : '') + (hid ? ' dimmed' : '') + '"><span class="tw">' + ic(op ? 'down' : 'right', 12) + '</span><span class="sw" style="background:' + COLS[l[0]] + '"></span><span class="nm">' + l[0] + '</span>' + (/cur/.test(f) ? '<span class="chip">current</span>' : '') + '<span class="n">' + (opt.filter ? l[3].length + ' of ' + l[1] : l[1]) + '</span>' + eyeBtn(hid) + lockBtn(ll) + '</div>';
+    if (!op) return;
+    l[3].forEach(function (x) {
+      var s = /s/.test(x[2]) && !/^hid/.test(x[2]), L = /L/.test(x[2]), blk = x[0] === 'block' && x[2] === 'open';
+      o += '<div class="row' + (s ? ' sel' : '') + (hid ? ' dimmed' : '') + (opt.ctx === x[1] + x[2] && !opt.done && (opt.done = 1) ? ' hover' : '') + '" style="padding-left:' + (x[3] * 16 + 4) + 'px"><span class="tw">' + (x[0] === 'block' ? ic(blk ? 'down' : 'right', 12) : '') + '</span><span class="ti">' + ic(x[0], 14) + '</span><span class="nm">' + x[1] + '</span>' + (L ? '<span class="chip warn">locked</span>' : '') + eyeBtn(false) + lockBtn(L) + '</div>';
+    });
+  });
+  return o;
+}
+function ctx(top, left) {
+  return '<div class="ctx" style="top:' + top + 'px;left:' + left + 'px"><div class="hot">' + ic('sel', 14) + 'Select<u>Click</u></div><div>' + ic('zoom', 14) + 'Zoom to<u>Z</u></div><hr><div>' + ic('eyeoff', 14) + 'Hide<u>H</u></div><div>' + ic('lock', 14) + 'Lock<u>Ctrl+L</u></div><hr><div>' + ic('layers', 14) + 'Move to layer…<u>›</u></div><div>' + ic('pen', 14) + 'Rename<u>F2</u></div><hr><div style="color:var(--muted)">Show all hidden</div></div>';
+}
+function head(foot, tabs, filt) {
+  return '<div class="omtop"><div class="search' + (filt ? ' f' : '') + '">' + ic('search', 14) + '<span>' + (filt || 'Search objects…') + '</span>' + (filt ? ic('close', 12) : '') + '</div><div class="filters"><span class="fb ' + (filt ? '' : 'on') + '">All</span><span class="fb">' + ic('eyeoff', 12) + 'Hidden 9</span><span class="fb">' + ic('lock', 12) + 'Locked 4</span><span style="flex:1"></span><span class="fb" title="Expand / collapse all">' + ic('down', 12) + '</span></div></div>';
+}
+function foot(txt) { return '<div class="omfoot">' + txt + '</div>'; }
+
+function sheet(selectedOnly) {
+  var g = 'stroke="var(--partline)" stroke-width="1.6" fill="none"';
+  return '<svg viewBox="0 0 900 640" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Bracket plate open on the sheet"><rect x="40" y="40" width="820" height="560" fill="var(--sheet)" stroke="var(--sheetline)"/>' +
+    '<text x="46" y="32" font-family="var(--mono)" font-size="11" fill="var(--muted)">Sheet 400 x 280 mm</text>' +
+    '<g stroke="var(--sheetline)" stroke-width="1" fill="none" stroke-dasharray="2 5"><rect x="52" y="52" width="796" height="536"/></g>' +   // Frame layer, locked
+    '<g ' + g + '><rect x="150" y="130" width="500" height="350" rx="14"/><line x1="150" y1="210" x2="450" y2="210" stroke-width="1.2"/><circle cx="190" cy="170" r="12"/><circle cx="610" cy="170" r="12"/><circle cx="190" cy="440" r="12"/><circle cx="610" cy="440" r="12"/><path d="M500 330h90a20 20 0 0 1 0 40h-90a20 20 0 0 1 0-40z"/><path d="M590 250a30 30 0 0 1 30 30" /></g>' +
+    '<g stroke="var(--sheetline)" stroke-width="1" fill="none" stroke-dasharray="7 4" opacity=".0"><path d="M110 305H690M400 100V520"/></g>' +   // Construction layer is hidden: not drawn
+    '<circle cx="330" cy="330" r="100" ' + g + '/>' +
+    '<g stroke="var(--accent)" fill="none"><circle cx="330" cy="330" r="100" stroke-width="2.4"/><circle cx="330" cy="330" r="100" fill="var(--accent)" opacity=".08" stroke="none"/></g>' +
+    '<g fill="var(--grip,var(--accent))" stroke="var(--sheet)" stroke-width="1.5"><rect x="324" y="324" width="12" height="12"/><rect x="424" y="324" width="12" height="12"/><rect x="224" y="324" width="12" height="12"/><rect x="324" y="224" width="12" height="12"/><rect x="324" y="424" width="12" height="12"/></g>' +
+    '<text x="330" y="270" text-anchor="middle" fill="var(--accent)" font-family="var(--mono)" font-size="12">Ø40</text>' +
+    '<g stroke="var(--dim)" stroke-width="1" fill="none"><path d="M150 500v22M650 500v22M150 514H650M150 514l8-3M150 514l8 3M650 514l-8-3M650 514l-8 3"/></g><text x="400" y="508" text-anchor="middle" fill="var(--dim)" font-family="var(--mono)" font-size="12">500.0</text>' +
+    '<g stroke="var(--accent)" stroke-width="1.2" fill="none" opacity=".7"><path d="M520 160h60l14 16h-74z"/></g><text x="530" y="176" fill="var(--accent)" font-family="var(--mono)" font-size="13">REV A</text>' +
+    '<g stroke="var(--mark)" stroke-width="1.5" fill="none"><circle cx="190" cy="170" r="5"/><path d="M185 170h10M190 165v10"/></g>' +
+    '<text x="46" y="618" fill="var(--muted)" font-family="var(--mono)" font-size="11">Construction: hidden (9 objects)</text></svg>';
+}
+function frame(menuOn, panelHtml, extra, narrow) {
+  var tools = ['sel', 'line', 'rect', 'circle', 'arc', 'dim', 'text'].map(function (t, i) { return '<span class="tl' + (i === 0 ? ' on' : '') + '">' + ic(t === 'sel' ? 'sel' : t, 18) + '</span>'; }).join('');
+  return '<div class="shell"><div class="menubar"><strong>Project D</strong>' + ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Help'].map(function (m) { return '<span class="menu' + (m === menuOn ? ' on' : '') + '">' + m + '</span>'; }).join('') + '</div>' +
+    '<div class="tabrow"><span class="tab on">bracket-plate.dxf</span><span class="tab">bracket-plate layout.dxf</span></div>' +
+    '<div class="body"><div class="rail">' + tools + '</div><div class="canvas">' + sheet() + (extra || '') + '</div>' + panelHtml + '</div>' +
+    '<div class="status"><span class="mono">X 330.00  Y 330.00 mm</span><span>Current layer: Cut</span><span>Selected: 1 of 45 · Circle Ø40, layer Cut</span><span class="chip">Tool: Select</span></div></div>';
+}
+
+// ---- A: tab in the right panel
+document.getElementById('A').innerHTML = frame('View',
+  '<aside class="side"><div class="ptabs"><span class="ptab">Drawing</span><span class="ptab on">Objects</span></div><div class="om">' + head() +
+  '<div class="tree">' + tree({ ctx: 'Circle Ø8' }) + ctx(96, 150) + '</div>' + foot('<span><b>45</b> objects · 6 layers</span><span style="flex:1"></span><span>1 selected</span>') + '</div></aside>', '');
+
+// ---- B: floating panel over the sheet, filtered, docking zone shown; the normal Drawing panel stays
+var drawingPanel = '<aside class="side narrow" style="padding:12px;gap:12px"><div><h3>Sheet</h3><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><div><span style="color:var(--muted);font-size:11px">Width</span><div class="search f" style="color:var(--text)"><span>400.0</span></div></div><div><span style="color:var(--muted);font-size:11px">Height</span><div class="search f" style="color:var(--text)"><span>280.0</span></div></div></div></div>' +
+  '<div><h3>Properties</h3><div style="display:flex;gap:8px;align-items:center;margin-bottom:6px"><span class="chip">Circle</span><span class="mono" style="color:var(--muted);font-size:12px">Ø40.00</span></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:6px"><div><span style="color:var(--muted);font-size:11px">Layer</span><div class="search" style="color:var(--text)"><span>Cut</span></div></div><div><span style="color:var(--muted);font-size:11px">Colour</span><div class="search" style="color:var(--text)"><span>ByLayer</span></div></div></div></div>' +
+  '<div><h3>Layers</h3>' + [['Cut', 14, 1], ['Engrave', 6], ['Hardware', 8], ['Dimensions', 5], ['Construction', 9, 0, 1], ['Frame', 3]].map(function (l) { return '<div class="row' + (l[2] ? ' layer cur' : '') + (l[3] ? ' dimmed' : '') + '" style="font-weight:400"><span class="sw" style="background:' + COLS[l[0]] + '"></span><span class="nm">' + l[0] + '</span><span class="n">' + l[1] + '</span>' + eyeBtn(!!l[3]) + '</div>'; }).join('') + '</div></aside>';
+document.getElementById('B').innerHTML = frame('View', drawingPanel,
+  '<div class="dock" style="top:8px;right:8px;width:96px;bottom:8px">Dock here</div>' +
+  '<div class="float" style="top:14px;left:14px;height:520px"><div class="ftitle">' + ic('layers', 14) + '<b>Object Manager</b><span class="a" title="Dock left">' + ic('dockl', 14) + '</span><span class="a on" title="Floating">' + ic('float', 14) + '</span><span class="a" title="Dock right">' + ic('dockr', 14) + '</span><span class="a" title="Close">' + ic('close', 14) + '</span></div><div class="om">' + head(0, 0, 'circle') +
+  '<div class="tree">' + tree({ filter: /circle/i, ctx: 'Circle Ø8' }) + ctx(96, 96) + '</div>' + foot('<span><b>3</b> of 45 match</span><span style="flex:1"></span><span>1 selected</span>') + '</div></div>', 1);
+</script>
+</body>
+</html>

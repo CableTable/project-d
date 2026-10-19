@@ -178,4 +178,14 @@ t('outlineOf: lines that do not close give the hull; text and kept dimensions ar
   assert.equal(nothing.kind, 'box'); near(polyArea(nothing.poly), 100);
 });
 
+t('a part narrower than one grid cell still marks a cell, so two of them are never put on the same spot', () => {
+  const items = [{ id: 'a', count: 6, poly: rect(1, 30) }], area = { x: 0, y: 0, w: 40, h: 40 };
+  const r = pack({ area, gap: 0, rotations: 'none', items, cell: 4 });
+  assert.equal(r.placed, 6);
+  const polys = polysOf(r, items);
+  for (let i = 0; i < polys.length; i++) for (let j = i + 1; j < polys.length; j++) assert.ok(clear(polys[i], polys[j], 0), 'no overlap');
+  const cells = new Set(r.placements.map((p) => Math.floor(p.x / 4) + ',' + Math.floor(p.y / 4)));
+  assert.equal(cells.size, 6, 'one cell each');
+});
+
 console.log(`nest.test.mjs: ${n} tests passed`);

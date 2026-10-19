@@ -13,7 +13,7 @@
 export class DrawingError extends Error {}
 
 const TAU = Math.PI * 2, DEG = Math.PI / 180;
-const MAX_ITEMS = 400000;
+const MAX_ITEMS = 400000, MAX_MATS = 400000;
 export const UNITS = { 1: 'in', 2: 'ft', 3: 'mi', 4: 'mm', 5: 'cm', 6: 'm', 7: 'km', 8: 'µin', 9: 'mil', 10: 'yd', 14: 'dm' };
 
 // ---------------------------------------------------------------- the file's text
@@ -40,7 +40,7 @@ export function readDxf(text) {
       if (!raw[i].trim()) { i -= 1; continue; }                // a stray blank line
       throw new DrawingError('Couldn\'t read this drawing.');
     }
-    C.push(c); V.push(raw[i + 1]);
+    C.push(c); V.push(raw[i + 1].replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))));   // the writer encodes it again
   }
   if (!C.length) throw new DrawingError('This drawing is empty.');
   const doc = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [] };
@@ -89,16 +89,28 @@ function firsts(r) {
 const num = (v, d = 0) => { const n = v == null ? NaN : +v; return Number.isFinite(n) ? n : d; };
 
 function tables(doc, recs) {
+  const styleOf = {};                                   // STYLE handle → name, for the text of a complex line type
+  for (const r of recs) {
+    const f = firsts(r);
+    // STYLE and DIMSTYLE records are kept as they are (name → { c, v }): the writer puts them back
+    if (r.type === 'STYLE' && f[2] != null) { (doc.styles ||= {})[f[2].trim()] = { c: r.c, v: r.v }; if (f[5]) styleOf[f[5].trim().toUpperCase()] = f[2].trim(); }
+    else if (r.type === 'DIMSTYLE' && f[2] != null) (doc.dimstyles ||= {})[f[2].trim()] = { c: r.c, v: r.v };
+  }
   for (const r of recs) {
     const f = firsts(r);
     if (r.type === 'LAYER' && f[2] != null) {
       const aci = num(f[62], 7);
       doc.layers[f[2].trim()] = { aci: Math.abs(aci) || 7, tc: f[420] != null ? num(f[420]) : null, off: aci < 0,
-        frozen: (num(f[70]) & 1) === 1, lt: (f[6] || 'CONTINUOUS').trim(), lw: num(f[370], -3), handle: (f[5] || '').trim().toUpperCase() };
+        frozen: (num(f[70]) & 1) === 1, flags: num(f[70]) & 6, lt: (f[6] || 'CONTINUOUS').trim(), lw: num(f[370], -3), plot: num(f[290], 1) !== 0, handle: (f[5] || '').trim().toUpperCase() };
     } else if (r.type === 'LTYPE' && f[2] != null) {
-      const pattern = [];
-      for (let k = 0; k < r.c.length; k++) if (r.c[k] === 49) pattern.push(num(r.v[k]));
-      doc.ltypes[f[2].trim().toUpperCase()] = { pattern };
+      const pattern = [], elems = [];
+      for (let k = 0; k < r.c.length; k++) {
+        const c = r.c[k], v = r.v[k], el = elems[elems.length - 1];
+        if (c === 49) { pattern.push(num(v)); elems.push({ flags: 0 }); } else if (!el) continue;
+        else if (c === 74) el.flags = num(v); else if (c === 75) el.shape = num(v); else if (c === 340) el.style = styleOf[v.trim().toUpperCase()];
+        else if (c === 46) el.scale = num(v); else if (c === 50) el.rot = num(v); else if (c === 44) el.x = num(v); else if (c === 45) el.y = num(v); else if (c === 9) el.text = v;
+      }
+      doc.ltypes[f[2].trim().toUpperCase()] = elems.some((e) => e.flags) ? { pattern, elems } : { pattern };   // elems: text / shape elements
     }
   }
 }
@@ -423,6 +435,7 @@ export function flatten(doc) {
             const cols = Math.min(Math.max(num(f[70], 1), 1), 100), rows = Math.min(Math.max(num(f[71], 1), 1), 100);
             const c = Math.cos(rot), s = Math.sin(rot);
             for (let row = 0; row < rows && !truncated; row++) for (let col = 0; col < cols && !truncated; col++) {
+              if (mats.length >= MAX_MATS) { truncated = true; break; }   // arrays of empty blocks draw nothing but still cost a matrix each
               let mm = mmul(mats[m], [1, 0, 0, 1, at[0], at[1]]);
               mm = mmul(mm, [c, s, -s, c, 0, 0]);
               mm = mmul(mm, [1, 0, 0, 1, col * num(f[44]), row * num(f[45])]);

@@ -147,6 +147,7 @@ function insideRuns(poly, ax, ay, C, gh) {
       if (c0 <= c1) out.push(j, c0, c1);
     }
   }
+  if (!out.length) for (const [x, y] of poly) out.push(Math.floor((y - ay) / C), Math.floor((x - ax) / C), Math.floor((x - ax) / C));   // narrower than a cell: its vertices' cells
   return out;
 }
 
@@ -170,6 +171,7 @@ function buildMask(poly, gap, C) {
       else if (!hit && c0 >= 0) { runs.push(row, c0, col - 1); c0 = -1; }
     }
   }
+  if (!runs.length) for (const [x, y] of poly) runs.push(Math.floor(y / C), Math.floor(x / C), Math.floor(x / C));   // narrower than a cell: its vertices' cells
   return Int32Array.from(runs);
 }
 

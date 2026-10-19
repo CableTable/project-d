@@ -246,4 +246,25 @@ test('Mirror: text keeps reading the same way (only its place moves); a whole el
   assert.ok(M.mirrorEntity(ellipse(0, 0, 5, 2, 0.5, 0, 1), [0, 0], [0, 1]).skip);
 });
 
+test('a polyline keeps its constant width and elevation through Mirror, Offset and Trim', () => {
+  const wide = lwpoly([[0, 0], [100, 0], [100, 50]], { ...base, width: 0.5 });
+  wide.r.c.splice(wide.r.c.indexOf(70) + 1, 0, 38); wide.r.v.splice(wide.r.c.indexOf(38), 0, '2');
+  const w = (e) => get(e.r, 43), z = (e) => get(e.r, 38);
+  const m = M.mirrorEntity(wide, [0, 0], [0, 10]).ent;
+  near(w(m), 0.5); near(z(m), 2);
+  const o = M.offsetEntity(wide, 5, [50, 20]).ent;
+  near(w(o), 0.5); near(z(o), 2);
+  const cut = line(50, -20, 50, 20, base), t = M.trimEntity(wide, [cut], [20, 0]);
+  assert.ok(t.ents.length > 0 && t.ents.every((e) => Math.abs(w(e) - 0.5) < 1e-9));
+  assert.equal(get(M.mirrorEntity(lwpoly([[0, 0], [10, 0], [10, 5]], base), [0, 0], [0, 10]).ent.r, 43), null, 'a plain polyline stays plain');
+});
+
+test('an arc with no sweep is a whole circle for Trim and Offset (no NaN radius)', () => {
+  const a = arc(0, 0, 10, 30, 30, base);
+  const p = M.pathOf(S(a));
+  assert.equal(p.type, 'circle');
+  const o = M.offsetEntity(a, 5, [30, 0]);
+  assert.ok(!o.error, o.error);
+});
+
 console.log(`${n} modify tests passed`);

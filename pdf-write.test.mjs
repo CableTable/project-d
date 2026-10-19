@@ -274,3 +274,21 @@ test('part, scaled to fit one page: A4 / A3 / A0, labelled not 1:1 with its scal
   assert.ok(X.planPdf(big, { page: 'check', checkPaper: 'A4', separate: false }).pages[0].scale < 0.3);
   assert.ok(X.planPdf(big, { page: 'check', checkPaper: 'A0', separate: false }).pages[0].scale > 0.9);
 });
+
+test('a sheet over 200 in gets /UserUnit and a PDF 1.6 header with the same physical size; normal sheets stay PDF 1.4', () => {
+  const big = new P.Page(6000, 1000), small = new P.Page(420, 297);
+  big.moveTo(0, 0); big.lineTo(6000, 0); big.stroke();
+  const t = text(P.writePdf([big, small]));
+  assert.ok(t.startsWith('%PDF-1.6\n'));
+  assert.ok(/\/UserUnit 2 /.test(t) && (t.match(/UserUnit/g) || []).length === 1);
+  const [b, s] = mediaBoxes(t);
+  near(b[0] * 2 / P.MM, 6000, 0.01, 'physical width'); near(s[0] / P.MM, 420, 0.01);
+  assert.ok(b[0] <= 14400 && b[1] <= 14400);
+  assert.ok(text(P.writePdf([small])).startsWith('%PDF-1.4\n'));
+});
+
+test('freePdfName: never a name that is taken (in this run or on disk)', async () => {
+  const onDisk = new Set(['bracket.pdf', 'bracket (2).pdf']);
+  assert.equal(await X.freePdfName('bracket', async (n) => onDisk.has(n)), 'bracket (3).pdf');
+  assert.equal(await X.freePdfName('other', async (n) => onDisk.has(n)), 'other.pdf');
+});

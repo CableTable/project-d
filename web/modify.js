@@ -25,6 +25,7 @@ const mod2pi = (t) => { t %= TAU; return t < 0 ? t + TAU : t; };
 export function pathOf(sh) {
   if (sh.t === 'line') return { type: 'line', closed: false, segs: [{ a: sh.a, b: sh.b, bulge: 0 }] };
   if (sh.t === 'arc') {
+    if (!norm360(sh.a1 - sh.a0)) return pathOf({ t: 'circle', c: sh.c, r: sh.r });   // no sweep = all the way round
     const sw = (norm360(sh.a1 - sh.a0) || 360) / DEG, P = (t) => [sh.c[0] + sh.r * Math.cos(t / DEG), sh.c[1] + sh.r * Math.sin(t / DEG)];
     return { type: 'arc', closed: false, segs: [{ a: P(sh.a0), b: P(sh.a0 + sw * DEG), bulge: Math.tan(sw / 4) }] };
   }
@@ -118,6 +119,14 @@ export function mirrorShape(sh, p1, p2) {
   return { t: 'poly', closed: sh.closed, pts: sh.pts.map((p) => { const q = R(p); return p[2] ? [q[0], q[1], -p[2]] : q; }) };
 }
 
+/** A shape made from `ent` as an entity again; a polyline keeps its constant width (43) and elevation (38). */
+export function rebuilt(sh, ent) {
+  const w = ent.type === 'LWPOLYLINE' ? get(ent.r, 43) : null, z = ent.type === 'LWPOLYLINE' ? get(ent.r, 38) : null;
+  const e = toEntity(sh, w ? { ...ent, width: w } : ent, 1);
+  if (z && e.type === 'LWPOLYLINE') { const k = e.r.c.indexOf(70) + 1; e.r.c.splice(k, 0, 38); e.r.v.splice(k, 0, String(z)); }
+  return e;
+}
+
 const TEXTS = new Set(['TEXT', 'MTEXT']);
 /**
  * The entity reflected in the line p1 → p2: { ent }, or { skip: 'why' } when this kind is not mirrored. Text moves but is not turned
@@ -128,7 +137,7 @@ export function mirrorEntity(ent, p1, p2) {
   if (dist(p1, p2) < 1e-12) return { skip: 'the mirror line has no length' };
   if (hasGrips(ent)) {
     const sh = mirrorShape(shapeOf(ent, 1), p1, p2);
-    return sh ? { ent: toEntity(sh, ent, 1) } : { skip: 'it could not be mirrored' };
+    return sh ? { ent: rebuilt(sh, ent) } : { skip: 'it could not be mirrored' };
   }
   const r = ent.r;
   if (TEXTS.has(ent.type)) {
@@ -369,7 +378,7 @@ export const canModify = (ent) => !!ent && hasGrips(ent) && ent.type !== 'LEADER
 export function offsetEntity(ent, d, at) {
   if (!canModify(ent)) return { error: 'Offset takes a line, arc, circle or polyline' };
   const r = offsetShape(shapeOf(ent, 1), d, at);
-  return r.error ? r : { ent: toEntity(r.shape, ent, 1) };
+  return r.error ? r : { ent: rebuilt(r.shape, ent) };
 }
 
 /** What is left of an entity after the part under `pick` is cut off at the edges (entities): { ents } | { error }. */
@@ -377,5 +386,5 @@ export function trimEntity(ent, edges, pick) {
   if (!canModify(ent)) return { error: 'Trim takes a line, arc, circle or polyline' };
   const shapes = edges.filter((e) => e !== ent && canModify(e)).map((e) => shapeOf(e, 1));
   const r = trimShape(shapeOf(ent, 1), shapes, pick);
-  return r.error ? r : { ents: r.shapes.map((sh) => toEntity(sh, ent, 1)) };
+  return r.error ? r : { ents: r.shapes.map((sh) => rebuilt(sh, ent)) };
 }

@@ -106,7 +106,7 @@ export function segmentsFromItems(ed, ents, skip = () => false) {
           if (!start) start = S;
           for (let j = 0; j < n; j++) {
             const E = at(a0 + sw * (j + 1) / n), M = at(a0 + sw * (j + 0.5) / n);
-            out.push(seg(S, E, bulgeOf3(S, M, E)));
+            if (dist(S, E) > 1e-12) out.push(seg(S, E, bulgeOf3(S, M, E)));   // an arc with no radius or no sweep adds nothing
             S = E;
           }
           cur = S; k += 7;
@@ -212,7 +212,7 @@ const extent = (s) => (s.b ? Math.abs(sweepOf(s)) : dist(s.p0, s.p1));
  * opts: { corners: 'sharp' | 'rounded' }. → { ok: true, loop } or { ok: false, why }.
  */
 export function offsetLoop(loop, t, opts = {}) {
-  const rounded = opts.corners === 'rounded', limit = opts.miter || MITER_LIMIT, area0 = loopArea(loop), size = Math.max(...loop.map((s) => dist(s.p0, s.p1)), Math.abs(t), 1e-9);
+  const rounded = opts.corners === 'rounded', limit = opts.miter || MITER_LIMIT, area0 = loopArea(loop), size = loop.reduce((m, s) => Math.max(m, dist(s.p0, s.p1)), Math.max(Math.abs(t), 1e-9));   // not Math.max(...): a dense loop overflows the stack
   const tolJ = 1e-9 * size + 1e-12;
   // 1. every segment moved; an arc that runs out of radius is gone (its place is kept as a corner about its centre)
   const pieces = [];

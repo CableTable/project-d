@@ -39,7 +39,7 @@ function pathEnds(ops) {
 }
 
 /** An arc op's sweep (radians, signed), as the canvas draws it: clockwise flag 1 = anticlockwise in canvas terms. */
-function arcSweep(a0, a1, acw) {
+function arcSweepOp(a0, a1, acw) {
   const T = 2 * Math.PI;
   let d = a1 - a0;
   if (!acw) { if (d >= T) return T; d %= T; if (d < 0) d += T; } else { if (-d >= T) return -T; d %= T; if (d > 0) d -= T; }
@@ -69,7 +69,7 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
         if (op === 0) { if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false }); cur = []; add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 1) { add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 2) {
-          const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweep(a0, a1, ops[k + 6] === 1);
+          const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweepOp(a0, a1, ops[k + 6] === 1);
           const n = Math.max(2, Math.ceil(Math.abs(sw) / (Math.PI / 720)));         // ¼° steps: well under 0.01 mm on a part
           if (!cur) cur = [];
           for (let s = cur.length ? 1 : 0; s <= n; s++) add(cx + r * Math.cos(a0 + sw * s / n), cy + r * Math.sin(a0 + sw * s / n));
@@ -131,15 +131,15 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
 
 /**
  * What the editor needs about a drawing: per shown entity its items and box, a pick grid, and the end points.
- * off: the layer indexes switched off (their entities are not there to pick).
+ * off: the layer indexes switched off (their entities are not there to pick); hid: entities hidden one by one (Objects tab), the same.
  */
-export function makeIndex(raw, fl, off = new Set()) {
+export function makeIndex(raw, fl, off = new Set(), hid = null) {
   const space = spaceOf(fl), n = raw.entities.length, items = fl.items;
   const vis = new Uint8Array(items.length), byEnt = new Array(n), box = new Float64Array(n * 4);
   const areas = [], shown = [];
   for (let i = 0; i < items.length; i++) {
     const it = items[i];
-    if (it.e == null || (it.ps ? 1 : 0) !== space || !itemVisible(it, off)) continue;
+    if (it.e == null || (it.ps ? 1 : 0) !== space || !itemVisible(it, off) || (hid && hid.has(it.e))) continue;
     vis[i] = 1;
     const e = it.e, b = it.b;
     if (!byEnt[e]) { byEnt[e] = []; shown.push(e); box[e * 4] = b[0]; box[e * 4 + 1] = b[1]; box[e * 4 + 2] = b[2]; box[e * 4 + 3] = b[3]; }
