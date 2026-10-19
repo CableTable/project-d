@@ -1,7 +1,7 @@
 // The DXF writer, pure: no DOM, no files — dxf-write.test.mjs. It writes what drawing.js readDxf gives (one document
 // shape for geometry read from a file and geometry the app makes), as an ASCII DXF R2000 (AC1015).
 //
-//   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way) }
+//   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
@@ -242,7 +242,13 @@ export function writeDxf(doc, opts = {}) {
   const layerNames = new Set(['0', ...Object.keys(doc.layers || {})]);
   const ltNames = new Map(Object.entries(doc.ltypes || {}).map(([k, v]) => [k.toUpperCase(), v.pattern || []]));
   const styles = new Set(Object.keys(doc.styles || {})), dimstyles = new Set(Object.keys(doc.dimstyles || {}));
-  const addName = (set, n) => { if (![...set].some((k) => k.toLowerCase() === n.toLowerCase())) set.add(n); };   // names ignore case
+  const lower = new Map();                                       // set → its names in lower case, so a lookup is one Map get, not a copy of the whole set
+  const addName = (set, n) => {                                  // names ignore case
+    let l = lower.get(set);
+    if (!l) lower.set(set, l = new Set([...set].map((k) => k.toLowerCase())));
+    const k = n.toLowerCase();
+    if (!l.has(k)) { l.add(k); set.add(n); }
+  };
   addName(styles, 'Standard'); addName(dimstyles, 'Standard');
   for (const lt of Object.values(doc.ltypes || {})) for (const el of lt.elems || []) if (el.style) addName(styles, el.style);
   const refLt = (n) => { n = (n || '').trim().toUpperCase(); if (n && !['BYLAYER', 'BYBLOCK', 'CONTINUOUS'].includes(n) && !ltNames.has(n)) ltNames.set(n, STD_LT[n] || []); };
@@ -415,7 +421,7 @@ export function writeDxf(doc, opts = {}) {
     o.s(0, 'SECTION').s(2, 'HEADER');
     o.s(9, '$ACADVER').s(1, 'AC1015');
     o.s(9, '$HANDSEED').s(5, hnext.toString(16).toUpperCase());
-    const ext = extents(doc);
+    const ext = opts.extents && opts.extents.every(Number.isFinite) ? opts.extents : extents(doc);
     const pt = (name, x, y, z) => o.s(9, name).p(10, x).p(20, y).p(30, z);
     pt('$EXTMIN', ext ? ext[0] : 1e20, ext ? ext[1] : 1e20, ext ? 0 : 1e20);
     pt('$EXTMAX', ext ? ext[2] : -1e20, ext ? ext[3] : -1e20, ext ? 0 : -1e20);

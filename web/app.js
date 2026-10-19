@@ -2222,7 +2222,7 @@ async function autosaveNow() {
       if (!d.dirty) { if (d.hasCopy) { d.hasCopy = false; await RC.removeCopy(d.rid); } continue; }
       if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers) continue;        // a drawing's state is replaced at every change: same one, same copy
       let dxf;
-      try { dxf = writeDxf(d.lay ? LD.layoutRaw(d.lay) : d.raw, { escapeUnicode: true }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
+      try { dxf = writeDxf(d.lay ? LD.layoutRaw(d.lay) : d.raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
       if (d.lay && d.hasCopy && d.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
       if (d.lay) d.autoDxf = dxf;
       if (!d.rid) d.rid = uid();
@@ -2322,7 +2322,7 @@ async function save(forceAs) {
   const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
-    const text = writeDxf(raw, { escapeUnicode: true });
+    const text = writeDxf(raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
     let path = d.path, name = d.name;
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
