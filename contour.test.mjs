@@ -232,4 +232,17 @@ test('the contour outlines are ordinary lines and arcs: they pick, chain and sna
   near(ap.area, 6000 + 320 * 10 + PI * 100, 'area', 1e-5);
 });
 
+test('an arc with no radius or no sweep adds no zero-length piece (the outline still offsets); a very dense loop does not overflow the stack', () => {
+  const doc = W.newDoc(4);
+  W.addEntities(doc, W.rect(0, 0, 100, 60, { layer: 'A' }), W.arc(50, 30, 0, 0, 90, { layer: 'A' }));
+  const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+  const segs = C.segmentsFromItems(ed, [0, 1]);
+  assert.ok(segs.every((s) => Math.hypot(s.p1[0] - s.p0[0], s.p1[1] - s.p0[1]) > 1e-12), 'no zero-length segment');
+  const { loops } = C.buildLoops(segs, 1e-4);
+  assert.equal(loops.length, 1);
+  assert.equal(C.offsetLoop(loops[0], 5).ok, true);
+  const N = 150000, big = Array.from({ length: N }, (_, i) => [1000 * Math.cos((2 * PI * i) / N), 1000 * Math.sin((2 * PI * i) / N)]);
+  assert.doesNotThrow(() => C.offsetLoop(poly(big), 1));
+});
+
 console.log(n + ' contour tests passed');
