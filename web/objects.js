@@ -115,6 +115,13 @@ export function buildTree(raw, fl, o = {}) {
   return { layers, objects, nLayers: by.size, hiddenN, lockedN };
 }
 
+/** The numbers of the entities in `hid` (a Set of entity objects): hiding is kept by object, so deleting or inserting before one does not move it. */
+export function hiddenIndexes(entities, hid) {
+  const out = new Set();
+  if (hid && hid.size) entities.forEach((e, i) => { if (hid.has(e)) out.add(i); });
+  return out;
+}
+
 /** The box [x0, y0, x1, y1] (drawing units, shown space) of these top-level entities, or null. */
 export function boxOf(fl, ents) {
   const want = ents instanceof Set ? ents : new Set(ents), space = spaceOf(fl);

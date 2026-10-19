@@ -6215,6 +6215,21 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await t('ptab-drawing').click();
   });
 
+  await step('Objects tab: a part hidden on a layout is left out of the PDF (fewer drawing operators), and comes back when shown; Save is not affected', async () => {
+    await t('ptab-drawing').click();
+    await nestLayout();
+    const ops = async () => { await openPdf(); const txt = pdfText(await downloaded(() => t('pdf-go').click())); return (txt.match(/ m\n/g) || []).length; };
+    const all = await ops();
+    await t('ptab-objects').click();
+    const eye = page.locator('[data-testid=obj-tree] .or.layer[data-part]').first().locator('[data-act=vis]');
+    await eye.click();
+    const fewer = await ops();
+    assert.ok(fewer > 0 && fewer < all, `${fewer} operators with Plate A hidden, ${all} with everything`);
+    await eye.click();
+    assert.equal(await ops(), all, 'shown again: the same PDF');
+    await t('ptab-drawing').click();
+  });
+
   await step('Objects tab: screenshots, light and dark', async () => {
     await openObjects();
     await oRow('Circle Ø40').click();

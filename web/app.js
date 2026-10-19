@@ -2459,7 +2459,7 @@ function setPtab(tab) {
 
 /** The tree for the tab that is open: a drawing's layers and objects, or a layout's parts. */
 function objOpts(d, om) {
-  return { factor: d.factor, off: d.off, hid: d.hid || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: d.addedLayers ? [...d.addedLayers] : [] };
+  return { factor: d.factor, off: d.off, hid: hidIdx(d) || new Set(), locked: d.locked || new Set(), curLayer: curLayerName(d), query: om.query, filter: om.filter, open: om.open, show: om.show, extra: d.addedLayers ? [...d.addedLayers] : [] };
 }
 function objBtn(act, on, label, inner, cls = '') {
   return h('button', { class: 'oa' + (on ? '' : ' off') + cls, type: 'button', 'data-act': act, 'aria-label': label, title: label }, oIcon(inner, 15));
@@ -2585,11 +2585,12 @@ function toggleLayerLock(d, name) {
 }
 /** Hides these objects, or shows them again if they are all hidden already. For this session only: the file does not keep it. */
 function objHide(d, ents) {
-  const hid = d.hid || (d.hid = new Set());
-  const off = ents.filter((e) => d.fl.layers.some((l, i) => l.name === d.raw.entities[e].layer && d.off.has(i)));
+  const hid = d.hid || (d.hid = new Set()), E = d.raw.entities;        // kept by entity object, so it survives edits that shift the numbers
+  const off = ents.filter((e) => d.fl.layers.some((l, i) => l.name === E[e].layer && d.off.has(i)));
   if (off.length === ents.length) { note('Its layer is hidden: show the layer first'); return; }
-  const all = ents.every((e) => hid.has(e));
-  for (const e of ents) { if (all) hid.delete(e); else hid.add(e); }
+  const all = ents.every((e) => hid.has(E[e]));
+  for (const e of ents) { if (all) hid.delete(E[e]); else hid.add(E[e]); }
+  d.hidC = null;
   layersChanged(d); paintOverlay(); renderObjects(); renderStatus();
   note(all ? `${ents.length} shown again` : `${ents.length} hidden for this session: the saved file keeps them`);
 }
@@ -2610,7 +2611,7 @@ function objZoom(d, ents) {
 }
 function showAllHidden(d) {
   if (d.lay) { if (d.hiddenParts) d.hiddenParts.clear(); paintOverlay(); renderObjects(); note('All parts are shown'); return; }
-  d.off.clear(); d.hid = new Set();
+  d.off.clear(); d.hid = new Set(); d.hidC = null;
   layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
   note('All layers and objects are shown');
 }
@@ -2618,11 +2619,11 @@ async function renameLayerNow(d, name) {
   if (name === '0') { note('Layer 0 cannot be renamed'); return; }
   const to = await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => Ed.layerNameProblem(v, allLayerNames(d), name) });
   if (!to || to === name) return;
-  const wasOff = d.off.has(d.fl.layers.findIndex((l) => l.name === name)), hid = d.hid || new Set(), lk = d.locked;
+  const wasOff = d.off.has(d.fl.layers.findIndex((l) => l.name === name)), hid = hidIdx(d), lk = d.locked;
   commit(d, OB.renameLayer(d.raw, name, to), `Rename layer ${name} → ${to}`);
   const i = d.fl.layers.findIndex((l) => l.name === to);
   if (wasOff && i >= 0) d.off.add(i);                                      // restore() keeps hidden layers by name: this one has a new name
-  d.hid = hid;
+  d.hid = new Set([...(hid || [])].map((k) => d.raw.entities[k])); d.hidC = null;       // the renamed entities are new objects, at the same numbers
   if (lk && lk.delete(name)) lk.add(to);
   if (d.curLayer === name) d.curLayer = to;
   if (d.addedLayers && d.addedLayers.delete(name)) d.addedLayers.add(to);
@@ -2636,7 +2637,7 @@ function objMenu(e) {
   const d = curDoc(), row = e.target.closest('.or');
   if (!d || !row || row.classList.contains('more') || row.classList.contains('member')) return;
   e.preventDefault();
-  const { clientX: x, clientY: y } = e, hid = d.hid || new Set(), sep = '-';
+  const { clientX: x, clientY: y } = e, hid = hidIdx(d) || new Set(), sep = '-';
   if (d.lay) {
     const id = row.dataset.part || (row.dataset.place != null ? placedNow[+row.dataset.place].partId : null), hp = d.hiddenParts || (d.hiddenParts = new Set());
     if (row.dataset.place != null) { state.sel = +row.dataset.place; renderProps(); drawSheet(); paintOverlay(); }
@@ -3007,11 +3008,17 @@ function applyView() {
   paintOverlay();
 }
 
+/** The numbers of the entities hidden one by one (d.hid holds the entity objects): looked up again when the entity list changed. */
+function hidIdx(d) {
+  if (!d.hid || !d.hid.size) return null;
+  if (!d.hidC || d.hidC.ents !== d.raw.entities) d.hidC = { ents: d.raw.entities, set: OB.hiddenIndexes(d.raw.entities, d.hid) };
+  return d.hidC.set;
+}
 /** Entities not painted: the one a grip is dragging (the overlay draws it) and the ones hidden one by one in the Objects tab. */
 function hideNow(d) {
   const drag = d && state.grip && state.grip.d === d && state.grip.next ? state.grip.e : null;
   if (!d || (drag == null && !(d.hid && d.hid.size))) return null;
-  const out = new Set(d.hid || []);
+  const out = new Set(hidIdx(d) || []);
   if (drag != null) out.add(drag);
   return out;
 }
@@ -3473,7 +3480,7 @@ const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
-function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, d.hid); return d.ed; }
+function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
 function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
 const lockedEnt = (d, e) => !!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer);
@@ -3546,7 +3553,7 @@ function restore(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
-  Object.assign(d, { fl, counts: layerCounts(fl), entities: entityCount(fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [], hid: new Set() });      // objects hidden one by one come back: entity numbers shift
+  Object.assign(d, { fl, counts: layerCounts(fl), entities: entityCount(fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   showDoc();
   warm(d);
 }
@@ -5555,7 +5562,7 @@ const hiddenLayerNames = (d) => new Set([...d.off].map((i) => d.fl.layers[i] && 
 function similarList(d, by) {
   const first = [...d.sel].find((e) => d.raw.entities[e] && d.raw.entities[e].layer !== Ed.DIM_LAYER);
   if (first == null) return null;
-  const off = hiddenLayerNames(d), ents = d.raw.entities;
+  const off = new Set([...hiddenLayerNames(d), ...(d.locked || [])]), ents = d.raw.entities;        // a locked layer's shapes are not picked up, as by a click
   return { ref: ents[first], list: PR.similar(ents, ents[first], by, layerMap(d), Ed.DIM_LAYER).filter((i) => !off.has(ents[i].layer)) };
 }
 function selectSimilar(by) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as O from './web/objects.js';
 import { newDoc, addEntities, addBlock, addLayer, writeDxf, line, circle, arc, lwpoly, rect, text, insert } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
+import { removeEntities } from './web/edit.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -96,6 +97,17 @@ test('boxOf: the box of some entities', () => {
   assert.deepEqual(O.boxOf(fl, new Set([1])), [30, 30, 70, 70]);
   assert.equal(O.boxOf(fl, []), null);
   assert.ok(raw);
+});
+
+test('hiddenIndexes: a hidden object stays hidden when an edit shifts the numbers (kept by entity object, not index)', () => {
+  const { raw } = sample(), hid = new Set([raw.entities[3], raw.entities[5]]);
+  assert.deepEqual([...O.hiddenIndexes(raw.entities, hid)], [3, 5]);
+  const after = removeEntities(raw, new Set([0, 1]));                       // two deleted before them: they are now 1 and 3
+  assert.deepEqual([...O.hiddenIndexes(after.entities, hid)], [1, 3]);
+  assert.equal(after.entities[1], raw.entities[3]);
+  const gone = removeEntities(raw, new Set([3]));                           // a hidden one deleted: the other stays hidden, nothing else gets hidden
+  assert.deepEqual([...O.hiddenIndexes(gone.entities, hid)], [4]);
+  assert.equal(O.hiddenIndexes(raw.entities, new Set()).size, 0);
 });
 
 test('renameLayer: the table, the entities and the block contents', () => {
