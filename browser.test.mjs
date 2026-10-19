@@ -6202,6 +6202,84 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await ctx2.close();
   });
 
+  await step("Audit 1: close → Don't save (or Save) deletes the recovery copies, so a reload offers nothing", async () => {
+    const c3 = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p3 = await c3.newPage();
+    await p3.addInitScript(() => {
+      window.__TAURI__ = { window: { getCurrentWindow: () => ({ onCloseRequested: (fn) => { window.__onClose = fn; }, destroy: async () => {} }) } };
+    });
+    const copyCount = () => p3.evaluate(() => new Promise((res) => {
+      const r = indexedDB.open('project-d-recovery', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('copies', { keyPath: 'id' });
+      r.onsuccess = () => { const q = r.result.transaction('copies').objectStore('copies').count(); q.onsuccess = () => { r.result.close(); res(q.result); }; };
+    }));
+    const waitCopy = async () => { for (let i = 0; i < 60; i++) { if (await copyCount() === 1) return; await p3.waitForTimeout(150); } throw new Error('no copy appeared'); };
+    const u3 = URL_ + '?autosave=300';
+    for (const answer of ['close-discard', 'close-save']) {
+      await p3.goto(u3);
+      await p3.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await p3.locator('[data-testid=layer-add]').click();
+      await waitCopy();
+      const pending = p3.evaluate(() => window.__onClose({ preventDefault() {} }));
+      await p3.locator('[data-testid=close-dialog]').waitFor();
+      await p3.locator(`[data-testid=${answer}]`).click(); await pending;
+      assert.equal(await copyCount(), 0, answer + ': the copy is gone before the window closes');
+      await p3.reload(); await p3.waitForSelector('[data-testid=count]', { state: 'attached' }); await p3.waitForTimeout(500);
+      assert.equal(await p3.locator('[data-testid=recover-dialog]').count(), 0, answer + ': nothing to recover');
+    }
+    await c3.close();
+  });
+
+  await step("Audit 4: autosave also copies a change that touches only the layers (a new layer after the first copy)", async () => {
+    const c4 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p4 = await c4.newPage();
+    const dxfs = () => p4.evaluate(() => new Promise((res) => {
+      const r = indexedDB.open('project-d-recovery', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('copies', { keyPath: 'id' });
+      r.onsuccess = () => { const q = r.result.transaction('copies').objectStore('copies').getAll(); q.onsuccess = () => { r.result.close(); res(q.result.map((x) => x.dxf)); }; };
+    }));
+    await p4.goto(URL_ + '?autosave=300');
+    await p4.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await p4.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+    await p4.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent === '2');
+    await p4.locator('[data-testid=gap-join]').click();
+    for (let i = 0; i < 60 && (await dxfs()).length < 1; i++) await p4.waitForTimeout(150);
+    assert.equal((await dxfs()).length, 1, 'the first copy');
+    assert.ok(!/\nLayer1\r?\n/.test((await dxfs())[0]));
+    await p4.locator('[data-testid=layer-add]').click();
+    let has = false;
+    for (let i = 0; i < 60 && !has; i++) { has = /\nLayer1\r?\n/.test((await dxfs())[0]); if (!has) await p4.waitForTimeout(150); }
+    assert.ok(has, 'the copy has the new layer');
+    await c4.close();
+  });
+
+  await step("Audit 6: a second window does not offer (or discard) the first window's recovery copies; once the first is gone, a restart does", async () => {
+    const c5 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const a = await c5.newPage();
+    const count = () => a.evaluate(() => new Promise((res) => {
+      const r = indexedDB.open('project-d-recovery', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('copies', { keyPath: 'id' });
+      r.onsuccess = () => { const q = r.result.transaction('copies').objectStore('copies').count(); q.onsuccess = () => { r.result.close(); res(q.result); }; };
+    }));
+    await a.goto(URL_ + '?autosave=300');
+    await a.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await a.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+    await a.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent === '2');
+    await a.locator('[data-testid=gap-join]').click();
+    for (let i = 0; i < 60 && await count() < 1; i++) await a.waitForTimeout(150);
+    assert.equal(await count(), 1);
+    const b = await c5.newPage();                                    // the exe started a second time
+    await b.goto(URL_);
+    await b.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await b.waitForTimeout(800);
+    assert.equal(await b.locator('[data-testid=recover-dialog]').count(), 0, 'the first window still owns its copies');
+    assert.equal(await count(), 1);
+    await a.close();
+    await b.reload();
+    await b.locator('[data-testid=recover-dialog]').waitFor();
+    await c5.close();
+  });
+
   // ---- TODO 39: the Objects tab (objects.js; mock-up R11a, Option A) ----
   const objDoc = () => {
     const doc = newDoc(4);

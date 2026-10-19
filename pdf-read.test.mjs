@@ -101,6 +101,14 @@ test('a page with /Rotate: drawn as it is shown (a portrait page turned 90° is 
   near(r.mm[0], 200, 'w', 1e-3); near(r.mm[1], 100, 'h', 1e-3);
 });
 
+test('a page with 200 000 line pieces opens (no push(...list) over the argument limit)', () => {
+  const OPS = pdfjs.OPS, n = 200000, codes = [], c = [];
+  for (let i = 0; i < n; i++) { codes.push(OPS.moveTo, OPS.lineTo); c.push(i % 500, 0, i % 500, 5); }
+  const ops = { fnArray: [OPS.constructPath, OPS.stroke], argsArray: [[codes, c], null] };
+  const { doc } = R.pdfToDoc({ ops, text: [], view: [0, 0, 600, 100] }, OPS);
+  assert.ok(doc.entities.length >= n, 'pieces: ' + doc.entities.length);
+});
+
 test('a v curve (no first control point) starts at the current point, also when the path goes on in a later op', () => {
   const OPS = pdfjs.OPS, r = 10;
   // a quarter circle (r, 0) → (0, r) written as m, then c split across two ops: m in the first, v (curveTo2) in the second

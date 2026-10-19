@@ -434,11 +434,11 @@ function askSaveChanges(dirty) {
 /** May the window close? Asks when a tab has unsaved changes; Save goes through the usual Save for each (a cancelled Save dialog keeps the window open). */
 async function mayClose() {
   const dirty = dirtyDocs();
-  if (!dirty.length) return true;
+  if (!dirty.length) { await dropCopiesNow(state.docs); return true; }
   if (closeAsk || closing) return false;                             // already asking, or saving after a Save
   const answer = await askSaveChanges(dirty);
   if (answer === 'cancel') return false;
-  if (answer === 'discard') return true;
+  if (answer === 'discard') { await dropCopiesNow(state.docs); return true; }   // a clean close: no recovery offer next start
   closing = true;
   try {
   for (const d of dirty) {
@@ -449,6 +449,7 @@ async function mayClose() {
     if (d.dirty) return false;                                       // the Save dialog was cancelled, or Save failed (it said why)
   }
   } finally { closing = false; }
+  await dropCopiesNow(state.docs);                                   // the window closes at once: wait for the deletes
   return true;
 }
 /** Wires the window's close (the exe) and a page unload (a browser) to mayClose. */
@@ -2204,29 +2205,37 @@ const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
 // ?autosave=<ms> in the page address sets another interval (the browser test uses it); 120000 (2 minutes) otherwise.
 let autosaving = false;
 function dropCopy(d) {
-  d.autoEnts = d.autoBlocks = d.autoDxf = null;
+  d.autoEnts = d.autoBlocks = d.autoLayers = d.autoDxf = null;
   if (!d.hasCopy) return;
   d.hasCopy = false;
   RC.removeCopy(d.rid).catch(() => {});
 }
+/** Deletes the copies of these tabs and waits for it (the window may close right after). */
+/** The window is closing: no new autosave round, and a copy still being written finishes first, so it is deleted too (up to 2 s). */
+let dropping = false;
+const dropCopiesNow = async (docs) => {
+  dropping = true;
+  for (let i = 0; autosaving && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
+  return Promise.all(docs.filter((d) => d.hasCopy).map((d) => { d.hasCopy = false; return RC.removeCopy(d.rid).catch(() => {}); }));
+};
 /** One round: a copy of every tab with unsaved changes that changed since its last copy; the copy of a tab that is saved now is dropped. */
 async function autosaveNow() {
-  if (autosaving) return;
+  if (autosaving || dropping) return;
   autosaving = true;
   try {
     for (const d of state.docs.slice()) {
       if (!d.raw && !d.lay) continue;
       if (!d.dirty) { if (d.hasCopy) { d.hasCopy = false; await RC.removeCopy(d.rid); } continue; }
-      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks) continue;        // a drawing's state is replaced at every change: same one, same copy
+      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers) continue;        // a drawing's state is replaced at every change: same one, same copy
       let dxf;
-      try { dxf = writeDxf(d.lay ? LD.layoutRaw(d.lay) : d.raw, { escapeUnicode: true }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
+      try { dxf = writeDxf(d.lay ? LD.layoutRaw(d.lay) : d.raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
       if (d.lay && d.hasCopy && d.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
       if (d.lay) d.autoDxf = dxf;
       if (!d.rid) d.rid = uid();
       await RC.saveCopy({ id: d.rid, name: d.name, path: d.path || null, kind: d.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
         saved: !!d.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!d.acceptedLoss });
       d.hasCopy = true;
-      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; }
+      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; }
       if (!state.docs.includes(d) || !d.dirty) dropCopy(d);                                          // closed or saved while this was being written
     }
   } catch (err) { console.warn('Autosave failed:', err); } finally { autosaving = false; }
@@ -2265,6 +2274,12 @@ async function recoverOne(c) {
     addTab(doc);
     return true;
   } catch (err) { console.warn('Recover failed for', c.name, err); return false; }
+}
+/** Is this the only window? Two windows share one recovery store, so a second one must not offer (or discard) the first one's live copies.
+ *  The lock is held for as long as the window lives. */
+function ownsRecovery() {
+  if (!navigator.locks) return Promise.resolve(true);
+  return new Promise((resolve) => navigator.locks.request('pd-app', { ifAvailable: true }, (lock) => { resolve(!!lock); return lock ? new Promise(() => {}) : undefined; }));
 }
 async function offerRecovery() {
   let copies;
@@ -2313,7 +2328,7 @@ async function save(forceAs) {
   const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
-    const text = writeDxf(raw, { escapeUnicode: true });
+    const text = writeDxf(raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
     let path = d.path, name = d.name;
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
@@ -6180,7 +6195,7 @@ function init() {
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);
-  offerRecovery();
+  ownsRecovery().then((own) => { if (own) offerRecovery(); });
 }
 
 init();
