@@ -20,14 +20,20 @@ function open() {
   return opened;
 }
 const done = (req) => new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error); });
-const tx = async (mode) => (await open()).transaction(STORE, mode).objectStore(STORE);
+/** A write is done when its transaction commits (a full disk aborts it there, after the request itself has succeeded). */
+const committed = (t) => new Promise((resolve, reject) => {
+  t.oncomplete = () => resolve();
+  t.onabort = () => reject(t.error || new Error('the parts store could not save'));
+  t.onerror = () => reject(t.error || new Error('the parts store could not save'));
+});
+const tx = async (mode) => (await open()).transaction(STORE, mode);
 
 /** Every saved part, oldest first. */
 export async function loadParts() {
-  const all = await done((await tx('readonly')).getAll());
+  const all = await done((await tx('readonly')).objectStore(STORE).getAll());
   return all.sort((a, b) => (a.t || 0) - (b.t || 0));
 }
 /** Adds or replaces a part. */
-export async function savePart(rec) { await done((await tx('readwrite')).put(rec)); }
+export async function savePart(rec) { const t = await tx('readwrite'), c = committed(t); t.objectStore(STORE).put(rec); await c; }
 /** Removes a part. */
-export async function removePart(id) { await done((await tx('readwrite')).delete(id)); }
+export async function removePart(id) { const t = await tx('readwrite'), c = committed(t); t.objectStore(STORE).delete(id); await c; }

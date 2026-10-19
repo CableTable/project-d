@@ -24,6 +24,7 @@ import * as OB from './objects.js';
 import * as C from './compare.js';
 import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
+import { withExt } from './savepath.js';
 import * as RC from './recovery.js';
 import { openExport } from './export.js';
 import { openNest } from './nestdlg.js';
@@ -1970,7 +1971,7 @@ function libPart(rec) {
   return p;
 }
 async function libInit() {
-  try { lib.items = await loadParts(); } catch (err) { lib.failed = true; console.warn('Parts library: storage is not available:', err); }
+  try { const saved = await loadParts(); lib.items = [...saved, ...lib.items.filter((r) => !saved.some((s) => s.id === r.id))]; } catch (err) { lib.failed = true; console.warn('Parts library: storage is not available:', err); }
   renderLibrary(); renderStep();
 }
 /** Saves a record: in the list at once, in storage as well. False if storage failed: the part then stays in the library until the app is closed. */
@@ -1983,7 +1984,7 @@ async function libAdd(rec) {
 const KEPT_ONLY_NOW = ' (this PC\'s storage is not available: it stays until the app is closed)';
 /** A part of an opened layout the library does not have (by name) is added to it. */
 function libKeep(part, source) {
-  if (!part || lib.items.some((r) => r.name.toLowerCase() === part.name.toLowerCase())) return;
+  if (!part || lib.items.some((r) => r.id === part.id || r.name.toLowerCase() === part.name.toLowerCase())) return;
   try { libAdd({ id: part.id, name: part.name, w: part.w, h: part.h, dxf: LD.partToDxf(part), thumb: thumbFor(part), source, t: Date.now() }).catch(() => {}); } catch { /* the layout is open; the library is a convenience */ }
 }
 
@@ -2072,7 +2073,7 @@ async function exportPart(rec) {
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       let path = await t.dialog.save({ defaultPath: name, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
       if (!path) return;
-      path = String(path); if (!/\.dxf$/i.test(path)) path += '.dxf';
+      path = await withExt(t, path, 'dxf'); if (!path) return;
       await t.fs.writeTextFile(path, rec.dxf);
       note(`Exported ${path.split(/[\\/]/).pop()}`);
     } else { download(name, rec.dxf); note(`Exported ${name}`); }
@@ -2307,8 +2308,8 @@ async function save(forceAs) {
       if (ask || !path) {
         path = await t.dialog.save({ defaultPath: want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
         if (!path) return;
-        path = String(path);
-        if (!/\.dxf$/i.test(path)) path += '.dxf';
+        path = await withExt(t, path, 'dxf');
+        if (!path) return;
       }
       await t.fs.writeTextFile(path, text);
       name = path.split(/[\\/]/).pop();
@@ -4060,9 +4061,10 @@ async function balExport(excel) {
   const t = window.__TAURI__;
   try {
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
-      const path = await t.dialog.save({ defaultPath: name, filters: [{ name: 'CSV table', extensions: ['csv'] }] });
+      const picked = await t.dialog.save({ defaultPath: name, filters: [{ name: 'CSV table', extensions: ['csv'] }] });
+      const path = picked && await withExt(t, picked, 'csv');
       if (!path) return;
-      await t.fs.writeTextFile(String(path), text);
+      await t.fs.writeTextFile(path, text);
       note(`Saved ${rows.length} balloons to ${path}`);
     } else { download(name, text); note(`Saved ${name} (${rows.length} balloons) to the Downloads folder`); }
   } catch (err) { note('Export failed: ' + (err && err.message ? err.message : err)); }
@@ -4120,8 +4122,9 @@ async function balSave(d, ask = true) {
       if (!path) {
         if (!ask || !t.dialog || !t.dialog.save) return;
         path = await t.dialog.save({ defaultPath: BAL.sidecarName(d.balName || d.name), filters: [{ name: 'Balloons', extensions: ['json'] }] });
+        path = path && await withExt(t, path, 'json');
         if (!path) return;
-        d.balloonPath = String(path);
+        d.balloonPath = path;
       }
       await t.fs.writeTextFile(path, text);
       note('Saved the balloons to ' + path);
