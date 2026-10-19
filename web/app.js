@@ -434,11 +434,11 @@ function askSaveChanges(dirty) {
 /** May the window close? Asks when a tab has unsaved changes; Save goes through the usual Save for each (a cancelled Save dialog keeps the window open). */
 async function mayClose() {
   const dirty = dirtyDocs();
-  if (!dirty.length) return true;
+  if (!dirty.length) { await dropCopiesNow(state.docs); return true; }
   if (closeAsk || closing) return false;                             // already asking, or saving after a Save
   const answer = await askSaveChanges(dirty);
   if (answer === 'cancel') return false;
-  if (answer === 'discard') return true;
+  if (answer === 'discard') { await dropCopiesNow(state.docs); return true; }   // a clean close: no recovery offer next start
   closing = true;
   try {
   for (const d of dirty) {
@@ -449,6 +449,7 @@ async function mayClose() {
     if (d.dirty) return false;                                       // the Save dialog was cancelled, or Save failed (it said why)
   }
   } finally { closing = false; }
+  await dropCopiesNow(state.docs);                                   // the window closes at once: wait for the deletes
   return true;
 }
 /** Wires the window's close (the exe) and a page unload (a browser) to mayClose. */
@@ -2209,6 +2210,8 @@ function dropCopy(d) {
   d.hasCopy = false;
   RC.removeCopy(d.rid).catch(() => {});
 }
+/** Deletes the copies of these tabs and waits for it (the window may close right after). */
+const dropCopiesNow = (docs) => Promise.all(docs.filter((d) => d.hasCopy).map((d) => { d.hasCopy = false; return RC.removeCopy(d.rid).catch(() => {}); }));
 /** One round: a copy of every tab with unsaved changes that changed since its last copy; the copy of a tab that is saved now is dropped. */
 async function autosaveNow() {
   if (autosaving) return;

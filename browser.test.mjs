@@ -6202,6 +6202,34 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await ctx2.close();
   });
 
+  await step("Audit 1: close → Don't save (or Save) deletes the recovery copies, so a reload offers nothing", async () => {
+    const c3 = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p3 = await c3.newPage();
+    await p3.addInitScript(() => {
+      window.__TAURI__ = { window: { getCurrentWindow: () => ({ onCloseRequested: (fn) => { window.__onClose = fn; }, destroy: async () => {} }) } };
+    });
+    const copyCount = () => p3.evaluate(() => new Promise((res) => {
+      const r = indexedDB.open('project-d-recovery', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('copies', { keyPath: 'id' });
+      r.onsuccess = () => { const q = r.result.transaction('copies').objectStore('copies').count(); q.onsuccess = () => { r.result.close(); res(q.result); }; };
+    }));
+    const waitCopy = async () => { for (let i = 0; i < 60; i++) { if (await copyCount() === 1) return; await p3.waitForTimeout(150); } throw new Error('no copy appeared'); };
+    const u3 = URL_ + '?autosave=300';
+    for (const answer of ['close-discard', 'close-save']) {
+      await p3.goto(u3);
+      await p3.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await p3.locator('[data-testid=layer-add]').click();
+      await waitCopy();
+      const pending = p3.evaluate(() => window.__onClose({ preventDefault() {} }));
+      await p3.locator('[data-testid=close-dialog]').waitFor();
+      await p3.locator(`[data-testid=${answer}]`).click(); await pending;
+      assert.equal(await copyCount(), 0, answer + ': the copy is gone before the window closes');
+      await p3.reload(); await p3.waitForSelector('[data-testid=count]', { state: 'attached' }); await p3.waitForTimeout(500);
+      assert.equal(await p3.locator('[data-testid=recover-dialog]').count(), 0, answer + ': nothing to recover');
+    }
+    await c3.close();
+  });
+
   // ---- TODO 39: the Objects tab (objects.js; mock-up R11a, Option A) ----
   const objDoc = () => {
     const doc = newDoc(4);
