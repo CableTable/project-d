@@ -5554,6 +5554,10 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     for (const id of ['offset', 'trim', 'mirror']) { const b = page.locator('[data-tool=' + id + ']'); assert.equal(await b.getAttribute('aria-disabled'), null, id + ' is built'); titles[id] = await b.getAttribute('title'); }
     assert.deepEqual(titles, { offset: 'Offset (O)', trim: 'Trim (TR)', mirror: 'Mirror (MI)' });
     assert.equal(await page.locator('[data-tool=nest]').getAttribute('aria-disabled'), 'true');
+    await page.locator('nav.rail').screenshot({ path: `${shotDir}/s12-toolbar-light.png` });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(300);
+    await page.locator('nav.rail').screenshot({ path: `${shotDir}/s12-toolbar-dark.png` });
+    await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
     await t('new-layout').click();
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
     await page.locator('[data-tool=trim]').click();
