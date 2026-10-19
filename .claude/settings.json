@@ -50,12 +50,27 @@
       "PowerShell(npx:*)",
       "PowerShell(node:*)"
     ],
+    "ask": [
+      "Bash(gh pr merge:*)",
+      "PowerShell(gh pr merge:*)"
+    ],
     "deny": [
+      "Bash(git push * --force*)",
+      "Bash(git push * -f*)",
+      "Bash(git push * +*)",
+      "PowerShell(git push * --force*)",
+      "PowerShell(git push * -f*)",
+      "PowerShell(git reset --hard:*)",
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
       "Bash(git reset --hard:*)",
       "PowerShell(git push --force:*)",
       "PowerShell(git push -f:*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "node tools/stop-hook.mjs" } ] }
     ]
   }
 }
