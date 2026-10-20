@@ -13,6 +13,8 @@ import { lwpoly } from './dxf-write.js';
 export const MAX_PX = 1000;
 export const DEFAULTS = { threshold: 128, detail: 65, smoothing: 30, colours: 2 };
 export const MAX_COLOURS = 32;
+/** More outlines than this and a noisy scan would freeze the dialog (42,000 took 2.9 s): the preview asks for less Detail instead. */
+export const MAX_OUTLINES = 5000;
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, Number.isFinite(v) ? v : lo));
 const r2 = (v) => Math.round(v * 100) / 100;

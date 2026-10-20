@@ -1,5 +1,5 @@
 // tracedlg.js — the Trace bitmap dialog (mock-up R14, section 05): the picture on the left of the preview, the proposed outlines beside it,
-// four controls (threshold, detail, smoothing, colour count), a layer name. Nothing is put on the drawing until "Trace into <layer>".
+// four controls (threshold, detail, smoothing, colour count), a layer name. Nothing is put on the drawing until "Trace".
 // The maths is trace.js (pure); imagetracerjs (web/vendor/imagetracer, a classic script) is loaded when the dialog first opens.
 // The picture's name comes from a file, so it goes in as text, via h().
 import { h } from './dom.js';
@@ -102,7 +102,7 @@ export function openTrace(cfg) {
     const name = layer.value.trim(), ps = polys;
     if (phase !== 'ready' || !ps.length || cfg.layerProblem(name)) return;
     close(); cfg.onApply(ps, name);
-  } });
+  } }, 'Trace');
   const foot = h('div', { class: 'pd-footer' }, status, h('span', { style: 'flex:1' }), cancel, update, apply);
 
   const dlg = h('div', { class: 'pdlg tracedlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Trace bitmap', 'data-testid': 'trace-dialog', 'data-state': phase },
@@ -121,12 +121,11 @@ export function openTrace(cfg) {
     layerErr.hidden = !why; layerErr.textContent = why;
     threshold.input.disabled = !two();
     thrNote.textContent = two() ? 'Threshold: darker than this is ink (two colours, black and white).' : 'Threshold works with 2 colours only. More colours are picked by the tracer.';
-    apply.textContent = `Trace into ${name || 'a layer'}`;
     apply.disabled = phase !== 'ready' || !polys.length || !!why;
     update.disabled = phase === 'tracing';
-    status.textContent = phase === 'tracing' ? 'Tracing…' : phase === 'stale' ? 'Settings changed: Update preview.' : phase === 'error' ? '' : !polys.length ? 'Nothing to trace with these settings.' : 'Trace puts the outlines on the layer as closed polylines (one undo step).';
+    status.textContent = phase === 'tracing' ? 'Tracing…' : phase === 'stale' ? 'Settings changed: Update preview.' : phase === 'error' || phase === 'many' ? '' : !polys.length ? 'Nothing to trace with these settings.' : 'Trace puts the outlines on the layer as closed polylines (one undo step).';
   }
-  function stale() { if (phase === 'ready' || phase === 'error') { phase = 'stale'; paintFooter(); } }
+  function stale() { if (phase === 'ready' || phase === 'error' || phase === 'many') { phase = 'stale'; paintFooter(); } }
 
   function paintPreview(points) {
     if (!polys.length) { pvwrap.replaceChildren(h('div', { class: 'lbl', style: 'padding:12px' }, phase === 'error' ? '' : 'No outlines.')); stats.textContent = ''; return; }
@@ -147,9 +146,15 @@ export function openTrace(cfg) {
         const p = params(), img = new ImageData(new Uint8ClampedArray(source.data), fit.w, fit.h);
         if (p.colours === 2) T.maskThreshold(img.data, p.threshold);
         const td = tracer.imagedataToTracedata(img, T.tracerOptions(p));
-        polys = T.tracedataToPolys(td, cfg.mmW, cfg.mmH);
-        phase = 'ready';
-        paintPreview(polys.reduce((s, q) => s + q.length, 0));
+        const all = T.tracedataToPolys(td, cfg.mmW, cfg.mmH);
+        if (all.length > T.MAX_OUTLINES) {
+          phase = 'many'; polys = [];
+          pvwrap.replaceChildren(h('div', { class: 'lbl bad', style: 'padding:12px', 'data-testid': 'trace-toomany' }, `Too many outlines (${all.length}). Lower Detail or raise Smoothing.`));
+          stats.textContent = '';
+        } else {
+          polys = all; phase = 'ready';
+          paintPreview(polys.reduce((s, q) => s + q.length, 0));
+        }
       } catch (err) {
         if (mine !== token) return;
         phase = 'error'; polys = [];

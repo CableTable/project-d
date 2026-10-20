@@ -1344,7 +1344,7 @@ try {
     assert.match(await t('trace-limit').textContent(), /reduced to 1000 px before tracing/);
     assert.match(await t('trace-stats').textContent(), /\d+ outlines? · \d+ points/);
     assert.equal(await t('trace-layer').inputValue(), 'Trace');
-    assert.equal(await t('trace-apply').textContent(), 'Trace into Trace');
+    assert.equal(await t('trace-apply').textContent(), 'Trace');
     // a control changes: the preview is out of date until Update preview
     await t('trace-colours').fill('3'); await t('trace-colours').press('Tab');
     assert.equal(await dlg.getAttribute('data-state'), 'stale');
@@ -1379,6 +1379,7 @@ try {
     await t('scale-target').selectOption('drawing');
     await page.waitForFunction(() => Math.abs(parseFloat(document.querySelector('[data-testid=dw]').value) - 105.83) < 1, null, { timeout: 5000 });
     assert.ok(Math.abs(parseFloat(await t('dh').inputValue()) - 52.92) < 1, 'height');
+    await page.waitForFunction(() => !document.querySelector('[data-testid=outlines]').textContent.includes('Reading the drawing'), null, { timeout: 30000 });
     await page.screenshot({ path: shotDir + '/trace-result-light.png' });
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
     await page.screenshot({ path: shotDir + '/trace-result-dark.png' });

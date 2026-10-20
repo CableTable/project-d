@@ -85,6 +85,15 @@ test('colours: with 3 colours the dark ink is traced, the white paper and the fa
   assert.ok(T.tracedataToPolys(td, 50, 50).length >= 1);
 });
 
+test('a big picture shrunk to the limit still comes out at its full size in mm', () => {
+  const big = { w: 4000, h: 2000 }, fit = T.fitSize(big.w, big.h), mmW = big.w * 25.4 / 96, mmH = big.h * 25.4 / 96;   // 96 dpi
+  const s = fit.w / 10;                                            // a box over the middle 80% × 80%
+  const td = trace(picture(fit.w, fit.h, [s, fit.h / 10, fit.w - s, fit.h - fit.h / 10, 0]), {});
+  const [poly] = T.tracedataToPolys(td, mmW, mmH), [x0, y0, x1, y1] = bbox(poly), px = mmW / fit.w;
+  near(x1 - x0, mmW * 0.8, 2 * px, 'width'); near(y1 - y0, mmH * 0.8, 2 * px, 'height');
+  near(x0, mmW * 0.1, 2 * px, 'left'); near(y0, mmH * 0.1, 2 * px, 'bottom');
+});
+
 test('traceEntities: closed LWPOLYLINEs on the layer, moved to the picture position and into drawing units', () => {
   const ents = T.traceEntities([[[0, 0], [10, 0], [10, 5]]], { x: 100, y: 50, factor: 25.4, layer: 'Trace' });
   assert.equal(ents.length, 1); assert.equal(ents[0].type, 'LWPOLYLINE'); assert.equal(ents[0].layer, 'Trace');
