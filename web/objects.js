@@ -15,7 +15,7 @@ import { sweepOf } from './draw.js';
 import * as TX from './text.js';
 import { typeName } from './props.js';
 import { DIM_BLOCK, LDR_BLOCK } from './edit.js';
-import { spaceOf } from './doc.js';
+import { spaceOf, shownEntityIndexes } from './doc.js';
 
 export const CAP = 500;                // objects listed per layer before "show more"
 export const MEMBERS = 200;            // members listed per block
@@ -84,14 +84,14 @@ export function membersOf(raw, ent, factor = 1) {
  */
 export function buildTree(raw, fl, o = {}) {
   const { factor = 1, off = new Set(), hid = new Set(), locked = new Set(), curLayer = null, filter = 'all', open = new Set(), show = new Map(), extra = [] } = o;
-  const q = String(o.query || '').trim().toLowerCase(), space = spaceOf(fl);
+  const q = String(o.query || '').trim().toLowerCase();
   const names = fl.layers.map((l) => l.name), at = new Map(names.map((n, i) => [n, i])), by = new Map(names.map((n) => [n, []]));
   for (const n of extra) if (!by.has(n)) by.set(n, []);                 // layers added by hand, still empty (the file's other empty layers are not listed, as in the Layers section)
-  raw.entities.forEach((e, i) => {
-    if (e.hidden || (e.ps ? 1 : 0) !== space) return;
+  for (const i of shownEntityIndexes(raw, fl)) {
+    const e = raw.entities[i];
     if (!by.has(e.layer)) by.set(e.layer, []);
     by.get(e.layer).push(i);
-  });
+  }
   const layers = [];
   let objects = 0, hiddenN = 0, lockedN = 0;
   for (const [name, list] of by) {

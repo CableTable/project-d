@@ -32,23 +32,24 @@ test('fit rect: sheet alone, or grown by a drawing that sticks out', () => {
   assert.ok(fitsSheet([0, 0, 100, 50], 1000, 700)); assert.ok(!fitsSheet([0, 0, 1100, 50], 1000, 700));
 });
 test('sample.dxf: mm, layers, counts, box', () => {
-  const fl = load('fixtures/sample.dxf');
+  const raw = readDxf(decodeDxf(readFileSync('fixtures/sample.dxf'))), fl = flatten(raw);
   assert.equal(spaceOf(fl), 0);
   assert.equal(shownItems(fl).length, 27, 'drawn items');
-  assert.equal(entityCount(fl), 19, 'a block reference is one entity, not one per item it draws');
-  const counts = layerCounts(fl);
-  assert.equal(counts.reduce((a, b) => a + b, 0), 19);
+  assert.equal(entityCount(raw, fl), 20, 'includes the unsupported IMAGE; a block reference counts once');
+  const counts = layerCounts(raw, fl);
+  assert.equal(counts.reduce((a, b) => a + b, 0), 20);
+  assert.equal(counts[fl.layers.findIndex((l) => l.name === 'NOTES')], 7);
   assert.equal(counts[fl.layers.findIndex((l) => l.name === 'HOLES')], 6);
   assert.deepEqual(drawingBoxMm(fl, 1), fl.boxes.model);
 });
 test('a kept dimension is one entity (its lines, arrowheads and text are items of one INSERT)', () => {
   const raw = readDxf(decodeDxf(readFileSync('fixtures/outline.dxf')));
-  const before = entityCount(flatten(raw));
+  const before = entityCount(raw, flatten(raw));
   const dim = makeDimension([0, 0], [50, 0], 1, raw.blocks, 2), next = addDimension(raw, dim);
-  const fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks });
+  const after = { ...raw, entities: next.entities, blocks: next.blocks }, fl = flatten(after);
   assert.ok(fl.items.length - 0 > before + 3, 'it draws several items');
-  assert.equal(entityCount(fl), before + 1);
-  assert.equal(layerCounts(fl)[fl.layers.findIndex((l) => l.name === 'Dimensions')], 1);
+  assert.equal(entityCount(after, fl), before + 1);
+  assert.equal(layerCounts(after, fl)[fl.layers.findIndex((l) => l.name === 'Dimensions')], 1);
 });
 test('layer visibility hides that layer\'s items only', () => {
   const fl = load('fixtures/sample.dxf');
@@ -60,13 +61,13 @@ test('layer visibility hides that layer\'s items only', () => {
   assert.equal(startHidden(fl).size, fl.layers.filter((l) => !l.on).length);
 });
 test('inch.dxf converts to mm', () => {
-  const fl = load('fixtures/inch.dxf');
+  const raw = readDxf(decodeDxf(readFileSync('fixtures/inch.dxf'))), fl = flatten(raw);
   assert.equal(fl.units, 'in');
   const f = unitFactor(fl.units);
   assert.equal(f, 25.4);
   const box = drawingBoxMm(fl, f);
   assert.deepEqual(box.map((v) => Math.round(v * 100) / 100), [0, 0, 101.6, 50.8]);
-  assert.equal(entityCount(fl), 3);
+  assert.equal(entityCount(raw, fl), 3);
   assert.equal(convertedNote(fl.units), 'converted from inch');
 });
 test('recent files: newest first, no repeats (any case or slash), at most 8', () => {

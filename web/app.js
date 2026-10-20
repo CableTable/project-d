@@ -509,7 +509,7 @@ async function readDrawing(bytes) {
 /** What a tab holds for a drawing: the DXF document (to save and to copy as a part), what is drawn, its layers and size. */
 function tabFields(raw, fl) {
   const factor = unitFactor(fl.units);
-  return { raw, fl, factor, off: startHidden(fl), counts: layerCounts(fl), entities: entityCount(fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
+  return { raw, fl, factor, off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
 }
 
 function addTab(d, replaceEmpty = true) {
@@ -2508,7 +2508,7 @@ function markObjSel(d, reveal) {
   if (reveal) { const s = ui.objTree.querySelector('.or.sel'); if (s && s.scrollIntoView) s.scrollIntoView({ block: 'nearest' }); }
   return true;
 }
-function renderObjects(reveal = false) {
+function renderObjects(reveal = false, keepLayer = null) {
   if (!ui.objTree || state.ptab !== 'objects') return;
   const d = curDoc(), lay = d && d.lay, ed = lay ? null : editable(), dark = isDark();
   const filterBtns = (hidden, locked) => {
@@ -2577,7 +2577,15 @@ function renderObjects(reveal = false) {
   }
   filterBtns(tree.hiddenN, tree.lockedN);
   ui.objToggle.replaceChildren(oIcon(om.open.size ? CHEV_DOWN : CHEV_RIGHT, 12));
-  ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, om.query || om.filter !== 'all' ? 'Nothing matches.' : 'This drawing has no objects.')]));
+  if (keepLayer) {
+    // Keep the clicked name mounted through expansion so the browser can deliver dblclick.
+    const at = rows.findIndex((r) => r.classList.contains('layer') && r.dataset.layer === keepLayer.dataset.layer), fresh = rows[at];
+    keepLayer.setAttribute('aria-expanded', fresh.getAttribute('aria-expanded'));
+    keepLayer.querySelector('.otw').replaceChildren(...fresh.querySelector('.otw').childNodes);
+    for (const r of [...ui.objTree.children]) if (r !== keepLayer) r.remove();
+    keepLayer.before(...rows.slice(0, at));
+    keepLayer.after(...rows.slice(at + 1));
+  } else ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, om.query || om.filter !== 'all' ? 'Nothing matches.' : 'This drawing has no objects.')]));
   ui.objCount.replaceChildren(h('b', null, tree.objects), ` object${tree.objects === 1 ? '' : 's'} · ${tree.nLayers} layer${tree.nLayers === 1 ? '' : 's'}`);
   ui.objSelN.textContent = d.sel.size + ' selected';
   if (reveal) { const s = ui.objTree.querySelector('.or.sel'); if (s && s.scrollIntoView) s.scrollIntoView({ block: 'nearest' }); }
@@ -2609,7 +2617,7 @@ function objClick(e) {
     const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
     if (act && act.dataset.act === 'vis') toggleLayerVis(d, idx);
     else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
-    else { flip(om.open, name); renderObjects(); }
+    else { flip(om.open, name); renderObjects(false, row); }
     return;
   }
   const ent = +row.dataset.e;
@@ -3628,7 +3636,7 @@ function restore(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
-  Object.assign(d, { fl, counts: layerCounts(fl), entities: entityCount(fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
+  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   showDoc();
   warm(d);
 }

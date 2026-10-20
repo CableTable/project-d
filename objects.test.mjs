@@ -1,9 +1,11 @@
 // objects.js — the Objects tab's model.   node objects.test.mjs
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import * as O from './web/objects.js';
 import { newDoc, addEntities, addBlock, addLayer, writeDxf, line, circle, arc, lwpoly, rect, text, insert } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { removeEntities } from './web/edit.js';
+import { entityCount, layerCounts } from './web/doc.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -70,6 +72,30 @@ test('tree: hidden layers and hidden objects count; the filters', () => {
   const lk = O.buildTree(raw, fl, { locked: new Set(['Cut']), filter: 'locked', open: new Set(['Cut']) });
   assert.deepEqual(lk.layers.map((l) => l.name), ['Cut']); assert.equal(lk.lockedN, 5);
   assert.ok(lk.layers[0].rows.every((r) => r.locked));
+});
+
+test('sample counts agree: unsupported IMAGE is included; paper space and block members are not', () => {
+  const raw = readDxf(readFileSync('fixtures/sample.dxf', 'utf8')), fl = flatten(raw), tree = O.buildTree(raw, fl, { open: new Set(['NOTES']) });
+  assert.equal(tree.objects, 20);
+  assert.equal(tree.objects, entityCount(raw, fl));
+  const counts = layerCounts(raw, fl);
+  for (const [i, l] of fl.layers.entries()) assert.equal(tree.layers.find((r) => r.name === l.name).count, counts[i], l.name);
+  const notes = tree.layers.find((l) => l.name === 'NOTES');
+  assert.equal(notes.count, 7);
+  assert.ok(notes.rows.some((r) => raw.entities[r.e].type === 'IMAGE'), 'unsupported objects stay accessible');
+  assert.equal(raw.entities.filter((e) => e.ps).length, 4, 'four paper-space records are excluded');
+});
+
+test('counts use the INSERT layer once, even when its members use different layers; hidden records stay excluded', () => {
+  const d = newDoc(4);
+  addBlock(d, 'Mixed', [line(0, 0, 10, 0, { layer: 'A' }), circle(5, 5, 2, { layer: 'B' })]);
+  addEntities(d, insert('Mixed', 0, 0, { layer: 'Cut' }), line(0, 0, 5, 0, { layer: 'Cut', hidden: true }));
+  const raw = readDxf(writeDxf(d)), fl = flatten(raw), tree = O.buildTree(raw, fl), counts = layerCounts(raw, fl);
+  assert.equal(tree.objects, 1);
+  assert.equal(entityCount(raw, fl), 1);
+  assert.equal(counts.reduce((a, b) => a + b, 0), 1);
+  for (const [i, l] of fl.layers.entries()) assert.equal(tree.layers.find((r) => r.name === l.name).count, counts[i], l.name);
+  assert.equal(counts[fl.layers.findIndex((l) => l.name === 'Cut')], 1);
 });
 
 test('search: by label, case-insensitive; layers without a match go; matches are listed without opening', () => {

@@ -388,8 +388,8 @@ try {
     assert.equal(names.length, 1, 'the empty tab was used up');
     assert.match(names.at(-1), /^sample\.dxf/);
     assert.ok((await inkedWhen((n) => n > 500)) > 500, 'drawing canvas is blank');
-    assert.match(await t('cmd-prompt').textContent(), /Opened sample\.dxf: 19 entities/);
-    assert.equal(await t('entities').textContent(), 'Entities 19');
+    assert.match(await t('cmd-prompt').textContent(), /Opened sample\.dxf: 20 entities/);
+    assert.equal(await t('entities').textContent(), 'Entities 20');
     assert.equal(await t('units').textContent(), '');
   });
 
@@ -448,7 +448,7 @@ try {
 
   await step('switching tabs swaps the drawing; closing a tab works', async () => {
     await page.locator('.tabs .dtab', { hasText: 'sample.dxf' }).click();
-    assert.equal(await t('entities').textContent(), 'Entities 19');
+    assert.equal(await t('entities').textContent(), 'Entities 20');
     await t('new-tab').click();                                                 // an empty tab
     assert.equal(await t('entities').textContent(), '');
     assert.equal(await blank(), 0);
@@ -6293,6 +6293,36 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   const oLayers = () => page.locator('[data-testid=obj-tree] .or.layer .onm').allTextContents();
   const isDim = (loc) => loc.evaluate((e) => e.classList.contains('dim'));
   const openObjects = async () => { await openGrips(objDoc(), 'objects.dxf'); await t('ptab-objects').click(); await t('objects-panel').waitFor(); };
+
+  await step('Objects tab: sample counts agree with Layers and status, including the unsupported IMAGE (TODO 59)', async () => {
+    await openGrips(readFileSync('fixtures/sample.dxf', 'utf8'), 'sample.dxf');
+    const counts = await page.locator('.layers-rows .layer[data-file-layer]').evaluateAll((rows) => rows.map((r) => [r.dataset.layerName, Number(r.querySelector('.lbl').textContent)]));
+    assert.equal(counts.find(([name]) => name === 'NOTES')[1], 7);
+    assert.equal(counts.reduce((sum, [, n]) => sum + n, 0), 20);
+    assert.equal(await t('entities').textContent(), 'Entities 20');
+    await t('ptab-objects').click();
+    assert.match(await t('obj-count').textContent(), /^20 objects/);
+    for (const [name, n] of counts) assert.equal(Number(await oLayer(name).locator('.ocnt').textContent()), n, name);
+  });
+
+  await step('Objects tab: a layer name double-click makes it current; single clicks still expand and select (TODO 58)', async () => {
+    await openObjects();
+    await oLayer('Engrave').locator('.onm').click();
+    assert.equal(await oLayer('Engrave').getAttribute('aria-expanded'), 'true');
+    assert.equal(await oLayer('Engrave').locator('[data-testid=obj-current]').count(), 0, 'a single click does not change the current layer');
+    await oRow("Text 'REV A'").click();
+    await waitSel('1 selected');
+    assert.deepEqual(await page.locator('.or.obj.sel .onm').allTextContents(), ["Text 'REV A'"]);
+    await oLayer('Engrave').locator('.onm').click();
+    assert.equal(await oLayer('Engrave').getAttribute('aria-expanded'), 'false');
+    await oLayer('Engrave').locator('.onm').dblclick();
+    assert.equal(await oLayer('Engrave').locator('[data-testid=obj-current]').textContent(), 'current');
+    assert.match(await t('cmd-prompt').textContent(), /Current layer: Engrave/);
+    await oLayer('Cut').locator('.onm').dblclick();
+    assert.equal(await oLayer('Cut').locator('[data-testid=obj-current]').textContent(), 'current');
+    await t('ptab-drawing').click();
+    assert.equal(await page.locator('.layers-rows .layer.current .nm').textContent(), 'Cut');
+  });
 
   await step('Objects tab: two tabs on the right panel; Objects lists the layers and, for the open one, its objects with short labels; the footer counts', async () => {
     await openGrips(objDoc(), 'objects.dxf');
