@@ -139,6 +139,18 @@ Run long ones in the background; print only `result`, `session_id`, `usage` and
 read + cache write + output from the final `result.usage`; new = input + cache write + output. Rowan: the
 "tokens used" line in its run.log. The `--max-budget-usd` caps stay as a safety stop; limits stay in %.
 
+## Keeping Rook small (his rule, 2026-10-20: Rook was on pace to hit its weekly limit by Friday)
+
+- **A fresh Rook session after every PR merge.** Rook ends with a starting prompt for him to paste (the template below, filled in:
+  branch, next items, open questions). Every Rook turn re-reads the whole conversation, so a long one costs the most.
+- **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
+  `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
+- Rook never opens screenshots or images (Pip-look reports in lines), never runs the test suites (the review does),
+  never reads skill or reference docs it has read before in the session.
+- While runs go, Rook ends its turn and waits for the notice; no status messages in between.
+- The usage page (https://claude.ai/artifact/1Qnf6QF3z3UyvCdcqiaWWf) is refreshed after merges only: upload the files
+  in `mockups/_design/usage/`, then one ArtifactData batch with the new urls. In chat: one line plus the link.
+
 ## Every brief says
 
 - "You ARE the claude2 builder / reviewer: do the work yourself, never launch claude2 or Agent subagents."
