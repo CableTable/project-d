@@ -2143,6 +2143,22 @@ try {
     await page.waitForTimeout(150);
   });
 
+  await step('TODO 57: many tabs scroll inside the tab strip; the window never shifts sideways and "+ New layout" stays on one line', async () => {
+    await page.setViewportSize({ width: 1024, height: 700 });
+    const before = await page.locator('.dtab').count();
+    for (let i = 0; i < 16; i++) await t('new-tab').click();
+    await page.locator('.dtab[data-kind]').last().click();                               // the last tab, as in the bug report
+    const m = await page.evaluate(() => {
+      const nl = document.querySelector('[data-testid=new-layout]').getBoundingClientRect(), tabs = document.querySelector('.tabs');
+      return { doc: [document.documentElement.scrollLeft, document.body.scrollLeft, document.querySelector('.shell').scrollLeft], menu: document.querySelector('.menubar').getBoundingClientRect().left, wide: document.documentElement.scrollWidth - innerWidth, nlH: nl.height, scrolls: tabs.scrollWidth > tabs.clientWidth, rowtools: document.querySelector('.rowtools').getBoundingClientRect().right <= innerWidth + 0.5 };
+    });
+    assert.deepEqual([m.doc, m.menu, m.wide <= 0, m.nlH <= 32, m.scrolls, m.rowtools], [[0, 0, 0], 0, true, true, true, true], JSON.stringify(m));
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForTimeout(150);
+    assert.equal(await page.evaluate(() => document.querySelector('.menubar').getBoundingClientRect().left), 0, 'still unshifted after widening');
+    while ((await page.locator('.dtab').count()) > before) await page.locator('.dtab[data-kind]').last().locator('.x').click();
+  });
+
   await step('Recent files (TODO 33): in the app the File menu lists them; one that is gone comes off the list', async () => {
     const bytes = [...readFileSync('fixtures/outline.dxf')];
     await page.evaluate((b) => {                                     // a stand-in for the app's file API: only readFile

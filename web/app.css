@@ -46,8 +46,11 @@ a { color: var(--accent); } a:hover { color: var(--text); }
 .dropdown button:hover { background: var(--sel); }
 
 /* document tabs */
-.tabsrow { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 8px; padding: 6px 10px 0; background: var(--app); border-bottom: 1px solid var(--line); flex-shrink: 0; }
-.tabs { display: flex; gap: 4px; align-items: flex-end; }
+.tabsrow { display: flex; align-items: flex-end; gap: 8px; padding: 6px 10px 0; background: var(--app); border-bottom: 1px solid var(--line); flex-shrink: 0; }
+/* min-width 0 + overflow: many tabs scroll inside the strip; before, they widened the row past the window and a click scrolled the whole shell sideways */
+.tabs { display: flex; gap: 4px; align-items: flex-end; min-width: 0; overflow-x: auto; scrollbar-width: thin; }
+.tabs .dtab { flex-shrink: 0; white-space: nowrap; }
+.rowtools { flex-shrink: 0; }
 .spacer { flex: 1; }
 .rowtools { display: flex; gap: 8px; align-items: center; padding-bottom: 6px; }
 .dtab { height: 30px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-bottom: 0; border-radius: var(--r) var(--r) 0 0; background: var(--app); color: var(--muted); cursor: pointer; }
