@@ -15,3 +15,16 @@ mkdirSync(tr, { recursive: true });
 copyFileSync('node_modules/imagetracerjs/imagetracer_v1.2.6.js', tr + 'imagetracer.js');
 copyFileSync('node_modules/imagetracerjs/LICENSE', tr + 'LICENSE');
 console.log('imagetracerjs ' + JSON.parse(readFileSync('node_modules/imagetracerjs/package.json', 'utf8')).version + ' -> ' + tr);
+
+// opentype.js (MIT; the ES-module build, pinned to 1.3.4 in package.json): reads a font file's glyph outlines for Text to outlines.
+const ot = 'web/vendor/opentype/';
+mkdirSync(ot, { recursive: true });
+copyFileSync('node_modules/opentype.js/dist/opentype.module.js', ot + 'opentype.js');
+copyFileSync('node_modules/opentype.js/LICENSE', ot + 'LICENSE');
+console.log('opentype.js ' + JSON.parse(readFileSync('node_modules/opentype.js/package.json', 'utf8')).version + ' -> ' + ot);
+
+// Liberation Sans (SIL OFL 1.1, from pdfjs-dist's standard fonts): the fallback font of Text to outlines when a Windows font file cannot be read.
+const fo = 'web/vendor/fonts/';
+mkdirSync(fo, { recursive: true });
+for (const f of ['LiberationSans-Regular.ttf', 'LiberationSans-Bold.ttf', 'LICENSE_LIBERATION']) copyFileSync('node_modules/pdfjs-dist/standard_fonts/' + f, fo + f);
+console.log('Liberation Sans -> ' + fo);

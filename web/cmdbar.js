@@ -27,6 +27,7 @@ const TABLE = [
   ['mirror', 'Edit', 'Mirror objects about a line', ['mi'], 'draw'],
   ['contour', 'Edit', 'Offset a closed outline in steps', ['co'], 'draw'],
   ['trace', 'Edit', 'Trace a picture into closed outlines', ['tb'], 'draw'],
+  ['textoutlines', 'Edit', 'Turn the selected text into closed outlines', ['txo'], 'draw'],
   ['extract', 'Layout', 'Save the selected outline as a part', ['e'], ''],
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
   ['rotate', 'Layout', 'Turn the selected part about a pivot', ['r', 'ro'], 'layout'],

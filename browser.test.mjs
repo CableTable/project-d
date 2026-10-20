@@ -7537,6 +7537,70 @@ try {
     } finally { await c.close(); }
   });
 
+  await step('TODO 53: Text to outlines (Modify menu, TXO): closed polylines in the text\'s place and size, one undo; the Windows font file when it can be read, the bundled Liberation Sans (named in the message) when not; "Select text" prompt', async () => {
+    const txoDone = async (which) => { try { await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 }); } catch (e) { throw new Error('run ' + which + ': no result; the prompt says: ' + (await prompt()) + ' / console: ' + errors.join(' | ')); } };
+    const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
+    await closeTabs(/./); await t('new-tab').click();
+    await page.locator('[data-tool=text]').click();
+    await t('text-height').fill('12'); await t('text-height').press('Enter'); await t('text-font').selectOption('Standard');
+    await click(30, 100); await t('text-editor').waitFor(); await page.keyboard.type('BOB'); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 1);
+    await page.screenshot({ path: shotDir + '/txo-before-light.png' });
+    await theme('dark'); await page.screenshot({ path: shotDir + '/txo-before-dark.png' }); await theme('light');
+    // the Modify menu lists it, with its alias
+    await page.locator('[data-menu=Modify]').click();
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents().then((a) => a.filter((x) => /outlines/.test(x))).then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Text to outlinesTXO']);
+    await page.screenshot({ path: shotDir + '/txo-menu-light.png' });
+    await theme('dark'); await page.locator('[data-menu=Modify]').click(); await page.screenshot({ path: shotDir + '/txo-menu-dark.png' }); await page.keyboard.press('Escape'); await theme('light');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');                  // Esc let go of the text: select it again
+    const t0 = (await savedDoc()).entities[0], ax = fieldOf(t0, 10), ay = fieldOf(t0, 20);       // where the text is, as saved
+    // the app: C:\Windows\Fonts is read through Tauri's fs (here a stub that has only the Segoe UI file)
+    await page.evaluate(async () => {
+      const b = new Uint8Array(await (await fetch('vendor/fonts/LiberationSans-Regular.ttf')).arrayBuffer());
+      window.__fontReads = [];
+      window.__TAURI__ = { fs: { readFile: async (p) => { window.__fontReads.push(p); if (/segoeui\.ttf$/.test(p)) return b; throw new Error('no ' + p); } } };
+    });
+    await menuItem('Modify', 'Text to outlines');
+    await txoDone(1);
+    assert.equal(await prompt(), '1 text → 8 outlines. Ctrl+Z takes them back', 'B has two counters, O one: three letters, eight outlines; no fallback named');
+    assert.deepEqual(await page.evaluate(() => window.__fontReads), ['C:/Windows/Fonts/segoeui.ttf']);
+    await page.evaluate(() => { delete window.__TAURI__; delete window.__fontReads; });
+    await page.screenshot({ path: shotDir + '/txo-after-light.png' });
+    await theme('dark'); await page.screenshot({ path: shotDir + '/txo-after-dark.png' }); await theme('light');
+    let doc = await savedDoc();
+    assert.equal(doc.entities.length, 8); assert.ok(doc.entities.every((e) => e.type === 'LWPOLYLINE' && e.layer === '0' && e.r.v[e.r.c.indexOf(70)] === '1'), 'closed polylines, no TEXT left');
+    const xs = doc.entities.flatMap((e) => e.r.c.flatMap((c, k) => (c === 10 ? [+e.r.v[k]] : []))), ys = doc.entities.flatMap((e) => e.r.c.flatMap((c, k) => (c === 20 ? [+e.r.v[k]] : [])));
+    assert.ok(Math.abs(Math.min(...ys) - ay) < 0.6, 'on the baseline of the text: ' + Math.min(...ys));
+    assert.ok(Math.max(...ys) - Math.min(...ys) > 11 && Math.max(...ys) - Math.min(...ys) < 14, 'the 12 mm text height');
+    assert.ok(Math.min(...xs) > ax - 1 && Math.min(...xs) < ax + 3 && Math.max(...xs) - Math.min(...xs) > 20, 'starts at the text');
+    assert.equal(await t('selbar').isVisible() || await t('textbar').isVisible(), true);
+    assert.deepEqual((await histLabels()).slice(-1), ['Text to outlines × 1']);
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 1, 'one undo brings the text back');
+    doc = await savedDoc();
+    assert.equal(doc.entities[0].type, 'TEXT');
+    // a second text in Arial-like; no Tauri here, so the bundled font stands in and the message says which
+    await page.locator('[data-tool=text]').click(); await t('text-font').selectOption('Arial');
+    await click(30, 60); await t('text-editor').waitFor(); await page.keyboard.type('AB'); await page.keyboard.press('Enter');
+    await page.locator('[data-tool=select]').click();                                       // the text tool's own prompt would cover the message
+    await menuItem('Modify', 'Text to outlines');
+    await txoDone(2);
+    assert.equal(await prompt(), '1 text → 5 outlines. Font file not found, used the fallback font (Arial → Liberation Sans). Ctrl+Z takes them back');
+    await page.keyboard.press('Control+z');
+    // nothing selected: the command asks for text, Enter runs it on what was picked
+    await page.locator('[data-tool=select]').click();
+    await click(150, 20);
+    await typeCmd('txo');
+    assert.equal(await prompt(), 'Text to outlines: select the texts (click or drag a box), then press Enter');
+    await page.keyboard.press('Control+a');
+    await cmdLine().press('Enter');
+    await txoDone(3);
+    assert.match(await prompt(), /^2 texts → 13 outlines/);
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2);
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;
