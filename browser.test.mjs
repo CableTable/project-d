@@ -3417,10 +3417,9 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   });
 
   // ---- TODO 35: Contour ----
-  const contourInk = () => t('drawing').evaluate((c) => {                      // pixels in the contour colour (#0e7c66 light, #4fd1b0 dark)
-    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, dark = document.documentElement.dataset.theme === 'dark';
-    const [R, G, B] = dark ? [79, 209, 176] : [14, 124, 102];
-    let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 150 && Math.abs(d[i] - R) < 30 && Math.abs(d[i + 1] - G) < 30 && Math.abs(d[i + 2] - B) < 30) k++;
+  const contourInk = () => t('drawing').evaluate((c) => {                      // translucent green: ByLayer uses the new Contour layer's ACI 3
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 100 && d[i] < 30 && d[i + 1] > 225 && d[i + 2] < 30) k++;
     return k;
   });
   const contourInkWhen = async (ok, ms = 6000) => { const end = Date.now() + ms; let n = await contourInk(); while (!ok(n) && Date.now() < end) { await page.waitForTimeout(60); n = await contourInk(); } return n; };
@@ -3503,10 +3502,10 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await t('contour-steps').fill('2.5'); await t('contour-steps').press('Enter');
     assert.match(await prompt(), /^Steps must be a whole number from 1 to 100/); assert.equal(await t('contour-steps').inputValue(), '3');
     // it remembers Inside / Outside, the distance, the steps and Sharp / Rounded, on this PC (his call)
-    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded' });
+    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', colour: 'bylayer', lt: 'BYLAYER' });
     const p2 = await ctx.newPage();
     await p2.goto(URL_); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
-    assert.deepEqual(await p2.evaluate(() => JSON.parse(localStorage.getItem('pd-contour'))), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded' });
+    assert.deepEqual(await p2.evaluate(() => JSON.parse(localStorage.getItem('pd-contour'))), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', colour: 'bylayer', lt: 'BYLAYER' });
     await p2.locator('[data-testid=picker]').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await p2.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
     await p2.locator('[data-tool=contour]').click();
@@ -3520,7 +3519,9 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     const box1 = await rectOf(t('contour-panel'));
     approx(box1.x, box0.x - 200, 3, 'moved left'); approx(box1.y, box0.y + 68, 3, 'moved down');
     assert.equal(await selCount(), '1 selected', 'a drag on the panel selected nothing else');
-    await page.mouse.move(head.x - 140, head.y + 80); await page.mouse.down(); await page.mouse.move(head.x + 60, head.y + 12, { steps: 4 }); await page.mouse.up();
+    // The extra style rows make the panel taller: move it left to uncover the open outline.
+    const canvas = await rectOf(t('canvas'));
+    await page.mouse.move(box1.x + 60, box1.y + 12); await page.mouse.down(); await page.mouse.move(canvas.x + 60, canvas.y + 12, { steps: 4 }); await page.mouse.up();
     // an outline that is not closed says so
     await click(550, 100); await waitSel('2 selected');
     assert.match(await t('contour-hint').textContent(), /^That is not a closed outline \(2 pieces left open\)\. Join the tiny gaps, or pick a closed one\.$/);
@@ -3616,11 +3617,80 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await cmdLine().fill('steps 1'); await page.keyboard.press('Enter');
     await cmdLine().fill('apply'); await page.keyboard.press('Enter');
     assert.equal(await entCount(), base + 2 + 1, 'apply from the command line: one more circle');
-    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 7, steps: 1, corners: 'sharp' });
+    assert.deepEqual(await ctCfg(), { dir: 'outside', dist: 7, steps: 1, corners: 'sharp', colour: 'bylayer', lt: 'BYLAYER' });
     await t('contour-close').click();
     // picking an outline of the new layer works like any other (they are ordinary entities)
     await click(300, 103); await waitSel('1 selected');
     assert.equal(await t('sel-layer').textContent(), 'layer Contour');
+  });
+
+  await step('TODO 65: Contour Red / Dashed previews, Apply, one selected edge in Properties, DXF reopen and remembered style', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addEntities(doc, dxfPoly([[100, 100], [200, 100], [200, 200], [100, 200]], { closed: true }));
+    await t('picker').setInputFiles({ name: 'contour-style.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'contour-style.dxf');
+    await page.locator('[data-tool=contour]').click(); await click(150, 100); await waitSel('1 selected');
+    const colours = t('contour-panel').getByRole('group', { name: 'Colour', exact: true });
+    const styles = t('contour-panel').getByRole('group', { name: 'Line style', exact: true });
+    assert.deepEqual(await colours.locator('button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))), ['ByLayer', 'Red', 'Blue', 'Green', 'Black']);
+    assert.deepEqual(await styles.locator('button').allTextContents(), ['Solid', 'Dashed', 'Dotted']);
+    assert.equal(await colours.getByRole('button', { name: 'ByLayer', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await styles.getByRole('button', { name: 'Solid', exact: true }).getAttribute('aria-pressed'), 'true');
+    await t('contour-dist').fill('5'); await t('contour-dist').press('Enter');
+    await t('contour-steps').fill('2'); await t('contour-steps').press('Enter');
+    await ctPanel('contour-outside').click(); await ctPanel('contour-sharp').click();
+    await colours.getByRole('button', { name: 'Red', exact: true }).click();
+    await styles.getByRole('button', { name: 'Dashed', exact: true }).click();
+    const previewStyle = await t('contour-preview').locator('.ct-out').first().evaluate((p) => {
+      const s = getComputedStyle(p); return [s.stroke, s.strokeDasharray, s.opacity];
+    });
+    assert.deepEqual(previewStyle, ['rgb(255, 0, 0)', '7px, 4px', '0.65']);
+    await page.waitForFunction(() => {
+      const c = document.querySelector('[data-testid=drawing]'), d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let red = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 225 && d[i + 1] < 30 && d[i + 2] < 30 && d[i + 3] > 100) red++;
+      return red > 40;
+    });
+    for (const th of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + th); await page.waitForTimeout(250);
+      await page.screenshot({ path: `${shotDir}/R13-built-${th}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    const base = await entCount(); await t('contour-apply').click();
+    assert.equal(await entCount(), base + 8);
+    const dl = await downloaded(() => page.keyboard.press('Control+s'));
+    const saved = readDxf(dl.text), added = saved.entities.filter((e) => e.layer === 'Contour');
+    assert.equal(added.length, 8); assert.ok(added.every((e) => e.aci === 1 && e.lt === 'DASHED'));
+    assert.deepEqual(saved.ltypes.DASHED.pattern, [7, -4]);
+    await t('contour-close').click(); await page.keyboard.press('Control+z'); assert.equal(await entCount(), base);
+    await page.keyboard.press('Control+y'); assert.equal(await entCount(), base + 8);
+    const pickEdge = async () => {
+      await page.keyboard.press('Escape');
+      const a = await at(75, 75), b = await at(225, 92);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up();
+      await waitSel('1 selected');
+      if (!(await t('props-panel').isVisible())) await page.keyboard.press('Control+1');
+      assert.equal(await t('prop-chip').textContent(), 'Line');
+      assert.equal(await t('prop-layer').inputValue(), 'Contour');
+      assert.equal(await t('prop-colour').inputValue(), 'aci:1');
+      assert.equal(await t('prop-colour').locator('option:checked').textContent(), 'Red');
+      assert.equal(await t('prop-lt').inputValue(), 'DASHED');
+      assert.equal(await t('prop-lt').locator('option:checked').textContent(), 'DASHED');
+    };
+    await pickEdge();
+    await closeTabs(/./);
+    await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await t('picker').setInputFiles({ name: 'contour-style-saved.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'contour-style-saved.dxf');
+    await pickEdge();
+    await page.locator('[data-tool=contour]').click();
+    assert.equal(await colours.getByRole('button', { name: 'Red', exact: true }).getAttribute('aria-pressed'), 'true');
+    assert.equal(await styles.getByRole('button', { name: 'Dashed', exact: true }).getAttribute('aria-pressed'), 'true');
+    await styles.getByRole('button', { name: 'Dotted', exact: true }).click();
+    assert.equal(await t('contour-preview').evaluate((p) => p.style.getPropertyValue('--ct-dash')), '0 4');
+    await colours.getByRole('button', { name: 'ByLayer', exact: true }).click();
+    await styles.getByRole('button', { name: 'Solid', exact: true }).click(); await t('contour-close').click();
+    if (await t('props-panel').isVisible()) await page.keyboard.press('Control+1');
   });
 
   await step('TODO 46: tiny gaps are counted (0.01 mm) and ringed; the tolerance is editable; Join gaps closes them in one undo step', async () => {
@@ -4764,7 +4834,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.waitForFunction(() => document.querySelector('[data-testid=prop-lt]').value === 'DASHED');
     const e = entOf(await savedDoc(), 0);
     assert.equal(e.layer, 'Marks'); assert.equal(e.aci, 1); assert.equal(e.lt, 'DASHED');
-    assert.deepEqual((await histLabels()).slice(-3), ['Layer → Marks', 'Colour → Red', 'Line type → Dashed']);
+    assert.deepEqual((await histLabels()).slice(-3), ['Layer → Marks', 'Colour → Red', 'Line type → DASHED']);
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
     assert.equal(entOf(await savedDoc(), 0).layer, 'Cutting');
@@ -4853,7 +4923,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await click(60, 130); await frames();                       // the dashed arc on Cutting
     await t('prop-match').click();
     assert.equal(await t('match-hint').isVisible(), true);
-    assert.equal(await t('match-hint').textContent(), 'Match properties · source: Arc (Cutting, ByLayer, Dashed) · click what should change · Esc ends');
+    assert.equal(await t('match-hint').textContent(), 'Match properties · source: Arc (Cutting, ByLayer, DASHED) · click what should change · Esc ends');
     assert.equal((await t('cmd-hist').textContent()).startsWith('Command: MATCHPROP'), true);
     assert.match(await prompt(), /^Select destination object/);
     await frames();

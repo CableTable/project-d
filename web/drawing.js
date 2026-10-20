@@ -345,7 +345,7 @@ export function flatten(doc) {
     if (!name || name === 'CONTINUOUS') return {};
     const t = doc.ltypes[name];
     const d = t && dashArray(t.pattern.map((x) => x * ltscale * lts));
-    if (d) return { dash: d };
+    if (d) return { dash: d, dpx: namedDash(name) };             // keep small named patterns visible at low zoom and in print
     const px = namedDash(name);
     return px ? { dpx: px } : {};
   };

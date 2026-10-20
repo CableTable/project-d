@@ -3155,7 +3155,8 @@ function paintOverlay() {
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
     paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
       bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && state.gapShow && d.ed && editable() ? gapsOf(d).map((g) => [g.x, g.y]) : null,
-      contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null, contourCol: cssVar('--contour', '#0e7c66'),
+      contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
+      contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', cssVar('--text', '#18181b')) : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--accent', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
@@ -5712,24 +5713,43 @@ function matchClick(d, p) {
 
 // ---- Contour (TODO 35; mock-up R4d, Option A): a floating panel; the preview is drawn on the sheet; Apply adds the outlines as lines and arcs on the layer "Contour" ----
 const CONTOUR_LAYER = 'Contour';
+const CT_STYLES = [{ key: 'BYLAYER', label: 'Solid', dash: [] }, { key: 'DASHED', label: 'Dashed', dash: [7, 4] }, { key: 'DOT', label: 'Dotted', dash: [0, 4] }];
+const contourStyle = () => CT_STYLES.find((st) => st.key === state.contourCfg.lt);
+const contourColour = (d) => {
+  const key = PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYER }, state.contourCfg.colour), { [CONTOUR_LAYER]: d.raw.layers[CONTOUR_LAYER] || { aci: 3 } });
+  return colourCss(key);
+};
 const CT_SAVED = 'pd-contour';
 const loadContourCfg = () => {
-  const cfg = { dir: 'outside', dist: 5, steps: 1, corners: 'sharp', live: true };
+  const cfg = { dir: 'outside', dist: 5, steps: 1, corners: 'sharp', colour: 'bylayer', lt: 'BYLAYER', live: true };
   try {
     const v = JSON.parse(localStorage.getItem(CT_SAVED) || 'null');
     if (v && (v.dir === 'inside' || v.dir === 'outside')) cfg.dir = v.dir;
     if (v && v.corners === 'rounded') cfg.corners = 'rounded';
+    if (v && PR.COLOURS.some((c) => c.key === v.colour)) cfg.colour = v.colour;
+    if (v && CT_STYLES.some((st) => st.key === v.lt)) cfg.lt = v.lt;
     if (v && Number.isFinite(+v.dist) && +v.dist > 0 && +v.dist <= 10000) cfg.dist = +v.dist;
     if (v && Number.isInteger(+v.steps) && +v.steps >= 1 && +v.steps <= 100) cfg.steps = +v.steps;
   } catch { /* storage may be blocked or hold something else */ }
   return cfg;
 };
-const saveContourCfg = () => { const c = state.contourCfg; try { localStorage.setItem(CT_SAVED, JSON.stringify({ dir: c.dir, dist: c.dist, steps: c.steps, corners: c.corners })); } catch { /* storage may be blocked */ } };
+const saveContourCfg = () => { const c = state.contourCfg; try { localStorage.setItem(CT_SAVED, JSON.stringify({ dir: c.dir, dist: c.dist, steps: c.steps, corners: c.corners, colour: c.colour, lt: c.lt })); } catch { /* storage may be blocked */ } };
 const contourWords = (c = state.contourCfg, dist = fmt1, tail = '') => `${c.dir === 'inside' ? 'Inside' : 'Outside'} · ${dist(c.dist)} mm · ${c.steps} step${c.steps === 1 ? '' : 's'} · ${c.corners === 'rounded' ? 'Rounded' : 'Sharp'}${tail}`;
 const contourCommandText = () => contourWords(state.contourCfg, (v) => v.toFixed(2), ' corners');
 
 function buildContourPanel() {
   const cfg = state.contourCfg;
+  ui.ctColours = PR.COLOURS.map(({ key, label }) => h('button', {
+    class: 'cs' + (key === 'bylayer' ? ' bylayer' : ''), type: 'button', title: label, 'aria-label': label, 'aria-pressed': 'false',
+    style: 'background:' + (key === 'bylayer' ? 'var(--field)' : colourCss(key)),
+    onclick: () => { cfg.colour = key; saveContourCfg(); renderContour(); }
+  }, key === 'bylayer' ? label : null));
+  ui.ctStyles = CT_STYLES.map(({ key, label, dash }) => h('button', {
+    class: 'ctstyle', type: 'button', 'aria-pressed': 'false',
+    onclick: () => { cfg.lt = key; saveContourCfg(); renderContour(); }
+  }, s('svg', { viewBox: '0 0 40 8', 'aria-hidden': 'true' }, s('path', {
+    d: 'M2 4H38', stroke: 'currentColor', 'stroke-width': 1.6, 'stroke-dasharray': dash.join(' ') || 'none', 'stroke-linecap': key === 'DOT' ? 'round' : 'butt'
+  })), label));
   const segs = (group, label, items, key) => {
     const btns = items.map(([v, text]) => {
       const b = h('button', { class: 'seg', type: 'button', 'data-testid': `contour-${v}`, 'aria-pressed': 'false', onclick: () => { cfg[key] = v; saveContourCfg(); renderContour(); } }, text);
@@ -5758,6 +5778,8 @@ function buildContourPanel() {
       segs('Direction', 'Direction', [['inside', 'Inside'], ['outside', 'Outside']], 'dir'),
       h('div', { class: 'grid2' }, field('Distance (mm)', 'contour-dist', setContourDist, 'Distance in mm'), field('Steps', 'contour-steps', setContourSteps, 'Steps')),
       segs('Corners', 'Corners', [['sharp', 'Sharp'], ['rounded', 'Rounded']], 'corners'),
+      h('div', { class: 'row' }, h('span', { class: 'lbl ctlbl' }, 'Colour'), h('div', { class: 'cswatches', role: 'group', 'aria-label': 'Colour' }, ui.ctColours)),
+      h('div', { class: 'row' }, h('span', { class: 'lbl ctlbl' }, 'Line style'), h('div', { class: 'ctstyles', role: 'group', 'aria-label': 'Line style' }, ui.ctStyles)),
       h('div', { class: 'row' }, ui.ctLive, h('label', { for: 'contour-live', style: 'flex:1' }, 'Live preview on the sheet')),
       ui.ctHint, ui.ctWarn,
       h('div', { class: 'row end' }, h('button', { class: 'btn', type: 'button', 'data-testid': 'contour-close', onclick: closeContour }, 'Close'), ui.ctApply)));
@@ -5833,6 +5855,8 @@ function renderContour() {
   ui.selContour.hidden = !on;
   if (!on) { if (d) d.cRes = null; return; }
   const cfg = state.contourCfg;
+  ui.ctColours.forEach((b, i) => b.setAttribute('aria-pressed', String(PR.COLOURS[i].key === cfg.colour)));
+  ui.ctStyles.forEach((b, i) => b.setAttribute('aria-pressed', String(CT_STYLES[i].key === cfg.lt)));
   ui.ct_dir.forEach((b) => { const v = b.dataset.testid.slice(8) === cfg.dir; b.classList.toggle('on', v); b.setAttribute('aria-pressed', String(v)); });
   ui.ct_corners.forEach((b) => { const v = b.dataset.testid.slice(8) === cfg.corners; b.classList.toggle('on', v); b.setAttribute('aria-pressed', String(v)); });
   if (document.activeElement !== ui['contour-dist']) ui['contour-dist'].value = fmt1(cfg.dist);
@@ -5849,7 +5873,9 @@ function renderContour() {
     : made ? `Apply makes ${made} new outline${made === 1 ? '' : 's'} on the layer Contour. The part itself is not changed.` : 'Nothing to make with these values.';
   const warn = res && res.stopped ? `Step ${res.stopped.step} would close up: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '';
   ui.ctWarn.hidden = !warn; ui.ctWarn.textContent = warn;
-  // the small preview: the outline, and the contours dashed
+  // Reduced opacity distinguishes preview contours from applied geometry.
+  ui.ctPreview.style.setProperty('--ct-colour', contourColour(d));
+  ui.ctPreview.style.setProperty('--ct-dash', contourStyle().dash.join(' ') || 'none');
   const loops = cc.an ? cc.an.loops.map((l) => CT.loopPoints(l, 6)) : [], outs = res ? res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 4))) : [];
   const all = [...loops, ...outs].flat();
   if (!all.length) ui.ctPreview.replaceChildren();
@@ -5875,7 +5901,9 @@ function applyContour() {
   if (cc.kind !== 'ok' || !cc.res.made) { note('Contour: nothing to apply. Pick a closed outline first'); return; }
   const res = cc.res, ents = [];
   if (!d.raw.layers[CONTOUR_LAYER]) addLayer(d.raw, CONTOUR_LAYER, { aci: 3 });
+  if (cfg.lt !== 'BYLAYER' && !d.raw.ltypes[cfg.lt]) d.raw.ltypes[cfg.lt] = { pattern: contourStyle().dash.map((x, i) => (i % 2 ? -x : x) / d.factor) };
   for (const st of res.steps) for (const l of st) ents.push(...CT.toEntities(l, CONTOUR_LAYER));
+  for (let i = 0; i < ents.length; i++) ents[i] = PR.withLineType(PR.withColour(ents[i], cfg.colour), cfg.lt);
   const keep = new Set(d.sel);
   commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks }, `Contour ${cfg.dir} ${fmtSize(cfg.dist)} mm × ${res.made}`);
   d.newLayer = CONTOUR_LAYER;

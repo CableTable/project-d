@@ -31,7 +31,7 @@ test('colour and line type: keys, labels, setting them (a colour clears a true c
   assert.equal(P.withColour({ ...e, tc: 5 }, 'aci:5').tc, null);
   assert.equal(P.ltKey(e), 'BYLAYER'); assert.equal(P.ltKey({ ...e, lt: 'Dashed' }), 'DASHED');
   assert.equal(P.withLineType(e, 'DASHED').lt, 'DASHED'); assert.equal(P.withLineType(P.withLineType(e, 'DASHED'), 'BYLAYER').lt, null);
-  assert.equal(P.ltLabel('DASHED'), 'Dashed'); assert.equal(P.ltLabel('HIDDEN'), 'Hidden');
+  assert.equal(P.ltLabel('DASHED'), 'DASHED'); assert.equal(P.ltLabel('DOT'), 'DOT'); assert.equal(P.ltLabel('HIDDEN'), 'Hidden');
   assert.equal(P.withLayer(e, 'Cut').layer, 'Cut');
 });
 

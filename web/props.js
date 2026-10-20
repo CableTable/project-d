@@ -32,7 +32,7 @@ export const typeName = (ent) => TYPE_NAMES[ent.type] || ent.type.charAt(0) + en
 
 /** The colours offered (the board's five); anything else in a file shows as itself. */
 export const COLOURS = [{ key: 'bylayer', label: 'ByLayer' }, { key: 'aci:1', label: 'Red' }, { key: 'aci:5', label: 'Blue' }, { key: 'aci:3', label: 'Green' }, { key: 'aci:7', label: 'Black' }];
-export const LINETYPES = [{ key: 'BYLAYER', label: 'ByLayer' }, { key: 'CONTINUOUS', label: 'Continuous' }, { key: 'DASHED', label: 'Dashed' }, { key: 'CENTER', label: 'Center' }];
+export const LINETYPES = [{ key: 'BYLAYER', label: 'ByLayer' }, { key: 'CONTINUOUS', label: 'Continuous' }, { key: 'DASHED', label: 'DASHED' }, { key: 'DOT', label: 'DOT' }, { key: 'CENTER', label: 'Center' }];
 
 /** The colour setting of an entity as a key: 'bylayer', 'byblock', 'aci:N' or 'tc:N'. */
 export function colourKey(ent) {

@@ -111,6 +111,8 @@ From the v0.1.30 exe test (Pip-test, 2026-10-20):
 64. ✅ (fixed, session 9: importing a background into a drawing marks it dirty and clears `empty`; browser coverage keeps the fresh tab and its picture on Open) **Import background on a fresh tab is lost on Open** (bug, S): new tab, pick a tool without drawing, Import background, then Open a file: the tab is replaced and the picture lost. `web/app.js:3447`: set `d.dirty = true` in that `else` branch. From the Pip-review of 62 (older than 62).
 65. **Contour: colour and line style** (his ask, 2026-10-20, S–M): the Contour panel picks the new outlines' colour and line style (solid, dashed, dotted). Today they always go on the layer "Contour" with its colour, solid. Saved to DXF as the entity's colour and linetype.
 
+65. ✅ (built, session 10) **Contour colour and line style**: R13 swatches and Solid / Dashed / Dotted, both previews, Properties, DXF round trip and PDF; one-step undo.
+
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
 1. ✅ (built, PR #10) Drawing tools: line, polyline, rectangle, rounded rectangle, circle, ellipse, arc, text and dimension, with snaps, ortho and polar tracking, and typed coordinates. (Text: TODO 17. Polar tracking: TODO 21, built in PR #12.)
