@@ -7,7 +7,7 @@ if ($Uninstall) {
     exit
 }
 $node = (Get-Command node -ErrorAction Stop).Source
-$version = & $node -p 'Number(process.versions.node.split(".")[0])'
+$version = (& $node --version).TrimStart('v').Split('.')[0]
 if ([int]$version -lt 22) { throw 'Install Node 22 or newer first.' }
 $repo = Split-Path -Parent $PSScriptRoot
 $shell = New-Object -ComObject WScript.Shell
