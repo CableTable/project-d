@@ -33,25 +33,23 @@ export function startHidden(fl) {
   return new Set(fl.layers.map((l, i) => (l.on ? -1 : i)).filter((i) => i >= 0));
 }
 
-/** Entities in the shown space (a block's contents count where it is inserted). */
-export function entityCount(fl) {
-  return countEntities(shownItems(fl), () => 0, 1)[0];
+/** Top-level entity indexes in the shown space, including unsupported objects preserved on Save. */
+export function shownEntityIndexes(raw, fl) {
+  const sp = spaceOf(fl);
+  return raw.entities.flatMap((e, i) => !e.hidden && (e.ps ? 1 : 0) === sp ? [i] : []);
 }
 
-/**
- * Entities per layer index, shown space only. What a top-level entity draws as several items (a block reference such as a
- * kept dimension: its lines, arrowheads and text) is one entity: items sharing `e` and a layer count once.
- */
-export function layerCounts(fl) {
-  return countEntities(shownItems(fl), (it) => it.L[0], fl.layers.length);
+/** Entities in the shown space: a block or dimension counts once, on its own layer. */
+export function entityCount(raw, fl) {
+  return shownEntityIndexes(raw, fl).length;
 }
-function countEntities(items, layerOf, nLayers) {
-  const n = new Array(nLayers).fill(0), seen = new Set();
-  for (const it of items) {
-    const l = layerOf(it);
-    if (it.e == null) { n[l]++; continue; }
-    const key = it.e + ':' + l;
-    if (!seen.has(key)) { seen.add(key); n[l]++; }
+
+/** Entities per layer index, using the same top-level objects as the Objects tree. */
+export function layerCounts(raw, fl) {
+  const n = new Array(fl.layers.length).fill(0), at = new Map(fl.layers.map((l, i) => [l.name, i]));
+  for (const e of shownEntityIndexes(raw, fl)) {
+    const l = at.get(raw.entities[e].layer);
+    if (l != null) n[l]++;
   }
   return n;
 }

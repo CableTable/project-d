@@ -13,11 +13,12 @@ briefs, reading short reports and merging.
 |---|---|---|---|
 | Lead | main account (this session) | Opus | Plans, picks TODO items, writes briefs, reads reports (never whole diffs, logs or files), publishes mock-ups, merges. |
 | Lookup | claude2 | Haiku | Reading TODO / code / logs / CI, quick questions. Replies in a few lines. |
-| Builder | claude2 | Sonnet, high | Mock-ups, features, fixes (even small ones): code, tests, screenshots, commit, push. |
+| Builder (**Rowan**, default) | Codex CLI (his ChatGPT Go plan) | gpt-6.1-sol, high | **Default builder** (his call, 2026-10-20, after the 57 / 61 comparison): features and fixes, code, tests, commit. Rook pushes (no git credentials in its sandbox). |
+| Builder (Pip) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark), and builds when Rowan is out of limit or a second build runs at once: code, tests, commit, push. |
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
 | PC tester | claude2 | Sonnet, high | Downloads the released exe and drives it (WebView2 debug port + Playwright), reports what broke. |
 | Fallback | claude2 | Opus, high | Only when Sonnet has failed at a build. |
-| Research (**Rowan**) | Codex CLI (his ChatGPT Go plan) | gpt-6-luna | **Default for web research**, big or small. **Research only, never reviews** (his call, 2026-10-20: in a blind test on TODO 39 it missed both bugs Pip-review found); read-only sandbox, live web search. Runs in `~/codex-research`, never the repo. |
+| Research (**Rowan**) | Codex CLI (his ChatGPT Go plan) | gpt-6-luna | **Default for web research**, big or small. **Never reviews** (his call, 2026-10-20: in a blind test on TODO 39 it missed both bugs Pip-review found); read-only sandbox, live web search. Runs in `~/codex-research`, never the repo. |
 | Quick lookup (**Scout**) | Antigravity CLI (`agy`, his Google account, free) | Gemini 3.8 Flash | Web research (specs, libraries, how other apps do X), so Pip's limits go to builds. Runs in `~/agy-research`, never the repo. |
 
 ## The loop for one TODO item
@@ -35,6 +36,16 @@ briefs, reading short reports and merging.
 6. **As built:** an AB board in the canvas when the build differs from the mock-up.
 7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR). CI publishes the exe.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
+   Pip-test downloads the release into `shots/exe/`, starts it with `WEBVIEW2_USER_DATA_FOLDER` (an isolated profile:
+   never his real library or recovery copies) and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9233`,
+   and drives it with Playwright `connectOverCDP`. Native Windows dialogs (Open, Save As, the close prompt) are driven
+   with UI Automation from PowerShell, by window title (never SendKeys: keys go to whatever window has focus): the helper
+   is `shots/exe/uia.ps1` (list / fg / front / dialog / close; local, not committed), run as
+   `powershell.exe -NoProfile -ExecutionPolicy Bypass -File shots/exe/uia.ps1 …` (TODO 60 test, 2026-10-20: all passed).
+   His call (2026-10-20): Pip controls these pop-ups itself. He doesn't use the PC during the test and minimizes the
+   other windows; before any key press Pip brings the Project D window to the front and checks the foreground window's
+   title, and stops if it isn't Project D or its dialog.
+   Allow it: `Bash(gh release:*)`, `PowerShell(Stop-Process:*)`, `PowerShell(Get-Process:*)`, `Bash(tasklist:*)`, `Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File shots/exe/uia.ps1:*)`.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
 
@@ -76,8 +87,14 @@ $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format te
 # its own empty folder; never in the repo, never --dangerously-bypass-approvals-and-sandbox. Answer lands in last.txt.
 cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -m gpt-6-luna --skip-git-repo-check -s read-only \
   -c web_search=\"live\" -o last.txt - < question.txt > run.log 2>&1
+# Rowan-build (default builder, 2026-10-20): its own clone ProjectD-rowan, git folder ProjectD-rowan-git (Codex blocks any
+# folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
+# `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
+# Before a build: git -C ../ProjectD-rowan fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
+# Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
+codex.cmd exec -m gpt-6.1-sol -c model_reasoning_effort="high" -s workspace-write -C "E:/Project B/Claude/ProjectD-rowan" \n  --add-dir "E:/Project B/Claude/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \n  -c sandbox_workspace_write.network_access=true -o r.txt - < brief.txt > r.log 2>&1
 # Usage (headless): the newest ~/.codex/sessions/**/*.jsonl has "rate_limits": primary.used_percent over a
-# 30-day window (Go plan), resets_at in Unix time. 2 test runs = 0.0%.
+# 5-hour window and secondary over the week, resets_at in Unix time. Two S builds = ~6% of 5h, 1% of the week.
 
 # Quick lookup: Scout (Antigravity CLI). Reads https pages only (his settings.json allow rule), no shell,
 # writes only in its own folder; never run it in the repo, never with --dangerously-skip-permissions.
@@ -116,8 +133,23 @@ Opus run; let running builders finish (a builder cut off mid-work leaves uncommi
   the run ends, so a background run uses `--output-format stream-json --verbose` (it grows as it works; the last
   line holds `result`, `session_id` and cost). An output file that doesn't exist is a bug, not progress.
 
-Run long ones in the background; print only `result`, `session_id`, `total_cost_usd` and
+Run long ones in the background; print only `result`, `session_id`, `usage` and
 `permission_denials` from the JSON. He can watch or take over any run: `claude2 --resume <session_id>`.
+**Report runs to him in tokens, never $** (his rule, 2026-10-20), e.g. "1.9M tokens (79k new)": total = input + cache
+read + cache write + output from the final `result.usage`; new = input + cache write + output. Rowan: the
+"tokens used" line in its run.log. The `--max-budget-usd` caps stay as a safety stop; limits stay in %.
+
+## Keeping Rook small (his rule, 2026-10-20: Rook was on pace to hit its weekly limit by Friday)
+
+- **A fresh Rook session after every PR merge.** Rook ends with a starting prompt for him to paste (the template below, filled in:
+  branch, next items, open questions). Every Rook turn re-reads the whole conversation, so a long one costs the most.
+- **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
+  `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
+- Rook never opens screenshots or images (Pip-look reports in lines), never runs the test suites (the review does),
+  never reads skill or reference docs it has read before in the session.
+- While runs go, Rook ends its turn and waits for the notice; no status messages in between.
+- The usage page (https://claude.ai/artifact/1Qnf6QF3z3UyvCdcqiaWWf) is refreshed after merges only: upload the files
+  in `mockups/_design/usage/`, then one ArtifactData batch with the new urls. In chat: one line plus the link.
 
 ## Every brief says
 
@@ -126,6 +158,7 @@ Run long ones in the background; print only `result`, `session_id`, `total_cost_
 - Use ponytail lite; plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
 - Builders: tests (`npm.cmd test`, `npm.cmd run test:browser`) must pass; screenshots light + dark into `shots/`.
+- Rowan-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Pip-look.
 - Reviewers: `ponytail:ponytail-review` for a build's commits, `ponytail:ponytail-audit` for a whole-codebase pass; verified findings only, "severity · file:line · problem · fix", then "ship as is" or "fix first".
 
 ## Permissions

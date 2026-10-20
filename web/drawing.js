@@ -497,6 +497,7 @@ export function flatten(doc) {
     }
   }
   walk(doc.entities, { m: 0, L: null, layer: null, css: null, lw: null, lt: null, ps: null }, 0);
+  for (const e of doc.entities) if (!e.hidden) layerOf(e.layer);       // past the draw limit the walk stops early: later layers still belong in the list (counts, Objects tree)
 
   const boxes = { model: null, paper: null };
   for (const it of items) if (it.L.every((l) => layers[l].on)) boxes[it.ps ? 'paper' : 'model'] = unionBox(boxes[it.ps ? 'paper' : 'model'], it.b);

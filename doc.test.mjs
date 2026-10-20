@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { mapply } from './web/drawing.js';
+import { buildTree } from './web/objects.js';
 import { makeDimension, addDimension } from './web/edit.js';
 import { unitFactor, convertedNote, spaceOf, shownItems, itemVisible, startHidden, entityCount, layerCounts, drawingBoxMm, placement, boxOnSheet, fitRect, cursorMm, fitsSheet, addRecent, closePrompt } from './web/doc.js';
 
@@ -32,23 +33,38 @@ test('fit rect: sheet alone, or grown by a drawing that sticks out', () => {
   assert.ok(fitsSheet([0, 0, 100, 50], 1000, 700)); assert.ok(!fitsSheet([0, 0, 1100, 50], 1000, 700));
 });
 test('sample.dxf: mm, layers, counts, box', () => {
-  const fl = load('fixtures/sample.dxf');
+  const raw = readDxf(decodeDxf(readFileSync('fixtures/sample.dxf'))), fl = flatten(raw);
   assert.equal(spaceOf(fl), 0);
   assert.equal(shownItems(fl).length, 27, 'drawn items');
-  assert.equal(entityCount(fl), 19, 'a block reference is one entity, not one per item it draws');
-  const counts = layerCounts(fl);
-  assert.equal(counts.reduce((a, b) => a + b, 0), 19);
+  assert.equal(entityCount(raw, fl), 20, 'a block reference is one entity, not one per item it draws; an IMAGE that draws nothing still counts');
+  const counts = layerCounts(raw, fl);
+  assert.equal(counts.reduce((a, b) => a + b, 0), 20);
   assert.equal(counts[fl.layers.findIndex((l) => l.name === 'HOLES')], 6);
+  assert.equal(counts[fl.layers.findIndex((l) => l.name === 'NOTES')], 7);
+  const tree = buildTree(raw, fl);       // the Objects tab counts the same
+  assert.equal(tree.objects, 20);
+  assert.deepEqual(tree.layers.map((l) => l.count), tree.layers.map((l) => counts[fl.layers.findIndex((x) => x.name === l.name)]));
   assert.deepEqual(drawingBoxMm(fl, 1), fl.boxes.model);
 });
 test('a kept dimension is one entity (its lines, arrowheads and text are items of one INSERT)', () => {
   const raw = readDxf(decodeDxf(readFileSync('fixtures/outline.dxf')));
-  const before = entityCount(flatten(raw));
+  const before = entityCount(raw, flatten(raw));
   const dim = makeDimension([0, 0], [50, 0], 1, raw.blocks, 2), next = addDimension(raw, dim);
-  const fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks });
+  const raw2 = { ...raw, entities: next.entities, blocks: next.blocks }, fl = flatten(raw2);
   assert.ok(fl.items.length - 0 > before + 3, 'it draws several items');
-  assert.equal(entityCount(fl), before + 1);
-  assert.equal(layerCounts(fl)[fl.layers.findIndex((l) => l.name === 'Dimensions')], 1);
+  assert.equal(entityCount(raw2, fl), before + 1);
+  assert.equal(layerCounts(raw2, fl)[fl.layers.findIndex((l) => l.name === 'Dimensions')], 1);
+});
+test('a file past the draw limit still lists every layer, so the counts agree with the Objects tree', () => {
+  const line = (layer) => ({ type: 'LINE', layer, lt: null, aci: 256, tc: null, lw: -1, lts: 1, hidden: false, ps: false, flip: false, kids: [], r: { type: 'LINE', c: [10, 20, 11, 21], v: ['0', '0', '1', '1'] } });
+  const raw = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [...Array(400001)].map(() => line('A')).concat([line('B'), line('B')]) };
+  const fl = flatten(raw);
+  assert.ok(fl.truncated, 'the draw limit was hit');
+  const b = fl.layers.findIndex((l) => l.name === 'B');
+  assert.ok(b >= 0, 'layer B is listed');
+  assert.equal(layerCounts(raw, fl)[b], 2);
+  assert.equal(layerCounts(raw, fl).reduce((x, y) => x + y, 0), entityCount(raw, fl));
+  assert.equal(buildTree(raw, fl).layers.find((l) => l.name === 'B').index, b);
 });
 test('layer visibility hides that layer\'s items only', () => {
   const fl = load('fixtures/sample.dxf');
@@ -60,13 +76,13 @@ test('layer visibility hides that layer\'s items only', () => {
   assert.equal(startHidden(fl).size, fl.layers.filter((l) => !l.on).length);
 });
 test('inch.dxf converts to mm', () => {
-  const fl = load('fixtures/inch.dxf');
+  const raw = readDxf(decodeDxf(readFileSync('fixtures/inch.dxf'))), fl = flatten(raw);
   assert.equal(fl.units, 'in');
   const f = unitFactor(fl.units);
   assert.equal(f, 25.4);
   const box = drawingBoxMm(fl, f);
   assert.deepEqual(box.map((v) => Math.round(v * 100) / 100), [0, 0, 101.6, 50.8]);
-  assert.equal(entityCount(fl), 3);
+  assert.equal(entityCount(raw, fl), 3);
   assert.equal(convertedNote(fl.units), 'converted from inch');
 });
 test('recent files: newest first, no repeats (any case or slash), at most 8', () => {
