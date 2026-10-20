@@ -21,7 +21,7 @@ const mod2pi = (t) => { t %= TAU; return t < 0 ? t + TAU : t; };
 
 // ---------------------------------------------------------------- paths: a shape as segments { a, b, bulge } (the polyline way)
 
-/** The path of a shape: { type, closed, segs: [{ a, b, bulge }] }. A circle is two half circles; an arc is one segment. */
+/** The path of a shape: { type, closed, segs: [{ a, b, bulge }] }. Polyline points retain start/end widths in slots 3/4. */
 export function pathOf(sh) {
   if (sh.t === 'line') return { type: 'line', closed: false, segs: [{ a: sh.a, b: sh.b, bulge: 0 }] };
   if (sh.t === 'arc') {
@@ -34,8 +34,8 @@ export function pathOf(sh) {
     return { type: 'circle', closed: true, segs: [{ a: r, b: l, bulge: 1 }, { a: l, b: r, bulge: 1 }] };
   }
   const pts = sh.pts, n = pts.length, segs = [];
-  for (let i = 0; i + 1 < n; i++) segs.push({ a: [pts[i][0], pts[i][1]], b: [pts[i + 1][0], pts[i + 1][1]], bulge: pts[i][2] || 0 });
-  if (sh.closed && n > 2) segs.push({ a: [pts[n - 1][0], pts[n - 1][1]], b: [pts[0][0], pts[0][1]], bulge: pts[n - 1][2] || 0 });
+  for (let i = 0; i + 1 < n; i++) segs.push({ a: pts[i], b: pts[i + 1], bulge: pts[i][2] || 0 });
+  if (sh.closed && n > 2) segs.push({ a: pts[n - 1], b: pts[0], bulge: pts[n - 1][2] || 0 });
   return { type: 'poly', closed: !!sh.closed && n > 2, segs };
 }
 
@@ -54,7 +54,13 @@ const pointAt = (g, f) => (g.line ? [g.a[0] + (g.b[0] - g.a[0]) * f, g.a[1] + (g
 /** The part of a segment from fraction f0 to f1 (of its length). */
 function subSeg(s, f0, f1) {
   if (f0 <= 1e-9 && f1 >= 1 - 1e-9) return s;
-  const g = geo(s), a = f0 <= 1e-9 ? s.a : pointAt(g, f0), b = f1 >= 1 - 1e-9 ? s.b : pointAt(g, f1);
+  const g = geo(s);
+  let a = f0 <= 1e-9 ? s.a : pointAt(g, f0), b = f1 >= 1 - 1e-9 ? s.b : pointAt(g, f1);
+  if (s.a.length > 3) {
+    const w = (f) => s.a[3] + (s.a[4] - s.a[3]) * f;
+    a = [a[0], a[1], 0, w(f0), w(f1)];
+    if (f1 < 1 - 1e-9) b = [b[0], b[1], 0, w(f1), w(f1)];
+  }
   return { a, b, bulge: g.line ? 0 : Math.tan(g.sw * (f1 - f0) / 4) };
 }
 /** Where on the arc g a point (on its circle) lies, as a fraction of the sweep, or null when it is off the arc. */
@@ -116,13 +122,26 @@ export function mirrorShape(sh, p1, p2) {
   if (sh.t === 'line') return { t: 'line', a: R(sh.a), b: R(sh.b) };
   if (sh.t === 'circle') return { t: 'circle', c: R(sh.c), r: sh.r };
   if (sh.t === 'arc') return { t: 'arc', c: R(sh.c), r: sh.r, a0: norm360(2 * th - sh.a1), a1: norm360(2 * th - sh.a0) };
-  return { t: 'poly', closed: sh.closed, pts: sh.pts.map((p) => { const q = R(p); return p[2] ? [q[0], q[1], -p[2]] : q; }) };
+  return { t: 'poly', closed: sh.closed, pts: sh.pts.map((p) => { const q = R(p); return p.length > 2 ? [q[0], q[1], -(p[2] || 0), ...p.slice(3)] : q; }) };
 }
 
-/** A shape made from `ent` as an entity again; a polyline keeps its constant width (43) and elevation (38). */
+/** A shape made from `ent` as an entity again; a polyline keeps its widths (40/41/43) and elevation (38). */
 export function rebuilt(sh, ent) {
   const w = ent.type === 'LWPOLYLINE' ? get(ent.r, 43) : null, z = ent.type === 'LWPOLYLINE' ? get(ent.r, 38) : null;
   const e = toEntity(sh, w ? { ...ent, width: w } : ent, 1);
+  if (e.type === 'LWPOLYLINE') {
+    const r = { ...e.r, c: [], v: [] };
+    let i = 0;
+    for (let k = 0; k < e.r.c.length; k++) {
+      const code = e.r.c[k];
+      r.c.push(code); r.v.push(e.r.v[k]);
+      if (code === 20) {
+        const p = sh.pts[i++];
+        if (p.length > 3) { r.c.push(40, 41); r.v.push(String(p[3]), String(p[4])); }
+      }
+    }
+    e.r = r;
+  }
   if (z && e.type === 'LWPOLYLINE') { const k = e.r.c.indexOf(70) + 1; e.r.c.splice(k, 0, 38); e.r.v.splice(k, 0, String(z)); }
   return e;
 }
@@ -271,9 +290,14 @@ function offsetPath(P, dd) {
     // joints that did not meet get a straight piece between the two ends
     const segs = [];
     for (let k = 0; k < n; k++) {
+      if (items[k].s.a.length > 3) out[k].a = [out[k].a[0], out[k].a[1], 0, ...items[k].s.a.slice(3)];
+      if (items[k].s.b.length > 3) out[k].b = [out[k].b[0], out[k].b[1], 0, ...items[k].s.b.slice(3)];
       segs.push(out[k]);
       const nj = k + 1 < n ? J[k + 1] : P.closed ? J[0] : null;
-      if (nj && nj.e && nj.s && dist(nj.e, nj.s) > 1e-7) segs.push({ a: nj.e, b: nj.s, bulge: 0, line: true });
+      if (nj && nj.e && nj.s && dist(nj.e, nj.s) > 1e-7) {
+        const end = items[k].s.a[4] ?? 0, start = items[(k + 1) % n].s.a[3] ?? 0;
+        segs.push({ a: [nj.e[0], nj.e[1], 0, end, start], b: nj.s, bulge: 0, line: true });
+      }
     }
     return { segs };
   }
@@ -282,8 +306,8 @@ function offsetPath(P, dd) {
 
 /** Is the path a polyline shape again: points with bulges. */
 function polyOf(segs, closed) {
-  const pts = segs.map((s) => (s.bulge ? [s.a[0], s.a[1], s.bulge] : [s.a[0], s.a[1]]));
-  if (!closed) pts.push([segs[segs.length - 1].b[0], segs[segs.length - 1].b[1]]);
+  const pts = segs.map((s) => (s.a.length > 3 || s.bulge ? [s.a[0], s.a[1], s.bulge || 0, ...s.a.slice(3)] : [s.a[0], s.a[1]]));
+  if (!closed) pts.push(segs[segs.length - 1].b.slice());
   return { t: 'poly', pts, closed };
 }
 
