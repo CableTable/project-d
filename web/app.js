@@ -36,6 +36,8 @@ import { withExt } from './savepath.js';
 import * as RC from './recovery.js';
 import { openExport } from './export.js';
 import { openNest } from './nestdlg.js';
+import { openTrace } from './tracedlg.js';
+import * as TR from './trace.js';
 import { outlineOf } from './nestshape.js';
 import { partSource } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
@@ -326,7 +328,7 @@ function recentItems() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
@@ -809,7 +811,13 @@ function buildCanvas() {
   ui.picker = h('input', { type: 'file', accept: '.dxf,.pdf,.json', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(files)) await openPicked(f); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
-  ui.bgPicker.addEventListener('change', async () => { const f = ui.bgPicker.files[0]; ui.bgPicker.value = ''; if (f) await importBackground(f); });
+  ui.bgPicker.addEventListener('change', async () => {
+    const f = ui.bgPicker.files[0], trace = traceAfter;
+    ui.bgPicker.value = ''; traceAfter = false;
+    if (f) await importBackground(f);
+    if (f && trace) traceBitmap();
+  });
+  ui.bgPicker.addEventListener('cancel', () => { traceAfter = false; });
   ui.pct = h('span', { class: 'pct mono', 'data-testid': 'zoom' }, '100%');
   ui.fitBtn = h('button', { class: 'tog on', type: 'button', onclick: fit }, 'Fit');
   ui.rubber = h('div', { class: 'rubber', hidden: true, 'data-testid': 'rubber' });
@@ -2878,7 +2886,7 @@ const DO = {
   dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
-  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(),
+  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(),
   rotate: () => {
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
@@ -3546,6 +3554,33 @@ function removeBackground() {
   d.bg = null; d.scaleTarget = 'drawing';
   showDoc();
   note('Background removed');
+}
+
+// ---- Trace a bitmap (TODO 40): the background picture becomes closed polylines on a layer, at the picture's position and size ----
+let traceAfter = false;                                            // the picker was opened by Trace, so the dialog opens once a picture is in
+/** Opens the Trace dialog for the tab's background picture; with none, asks for a picture first (it becomes the background, then the dialog opens). */
+function traceBitmap() {
+  const d = curDoc();
+  if (!d || !d.bg) { traceAfter = true; ui.bgPicker.click(); return; }
+  if (!editable()) { note('Trace bitmap works on a drawing or picture tab'); return; }
+  const bg = d.bg;
+  openTrace({
+    name: bg.name, bitmap: bg.bitmap, w: bg.w, h: bg.h, mmW: bg.w * bg.mm, mmH: bg.h * bg.mm, layer: 'Trace',
+    layerProblem: (name) => Ed.layerNameProblem(name, []),
+    onApply: (polys, name) => applyTrace(d, polys, name),
+  });
+}
+/** The outlines are added as closed polylines on the layer (made if new; a name that is already there is used as it is): one undo step. */
+function applyTrace(d, polys, name) {
+  if (!state.docs.includes(d) || !d.bg || !d.hist) return;
+  const had = Object.keys(d.raw.layers).find((n) => n.toLowerCase() === name.toLowerCase()), layer = had || name;
+  const doc = { layers: { ...d.raw.layers } };
+  if (!had) addLayer(doc, layer, { aci: 1 });
+  const ents = TR.traceEntities(polys, { x: d.bg.x, y: d.bg.y, factor: d.factor, layer });
+  commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: doc.layers }, `Trace bitmap × ${ents.length}`);
+  if (!had) d.newLayer = layer;
+  renderLayers();
+  note(`Trace: ${ents.length} closed outline${ents.length === 1 ? '' : 's'} on the layer ${layer}, at the picture's place and size. Ctrl+Z takes them away`);
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
@@ -5448,7 +5483,8 @@ function buildDrawingSection() {
   ui.bgX = h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove the background', 'data-testid': 'bg-remove', onclick: removeBackground }, '×');
   ui.scaleTarget = h('select', { class: 'fld', 'aria-label': 'Size and Set length act on', 'data-testid': 'scale-target' }, h('option', { value: 'drawing' }, 'Drawing'), h('option', { value: 'bg' }, 'Background'));
   ui.scaleTarget.addEventListener('change', () => { const d = curDoc(); if (d) { d.scaleTarget = ui.scaleTarget.value; renderEdit(); } });
-  ui.bgRow = h('div', { class: 'bgrow' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'bg-import', onclick: () => ui.bgPicker.click() }, 'Background…'), ui.bgName, ui.bgX);
+  ui.bgTrace = h('button', { class: 'btn sm', type: 'button', title: 'Trace this picture into closed outlines on a layer', 'data-testid': 'bg-trace', onclick: traceBitmap }, 'Trace…');
+  ui.bgRow = h('div', { class: 'bgrow' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'bg-import', onclick: () => ui.bgPicker.click() }, 'Background…'), ui.bgName, ui.bgTrace, ui.bgX);
   const useBtn = h('button', { class: 'btn sm primary', type: 'button', 'data-testid': 'add-to-layout', title: 'Put this drawing on a layout (the open layout tab, or a new one)', onclick: addToLayout }, 'Add to layout');
   const size = (label, id, axis) => {
     const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': id, 'aria-label': label + ' in mm' });
@@ -6228,6 +6264,7 @@ function renderEdit() {
   const n = d.sel.size, b = sizeBox(d), scalable = !!b;
   ui.bgName.textContent = d.bg ? d.bg.name : '';
   ui.bgX.hidden = !d.bg;
+  ui.bgTrace.hidden = !d.bg;
   ui.scaleTarget.hidden = !(d.bg && d.box);
   ui.scaleTarget.value = sizeTarget(d);
   ui.selRow.hidden = n === 0;

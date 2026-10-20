@@ -64,7 +64,7 @@ CorelDRAW-style additions (his picks, 2026-10-17):
 37. ✅ (built, PR #9) **Group / Ungroup and Lock**: move several parts as one; lock things so they can't be bumped.
 38. ✅ (built, PR #9) **Rulers and guidelines**: drag guides out of the rulers and snap to them.
 39. ✅ (built, session 8, Option A of mock-up R11) **Object Manager**: a tree of everything in the file, layer by layer, with show, hide and lock.
-40. **Trace a bitmap** (CorelDRAW's PowerTRACE): a photo or scan of artwork → vector outlines.
+40. ✅ (built, session 12, R14 section 05 option A; see DECISIONS) **Trace a bitmap** (CorelDRAW's PowerTRACE): a photo or scan of artwork → vector outlines. Outline only; Centreline comes later.
 41. ✅ (built, PR #10) **Compare parts by colour**: give each part's outline its own colour (e.g. one red, one blue) and lay them over each
     other to see where they differ, e.g. two revisions of the same part. A button lines them up (same corner, or
     centres, using Align from 36), and an option highlights where the outlines differ by more than a set tolerance

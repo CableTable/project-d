@@ -1329,6 +1329,67 @@ try {
     await page.locator('[data-tool=step]').click();
   });
 
+  await step('TODO 40: Trace bitmap: asks for a picture when there is none, previews, validates the layer name, traces at the picture\'s size, one undo', async () => {
+    await t('new-tab').click();
+    assert.equal(await t('bg-trace').isVisible(), false, 'no picture, no Trace button');
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), menuItem('File', 'Trace bitmap…')]);
+    await chooser.setFiles('fixtures/bg.png');
+    const dlg = t('trace-dialog');
+    await dlg.waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    assert.ok(Number(await dlg.getAttribute('data-count')) >= 2, 'the frame and the grid cells are outlines');
+    assert.equal(await t('trace-mode-centreline').isDisabled(), true);
+    assert.equal(await t('trace-mode-centreline').getAttribute('title'), 'Centreline: coming later');
+    assert.equal(await t('trace-threshold').isDisabled(), false, 'two colours: the threshold works');
+    assert.match(await t('trace-limit').textContent(), /reduced to 1000 px before tracing/);
+    assert.match(await t('trace-stats').textContent(), /\d+ outlines? · \d+ points/);
+    assert.equal(await t('trace-layer').inputValue(), 'Trace');
+    assert.equal(await t('trace-apply').textContent(), 'Trace into Trace');
+    // a control changes: the preview is out of date until Update preview
+    await t('trace-colours').fill('3'); await t('trace-colours').press('Tab');
+    assert.equal(await dlg.getAttribute('data-state'), 'stale');
+    assert.equal(await t('trace-apply').isDisabled(), true);
+    assert.equal(await t('trace-threshold').isDisabled(), true, 'more colours: no threshold');
+    await t('trace-colours').fill('2'); await t('trace-colours').press('Tab');
+    await t('trace-update').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    // a bad layer name
+    await t('trace-layer').fill('a<b');
+    assert.equal(await t('trace-apply').isDisabled(), true);
+    assert.match(await t('trace-layer-error').textContent(), /can't hold/);
+    await t('trace-layer').fill('Trace');
+    await page.screenshot({ path: shotDir + '/trace-dialog-light.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; }); await page.waitForTimeout(150);      // the dialog covers the menus
+    await page.screenshot({ path: shotDir + '/trace-dialog-dark.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; }); await page.waitForTimeout(150);
+    await t('trace-cancel').click();
+    assert.equal(await dlg.count(), 0, 'Cancel changes nothing');
+    assert.ok(!(await page.locator('.layer .nm').allTextContents()).includes('Trace'));
+    // the Trace… button and the command open it again; Esc closes it
+    await t('bg-trace').click(); await dlg.waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await dlg.count(), 0);
+    await typeCmd('trace'); await dlg.waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    await t('trace-apply').click();
+    assert.equal(await dlg.count(), 0);
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Trace'), 'the new layer');
+    assert.match(await t('cmd-prompt').textContent(), /Trace: \d+ closed outlines? on the layer Trace/);
+    // true size: the picture is 400 × 200 px at 96 dpi = 105.83 × 52.92 mm; the traced frame is that, within a pixel (0.27 mm) or two
+    await t('scale-target').selectOption('drawing');
+    await page.waitForFunction(() => Math.abs(parseFloat(document.querySelector('[data-testid=dw]').value) - 105.83) < 1, null, { timeout: 5000 });
+    assert.ok(Math.abs(parseFloat(await t('dh').inputValue()) - 52.92) < 1, 'height');
+    await page.screenshot({ path: shotDir + '/trace-result-light.png' });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/trace-result-dark.png' });
+    await menuItem('View', 'Theme: light'); await page.waitForTimeout(150);
+    // one undo takes the outlines and the layer away
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => ![...document.querySelectorAll('.layer .nm')].some((n) => n.textContent === 'Trace'));
+    assert.equal(await t('scale-target').isVisible(), false, 'only the picture again');
+    await closeTabs(/bg\.png/);
+  });
+
   await step('TODO 64: Open keeps a fresh tab and its imported background after picking a tool without drawing', async () => {
     const originalName = await page.locator('.tabs .dtab.on .tname').textContent();
     await t('new-tab').click();
@@ -7195,8 +7256,8 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
       await open();
-      assert.equal(await dialog.locator('tr[data-command]').count(), 50);
-      assert.equal(await dialog.locator('.sc-count').textContent(), '50 commands');
+      assert.equal(await dialog.locator('tr[data-command]').count(), 51);
+      assert.equal(await dialog.locator('.sc-count').textContent(), '51 commands');
       await dialog.getByRole('searchbox').fill('contour'); assert.equal(await dialog.locator('.sc-count').textContent(), '1 commands');
       await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
       assert.equal(await dialog.locator('tr[data-command]:visible').count(), 5);
