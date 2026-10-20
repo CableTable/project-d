@@ -116,6 +116,45 @@ try {
     assert.deepEqual(await tabNames(), ['Drawing 1']);
   });
 
+  await step('Many tabs: only the tab strip scrolls at 1024; widening to 1440 keeps the menu and toolbar in place and + New layout on one line', async () => {
+    const c2 = await browser.newContext({ viewport: { width: 1024, height: 700 } });
+    try {
+      const p2 = await c2.newPage();
+      await p2.goto(URL_); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
+      for (let i = 1; i < 17; i++) await p2.locator('[data-testid=new-tab]').click();
+      const docs = p2.locator('.tabs .dtab[data-kind]');
+      assert.equal(await docs.count(), 17);
+      const fits = async () => {
+        const m = await p2.evaluate(() => {
+          const strip = document.querySelector('.tabs'), row = document.querySelector('.tabsrow');
+          const label = document.createRange(); label.selectNodeContents(document.querySelector('[data-testid=new-layout]'));
+          return {
+            pageWidth: document.documentElement.scrollWidth, viewport: innerWidth, pageX: scrollX,
+            shellX: document.querySelector('.shell').scrollLeft, rowX: row.scrollLeft,
+            menuLeft: document.querySelector('.menubar').getBoundingClientRect().left,
+            toolsRight: document.querySelector('.rowtools').getBoundingClientRect().right,
+            stripX: strip.scrollLeft, stripWidth: strip.clientWidth, contentWidth: strip.scrollWidth,
+            labelLines: label.getClientRects().length,
+          };
+        });
+        assert.ok(m.pageWidth <= m.viewport, 'the page fits the viewport');
+        assert.deepEqual([m.pageX, m.shellX, m.rowX, m.menuLeft], [0, 0, 0, 0], 'the page and shell never scroll sideways');
+        assert.ok(m.toolsRight <= m.viewport, 'the toolbar stays inside the window');
+        assert.ok(m.contentWidth > m.stripWidth && m.stripX > 0, 'the tab strip itself scrolls to reveal the last tab');
+        assert.equal(m.labelLines, 1, '+ New layout stays on one line');
+      };
+      await docs.first().click(); await docs.last().click();
+      assert.ok((await docs.last().getAttribute('class')).includes('on'), 'the last tab is selected');
+      await fits();
+      await p2.setViewportSize({ width: 1440, height: 900 });
+      await fits();
+      for (let i = 0; i < 3; i++) await docs.last().locator('.x').click();
+      assert.equal(await docs.count(), 14);
+      await docs.first().click(); await docs.last().click();
+      await fits();
+    } finally { await c2.close(); }
+  });
+
   await step('a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat', async () => {
     await t('picker').setInputFiles('fixtures/overlay.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
