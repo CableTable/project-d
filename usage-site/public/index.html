@@ -79,6 +79,12 @@ button:disabled { opacity: .6; cursor: wait; }
 .ud input[type=search] { font: inherit; font-size: var(--cds-font-size-caption); padding: 4px 10px; border-radius: var(--cds-radius); border: 1px solid var(--color-border-line); background: var(--color-bg); color: var(--color-fg); width: min(100%, 16rem); }
 .ud-note td:first-child { font-weight: var(--cds-font-weight-medium); white-space: nowrap; }
 .ud-note td { font-size: var(--cds-font-size-body); line-height: 1.5; }
+.ud-todo { overflow-wrap: anywhere; }
+.ud-todo-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; }
+.ud-todo-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
+.ud-todo-list p { margin-top: 4px; line-height: 1.5; white-space: pre-wrap; }
+.ud-todo summary { cursor: pointer; color: var(--color-fg-muted); }
+.ud-todo details[open] summary { margin-bottom: 16px; }
 [data-dash-source-state=empty] { color: transparent; }
 [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
 @media (max-width: 40rem) { .ud .hide-narrow { display: none; } }
@@ -125,6 +131,11 @@ button:disabled { opacity: .6; cursor: wait; }
         <tbody id="notes"></tbody>
       </table></div>
     </div>
+  </section>
+
+  <section class="ud-sec" id="todo">
+    <h2>TODO</h2>
+    <div class="ud-sec" id="todo-sections"></div>
   </section>
 
   <section class="ud-sec" id="runs">

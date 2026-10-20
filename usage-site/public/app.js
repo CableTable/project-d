@@ -184,6 +184,33 @@ function drawNotes(notes) {
   notes.forEach((n) => { const tr = el('tr'); tr.dataset.key = n.id; const c = el('td'); c.append(el('div', null, n.topic), el('div', 'ud-muted', n.as_of)); tr.append(c, el('td', null, n.note)); tb.append(tr); });
 }
 
+function drawTodo(sections) {
+  const box = document.getElementById('todo-sections'); box.replaceChildren();
+  if (!sections.length) box.append(el('p', 'ud-muted', 'No TODO uploaded yet.'));
+  for (const section of sections) {
+    const card = el('div', 'ud-card ud-todo');
+    card.append(el('h3', null, section.title));
+    const open = el('ul', 'ud-todo-list'), completed = el('ul', 'ud-todo-list');
+    for (const item of section.items) {
+      const row = el('li');
+      const head = el('div', 'ud-todo-head');
+      head.append(el('span', 'ud-muted', item.num + '.'), el('strong', null, item.title));
+      if (item.size) head.append(el('span', 'ud-chip', item.size));
+      row.append(head);
+      if (item.text) row.append(el('p', 'ud-muted', item.text));
+      (item.done ? completed : open).append(row);
+    }
+    if (open.childElementCount) card.append(open);
+    else card.append(el('p', 'ud-muted', 'No open items.'));
+    if (completed.childElementCount) {
+      const details = el('details');
+      details.append(el('summary', null, completed.childElementCount + ' done'), completed);
+      card.append(details);
+    }
+    box.append(card);
+  }
+}
+
 function draw() {
   const times = data.limits.map((r) => Date.parse(r.as_of)).filter(Number.isFinite);
   document.getElementById('asof').textContent = times.length ? IST.format(new Date(Math.max(...times))) + ' IST' : '\u2014';
@@ -252,10 +279,11 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   onAuthStateChanged(auth, (user) => {
     stopListening(); allowed = false; currentStatus = {};
     data = { limits: [], history: [], runs: [], analysis: [] };
+    drawTodo([]);
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
     dashboard.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
     if (!user) return;
-    for (const name of ['limits', 'history', 'runs', 'analysis', 'status']) {
+    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'status']) {
       subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         allowed = true; dashboard.hidden = false;
@@ -263,6 +291,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         if (message.textContent === 'Loading…') message.textContent = 'Signed in.';
         const value = snapshot.data() || {};
         if (name === 'status') currentStatus = value;
+        else if (name === 'todo') drawTodo(value.sections || []);
         else data[name] = value[name === 'analysis' ? 'items' : 'rows'] || [];
         showStatus(); draw();
       }, report));

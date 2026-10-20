@@ -10,6 +10,38 @@ import { setTimeout as delay } from 'node:timers/promises';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
 
+export function parseTodo(text) {
+  const sections = [];
+  let section, item;
+  for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const heading = line.match(/^#{2,6}\s+(.+)$/);
+    const numbered = line.match(/^(\d+)\.\s+(.*)$/);
+    if (heading) {
+      section = { title: heading[1], items: [] };
+      sections.push(section); item = null;
+    } else if (section && numbered) {
+      item = { num: Number(numbered[1]), body: numbered[2] };
+      section.items.push(item);
+    } else if (item && /^\s+\S/.test(line)) item.body += ' ' + line.trim();
+    else if (line.trim()) item = null;
+  }
+  for (const section of sections) {
+    const unique = new Map();
+    section.items = section.items.map(({ num, body }) => {
+      const done = /^✅\s*/u.test(body);
+      body = body.replace(/^✅\s*/u, '');
+      const bold = body.match(/\*\*(.+?)\*\*/);
+      const title = bold ? bold[1] : body.split(/(?<=[.!?])\s|:\s|\s+\((?:S(?:[–-]M)?|M|L)\)/)[0];
+      const size = body.match(/\((?:[^()]*,\s*)?(S(?:[–-]M)?|M|L)\)/)?.[1] || '';
+      const text = body.replace(bold ? bold[0] : title, '').replace(/\*\*/g, '').replace(/^\s*:\s*/, '').replace(/\s{2,}/g, ' ').trim();
+      const item = { num, title, size, done, text };
+      if (!unique.get(num)?.done) unique.set(num, item);
+      return item;
+    }).filter((item) => unique.get(item.num) === item);
+  }
+  return { sections };
+}
+
 export function parseCsv(text) {
   text = text.replace(/^\uFEFF/, '');
   const records = [];
@@ -181,6 +213,7 @@ async function main() {
         const items = JSON.parse(readFileSync(join(dataDir, 'analysis.json'), 'utf8'));
         if (!Array.isArray(items) || items.some((i) => !i || typeof i.id !== 'string' || typeof i.topic !== 'string' || typeof i.note !== 'string')) throw new Error('analysis.json must be an array of {id, topic, note} strings');
         docs.push(['analysis', { items }]);
+        docs.push(['todo', parseTodo(readFileSync(join(repo, 'TODO.md'), 'utf8'))]);
         const writes = docs.map(([name, data]) => {
           const fields = firestoreValue(data).mapValue.fields;
           // shortcut: refuse oversized docs; split runs/analysis into pages if they outgrow one document.

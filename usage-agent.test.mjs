@@ -3,7 +3,46 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseCsv, firestoreValue, assertKeyOutsideRepo } from './tools/usage-agent.mjs';
+import { parseTodo, parseCsv, firestoreValue, assertKeyOutsideRepo } from './tools/usage-agent.mjs';
+
+test('TODO keeps every section, continuation text and section-local numbers, with done winning duplicates', () => {
+  const sample = `# Made-up TODO
+Intro.
+## First
+1. **Open <thing>** (S–M): More detail.
+   Continued detail.
+2. **Old task** (M): Still open here.
+
+More ideas:
+3. Plain task. Extra detail.
+2. ✅ (built today) **Finished task** (bug, S): Shipped.
+2. **Stale copy** (L)
+4. **Large task** (his ask, L): Later.
+5. Small task (S): A plain title.
+## Next
+1. **Another task** (M): Different number scope.
+2. ✅ Plain finished. Kept too.
+## Empty
+## Last
+1. No tag.
+`;
+  assert.deepEqual(parseTodo('\uFEFF' + sample.replace(/\n/g, '\r\n')), { sections: [
+    { title: 'First', items: [
+      { num: 1, title: 'Open <thing>', size: 'S–M', done: false, text: '(S–M): More detail. Continued detail.' },
+      { num: 3, title: 'Plain task.', size: '', done: false, text: 'Extra detail.' },
+      { num: 2, title: 'Finished task', size: 'S', done: true, text: '(built today) (bug, S): Shipped.' },
+      { num: 4, title: 'Large task', size: 'L', done: false, text: '(his ask, L): Later.' },
+      { num: 5, title: 'Small task', size: 'S', done: false, text: '(S): A plain title.' },
+    ] },
+    { title: 'Next', items: [
+      { num: 1, title: 'Another task', size: 'M', done: false, text: '(M): Different number scope.' },
+      { num: 2, title: 'Plain finished.', size: '', done: true, text: 'Kept too.' },
+    ] },
+    { title: 'Empty', items: [] },
+    { title: 'Last', items: [{ num: 1, title: 'No tag.', size: '', done: false, text: '' }] },
+  ] });
+  assert.deepEqual(parseTodo(''), { sections: [] });
+});
 
 test('CSV preserves empty cells, CRLF, BOM, quoted commas, escaped quotes and newlines', () => {
   assert.deepEqual(parseCsv('\uFEFFid,task,new_tokens\r\n1,"Fix, then ""test""\nagain",\r\n\r\n2,Done,0'), [

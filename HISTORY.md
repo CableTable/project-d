@@ -1,5 +1,7 @@
 # Project D: history
 
+**2026-10-20 (session 12): whole TODO on the usage page.** Every agent refresh uploads all TODO.md sections to usage/todo. The pure parser keeps continuation text and section-local numbering, with completed entries replacing duplicate open ones. The page shows open items with bold titles and size chips, and folds completed items under a count. npm test passes (224 tests); the offline Firebase browser check covers all sections, safe text, folds and 320/1440 px in light/dark, with captures in shots/usage-todo-*.png and an As-built board in mockups/Usage_TODO_AB.html. Live Firebase writes/deployment were not checked.
+
 **2026-10-16**: The idea came up at the end of a Project R session, right after Project R's
 drawing viewer (DXF) and 3D viewer were built and file uploads for CAD were raised to 100 MB. He asked
 for "a 2D and 3D engineering drawings and modeling software". He chose to start with 2D drawings and
