@@ -17,8 +17,10 @@ test('outline lineweights round trip for lines, arcs and circles, including inch
       assert.equal(widthKey(saved), value);
       assert.equal(saved.lw, value === 'ByLayer' ? -1 : value === 'Hairline' ? 5 : value * 100);
     }
-    const inch = roundtrip([withWidth(e, .1, 25.4)], 1).entities[0];
-    assert.equal(inch.lw, 254); near(widthKey(inch, 25.4), .1);
+    for (const mm of [.25, .37]) {
+      const inch = roundtrip([withWidth(e, mm, 25.4)], 1).entities[0];
+      assert.equal(inch.lw, mm * 100); near(widthKey(inch, 25.4), mm);
+    }
     assert.equal(roundtrip([withWidth(e, .376)]).entities[0].lw, 38, 'hundredths of mm');
     for (const bad of [null, '', 'oops', 0, -1, NaN, Infinity, 328]) assert.equal(withWidth(e, bad), null);
   }
@@ -34,8 +36,8 @@ test('constant polyline widths replace vertex widths and reset to Hairline or By
   for (const e of [light, legacy]) {
     for (const factor of [1, 25.4]) {
       const wide = roundtrip([withWidth(e, .123456, factor)], factor === 1 ? 4 : 1);
-      near(widthKey(wide.entities[0], factor), .123456);
-      near(flatten(wide).items[0].w, .123456);
+      near(widthKey(wide.entities[0], factor), .123456, factor * 1e-6);
+      near(flatten(wide).items[0].w, .123456 / factor);
       assert.equal(wide.entities[0].lw, -1);
       for (const key of ['ByLayer', 'Hairline']) {
         const reset = roundtrip([withWidth(wide.entities[0], key, factor)]);
@@ -51,9 +53,9 @@ test('PDF and Print preserve weights, constant widths, ByLayer and 0.05 mm Hairl
     const raw = newDoc(units);
     raw.layers[0].lw = 100;
     raw.entities = [withWidth(line(1, 1, 2, 1), 'Hairline', factor),
-      withWidth(arc(3, 3, 1, 0, 90), .37 / factor, factor),
-      withWidth(circle(4, 4, 1), .5 / factor, factor),
-      withWidth(lwpoly([[1, 2], [2, 2]]), 2 / factor, factor), line(1, 3, 2, 3)];
+      withWidth(arc(3, 3, 1, 0, 90), .37, factor),
+      withWidth(circle(4, 4, 1), .5, factor),
+      withWidth(lwpoly([[1, 2], [2, 2]]), 2, factor), line(1, 3, 2, 3)];
     for (const doc of [raw, readDxf(writeDxf(raw))]) {
       const fl = flatten(doc);
       for (const mirror of [false, true]) {
@@ -70,15 +72,31 @@ test('PDF and Print preserve weights, constant widths, ByLayer and 0.05 mm Hairl
 test('screen stroke scales with zoom and agrees with physical widths, including inches', () => {
   for (const factor of [1, 25.4]) {
     const fl = flatten(roundtrip([line(1, 1, 3, 1), arc(3, 3, 1, 0, 90), circle(4, 4, 1), lwpoly([[1, 2], [2, 2]])]
-      .map((e) => withWidth(e, .5 / factor, factor))));
-    for (const scale of [2, 10]) {
+      .map((e) => withWidth(e, .5, factor))));
+    for (const scale of [.1, 2, 10]) {
       const strokes = [];
       let matrix, width;
       const c = { setTransform: (...m) => { matrix = m; }, clearRect() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {}, arc() {},
         set lineWidth(w) { width = w; }, stroke() { strokes.push(width * Math.abs(matrix[0])); } };
       paintDrawing({ width: 5000, height: 5000, getContext: () => c }, { fl, off: new Set(), factor, sheetH: 100, ox: 0, oy: 0, scale, w: 5000, h: 5000, dpr: 2 });
       assert.ok(strokes.length);
-      for (const w of strokes) near(w, .5 * scale * 2, factor * scale * 2 * 1e-6); // DXF widths save to six decimals in drawing units.
+      for (const w of strokes) near(w, Math.max(.5 * scale * 2, 1.2 * 2), factor * scale * 2 * 1e-6); // DXF widths save to six decimals in drawing units.
     }
   }
+});
+
+test('inch polyline presets and Custom widths save in drawing units', () => {
+  for (const mm of [.25, .37]) {
+    const saved = roundtrip([withWidth(lwpoly([[0, 0], [2, 0]]), mm, 25.4)], 1).entities[0];
+    near(+saved.r.v[saved.r.c.indexOf(43)], mm / 25.4);
+    near(widthKey(saved, 25.4), mm, 25.4e-6);
+  }
+});
+
+test('Hairline uses the 1.2 CSS pixel screen minimum when zoomed out', () => {
+  const fl = flatten(roundtrip([withWidth(line(0, 0, 100, 0), 'Hairline')]));
+  let width, matrix;
+  const c = { setTransform: (...m) => { matrix = m; }, clearRect() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {},
+    set lineWidth(w) { width = w; }, stroke() { near(width * Math.abs(matrix[0]), 2.4); } };
+  paintDrawing({ getContext: () => c }, { fl, off: new Set(), factor: 1, sheetH: 100, ox: 0, oy: 0, scale: 1, w: 500, h: 500, dpr: 2 });
 });

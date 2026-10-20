@@ -117,7 +117,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor) {
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
     if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur]; c.setTransform(...mmul(T, M)); kk = k * mscale(M) || k; }
     if (it.k === 'p' && !it.fill) {
-      const lw = strokeWidth(it, factor, kk / k) * k / factor / kk;
+      const lw = Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
       const dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
       const css = col(it.css);
       if (!open || css !== pc || lw !== pw || dash !== pd) {

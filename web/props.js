@@ -2,7 +2,7 @@
 //
 // What a selection has in common (layer, colour, line type), its geometry fields (length, radius, centre, text height …), and the edits:
 // all on entity records (dxf-write.js shape: { type, layer, aci, tc, lt, …, r: { c: [codes], v: [values] } }) in the drawing's own units, y up.
-// `factor` turns units into mm; geometry fields use mm, outline widths use drawing units.
+// `factor` turns drawing units into mm; geometry fields and outline widths use mm.
 //
 //   summarize(ents)                  → { n, kind, chip, layer, colour, lt }: a value is null when the entities differ ("*varies*")
 //   fieldsOf(ents, factor)           → [{ key, label, value (mm / degrees, null = varies), editable, unit, group }] (only when all are one type)
@@ -63,29 +63,29 @@ export const withColour = (ent, key) => {
 export const withLineType = (ent, key) => ({ ...ent, lt: key === 'BYLAYER' ? null : key });
 
 export const WIDTHS = ['ByLayer', 'Hairline', 0.10, 0.25, 0.50, 1.00, 2.00];
-/** Outline setting in drawing units; null for a polyline with varying vertex widths. */
+/** Outline setting in mm; null for a polyline with varying vertex widths. */
 export function widthKey(ent, factor = 1) {
   if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
     const cw = get(ent.r, ent.type === 'LWPOLYLINE' ? 43 : 40);
-    if (cw > 0 && (ent.type === 'LWPOLYLINE' || cw === get(ent.r, 41))) return cw;
+    if (cw > 0 && (ent.type === 'LWPOLYLINE' || cw === get(ent.r, 41))) return cw * factor;
     const widths = [ent.r, ...(ent.kids || [])].flatMap((r) => r.c.flatMap((c, i) => c === 40 || c === 41 ? [num(r.v[i])] : []));
     if (widths.some((w) => w > 0)) return null;
   }
   const lw = ent.lw ?? -1;
-  return lw === -1 ? 'ByLayer' : lw === -2 ? 'ByBlock' : lw === -3 ? 'Default' : lw === 5 || lw === 0 ? 'Hairline' : lw / 100 / factor;
+  return lw === -1 ? 'ByLayer' : lw === -2 ? 'ByBlock' : lw === -3 ? 'Default' : lw === 5 || lw === 0 ? 'Hairline' : lw / 100;
 }
-/** Numeric widths use DXF hundredths of mm, or a polyline's constant width. */
+/** Numeric mm widths become DXF hundredths of mm, or a polyline's width in drawing units. */
 export function withWidth(ent, value, factor = 1) {
-  if (value !== 'ByLayer' && value !== 'Hairline' && !(typeof value === 'number' && Number.isFinite(value) && value > 0 && value * factor * 100 <= 32767)) return null;
+  if (value !== 'ByLayer' && value !== 'Hairline' && !(typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 327.67)) return null;
   const poly = ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE';
-  const lw = value === 'ByLayer' ? -1 : value === 'Hairline' ? 5 : poly ? -1 : Math.max(1, Math.round(value * factor * 100));
+  const lw = value === 'ByLayer' ? -1 : value === 'Hairline' ? 5 : poly ? -1 : Math.max(1, Math.round(value * 100));
   if (!poly) return { ...ent, lw };
   const clear = (r) => {
     const keep = r.c.map((c, i) => c !== 40 && c !== 41 && c !== 43 ? i : -1).filter((i) => i >= 0);
     return { ...r, c: keep.map((i) => r.c[i]), v: keep.map((i) => r.v[i]) };
   };
   let next = { ...ent, lw, r: clear(ent.r), kids: ent.kids?.map(clear) };
-  if (typeof value === 'number') next = withValues(next, ent.type === 'LWPOLYLINE' ? [[43, value]] : [[40, value], [41, value]]);
+  if (typeof value === 'number') next = withValues(next, ent.type === 'LWPOLYLINE' ? [[43, value / factor]] : [[40, value / factor], [41, value / factor]]);
   return next;
 }
 /** Match properties: dst takes src's layer, colour and line type (nothing else). */

@@ -5033,11 +5033,23 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     const pdf = pdfText(await downloaded(() => t('pdf-go').click()));
     assert.match(pdf, /\n2 w\n/, 'reopened constant width reaches PDF / Print');
     assert.match(pdf, /\n0\.05 w\n/, 'Hairline stays 0.05 mm in the output');
-    const inch = newDoc(1); addEntities(inch, dxfLine(1, 1, 3, 1));
+    const inch = newDoc(1); addEntities(inch, dxfLine(1, 1, 3, 1), dxfPoly([[1, 2], [3, 2]]));
     await openGrips(writeDxf(inch), 'outline-inches.dxf'); await click(50.8, 25.4); await frames();
-    assert.match(await t('prop-width').textContent(), /Selection · in/);
+    assert.match(await t('prop-width').textContent(), /Selection · mm/);
+    await preset('0.25').click();
+    assert.equal((await savedDoc()).entities[0].lw, 25, 'preset uses mm in an inch drawing');
     await t('prop-width-custom').fill('0.1'); await t('prop-width-custom').press('Enter');
-    assert.equal((await savedDoc()).entities[0].lw, 254, 'typed Custom uses drawing inches');
+    assert.equal((await savedDoc()).entities[0].lw, 10, 'typed Custom uses mm in an inch drawing');
+    await t('prop-width-custom').fill('328'); await t('prop-width-custom').press('Enter');
+    assert.match(await prompt(), /up to 327\.67 mm/);
+    await click(50.8, 50.8); await frames(); await preset('0.25').click();
+    assert.equal(await preset('0.25').getAttribute('aria-pressed'), 'true', 'inch polyline preset stays active after conversion');
+    const inchSaved = await savedDoc();
+    assert.ok(Math.abs(fieldOf(inchSaved.entities[1], 43) - .25 / 25.4) < 1e-6);
+    await openGrips(writeDxf(inchSaved), 'outline-inches-reopened.dxf'); await click(50.8, 50.8); await frames();
+    assert.equal(await preset('0.25').getAttribute('aria-pressed'), 'true', 'inch preset survives DXF width rounding');
+    await t('prop-width-custom').fill('0.37'); await t('prop-width-custom').press('Enter');
+    assert.ok(Math.abs(fieldOf((await savedDoc()).entities[1], 43) - .37 / 25.4) < 1e-6);
     await page.keyboard.press('Control+1'); await closeTabs(/./);
   });
 

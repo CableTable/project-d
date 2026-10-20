@@ -5658,7 +5658,7 @@ function buildPropsSection() {
   ui.propLt.addEventListener('change', () => propSet('lt', ui.propLt.value));
   ui.propWidthUnits = h('span', { class: 'lbl' });
   ui.propWidthHint = h('span', { class: 'lbl' });
-  ui.propWidthInput = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': 'Custom outline width in drawing units', 'data-testid': 'prop-width-custom' });
+  ui.propWidthInput = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': 'Custom outline width in mm', 'data-testid': 'prop-width-custom' });
   ui.propWidthInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); ui.propWidthInput.blur(); }
     else if (e.key === 'Escape') { ui.propWidthInput.dataset.cancel = '1'; ui.propWidthInput.blur(); }
@@ -5700,10 +5700,12 @@ function renderPropsPanel(d) {
   ui.propCommon.hidden = none; ui.propGeo.hidden = none; ui.propButtons.hidden = none;
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
   const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
-  const units = d.fl.units === 'unitless' ? 'units' : d.fl.units;
-  ui.propWidthHint.textContent = 'Selection · ' + units;
-  ui.propWidthUnits.textContent = units;
-  for (const b of ui.propWidthPresets.children) b.setAttribute('aria-pressed', String(String(width) === b.dataset.width));
+  ui.propWidthHint.textContent = 'Selection · mm';
+  ui.propWidthUnits.textContent = 'mm';
+  for (const b of ui.propWidthPresets.children) {
+    const active = typeof width === 'number' ? Math.abs(width - Number(b.dataset.width)) < d.factor * 1e-6 : String(width) === b.dataset.width;
+    b.setAttribute('aria-pressed', String(active));
+  }
   if (document.activeElement !== ui.propWidthInput) {
     ui.propWidthInput.value = typeof width === 'number' ? String(+width.toPrecision(10)) : '';
     ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
@@ -5758,9 +5760,9 @@ function propWidthSet(value) {
   const all = propEnts(d, true);
   if (!all.length) return;
   if (!PR.withWidth(all[0][1], value, d.factor)) {
-    note('Outline width: type a positive number up to ' + String(327.67 / d.factor) + ' ' + d.fl.units); renderEdit(); return;
+    note('Outline width: type a positive number up to ' + fmt(327.67) + ' mm'); renderEdit(); return;
   }
-  const label = typeof value === 'number' ? String(value) + ' ' + d.fl.units : value;
+  const label = typeof value === 'number' ? fmt(value) + ' mm' : value;
   const n = propCommit(d, 'Outline width → ' + label, (ent) => {
     const next = PR.withWidth(ent, value, d.factor);
     return PR.widthKey(next, d.factor) === PR.widthKey(ent, d.factor) ? null : next;
