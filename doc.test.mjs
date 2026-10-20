@@ -55,6 +55,17 @@ test('a kept dimension is one entity (its lines, arrowheads and text are items o
   assert.equal(entityCount(raw2, fl), before + 1);
   assert.equal(layerCounts(raw2, fl)[fl.layers.findIndex((l) => l.name === 'Dimensions')], 1);
 });
+test('a file past the draw limit still lists every layer, so the counts agree with the Objects tree', () => {
+  const line = (layer) => ({ type: 'LINE', layer, lt: null, aci: 256, tc: null, lw: -1, lts: 1, hidden: false, ps: false, flip: false, kids: [], r: { type: 'LINE', c: [10, 20, 11, 21], v: ['0', '0', '1', '1'] } });
+  const raw = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [...Array(400001)].map(() => line('A')).concat([line('B'), line('B')]) };
+  const fl = flatten(raw);
+  assert.ok(fl.truncated, 'the draw limit was hit');
+  const b = fl.layers.findIndex((l) => l.name === 'B');
+  assert.ok(b >= 0, 'layer B is listed');
+  assert.equal(layerCounts(raw, fl)[b], 2);
+  assert.equal(layerCounts(raw, fl).reduce((x, y) => x + y, 0), entityCount(raw, fl));
+  assert.equal(buildTree(raw, fl).layers.find((l) => l.name === 'B').index, b);
+});
 test('layer visibility hides that layer\'s items only', () => {
   const fl = load('fixtures/sample.dxf');
   const holes = fl.layers.findIndex((l) => l.name === 'HOLES');
