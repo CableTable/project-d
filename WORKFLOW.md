@@ -85,8 +85,11 @@ $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format te
 
 # Research: Rowan (Codex CLI, ChatGPT Go; set up 2026-10-20 with the non-admin sandbox). Read-only, live web search,
 # its own empty folder; never in the repo, never --dangerously-bypass-approvals-and-sandbox. Answer lands in last.txt.
-cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -m gpt-6-luna --skip-git-repo-check -s read-only \
-  -c web_search=\"live\" -o last.txt - < question.txt > run.log 2>&1
+cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p researcher --skip-git-repo-check \
+  -o last.txt - < question.txt > run.log 2>&1
+# Profiles (2026-10-20, Codex docs review, mockups/_design/codex-workflow.md): ~/.codex/researcher.config.toml
+# (gpt-6-luna, read-only, live web search) and ~/.codex/builder.config.toml (gpt-6.1-sol, high, workspace-write,
+# network on). The repo's AGENTS.md carries the build rules Codex reads on every run, so briefs skip them.
 # Rowan-build (default builder, 2026-10-20): its own clone ProjectD-rowan, git folder ProjectD-rowan-git (Codex blocks any
 # folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
@@ -94,7 +97,11 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -m gpt-
 # If Codex blocks Rowan's commit, Rook commits in ProjectD-rowan itself. Rowan's TODO / DECISIONS / HISTORY edits
 # conflict on cherry-pick into the repo: keep both sides.
 # Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
-codex.cmd exec -m gpt-6.1-sol -c model_reasoning_effort="high" -s workspace-write -C "E:/Project B/Claude/ProjectD-rowan" \n  --add-dir "E:/Project B/Claude/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \n  -c sandbox_workspace_write.network_access=true -o r.txt - < brief.txt > r.log 2>&1
+codex.cmd exec -p builder -C "E:/Project B/Claude/ProjectD-rowan" \
+  --add-dir "E:/Project B/Claude/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \
+  -o r.txt - < brief.txt > r.log 2>&1
+# Cut off by the 5-hour limit: after the reset, `codex.cmd exec resume <session id> -` (id from r.log) with
+# "continue: check git status and the diff, rerun the tests, finish". Fresh runs stay the rule for new work and fixes.
 # Usage (headless): the newest ~/.codex/sessions/**/*.jsonl has "rate_limits": primary.used_percent over a
 # 5-hour window and secondary over the week, resets_at in Unix time. Two S builds = ~6% of 5h, 1% of the week.
 
