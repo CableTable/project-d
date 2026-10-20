@@ -52,8 +52,11 @@ or a tool fails silently, the fix round also adds ONE small check for exactly th
 test), and HISTORY.md names it. No big hook collections. First one: the PS 5.1 quote-stripping bug in
 usage-agent-install.ps1.
 **From Matt Pocock's workflow** (his picks 2026-10-20; plugin `mattpocock-skills@mattpocock` v1.3.1 on both accounts):
-1. **Grill before building** an M / L item: Rook asks him one round of up to 5 sharp questions (the `grilling` skill's
-   shape, `---` between questions) until each choice is settled, then writes the brief. S items skip it.
+1. **Grill before building, always on** (his call 2026-10-20): before every M / L item, and any plan or design he brings,
+   Rook runs `grill-with-docs` the way it is built: the Skill tool for `grilling` (rounds of numbered questions, each with
+   Rook's recommended answer, `---` between them, until every choice is settled) and for `domain-modeling` (terms go
+   into GLOSSARY.md; decisions go into DECISIONS.md rows, our ADRs). S items skip it. (grill-me / grill-with-docs are
+   user-only commands, so Rook calls the two skills they wrap; he can still type /grill-me or /grill-with-docs.)
 2. **Two reviews per build**: Pip-review A = spec fidelity (does it do what the brief / TODO item says, every point;
    Opus medium) and Pip-review B = code standards (`ponytail:ponytail-review`; Sonnet high), separate fresh sessions,
    run in parallel in two throwaway worktrees (ProjectD-review, ProjectD-review2).
