@@ -51,6 +51,16 @@ briefs, reading short reports and merging.
 or a tool fails silently, the fix round also adds ONE small check for exactly that case (a hook, a script line or a
 test), and HISTORY.md names it. No big hook collections. First one: the PS 5.1 quote-stripping bug in
 usage-agent-install.ps1.
+**From Matt Pocock's workflow** (his picks 2026-10-20; plugin `mattpocock-skills@mattpocock` v1.3.1 on both accounts):
+1. **Grill before building** an M / L item: Rook asks him one round of up to 5 sharp questions (the `grilling` skill's
+   shape, `---` between questions) until each choice is settled, then writes the brief. S items skip it.
+2. **Two reviews per build**: Pip-review A = spec fidelity (does it do what the brief / TODO item says, every point;
+   Opus medium) and Pip-review B = code standards (`ponytail:ponytail-review`; Sonnet high), separate fresh sessions,
+   run in parallel in two throwaway worktrees (ProjectD-review, ProjectD-review2).
+3. **PR body in the `pr` skill's shape**: a summary visual (file tree / call tree / diff), before / after evidence
+   (tests, screenshots), and a merge-danger call: one-way or two-way door, plus blast radius.
+4. **Retro at session end**: before the merge, a Pip run of the `retro` skill over the session's commits, briefs and
+   run reports suggests changes to rules, checks, briefs (not code); he picks which to apply.
 **Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. This week (49% on Tue 21:45):
 by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. From next week: 14% × k by the end of day k
 after the reset, like Pip. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
