@@ -24,7 +24,7 @@ briefs, reading short reports and merging.
 ## The loop for one TODO item
 
 1. **Pick:** the next unticked item in TODO.md "Rakshith's list" (Haiku lookup), or what he names.
-2. **Mock-up** (any new UI): builder writes 2–3 options as `.dc.html` artboards in `mockups/_design/project/`
+2. **Mock-up** (only when he asks for one; otherwise Rook decides the UI and records it in DECISIONS.md, his call 2026-10-20): builder writes 2–3 options as `.dc.html` artboards in `mockups/_design/project/`
    (format spec: `mockups/_design/ref/`; copy the latest R-board). Lead reads them, adds them to
    `canvas.json` (a Round title note + a sticky with pros / cons / open questions per board) and publishes
    to the **"Project D Mockups"** canvas: https://claude.ai/artifact/QgsKW8CrQbt4rURJeY9sSD.
@@ -33,7 +33,7 @@ briefs, reading short reports and merging.
    tests, screenshots light + dark, tick TODO.md, commit + push, don't stage `mockups/`). Keep its `session_id`.
 4. **Review:** a Pip-review session on the build's commits (ranked findings, "ship as is" / "fix first").
 5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run.
-6. **As built:** an AB board in the canvas when the build differs from the mock-up.
+6. **As built:** every UI build gets an AB board (mockups/R<n>_AB_*.html, local), drawn from the screenshots (his call, 2026-10-20).
 7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR). CI publishes the exe.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
    Pip-test downloads the release into `shots/exe/`, starts it with `WEBVIEW2_USER_DATA_FOLDER` (an isolated profile:
@@ -91,6 +91,8 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -m gpt-
 # folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
 # Before a build: git -C ../ProjectD-rowan fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
+# If Codex blocks Rowan's commit, Rook commits in ProjectD-rowan itself. Rowan's TODO / DECISIONS / HISTORY edits
+# conflict on cherry-pick into the repo: keep both sides.
 # Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
 codex.cmd exec -m gpt-6.1-sol -c model_reasoning_effort="high" -s workspace-write -C "E:/Project B/Claude/ProjectD-rowan" \n  --add-dir "E:/Project B/Claude/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \n  -c sandbox_workspace_write.network_access=true -o r.txt - < brief.txt > r.log 2>&1
 # Usage (headless): the newest ~/.codex/sessions/**/*.jsonl has "rate_limits": primary.used_percent over a
@@ -141,8 +143,12 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 ## Keeping Rook small (his rule, 2026-10-20: Rook was on pace to hit its weekly limit by Friday)
 
-- **A fresh Rook session after every PR merge.** Rook ends with a starting prompt for him to paste (the template below, filled in:
-  branch, next items, open questions). Every Rook turn re-reads the whole conversation, so a long one costs the most.
+- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, and once CI is green for the
+  head commit asks his OK to merge. On his yes: `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
+  (ccd_pr get_status, or the PR's GitHub merge notice), refresh the usage page, then start the next Rook session itself
+  (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
+  of handing him a prompt. No scheduled or polled CI checks. Every Rook turn re-reads the whole conversation, so a
+  long one costs the most.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
   `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
 - Rook never opens screenshots or images (Pip-look reports in lines), never runs the test suites (the review does),

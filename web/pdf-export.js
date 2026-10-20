@@ -7,7 +7,7 @@
 //   mirror (x flipped, emulsion down), negative (black page, white art), black (every colour prints black),
 //   separate (one page per layer / print colour), crop / reg marks on every page, strip (file, date, colour).
 import { Page, writePdf, winAnsi, textWidthEm } from './pdf-write.js';
-import { mmul, mapply, mscale, arcSweep, opsBox } from './drawing.js';
+import { mmul, mapply, mscale, arcSweep, opsBox, strokeWidth } from './drawing.js';
 import { shownItems, itemVisible } from './doc.js';
 import { markGeometry } from './layout.js';
 
@@ -282,7 +282,7 @@ function drawPage(src, o, plan, p, artBox) {
   for (const it of g.items) {
     const M = fullFor(it.m), sc = mscale(M);
     if (it.k === 'p' && !it.fill) {
-      const w = Math.max(it.w ? it.w * sc : it.lw / 100 * ws, minW);
+      const w = strokeWidth(it, F, mscale(fl.mats[it.m])) * ws;
       let dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * sc >= 0.3 ? it.dash.map((x) => x * sc) : it.dpx ? it.dpx.map((x) => x * 0.3) : null;
       if (dash && dash.reduce((a, x) => a + x, 0) < 0.3) dash = null;
       page.strokeColor(inkOf(it.css)); page.lineWidth(w); page.dash(dash || []);

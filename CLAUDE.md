@@ -51,9 +51,10 @@ Set up in session 1, the same shape as Project R:
 ## 1. How changes ship
 
 - **Plan first, with options**, before any big build; wait for the go-ahead.
-- **UI is mocked up first** (an artifact, "Project D Mockups"), then built once he picks,
-  unless he says go ahead without one.
-- **The build matches its mock-up** (from Project R):
+- **No mock-up unless he asks for one** for a feature (his call, 2026-10-20): Rook decides the UI, records it
+  in DECISIONS.md, and the PR body says what was chosen. When he does ask, the mock-up comes first and he picks.
+  The **As built** boards stay: every UI build gets one (mockups/R<n>_AB_*.html, local), drawn from the screenshots.
+- **The build matches its mock-up**, when there is one (from Project R):
   1. Build from the mock-up's file, never from memory: read its artboard first and list what's on
      it (buttons, labels, colours, order). That list is the spec.
   2. Before calling a screen done, screenshot the real one beside its mock-up and tick the list;

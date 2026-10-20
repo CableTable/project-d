@@ -43,6 +43,8 @@ export function lwVertices(r) {
     if (r.c[k] === 10) vs.push({ kx: k, ky: -1, kb: -1 });
     else if (r.c[k] === 20 && vs.length && vs[vs.length - 1].ky < 0) vs[vs.length - 1].ky = k;
     else if (r.c[k] === 42 && vs.length) vs[vs.length - 1].kb = k;
+    else if (r.c[k] === 40 && vs.length) vs[vs.length - 1].ws = num(r.v[k]);
+    else if (r.c[k] === 41 && vs.length) vs[vs.length - 1].we = num(r.v[k]);
   }
   return vs.filter((v) => v.ky >= 0).map((v) => ({ ...v, x: num(r.v[v.kx]), y: num(r.v[v.ky]), b: v.kb >= 0 ? num(r.v[v.kb]) : 0 }));
 }
@@ -146,7 +148,7 @@ export function shapeOf(ent, factor = 1) {
   if (ent.type === 'ARC') { const a = arcOf(r); return { t: 'arc', c: P(a.c[0], a.c[1]), r: a.r * f, a0: a.a0, a1: a.a1 }; }
   if (ent.type === 'LWPOLYLINE') {
     const flags = get(r, 70) ?? 0;
-    return { t: 'poly', pts: lwVertices(r).map((v) => (v.b ? [v.x * f, v.y * f, v.b] : [v.x * f, v.y * f])), closed: (flags & 1) === 1 };
+    return { t: 'poly', pts: lwVertices(r).map((v) => (v.ws != null || v.we != null ? [v.x * f, v.y * f, v.b, (v.ws ?? 0) * f, (v.we ?? 0) * f] : v.b ? [v.x * f, v.y * f, v.b] : [v.x * f, v.y * f])), closed: (flags & 1) === 1 };
   }
   return null;
 }

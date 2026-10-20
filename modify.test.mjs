@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import * as M from './web/modify.js';
 import { shapeOf, get } from './web/grips.js';
-import { line, circle, arc, lwpoly, text, mtext, ellipse, insert, rect, roundRect } from './web/dxf-write.js';
+import { entity, line, circle, arc, lwpoly, text, mtext, ellipse, insert, rect, roundRect } from './web/dxf-write.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -14,6 +14,13 @@ const len = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
 function distToSegs(P, segs) { return Math.min(...segs.map((s) => { const d = [s.b[0] - s.a[0], s.b[1] - s.a[1]], l2 = d[0] * d[0] + d[1] * d[1], t = Math.max(0, Math.min(1, ((P[0] - s.a[0]) * d[0] + (P[1] - s.a[1]) * d[1]) / l2)); return len(P, [s.a[0] + d[0] * t, s.a[1] + d[1] * t]); })); }
 
 const base = { layer: 'Cut', aci: 3 };
+const widePoly = (width, closed = false) => entity('LWPOLYLINE', [
+  [90, 3], [70, closed ? 1 : 0], [43, width],
+  [10, 0], [20, 0], [40, 2], [41, 4],
+  [10, 100], [20, 0], [40, 6], [41, 8],
+  [10, 100], [20, 50], [40, 10], [41, 12],
+], base);
+const widthsOf = (ent) => ent.r.c.flatMap((c, i) => c === 40 || c === 41 ? [Number(ent.r.v[i])] : []);
 
 test('geo: a bulge is an arc through its two ends with the right centre and sweep', () => {
   const g = M.geo({ a: [10, 0], b: [0, 10], bulge: Math.tan(Math.PI / 8) });            // a quarter circle round the origin, anticlockwise
@@ -81,6 +88,14 @@ test('Offset an open polyline: both ends move sideways, the inner corner is mitr
   r = M.offsetEntity(p, 10, [50, -5]);                                                       // outside: the corner is extended
   s = S(r.ent);
   nearPt(s.pts[0], [0, -10]); nearPt(s.pts[1], [110, -10]); nearPt(s.pts[2], [110, 100]);
+});
+
+test('Offset a plain arc beside a line: a straight filler does not add vertex widths', () => {
+  const result = M.offsetEntity(lwpoly([[0, 0, 1], [10, 0], [20, 0]]), 4, [15, 4]);
+  assert.ok(result.ent, result.error);
+  assert.equal(S(result.ent).pts.length, 4, 'a filler joins the arc and line');
+  assert.equal(result.ent.r.c.includes(40), false);
+  assert.equal(result.ent.r.c.includes(41), false);
 });
 
 test('Offset a polyline with a bulge: the arc keeps its centre and takes the new radius; joins stay tangent', () => {
@@ -257,6 +272,45 @@ test('a polyline keeps its constant width and elevation through Mirror, Offset a
   const cut = line(50, -20, 50, 20, base), t = M.trimEntity(wide, [cut], [20, 0]);
   assert.ok(t.ents.length > 0 && t.ents.every((e) => Math.abs(w(e) - 0.5) < 1e-9));
   assert.equal(get(M.mirrorEntity(lwpoly([[0, 0], [10, 0], [10, 5]], base), [0, 0], [0, 10]).ent.r, 43), null, 'a plain polyline stays plain');
+});
+
+test('Mirror keeps constant and per-vertex widths for a copy or replacement, without changing the source', () => {
+  for (const width of [0, 0.5]) for (const closed of [false, true]) {
+    const source = widePoly(width, closed), before = structuredClone(source);
+    const mirrored = M.mirrorEntity(source, [0, 0], [0, 10]).ent;
+    assert.equal(get(mirrored.r, 43) ?? 0, width);
+    assert.deepEqual(widthsOf(mirrored), [2, 4, 6, 8, 10, 12]);
+    assert.deepEqual(source, before, 'keeping the source for a copy must leave its widths unchanged');
+    assert.deepEqual(widthsOf(M.mirrorEntity(mirrored, [0, 0], [0, 10]).ent), widthsOf(source));
+  }
+});
+
+test('Offset keeps constant and per-vertex widths on the new polyline', () => {
+  for (const width of [0, 0.5]) for (const closed of [false, true]) {
+    const source = widePoly(width, closed), before = structuredClone(source);
+    const result = M.offsetEntity(source, 5, [50, -20]);
+    assert.ok(result.ent, result.error);
+    assert.equal(get(result.ent.r, 43) ?? 0, width);
+    assert.deepEqual(widthsOf(result.ent), [2, 4, 6, 8, 10, 12]);
+    assert.deepEqual(source, before);
+  }
+});
+
+test('Trim keeps constant and per-vertex widths on every piece, interpolating tapered widths at cuts', () => {
+  const edges = [line(25, -10, 25, 10), line(75, -10, 75, 10)];
+  for (const width of [0, 0.5]) {
+    const source = widePoly(width), before = structuredClone(source);
+    const result = M.trimEntity(source, edges, [50, 0]);
+    assert.equal(result.ents.length, 2);
+    assert.ok(result.ents.every((e) => (get(e.r, 43) ?? 0) === width));
+    assert.deepEqual(widthsOf(result.ents[0]), [2, 2.5, 2.5, 2.5]);
+    assert.deepEqual(widthsOf(result.ents[1]), [3.5, 4, 6, 8, 10, 12]);
+    const closed = M.trimEntity(widePoly(width, true), edges, [50, 0]);
+    assert.equal(closed.ents.length, 1);
+    assert.equal(get(closed.ents[0].r, 43) ?? 0, width);
+    assert.deepEqual(widthsOf(closed.ents[0]), [3.5, 4, 6, 8, 10, 12, 2, 2.5, 2.5, 2.5]);
+    assert.deepEqual(source, before);
+  }
 });
 
 test('an arc with no sweep is a whole circle for Trim and Offset (no NaN radius)', () => {

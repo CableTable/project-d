@@ -26,7 +26,7 @@ export function chainTol(box, factor) {
 }
 
 /** A path's ends [x1, y1, x2, y2] (item coordinates), or null when it is closed. */
-function pathEnds(ops) {
+export function pathEnds(ops) {
   let sx = ops[1], sy = ops[2], x = sx, y = sy, closed = false;
   for (let i = 0; i < ops.length;) {
     const op = ops[i];

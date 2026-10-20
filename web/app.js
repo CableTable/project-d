@@ -8,12 +8,15 @@ import { idbStore } from './idbstore.js';
 import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
+import * as UF from './unitfix.js';
+import * as CL from './cleanup.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
 import { paintDrawing, ink, FONT_FAMILY } from './render.js';
 import { flatten, unionBox, CAP, ACI } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc } from './dxf-write.js';
+import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
 import * as GR from './grips.js';
@@ -323,7 +326,7 @@ function recentItems() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
@@ -343,7 +346,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'E'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Format = [['Dimension style…', showDimStyle]];
-  menus.Tools = [['Shortcuts…', showShortcuts, 'Aliases + keys']];
+  menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
     ['Duplicate part', duplicateOne, 'Ctrl+D', () => !!selectedPlaced()], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
     ['Group', groupSel, 'Ctrl+G', () => selIdxs().length > 1 && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', () => selItems().some((x) => x.p.g)],
@@ -830,7 +833,8 @@ function buildCanvas() {
   });
   ui.textArea.addEventListener('input', placeTextEditor);
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
-  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.gripHint, ui.matchHint, ui.textEd, ui.rubber, ui.dropHint, ui.hintPill, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets, ui.cmdUI.fade, ui.cmdUI.drawer, ui.cmdUI.bar,
+  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
+    h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
       ui.pct,
@@ -2385,6 +2389,77 @@ async function save(forceAs) {
   }
 }
 
+/**
+ * File → Export for cutter… (TODO 52, mock-up R14 option B): a small dialog (the file name, "Curves flattened to [0.01] mm", what is left
+ * out), then the native Save picker, defaulting to "<name>-cutter.dxf". The copy holds LINE, ARC and LWPOLYLINE only (dxf-cutter.js);
+ * the tab, its dirty mark and its Save file are not touched.
+ */
+function exportCutter() {
+  const d = curDoc();
+  if (!d || (!d.raw && !d.lay)) { note('Export for cutter: open a drawing first'); return; }
+  if (document.querySelector('.cutdlg')) return;
+  const raw = d.lay ? LD.layoutRaw(d.lay) : d.raw;
+  const factor = d.lay ? 1 : d.factor;
+  let made = { tol: 0.01, res: cutterDoc(raw, 0.01 / factor) };        // the count of what is left out does not depend on the tolerance
+  const want = baseName(dxfName(d.openPath ? d.openPath.split(/[\\/]/).pop() : d.name)) + '-cutter.dxf';
+  const { left, other } = made.res;
+  const leftText = left ? `${left} text / fill ${left === 1 ? 'object' : 'objects'} left out` : 'No text or fills to leave out';
+
+  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: '0.01', 'aria-label': 'Curve flattening tolerance in mm', 'data-testid': 'cutter-tol' });
+  const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'cutter-err' });
+  const refusal = () => { const typed = input.value.trim(), v = Number(typed); return typed === '' || !Number.isFinite(v) || !(v > 0) ? 'The flattening tolerance must be a number above 0 (mm)' : ''; };
+  const showRefusal = () => { const why = refusal(), shown = why && input.value.trim() !== ''; flagInvalid(input, shown); err.textContent = shown ? why : ''; err.hidden = !shown; return why; };
+  clearInvalid(input);
+  input.addEventListener('input', showRefusal);
+
+  const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
+  const go = async () => {
+    const why = showRefusal();
+    if (why) { flagInvalid(input, true); err.textContent = why; err.hidden = false; note(why); input.focus(); return; }
+    const tol = Number(input.value.trim());
+    finish();
+    const t = window.__TAURI__;
+    try {
+      if (made.tol !== tol) made = { tol, res: cutterDoc(raw, tol / factor) };
+      const text = writeDxf(made.res.doc, { escapeUnicode: true });
+      let name = want, dir = '';
+      if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
+        let path = await t.dialog.save({ defaultPath: d.openPath ? d.openPath.replace(/[^\\/]*$/, () => want) : want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+        if (!path) return;
+        path = await withExt(t, path, 'dxf');
+        if (!path) return;
+        if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Export never writes over it'); return; }
+        await t.fs.writeTextFile(path, text);
+        name = path.split(/[\\/]/).pop();
+        dir = path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/')));
+      } else download(name, text);
+      note(`Exported ${name} for the cutter, curves flattened to ${tol} mm` + (left ? ` (${leftText})` : '') + (other ? `, ${other} other object${other === 1 ? '' : 's'} could not be kept` : '') + (dir ? ' in ' + dir : ''));
+    } catch (e) {
+      note('Export failed: ' + (e && e.message ? e.message : e));
+    }
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+  const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'cutter-cancel', onclick: finish }, 'Cancel');
+  const choose = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'cutter-go', onclick: go }, 'Choose file…');
+  const dlg = h('div', { class: 'pop-dialog cutdlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export for cutter', 'data-testid': 'cutter-dialog' },
+    h('div', { class: 'row between' }, h('strong', null, 'Export for cutter'), h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×')),
+    h('div', { class: 'row between' }, h('b', { class: 'mono', 'data-testid': 'cutter-name' }, want), h('span', { class: 'lbl cutchip' }, 'DXF drawing')),
+    h('span', { class: 'lbl' }, 'Create a cutter copy from the active drawing.'),
+    h('div', { class: 'cutnote' }, h('label', { class: 'row' }, 'Curves flattened to', input, 'mm'),
+      h('span', { class: 'lbl' }, 'Maximum curve deviation · arcs stay arcs where possible.'), err),
+    h('span', { class: 'lbl' }, 'Only lines, arcs and polylines are written. Blocks are exploded and a circle becomes two arcs. Runs on the export copy: the original stays as it is.'),
+    h('span', { class: 'lbl' }, 'Line widths are not written (cutters ignore them).'),
+    h('div', { class: 'cutnote' + (left ? ' bad' : ''), 'data-testid': 'cutter-left' }, leftText,
+      other ? h('span', { class: 'lbl' }, `${other} other object${other === 1 ? '' : 's'} (points, 3D faces, missing blocks) cannot be kept`) : null),
+    h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'), cancel, choose));
+  const back = h('div', { class: 'pop-back', 'data-testid': 'cutter-back' }, dlg);
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); } };
+  back.addEventListener('pointerdown', (e) => { if (e.target === back) finish(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(back);
+  input.focus(); input.select();
+}
+
 /** The dimensions drawn on a layout: the sheet's width and height, and the width of the selected placed part (when there is one). */
 const sheetDimCount = () => 2 + (selBoxDown() ? 1 : 0);
 function layerRows() {
@@ -3197,7 +3272,7 @@ function attachCanvasEvents() {
     zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y);
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('.zoombox, .contourpanel, .balsheets, .balpic')) return;
+    if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
     if (e.button === 0 && gh0 && curLay() && !state.setlen && state.tool !== 'pan' && !curLay().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
@@ -3580,7 +3655,7 @@ function partBox(d) {
 const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
+const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
@@ -3643,15 +3718,19 @@ function hideRubber() { if (ui.rubber) ui.rubber.hidden = true; }
 
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. */
 function commit(d, next, label) { d.hist.push(snapshotOf(d), label); d.newLayer = null; restore(d, next); }
+function restoreBg(d, st) {
+  if (st.mm != null && d.bg) d.bg.mm = st.mm;
+  if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
+}
 function restore(d, st) {
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if ('bl' in st) d.balloons = st.bl;                           // a drawing edit does not carry balloons, an undo step does
   if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
-    if (st.mm != null && d.bg) d.bg.mm = st.mm;
+    restoreBg(d, st);
     d.dirty = true; showDoc(); return;
   }
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
-  if (st.mm != null && d.bg) d.bg.mm = st.mm;
+  restoreBg(d, st);
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
@@ -3699,6 +3778,25 @@ function scaleDrawing(d, s, label = 'Scale') {
   commit(d, r, `${label} ×${s.toFixed(3)}`);
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', '), nb = partBox(d);
   note(`Scaled ×${+s.toPrecision(6)}: now ${fmtSize(nb[2] - nb[0])} × ${fmtSize(nb[3] - nb[1])} mm` + (left ? ` (not scaled: ${left})` : ''));
+}
+/** ×25.4 / ÷25.4 (TODO 51): the whole chosen target, whatever is selected, about 0,0, widths too, one undo step; the unit header stays. */
+function unitFix(fix) {
+  const d = editable(), before = d && sizeBox(d);
+  if (!d || !before) return;
+  state.setlen = null; if (ui.realLen) ui.realLen.blur();
+  const was = UF.unitFixSize(before, 1);
+  if (sizeTarget(d) === 'bg') {
+    d.hist.push(snapshotOf(d), `Unit fix ${fix.text} background`);
+    d.bg = UF.bgUnitFixed(d.bg, fix.s);
+    if (view.fitted) fit(); else paintOverlay();
+    renderEdit();
+    note(UF.unitFixLine(fix, was, UF.unitFixSize(Ed.bgBox(d.bg), 1)));
+    return;
+  }
+  const r = Ed.scaleAbout(d.raw, fix.s, 0, 0, spaceOf(d.fl));
+  commit(d, r, `Unit fix ${fix.text}`);
+  const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', ');
+  note(UF.unitFixLine(fix, was, UF.unitFixSize(partBox(d), 1)) + (left ? ` (not scaled: ${left})` : ''));
 }
 function sizeTyped(input, axis) {
   input.blur();
@@ -4179,6 +4277,7 @@ async function balSheet(d, n) {
     if (P.picture) {
       const r = await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
       d.bg = { ...d.bg, bitmap: bm, w: bm.width, h: bm.height, mm: r.mmPerPx, x: 0, y: 0 };
+      d.hist = Ed.createHistory();
     } else {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
       Object.assign(d, tabFields(r.doc, flatten(r.doc)));
@@ -5380,6 +5479,8 @@ function buildDrawingSection() {
   ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { state.gapShow = !state.gapShow; paintOverlay(); renderEdit(); } }, 'Show');
   ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Move the ends of each gap together, to the middle between them (one undo step)', onclick: joinTinyGaps }, 'Join');
   ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin);
+  ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
+  ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', onclick: removeDuplicates }, 'Remove duplicates…');
   ui.realLen = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'real-length', 'aria-label': 'Real length in mm', placeholder: 'real length, mm' });
   ui.realLen.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyLength(); } });
   ui.measured = h('span', { class: 'lbl mono', 'data-testid': 'measured' });
@@ -5389,11 +5490,15 @@ function buildDrawingSection() {
   ui.drawSec = h('section', { class: 'drawbox', hidden: true, 'data-testid': 'drawing-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Drawing scale'),
       h('span', { class: 'tools' },
-        tog('Set length', 'set-length', startSetlen, 'Click two points, then type the real distance between them'),
         tog('Undo', 'undo', () => { const d = editable(); if (d) undo(d); }, 'Undo (Ctrl+Z)'),
         tog('Redo', 'redo', () => { const d = editable(); if (d) redo(d); }, 'Redo (Ctrl+Y)'))),
+    h('div', { class: 'unitrow' },
+      tog('Set length', 'set-length', startSetlen, 'Click two points, then type the real distance between them'),
+      tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
+      tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
     ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
+    h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount),
     h('div', { class: 'lbl sizelbl', title: 'The part itself, without kept dimensions. Set length and a typed size scale the drawing by it' }, 'Whole drawing'),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
@@ -5526,9 +5631,9 @@ function drawSheetSel() {
 const PROPS_SAVED = 'pd-props';
 const VARIES = '*varies*';
 /** [index, entity] of the selection without kept dimensions (a dimension has its own text-height field). */
-function propEnts(d) {
+function propEnts(d, all = false) {
   const out = [];
-  for (const e of d.sel) { const ent = d.raw.entities[e]; if (ent && ent.layer !== Ed.DIM_LAYER) out.push([e, ent]); }
+  for (const e of d.sel) { const ent = d.raw.entities[e]; if (ent && (all || ent.layer !== Ed.DIM_LAYER)) out.push([e, ent]); }
   return out;
 }
 /** The layers to pick from: the file's, and the ones the selection is on (not the kept-dimensions layer). */
@@ -5554,14 +5659,31 @@ function buildPropsSection() {
   ui.propLayer.addEventListener('change', () => propSet('layer', ui.propLayer.value));
   ui.propColour.addEventListener('change', () => propSet('colour', ui.propColour.value));
   ui.propLt.addEventListener('change', () => propSet('lt', ui.propLt.value));
+  ui.propWidthUnits = h('span', { class: 'lbl' });
+  ui.propWidthHint = h('span', { class: 'lbl' });
+  ui.propWidthInput = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': 'Custom outline width in mm', 'data-testid': 'prop-width-custom' });
+  ui.propWidthInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); ui.propWidthInput.blur(); }
+    else if (e.key === 'Escape') { ui.propWidthInput.dataset.cancel = '1'; ui.propWidthInput.blur(); }
+  });
+  ui.propWidthInput.addEventListener('change', () => {
+    if (!ui.propWidthInput.dataset.cancel) propWidthSet(PL.parseMm(ui.propWidthInput.value));
+  });
+  ui.propWidthInput.addEventListener('blur', () => { delete ui.propWidthInput.dataset.cancel; renderEdit(); });
+  ui.propWidthPresets = h('div', { class: 'widthpresets', role: 'group', 'aria-label': 'Outline width presets' },
+    PR.WIDTHS.map((value) => h('button', { class: 'btn', type: 'button', 'data-width': String(value), 'aria-pressed': 'false', onclick: () => propWidthSet(value) }, typeof value === 'number' ? fmt(value) : value)));
+  ui.propWidth = h('div', { class: 'widthbox', 'data-testid': 'prop-width' },
+    h('div', { class: 'proprow widthhead' }, h('b', {}, 'Outline width'), ui.propWidthHint), ui.propWidthPresets,
+    h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Custom'), ui.propWidthInput, ui.propWidthUnits),
+    h('p', { class: 'lbl widthnote' }, 'True width on screen · scales with zoom'));
   ui.propGeo = h('div', { class: 'propgeo', 'data-testid': 'prop-geo' });
   ui.propSimilar = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-similar', title: 'Select every shape like the first one selected', onclick: (e) => selectSimilarMenu(e.currentTarget) }, 'Select similar ▾');
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
-  ui.propBody = h('div', { class: 'propbody' },
-    row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt), ui.propGeo,
-    h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch));
+  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt));
+  ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch);
+  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo, ui.propButtons);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody);
   return ui.propSec;
@@ -5576,9 +5698,21 @@ function renderPropsPanel(d) {
   const show = state.propsOn && !!d && state.panel !== 'library';
   ui.propSec.hidden = !show;
   if (!show) return;
-  const pe = propEnts(d), ents = pe.map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
-  ui.propEmpty.hidden = !none; ui.propBody.hidden = none; ui.propChip.hidden = none;
+  const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
+  ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none;
+  ui.propCommon.hidden = none; ui.propGeo.hidden = none; ui.propButtons.hidden = none;
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
+  const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
+  ui.propWidthHint.textContent = 'Selection · mm';
+  ui.propWidthUnits.textContent = 'mm';
+  for (const b of ui.propWidthPresets.children) {
+    const active = typeof width === 'number' ? Math.abs(width - Number(b.dataset.width)) < d.factor * 1e-6 : String(width) === b.dataset.width;
+    b.setAttribute('aria-pressed', String(active));
+  }
+  if (document.activeElement !== ui.propWidthInput) {
+    ui.propWidthInput.value = typeof width === 'number' ? String(+width.toPrecision(10)) : '';
+    ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
+  }
   if (none) return;
   ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
@@ -5613,8 +5747,8 @@ function renderPropsPanel(d) {
 }
 
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
-function propCommit(d, label, fn) {
-  const pe = propEnts(d), repl = new Map();
+function propCommit(d, label, fn, all = false) {
+  const pe = propEnts(d, all), repl = new Map();
   for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
   if (!repl.size) return 0;
   const keep = new Set(d.sel);
@@ -5622,6 +5756,22 @@ function propCommit(d, label, fn) {
   commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks }, label);
   setSel(d, keep);
   return repl.size;
+}
+function propWidthSet(value) {
+  const d = editable();
+  if (!d) return;
+  const all = propEnts(d, true);
+  if (!all.length) return;
+  if (!PR.withWidth(all[0][1], value, d.factor)) {
+    note('Outline width: type a positive number up to ' + fmt(327.67) + ' mm'); renderEdit(); return;
+  }
+  const label = typeof value === 'number' ? fmt(value) + ' mm' : value;
+  const n = propCommit(d, 'Outline width → ' + label, (ent) => {
+    const next = PR.withWidth(ent, value, d.factor);
+    return PR.widthKey(next, d.factor) === PR.widthKey(ent, d.factor) ? null : next;
+  }, true);
+  if (n) note(`Outline width ${label} on ${n} shape${n === 1 ? '' : 's'}. Ctrl+Z takes it back`);
+  renderEdit();
 }
 function propSet(what, value) {
   const d = editable();
@@ -5977,10 +6127,11 @@ function gapTolTyped() {
   try { localStorage.setItem('pd-gaptol', String(v)); } catch { /* ignore */ }
   paintOverlay(); renderEdit();
 }
-function joinTinyGaps() {
-  const d = editable(), gaps = d && gapsOf(d);
+function joinTinyGaps(whole = false) {
+  const d = editable(), ed = d && (whole === true ? CL.checkIndex(d.raw) : edIndex(d));
+  const gaps = ed && Ed.findGaps(ed, state.gapMm / d.factor).filter((g) => g.ends.every((e) => !lockedEnt(d, e.e)));
   if (!gaps || !gaps.length) return;
-  const r = Ed.joinGaps(d.raw, d.ed, gaps);
+  const r = Ed.joinGaps(d.raw, ed, gaps);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
   const left = gapsOf(d) || [];
@@ -5988,11 +6139,80 @@ function joinTinyGaps() {
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
+function removeDuplicates() {
+  const d = editable();
+  if (!d) return;
+  const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
+  d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
+  if (!r.count) { note('No removable duplicates / overlaps (locked layers are kept)'); renderEdit(); return; }
+  commit(d, r, 'Remove duplicates / overlaps');
+  note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
+}
+
+function showPreflight() {
+  if (!editable()) { note('Preflight works on a drawing tab: open a drawing first'); return; }
+  ui.cmdUI.close();
+  if (!ui.preflight) {
+    ui.preflight = h('section', { class: 'pop preflightpanel', role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Preflight', 'data-testid': 'preflight' });
+    ui.preflight.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ui.preflight.hidden = true; e.stopPropagation(); } });
+    ui.canvas.append(ui.preflight);
+  }
+  ui.preflight.hidden = false;
+  recheckPreflight();
+}
+function recheckPreflight(check) {
+  const d = editable();
+  if (!d || !ui.preflight || ui.preflight.hidden) return;
+  const fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check });
+  const rows = check ? ui.preflightRows.map((r) => fresh.find((f) => f.id === r.id) || r) : fresh;
+  ui.preflightRows = rows;
+  if (!check) { ui.preflightDoc = d; ui.preflightSource = d.raw.entities; }
+  const duplicates = fresh.find((r) => r.id === 'duplicates');
+  if (duplicates) { d.duplicates = { source: d.raw.entities, count: duplicates.count }; renderEdit(); }
+  const button = (label, id, fn, disabled = false) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, disabled, onclick: fn }, label);
+  const select = (id) => {
+    const fresh = recheckPreflight(id);
+    setTool('select');
+    const offenders = fresh.offenders.filter((i) => !lockedEnt(d, i));
+    setSel(d, new Set(offenders));
+    note(`Preflight: ${fresh.label} · ${offenders.length} entities selected` + (offenders.length < fresh.offenders.length ? ' (locked layers skipped)' : ''));
+  };
+  const fix = (id) => {
+    if (id === 'duplicates') removeDuplicates();
+    else if (id === 'gaps') joinTinyGaps(true);
+    else {
+      const [wide] = CL.preflight(d.raw, { factor: d.factor, check: 'wide' });
+      const offenders = new Set(wide.offenders.filter((i) => !lockedEnt(d, i)));
+      if (offenders.size) commit(d, CL.hairline(d.raw, offenders, d.locked), 'Preflight Hairline');
+    }
+    recheckPreflight(id);
+  };
+  ui.preflightNote = h('p', { class: 'lbl', 'data-testid': 'preflight-note' },
+    (ui.preflightSource !== d.raw.entities ? 'Drawing changed · Recheck for other counts.' : 'Whole drawing · checked just now.') + ' Cut layer: name contains “cut” (any case).');
+  ui.preflight.replaceChildren(
+    h('div', { class: 'pfhead' }, h('strong', {}, 'Preflight'), h('span', { class: 'chip', 'data-testid': 'preflight-flagged' }, `${rows.filter((r) => r.count).length} checks flagged`)),
+    h('div', { class: 'pfbody' }, ui.preflightNote,
+      h('div', { class: 'pfrow pfcols', 'aria-hidden': 'true' }, ['Check', 'Count', 'Select', 'Fix'].map((label) => h('span', {}, label))),
+      rows.map((r) => h('div', { class: 'pfrow', 'data-testid': `preflight-${r.id}` }, h('span', {}, r.label),
+        h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count ?? 'n/a (no sheet)'),
+        button('Select', `preflight-${r.id}-select`, () => select(r.id), !r.count),
+        r.fix ? button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count) : h('span', { class: 'pfmanual' }, 'Manual'))),
+      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`),
+      h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', () => recheckPreflight()), button('Close', 'preflight-close', () => { ui.preflight.hidden = true; })))
+  );
+  return fresh[0];
+}
+
 function renderEdit() {
   if (!ui.drawSec) return;
   renderStatus();                                          // the status bar's layer follows the selection
   renderBalloons();
   const d = curDoc(), on = !!editable(), L = state.setlen, lib = state.panel === 'library';
+  if (ui.preflight && !ui.preflight.hidden) {
+    if (!on) ui.preflight.hidden = true;
+    else if (ui.preflightDoc !== d) recheckPreflight();
+    else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
+  }
   ui.drawSec.hidden = !on || lib; ui.outSec.hidden = !on || lib;
   if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
@@ -6027,12 +6247,16 @@ function renderEdit() {
   put(ui.dw, b ? fmtSize(b[2] - b[0]) : ''); put(ui.dh, b ? fmtSize(b[3] - b[1]) : '');
   ui.dw.disabled = ui.dh.disabled = ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
+  for (const [id, fix] of [['unit-up', UF.UNIT_FIXES.up], ['unit-down', UF.UNIT_FIXES.down]]) { ui[id].disabled = !scalable; ui[id].title = UF.unitFixTip(fix, b); }
   ui.undo.disabled = !d.hist.canUndo; ui.redo.disabled = !d.hist.canRedo;
   const gl = gapsOf(d);
   ui.gapRow.hidden = !d.ed;
   ui.gapCount.textContent = gl ? String(gl.length) : '…';
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
   ui.gapShow.classList.toggle('on', state.gapShow); ui.gapShow.disabled = ui.gapJoin.disabled = !gl || !gl.length;
+  const duplicates = d.duplicates?.source === d.raw.entities ? d.duplicates : null;
+  ui.duplicateCount.textContent = duplicates ? `${duplicates.count} found` : 'Check';
+  ui.duplicateRemove.disabled = duplicates?.count === 0;
   ui.lenRow.hidden = !(L && L.measured);
   if (L && L.measured) ui.measured.textContent = fmtSize(L.measured) + ' mm measured';
 }

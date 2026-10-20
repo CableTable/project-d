@@ -10,7 +10,7 @@ import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
@@ -1042,6 +1042,37 @@ try {
     await page.keyboard.press('Control+Shift+z'); await waitSize('125', '75');
     await page.keyboard.press('Control+y'); await waitSize('62.5', '37.5');
     assert.equal(await t('redo').isDisabled(), true);
+  });
+
+  await step('edit: Unit fix ×25.4 / ÷25.4 scales the whole drawing in one undo step and says before → after', async () => {
+    assert.match(await t('unit-up').getAttribute('title'), /Would give 1587\.50 × 952\.50 mm/);
+    assert.match(await t('unit-down').getAttribute('title'), /Would give 2\.46 × 1\.48 mm/);
+    await t('unit-up').click(); await waitSize('1587.5', '952.5');
+    assert.match(await t('cmd-prompt').textContent(), /Unit fix ×25\.4 · 62\.50 × 37\.50 → 1587\.50 × 952\.50 mm/);
+    const dir = process.env.SHOTS_DIR || 'shots';
+    mkdirSync(dir, { recursive: true });
+    await page.waitForTimeout(600);
+    const checkToasts = async () => {
+      const canvas = await t('canvas').boundingBox(), fade = await t('cmd-fade').boundingBox();
+      assert.ok(Math.abs(fade.x + fade.width / 2 - canvas.x - canvas.width / 2) < 1, 'toasts centred in the canvas');
+      assert.ok(fade.y + fade.height < canvas.y + canvas.height, 'toasts above the status bar');
+      assert.equal(await t('cmd-fade').locator('.cb-fade-rows > div').evaluateAll((rows) => rows.length === 3 && rows.every((row) => {
+        const css = getComputedStyle(row), panel = getComputedStyle(document.querySelector('.panel'));
+        return css.opacity === '1' && css.color === panel.color && css.backgroundColor === panel.backgroundColor && css.borderTopStyle === 'solid' && parseFloat(css.borderTopWidth) >= 1;
+      })), true, 'all three toast rows use opaque theme panel/text colours and a border');
+    };
+    await checkToasts();
+    await page.screenshot({ path: dir + '/s11-51-light.png' });
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: dark', exact: true }).click();
+    await page.waitForTimeout(150);
+    await checkToasts();
+    await page.screenshot({ path: dir + '/s11-51-dark.png' });
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: light', exact: true }).click();
+    await t('unit-down').click(); await waitSize('62.5', '37.5');
+    assert.match(await t('cmd-prompt').textContent(), /Unit fix ÷25\.4 · 1587\.50 × 952\.50 → 62\.50 × 37\.50 mm/);
+    await page.keyboard.press('Control+z'); await waitSize('1587.5', '952.5');        // one undo step each
+    await page.keyboard.press('Control+z'); await waitSize('62.5', '37.5');
+    assert.equal(await t('undo').isDisabled(), false, 'the earlier steps are still there');
   });
 
   await step('edit: Save writes the edited drawing: 8 entities, 62.5 × 37.5, nothing else', async () => {
@@ -4557,6 +4588,24 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   const undoAndPick = async (x, y, n) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await pick(x, y, n); };       // (not from inside the command line, where Ctrl+Z is the field's own)
   const entOf = (doc, i) => doc.entities[i];
   const near = (a, b, e) => Math.abs(a - b) < e;
+  await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
+    await openGrips();
+    await click(70, 30); await gripWhen(3);
+    await typeCmd('unknowncommand');
+    await t('cmd-fade').locator('.er', { hasText: 'Unknown command: unknowncommand' }).waitFor();
+    const viewport = page.viewportSize();
+    try {
+      for (const size of [viewport, { width: 1280, height: 720 }]) {
+        await page.setViewportSize(size);
+        await t('cmd-fade').waitFor({ state: 'visible' });
+        await t('grip-hint').waitFor({ state: 'visible' });
+        const messages = await t('cmd-fade').boundingBox(), hint = await t('grip-hint').boundingBox();
+        assert.ok(messages && hint && messages.y + messages.height <= hint.y + 1,
+          `command messages sit above the grip hint without overlapping at ${size.width}x${size.height}: ${JSON.stringify({ messages, hint })}`);
+      }
+    } finally { await page.setViewportSize(viewport); }
+  });
+
   await step('Grips: a selected line, circle, arc and polyline show blue squares (line 3, circle 5, arc 4, polyline per vertex); none with nothing selected, with a drawing tool, or past 200 selected', async () => {
     await openGrips();
     assert.equal(await gripCount(), 0, 'nothing selected: no grips');
@@ -4958,6 +5007,205 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     const ok = await t('props-panel').evaluate((el) => { const r = el.getBoundingClientRect(); return [...el.querySelectorAll('select, input, button')].filter((c) => c.offsetParent !== null).every((c) => c.getBoundingClientRect().right <= r.right + 0.5 && c.getBoundingClientRect().left >= r.left - 0.5); });
     assert.equal(ok, true, 'nothing sticks out of the section');
     await page.keyboard.press('Control+1'); await closeTabs(/./);
+  });
+
+  await step('Outline width: presets, Custom, varies, one undo for the selection, polyline save and light/dark screenshots (TODO 48)', async () => {
+    await propsOpen(); await propsOnNow(); await click(70, 30); await frames();
+    const preset = (value) => t('prop-width').locator(`[data-width="${value}"]`);
+    assert.deepEqual(await t('prop-width').locator('button').allTextContents(), ['ByLayer', 'Hairline', '0.10', '0.25', '0.50', '1.00', '2.00']);
+    assert.equal(await preset('ByLayer').getAttribute('aria-pressed'), 'true');
+    const bounds = await Promise.all([t('prop-lt').boundingBox(), t('prop-width').boundingBox()]);
+    assert.ok(bounds[1].y > bounds[0].y + bounds[0].height, 'below Line type');
+    await preset('0.5').click();
+    assert.equal((await savedDoc()).entities[0].lw, 50);
+    const before = (await histLabels()).length;
+    await t('prop-width-custom').fill('0.37'); await t('prop-width-custom').press('Enter');
+    assert.equal((await savedDoc()).entities[0].lw, 37);
+    await page.keyboard.press('Control+z');
+    assert.equal((await savedDoc()).entities[0].lw, 50);
+    await click(70, 30); await click(190, 100, { shift: true }); await frames();
+    assert.equal(await t('prop-width-custom').getAttribute('placeholder'), '*varies*');
+    await preset('2').click();
+    let saved = await savedDoc();
+    assert.deepEqual([saved.entities[0].lw, saved.entities[2].lw], [200, 200]);
+    assert.equal((await histLabels()).length, before + 1, 'one step for both selected objects');
+    await page.keyboard.press('Control+z'); saved = await savedDoc();
+    assert.deepEqual([saved.entities[0].lw, saved.entities[2].lw], [50, -1]);
+    await click(170, 30); await frames();
+    await t('prop-width-custom').fill('0.63'); await t('prop-width-custom').press('Enter');
+    saved = await savedDoc(); assert.equal(fieldOf(saved.entities[4], 43), .63);
+    const history = await histLabels();
+    await t('prop-width-custom').fill('-1'); await t('prop-width-custom').press('Enter');
+    assert.match(await prompt(), /Outline width: type a positive number/);
+    assert.deepEqual(await histLabels(), history, 'invalid input does not create an undo step');
+    await t('prop-width-custom').fill('3'); await t('prop-width-custom').press('Escape');
+    assert.equal(await t('prop-width-custom').inputValue(), '0.63', 'Escape cancels Custom');
+    await preset('Hairline').click(); saved = await savedDoc();
+    assert.equal(saved.entities[4].lw, 5); assert.equal(saved.entities[4].r.c.includes(43), false);
+    await preset('ByLayer').click(); saved = await savedDoc(); assert.equal(saved.entities[4].lw, -1);
+    const plate = newDoc();
+    addEntities(plate, roundRect(20, 20, 50, 30, 2), dxfCircle(26, 44, 2, { lw: 5 }), dxfCircle(64, 44, 2, { lw: 5 }), dxfCircle(45, 33, 7, { lw: 5 }), dxfLine(20, 10, 70, 10, { lw: 5 }));
+    await openGrips(writeDxf(plate), 'outline-width.dxf'); await click(40, 20); await frames(); await preset('2').click();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      assert.equal(await t('prop-width').evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return [...el.querySelectorAll('button, input, .lbl')].every((e) => e.getBoundingClientRect().right <= r.right + .5);
+      }), true, 'width controls and units fit the panel');
+      await page.screenshot({ path: shotDir + '/s11-48-' + theme + '.png' });
+    }
+    await menuItem('View', 'Theme: light');
+    const dl = await downloaded(() => page.keyboard.press('Control+s'));
+    await openGrips(dl.text, 'outline-width-reopened.dxf'); await click(40, 20); await frames();
+    assert.equal(await preset('2').getAttribute('aria-pressed'), 'true', 'width returns after reopening');
+    await openPdf(); await t('pdf-page-sheet').check();
+    const pdf = pdfText(await downloaded(() => t('pdf-go').click()));
+    assert.match(pdf, /\n2 w\n/, 'reopened constant width reaches PDF / Print');
+    assert.match(pdf, /\n0\.05 w\n/, 'Hairline stays 0.05 mm in the output');
+    const inch = newDoc(1); addEntities(inch, dxfLine(1, 1, 3, 1), dxfPoly([[1, 2], [3, 2]]));
+    await openGrips(writeDxf(inch), 'outline-inches.dxf'); await click(50.8, 25.4); await frames();
+    assert.match(await t('prop-width').textContent(), /Selection · mm/);
+    await preset('0.25').click();
+    assert.equal((await savedDoc()).entities[0].lw, 25, 'preset uses mm in an inch drawing');
+    await t('prop-width-custom').fill('0.1'); await t('prop-width-custom').press('Enter');
+    assert.equal((await savedDoc()).entities[0].lw, 10, 'typed Custom uses mm in an inch drawing');
+    await t('prop-width-custom').fill('328'); await t('prop-width-custom').press('Enter');
+    assert.match(await prompt(), /up to 327\.67 mm/);
+    await click(50.8, 50.8); await frames(); await preset('0.25').click();
+    assert.equal(await preset('0.25').getAttribute('aria-pressed'), 'true', 'inch polyline preset stays active after conversion');
+    const inchSaved = await savedDoc();
+    assert.ok(Math.abs(fieldOf(inchSaved.entities[1], 43) - .25 / 25.4) < 1e-6);
+    await openGrips(writeDxf(inchSaved), 'outline-inches-reopened.dxf'); await click(50.8, 50.8); await frames();
+    assert.equal(await preset('0.25').getAttribute('aria-pressed'), 'true', 'inch preset survives DXF width rounding');
+    await t('prop-width-custom').fill('0.37'); await t('prop-width-custom').press('Enter');
+    assert.ok(Math.abs(fieldOf((await savedDoc()).entities[1], 43) - .37 / 25.4) < 1e-6);
+    await page.keyboard.press('Control+1'); await closeTabs(/./);
+  });
+
+  const cleanupDrawing = () => {
+    const d = newDoc(); addLayer(d, 'Laser CUT'); addLayer(d, 'Artwork');
+    addEntities(d, dxfLine(20, 20, 50, 20, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(20, 20, 50, 20, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(40, 20, 70, 20, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(80, 30, 100, 30, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(100.005, 30, 120, 30, { layer: 'Laser CUT', lw: 5 }),
+      dxfCircle(90, 65, 10, { layer: 'Artwork', lw: 50 }),
+      dxfText(20, 75, 4, 'JOB 14', { layer: 'Artwork' }), dxfCircle(-10, 10, 2, { lw: 5 }));
+    return writeDxf(d);
+  };
+  await step('Remove duplicates + undo: count redundant entities and trim partial overlaps (TODO 49)', async () => {
+    await openGrips(cleanupDrawing(), 'cleanup.dxf');
+    assert.equal(await t('duplicate-count').textContent(), 'Check');
+    const before = await savedDoc(), labels = await histLabels();
+    await t('duplicate-remove').click(); await frames();
+    assert.equal(await t('duplicate-count').textContent(), 'Check', 'edits invalidate the count without scanning');
+    const cleaned = await savedDoc();
+    assert.equal(cleaned.entities.length, before.entities.length - 1);
+    assert.equal(fieldOf(cleaned.entities[1], 10), 50, 'partially redundant line starts at 50');
+    assert.equal((await histLabels()).length, labels.length + 1, 'one undo step');
+    await t('undo').click(); await frames();
+    assert.equal(await t('duplicate-count').textContent(), '2 found', 'undo reuses the cached count for the restored entities');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'undo restores every original');
+    await t('duplicate-remove').click(); await t('duplicate-remove').click();
+    assert.equal(await t('duplicate-count').textContent(), '0 found', 'explicit check updates the count');
+  });
+  await step('Preflight open, Select, Fix, Recheck and Close, light/dark screenshots (TODO 50)', async () => {
+    await openGrips(cleanupDrawing(), 'preflight.dxf');
+    await t('gap-tol').fill('0.01'); await t('gap-tol').press('Enter');
+    await menuItem('Tools', 'Preflight…');
+    assert.equal(await t('preflight').isVisible(), true);
+    assert.equal(await t('preflight').locator('.pfrow:not(.pfcols)').count(), 6);
+    assert.match(await t('preflight-note').textContent(), /name contains “cut” \(any case\)/);
+    assert.equal(await t('preflight-duplicates-count').textContent(), '2');
+    assert.equal(await t('preflight-gaps-count').textContent(), '1');
+    assert.equal(await t('preflight-text-count').textContent(), '1');
+    assert.equal(await t('preflight-wide-count').textContent(), '1');
+    assert.equal(await t('preflight-offsheet-count').textContent(), 'n/a (no sheet)');
+    assert.equal(await t('preflight-offsheet-select').isDisabled(), true);
+    assert.equal(await t('duplicate-count').textContent(), '2 found', 'Preflight updates the duplicate count');
+    const openCount = await t('preflight-open-count').textContent();
+    assert.deepEqual(await t('preflight').locator('.pfmanual').allTextContents(), ['Manual', 'Manual', 'Manual']);
+    await t('preflight-duplicates-select').click();
+    assert.equal(await t('sel-count').textContent(), '2 selected');
+    assert.equal(await t('preflight').isVisible(), true, 'Select keeps the canvas panel open');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: shotDir + '/s11-50-' + theme + '.png' });
+    }
+    await menuItem('View', 'Theme: light');
+    await savedDoc();
+    await openPdf();
+    assert.match(pdfText(await downloaded(() => t('pdf-go').click())), /^%PDF-/, 'preflight warnings never block PDF output');
+    await t('preflight-duplicates-fix').click(); await frames();
+    assert.equal(await t('preflight-duplicates-count').textContent(), '0');
+    assert.equal(await t('preflight-open-count').textContent(), openCount, 'Fix leaves other row counts stale');
+    await t('preflight-gaps-select').click(); assert.equal(await t('sel-count').textContent(), '2 selected');
+    await t('preflight-gaps-fix').click(); await frames();
+    assert.equal(await t('preflight-gaps-count').textContent(), '0');
+    await t('preflight-wide-select').click(); assert.equal(await t('sel-count').textContent(), '1 selected');
+    await t('preflight-wide-fix').click(); await frames();
+    assert.equal(await t('preflight-wide-count').textContent(), '0');
+    await t('undo').click(); await frames();
+    assert.match(await t('preflight-note').textContent(), /Drawing changed/);
+    await t('preflight-text-select').click();
+    assert.equal(await t('preflight-wide-count').textContent(), '0', 'Select refreshes only the clicked row');
+    await t('preflight-recheck').click(); assert.equal(await t('preflight-wide-count').textContent(), '1');
+    await t('preflight-open-select').click(); assert.ok(/selected/.test(await t('sel-count').textContent()));
+    await t('preflight-text-select').click(); assert.equal(await t('sel-count').textContent(), '1 selected');
+    await t('preflight-close').click(); assert.equal(await t('preflight').isVisible(), false);
+    await menuItem('Tools', 'Preflight…'); await t('preflight-recheck').focus(); await page.keyboard.press('Escape');
+    assert.equal(await t('preflight').isVisible(), false);
+    await closeTabs(/./);
+  });
+  await step('Background unit fix: chosen Background scales size and a nonzero corner by ×25.4; Ctrl+Z restores both', async () => {
+    const doc = newDoc(); addEntities(doc, dxfLine(10, 20, 30, 20));
+    await openGrips(writeDxf(doc), 'background-unit-fix.dxf');
+    await t('drawing').evaluate((canvas) => {
+      const ctx = canvas.getContext('2d'), draw = ctx.drawImage;
+      ctx.drawImage = function (image, x, y, w, h) {
+        canvas.__backgroundRect = [x, Number(document.querySelector('[data-key=sheetH]').value) - y - h, w, h];
+        return draw.call(this, image, x, y, w, h);
+      };
+    });
+    const painted = async () => { await frames(); return t('drawing').evaluate((c) => c.__backgroundRect); };
+    try {
+      await t('bg-picker').setInputFiles('fixtures/bg.png');
+      await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
+      await t('scale-target').selectOption('bg'); await waitSize('105.83', '52.92');
+      const before = await painted();
+      assert.deepEqual(before.slice(0, 2).map((v) => +v.toFixed(6)), [10, 20], 'nonzero background corner');
+      await t('unit-up').click(); await waitSize('2688.17', '1344.08');
+      const after = await painted();
+      after.forEach((v, i) => assert.ok(Math.abs(v - before[i] * 25.4) < 1e-6, 'scaled size and corner'));
+      await page.keyboard.press('Control+z'); await waitSize('105.83', '52.92');
+      const restored = await painted();
+      restored.forEach((v, i) => assert.ok(Math.abs(v - before[i]) < 1e-6, 'restored size and corner'));
+      await t('scale-target').selectOption('drawing'); await waitSize('20', '0');
+    } finally {
+      await t('drawing').evaluate((c) => { delete c.getContext('2d').drawImage; });
+      await closeTabs(/./);
+    }
+  });
+
+  await step('Picture PDF: changing sheets clears undo and redo so Ctrl+Z cannot resize another sheet', async () => {
+    await closeTabs(/./);
+    page.once('dialog', (d) => d.accept('1'));
+    await t('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
+    await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
+    await t('unit-up').click();
+    assert.equal(await t('undo').isDisabled(), false);
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+    assert.equal(await t('undo').isDisabled(), true, 'sheet 1 history was cleared');
+    const before = await sizeNow();
+    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), before, 'sheet 2 size stays put');
+    await t('unit-up').click(); await page.keyboard.press('Control+z');
+    assert.deepEqual(await sizeNow(), before, 'sheet 2 has its own working undo');
+    assert.equal(await t('redo').isDisabled(), false);
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
+    assert.equal(await t('redo').isDisabled(), true, 'sheet 2 redo was cleared');
+    await closeTabs(/./);
   });
 
   // ---- TODO 23: resize the sheet on a layout (R5c, right pane): select the sheet, drag a side handle, whole mm, the parts stay where they are ----
@@ -7030,6 +7278,85 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' }); await open();
       assert.equal(await alias('Contour').inputValue(), 'co'); assert.equal(await key('Contour').textContent(), 'Press keys…');
     } finally { await scCtx.close(); }
+  });
+
+  await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
+    await closeTabs(/./);
+    const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);
+    await t('picker').setInputFiles({ name: 'cut-plate.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'cut-plate.dxf');
+    const dlg = t('cutter-dialog');
+    const shot = async (n) => { await dlg.waitFor(); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/s11-52-${n}.png` }); };
+    await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
+    assert.equal(await t('cutter-name').textContent(), 'cut-plate-cutter.dxf');
+    assert.equal(await t('cutter-tol').inputValue(), '0.01');
+    assert.match(await dlg.textContent(), /Line widths are not written \(cutters ignore them\)\./);
+    assert.equal(await t('cutter-left').textContent(), '1 text / fill object left out');
+    for (const bad of ['abc', '0', '-1']) {
+      await t('cutter-tol').fill(bad);
+      assert.equal(await t('cutter-err').isVisible(), true, bad + ' is refused');
+      assert.match(await t('cutter-err').textContent(), /tolerance must be a number above 0/);
+      assert.match(await t('cutter-tol').getAttribute('class'), /invalid/);
+    }
+    await t('cutter-go').click();
+    assert.equal(await dlg.isVisible(), true, 'a bad tolerance keeps the dialog open');
+    assert.match(await prompt(), /tolerance must be a number above 0/);
+    await t('cutter-tol').fill('0.05');
+    assert.equal(await t('cutter-err').isVisible(), false);
+    await shot('light');
+    await t('cutter-cancel').click(); await dlg.waitFor({ state: 'detached' });
+    await menuItem('View', 'Theme: dark');
+    await menuItem('File', 'Export for cutter…'); await shot('dark');
+    await page.keyboard.press('Escape'); await dlg.waitFor({ state: 'detached' });
+    await menuItem('View', 'Theme: light');
+    assert.deepEqual(await tabNames(), ['cut-plate.dxf']); assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0, 'cancelled: the tab is untouched');
+
+    await page.evaluate(() => {
+      window.__cut = { dlg: [], wrote: [] };
+      window.__TAURI__ = { dialog: { save: async (o) => { window.__cut.dlg.push(o.defaultPath); return 'C:\\out\\plate-cutter.dxf'; }, ask: async () => true },
+        fs: { exists: async () => false, writeTextFile: async (p, text) => { window.__cut.wrote.push([p, text]); } } };
+    });
+    try {
+      await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
+      await t('cutter-tol').fill('0.05'); await t('cutter-go').click();
+      await page.waitForFunction(() => window.__cut.wrote.length === 1);
+      const { dlg: asked, wrote } = await page.evaluate(() => window.__cut);
+      assert.deepEqual(asked, ['cut-plate-cutter.dxf']); assert.equal(wrote[0][0], 'C:\\out\\plate-cutter.dxf');
+      const back = readDxf(wrote[0][1]);
+      assert.deepEqual([...new Set(back.entities.map((e) => e.type))].sort(), ['ARC', 'LWPOLYLINE']);
+      assert.match(await prompt(), /Exported plate-cutter\.dxf for the cutter, curves flattened to 0\.05 mm \(1 text \/ fill object left out\)/);
+      assert.deepEqual(await tabNames(), ['cut-plate.dxf'], 'the tab keeps its own name and file');
+    } finally { await page.evaluate(() => { delete window.__TAURI__; delete window.__cut; }); }
+    await closeTabs(/./);
+
+  });
+
+  await step('Export for cutter: app converts default and edited mm tolerances on an inch drawing', async () => {
+    await closeTabs(/./);
+    const inch = newDoc(1); addEntities(inch, dxfEllipse(0, 0, 4, 0, .4));
+    await openGrips(writeDxf(inch), 'cutter-inches.dxf');
+    for (const mm of [.01, .05]) {
+      await menuItem('File', 'Export for cutter…'); await t('cutter-dialog').waitFor();
+      if (mm !== .01) await t('cutter-tol').fill(String(mm));
+      const back = readDxf((await downloaded(() => t('cutter-go').click())).text);
+      assert.equal(back.header.$INSUNITS, '1', 'export keeps inch units');
+      assert.deepEqual(back.entities.map((e) => e.type), ['LWPOLYLINE']);
+      const r = back.entities[0].r, pts = [];
+      r.c.forEach((code, i) => { if (code === 10) pts.push([+r.v[i] * 25.4, +r.v[i + 1] * 25.4]); });
+      let worst = 0;
+      for (let i = 0; i < 4096; i++) {
+        const angle = i * 2 * Math.PI / 4096, x = 4 * 25.4 * Math.cos(angle), y = 1.6 * 25.4 * Math.sin(angle);
+        let best = Infinity;
+        pts.forEach((a, j) => {
+          const b = pts[(j + 1) % pts.length], dx = b[0] - a[0], dy = b[1] - a[1];
+          const u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy)));
+          best = Math.min(best, Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy));
+        });
+        worst = Math.max(worst, best);
+      }
+      assert.ok(worst <= mm + .0001, `inch export deviation ${worst} mm exceeds ${mm} mm (plus DXF rounding)`);
+    }
+    await closeTabs(/./);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

@@ -1,4 +1,4 @@
-// The floating command bar (TODO 47, mock-up R12b Option B): the bar at the cursor, the last three command lines fading in at the bottom left
+// The floating command bar (TODO 47, mock-up R12b Option B): the bar at the cursor, the last three command lines at the bottom centre
 // of the canvas, the F2 history drawer, and the echo button of the status bar. The logic is in cmdbar.js (pure); this is the DOM.
 // Text from a file only ever goes in with textContent / h().
 import { h } from './dom.js';
