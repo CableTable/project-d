@@ -509,7 +509,7 @@ async function readDrawing(bytes) {
 /** What a tab holds for a drawing: the DXF document (to save and to copy as a part), what is drawn, its layers and size. */
 function tabFields(raw, fl) {
   const factor = unitFactor(fl.units);
-  return { raw, fl, factor, off: startHidden(fl), counts: layerCounts(fl), entities: entityCount(fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
+  return { raw, fl, factor, off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
 }
 
 function addTab(d, replaceEmpty = true) {
@@ -2466,7 +2466,6 @@ function buildObjects() {
   ui.objToggle = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-toggle', 'aria-label': 'Expand or collapse all', title: 'Expand or collapse all', onclick: objToggleAll });
   ui.objTree = h('div', { class: 'otree', role: 'tree', 'aria-label': 'Objects', 'data-testid': 'obj-tree' });
   ui.objTree.addEventListener('click', objClick);
-  ui.objTree.addEventListener('dblclick', (e) => { const r = e.target.closest('.or.layer'), d = editable(); if (r && d && !e.target.closest('button')) { d.curLayer = r.dataset.layer; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${d.curLayer}. New shapes and text go on it`); } });
   ui.objTree.addEventListener('contextmenu', objMenu);
   ui.objCount = h('span', { 'data-testid': 'obj-count' }); ui.objSelN = h('span', { 'data-testid': 'obj-selected' });
   return ui.objPanel = h('div', { class: 'objpanel', 'data-testid': 'objects-panel', hidden: true },
@@ -2609,7 +2608,11 @@ function objClick(e) {
     const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
     if (act && act.dataset.act === 'vis') toggleLayerVis(d, idx);
     else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
-    else { flip(om.open, name); renderObjects(); }
+    else {
+      flip(om.open, name);
+      const ed = editable();       // a double-click's second click: the first rebuilt the rows, so the browser sends no dblclick; the click's detail still counts
+      if (e.detail === 2 && ed) { ed.curLayer = name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${name}. New shapes and text go on it`); } else renderObjects();
+    }
     return;
   }
   const ent = +row.dataset.e;
@@ -3628,7 +3631,7 @@ function restore(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
-  Object.assign(d, { fl, counts: layerCounts(fl), entities: entityCount(fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
+  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   showDoc();
   warm(d);
 }

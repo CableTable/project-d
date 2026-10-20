@@ -388,8 +388,8 @@ try {
     assert.equal(names.length, 1, 'the empty tab was used up');
     assert.match(names.at(-1), /^sample\.dxf/);
     assert.ok((await inkedWhen((n) => n > 500)) > 500, 'drawing canvas is blank');
-    assert.match(await t('cmd-prompt').textContent(), /Opened sample\.dxf: 19 entities/);
-    assert.equal(await t('entities').textContent(), 'Entities 19');
+    assert.match(await t('cmd-prompt').textContent(), /Opened sample\.dxf: 20 entities/);
+    assert.equal(await t('entities').textContent(), 'Entities 20');
     assert.equal(await t('units').textContent(), '');
   });
 
@@ -448,7 +448,7 @@ try {
 
   await step('switching tabs swaps the drawing; closing a tab works', async () => {
     await page.locator('.tabs .dtab', { hasText: 'sample.dxf' }).click();
-    assert.equal(await t('entities').textContent(), 'Entities 19');
+    assert.equal(await t('entities').textContent(), 'Entities 20');
     await t('new-tab').click();                                                 // an empty tab
     assert.equal(await t('entities').textContent(), '');
     assert.equal(await blank(), 0);
@@ -6310,8 +6310,30 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.deepEqual(await oRows(), ['Rectangle 100.0 × 60.0', 'Circle Ø40', 'Line 100.0', "Text 'REV A'"]);
     await oLayer('Engrave').click();
     assert.equal((await oRows()).length, 3, 'a click on a layer closes it again');
+    await oLayer('Engrave').dblclick();         // the first click rebuilds the rows, so the browser sends no dblclick: the second click (detail 2) does it
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.layer.cur').getAttribute('data-layer'), 'Engrave', 'a double-click makes the layer current');
+    assert.equal(await page.locator('.layer.current .nm').textContent(), 'Engrave', 'the Layers panel agrees');
+    assert.equal((await oRows()).length, 3, 'and the layer is left as it was, closed');
+    await oLayer('Cut').dblclick();
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.layer.cur').getAttribute('data-layer'), 'Cut');
     await t('ptab-drawing').click();
     assert.equal(await page.locator('.layers-rows').isVisible(), true);
+  });
+
+  await step('Counts agree: sample.dxf has the same layer counts in the Layers panel and the Objects tab, and the same total in the status bar and the footer', async () => {
+    await t('picker').setInputFiles('fixtures/sample.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('sample.dxf'));
+    await t('ptab-objects').click();
+    const objN = Object.fromEntries(await page.locator('[data-testid=obj-tree] .or.layer').evaluateAll((rs) => rs.map((r) => [r.dataset.layer, r.querySelector('.ocnt').textContent])));
+    await t('ptab-drawing').click();
+    const layN = Object.fromEntries(await page.locator('.layer[data-file-layer]').evaluateAll((rs) => rs.map((r) => [r.querySelector('.nm').textContent, r.querySelector('.lbl').textContent])));
+    assert.equal(layN.NOTES, '7', 'the IMAGE draws nothing but is an entity of the file');
+    for (const [name, n] of Object.entries(objN)) assert.equal(layN[name], n, name);
+    await t('ptab-objects').click();
+    assert.match(await t('obj-count').textContent(), /^20 objects/);
+    assert.equal(await t('entities').textContent(), 'Entities 20');
+    await t('ptab-drawing').click();
+    await closeTabs(/sample/);                                                  // back to the objects.dxf tab for the steps below
   });
 
   await step('Objects tab: a click on a row selects that object on the sheet; a pick on the sheet lights its row (its layer opens)', async () => {

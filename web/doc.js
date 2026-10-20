@@ -33,26 +33,18 @@ export function startHidden(fl) {
   return new Set(fl.layers.map((l, i) => (l.on ? -1 : i)).filter((i) => i >= 0));
 }
 
-/** Entities in the shown space (a block's contents count where it is inserted). */
-export function entityCount(fl) {
-  return countEntities(shownItems(fl), () => 0, 1)[0];
+/**
+ * Entities in the shown space, counted from the file's entities, as the Objects tab does: a block reference (a kept dimension
+ * with its lines, arrowheads and text) is one, and so is one that draws nothing (an IMAGE, a block with no contents).
+ */
+export function entityCount(raw, fl) {
+  return layerCounts(raw, fl).reduce((a, b) => a + b, 0);
 }
 
-/**
- * Entities per layer index, shown space only. What a top-level entity draws as several items (a block reference such as a
- * kept dimension: its lines, arrowheads and text) is one entity: items sharing `e` and a layer count once.
- */
-export function layerCounts(fl) {
-  return countEntities(shownItems(fl), (it) => it.L[0], fl.layers.length);
-}
-function countEntities(items, layerOf, nLayers) {
-  const n = new Array(nLayers).fill(0), seen = new Set();
-  for (const it of items) {
-    const l = layerOf(it);
-    if (it.e == null) { n[l]++; continue; }
-    const key = it.e + ':' + l;
-    if (!seen.has(key)) { seen.add(key); n[l]++; }
-  }
+/** Entities per layer index of `fl.layers`, shown space only; hidden entities and ones on a layer missing from the table are not counted. */
+export function layerCounts(raw, fl) {
+  const sp = spaceOf(fl), at = new Map(fl.layers.map((l, i) => [l.name, i])), n = new Array(fl.layers.length).fill(0);
+  for (const e of raw.entities) if (!e.hidden && (e.ps ? 1 : 0) === sp && at.has(e.layer)) n[at.get(e.layer)]++;
   return n;
 }
 
