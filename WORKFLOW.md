@@ -125,7 +125,7 @@ cd ~/agy-research && "/c/Users/raksh/AppData/Local/agy/bin/agy.exe" -p "<questio
 # follow-up: --conversation <conversation_id>; its quota: /usage inside agy (interactive only; he pastes it)
 # Two weekly pools: Gemini (Flash/Pro; ~1.5% per short question) and Claude/GPT (Sonnet 4.6, Opus 4.6, GPT-OSS).
 # Default Gemini 3.8 Flash; hard questions or Gemini under 20%: --model claude-sonnet-4-6 until 2026-11-02.
-# From 2026-11-02 Sonnet 4.6, Opus 4.6 and GPT-OSS leave Antigravity (Scout, 2026-10-19); his plan (AI Plus; upgraded to Google AI Pro 2026-10-20, check `agy models` and /usage for the new quotas)
+# From 2026-11-02 Sonnet 4.6, Opus 4.6 and GPT-OSS leave Antigravity (Scout, 2026-10-19); his plan (AI Plus; his "Pro" since 2026-10-20 is a reseller name, same AI quota as Plus)
 # keeps Gemini only, so then: Flash default, a Gemini Pro slug for hard questions. Check `agy models` if a slug fails.
 ```
 
