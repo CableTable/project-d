@@ -64,6 +64,10 @@ usage-agent-install.ps1.
    (tests, screenshots), and a merge-danger call: one-way or two-way door, plus blast radius.
 4. **Retro at session end**: before the merge, a Pip run of the `retro` skill over the session's commits, briefs and
    run reports suggests changes to rules, checks, briefs (not code); he picks which to apply.
+5. **Tickets sized for one fresh session** (his call 2026-10-20): every M / L TODO item is split into tickets
+   (TODO "66a", "66b", …), each a vertical slice that one fresh builder run can finish with its context under
+   **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
+   (`rook.mjs result` shows it) means the ticket was too big: split the rest further.
 **Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. This week (49% on Tue 21:45):
 by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. From next week: 14% × k by the end of day k
 after the reset, like Pip. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
