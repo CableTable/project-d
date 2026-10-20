@@ -125,8 +125,11 @@ Opus run; let running builders finish (a builder cut off mid-work leaves uncommi
   the run ends, so a background run uses `--output-format stream-json --verbose` (it grows as it works; the last
   line holds `result`, `session_id` and cost). An output file that doesn't exist is a bug, not progress.
 
-Run long ones in the background; print only `result`, `session_id`, `total_cost_usd` and
+Run long ones in the background; print only `result`, `session_id`, `usage` and
 `permission_denials` from the JSON. He can watch or take over any run: `claude2 --resume <session_id>`.
+**Report runs to him in tokens, never $** (his rule, 2026-10-20), e.g. "1.9M tokens (79k new)": total = input + cache
+read + cache write + output from the final `result.usage`; new = input + cache write + output. Rowan: the
+"tokens used" line in its run.log. The `--max-budget-usd` caps stay as a safety stop; limits stay in %.
 
 ## Every brief says
 
