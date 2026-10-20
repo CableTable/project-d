@@ -116,6 +116,38 @@ try {
     assert.deepEqual(await tabNames(), ['Drawing 1']);
   });
 
+  await step('TODO 62: Open keeps drawn, edited and saved tabs; only an untouched new tab is replaced', async () => {
+    for (const kind of ['draw', 'draw-save', 'layer-save', 'empty-save']) {
+      await t('new-tab').click();
+      if (kind === 'layer-save') {
+        await t('layer-add').click();
+        await page.evaluate(() => document.activeElement.blur());
+      } else {
+        await page.locator('[data-tool=line]').click();
+        if (kind !== 'empty-save') { await typeCmd('20,20'); await typeCmd('120,20'); }
+        await page.keyboard.press('Escape');
+      }
+      if (kind.endsWith('save')) {
+        const [dl] = await Promise.all([page.waitForEvent('download'), page.keyboard.press('Control+s')]);
+        const raw = readDxf(readFileSync(await dl.path(), 'latin1'));
+        assert.equal(raw.entities.length, kind === 'draw-save' ? 1 : 0);
+        assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'Save cleared dirty');
+      }
+      const before = await tabNames(), keptName = before.at(-1);
+      await t('picker').setInputFiles('fixtures/overlay.dxf');
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
+      assert.deepEqual(await tabNames(), [...before, 'overlay.dxf'], kind + ': the tab stays');
+      await page.locator('.tabs .dtab', { hasText: keptName }).click();
+      assert.equal(await t('entities').textContent(), kind.startsWith('draw') ? 'Entities 1' : 'Entities 0');
+      await closeTabs(/./);
+    }
+    await t('new-tab').click();
+    await t('picker').setInputFiles('fixtures/overlay.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
+    assert.deepEqual(await tabNames(), ['Drawing 1', 'overlay.dxf'], 'the untouched Drawing 2 is replaced');
+    await closeTabs(/./);
+  });
+
   await step('Many tabs: only the tab strip scrolls at 1024; widening to 1440 keeps the menu and toolbar in place and + New layout on one line', async () => {
     const c2 = await browser.newContext({ viewport: { width: 1024, height: 700 } });
     try {

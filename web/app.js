@@ -175,7 +175,13 @@ function emptyDoc() {
   const names = new Set(state.docs.map((d) => d.name));
   let n = 1;
   while (names.has('Drawing ' + n)) n++;
-  return { name: 'Drawing ' + n, path: null, dirty: false, empty: true };
+  let dirty = false;
+  return {
+    name: 'Drawing ' + n, path: null, empty: true,
+    get dirty() { return dirty; },
+    // Any edit or successful save permanently retires the untouched placeholder.
+    set dirty(value) { dirty = value; this.empty = false; },
+  };
 }
 state.docs.push(emptyDoc());
 const view = { scale: 1, ox: -80, oy: -80, fitted: true };
