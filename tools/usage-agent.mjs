@@ -1,0 +1,221 @@
+// Node 22; run from any directory. Importing this file does not start the agent.
+import { createSign } from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
+
+const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const run = promisify(execFile);
+
+export function parseCsv(text) {
+  text = text.replace(/^\uFEFF/, '');
+  const records = [];
+  let row = [], field = '', quoted = false, closed = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c === '"' && text[i + 1] === '"') { field += '"'; i++; }
+      else if (c === '"') { quoted = false; closed = true; }
+      else field += c;
+    } else if (c === ',' || c === '\n' || c === '\r') {
+      row.push(field); field = ''; closed = false;
+      if (c !== ',') {
+        if (row.length > 1 || row[0] !== '') records.push(row);
+        row = [];
+        if (c === '\r' && text[i + 1] === '\n') i++;
+      }
+    } else if (c === '"' && field === '' && !closed) quoted = true;
+    else {
+      if (closed || c === '"') throw new Error('Invalid CSV quoting');
+      field += c;
+    }
+  }
+  if (quoted) throw new Error('Unclosed CSV quote');
+  if (field !== '' || row.length || closed) { row.push(field); records.push(row); }
+  if (!records.length) return [];
+  const headers = records.shift();
+  if (headers.some((h) => !h) || new Set(headers).size !== headers.length) throw new Error('Invalid CSV headers');
+  return records.map((r, i) => {
+    if (r.length !== headers.length) throw new Error(`CSV row ${i + 2}: expected ${headers.length} columns, got ${r.length}`);
+    return Object.fromEntries(headers.map((h, j) => [h, r[j]]));
+  });
+}
+
+export function firestoreValue(value) {
+  if (value === null) return { nullValue: null };
+  if (typeof value === 'string') return { stringValue: value };
+  if (typeof value === 'boolean') return { booleanValue: value };
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Number.isSafeInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  }
+  if (value instanceof Date && Number.isFinite(+value)) return { timestampValue: value.toISOString() };
+  if (Array.isArray(value)) {
+    if (value.some(Array.isArray)) throw new Error('Firestore does not support nested arrays');
+    return { arrayValue: { values: value.map(firestoreValue) } };
+  }
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    return { mapValue: { fields: Object.fromEntries(Object.entries(value).map(([k, v]) => [k, firestoreValue(v)])) } };
+  }
+  throw new Error(`Unsupported Firestore value: ${String(value)}`);
+}
+
+export function assertKeyOutsideRepo(keyPath, repoPath = repo) {
+  // Check both the written path and its real target, including junctions/symlinks.
+  for (const real of [false, true]) {
+    const key = real ? realpathSync(keyPath) : resolve(keyPath);
+    const root = real ? realpathSync(repoPath) : resolve(repoPath);
+    const rel = relative(root, key);
+    if (rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith('..' + sep))) {
+      throw new Error('Refusing to start: Firebase key path is inside the repo folder. Move it to %APPDATA%\\ProjectD\\firebase-key.json.');
+    }
+  }
+}
+
+function acquireLock(path) {
+  // Serialize stale-lock recovery too, so simultaneous starters cannot delete a new lock.
+  const gate = path + '.guard';
+  try { mkdirSync(gate); }
+  catch (e) {
+    if (e.code !== 'EEXIST') throw e;
+    throw new Error(`Agent lock is being checked. If no agent is starting, remove the abandoned directory: ${gate}`);
+  }
+  try {
+    if (existsSync(path)) {
+      const pid = Number(readFileSync(path, 'utf8'));
+      if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Invalid agent lock: ${path}; remove it after checking no agent is running.`);
+      let running = true;
+      try { process.kill(pid, 0); }
+      catch (e) { if (e.code !== 'ESRCH') throw e; running = false; }
+      if (running) throw new Error(`Usage agent already running (pid ${pid}).`);
+      unlinkSync(path);
+    }
+    const fd = openSync(path, 'wx');
+    writeFileSync(fd, String(process.pid)); closeSync(fd);
+  } finally { rmdirSync(gate); }
+  process.on('exit', () => {
+    try { if (readFileSync(path, 'utf8') === String(process.pid)) unlinkSync(path); } catch { /* Already removed. */ }
+  });
+  for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
+}
+
+async function main() {
+  if (!process.env.APPDATA) throw new Error('APPDATA is missing; run this agent on your Windows PC.');
+  const home = join(process.env.APPDATA, 'ProjectD');
+  mkdirSync(home, { recursive: true });
+  const logPath = join(home, 'usage-agent.log');
+  function log(message) {
+    try {
+      const line = `${new Date().toISOString()} ${message.replace(/[\r\n]+/g, ' ').slice(0, 4000)}\n`;
+      let old = '';
+      try { if (statSync(logPath).size + Buffer.byteLength(line) > 1_000_000) old = readFileSync(logPath, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+      if (old) {
+        const tail = Buffer.from(old).subarray(-500_000).toString('utf8');
+        writeFileSync(logPath, tail.slice(tail.indexOf('\n') + 1));
+      }
+      appendFileSync(logPath, line);
+    } catch (e) { console.error(`Cannot write agent log: ${e.message}`); }
+  }
+  try {
+    const keyPath = resolve(process.env.PROJECTD_FIREBASE_KEY || join(home, 'firebase-key.json'));
+    assertKeyOutsideRepo(keyPath);
+    const key = JSON.parse(readFileSync(keyPath, 'utf8'));
+    if (key.type !== 'service_account' || !key.project_id || !key.client_email || !key.private_key) throw new Error('Expected a Firebase service-account JSON key.');
+    acquireLock(join(home, 'usage-agent.lock'));
+    const database = `projects/${encodeURIComponent(key.project_id)}/databases/(default)/documents`;
+    const endpoint = `https://firestore.googleapis.com/v1/${database}`;
+    let token = '', expires = 0;
+
+    async function accessToken() {
+      if (token && Date.now() < expires - 60_000) return token;
+      const now = Math.floor(Date.now() / 1000);
+      const b64 = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      const unsigned = b64({ alg: 'RS256', typ: 'JWT' }) + '.' + b64({
+        iss: key.client_email, scope: 'https://www.googleapis.com/auth/datastore',
+        aud: 'https://oauth2.googleapis.com/token', iat: now, exp: now + 3600,
+      });
+      const signature = createSign('RSA-SHA256').update(unsigned).sign(key.private_key, 'base64url');
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST', signal: AbortSignal.timeout(20_000),
+        body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: unsigned + '.' + signature }),
+      });
+      if (!response.ok) throw new Error(`OAuth token exchange: HTTP ${response.status}`);
+      const data = await response.json();
+      if (!data.access_token || !(data.expires_in > 0)) throw new Error('OAuth response missing token/expiry');
+      token = data.access_token; expires = Date.now() + data.expires_in * 1000;
+      return token;
+    }
+
+    async function request(suffix, body) {
+      const response = await fetch(endpoint + suffix, {
+        method: body ? 'POST' : 'GET', signal: AbortSignal.timeout(20_000),
+        headers: { Authorization: `Bearer ${await accessToken()}`, 'Content-Type': 'application/json' },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      });
+      if (response.status === 401) { token = ''; expires = 0; }
+      if (response.status === 404 && !body) return null;
+      if (!response.ok) throw new Error(`Firestore ${suffix}: HTTP ${response.status} ${(await response.text()).slice(0, 500)}`);
+      return response.json();
+    }
+    const timestamp = (fieldPath) => ({ fieldPath, setToServerValue: 'REQUEST_TIME' });
+    const statusWrite = (fields) => ({
+      update: { name: `${database}/usage/status`, fields: {} },
+      updateMask: { fieldPaths: [] }, updateTransforms: fields.map(timestamp),
+    });
+    const heartbeat = () => request(':commit', { writes: [statusWrite(['agentHeartbeat'])] });
+    let lastHandled = 0, nextRefresh = 0, nextHeartbeat = 0, busy = false;
+
+    async function refresh(requestedAt) {
+      busy = true;
+      nextRefresh = Date.now() + 3600_000;
+      try {
+        await run(process.execPath, ['tools/rook.mjs', 'usage'], { cwd: repo, windowsHide: true, timeout: 180_000, maxBuffer: 1024 * 1024 });
+        const dataDir = join(repo, 'mockups', '_design', 'usage');
+        const docs = ['limits', 'history', 'runs'].map((name) => {
+          let rows = parseCsv(readFileSync(join(dataDir, name + '.csv'), 'utf8'));
+          if (name === 'history') rows = rows.slice(-2000);
+          return [name, { rows }];
+        });
+        const items = JSON.parse(readFileSync(join(dataDir, 'analysis.json'), 'utf8'));
+        if (!Array.isArray(items) || items.some((i) => !i || typeof i.id !== 'string' || typeof i.topic !== 'string' || typeof i.note !== 'string')) throw new Error('analysis.json must be an array of {id, topic, note} strings');
+        docs.push(['analysis', { items }]);
+        const writes = docs.map(([name, data]) => {
+          const fields = firestoreValue(data).mapValue.fields;
+          // shortcut: refuse oversized docs; split runs/analysis into pages if they outgrow one document.
+          if (Buffer.byteLength(JSON.stringify(fields)) > 900_000) throw new Error(`${name} exceeds the safe document size (900 KB encoded)`);
+          return { update: { name: `${database}/usage/${name}`, fields } };
+        });
+        writes.push(statusWrite(['lastUpdate', 'agentHeartbeat']));
+        await request(':commit', { writes });
+        lastHandled = requestedAt;
+        log('refresh OK');
+      } catch (e) { log(`refresh ERROR: ${e.message}`); }
+      finally { busy = false; }
+    }
+
+    console.log(`Usage agent running; log: ${logPath}`);
+    for (;;) {
+      const tick = Date.now();
+      if (Date.now() >= nextHeartbeat) {
+        nextHeartbeat = Date.now() + 60_000;
+        heartbeat().catch((e) => log(`heartbeat ERROR: ${e.message}`));
+      }
+      try {
+        const control = await request('/control/refresh');
+        const value = control?.fields?.requestedAt?.timestampValue;
+        const requestedAt = value ? Date.parse(value) : 0;
+        if (!busy && (Date.now() >= nextRefresh || requestedAt > lastHandled)) void refresh(requestedAt);
+      } catch (e) {
+        log(`poll ERROR: ${e.message}`);
+        if (!busy && Date.now() >= nextRefresh) void refresh(lastHandled);
+      }
+      await delay(Math.max(0, 10_000 - (Date.now() - tick)));
+    }
+  } catch (e) { log(`startup ERROR: ${e.message}`); throw e; }
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  main().catch((e) => { console.error(`Usage agent: ${e.message}`); process.exitCode = 1; });
+}

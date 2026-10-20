@@ -1,0 +1,287 @@
+
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
+import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
+import { firebaseConfig } from './firebase-config.js';
+
+const AGENT_COLOR = { Rook: '#3b9b82', Pip: 'var(--ud-pip)', Rowan: 'var(--ud-rowan)' };
+const ORDER = ['Rook', 'Pip', 'Rowan'];
+const IST = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+const HM = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+const compact = (n) => Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+const num = (x) => (x === '' || x == null ? null : Number(x));
+
+let data = { limits: [], history: [], runs: [], analysis: [] };
+function paceRows() {
+  return data.limits.map((r) => ({ agent: r.agent, window: r.window,
+    pace_pct: Math.round(Math.max(0, Math.min(1, (Date.parse(r.as_of) - Date.parse(r.starts)) / (Date.parse(r.resets) - Date.parse(r.starts)))) * 100) }));
+}
+function forecasts() {
+  return data.limits.filter((r) => r.window === 'week').map((r) => {
+    const s = Date.parse(r.starts), e = Date.parse(r.resets), a = Date.parse(r.as_of), used = Number(r.used_pct);
+    const at_reset_pct = a - s < 12 * 3600e3 || used <= 0 ? null : Math.round(used * (e - s) / (a - s));
+    return { agent: r.agent, at_reset_pct, hit_at: at_reset_pct >= 100 ? new Date(s + (a - s) * 100 / used).toISOString() : null };
+  });
+}
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const mark = (e, src, field, where) => { e.dataset.source = src; e.dataset.field = field; if (where) e.dataset.where = where; return e; };
+const wh = (a, w) => 'agent=' + encodeURIComponent(a) + '&window=' + encodeURIComponent(w);
+
+let win = 'week';
+const btnW = document.getElementById('w-week'), btn5 = document.getElementById('w-5h');
+const setWin = (w) => { win = w; btnW.setAttribute('aria-pressed', w === 'week'); btn5.setAttribute('aria-pressed', w === '5h'); draw(); };
+btnW.addEventListener('click', () => setWin('week'));
+btn5.addEventListener('click', () => setWin('5h'));
+let query = '';
+document.getElementById('q').addEventListener('input', (e) => { query = e.target.value.toLowerCase(); draw(); });
+
+function status(used, pace, cap) {
+  if (cap != null && used >= cap) return ['bad', 'At today’s cap'];
+  if (used >= 85) return ['bad', 'Near the limit'];
+  if (used > pace + 10) return ['warn', 'Ahead of even use'];
+  return ['ok', 'Within pace'];
+}
+
+function drawAgents(limits, pace) {
+  const box = document.getElementById('agents');
+  box.replaceChildren();
+  const pk = new Map(pace.map((p) => [p.agent + '|' + p.window, p.pace_pct]));
+  const fk = new Map(forecasts().map((f) => [f.agent, f]));
+  ORDER.forEach((a) => {
+    const rows = limits.filter((r) => r.agent === a);
+    if (!rows.length) return;
+    const card = el('div', 'ud-card');
+    const head = el('div', 'ud-agent');
+    const t = el('div'); t.append(el('h3', null, a)); t.append(mark(el('p', 'ud-muted', rows[0].role + ' · ' + rows[0].model), 'limits', 'role', 'agent=' + a + '&window=' + rows[0].window));
+    t.lastChild.textContent = rows[0].role; head.append(t);
+    head.append(mark(el('span', 'ud-muted', rows[0].model), 'limits', 'model', wh(a, rows[0].window)));
+    card.append(head);
+    ['5h', 'week'].forEach((w) => {
+      const r = rows.find((x) => x.window === w); if (!r) return;
+      const used = Number(r.used_pct), p = pk.get(a + '|' + w), cap = num(r.cap_pct);
+      const m = el('div', 'ud-meter');
+      const top = el('div', 'ud-mrow');
+      const left = el('div');
+      left.append(el('span', 'ud-muted', w === '5h' ? '5-hour window ' : 'Week '));
+      const big = el('div', 'ud-big'); big.append(mark(el('span', null, String(used)), 'limits', 'used_pct', wh(a, w)), document.createTextNode('%'));
+      left.append(big); top.append(left);
+      const [cls, label] = status(used, p ?? 0, cap);
+      top.append(el('span', 'ud-chip ' + cls, label));
+      m.append(top);
+      const tr = el('div', 'ud-track');
+      const f = el('div', 'ud-fill'); f.style.width = Math.min(100, used) + '%'; f.style.background = cls === 'bad' ? 'var(--cds-chart-status-critical)' : AGENT_COLOR[a];
+      tr.append(f);
+      if (p != null) { const k = el('div', 'ud-tick'); k.style.left = 'calc(' + p + '% - 1px)'; k.title = 'Even use'; tr.append(k); }
+      if (cap != null) { const k = el('div', 'ud-tick cap'); k.style.left = 'calc(' + cap + '% - 1px)'; tr.append(k); }
+      m.append(tr);
+      const foot = el('div', 'ud-mrow ud-muted');
+      const fl = el('span'); fl.append(document.createTextNode('Even use: '), mark(el('span', null, String(p ?? '—')), 'pace', 'pace_pct', wh(a, w)), document.createTextNode('%'));
+      if (cap != null) { fl.append(document.createTextNode(' · cap today: '), mark(el('span', null, String(cap)), 'limits', 'cap_pct', wh(a, w)), document.createTextNode('%')); }
+      foot.append(fl);
+      const rs = el('span'); rs.append(document.createTextNode('Resets '), mark(el('span', null, w === '5h' ? HM.format(new Date(r.resets)) : IST.format(new Date(r.resets))), 'limits', 'resets', wh(a, w)));
+      foot.append(rs);
+      m.append(foot);
+      const fc = w === 'week' && fk.get(a);
+      if (fc) {
+        const fp = el('div', 'ud-mrow');
+        const s = el('span');
+        if (fc.hit_at) {
+          s.append(document.createTextNode('At this pace: hits 100% '), mark(el('b', 'ud-hit', IST.format(new Date(fc.hit_at))), 'forecast', 'hit_at', 'agent=' + encodeURIComponent(a)), document.createTextNode(', before the reset'));
+        } else if (fc.at_reset_pct != null) {
+          s.append(document.createTextNode('At this pace: about '), mark(el('b', null, String(fc.at_reset_pct)), 'forecast', 'at_reset_pct', 'agent=' + encodeURIComponent(a)), document.createTextNode('% at the reset'));
+        } else s.append(el('span', 'ud-muted', 'At this pace: too early in the week to tell'));
+        fp.append(s);
+        m.append(fp);
+      }
+      card.append(m);
+    });
+    box.append(card);
+  });
+}
+
+function drawTake(limits, pace) {
+  const p = document.getElementById('takeaway');
+  p.replaceChildren();
+  const pk = new Map(pace.map((x) => [x.agent + '|' + x.window, x.pace_pct]));
+  const wk = limits.filter((r) => r.window === 'week').map((r) => ({ r, gap: Number(r.used_pct) - (pk.get(r.agent + '|week') ?? 0) }));
+  if (!wk.length) return;
+  wk.sort((a, b) => b.gap - a.gap);
+  const top = wk[0].r;
+  p.append(document.createTextNode(top.agent + ' is the one to watch: '),
+    mark(el('b', null, top.used_pct), 'limits', 'used_pct', wh(top.agent, 'week')), document.createTextNode('% of its week used, with '),
+    mark(el('b', null, String(pk.get(top.agent + '|week'))), 'pace', 'pace_pct', wh(top.agent, 'week')), document.createTextNode('% of the week gone. '));
+  const pip = limits.find((r) => r.agent === 'Pip' && r.window === 'week');
+  if (pip && pip.cap_pct !== '') {
+    p.append(document.createTextNode('Pip is at '), mark(el('b', null, pip.used_pct), 'limits', 'used_pct', wh('Pip', 'week')),
+      document.createTextNode('% against today’s cap of '), mark(el('b', null, pip.cap_pct), 'limits', 'cap_pct', wh('Pip', 'week')), document.createTextNode('%.'));
+  }
+}
+
+function drawChart(hist) {
+  const box = document.getElementById('chart'); box.replaceChildren();
+  const rows = hist.filter((r) => r.window === win).map((r) => ({ t: Date.parse(r.when), agent: r.agent, v: Number(r.used_pct) }))
+    .filter((r) => Number.isFinite(r.t) && Number.isFinite(r.v));
+  if (!rows.length) { box.append(el('p', 'ud-muted', 'No readings yet.')); return; }
+  const W = Math.max(260, box.clientWidth), H = 240, left = 34, right = W - 66;
+  const min = Math.min(...rows.map((r) => r.t)), max = Math.max(...rows.map((r) => r.t));
+  const x = (t) => left + (t - min) / (max - min || 1) * (right - left);
+  const y = (v) => 214 - Math.max(0, Math.min(100, v)) * 2;
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H); svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', 'Usage readings over time in IST'); box.append(svg);
+  function add(tag, attrs, text, parent = svg) {
+    const node = document.createElementNS(svg.namespaceURI, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    if (text != null) node.textContent = text;
+    parent.append(node); return node;
+  }
+  for (const v of [0, 25, 50, 75, 100]) {
+    add('line', { x1: left, x2: right, y1: y(v), y2: y(v), stroke: 'var(--cds-chart-grid)' });
+    add('text', { x: left - 5, y: y(v) + 4, 'text-anchor': 'end' }, v + '%');
+  }
+  for (let i = 0; i < 3; i++) {
+    const t = min + (max - min) * i / 2;
+    add('text', { x: x(t), y: 234, 'text-anchor': 'middle' }, HM.format(new Date(t)));
+  }
+  const ends = [];
+  for (const agent of ORDER) {
+    const pts = rows.filter((r) => r.agent === agent).sort((a, b) => a.t - b.t);
+    if (!pts.length) continue;
+    add('polyline', { points: pts.map((p) => x(p.t) + ',' + y(p.v)).join(' '), fill: 'none', stroke: AGENT_COLOR[agent], 'stroke-width': 2 });
+    for (const p of pts) {
+      const dot = add('circle', { cx: x(p.t), cy: y(p.v), r: 3, fill: AGENT_COLOR[agent] });
+      add('title', {}, agent + ' ' + p.v + '% ? ' + IST.format(new Date(p.t)) + ' IST', dot);
+    }
+    const last = pts.at(-1); ends.push({ agent, v: last.v, y: y(last.v) });
+  }
+  ends.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++) ends[i].y = Math.max(ends[i].y, ends[i - 1].y + 14);
+  for (const end of ends) add('text', { x: right + 6, y: end.y + 4, style: 'fill:' + AGENT_COLOR[end.agent] }, end.agent + ' ' + end.v + '%');
+}
+
+function drawRuns(runs) {
+  const tb = document.getElementById('runrows');
+  tb.replaceChildren();
+  const max = Math.max(0, ...runs.map((r) => Number(r.new_tokens || 0))) || 1;
+  runs.filter((r) => !query || [r.agent, r.task, r.kind, r.verdict, r.model].join(' ').toLowerCase().includes(query))
+    .forEach((r) => {
+      const tr = el('tr'); tr.dataset.key = r.id;
+      tr.append(el('td', null, r.session), el('td', null, r.agent));
+      const task = el('td'); task.append(el('div', null, r.task)); task.append(el('div', 'ud-muted', r.model + ' · ' + r.kind)); tr.append(task);
+      const nt = el('td', 'num');
+      if (r.new_tokens !== '' && r.new_tokens != null) { const b = el('span', 'bar ' + r.agent.toLowerCase()); b.style.width = Math.max(2, (Number(r.new_tokens) / max) * 60) + 'px'; nt.append(b, document.createTextNode(compact(Number(r.new_tokens)))); } else nt.textContent = '—';
+      tr.append(nt, el('td', 'num hide-narrow', compact(Number(r.total_tokens))), el('td', 'hide-narrow', r.verdict || ''));
+      tb.append(tr);
+    });
+}
+
+function drawByAgent(rows) {
+  const tb = document.getElementById('byagent'); tb.replaceChildren();
+  rows.forEach((r) => { const tr = el('tr'); tr.append(el('td', null, String(r.session)), el('td', null, r.agent), el('td', 'num', String(r.runs)), el('td', 'num', compact(r.new_tokens))); tb.append(tr); });
+}
+
+function drawNotes(notes) {
+  const tb = document.getElementById('notes'); tb.replaceChildren();
+  notes.forEach((n) => { const tr = el('tr'); tr.dataset.key = n.id; const c = el('td'); c.append(el('div', null, n.topic), el('div', 'ud-muted', n.as_of)); tr.append(c, el('td', null, n.note)); tb.append(tr); });
+}
+
+function draw() {
+  const times = data.limits.map((r) => Date.parse(r.as_of)).filter(Number.isFinite);
+  document.getElementById('asof').textContent = times.length ? IST.format(new Date(Math.max(...times))) + ' IST' : '\u2014';
+  const pace = paceRows();
+  drawAgents(data.limits, pace); drawTake(data.limits, pace); drawChart(data.history);
+  drawRuns(data.runs); drawNotes(data.analysis);
+  const groups = new Map();
+  for (const r of data.runs) {
+    const key = r.session + '|' + r.agent;
+    const group = groups.get(key) || { session: r.session, agent: r.agent, runs: 0, new_tokens: 0 };
+    group.runs++; group.new_tokens += Number(r.new_tokens || 0); groups.set(key, group);
+  }
+  drawByAgent([...groups.values()].sort((a, b) => b.session - a.session || b.new_tokens - a.new_tokens));
+}
+new ResizeObserver(() => drawChart(data.history)).observe(document.getElementById('chart'));
+
+const message = document.getElementById('message');
+const signin = document.getElementById('signin'), signout = document.getElementById('signout');
+const refreshButton = document.getElementById('refresh'), dashboard = document.getElementById('dashboard');
+const lastUpdateLabel = document.getElementById('last-update'), offline = document.getElementById('offline');
+let currentStatus = {}, pending = null, allowed = false;
+
+function finishUpdate(text) {
+  if (pending) clearTimeout(pending.timer);
+  pending = null;
+  refreshButton.disabled = !allowed;
+  refreshButton.textContent = 'Update now';
+  message.textContent = text;
+}
+function showStatus() {
+  const last = currentStatus.lastUpdate?.toMillis();
+  const heartbeat = currentStatus.agentHeartbeat?.toMillis();
+  lastUpdateLabel.textContent = 'Last update: ' + (last ? IST.format(new Date(last)) + ' IST' : '—');
+  offline.hidden = !allowed || (heartbeat != null && Date.now() - heartbeat <= 180_000);
+  if (pending?.requestedAt != null && last > pending.requestedAt) finishUpdate('Updated.');
+}
+setInterval(showStatus, 10_000);
+
+if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
+  message.textContent = 'Setup needed: fill the placeholders in firebase-config.js.';
+  signin.disabled = true;
+} else {
+  const app = initializeApp(firebaseConfig), auth = getAuth(app), db = getFirestore(app);
+  const provider = new GoogleAuthProvider();
+  let subscriptions = [];
+  function stopListening() { subscriptions.forEach((stop) => stop()); subscriptions = []; }
+  function report(error) {
+    if (error.code === 'permission-denied' && auth.currentUser) {
+      allowed = false; dashboard.hidden = true; stopListening();
+      finishUpdate('Not allowed. Your uid: ' + auth.currentUser.uid);
+      showStatus();
+    } else finishUpdate('Could not load/update usage: ' + error.message);
+  }
+  signin.addEventListener('click', async () => {
+    try {
+      await signInWithPopup(auth, provider);
+    } catch (error) {
+      const phone = matchMedia('(pointer: coarse)').matches;
+      if (error.code === 'auth/popup-blocked' || (phone && ['auth/popup-closed-by-user', 'auth/operation-not-supported-in-this-environment'].includes(error.code))) {
+        try { await signInWithRedirect(auth, provider); } catch (e) { report(e); }
+      } else if (error.code !== 'auth/popup-closed-by-user') report(error);
+    }
+  });
+  signout.addEventListener('click', () => signOut(auth).catch(report));
+  getRedirectResult(auth).catch(report);
+  onAuthStateChanged(auth, (user) => {
+    stopListening(); allowed = false; currentStatus = {};
+    data = { limits: [], history: [], runs: [], analysis: [] };
+    draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
+    dashboard.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
+    if (!user) return;
+    for (const name of ['limits', 'history', 'runs', 'analysis', 'status']) {
+      subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
+        if (snapshot.metadata.fromCache) return;
+        allowed = true; dashboard.hidden = false;
+        refreshButton.disabled = !!pending;
+        if (message.textContent === 'Loading…') message.textContent = 'Signed in.';
+        const value = snapshot.data() || {};
+        if (name === 'status') currentStatus = value;
+        else data[name] = value[name === 'analysis' ? 'items' : 'rows'] || [];
+        showStatus(); draw();
+      }, report));
+    }
+  });
+  refreshButton.addEventListener('click', async () => {
+    if (pending || !allowed) return;
+    const attempt = { requestedAt: null, timer: null };
+    pending = attempt;
+    refreshButton.disabled = true; refreshButton.textContent = 'Updating…'; message.textContent = 'Updating…';
+    attempt.timer = setTimeout(() => { if (pending === attempt) finishUpdate("PC didn't answer"); }, 60_000);
+    try {
+      const control = doc(db, 'control', 'refresh');
+      await setDoc(control, { requestedAt: serverTimestamp() });
+      if (pending !== attempt) return;
+      const saved = await getDocFromServer(control);
+      if (pending !== attempt) return;
+      attempt.requestedAt = saved.data()?.requestedAt?.toMillis();
+      showStatus();
+    } catch (error) { if (pending === attempt) report(error); }
+  });
+}
