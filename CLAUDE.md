@@ -100,7 +100,8 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   (`claude2`): Pip-build (Sonnet high, a FRESH session per build or fix round, capped with
   `--max-budget-usd`), Pip-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
   build gets one), Pip-look (Haiku), Pip-test (the exe on his PC). **Rowan** (Codex, his ChatGPT Go
-  plan) does web research only, never reviews. **Scout** (Antigravity) only quick lookups.
+  plan) is the **default builder** (his call, 2026-10-20; it commits, Rook pushes) and does web research, never
+  reviews; Pip-build takes mock-ups, screenshots and overflow builds. **Scout** (Antigravity) only quick lookups.
   Pip never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
   **Pip's budget:** at most 14% of its weekly limit per day (above only with his OK); after every
   merge, report Rook / Pip / Rowan usage. A new worktree folder needs trusting once on account 2.

@@ -13,11 +13,12 @@ briefs, reading short reports and merging.
 |---|---|---|---|
 | Lead | main account (this session) | Opus | Plans, picks TODO items, writes briefs, reads reports (never whole diffs, logs or files), publishes mock-ups, merges. |
 | Lookup | claude2 | Haiku | Reading TODO / code / logs / CI, quick questions. Replies in a few lines. |
-| Builder | claude2 | Sonnet, high | Mock-ups, features, fixes (even small ones): code, tests, screenshots, commit, push. |
+| Builder (**Rowan**, default) | Codex CLI (his ChatGPT Go plan) | gpt-6.1-sol, high | **Default builder** (his call, 2026-10-20, after the 57 / 61 comparison): features and fixes, code, tests, commit. Rook pushes (no git credentials in its sandbox). |
+| Builder (Pip) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark), and builds when Rowan is out of limit or a second build runs at once: code, tests, commit, push. |
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
 | PC tester | claude2 | Sonnet, high | Downloads the released exe and drives it (WebView2 debug port + Playwright), reports what broke. |
 | Fallback | claude2 | Opus, high | Only when Sonnet has failed at a build. |
-| Research (**Rowan**) | Codex CLI (his ChatGPT Go plan) | gpt-6-luna | **Default for web research**, big or small. **Research only, never reviews** (his call, 2026-10-20: in a blind test on TODO 39 it missed both bugs Pip-review found); read-only sandbox, live web search. Runs in `~/codex-research`, never the repo. |
+| Research (**Rowan**) | Codex CLI (his ChatGPT Go plan) | gpt-6-luna | **Default for web research**, big or small. **Never reviews** (his call, 2026-10-20: in a blind test on TODO 39 it missed both bugs Pip-review found); read-only sandbox, live web search. Runs in `~/codex-research`, never the repo. |
 | Quick lookup (**Scout**) | Antigravity CLI (`agy`, his Google account, free) | Gemini 3.8 Flash | Web research (specs, libraries, how other apps do X), so Pip's limits go to builds. Runs in `~/agy-research`, never the repo. |
 
 ## The loop for one TODO item
@@ -85,8 +86,14 @@ $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format te
 # its own empty folder; never in the repo, never --dangerously-bypass-approvals-and-sandbox. Answer lands in last.txt.
 cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -m gpt-6-luna --skip-git-repo-check -s read-only \
   -c web_search=\"live\" -o last.txt - < question.txt > run.log 2>&1
+# Rowan-build (default builder, 2026-10-20): its own clone ProjectD-rowan, git folder ProjectD-rowan-git (Codex blocks any
+# folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
+# `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
+# Before a build: git -C ../ProjectD-rowan fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
+# Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
+codex.cmd exec -m gpt-6.1-sol -c model_reasoning_effort="high" -s workspace-write -C "E:/Project B/Claude/ProjectD-rowan" \n  --add-dir "E:/Project B/Claude/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \n  -c sandbox_workspace_write.network_access=true -o r.txt - < brief.txt > r.log 2>&1
 # Usage (headless): the newest ~/.codex/sessions/**/*.jsonl has "rate_limits": primary.used_percent over a
-# 30-day window (Go plan), resets_at in Unix time. 2 test runs = 0.0%.
+# 5-hour window and secondary over the week, resets_at in Unix time. Two S builds = ~6% of 5h, 1% of the week.
 
 # Quick lookup: Scout (Antigravity CLI). Reads https pages only (his settings.json allow rule), no shell,
 # writes only in its own folder; never run it in the repo, never with --dangerously-skip-permissions.
@@ -138,6 +145,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - Use ponytail lite; plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
 - Builders: tests (`npm.cmd test`, `npm.cmd run test:browser`) must pass; screenshots light + dark into `shots/`.
+- Rowan-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Pip-look.
 - Reviewers: `ponytail:ponytail-review` for a build's commits, `ponytail:ponytail-audit` for a whole-codebase pass; verified findings only, "severity · file:line · problem · fix", then "ship as is" or "fix first".
 
 ## Permissions
