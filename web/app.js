@@ -2,6 +2,9 @@
 import { h } from './dom.js';
 import * as CB from './cmdbar.js';
 import { buildCmdUI } from './cmdui.js';
+import * as SC from './shortcuts.js';
+import { openShortcuts } from './shortcutdlg.js';
+import { idbStore } from './idbstore.js';
 import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
@@ -35,6 +38,18 @@ import { partSource } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
+const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
+let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
+function showShortcuts() {
+  ui.cmdUI.close();
+  openShortcuts(ownBindings, async (draft) => {
+    const overrides = SC.differences(draft);
+    if (Object.keys(overrides).length) await shortcutStore.put({ id: 'own', overrides });
+    else await shortcutStore.del('own');
+    ownBindings = SC.bindings(draft); ownCommands = SC.commandsFor(ownBindings);
+    note('Shortcuts saved: aliases + keys apply now');
+  });
+}
 
 /** An SVG element: s('rect', { x: 1, class: 'a' }, children…). Text goes in as text. */
 function s(tag, attrs, ...kids) {
@@ -328,6 +343,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'E'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Format = [['Dimension style…', showDimStyle]];
+  menus.Tools = [['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
     ['Duplicate part', duplicateOne, 'Ctrl+D', () => !!selectedPlaced()], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
     ['Group', groupSel, 'Ctrl+G', () => selIdxs().length > 1 && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', () => selItems().some((x) => x.p.g)],
@@ -335,7 +351,7 @@ function buildMenus() {
   const drop = h('div', { class: 'dropdown', hidden: true, role: 'menu' });
   ui.dropdown = drop;
   const close = () => { drop.hidden = true; ui.menuBtns.forEach((b) => b.classList.remove('open')); };
-  ui.menuBtns = ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Help'].map((name) => {
+  ui.menuBtns = ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools', 'Help'].map((name) => {
     const unbuilt = !menus[name];
     const b = h('button', { class: 'menu' + (unbuilt ? ' off' : ''), type: 'button', 'data-menu': name, title: unbuilt ? 'Not built yet' : null, 'aria-disabled': unbuilt ? 'true' : null }, name);
     b.addEventListener('click', (e) => {
@@ -345,6 +361,8 @@ function buildMenus() {
       if (was || unbuilt) return;
       const items = typeof menus[name] === 'function' ? menus[name]() : menus[name];
       drop.replaceChildren(...items.map(([text, fn, hint, enabled, title, sep]) => {
+        const bound = CB.COMMANDS.find((c) => c.key === hint && hint);
+        if (bound) hint = ownBindings[bound.name].key;
         const item = h('button', { type: 'button', role: 'menuitem', class: sep ? 'sep' : null, title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
         item.addEventListener('click', () => { close(); fn(); });
         return item;
@@ -466,6 +484,7 @@ function guardClose() {
   if (w && w.onCloseRequested) w.onCloseRequested(async (event) => { event.preventDefault(); if (await mayClose()) await w.destroy(); });
   window.addEventListener('beforeunload', (e) => { if (dirtyDocs().length) { e.preventDefault(); e.returnValue = ''; } });
   document.addEventListener('keydown', (e) => {                      // in the exe a reload would drop every tab with no question
+    if (document.querySelector('.pop-back, .pdlg-back')) return;
     const reload = e.key === 'F5' || ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'r');
     if (reload && window.__TAURI__ && dirtyDocs().length) { e.preventDefault(); note('Reload is off while a drawing has unsaved changes. Save it first'); }
   }, true);
@@ -2730,7 +2749,7 @@ function objMenu(e) {
 
 /** The command bar (cmdui.js): the log the app writes to, the floating bar, the fade, the F2 history and the echo button. */
 function buildCommand() {
-  ui.cmdUI = buildCmdUI({ tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(CB.COMMANDS.find((x) => x.name === name)), canvas: () => ui.canvas, say: note });
+  ui.cmdUI = buildCmdUI({ commands: () => ownCommands, tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(ownCommands.find((x) => x.name === name)), canvas: () => ui.canvas, say: note });
   ui.hist = ui.cmdUI.hist; ui.prompt = ui.cmdUI.prompt; ui.cmd = ui.cmdUI.input;
   ui.keepMeas = h('button', { class: 'btn sm', type: 'button', hidden: true, 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
   ui.modAsk = h('span', { hidden: true, class: 'modask' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-yes', onclick: () => { if (modLive()) modAnswer(editable(), true); } }, 'Yes'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-no', onclick: () => { if (modLive()) modAnswer(editable(), false); } }, 'No'));
@@ -2771,15 +2790,9 @@ function cmdEnter(raw) {
     if (c === 'apply' || c === 'a') { applyContour(); return; }
     if (m) { const why = m[1][0] === 'd' ? setContourDist(m[2]) : setContourSteps(m[2]); renderContour(); renderCommand(); if (why) note(why); return; }
   }
-  if (curLay() && c === 'mx') { mirrorSel('x'); return; }
-  if (curLay() && c === 'my') { mirrorSel('y'); return; }
-  if (curLay() && (c === 'group' || c === 'g')) { groupSel(); return; }
-  if (curLay() && (c === 'ungroup' || c === 'u')) { ungroupSel(); return; }
-  if (curLay() && c === 'lock') { lockSel(true); return; }
-  if (curLay() && c === 'unlock') { lockSel(false); return; }
   if (state.tool === 'balloon' && editable() && /^\d+$/.test(c)) { balNextTyped(c); return; }
   if (state.tool === 'dimension' && state.dimType === 'linear' && state.dim.pts.length === 2 && /^(h|horizontal|v|vertical)$/.test(c)) { state.dim.force = c[0]; note('Linear: ' + (c[0] === 'h' ? 'horizontal' : 'vertical') + '. ' + dimPrompt()); paintOverlay(); return; }
-  const cmd = CB.resolve(c, curLay() ? 'layout' : 'draw');
+  const cmd = CB.resolve(c, curLay() ? 'layout' : 'draw', ownCommands);
   if (cmd) runCommand(cmd);
   else note('Unknown command: ' + c);
 }
@@ -2806,6 +2819,7 @@ const DO = {
   redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
   history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
+  shortcuts: () => showShortcuts(),
 };
 /** A command of the table started by its name (typed in the bar, a history line, Space on the drawing). */
 function runCommand(cmd) {
@@ -4451,8 +4465,6 @@ function applyLength() {
 }
 
 // ---- drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
-const DRAW_ALIAS = { l: 'line', line: 'line', pl: 'polyline', pline: 'polyline', polyline: 'polyline', r: 'rect', rec: 'rect', rect: 'rect', rectangle: 'rect', rr: 'rrect', rrect: 'rrect',
-  c: 'circle', circle: 'circle', el: 'ellipse', ellipse: 'ellipse', a: 'arc', arc: 'arc', t: 'text', text: 'text' };
 
 /** An empty tab becomes a drawing to draw in (mm, one layer "0"); its first change makes it dirty. */
 function ensureScratch(d) {
@@ -4527,7 +4539,7 @@ function drawCommit(d, kind, shapes) {
 function drawTyped(raw) {
   if (!drawLive()) return false;
   const T = state.draw, word = raw.trim().toLowerCase();
-  if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word) && DRAW_ALIAS[word] !== T.kind) { const cmd = CB.resolve(word, 'draw'); if (cmd) { runCommand(cmd); return true; } }       // a command typed between two shapes
+  if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word)) { const cmd = CB.resolve(word, 'draw', ownCommands); if (cmd && (TOOL_OF[cmd.name] || cmd.name) !== T.kind) { runCommand(cmd); return true; } }       // a command typed between two shapes
   state.msg = null;
   drawApply(DR.toolType(T, raw));
   return true;
@@ -5039,7 +5051,7 @@ function textTyped(raw) {
   const inp = DR.parseInput(raw);
   if (inp.kind === 'xy' && !inp.rel) { const f = d.factor; textOpen(d, [inp.x / f, inp.y / f]); return; }
   if (/^(height|justify|style)$/.test(c)) { note('Type it with a value: Height 12, Justify Centre, Style Mono'); return; }
-  const cmd = CB.resolve(c, 'draw');
+  const cmd = CB.resolve(c, 'draw', ownCommands);
   if (cmd && cmd.name !== 'text') { runCommand(cmd); return; }
   note(`"${raw.trim()}" is not an option here. Click to place, or type x,y, Height 12, Left / Centre / Right, Style Mono, Bold`);
 }
@@ -5254,7 +5266,6 @@ function layoutKey(e, mod, k) {
   if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redoLay(); else undoLay(); return true; }
   if (mod && !e.altKey && !e.shiftKey && k === 'y') { e.preventDefault(); redoLay(); return true; }
   if (!selectedPlaced()) return false;
-  if (mod && !e.altKey && k === 'g') { e.preventDefault(); if (e.shiftKey) ungroupSel(); else groupSel(); return true; }
   if (mod && !e.altKey && !e.shiftKey && k === 'd') { e.preventDefault(); duplicateOne(); return true; }
   if (e.key === 'Delete' && !mod) { e.preventDefault(); deletePlaced(); return true; }
   const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
@@ -5313,14 +5324,13 @@ function editKey(e) {
     else if (d && d.sel.size) setSel(d, new Set());
     return;
   }
-  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.key === '1' || e.code === 'Digit1' || e.code === 'Numpad1')) { e.preventDefault(); toggleProps(); return; }
   if (e.target && e.target.closest && e.target.closest('input, textarea, select')) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
-  if (mod && !e.altKey && !e.shiftKey && (k === '0' || e.code === 'Digit0' || e.code === 'Numpad0')) { e.preventDefault(); fit(); return; }
+  const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
+  if (own) { e.preventDefault(); runCommand(own); return; }
   const dialog = !!document.querySelector('.pop-back, .pdlg-back'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (cmpKey(e, mod)) return;
-  if (mod && !e.altKey && !e.shiftKey && k === 'a') { e.preventDefault(); selectAll(); return; }
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
   if (layoutKey(e, mod, k)) return;
@@ -6171,7 +6181,15 @@ function cmpCommand(c) {
   ui.prompt.textContent = state.msg ? state.msg : n ? `Zoom to a difference: click it in the panel (1-${n}):` : 'Line up, Tolerance and Show differences are in the panel:';
 }
 
-function init() {
+async function init() {
+  guardClose();
+  let shortcutError = '';
+  try {
+    const saved = (await shortcutStore.all()).find((r) => r.id === 'own');
+    const loaded = SC.bindings(saved?.overrides);
+    if (SC.clashes(loaded).length) shortcutError = 'Saved shortcuts have conflicts; defaults are active. Import a corrected PGP to change them.';
+    else { ownBindings = loaded; ownCommands = SC.commandsFor(loaded); }
+  } catch (err) { shortcutError = 'Could not load shortcuts; defaults are active: ' + (err.message || err); }
   const app = document.getElementById('app');
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();
@@ -6185,7 +6203,6 @@ function init() {
     balDock, cmdLog, buildStatus()));
   renderTabs();
   attachDrop();
-  guardClose();
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
@@ -6204,6 +6221,7 @@ function init() {
   syncFields(); applyKind();
   update(true);
   setTool('select');
+  if (shortcutError) note(shortcutError);
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);

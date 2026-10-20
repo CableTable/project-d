@@ -54,7 +54,7 @@ AutoCAD-style additions (his picks, 2026-10-17):
 31. ✅ (built, PR #8; in the selection bar) **Area and perimeter** of a closed shape (for ink and cost).
 32. ✅ (built, PR #9) **Autosave and recovery** after a crash.
 33. ✅ (built, PR #8; DXFs and layouts, in the app) **Recent files** on the File menu.
-34. **Own keyboard shortcuts**, like AutoCAD's PGP aliases.
+34. ✅ (built, session 10, R12 option 2) **Own keyboard shortcuts**: Tools → Shortcuts…, typed aliases and keys, clash swaps, per-PC storage and .pgp import / export.
 35. ✅ (built, PR #9) **Contour**, CorelDRAW style: pick an outline, inside or outside, a distance and a number of steps; corners sharp
     or rounded (his choice per use).
 

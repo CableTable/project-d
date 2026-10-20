@@ -716,3 +716,50 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
 @media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* narrow: the echo is its icon only */
 @media (max-width: 1100px) { .status .cb-echo { display: none; } }       /* 1024 px: the status bar is as before TODO 47, so it fits with CI fonts (typing still opens the bar) */
+
+/* TODO 34: R12 Shortcuts, using the same tokens as the mock-up. */
+.sc-back { background: color-mix(in srgb, var(--canvas) 75%, transparent); }
+.pop-dialog.sc-dialog { width: min(960px, 100%); height: min(690px, calc(100vh - 32px)); padding: 0; gap: 0; border-radius: 8px; box-shadow: 0 12px 32px var(--shadow); overflow: hidden; }
+.sc-head { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); }
+.sc-title { display: flex; align-items: center; gap: 8px; }
+.sc-title b { font-size: 14px; }
+.sc-head p { font-size: 12px; color: var(--muted); margin: 5px 0 0; line-height: 1.5; }
+.sc-filters { display: flex; gap: 8px; padding: 12px 18px; align-items: center; }
+.sc-filters input, .sc-filters select { height: 28px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); color: var(--text); font: 12px var(--sans); padding: 0 8px; min-width: 0; }
+.sc-filters input { flex: 1; }
+.sc-search { display: flex; flex: 1; align-items: center; gap: 7px; height: 28px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 0 8px; color: var(--muted); }
+.sc-search input { width: 100%; border: 0; background: transparent; padding: 0; }
+.sc-count { color: var(--muted); font-size: 12px; min-width: 78px; text-align: right; }
+.sc-tablewrap { flex: 1; min-height: 0; overflow: auto; border-block: 1px solid var(--line); }
+.sc-dialog table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.sc-dialog th { position: sticky; top: 0; z-index: 1; background: var(--app); text-align: left; font-size: 11px; font-weight: 600; color: var(--muted); height: 29px; border-bottom: 1px solid var(--line); }
+.sc-dialog th:first-child, .sc-dialog td:first-child { padding-left: 18px; }
+.sc-dialog th:last-child, .sc-dialog td:last-child { padding-right: 14px; }
+.sc-dialog td { height: 36px; border-bottom: 1px solid var(--line); padding: 4px 8px 4px 0; }
+.sc-category { color: var(--muted); font-size: 12px; }
+.sc-command { font-weight: 500; }
+.sc-scope { color: var(--muted); font-size: 11px; margin-left: 6px; }
+.sc-edited { background: var(--sel); box-shadow: inset 2px 0 var(--accent); }
+.sc-dot { color: var(--accent); font-size: 11px; margin-left: 7px; }
+.sc-alias, .sc-key { width: 100%; height: 26px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 0 7px; text-align: left; font: 12px var(--mono); color: var(--text); }
+.sc-key { color: var(--muted); cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.sc-key.sc-assigned { color: var(--text); }
+.sc-key:disabled { background: var(--app); cursor: default; }
+.sc-key.sc-listening { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; color: var(--accent); background: var(--sel); }
+.sc-icon { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; padding: 0; border: 0; background: transparent; color: var(--muted); border-radius: var(--r); cursor: pointer; font-size: 18px; }
+.sc-dialog button:focus-visible, .sc-dialog select:focus-visible, .sc-dialog input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sc-warning { background: color-mix(in srgb, var(--mark) 7%, var(--panel)); color: var(--mark); }
+.sc-conflict td { background: color-mix(in srgb, var(--mark) 7%, var(--panel)); }
+.sc-conflict .sc-alias, .sc-conflict .sc-key { border-color: var(--mark); color: var(--mark); }
+.sc-warning-line { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+.sc-warning .btn { height: 24px; font-size: 11px; }
+.sc-warning[hidden], .sc-dialog tr[hidden] { display: none; }
+.sc-note { padding: 8px 18px; color: var(--muted); font-size: 11px; display: flex; gap: 14px; align-items: center; }
+.sc-changed { color: var(--accent); }
+.sc-reserved { display: inline-flex; align-items: center; gap: 4px; }
+.sc-changed.warn { color: var(--mark); }
+.sc-status { font-size: 12px; line-height: 1.5; margin: 8px 18px 0; color: var(--mark); }
+.sc-status:empty { display: none; }
+.sc-foot { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid var(--line); }
+.sc-foot .btn { height: 28px; font-size: 12px; }
+@media (max-width: 700px) { .sc-tablewrap table { min-width: 720px; } .sc-note { flex-wrap: wrap; gap: 6px; } .sc-foot { flex-wrap: wrap; } }

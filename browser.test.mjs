@@ -209,7 +209,7 @@ try {
   });
 
   await step('layout: menu bar, rail tools in order, layers', async () => {
-    assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Help']);
+    assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools', 'Help']);
     const labels = await page.locator('nav[aria-label=Tools] button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')));
     assert.equal(labels.length, 20); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['Parts', 'Marks', 'Dimensions']);
@@ -5467,7 +5467,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   const styleStore = () => page.evaluate(() => JSON.parse(localStorage.getItem('pd-dimstyles') || 'null'));
   await step('dimension styles: the new Format menu opens the dialog with the Standard style (arrow 2.50, text 3.50, Decimals 0.00, gap 0.80, mm, Above), a live preview and a caption', async () => {
     await openGrips(dimDoc(), 'styles.dxf');
-    assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Help']);
+    assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools', 'Help']);
     await openStyle();
     assert.deepEqual(await styleFields(), { arrow: '2.50', text: '3.50', dp: '2', gap: '0.80', units: 'ds-units-mm', pos: 'ds-pos-above' });
     assert.equal(await t('ds-preset').inputValue(), 'Standard'); assert.deepEqual(await t('ds-preset').locator('option').allTextContents(), ['Standard']);
@@ -6848,6 +6848,118 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     } finally {
       await page.evaluate(() => { delete window.__TAURI__; delete window.__log; });
     }
+  });
+
+  await step('TODO 34 Shortcuts: aliases + keys, capture, clashes, Swap, persistence and native PGP round trip', async () => {
+    const scCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await scCtx.newPage();
+    p.on('pageerror', (err) => errors.push(String(err)));
+    const dialog = p.getByRole('dialog', { name: 'Shortcuts', exact: true });
+    const alias = (name) => dialog.getByRole('textbox', { name: name + ' aliases', exact: true });
+    const key = (name) => dialog.getByRole('button', { name: name + ' key', exact: true });
+    const save = () => dialog.getByRole('button', { name: 'Save', exact: true }).click();
+    const command = async (word, accept = 'Enter') => {
+      await p.locator('[data-testid=cmd-echo]').click();
+      await p.locator('[data-testid=cmd-input]').fill(word); await p.locator('[data-testid=cmd-input]').press(accept);
+    };
+    const open = async () => {
+      await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Shortcuts…' }).click(); await dialog.waitFor();
+    };
+    const shot = async (state) => {
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme);
+        await p.screenshot({ path: `${shotDir}/R12-built-${state}-${theme}.png` });
+      }
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    };
+    try {
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
+      await open();
+      assert.equal(await dialog.locator('tr[data-command]').count(), 50);
+      assert.equal(await dialog.locator('.sc-count').textContent(), '50 commands');
+      await dialog.getByRole('searchbox').fill('contour'); assert.equal(await dialog.locator('.sc-count').textContent(), '1 commands');
+      await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
+      assert.equal(await dialog.locator('tr[data-command]:visible').count(), 5);
+      await dialog.getByLabel('Category', { exact: true }).selectOption('');
+      await alias('Contour').fill('co, ww');
+      await key('Contour').click(); await p.keyboard.press('Control+Alt+w');
+      assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
+      await key('Contour').click(); await p.keyboard.press('Escape');
+      assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W', 'capture Esc keeps old key and leaves dialog open');
+      assert.equal(await dialog.locator('.sc-edited').count(), 1);
+      await shot('A');
+      await alias('Contour').fill('co, mi'); await key('Contour').click(); await p.keyboard.press('Control+g');
+      assert.match(await dialog.textContent(), /Alias “mi” is used by Mirror/);
+      assert.match(await dialog.textContent(), /Key “Ctrl\+G” is used by Group/);
+      assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
+      await key('Contour').click(); await p.keyboard.press('Control+s');
+      assert.match(await dialog.locator('.sc-status').textContent(), /Reserved for Save/);
+      assert.equal(await key('Contour').textContent(), 'Ctrl+G');
+      await shot('C');
+      await dialog.getByRole('button', { name: 'Swap alias clash' }).click();
+      assert.equal(await alias('Contour').inputValue(), 'mi'); assert.equal(await alias('Mirror').inputValue(), 'co, ww');
+      await dialog.getByRole('button', { name: 'Swap key clash' }).click();
+      assert.equal(await key('Contour').textContent(), 'Ctrl+G'); assert.equal(await key('Group').textContent(), 'Ctrl+Alt+W');
+      assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
+      await dialog.getByRole('button', { name: 'Reset Mirror', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Cancel alias clash' }).click();
+      assert.equal(await alias('Mirror').inputValue(), 'co, ww', 'Cancel undoes a row reset that clashes with another own alias');
+      await dialog.getByRole('button', { name: 'Reset Group', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Cancel key clash' }).click();
+      assert.equal(await key('Group').textContent(), 'Ctrl+Alt+W', 'Cancel restores the reset key, keeping the other command alone');
+      await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
+      await alias('Contour').fill('co, ww'); await key('Contour').click(); await p.keyboard.press('Control+Alt+w');
+      await alias('Contour').fill('co, mi'); await dialog.getByRole('button', { name: 'Cancel alias clash' }).click();
+      assert.equal(await alias('Contour').inputValue(), 'co, ww', 'Cancel restores previous alias cell');
+      await key('Contour').click(); await p.keyboard.press('w');
+      assert.match(await dialog.locator('.sc-status').textContent(), /command bar/);
+      assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
+      // A failed storage write keeps the dialog and does not activate its draft.
+      await p.evaluate(() => {
+        window.__scTx = IDBDatabase.prototype.transaction;
+        IDBDatabase.prototype.transaction = function (...args) { if (args[1] === 'readwrite' && this.name === 'project-d-shortcuts') throw new Error('disk full'); return window.__scTx.apply(this, args); };
+      });
+      await save(); await dialog.getByRole('status').filter({ hasText: 'Save failed: disk full' }).waitFor();
+      await p.evaluate(() => { IDBDatabase.prototype.transaction = window.__scTx; delete window.__scTx; });
+      await save(); await dialog.waitFor({ state: 'hidden' });
+      await command('ww', 'Space');
+      assert.equal((await p.locator('[data-testid=tool-chip]').textContent()).trim(), 'Tool: Contour');
+      await command('select'); await p.keyboard.press('Control+Alt+w');
+      assert.equal((await p.locator('[data-testid=tool-chip]').textContent()).trim(), 'Tool: Contour');
+      await command('shortcuts'); await dialog.waitFor();
+      await p.evaluate(() => {
+        window.__scFiles = { text: '', writes: 0, save: [], open: [] };
+        window.__TAURI__ = {
+          dialog: { save: async (o) => { window.__scFiles.save.push(o); return 'C:/shortcuts'; }, open: async (o) => { window.__scFiles.open.push(o); return 'C:/shortcuts.pgp'; } },
+          fs: { exists: async () => false, writeTextFile: async (path, text) => { window.__scFiles.path = path; window.__scFiles.text = text; window.__scFiles.writes++; }, readFile: async () => new TextEncoder().encode(window.__scFiles.text + '\nXX, *UNKNOWN\n;KEY UNKNOWN, F6\n; ignored comment') },
+        };
+      });
+      await dialog.getByRole('button', { name: 'Export .pgp', exact: true }).click();
+      await p.waitForFunction(() => window.__scFiles.writes === 1);
+      const exported = await p.evaluate(() => window.__scFiles);
+      assert.equal(exported.path, 'C:/shortcuts.pgp'); assert.equal(exported.save[0].defaultPath, 'shortcuts.pgp');
+      assert.match(exported.text, /WW,        \*CONTOUR/); assert.match(exported.text, /;KEY CONTOUR, Ctrl\+Alt\+W/);
+      await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Import .pgp', exact: true }).click();
+      await dialog.getByRole('status').filter({ hasText: '2 lines skipped' }).waitFor();
+      assert.equal(await alias('Contour').inputValue(), 'co, ww'); assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
+      assert.deepEqual(await p.evaluate(() => window.__scFiles.open[0].filters[0].extensions), ['pgp']);
+      await save(); await dialog.waitFor({ state: 'hidden' });
+      await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      await open(); assert.equal(await alias('Contour').inputValue(), 'co, ww'); assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
+      const stored = await p.evaluate(async () => {
+        const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-shortcuts', 'settings', 'test').all();
+      });
+      assert.deepEqual(stored, [{ id: 'own', overrides: { contour: { alias: ['co', 'ww'], key: 'Ctrl+Alt+W' } } }]);
+      await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+      await open(); assert.equal(await alias('Contour').inputValue(), 'co, ww', 'Cancel leaves saved settings alone');
+      await dialog.getByRole('button', { name: 'Reset all', exact: true }).click(); await save(); await dialog.waitFor({ state: 'hidden' });
+      await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' }); await open();
+      assert.equal(await alias('Contour').inputValue(), 'co'); assert.equal(await key('Contour').textContent(), 'Press keys…');
+    } finally { await scCtx.close(); }
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
