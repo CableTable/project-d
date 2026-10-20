@@ -52,7 +52,7 @@ export function geo(s) {
 }
 const pointAt = (g, f) => (g.line ? [g.a[0] + (g.b[0] - g.a[0]) * f, g.a[1] + (g.b[1] - g.a[1]) * f] : [g.c[0] + g.r * Math.cos(g.a0 + g.sw * f), g.c[1] + g.r * Math.sin(g.a0 + g.sw * f)]);
 /** The part of a segment from fraction f0 to f1 (of its length). */
-function subSeg(s, f0, f1) {
+export function subSeg(s, f0, f1) {
   if (f0 <= 1e-9 && f1 >= 1 - 1e-9) return s;
   const g = geo(s);
   let a = f0 <= 1e-9 ? s.a : pointAt(g, f0), b = f1 >= 1 - 1e-9 ? s.b : pointAt(g, f1);
@@ -348,7 +348,7 @@ function subPath(P, u0, u1) {
 }
 
 /** A piece of a path back as a shape of the kind the source was. */
-function shapeOfPiece(segs, srcType) {
+export function shapeOfPiece(segs, srcType) {
   if (!segs.length) return null;
   const len = segs.reduce((a, s) => a + dist(s.a, s.b), 0);
   if (len < 1e-7) return null;

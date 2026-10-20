@@ -9,6 +9,7 @@ import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import * as UF from './unitfix.js';
+import * as CL from './cleanup.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
@@ -345,7 +346,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'E'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Format = [['Dimension style…', showDimStyle]];
-  menus.Tools = [['Shortcuts…', showShortcuts, 'Aliases + keys']];
+  menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
     ['Duplicate part', duplicateOne, 'Ctrl+D', () => !!selectedPlaced()], ['Mirror X', () => mirrorSel('x'), null, () => !!selectedPlaced()], ['Mirror Y', () => mirrorSel('y'), null, () => !!selectedPlaced()],
     ['Group', groupSel, 'Ctrl+G', () => selIdxs().length > 1 && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', () => selItems().some((x) => x.p.g)],
@@ -3268,7 +3269,7 @@ function attachCanvasEvents() {
     zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y);
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('.zoombox, .contourpanel, .balsheets, .balpic')) return;
+    if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
     if (e.button === 0 && gh0 && curLay() && !state.setlen && state.tool !== 'pan' && !curLay().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
@@ -5475,6 +5476,8 @@ function buildDrawingSection() {
   ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { state.gapShow = !state.gapShow; paintOverlay(); renderEdit(); } }, 'Show');
   ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Move the ends of each gap together, to the middle between them (one undo step)', onclick: joinTinyGaps }, 'Join');
   ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin);
+  ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
+  ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', onclick: removeDuplicates }, 'Remove duplicates…');
   ui.realLen = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'real-length', 'aria-label': 'Real length in mm', placeholder: 'real length, mm' });
   ui.realLen.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyLength(); } });
   ui.measured = h('span', { class: 'lbl mono', 'data-testid': 'measured' });
@@ -5492,6 +5495,7 @@ function buildDrawingSection() {
       tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
     ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
+    h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount),
     h('div', { class: 'lbl sizelbl', title: 'The part itself, without kept dimensions. Set length and a typed size scale the drawing by it' }, 'Whole drawing'),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
@@ -6118,10 +6122,11 @@ function gapTolTyped() {
   try { localStorage.setItem('pd-gaptol', String(v)); } catch { /* ignore */ }
   paintOverlay(); renderEdit();
 }
-function joinTinyGaps() {
-  const d = editable(), gaps = d && gapsOf(d);
+function joinTinyGaps(whole = false) {
+  const d = editable(), ed = d && (whole === true ? CL.checkIndex(d.raw) : edIndex(d));
+  const gaps = ed && Ed.findGaps(ed, state.gapMm / d.factor).filter((g) => g.ends.every((e) => !lockedEnt(d, e.e)));
   if (!gaps || !gaps.length) return;
-  const r = Ed.joinGaps(d.raw, d.ed, gaps);
+  const r = Ed.joinGaps(d.raw, ed, gaps);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
   const left = gapsOf(d) || [];
@@ -6129,11 +6134,77 @@ function joinTinyGaps() {
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
+function duplicatesOf(d) {
+  if (!d.duplicates || d.duplicates.source !== d.raw.entities) d.duplicates = { source: d.raw.entities, result: CL.removeDuplicates(d.raw) };
+  return d.duplicates.result;
+}
+function removeDuplicates() {
+  const d = editable();
+  if (!d) return;
+  const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
+  if (!r.count) { note('No removable duplicates / overlaps (locked layers are kept)'); return; }
+  commit(d, r, 'Remove duplicates / overlaps');
+  note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
+}
+
+function showPreflight() {
+  if (!editable()) { note('Preflight works on a drawing tab: open a drawing first'); return; }
+  ui.cmdUI.close();
+  if (!ui.preflight) {
+    ui.preflight = h('section', { class: 'pop preflightpanel', role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Preflight', 'data-testid': 'preflight' });
+    ui.preflight.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ui.preflight.hidden = true; e.stopPropagation(); } });
+    ui.canvas.append(ui.preflight);
+  }
+  ui.preflight.hidden = false;
+  recheckPreflight();
+}
+function recheckPreflight() {
+  const d = editable();
+  if (!d || !ui.preflight || ui.preflight.hidden) return;
+  const rows = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, sheetW: state.sheetW, sheetH: state.sheetH });
+  ui.preflightDoc = d; ui.preflightSource = d.raw.entities;
+  const button = (label, id, fn, disabled = false) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, disabled, onclick: fn }, label);
+  const select = (id) => {
+    const fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, sheetW: state.sheetW, sheetH: state.sheetH }).find((r) => r.id === id);
+    setTool('select');
+    const offenders = fresh.offenders.filter((i) => !lockedEnt(d, i));
+    setSel(d, new Set(offenders));
+    note(`Preflight: ${fresh.label} · ${offenders.length} entities selected` + (offenders.length < fresh.offenders.length ? ' (locked layers skipped)' : ''));
+  };
+  const fix = (id) => {
+    if (id === 'duplicates') removeDuplicates();
+    else if (id === 'gaps') joinTinyGaps(true);
+    else {
+      const wide = CL.preflight(d.raw, { factor: d.factor }).find((r) => r.id === 'wide');
+      const offenders = new Set(wide.offenders.filter((i) => !lockedEnt(d, i)));
+      if (offenders.size) commit(d, CL.hairline(d.raw, offenders, d.locked), 'Preflight Hairline');
+    }
+    recheckPreflight();
+  };
+  ui.preflightNote = h('p', { class: 'lbl', 'data-testid': 'preflight-note' }, 'Whole drawing + active sheet · checked just now. Cut layer: name contains “cut” (any case).');
+  ui.preflight.replaceChildren(
+    h('div', { class: 'pfhead' }, h('strong', {}, 'Preflight'), h('span', { class: 'chip', 'data-testid': 'preflight-flagged' }, `${rows.filter((r) => r.count).length} checks flagged`)),
+    h('div', { class: 'pfbody' }, ui.preflightNote,
+      h('div', { class: 'pfrow pfcols', 'aria-hidden': 'true' }, ['Check', 'Count', 'Select', 'Fix'].map((label) => h('span', {}, label))),
+      rows.map((r) => h('div', { class: 'pfrow', 'data-testid': `preflight-${r.id}` }, h('span', {}, r.label),
+        h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count),
+        button('Select', `preflight-${r.id}-select`, () => select(r.id), !r.count),
+        r.fix ? button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count) : h('span', { class: 'pfmanual' }, 'Manual'))),
+      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`),
+      h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', recheckPreflight), button('Close', 'preflight-close', () => { ui.preflight.hidden = true; })))
+  );
+}
+
 function renderEdit() {
   if (!ui.drawSec) return;
   renderStatus();                                          // the status bar's layer follows the selection
   renderBalloons();
   const d = curDoc(), on = !!editable(), L = state.setlen, lib = state.panel === 'library';
+  if (ui.preflight && !ui.preflight.hidden) {
+    if (!on) ui.preflight.hidden = true;
+    else if (ui.preflightDoc !== d) recheckPreflight();
+    else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
+  }
   ui.drawSec.hidden = !on || lib; ui.outSec.hidden = !on || lib;
   if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
@@ -6175,6 +6246,9 @@ function renderEdit() {
   ui.gapCount.textContent = gl ? String(gl.length) : '…';
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
   ui.gapShow.classList.toggle('on', state.gapShow); ui.gapShow.disabled = ui.gapJoin.disabled = !gl || !gl.length;
+  const duplicates = duplicatesOf(d);
+  ui.duplicateCount.textContent = `${duplicates.count} found`;
+  ui.duplicateRemove.disabled = !duplicates.count;
   ui.lenRow.hidden = !(L && L.measured);
   if (L && L.measured) ui.measured.textContent = fmtSize(L.measured) + ' mm measured';
 }

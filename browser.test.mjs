@@ -5041,6 +5041,73 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.keyboard.press('Control+1'); await closeTabs(/./);
   });
 
+  const cleanupDrawing = () => {
+    const d = newDoc(); addLayer(d, 'Laser CUT'); addLayer(d, 'Artwork');
+    addEntities(d, dxfLine(20, 20, 50, 20, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(20, 20, 50, 20, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(40, 20, 70, 20, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(80, 30, 100, 30, { layer: 'Laser CUT', lw: 5 }),
+      dxfLine(100.005, 30, 120, 30, { layer: 'Laser CUT', lw: 5 }),
+      dxfCircle(90, 65, 10, { layer: 'Artwork', lw: 50 }),
+      dxfText(20, 75, 4, 'JOB 14', { layer: 'Artwork' }), dxfCircle(-10, 10, 2, { lw: 5 }));
+    return writeDxf(d);
+  };
+  await step('Remove duplicates + undo: count redundant entities and trim partial overlaps (TODO 49)', async () => {
+    await openGrips(cleanupDrawing(), 'cleanup.dxf');
+    assert.equal(await t('duplicate-count').textContent(), '2 found');
+    const before = await savedDoc(), labels = await histLabels();
+    await t('duplicate-remove').click(); await frames();
+    assert.equal(await t('duplicate-count').textContent(), '0 found');
+    const cleaned = await savedDoc();
+    assert.equal(cleaned.entities.length, before.entities.length - 1);
+    assert.equal(fieldOf(cleaned.entities[1], 10), 50, 'partially redundant line starts at 50');
+    assert.equal((await histLabels()).length, labels.length + 1, 'one undo step');
+    await t('undo').click(); await frames();
+    assert.equal(await t('duplicate-count').textContent(), '2 found');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'undo restores every original');
+  });
+  await step('Preflight open, Select, Fix, Recheck and Close, light/dark screenshots (TODO 50)', async () => {
+    await openGrips(cleanupDrawing(), 'preflight.dxf');
+    await t('gap-tol').fill('0.01'); await t('gap-tol').press('Enter');
+    await menuItem('Tools', 'Preflight…');
+    assert.equal(await t('preflight').isVisible(), true);
+    assert.equal(await t('preflight').locator('.pfrow:not(.pfcols)').count(), 6);
+    assert.match(await t('preflight-note').textContent(), /name contains “cut” \(any case\)/);
+    assert.equal(await t('preflight-duplicates-count').textContent(), '2');
+    assert.equal(await t('preflight-gaps-count').textContent(), '1');
+    assert.equal(await t('preflight-text-count').textContent(), '1');
+    assert.equal(await t('preflight-wide-count').textContent(), '1');
+    assert.deepEqual(await t('preflight').locator('.pfmanual').allTextContents(), ['Manual', 'Manual', 'Manual']);
+    await t('preflight-duplicates-select').click();
+    assert.equal(await t('sel-count').textContent(), '2 selected');
+    assert.equal(await t('preflight').isVisible(), true, 'Select keeps the canvas panel open');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: shotDir + '/s11-50-' + theme + '.png' });
+    }
+    await menuItem('View', 'Theme: light');
+    await savedDoc();
+    await openPdf();
+    assert.match(pdfText(await downloaded(() => t('pdf-go').click())), /^%PDF-/, 'preflight warnings never block PDF output');
+    await t('preflight-duplicates-fix').click(); await frames();
+    assert.equal(await t('preflight-duplicates-count').textContent(), '0');
+    await t('preflight-gaps-select').click(); assert.equal(await t('sel-count').textContent(), '2 selected');
+    await t('preflight-gaps-fix').click(); await frames();
+    assert.equal(await t('preflight-gaps-count').textContent(), '0');
+    await t('preflight-wide-select').click(); assert.equal(await t('sel-count').textContent(), '1 selected');
+    await t('preflight-wide-fix').click(); await frames();
+    assert.equal(await t('preflight-wide-count').textContent(), '0');
+    await t('undo').click(); await frames();
+    assert.match(await t('preflight-note').textContent(), /Drawing changed/);
+    await t('preflight-recheck').click(); assert.equal(await t('preflight-wide-count').textContent(), '1');
+    await t('preflight-open-select').click(); assert.ok(/selected/.test(await t('sel-count').textContent()));
+    await t('preflight-text-select').click(); assert.equal(await t('sel-count').textContent(), '1 selected');
+    await t('preflight-offsheet-select').click(); assert.ok(/selected/.test(await t('sel-count').textContent()));
+    await t('preflight-close').click(); assert.equal(await t('preflight').isVisible(), false);
+    await menuItem('Tools', 'Preflight…'); await t('preflight-recheck').focus(); await page.keyboard.press('Escape');
+    assert.equal(await t('preflight').isVisible(), false);
+    await closeTabs(/./);
+  });
   await step('Background unit fix: chosen Background scales size and a nonzero corner by ×25.4; Ctrl+Z restores both', async () => {
     const doc = newDoc(); addEntities(doc, dxfLine(10, 20, 30, 20));
     await openGrips(writeDxf(doc), 'background-unit-fix.dxf');
