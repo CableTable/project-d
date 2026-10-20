@@ -1,7 +1,7 @@
 // The floating command bar's pure parts (TODO 47, mock-up R12b Option B): the command table, alias lookup, autocomplete ranking,
 // the option chips of a prompt, which keys open the bar, and where the bar sits. No DOM here.
 
-/** [name, category, description, aliases, where ('draw' = a drawing tab, 'layout' = a layout tab, '' = both)] */
+/** [name, category, description, aliases, where ('draw' | 'layout' | '' = both), default key (optional)] */
 const TABLE = [
   ['line', 'Draw', 'Straight segments', ['l'], 'draw'],
   ['polyline', 'Draw', 'Connected segments in one object', ['pl', 'pline', 'p'], 'draw'],
@@ -31,8 +31,8 @@ const TABLE = [
   ['rotate', 'Layout', 'Turn the selected part about a pivot', ['r', 'ro'], 'layout'],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', [], 'layout'],
-  ['group', 'Layout', 'Group the selected parts', ['g'], 'layout'],
-  ['ungroup', 'Layout', 'Split a group', ['u'], 'layout'],
+  ['group', 'Layout', 'Group the selected parts', ['g'], 'layout', 'Ctrl+G'],
+  ['ungroup', 'Layout', 'Split a group', ['u'], 'layout', 'Ctrl+Shift+G'],
   ['lock', 'Layout', 'Lock the selected parts', [], 'layout'],
   ['unlock', 'Layout', 'Unlock the selected parts', [], 'layout'],
   ['mx', 'Layout', 'Mirror the selected part left to right', [], 'layout'],
@@ -40,38 +40,39 @@ const TABLE = [
   ['newlayout', 'Layout', 'A new layout tab', ['nl'], ''],
   ['library', 'Layout', 'Open the Parts library', ['lib'], 'layout'],
   ['open', 'File', 'Open a DXF or PDF', [], ''],
-  ['save', 'File', 'Save the open tab', [], ''],
-  ['saveas', 'File', 'Save under another name', [], ''],
+  ['save', 'File', 'Save the open tab', [], '', 'Ctrl+S'],
+  ['saveas', 'File', 'Save under another name', [], '', 'Ctrl+Shift+S'],
   ['pdf', 'File', 'PDF / Print', ['print'], ''],
   ['compare', 'File', 'Compare two drawings', ['cmp'], ''],
-  ['undo', 'Edit', 'Take back the last step', [], ''],
-  ['redo', 'Edit', 'Bring back the step taken back', [], ''],
+  ['undo', 'Edit', 'Take back the last step', [], '', 'Ctrl+Z'],
+  ['redo', 'Edit', 'Bring back the step taken back', [], '', 'Ctrl+Y / Ctrl+Shift+Z'],
   ['history', 'Edit', 'Undo history: go back to any step', ['uh'], ''],
-  ['selectall', 'Edit', 'Select everything', ['all'], ''],
-  ['delete', 'Edit', 'Delete the selection', ['del', 'erase'], ''],
-  ['fit', 'View', 'Fit the view to the window', ['z', 'zoom', 'ze'], ''],
+  ['selectall', 'Edit', 'Select everything', ['all'], '', 'Ctrl+A'],
+  ['delete', 'Edit', 'Delete the selection', ['del', 'erase'], '', 'Delete'],
+  ['fit', 'View', 'Fit the view to the window', ['z', 'zoom', 'ze'], '', 'Ctrl+0'],
   ['rulers', 'View', 'Show or hide the rulers', [], ''],
-  ['properties', 'View', 'Show or hide the Properties bar', ['props'], ''],
+  ['properties', 'View', 'Show or hide the Properties bar', ['props'], '', 'Ctrl+1'],
+  ['shortcuts', 'Edit', 'Own typed aliases and key shortcuts', [], ''],
 ];
 
-export const COMMANDS = TABLE.map(([name, cat, desc, alias, where]) => ({ name, cat, desc, alias, where }));
+export const COMMANDS = TABLE.map(([name, cat, desc, alias, where, key = '']) => ({ name, cat, desc, alias, where, key }));
 
 const fits = (c, tab) => !c.where || !tab || c.where === tab;     // tab: 'draw' | 'layout' | '' (unknown)
 
 /** The command a typed word means (its name or an alias, any case), the ones for the open tab first. → a command or null */
-export function resolve(text, tab = '') {
+export function resolve(text, tab = '', commands = COMMANDS) {
   const w = String(text || '').trim().toLowerCase();
   if (!w) return null;
-  const all = COMMANDS.filter((c) => c.name === w || c.alias.includes(w));
+  const all = commands.filter((c) => c.name === w || c.alias.includes(w));
   return all.find((c) => fits(c, tab)) || all[0] || null;
 }
 
 /** Autocomplete: commands whose name or alias starts with the text, then words inside the name or description. → [{ cmd, alias, hit }] (hit = how many letters of the name are typed) */
-export function suggest(text, tab = '', limit = 6) {
+export function suggest(text, tab = '', limit = 6, commands = COMMANDS) {
   const t = String(text || '').trim().toLowerCase();
   if (!t || /\s/.test(t) || !/^[a-z]/.test(t)) return [];
   const out = [];
-  for (const c of COMMANDS) {
+  for (const c of commands) {
     const exact = c.alias.includes(t) || c.name === t;
     const aliasStart = c.alias.find((a) => a.startsWith(t));
     let rank;
@@ -110,10 +111,10 @@ export function matchOption(options, text) {
 }
 
 /** Does Space act as Enter? On an empty bar it repeats the last command; after a command or alias it accepts it; never in a text-entry command or in the middle of a sentence. */
-export function spaceIsEnter(text, label = '', tab = '') {
+export function spaceIsEnter(text, label = '', tab = '', commands = COMMANDS) {
   if (isTextEntry(label)) return false;
   const t = String(text || '').trim();
-  return !t || (!/\s/.test(t) && !!resolve(t, tab));
+  return !t || (!/\s/.test(t) && !!resolve(t, tab, commands));
 }
 export const isTextEntry = (label) => /^(text|rename)$/i.test(String(label || '').trim());
 

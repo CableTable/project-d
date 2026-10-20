@@ -22,6 +22,25 @@ const strip = (d) => ({ ...d, entities: supported(d.entities), blocks: Object.fr
 const supported = (list) => list.filter((e) => !W.unwritable({ entities: [e], blocks: {} }).length);
 const sigs = (list) => supported(list).map(sig);
 
+test('contour colour and linetype round trip, with missing and existing LTYPE entries', () => {
+  for (const existing of [false, true]) {
+    const doc = W.newDoc();
+    W.addLayer(doc, 'Contour', { aci: 3 });
+    if (existing) doc.ltypes = { DASHED: { pattern: [7, -4] }, DOT: { pattern: [0, -4] } };
+    doc.entities = [W.line(0, 0, 20, 0, { layer: 'Contour', aci: 1, lt: 'DASHED' }),
+      W.circle(20, 20, 10, { layer: 'Contour', aci: 5, lt: 'DOT' }), W.line(0, 10, 20, 10, { layer: 'Contour' })];
+    const back = reread(doc);
+    assert.deepEqual(back.entities.map((e) => [e.aci, e.lt]), [[1, 'DASHED'], [5, 'DOT'], [256, null]]);
+    assert.deepEqual(back.ltypes.DASHED.pattern, existing ? [7, -4] : [0.5, -0.25]);
+    assert.deepEqual(back.ltypes.DOT.pattern, existing ? [0, -4] : [0, -0.25]);
+    const items = D.flatten(back).items;
+    assert.equal(items[0].css, '#ff0000'); assert.equal(items[1].css, '#0000ff'); assert.equal(items[2].css, '#00ff00');
+    assert.equal(items[0].dpx, undefined); assert.equal(items[1].dpx, undefined);
+    assert.ok(items[0].dash.length && items[1].dash.length);
+    assert.equal(items[2].dash, undefined);
+  }
+});
+
 test('number formatting: 6 decimals, no exponent, no -0', () => {
   assert.equal(W.fmt(1), '1'); assert.equal(W.fmt(100), '100'); assert.equal(W.fmt(-0), '0'); assert.equal(W.fmt(-0.0000001), '0');
   assert.equal(W.fmt(0.1234567), '0.123457'); assert.equal(W.fmt(1e-7), '0'); assert.equal(W.fmt(1.5e-5), '0.000015');

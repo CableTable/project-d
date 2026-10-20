@@ -96,7 +96,7 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 - Windows: PowerShell 5.1 has no `<` redirect and blocks `.ps1` shims, so use `npm.cmd` there.
 - **How a session runs: WORKFLOW.md** (the roles, the exact commands, the loop, the budgets). In short:
   **Rook** is the lead (Opus, main account, this session): plans, writes briefs, reads short reports,
-  merges, and fixes review findings under ~20 lines itself. **Pip** is everything on the 2nd account
+  merges, and writes no code: review findings, however small, go to Rowan (his call, 2026-10-20). **Pip** is everything on the 2nd account
   (`claude2`): Pip-build (Sonnet high, a FRESH session per build or fix round, capped with
   `--max-budget-usd`), Pip-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
   build gets one), Pip-look (Haiku), Pip-test (the exe on his PC). **Rowan** (Codex, his ChatGPT Go

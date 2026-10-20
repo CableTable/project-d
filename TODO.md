@@ -54,7 +54,7 @@ AutoCAD-style additions (his picks, 2026-10-17):
 31. ✅ (built, PR #8; in the selection bar) **Area and perimeter** of a closed shape (for ink and cost).
 32. ✅ (built, PR #9) **Autosave and recovery** after a crash.
 33. ✅ (built, PR #8; DXFs and layouts, in the app) **Recent files** on the File menu.
-34. **Own keyboard shortcuts**, like AutoCAD's PGP aliases.
+34. ✅ (built, session 10, R12 option 2) **Own keyboard shortcuts**: Tools → Shortcuts…, typed aliases and keys, clash swaps, per-PC storage and .pgp import / export.
 35. ✅ (built, PR #9) **Contour**, CorelDRAW style: pick an outline, inside or outside, a distance and a number of steps; corners sharp
     or rounded (his choice per use).
 
@@ -107,8 +107,11 @@ From the v0.1.30 exe test (Pip-test, 2026-10-20):
 60. ✅ (tested, session 9, v0.1.30: Save, Save As, PDF / Print and the close prompt all pass; Pip-test drives the dialogs with shots/exe/uia.ps1) **Exe test of the native dialogs** (test, S): Save, Save As, PDF / Print save, the close prompt (Save / Don't save / Cancel; after Don't save a restart offers no recovery). Pip-test drives the Windows dialogs itself with UI Automation (PowerShell, by window title); a key press only after it has checked Project D is the foreground window (his call: he leaves the PC alone during the test). Not reached in the v0.1.30 test: the boxes piled up and he cancelled them by hand.
 61. ✅ (fixed, session 9: `flatten` now registers every top-level entity's layer after the walk, so a cut-off file keeps all its layers; test in doc.test.mjs) **Counts on files past the draw limit** (bug, S): when a file hits the 400,000-piece draw limit, `flatten` stops before later layers reach `fl.layers`, so `layerCounts` skips their entities while `entityCount` and the Objects tree still count them (and that tree layer's eye / lock get idx -1). Fix: register every top-level entity's layer before the cut (or build the list from `raw.layers` too), plus a test with a cut-off file. From the Pip-review of 58 / 59.
 62. ✅ (fixed, session 9: the new tab's dirty setter clears `empty` on any edit or save; browser coverage keeps drawn, edited and saved tabs and still replaces untouched ones) **Opening a file replaces a saved drawn tab** (bug, S): `+`, draw a line, Save it, then Open another file: the drawn tab disappears (the file stays on disk). `web/app.js:521` replaces an "untouched empty tab" and the `empty` flag (`web/app.js:178`) is never cleared by drawing. From the TODO 60 exe test.
-63. **Save As starts in the last-used folder** (question, S): on an opened file, Save As opens in the last folder used (fixtures) with "Drawing 2.dxf", not the opened file's folder and name. Decide which is right. From the TODO 60 exe test.
-64. **Import background on a fresh tab is lost on Open** (bug, S): new tab, pick a tool without drawing, Import background, then Open a file: the tab is replaced and the picture lost. `web/app.js:3447`: set `d.dirty = true` in that `else` branch. From the Pip-review of 62 (older than 62).
+63. ✅ (fixed, session 10: Save As reuses first Save's suggestion in the opened file's folder, as "<name>-edited.dxf"; new drawings keep the last-used folder) **Save As starts in the last-used folder** (question, S): from the TODO 60 exe test; decided 2026-10-20 (see DECISIONS).
+64. ✅ (fixed, session 9: importing a background into a drawing marks it dirty and clears `empty`; browser coverage keeps the fresh tab and its picture on Open) **Import background on a fresh tab is lost on Open** (bug, S): new tab, pick a tool without drawing, Import background, then Open a file: the tab is replaced and the picture lost. `web/app.js:3447`: set `d.dirty = true` in that `else` branch. From the Pip-review of 62 (older than 62).
+65. **Contour: colour and line style** (his ask, 2026-10-20, S–M): the Contour panel picks the new outlines' colour and line style (solid, dashed, dotted). Today they always go on the layer "Contour" with its colour, solid. Saved to DXF as the entity's colour and linetype.
+
+65. ✅ (built, session 10) **Contour colour and line style**: R13 swatches and Solid / Dashed / Dotted, both previews, Properties, DXF round trip and PDF; one-step undo.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

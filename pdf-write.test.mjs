@@ -18,6 +18,24 @@ const mediaBoxes = (t) => [...t.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g
 const content = (t, i) => [...t.matchAll(/stream\n([\s\S]*?)endstream/g)].map((m) => m[1])[i];
 const pagesOf = (plan) => plan.pages.map((_, i) => plan.build(i));
 
+test('contour colour and linetypes print before and after DXF save', async () => {
+  const W = await import('./web/dxf-write.js');
+  for (const defined of [false, true]) {
+    const raw = W.newDoc(); W.addLayer(raw, 'Contour', { aci: 3 });
+    if (defined) raw.ltypes = { DASHED: { pattern: [7, -4] }, DOT: { pattern: [0, -4] } };
+    raw.entities = [W.line(10, 10, 50, 10, { layer: 'Contour', aci: 1, lt: 'DASHED' }),
+      W.line(10, 20, 50, 20, { layer: 'Contour', aci: 1, lt: 'DOT' })];
+    for (const doc of [raw, D.readDxf(W.writeDxf(raw))]) {
+      const fl = D.flatten(doc);
+      const plan = X.planPdf({ fl, factor: 1, off: new Set(), sheetW: 100, sheetH: 100 }, { page: 'sheet', separate: false, black: false });
+      const cmds = plan.build(0).cmds;
+      assert.ok(cmds.some((c) => c[0] === 'd' && c[1].length === 2 && c[1][0] > c[1][1]), 'dashes');
+      assert.equal(cmds.some((c) => c[0] === 'd' && c[1].length === 2 && c[1][0] < c[1][1]), defined || doc === raw, 'a tiny DOT read from a file prints solid');
+      assert.ok(text(plan.bytes()).includes('1 0 0 RG'), 'red ink');
+    }
+  }
+});
+
 test('structure: header, objects, xref offsets, trailer, page count', () => {
   const plan = X.planPdf(srcOf('sample.dxf'), { page: 'sheet', separate: true });
   const t = text(plan.bytes());

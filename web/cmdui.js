@@ -24,6 +24,8 @@ function svg(name, size = 14) {
  * starts one), runName(name) (start a command by its name), canvas() → the canvas element, say(text).
  */
 export function buildCmdUI(hooks) {
+  const resolve = (text, tab = '') => CB.resolve(text, tab, hooks.commands());
+  const suggest = (text, tab = '') => CB.suggest(text, tab, 6, hooks.commands());
   const lines = [], typed = [];                // the session's command lines { pre, ans, cls, run } (not saved), and what was typed at the bar
   let lastName = '', echoName = '', echoAns = [], hi = 0, sugg = [], recall = -1, ptr = null, anchor = { x: 0, y: 0 }, idle = 0;
 
@@ -76,7 +78,7 @@ export function buildCmdUI(hooks) {
     promptEl.hidden = !act; promptEl.textContent = act ? act.prompt : '';
     chips.hidden = !opts.length;
     chips.replaceChildren(...opts.map((o) => h('button', { class: 'chip' + (o === hit ? ' hit' : ''), type: 'button', 'aria-label': 'Option ' + o.word, 'data-testid': 'cmd-chip', onmousedown: (e) => e.preventDefault(), onclick: () => chip(o) }, h('b', null, o.key), o.rest)));
-    sugg = hit ? [] : CB.suggest(input.value, tab);
+    sugg = hit ? [] : suggest(input.value, tab);
     hi = Math.max(0, Math.min(hi, sugg.length - 1));
     rows.hidden = !sugg.length;
     rows.replaceChildren(...sugg.map((s, i) => h('div', { class: 'r' + (i === hi ? ' hi' : '') + (s.cmd.where && s.cmd.where !== tab ? ' off' : ''), role: 'option', 'aria-selected': String(i === hi), 'data-testid': 'cmd-sugg', onmousedown: (e) => e.preventDefault(), onclick: () => go(s.cmd.name) },
@@ -107,7 +109,7 @@ export function buildCmdUI(hooks) {
     if (!cls && /cancel|unknown|must |cannot|can't|failed/i.test(pre)) cls = 'er';
     lines.push({ pre, ans: ans || '', cls: cls || '', run: run || '' });
     if (lines.length > 1000) lines.shift();
-    if (cls === 'cm') { echoName = CB.resolve(ans) ? CB.resolve(ans).name.toUpperCase() : String(ans).toUpperCase(); echoAns = []; }
+    if (cls === 'cm') { echoName = resolve(ans) ? resolve(ans).name.toUpperCase() : String(ans).toUpperCase(); echoAns = []; }
     else if (ans && echoName) echoAns = [...echoAns, ans].slice(-2);       // the command and its last two answers, as the mock-up's "OFFSET  5  ·  Exit"
     echoSpan.textContent = echoName ? [echoName, echoAns.join('  ·  ')].filter(Boolean).join('  ') : 'Command';
     paintFade();
@@ -137,8 +139,8 @@ export function buildCmdUI(hooks) {
     if (picked && VALUED.test(picked.word)) { chip(picked); return; }       // it needs a value: the bar waits for it, as the chip does
     let send = text;
     if (picked) send = picked.word.toLowerCase();
-    else if (!act && /^[a-z][a-z0-9]*$/i.test(text) && !CB.resolve(text, tab)) { const s = CB.suggest(text, tab); if (s.length && s[Math.min(hi, s.length - 1)].hit) send = s[Math.min(hi, s.length - 1)].cmd.name; }
-    const isCmd = !picked && !!CB.resolve(send, tab);
+    else if (!act && /^[a-z][a-z0-9]*$/i.test(text) && !resolve(text, tab)) { const s = suggest(text, tab); if (s.length && s[Math.min(hi, s.length - 1)].hit) send = s[Math.min(hi, s.length - 1)].cmd.name; }
+    const isCmd = !picked && !!resolve(send, tab);
     addLine(act && !isCmd ? act.prompt : 'Command:', text, act && !isCmd ? '' : 'cm', isCmd ? send : '');
     if (typed[typed.length - 1] !== text) typed.push(text);
     close(); hooks.submit(send);
@@ -159,7 +161,7 @@ export function buildCmdUI(hooks) {
       if (sugg.length) { hi = (hi + (e.key === 'ArrowDown' ? 1 : sugg.length - 1)) % sugg.length; update(); }
       else if (typed.length && e.key === 'ArrowUp') { recall = Math.min(typed.length - 1, recall + 1); input.value = typed[typed.length - 1 - recall]; update(); }
       else if (e.key === 'ArrowDown' && recall >= 0) { recall--; input.value = recall >= 0 ? typed[typed.length - 1 - recall] : ''; update(); }
-    } else if (e.key === ' ' && !e.ctrlKey && !e.altKey && !e.metaKey && CB.spaceIsEnter(input.value, act && act.label, hooks.tab())) { e.preventDefault(); go(input.value); }
+    } else if (e.key === ' ' && !e.ctrlKey && !e.altKey && !e.metaKey && CB.spaceIsEnter(input.value, act && act.label, hooks.tab(), hooks.commands())) { e.preventDefault(); go(input.value); }
   });
   for (const el of [bar, drawer, acts]) for (const ev of ['pointerdown', 'wheel', 'dblclick', 'contextmenu']) el.addEventListener(ev, (e) => e.stopPropagation());       // the canvas under them gets none of it
   bar.addEventListener('focusout', () => setTimeout(() => { if (!bar.hidden && !bar.contains(document.activeElement)) close(); }));

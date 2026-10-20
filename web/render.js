@@ -81,19 +81,21 @@ export function paintDrawing(canvas, o) {
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
-  if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#0e7c66');
+  if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#00ff00', o.contourDash || []);
 }
 
-/** Contour's preview (TODO 35): every outline as a dashed line (each a list of points, drawing units). */
-function drawContour(c, loops, T, dpr, col) {
+/** Contour's preview: the chosen colour and style, translucent until Apply. */
+function drawContour(c, loops, T, dpr, col, dash) {
+  c.save();
   c.setTransform(1, 0, 0, 1, 0, 0);
-  c.strokeStyle = col; c.lineWidth = 1.8 * dpr; c.setLineDash([8 * dpr, 5 * dpr]); c.lineJoin = 'round';
+  c.strokeStyle = col;
+  c.globalAlpha = .65; c.lineWidth = 1.8 * dpr; c.setLineDash(dash.map((x) => x * dpr)); c.lineJoin = 'round';
   for (const pts of loops) {
     c.beginPath();
     pts.forEach((q, i) => { const [x, y] = mapply(T, q[0], q[1]); if (i) c.lineTo(x, y); else c.moveTo(x, y); });
     c.closePath(); c.stroke();
   }
-  c.setLineDash([]);
+  c.restore();
 }
 
 /** Tiny gaps (TODO 46): a small ring in the mark colour round each. */
