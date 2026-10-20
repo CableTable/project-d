@@ -2330,8 +2330,9 @@ async function save(forceAs) {
   const lossy = bad.length > 0 && !d.acceptedLoss && !d.lay;       // a layout is a new file: nothing to overwrite
   if (lossy) note(`This file has things Save can't keep (${bad.map((b) => b.type + ' ' + b.count).join(', ')}), so it's saved as a copy`);
   // the opened file itself is never touched: its first save is a Save As (to "<name>-edited.dxf"), later ones overwrite that
-  const first = !d.saved && !d.fromPdf && !d.scratch && !lossy && (!d.lay || d.fromFile);
-  const base = baseName(dxfName(d.name));
+  const source = forceAs && d.openPath;
+  const first = (!d.saved || source) && !d.fromPdf && !d.scratch && !lossy && (!d.lay || d.fromFile);
+  const base = baseName(dxfName(source ? source.split(/[\\/]/).pop() : d.name));
   const want = lossy ? base + '-copy.dxf' : first ? base + '-edited.dxf' : dxfName(d.name);
   const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
@@ -2340,7 +2341,7 @@ async function save(forceAs) {
     let path = d.path, name = d.name;
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
-        path = await t.dialog.save({ defaultPath: want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+        path = await t.dialog.save({ defaultPath: d.openPath ? d.openPath.replace(/[^\\/]*$/, () => want) : want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
         if (!path) return;
         path = await withExt(t, path, 'dxf');
         if (!path) return;

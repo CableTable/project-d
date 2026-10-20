@@ -66,7 +66,8 @@ try {
   const typeCmd = async (text) => { await cmdLine().fill(text); await cmdLine().press('Enter'); };
   const readout = async () => ({ count:Number(await t('count').textContent()), grid: await t('grid').textContent() });
 
-  mkdirSync('shots', { recursive: true });
+  const shotDir = process.env.SHOTS_DIR || 'shots';
+  mkdirSync(shotDir, { recursive: true });
   const tabNames = () => page.locator('.tabs .dtab:not([aria-label]) .tname').allTextContents();
   // closes (accepting "close without saving?") every tab whose name matches
   const closeTabs = async (re) => {
@@ -233,7 +234,7 @@ try {
     assert.ok(await fits('nav.rail'), 'rail scrolls');
   });
 
-  await page.screenshot({ path: 'shots/a-light.png' });
+  await page.screenshot({ path: shotDir + '/a-light.png' });
 
   await step('Gap X 20 changes the count', async () => {
     await page.locator('[data-key=gapX]').fill('20');
@@ -879,7 +880,6 @@ try {
   const sizeNow = async () => [await t('dw').inputValue(), await t('dh').inputValue()];
   const waitSize = (w, h2) => page.waitForFunction(([a, b]) => document.querySelector('[data-testid=dw]').value === a && document.querySelector('[data-testid=dh]').value === b, [w, h2]);
   const entitiesNow = async () => (await t('entities').textContent()).trim();
-  const shotDir = process.env.SHOTS_DIR || 'shots';
 
   await step('edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
@@ -1881,7 +1881,7 @@ try {
     const dark = await bg();
     assert.notEqual(light, dark); assert.equal(dark, 'rgb(11, 11, 13)');
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
-    await page.screenshot({ path: 'shots/a-dark.png' });
+    await page.screenshot({ path: shotDir + '/a-dark.png' });
     await page.locator('[data-menu=View]').click();
     await page.getByRole('menuitem', { name: 'Theme: light' }).click();
     assert.equal(await bg(), light);
@@ -2153,7 +2153,7 @@ try {
     const theme0 = await page.evaluate(() => document.documentElement.dataset.theme || '');
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
-      await page.screenshot({ path: `shots/s14-invalid-${th}.png` });
+      await page.screenshot({ path: `${shotDir}/s14-invalid-${th}.png` });
     }
     await page.evaluate((x) => { if (x) document.documentElement.dataset.theme = x; else delete document.documentElement.dataset.theme; }, theme0);
     await t('fit-switch').check();
@@ -2254,7 +2254,7 @@ try {
     const tabs = await page.locator('.tabs .dtab').count();
     await fileMenu.click();
     assert.equal(await items.filter({ hasText: 'gone.dxf' }).count(), 0);
-    await page.screenshot({ path: 'shots/s13-recent-' + (await page.evaluate(() => document.documentElement.dataset.theme || 'light')) + '.png' });
+    await page.screenshot({ path: shotDir + '/s13-recent-' + (await page.evaluate(() => document.documentElement.dataset.theme || 'light')) + '.png' });
     await items.filter({ hasText: '1  outline.dxf' }).click();
     await page.waitForFunction((n) => document.querySelectorAll('.tabs .dtab').length > n || /Opened outline\.dxf/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), tabs);
     assert.match(await t('cmd-prompt').textContent(), /Opened outline\.dxf/);
@@ -4024,7 +4024,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.match(await prompt(), /Layer renamed to Cut line/);
     await t('layer-colour').last().fill('#ff0000');
     assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Cut line');
-    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `shots/s15-addlayer-${th}.png` }); }
+    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `${shotDir}/s15-addlayer-${th}.png` }); }
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
     await page.locator('[data-tool=circle]').click();
     assert.match(await t('cmd-hist').textContent(), /layer Cut line/);
@@ -6269,7 +6269,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     const pending = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
     await dlg.waitFor();
     assert.equal(await p2.locator('[data-testid=close-dialog] strong').textContent(), 'Save changes to "Drawing 1"?');
-    for (const th of ['light', 'dark']) { await p2.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await p2.screenshot({ path: `shots/s16-closeprompt-${th}.png` }); }
+    for (const th of ['light', 'dark']) { await p2.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await p2.screenshot({ path: `${shotDir}/s16-closeprompt-${th}.png` }); }
     await p2.locator('[data-testid=close-cancel]').click(); await pending;
     assert.equal(await destroyed(), 1, 'Cancel: still open'); assert.equal(await p2.locator('.tabs .dtab[data-kind]').count(), 1);
     // Esc is Cancel too
@@ -6705,6 +6705,64 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await oRow('Circle Ø40').locator('[data-act=vis]').click();
     assert.equal(await ops(), all, 'shown again: the same PDF');
     await t('ptab-drawing').click();
+  });
+
+  await step('TODO 63: Save As and first Save suggest the source folder and edited name; a new drawing keeps the last-used folder', async () => {
+    await closeTabs(/./);
+    await page.evaluate((bytes) => {
+      window.__log = { dlg: [], wrote: [] }; window.__next = null;
+      window.__TAURI__ = {
+        dialog: {
+          open: async () => window.__open,
+          save: async (o) => { window.__log.dlg.push(o.defaultPath); return window.__next; },
+          ask: async () => true,
+        },
+        fs: {
+          readFile: async () => new Uint8Array(bytes), exists: async () => false,
+          writeTextFile: async (p) => { window.__log.wrote.push(p); },
+        },
+      };
+    }, [...readFileSync('fixtures/overlay.dxf')]);
+    const suggestion = async (action, want) => {
+      const n = await page.evaluate(() => window.__log.dlg.length);
+      await action();
+      await page.waitForFunction((n) => window.__log.dlg.length === n + 1, n);
+      assert.equal(await page.evaluate(() => window.__log.dlg.at(-1)), want);
+    };
+    try {
+      for (const source of ['C:\\work\\a.dxf', 'C:/drawings/panel $&.dxf']) {
+        await page.evaluate((p) => { window.__open = p; window.__next = null; }, source);
+        await menuItem('File', 'Open…');
+        const name = source.split(/[\\/]/).pop();
+        await page.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, name);
+        const want = source.slice(0, -4) + '-edited.dxf';
+        await suggestion(() => page.keyboard.press('Control+s'), want);
+        await suggestion(() => menuItem('File', 'Save As…'), want);
+        assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'cancelled: no file written');
+        await page.evaluate((p) => { window.__next = p; }, source);
+        await suggestion(() => page.keyboard.press('Control+Shift+s'), want);
+        await page.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Pick another name: that is the opened file'));
+        assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'Save As refuses the opened file');
+        await page.evaluate(() => { window.__next = 'C:\\elsewhere\\chosen.dxf'; });
+        await suggestion(() => menuItem('File', 'Save As…'), want);
+        await page.waitForFunction(() => window.__log.wrote.length === 1);
+        await page.keyboard.press('Control+s');
+        await page.waitForFunction(() => window.__log.wrote.length === 2);
+        assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\elsewhere\\chosen.dxf', 'C:\\elsewhere\\chosen.dxf']);
+        await page.evaluate(() => { window.__next = null; });
+        await suggestion(() => menuItem('File', 'Save As…'), want);
+        await closeTabs(/./);
+        await page.evaluate(() => { window.__log.wrote.length = 0; });
+      }
+      await page.locator('[data-tool=line]').click();
+      await typeCmd('20,20'); await typeCmd('120,20'); await page.keyboard.press('Escape');
+      await page.locator('[data-tool=select]').click();
+      await suggestion(() => menuItem('File', 'Save As…'), 'Drawing 1.dxf');
+      assert.deepEqual(await page.evaluate(() => window.__log.wrote), []);
+      await closeTabs(/./);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__log; delete window.__next; delete window.__open; localStorage.removeItem('pd-recent'); });
+    }
   });
 
   await step('Save in the exe: the opened file is never written; a name without .dxf that exists asks first; a balloons file that could not be read is not written over', async () => {
