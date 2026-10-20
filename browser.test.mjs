@@ -1298,6 +1298,31 @@ try {
     await page.locator('[data-tool=step]').click();
   });
 
+  await step('TODO 64: Open keeps a fresh tab and its imported background after picking a tool without drawing', async () => {
+    const originalName = await page.locator('.tabs .dtab.on .tname').textContent();
+    await t('new-tab').click();
+    await page.locator('[data-tool=line]').click();
+    await page.keyboard.press('Escape');
+    assert.equal(await t('entities').textContent(), 'Entities 0');
+    await t('bg-picker').setInputFiles('fixtures/bg.png');
+    await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
+    const before = await tabNames(), keptName = before.at(-1);
+    assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1, 'import marks the tab changed');
+    await t('picker').setInputFiles('fixtures/overlay.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
+    assert.deepEqual(await tabNames(), [...before, 'overlay.dxf'], 'the background tab stays');
+    await page.locator('.tabs .dtab', { hasText: keptName }).click();
+    assert.equal(await t('bg-name').textContent(), 'bg.png');
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Background'));
+    assert.ok((await inkedWhen((n) => n > 200)) > 200, 'the picture is still drawn');
+    await page.locator('.tabs .dtab', { hasText: 'overlay.dxf' }).last().click();
+    await page.locator('.tabs .dtab.on .x').click();
+    await closeTabs(new RegExp('^' + keptName + '\\b'));
+    await page.locator('.tabs .dtab', { hasText: originalName }).click();
+    await page.locator('[data-tool=step]').click();
+    assert.deepEqual(await tabNames(), before.slice(0, -1), 'test tabs are closed');
+  });
+
   await step('PDF: a vector PDF opens as a drawing (mm, page corner at 0,0), the outline is one click, Keep only, size, Save writes a DXF', async () => {
     await t('picker').setInputFiles('fixtures/vector.pdf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('vector.dxf'), null, { timeout: 60000 });

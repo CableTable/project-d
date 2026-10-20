@@ -3444,7 +3444,7 @@ function placeBackground(name, bitmap, mm, how, newTab = false, src = null) {
     balLoad(d, src && src.path, name);
   } else {
     if (d.box) { bg.x = d.box[0]; bg.y = d.box[1]; }
-    d.bg = bg; d.scaleTarget = 'drawing';
+    d.bg = bg; d.scaleTarget = 'drawing'; d.dirty = true;
     showDoc();
   }
   if (src && src.pdf) d.pdf = src.pdf;
