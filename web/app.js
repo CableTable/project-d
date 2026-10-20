@@ -2609,7 +2609,16 @@ function objClick(e) {
     const name = row.dataset.layer, idx = d.fl.layers.findIndex((l) => l.name === name);
     if (act && act.dataset.act === 'vis') toggleLayerVis(d, idx);
     else if (act && act.dataset.act === 'lock') toggleLayerLock(d, name);
-    else { flip(om.open, name); renderObjects(); }
+    else {
+      flip(om.open, name); renderObjects();
+      // Keep the clicked header/name alive so the browser can deliver dblclick.
+      const fresh = [...ui.objTree.querySelectorAll('.or.layer')].find((r) => r.dataset.layer === name);
+      if (fresh) {
+        row.setAttribute('aria-expanded', fresh.getAttribute('aria-expanded'));
+        row.querySelector('.otw').replaceChildren(...fresh.querySelector('.otw').childNodes);
+        fresh.replaceWith(row);
+      }
+    }
     return;
   }
   const ent = +row.dataset.e;

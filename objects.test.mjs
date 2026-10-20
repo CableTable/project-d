@@ -1,12 +1,28 @@
 // objects.js — the Objects tab's model.   node objects.test.mjs
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { entityCount, layerCounts } from './web/doc.js';
 import * as O from './web/objects.js';
 import { newDoc, addEntities, addBlock, addLayer, writeDxf, line, circle, arc, lwpoly, rect, text, insert } from './web/dxf-write.js';
-import { readDxf, flatten } from './web/drawing.js';
+import { decodeDxf, readDxf, flatten } from './web/drawing.js';
 import { removeEntities } from './web/edit.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
+
+test('sample: Objects, Layers and status count the same supported entities', () => {
+  const raw = readDxf(decodeDxf(readFileSync('fixtures/sample.dxf'))), fl = flatten(raw);
+  const tree = O.buildTree(raw, fl, { open: new Set(fl.layers.map((l) => l.name)) });
+  assert.equal(tree.objects, 19);
+  assert.equal(tree.objects, entityCount(fl));
+  const counts = layerCounts(fl);
+  for (const l of tree.layers) assert.equal(l.count, counts[l.index], l.name);
+  assert.equal(tree.layers.find((l) => l.name === 'NOTES').count, 6);
+  const image = raw.entities.findIndex((e) => e.type === 'IMAGE');
+  assert.ok(image >= 0);
+  assert.ok(!tree.layers.some((l) => l.rows.some((r) => r.e === image)), 'unsupported IMAGE has no drawn item');
+  assert.ok(!tree.layers.some((l) => l.rows.some((r) => raw.entities[r.e].ps)), 'paper space excluded');
+});
 
 function sample() {
   const d = newDoc(4);

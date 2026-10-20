@@ -102,8 +102,8 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
 
 From the v0.1.30 exe test (Pip-test, 2026-10-20):
 57. **Many tabs push the whole window sideways** (bug, S): at 1024 px with ~17 tabs, clicking the last tab shifts the menu bar ~470 px left and cuts off the toolbar; it stays shifted after widening (−169 px at 1440); at 1440 with 14 tabs "+ New layout" wraps. The tab strip should scroll on its own. Screenshots: shots/exe/91-last-tab-1024.png, 66-light1024-layout.png.
-58. **Double-click a layer row in the Objects tab does not make it current** (bug, S): the first click rebuilds the rows, so no dblclick arrives. The Layers panel click works.
-59. **Layer counts disagree** (bug, S): sample.dxf: Layers panel NOTES 6, Objects tab NOTES 7 and 20 in total, status bar 19 entities. Find which count is right.
+58. ✅ (fixed, session 9: keep the layer header/name alive during expansion so double-click makes it current; browser regression added) **Double-click a layer row in the Objects tab does not make it current** (bug, S).
+59. ✅ (fixed, session 9: Objects uses the same supported entities in the shown space as Layers/status; sample NOTES 6, total 19; unsupported IMAGE excluded; regression added) **Layer counts disagree** (bug, S).
 60. **Exe test of the native dialogs** (test, S): Save, Save As, PDF / Print save, the close prompt (Save / Don't save / Cancel; after Don't save a restart offers no recovery). Pip-test drives the Windows dialogs itself with UI Automation (PowerShell, by window title); a key press only after it has checked Project D is the foreground window (his call: he leaves the PC alone during the test). Not reached in the v0.1.30 test: the boxes piled up and he cancelled them by hand.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)

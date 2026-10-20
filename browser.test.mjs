@@ -6314,6 +6314,22 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await page.locator('.layers-rows').isVisible(), true);
   });
 
+  await step('Objects tab: double-click a layer name makes it current; single click still expands and object click selects', async () => {
+    await t('ptab-objects').click();
+    await oLayer('Engrave').locator('.onm').click();
+    assert.equal(await oLayer('Engrave').getAttribute('aria-expanded'), 'true');
+    assert.equal(await oLayer('Engrave').locator('[data-testid=obj-current]').count(), 0);
+    await oLayer('Engrave').locator('.onm').click();
+    assert.equal(await oLayer('Engrave').getAttribute('aria-expanded'), 'false');
+    await oLayer('Engrave').locator('.onm').dblclick();
+    assert.equal(await oLayer('Engrave').locator('[data-testid=obj-current]').count(), 1);
+    await t('ptab-drawing').click();
+    assert.equal(await page.locator('.layer[data-layer-name="Engrave"] [data-testid=layer-current]').count(), 1);
+    await t('ptab-objects').click();
+    await oLayer('Cut').locator('.onm').dblclick();
+    assert.equal(await oLayer('Cut').locator('[data-testid=obj-current]').count(), 1);
+  });
+
   await step('Objects tab: a click on a row selects that object on the sheet; a pick on the sheet lights its row (its layer opens)', async () => {
     await t('ptab-objects').click();
     await oRow('Circle Ø40').click();
