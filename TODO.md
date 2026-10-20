@@ -126,6 +126,10 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
 75. **Array on a drawing** (M): rows / columns / spacing, plus polar (holes in a ring); step and repeat today is layouts only.
 76. **Dimensions drive the drawing** (L, later): double-click a dimension, type a value, the line stretches; no full constraints.
 
+From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/Sp3eoq15FKgsVFQpxmpPd7; his picks):
+77. **Layer search box** (S): a small search box above the Layers list and the Objects tree; matches show, the rest hide (QCAD forum, 7 Oct 2026).
+78. **Trim preview** (M): while the pointer is over a segment in Trim, draw the part that would go in faint red; the preview must match the result (LibreCAD #2632, #2647).
+
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
 1. ✅ (built, PR #10) Drawing tools: line, polyline, rectangle, rounded rectangle, circle, ellipse, arc, text and dimension, with snaps, ortho and polar tracking, and typed coordinates. (Text: TODO 17. Polar tracking: TODO 21, built in PR #12.)

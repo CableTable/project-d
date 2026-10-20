@@ -47,6 +47,14 @@ briefs, reading short reports and merging.
    title, and stops if it isn't Project D or its dialog.
    Allow it: `Bash(gh release:*)`, `PowerShell(Stop-Process:*)`, `PowerShell(Get-Process:*)`, `Bash(tasklist:*)`, `Bash(powershell.exe -NoProfile -ExecutionPolicy Bypass -File shots/exe/uia.ps1:*)`.
 
+**One check per real failure** (his call, 2026-10-20, from the AI-coding forums research): when a worker breaks a rule
+or a tool fails silently, the fix round also adds ONE small check for exactly that case (a hook, a script line or a
+test), and HISTORY.md names it. No big hook collections. First one: the PS 5.1 quote-stripping bug in
+usage-agent-install.ps1.
+**Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
+(`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
+wait for a reset, or pause the session.
+
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
 
 ## Commands (Git Bash, from the repo folder)
