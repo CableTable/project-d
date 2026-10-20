@@ -160,7 +160,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, and once CI is green for the
   head commit asks his OK to merge. On his yes: `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
-  (ccd_pr get_status, or the PR's GitHub merge notice), refresh the usage page, then start the next Rook session itself
+  (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then start the next Rook session itself
   (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
   of handing him a prompt. No scheduled or polled CI checks. Every Rook turn re-reads the whole conversation, so a
   long one costs the most.
@@ -169,8 +169,11 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - Rook never opens screenshots or images (Pip-look reports in lines), never runs the test suites (the review does),
   never reads skill or reference docs it has read before in the session.
 - While runs go, Rook ends its turn and waits for the notice; no status messages in between.
-- The usage page (https://claude.ai/artifact/1Qnf6QF3z3UyvCdcqiaWWf) is refreshed after merges only: upload the files
-  in `mockups/_design/usage/`, then one ArtifactData batch with the new urls. In chat: one line plus the link.
+- The usage page is https://project-d-usage.web.app (Firebase, his Google account only; session 12). The PC agent
+  (tools/usage-agent.mjs, Startup shortcut) refreshes it hourly and on its "Update now" button, so Rook uploads nothing.
+  Rules / page changes deploy with `GOOGLE_APPLICATION_CREDENTIALS=%APPDATA%\ProjectD\firebase-key.json npx.cmd
+  firebase-tools@15.30.2 deploy --only hosting,firestore:rules --project project-d-usage` (usage-site/, his OK per deploy).
+  The old claude.ai usage artifact is retired.
 
 ## Every brief says
 
