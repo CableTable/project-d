@@ -15,6 +15,7 @@ import * as BAL from './balloons.js';
 import { paintDrawing, ink, FONT_FAMILY } from './render.js';
 import { flatten, unionBox, CAP, ACI } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc } from './dxf-write.js';
+import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
 import * as GR from './grips.js';
@@ -324,7 +325,7 @@ function recentItems() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
@@ -2384,6 +2385,75 @@ async function save(forceAs) {
   } catch (err) {
     note('Save failed: ' + (err && err.message ? err.message : err));
   }
+}
+
+/**
+ * File → Export for cutter… (TODO 52, mock-up R14 option B): a small dialog (the file name, "Curves flattened to [0.01] mm", what is left
+ * out), then the native Save picker, defaulting to "<name>-cutter.dxf". The copy holds LINE, ARC and LWPOLYLINE only (dxf-cutter.js);
+ * the tab, its dirty mark and its Save file are not touched.
+ */
+function exportCutter() {
+  const d = curDoc();
+  if (!d || (!d.raw && !d.lay)) { note('Export for cutter: open a drawing first'); return; }
+  if (document.querySelector('.cutdlg')) return;
+  const raw = d.lay ? LD.layoutRaw(d.lay) : d.raw;
+  let made = { tol: 0.01, res: cutterDoc(raw, 0.01) };                 // the count of what is left out does not depend on the tolerance
+  const want = baseName(dxfName(d.openPath ? d.openPath.split(/[\\/]/).pop() : d.name)) + '-cutter.dxf';
+  const { left, other } = made.res;
+  const leftText = left ? `${left} text / fill ${left === 1 ? 'object' : 'objects'} left out` : 'No text or fills to leave out';
+
+  const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: '0.01', 'aria-label': 'Curve flattening tolerance in mm', 'data-testid': 'cutter-tol' });
+  const err = h('div', { class: 'pd-bad', role: 'alert', hidden: true, 'data-testid': 'cutter-err' });
+  const refusal = () => { const typed = input.value.trim(), v = Number(typed); return typed === '' || !Number.isFinite(v) || !(v > 0) ? 'The flattening tolerance must be a number above 0 (mm)' : ''; };
+  const showRefusal = () => { const why = refusal(), shown = why && input.value.trim() !== ''; flagInvalid(input, shown); err.textContent = shown ? why : ''; err.hidden = !shown; return why; };
+  clearInvalid(input);
+  input.addEventListener('input', showRefusal);
+
+  const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
+  const go = async () => {
+    const why = showRefusal();
+    if (why) { flagInvalid(input, true); err.textContent = why; err.hidden = false; note(why); input.focus(); return; }
+    const tol = Number(input.value.trim());
+    finish();
+    const t = window.__TAURI__;
+    try {
+      if (made.tol !== tol) made = { tol, res: cutterDoc(raw, tol) };
+      const text = writeDxf(made.res.doc, { escapeUnicode: true });
+      let name = want, dir = '';
+      if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
+        let path = await t.dialog.save({ defaultPath: d.openPath ? d.openPath.replace(/[^\\/]*$/, () => want) : want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+        if (!path) return;
+        path = await withExt(t, path, 'dxf');
+        if (!path) return;
+        if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Export never writes over it'); return; }
+        await t.fs.writeTextFile(path, text);
+        name = path.split(/[\\/]/).pop();
+        dir = path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/')));
+      } else download(name, text);
+      note(`Exported ${name} for the cutter, curves flattened to ${tol} mm` + (left ? ` (${leftText})` : '') + (other ? `, ${other} other object${other === 1 ? '' : 's'} could not be kept` : '') + (dir ? ' in ' + dir : ''));
+    } catch (e) {
+      note('Export failed: ' + (e && e.message ? e.message : e));
+    }
+  };
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); go(); } });
+  const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'cutter-cancel', onclick: finish }, 'Cancel');
+  const choose = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'cutter-go', onclick: go }, 'Choose file…');
+  const dlg = h('div', { class: 'pop-dialog cutdlg', role: 'dialog', 'aria-modal': 'true', 'aria-label': 'Export for cutter', 'data-testid': 'cutter-dialog' },
+    h('div', { class: 'row between' }, h('strong', null, 'Export for cutter'), h('button', { class: 'btn sm', type: 'button', 'aria-label': 'Close', onclick: finish }, '×')),
+    h('div', { class: 'row between' }, h('b', { class: 'mono', 'data-testid': 'cutter-name' }, want), h('span', { class: 'lbl cutchip' }, 'DXF drawing')),
+    h('span', { class: 'lbl' }, 'Create a cutter copy from the active drawing.'),
+    h('div', { class: 'cutnote' }, h('label', { class: 'row' }, 'Curves flattened to', input, 'mm'),
+      h('span', { class: 'lbl' }, 'Maximum curve deviation · arcs stay arcs where possible.'), err),
+    h('span', { class: 'lbl' }, 'Only lines, arcs and polylines are written. Blocks are exploded and a circle becomes two arcs. Runs on the export copy: the original stays as it is.'),
+    h('div', { class: 'cutnote' + (left ? ' bad' : ''), 'data-testid': 'cutter-left' }, leftText,
+      other ? h('span', { class: 'lbl' }, `${other} other object${other === 1 ? '' : 's'} (points, 3D faces, missing blocks) cannot be kept`) : null),
+    h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'), cancel, choose));
+  const back = h('div', { class: 'pop-back', 'data-testid': 'cutter-back' }, dlg);
+  const onKey = (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); finish(); } };
+  back.addEventListener('pointerdown', (e) => { if (e.target === back) finish(); });
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(back);
+  input.focus(); input.select();
 }
 
 /** The dimensions drawn on a layout: the sheet's width and height, and the width of the selected placed part (when there is one). */

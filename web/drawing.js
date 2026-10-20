@@ -217,23 +217,29 @@ function namedDash(name) {
 
 // ---------------------------------------------------------------- curves
 
+/** True when cp / knots / deg describe a curve nurbs() can evaluate (else it falls back to the fit points or control polygon). */
+export const nurbsOk = (cp, knots, deg) => cp.length > deg && knots.length === cp.length + deg + 1 && knots[cp.length] > knots[deg];
+
+/** One point of a NURBS curve at parameter t (de Boor, rational when weights w, one per control point, are given). */
+export function nurbsAt(cp, knots, deg, w, t) {
+  const n = cp.length;
+  let s = deg;
+  while (s < n - 1 && t >= knots[s + 1]) s++;
+  const d = [];
+  for (let j = 0; j <= deg; j++) { const p = cp[j + s - deg], q = w ? w[j + s - deg] : 1; d.push([p[0] * q, p[1] * q, q]); }
+  for (let r = 1; r <= deg; r++) for (let j = deg; j >= r; j--) {
+    const den = knots[j + 1 + s - r] - knots[j + s - deg], al = den ? (t - knots[j + s - deg]) / den : 0;
+    d[j] = [0, 1, 2].map((k) => (1 - al) * d[j - 1][k] + al * d[j][k]);
+  }
+  return [d[deg][0] / (d[deg][2] || 1), d[deg][1] / (d[deg][2] || 1)];
+}
+
 /** Points on a NURBS curve (de Boor, rational when weights are given); else its fit points or control polygon. */
 export function nurbs(cp, knots, deg, weights, fit) {
   const n = cp.length;
-  if (n > deg && knots.length === n + deg + 1 && knots[n] > knots[deg]) {
+  if (nurbsOk(cp, knots, deg)) {
     const w = weights && weights.length === n ? weights : null, out = [], steps = Math.min(Math.max(n * 12, 48), 2000);
-    for (let i = 0; i <= steps; i++) {
-      const t = knots[deg] + (knots[n] - knots[deg]) * i / steps;
-      let s = deg;
-      while (s < n - 1 && t >= knots[s + 1]) s++;
-      const d = [];
-      for (let j = 0; j <= deg; j++) { const p = cp[j + s - deg], q = w ? w[j + s - deg] : 1; d.push([p[0] * q, p[1] * q, q]); }
-      for (let r = 1; r <= deg; r++) for (let j = deg; j >= r; j--) {
-        const den = knots[j + 1 + s - r] - knots[j + s - deg], al = den ? (t - knots[j + s - deg]) / den : 0;
-        d[j] = [0, 1, 2].map((k) => (1 - al) * d[j - 1][k] + al * d[j][k]);
-      }
-      out.push([d[deg][0] / (d[deg][2] || 1), d[deg][1] / (d[deg][2] || 1)]);
-    }
+    for (let i = 0; i <= steps; i++) out.push(nurbsAt(cp, knots, deg, w, knots[deg] + (knots[n] - knots[deg]) * i / steps));
     return out;
   }
   return fit && fit.length > 1 ? fit : cp;

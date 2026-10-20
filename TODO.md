@@ -94,7 +94,7 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
 50. **Preflight check before PDF / film / DXF** (M): one list of duplicates, open paths on a cut layer, tiny gaps, parts off
     the sheet, lines wider than a hairline, text not outlined; each row selects the offenders.
 51. ✅ (built, session 11, R14 option A) **One-click unit fix, ×25.4 / ÷25.4** (S), next to Set length: the commonest "my file is the wrong size" cause.
-52. **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
+52. ✅ (built, session 11, R14 option B) **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
 53. **Text to outlines** (L): removes font problems for film and cut files (needs font outlines without a build step).
 54. **Wireframe (outline-only) view** (S): one toggle that shows objects stacked or hidden behind fills.
 55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.

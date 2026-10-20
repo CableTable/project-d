@@ -7052,6 +7052,55 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     } finally { await scCtx.close(); }
   });
 
+  await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
+    await closeTabs(/./);
+    const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);
+    await t('picker').setInputFiles({ name: 'cut-plate.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'cut-plate.dxf');
+    const dlg = t('cutter-dialog');
+    const shot = async (n) => { await dlg.waitFor(); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/s11-52-${n}.png` }); };
+    await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
+    assert.equal(await t('cutter-name').textContent(), 'cut-plate-cutter.dxf');
+    assert.equal(await t('cutter-tol').inputValue(), '0.01');
+    assert.equal(await t('cutter-left').textContent(), '1 text / fill object left out');
+    for (const bad of ['abc', '0', '-1']) {
+      await t('cutter-tol').fill(bad);
+      assert.equal(await t('cutter-err').isVisible(), true, bad + ' is refused');
+      assert.match(await t('cutter-err').textContent(), /tolerance must be a number above 0/);
+      assert.match(await t('cutter-tol').getAttribute('class'), /invalid/);
+    }
+    await t('cutter-go').click();
+    assert.equal(await dlg.isVisible(), true, 'a bad tolerance keeps the dialog open');
+    assert.match(await prompt(), /tolerance must be a number above 0/);
+    await t('cutter-tol').fill('0.05');
+    assert.equal(await t('cutter-err').isVisible(), false);
+    await shot('light');
+    await t('cutter-cancel').click(); await dlg.waitFor({ state: 'detached' });
+    await menuItem('View', 'Theme: dark');
+    await menuItem('File', 'Export for cutter…'); await shot('dark');
+    await page.keyboard.press('Escape'); await dlg.waitFor({ state: 'detached' });
+    await menuItem('View', 'Theme: light');
+    assert.deepEqual(await tabNames(), ['cut-plate.dxf']); assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0, 'cancelled: the tab is untouched');
+
+    await page.evaluate(() => {
+      window.__cut = { dlg: [], wrote: [] };
+      window.__TAURI__ = { dialog: { save: async (o) => { window.__cut.dlg.push(o.defaultPath); return 'C:\\out\\plate-cutter.dxf'; }, ask: async () => true },
+        fs: { exists: async () => false, writeTextFile: async (p, text) => { window.__cut.wrote.push([p, text]); } } };
+    });
+    try {
+      await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
+      await t('cutter-tol').fill('0.05'); await t('cutter-go').click();
+      await page.waitForFunction(() => window.__cut.wrote.length === 1);
+      const { dlg: asked, wrote } = await page.evaluate(() => window.__cut);
+      assert.deepEqual(asked, ['cut-plate-cutter.dxf']); assert.equal(wrote[0][0], 'C:\\out\\plate-cutter.dxf');
+      const back = readDxf(wrote[0][1]);
+      assert.deepEqual([...new Set(back.entities.map((e) => e.type))].sort(), ['ARC', 'LWPOLYLINE']);
+      assert.match(await prompt(), /Exported plate-cutter\.dxf for the cutter, curves flattened to 0\.05 mm \(1 text \/ fill object left out\)/);
+      assert.deepEqual(await tabNames(), ['cut-plate.dxf'], 'the tab keeps its own name and file');
+    } finally { await page.evaluate(() => { delete window.__TAURI__; delete window.__cut; }); }
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

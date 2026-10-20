@@ -296,6 +296,12 @@ select.fld { font-family: var(--sans); }
 .hrow.now { font-weight: 600; background: var(--sel); }
 .hrow.later { color: var(--muted); }
 .pop-dialog .row.lbl { gap: 12px; }
+.cutdlg { width: min(580px, 100%); }
+.cutdlg .fld { width: 70px; }
+.cutchip { padding: 2px 8px; border: 1px solid var(--line); border-radius: 12px; }
+.cutnote { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); }
+.cutnote.bad { border-color: var(--mark); color: var(--mark); }
+.cutnote.bad .lbl { color: var(--muted); }
 .pfields { display: flex; align-items: center; gap: 14px; }
 .pfields[hidden] { display: none; }
 
