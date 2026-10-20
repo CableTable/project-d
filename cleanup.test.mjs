@@ -113,6 +113,26 @@ test('empty drawing has zero flags and off-sheet edges use physical units', () =
   assert.equal(rows(d, { factor: 25.4, sheetW: 25.4 }).offsheet.count, 0);
   assert.equal(rows(d, { factor: 25.4, sheetW: 20 }).offsheet.count, 1);
 });
+
+test('drawing tabs have no sheet; each targeted check agrees with a full preflight', () => {
+  const d = doc(line(-1, 0, 1, 0), line(-1, 0, 1, 0), text(200, 200, 2, 'Outside'));
+  const options = { factor: 25.4, tolerance: .05 };
+  const all = preflight(d, options);
+  assert.equal(all.find((r) => r.id === 'offsheet').count, null);
+  assert.deepEqual(all.find((r) => r.id === 'offsheet').offenders, []);
+  for (const row of all) assert.deepEqual(preflight(d, { ...options, check: row.id }), [row]);
+  const sheet = { ...options, sheetW: 100, sheetH: 100 };
+  for (const row of preflight(d, sheet)) assert.deepEqual(preflight(d, { ...sheet, check: row.id }), [row]);
+});
+
+test('targeted width and text checks skip duplicate geometry comparisons', () => {
+  const d = doc(line(0, 0, 10, 0, { lw: 50 }), text(0, 5, 1, 'Live'));
+  // Duplicate comparison reads every raw field; these checks only need flattened geometry.
+  d.entities[0].r.c.push(999);
+  d.entities[0].r.v.push({ toString() { throw new Error('duplicate scan ran'); } });
+  assert.deepEqual(preflight(d, { check: 'wide' })[0].offenders, [0]);
+  assert.deepEqual(preflight(d, { check: 'text' })[0].offenders, [1]);
+});
 test('partial cleanup preserves elevated lines/arcs and their original properties', () => {
   const d = doc(line(0, 0, 10, 0), line(5, 0, 15, 0), arc(0, 0, 10, 0, 90), arc(0, 0, 10, 45, 135));
   for (const e of d.entities) for (const c of [30, 31]) if (e.r.c.includes(c)) e.r.v[e.r.c.indexOf(c)] = '7';

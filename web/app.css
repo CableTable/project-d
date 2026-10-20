@@ -193,7 +193,7 @@ select.fld { font-family: var(--sans); }
 .pfhead { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 .pfbody { padding: 12px; }
 .pfbody p { margin: 6px 0 10px; line-height: 1.5; }
-.pfrow { display: grid; grid-template-columns: minmax(0, 1fr) 30px 53px 68px; align-items: center; gap: 6px; min-height: 48px; border-top: 1px solid var(--line); }
+.pfrow { display: grid; grid-template-columns: minmax(0, 1fr) 104px 53px 68px; align-items: center; gap: 6px; min-height: 48px; border-top: 1px solid var(--line); }
 .pfcols { min-height: 30px; border: 0; color: var(--muted); font-size: 11px; }
 .pfrow .btn { padding: 0 7px; font-size: 12px; }
 .pfcount { color: var(--mark); font-family: var(--mono); font-weight: 600; text-align: center; }

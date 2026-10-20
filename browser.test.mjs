@@ -5067,17 +5067,19 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   };
   await step('Remove duplicates + undo: count redundant entities and trim partial overlaps (TODO 49)', async () => {
     await openGrips(cleanupDrawing(), 'cleanup.dxf');
-    assert.equal(await t('duplicate-count').textContent(), '2 found');
+    assert.equal(await t('duplicate-count').textContent(), 'Check');
     const before = await savedDoc(), labels = await histLabels();
     await t('duplicate-remove').click(); await frames();
-    assert.equal(await t('duplicate-count').textContent(), '0 found');
+    assert.equal(await t('duplicate-count').textContent(), 'Check', 'edits invalidate the count without scanning');
     const cleaned = await savedDoc();
     assert.equal(cleaned.entities.length, before.entities.length - 1);
     assert.equal(fieldOf(cleaned.entities[1], 10), 50, 'partially redundant line starts at 50');
     assert.equal((await histLabels()).length, labels.length + 1, 'one undo step');
     await t('undo').click(); await frames();
-    assert.equal(await t('duplicate-count').textContent(), '2 found');
+    assert.equal(await t('duplicate-count').textContent(), '2 found', 'undo reuses the cached count for the restored entities');
     assert.deepEqual((await savedDoc()).entities, before.entities, 'undo restores every original');
+    await t('duplicate-remove').click(); await t('duplicate-remove').click();
+    assert.equal(await t('duplicate-count').textContent(), '0 found', 'explicit check updates the count');
   });
   await step('Preflight open, Select, Fix, Recheck and Close, light/dark screenshots (TODO 50)', async () => {
     await openGrips(cleanupDrawing(), 'preflight.dxf');
@@ -5090,6 +5092,10 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await t('preflight-gaps-count').textContent(), '1');
     assert.equal(await t('preflight-text-count').textContent(), '1');
     assert.equal(await t('preflight-wide-count').textContent(), '1');
+    assert.equal(await t('preflight-offsheet-count').textContent(), 'n/a (no sheet)');
+    assert.equal(await t('preflight-offsheet-select').isDisabled(), true);
+    assert.equal(await t('duplicate-count').textContent(), '2 found', 'Preflight updates the duplicate count');
+    const openCount = await t('preflight-open-count').textContent();
     assert.deepEqual(await t('preflight').locator('.pfmanual').allTextContents(), ['Manual', 'Manual', 'Manual']);
     await t('preflight-duplicates-select').click();
     assert.equal(await t('sel-count').textContent(), '2 selected');
@@ -5104,6 +5110,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.match(pdfText(await downloaded(() => t('pdf-go').click())), /^%PDF-/, 'preflight warnings never block PDF output');
     await t('preflight-duplicates-fix').click(); await frames();
     assert.equal(await t('preflight-duplicates-count').textContent(), '0');
+    assert.equal(await t('preflight-open-count').textContent(), openCount, 'Fix leaves other row counts stale');
     await t('preflight-gaps-select').click(); assert.equal(await t('sel-count').textContent(), '2 selected');
     await t('preflight-gaps-fix').click(); await frames();
     assert.equal(await t('preflight-gaps-count').textContent(), '0');
@@ -5112,10 +5119,11 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await t('preflight-wide-count').textContent(), '0');
     await t('undo').click(); await frames();
     assert.match(await t('preflight-note').textContent(), /Drawing changed/);
+    await t('preflight-text-select').click();
+    assert.equal(await t('preflight-wide-count').textContent(), '0', 'Select refreshes only the clicked row');
     await t('preflight-recheck').click(); assert.equal(await t('preflight-wide-count').textContent(), '1');
     await t('preflight-open-select').click(); assert.ok(/selected/.test(await t('sel-count').textContent()));
     await t('preflight-text-select').click(); assert.equal(await t('sel-count').textContent(), '1 selected');
-    await t('preflight-offsheet-select').click(); assert.ok(/selected/.test(await t('sel-count').textContent()));
     await t('preflight-close').click(); assert.equal(await t('preflight').isVisible(), false);
     await menuItem('Tools', 'Preflight…'); await t('preflight-recheck').focus(); await page.keyboard.press('Escape');
     assert.equal(await t('preflight').isVisible(), false);

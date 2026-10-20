@@ -6138,15 +6138,12 @@ function joinTinyGaps(whole = false) {
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
-function duplicatesOf(d) {
-  if (!d.duplicates || d.duplicates.source !== d.raw.entities) d.duplicates = { source: d.raw.entities, result: CL.removeDuplicates(d.raw) };
-  return d.duplicates.result;
-}
 function removeDuplicates() {
   const d = editable();
   if (!d) return;
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
-  if (!r.count) { note('No removable duplicates / overlaps (locked layers are kept)'); return; }
+  d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
+  if (!r.count) { note('No removable duplicates / overlaps (locked layers are kept)'); renderEdit(); return; }
   commit(d, r, 'Remove duplicates / overlaps');
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
@@ -6162,14 +6159,18 @@ function showPreflight() {
   ui.preflight.hidden = false;
   recheckPreflight();
 }
-function recheckPreflight() {
+function recheckPreflight(check) {
   const d = editable();
   if (!d || !ui.preflight || ui.preflight.hidden) return;
-  const rows = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, sheetW: state.sheetW, sheetH: state.sheetH });
-  ui.preflightDoc = d; ui.preflightSource = d.raw.entities;
+  const fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check });
+  const rows = check ? ui.preflightRows.map((r) => fresh.find((f) => f.id === r.id) || r) : fresh;
+  ui.preflightRows = rows;
+  if (!check) { ui.preflightDoc = d; ui.preflightSource = d.raw.entities; }
+  const duplicates = fresh.find((r) => r.id === 'duplicates');
+  if (duplicates) { d.duplicates = { source: d.raw.entities, count: duplicates.count }; renderEdit(); }
   const button = (label, id, fn, disabled = false) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, disabled, onclick: fn }, label);
   const select = (id) => {
-    const fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, sheetW: state.sheetW, sheetH: state.sheetH }).find((r) => r.id === id);
+    const fresh = recheckPreflight(id);
     setTool('select');
     const offenders = fresh.offenders.filter((i) => !lockedEnt(d, i));
     setSel(d, new Set(offenders));
@@ -6179,24 +6180,26 @@ function recheckPreflight() {
     if (id === 'duplicates') removeDuplicates();
     else if (id === 'gaps') joinTinyGaps(true);
     else {
-      const wide = CL.preflight(d.raw, { factor: d.factor }).find((r) => r.id === 'wide');
+      const [wide] = CL.preflight(d.raw, { factor: d.factor, check: 'wide' });
       const offenders = new Set(wide.offenders.filter((i) => !lockedEnt(d, i)));
       if (offenders.size) commit(d, CL.hairline(d.raw, offenders, d.locked), 'Preflight Hairline');
     }
-    recheckPreflight();
+    recheckPreflight(id);
   };
-  ui.preflightNote = h('p', { class: 'lbl', 'data-testid': 'preflight-note' }, 'Whole drawing + active sheet · checked just now. Cut layer: name contains “cut” (any case).');
+  ui.preflightNote = h('p', { class: 'lbl', 'data-testid': 'preflight-note' },
+    (ui.preflightSource !== d.raw.entities ? 'Drawing changed · Recheck for other counts.' : 'Whole drawing · checked just now.') + ' Cut layer: name contains “cut” (any case).');
   ui.preflight.replaceChildren(
     h('div', { class: 'pfhead' }, h('strong', {}, 'Preflight'), h('span', { class: 'chip', 'data-testid': 'preflight-flagged' }, `${rows.filter((r) => r.count).length} checks flagged`)),
     h('div', { class: 'pfbody' }, ui.preflightNote,
       h('div', { class: 'pfrow pfcols', 'aria-hidden': 'true' }, ['Check', 'Count', 'Select', 'Fix'].map((label) => h('span', {}, label))),
       rows.map((r) => h('div', { class: 'pfrow', 'data-testid': `preflight-${r.id}` }, h('span', {}, r.label),
-        h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count),
+        h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count ?? 'n/a (no sheet)'),
         button('Select', `preflight-${r.id}-select`, () => select(r.id), !r.count),
         r.fix ? button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count) : h('span', { class: 'pfmanual' }, 'Manual'))),
       h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`),
-      h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', recheckPreflight), button('Close', 'preflight-close', () => { ui.preflight.hidden = true; })))
+      h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', () => recheckPreflight()), button('Close', 'preflight-close', () => { ui.preflight.hidden = true; })))
   );
+  return fresh[0];
 }
 
 function renderEdit() {
@@ -6250,9 +6253,9 @@ function renderEdit() {
   ui.gapCount.textContent = gl ? String(gl.length) : '…';
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
   ui.gapShow.classList.toggle('on', state.gapShow); ui.gapShow.disabled = ui.gapJoin.disabled = !gl || !gl.length;
-  const duplicates = duplicatesOf(d);
-  ui.duplicateCount.textContent = `${duplicates.count} found`;
-  ui.duplicateRemove.disabled = !duplicates.count;
+  const duplicates = d.duplicates?.source === d.raw.entities ? d.duplicates : null;
+  ui.duplicateCount.textContent = duplicates ? `${duplicates.count} found` : 'Check';
+  ui.duplicateRemove.disabled = duplicates?.count === 0;
   ui.lenRow.hidden = !(L && L.measured);
   if (L && L.measured) ui.measured.textContent = fmtSize(L.measured) + ' mm measured';
 }

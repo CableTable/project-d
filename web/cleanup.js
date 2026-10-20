@@ -142,54 +142,61 @@ export function hairline(raw, offenders, locked = new Set()) {
 }
 
 /** Six warning checks. Sheet/tolerance are mm; counts are offending entities except gap clusters. */
-export function preflight(raw, { factor = 1, tolerance = 0.01, sheetW, sheetH } = {}) {
-  const ed = checkIndex(raw), fl = ed.fl, gaps = findGaps(ed, tolerance / factor);
-  const cut = [], ends = [];
-  for (const it of fl.items) {
-    if (it.ps !== ed.space || it.k !== 'p' || it.fill || !/cut/i.test(fl.layers[it.L[0]].name)) continue;
-    const p = pathEnds(it.ops);
-    if (!p) continue;
-    const a = mapply(fl.mats[it.m], p[0], p[1]), b = mapply(fl.mats[it.m], p[2], p[3]);
-    if (near(a, b)) continue;
-    cut.push(it); ends.push(...a, ...b);
-  }
-  const cutEd = { shown: cut.map((_, i) => i), ends, graph: null }, open = new Set(), visited = new Set();
-  const endpoints = cut.flatMap((_, e) => [0, 1].map((k) => ({ e, k, p: ends.slice(e * 4 + k * 2, e * 4 + k * 2 + 2) })));
-  const bins = new Map(), cell = 2e-6;
-  for (const p of endpoints) {
-    const key = `${Math.floor(p.p[0] / cell)},${Math.floor(p.p[1] / cell)}`;
-    if (!bins.has(key)) bins.set(key, []);
-    bins.get(key).push(p);
-  }
-  const free = new Set();
-  for (const p of endpoints) {
-    const x = Math.floor(p.p[0] / cell), y = Math.floor(p.p[1] / cell);
-    let joined = false;
-    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
-      if ((bins.get(`${x + dx},${y + dy}`) || []).some((q) => q !== p && near(p.p, q.p, cell))) joined = true;
+export function preflight(raw, { factor = 1, tolerance = 0.01, sheetW, sheetH, check } = {}) {
+  const wanted = (id) => !check || check === id, hasSheet = sheetW != null && sheetH != null;
+  const ed = check === 'duplicates' || (check === 'offsheet' && !hasSheet) ? null : checkIndex(raw), fl = ed?.fl;
+  const gaps = wanted('gaps') ? findGaps(ed, tolerance / factor) : [];
+  const open = new Set();
+  if (wanted('open')) {
+    const cut = [], ends = [];
+    for (const it of fl.items) {
+      if (it.ps !== ed.space || it.k !== 'p' || it.fill || !/cut/i.test(fl.layers[it.L[0]].name)) continue;
+      const p = pathEnds(it.ops);
+      if (!p) continue;
+      const a = mapply(fl.mats[it.m], p[0], p[1]), b = mapply(fl.mats[it.m], p[2], p[3]);
+      if (near(a, b)) continue;
+      cut.push(it); ends.push(...a, ...b);
     }
-    if (!joined) free.add(p.e);
-  }
-  for (const i of cutEd.shown) {
-    if (visited.has(i)) continue;
-    const chain = chainAt(cutEd, i, cell);
-    for (const e of chain) visited.add(e);
-    if (chain.some((e) => free.has(e))) for (const e of chain) open.add(cut[e].e);
+    const cutEd = { shown: cut.map((_, i) => i), ends, graph: null }, visited = new Set();
+    const endpoints = cut.flatMap((_, e) => [0, 1].map((k) => ({ e, k, p: ends.slice(e * 4 + k * 2, e * 4 + k * 2 + 2) })));
+    const bins = new Map(), cell = 2e-6;
+    for (const p of endpoints) {
+      const key = `${Math.floor(p.p[0] / cell)},${Math.floor(p.p[1] / cell)}`;
+      if (!bins.has(key)) bins.set(key, []);
+      bins.get(key).push(p);
+    }
+    const free = new Set();
+    for (const p of endpoints) {
+      const x = Math.floor(p.p[0] / cell), y = Math.floor(p.p[1] / cell);
+      let joined = false;
+      for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
+        if ((bins.get(`${x + dx},${y + dy}`) || []).some((q) => q !== p && near(p.p, q.p, cell))) joined = true;
+      }
+      if (!joined) free.add(p.e);
+    }
+    for (const i of cutEd.shown) {
+      if (visited.has(i)) continue;
+      const chain = chainAt(cutEd, i, cell);
+      for (const e of chain) visited.add(e);
+      if (chain.some((e) => free.has(e))) for (const e of chain) open.add(cut[e].e);
+    }
   }
   const off = new Set(), wide = new Set(), text = new Set();
-  for (const it of fl.items) {
+  if (wanted('offsheet') && hasSheet || wanted('wide') || wanted('text')) for (const it of fl.items) {
     if (it.ps !== ed.space) continue;
-    if (it.k === 't') text.add(it.e);
-    if (it.k === 'p' && !it.fill && strokeWidth(it, factor, mscale(fl.mats[it.m])) > 0.05 + EPS) wide.add(it.e);
-    const b = it.b.map((v) => v * factor);
-    if (sheetW != null && sheetH != null && (b[0] < -EPS || b[1] < -EPS || b[2] > sheetW + EPS || b[3] > sheetH + EPS)) off.add(it.e);
+    if (wanted('text') && it.k === 't') text.add(it.e);
+    if (wanted('wide') && it.k === 'p' && !it.fill && strokeWidth(it, factor, mscale(fl.mats[it.m])) > 0.05 + EPS) wide.add(it.e);
+    if (wanted('offsheet') && hasSheet) {
+      const b = it.b.map((v) => v * factor);
+      if (b[0] < -EPS || b[1] < -EPS || b[2] > sheetW + EPS || b[3] > sheetH + EPS) off.add(it.e);
+    }
   }
-  const dup = removeDuplicates(raw);
+  const dup = wanted('duplicates') ? removeDuplicates(raw) : null;
   const row = (id, label, offenders, fix, count = offenders.length) => ({ id, label, offenders, fix, count });
-  return [row('duplicates', 'Duplicates / overlaps', dup.offenders, 'Remove'),
+  return [row('duplicates', 'Duplicates / overlaps', dup?.offenders || [], 'Remove'),
     row('open', 'Open paths on Cut', [...open]),
     row('gaps', `Tiny gaps < ${tolerance} mm`, [...new Set(gaps.flatMap((g) => g.ends.map((e) => e.e)))], 'Join', gaps.length),
-    row('offsheet', 'Parts off the sheet', [...off]),
+    row('offsheet', 'Parts off the sheet', [...off], undefined, hasSheet ? off.size : null),
     row('wide', 'Lines wider than hairline', [...wide], 'Hairline'),
-    row('text', 'Text not outlined', [...text])];
+    row('text', 'Text not outlined', [...text])].filter((r) => wanted(r.id));
 }
