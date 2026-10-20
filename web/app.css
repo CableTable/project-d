@@ -712,7 +712,7 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cb-rows kbd { text-transform: uppercase; }
 .cb-foot { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 6px 10px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
 .cb-foot kbd { margin: 0 1px; }
-.cfade { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%); bottom: 14px; width: min(430px, calc(100% - 28px)); display: flex; flex-direction: column; gap: 3px; font: 12px var(--mono); pointer-events: none; }
+.cfade { position: absolute; z-index: 3; left: 50%; transform: translateX(-50%); bottom: 52px; width: min(430px, calc(100% - 28px)); display: flex; flex-direction: column; gap: 3px; font: 12px var(--mono); pointer-events: none; }
 .cb-acts { display: flex; gap: 6px; pointer-events: auto; }
 .cb-acts:empty { display: none; }
 .cb-acts .modask { display: inline-flex; gap: 6px; }

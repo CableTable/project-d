@@ -4588,6 +4588,16 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
   const undoAndPick = async (x, y, n) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await pick(x, y, n); };       // (not from inside the command line, where Ctrl+Z is the field's own)
   const entOf = (doc, i) => doc.entities[i];
   const near = (a, b, e) => Math.abs(a - b) < e;
+  await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
+    await openGrips();
+    await click(70, 30); await gripWhen(3);
+    await typeCmd('unknowncommand');
+    await t('cmd-fade').locator('.er', { hasText: 'Unknown command: unknowncommand' }).waitFor();
+    assert.equal(await t('grip-hint').isVisible(), true);
+    const messages = await t('cmd-fade').boundingBox(), hint = await t('grip-hint').boundingBox();
+    assert.ok(messages && hint && messages.y + messages.height <= hint.y, 'command messages sit above the grip hint without overlapping');
+  });
+
   await step('Grips: a selected line, circle, arc and polyline show blue squares (line 3, circle 5, arc 4, polyline per vertex); none with nothing selected, with a drawing tool, or past 200 selected', async () => {
     await openGrips();
     assert.equal(await gripCount(), 0, 'nothing selected: no grips');
