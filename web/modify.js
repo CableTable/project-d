@@ -296,7 +296,7 @@ function offsetPath(P, dd) {
       const nj = k + 1 < n ? J[k + 1] : P.closed ? J[0] : null;
       if (nj && nj.e && nj.s && dist(nj.e, nj.s) > 1e-7) {
         const end = items[k].s.a[4] ?? 0, start = items[(k + 1) % n].s.a[3] ?? 0;
-        segs.push({ a: [nj.e[0], nj.e[1], 0, end, start], b: nj.s, bulge: 0, line: true });
+        segs.push({ a: items[k].s.a.length > 3 || items[(k + 1) % n].s.a.length > 3 ? [nj.e[0], nj.e[1], 0, end, start] : nj.e, b: nj.s, bulge: 0, line: true });
       }
     }
     return { segs };

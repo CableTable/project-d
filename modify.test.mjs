@@ -90,6 +90,14 @@ test('Offset an open polyline: both ends move sideways, the inner corner is mitr
   nearPt(s.pts[0], [0, -10]); nearPt(s.pts[1], [110, -10]); nearPt(s.pts[2], [110, 100]);
 });
 
+test('Offset a plain arc beside a line: a straight filler does not add vertex widths', () => {
+  const result = M.offsetEntity(lwpoly([[0, 0, 1], [10, 0], [20, 0]]), 4, [15, 4]);
+  assert.ok(result.ent, result.error);
+  assert.equal(S(result.ent).pts.length, 4, 'a filler joins the arc and line');
+  assert.equal(result.ent.r.c.includes(40), false);
+  assert.equal(result.ent.r.c.includes(41), false);
+});
+
 test('Offset a polyline with a bulge: the arc keeps its centre and takes the new radius; joins stay tangent', () => {
   // a slot: line, half circle, line, half circle (closed), 40 long, 20 wide
   const slot = lwpoly([[10, 0], [50, 0, 1], [50, 20], [10, 20, 1]], { ...base, closed: true });

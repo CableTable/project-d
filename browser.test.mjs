@@ -5041,6 +5041,57 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.keyboard.press('Control+1'); await closeTabs(/./);
   });
 
+  await step('Background unit fix: chosen Background scales size and a nonzero corner by ×25.4; Ctrl+Z restores both', async () => {
+    const doc = newDoc(); addEntities(doc, dxfLine(10, 20, 30, 20));
+    await openGrips(writeDxf(doc), 'background-unit-fix.dxf');
+    await t('drawing').evaluate((canvas) => {
+      const ctx = canvas.getContext('2d'), draw = ctx.drawImage;
+      ctx.drawImage = function (image, x, y, w, h) {
+        canvas.__backgroundRect = [x, Number(document.querySelector('[data-key=sheetH]').value) - y - h, w, h];
+        return draw.call(this, image, x, y, w, h);
+      };
+    });
+    const painted = async () => { await frames(); return t('drawing').evaluate((c) => c.__backgroundRect); };
+    try {
+      await t('bg-picker').setInputFiles('fixtures/bg.png');
+      await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
+      await t('scale-target').selectOption('bg'); await waitSize('105.83', '52.92');
+      const before = await painted();
+      assert.deepEqual(before.slice(0, 2).map((v) => +v.toFixed(6)), [10, 20], 'nonzero background corner');
+      await t('unit-up').click(); await waitSize('2688.17', '1344.08');
+      const after = await painted();
+      after.forEach((v, i) => assert.ok(Math.abs(v - before[i] * 25.4) < 1e-6, 'scaled size and corner'));
+      await page.keyboard.press('Control+z'); await waitSize('105.83', '52.92');
+      const restored = await painted();
+      restored.forEach((v, i) => assert.ok(Math.abs(v - before[i]) < 1e-6, 'restored size and corner'));
+      await t('scale-target').selectOption('drawing'); await waitSize('20', '0');
+    } finally {
+      await t('drawing').evaluate((c) => { delete c.getContext('2d').drawImage; });
+      await closeTabs(/./);
+    }
+  });
+
+  await step('Picture PDF: changing sheets clears undo and redo so Ctrl+Z cannot resize another sheet', async () => {
+    await closeTabs(/./);
+    page.once('dialog', (d) => d.accept('1'));
+    await t('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
+    await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
+    await t('unit-up').click();
+    assert.equal(await t('undo').isDisabled(), false);
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+    assert.equal(await t('undo').isDisabled(), true, 'sheet 1 history was cleared');
+    const before = await sizeNow();
+    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), before, 'sheet 2 size stays put');
+    await t('unit-up').click(); await page.keyboard.press('Control+z');
+    assert.deepEqual(await sizeNow(), before, 'sheet 2 has its own working undo');
+    assert.equal(await t('redo').isDisabled(), false);
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
+    assert.equal(await t('redo').isDisabled(), true, 'sheet 2 redo was cleared');
+    await closeTabs(/./);
+  });
+
   // ---- TODO 23: resize the sheet on a layout (R5c, right pane): select the sheet, drag a side handle, whole mm, the parts stay where they are ----
   const sheetSize = async () => [await page.locator('[data-key=sheetW]').inputValue(), await page.locator('[data-key=sheetH]').inputValue()];
   const sizeNum = async () => (await sheetSize()).map(Number);

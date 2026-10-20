@@ -4273,6 +4273,7 @@ async function balSheet(d, n) {
     if (P.picture) {
       const r = await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
       d.bg = { ...d.bg, bitmap: bm, w: bm.width, h: bm.height, mm: r.mmPerPx, x: 0, y: 0 };
+      d.hist = Ed.createHistory();
     } else {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
       Object.assign(d, tabFields(r.doc, flatten(r.doc)));
