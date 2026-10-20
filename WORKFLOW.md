@@ -24,7 +24,7 @@ briefs, reading short reports and merging.
 ## The loop for one TODO item
 
 1. **Pick:** the next unticked item in TODO.md "Rakshith's list" (Haiku lookup), or what he names.
-2. **Mock-up** (any new UI): builder writes 2–3 options as `.dc.html` artboards in `mockups/_design/project/`
+2. **Mock-up** (only when he asks for one; otherwise Rook decides the UI and records it in DECISIONS.md, his call 2026-10-20): builder writes 2–3 options as `.dc.html` artboards in `mockups/_design/project/`
    (format spec: `mockups/_design/ref/`; copy the latest R-board). Lead reads them, adds them to
    `canvas.json` (a Round title note + a sticky with pros / cons / open questions per board) and publishes
    to the **"Project D Mockups"** canvas: https://claude.ai/artifact/QgsKW8CrQbt4rURJeY9sSD.
@@ -33,7 +33,7 @@ briefs, reading short reports and merging.
    tests, screenshots light + dark, tick TODO.md, commit + push, don't stage `mockups/`). Keep its `session_id`.
 4. **Review:** a Pip-review session on the build's commits (ranked findings, "ship as is" / "fix first").
 5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run.
-6. **As built:** an AB board in the canvas when the build differs from the mock-up.
+6. **As built:** every UI build gets an AB board (mockups/R<n>_AB_*.html, local), drawn from the screenshots (his call, 2026-10-20).
 7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR). CI publishes the exe.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
    Pip-test downloads the release into `shots/exe/`, starts it with `WEBVIEW2_USER_DATA_FOLDER` (an isolated profile:
