@@ -11,7 +11,6 @@ import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
-import { cutterDoc } from './web/dxf-cutter.js';
 import * as GR from './web/grips.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
@@ -1053,9 +1052,20 @@ try {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
     await page.waitForTimeout(600);
+    const checkToasts = async () => {
+      const canvas = await t('canvas').boundingBox(), fade = await t('cmd-fade').boundingBox();
+      assert.ok(Math.abs(fade.x + fade.width / 2 - canvas.x - canvas.width / 2) < 1, 'toasts centred in the canvas');
+      assert.ok(fade.y + fade.height < canvas.y + canvas.height, 'toasts above the status bar');
+      assert.equal(await t('cmd-fade').locator('.cb-fade-rows > div').evaluateAll((rows) => rows.length === 3 && rows.every((row) => {
+        const css = getComputedStyle(row), panel = getComputedStyle(document.querySelector('.panel'));
+        return css.opacity === '1' && css.color === panel.color && css.backgroundColor === panel.backgroundColor && css.borderTopStyle === 'solid' && parseFloat(css.borderTopWidth) >= 1;
+      })), true, 'all three toast rows use opaque theme panel/text colours and a border');
+    };
+    await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-light.png' });
     await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: dark', exact: true }).click();
     await page.waitForTimeout(150);
+    await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-dark.png' });
     await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: light', exact: true }).click();
     await t('unit-down').click(); await waitSize('62.5', '37.5');
@@ -7301,14 +7311,32 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     } finally { await page.evaluate(() => { delete window.__TAURI__; delete window.__cut; }); }
     await closeTabs(/./);
 
+  });
+
+  await step('Export for cutter: app converts default and edited mm tolerances on an inch drawing', async () => {
+    await closeTabs(/./);
     const inch = newDoc(1); addEntities(inch, dxfEllipse(0, 0, 4, 0, .4));
     await openGrips(writeDxf(inch), 'cutter-inches.dxf');
     for (const mm of [.01, .05]) {
-      await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
+      await menuItem('File', 'Export for cutter…'); await t('cutter-dialog').waitFor();
       if (mm !== .01) await t('cutter-tol').fill(String(mm));
       const back = readDxf((await downloaded(() => t('cutter-go').click())).text);
-      const expected = readDxf(writeDxf(cutterDoc(inch, mm / 25.4).doc));
-      assert.equal(fieldOf(back.entities[0], 90), fieldOf(expected.entities[0], 90), 'inch export converts ' + mm + ' mm to drawing units');
+      assert.equal(back.header.$INSUNITS, '1', 'export keeps inch units');
+      assert.deepEqual(back.entities.map((e) => e.type), ['LWPOLYLINE']);
+      const r = back.entities[0].r, pts = [];
+      r.c.forEach((code, i) => { if (code === 10) pts.push([+r.v[i] * 25.4, +r.v[i + 1] * 25.4]); });
+      let worst = 0;
+      for (let i = 0; i < 4096; i++) {
+        const angle = i * 2 * Math.PI / 4096, x = 4 * 25.4 * Math.cos(angle), y = 1.6 * 25.4 * Math.sin(angle);
+        let best = Infinity;
+        pts.forEach((a, j) => {
+          const b = pts[(j + 1) % pts.length], dx = b[0] - a[0], dy = b[1] - a[1];
+          const u = Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / (dx * dx + dy * dy)));
+          best = Math.min(best, Math.hypot(x - a[0] - u * dx, y - a[1] - u * dy));
+        });
+        worst = Math.max(worst, best);
+      }
+      assert.ok(worst <= mm + .0001, `inch export deviation ${worst} mm exceeds ${mm} mm (plus DXF rounding)`);
     }
     await closeTabs(/./);
   });

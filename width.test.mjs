@@ -93,6 +93,24 @@ test('inch polyline presets and Custom widths save in drawing units', () => {
   }
 });
 
+test('selection keeps the true-width object ink under a thin accent centre line', () => {
+  for (const factor of [1, 25.4]) {
+    const fl = flatten(roundtrip([withWidth(line(1, 1, 3, 1, { aci: 1 }), 2, factor)]));
+    for (const dark of [false, true]) {
+      const strokes = [];
+      let matrix, width, colour;
+      const c = { setTransform: (...m) => { matrix = m; }, clearRect() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {},
+        set lineWidth(w) { width = w; }, set strokeStyle(v) { colour = v; },
+        stroke() { strokes.push([colour, width * Math.abs(matrix[0])]); } };
+      paintDrawing({ getContext: () => c }, { fl, hl: fl.items, accent: '#4f46e5', off: new Set(), factor, dark,
+        sheetH: 100, ox: 0, oy: 0, scale: 10, w: 5000, h: 5000, dpr: 2 });
+      assert.equal(strokes.length, 2);
+      assert.equal(strokes[0][0], '#ff0000'); near(strokes[0][1], 40);
+      assert.equal(strokes[1][0], '#4f46e5'); near(strokes[1][1], 5.2);
+    }
+  }
+});
+
 test('Hairline uses the 1.2 CSS pixel screen minimum when zoomed out', () => {
   const fl = flatten(roundtrip([withWidth(line(0, 0, 100, 0), 'Hairline')]));
   let width, matrix;

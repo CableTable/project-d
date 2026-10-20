@@ -75,7 +75,7 @@ export function paintDrawing(canvas, o) {
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
   paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor);
-  if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', factor);
+  if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5');
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
@@ -138,13 +138,13 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor) {
   flush();
 }
 
-/** The selection: its paths again in the accent colour, a little heavier; a filled or text item gets its box. */
-function highlight(c, items, mats, T, k, dpr, accent, factor) {
+/** The selection: a thin accent centre line over the object's true-width stroke. */
+function highlight(c, items, mats, T, k, dpr, accent) {
   c.strokeStyle = accent; c.fillStyle = accent; c.setLineDash([]);
   let cur = -1, kk = k;
   for (const it of items) {
     if (it.m !== cur) { cur = it.m; const M = mats[cur]; c.setTransform(...mmul(T, M)); kk = k * mscale(M) || k; }
-    c.lineWidth = Math.max(strokeWidth(it, factor, kk / k) * k / factor, 2.6 * dpr) / kk;
+    c.lineWidth = 2.6 * dpr / kk;
     c.beginPath();
     if (it.k === 'p') { trace(c, it.ops); if (it.fill) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0], it.b[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
   }
