@@ -6,7 +6,7 @@ import { widthKey, withWidth } from './web/props.js';
 import { planPdf } from './web/pdf-export.js';
 import { paintDrawing } from './web/render.js';
 
-const near = (a, b) => assert.ok(Math.abs(a - b) < 1e-5, `${a} vs ${b}`);
+const near = (a, b, tolerance = 1e-5) => assert.ok(Math.abs(a - b) < tolerance, `${a} vs ${b}`);
 const roundtrip = (ents, units = 4) => readDxf(writeDxf({ ...newDoc(units), entities: ents }));
 
 test('outline lineweights round trip for lines, arcs and circles, including inch input', () => {
@@ -69,14 +69,16 @@ test('PDF and Print preserve weights, constant widths, ByLayer and 0.05 mm Hairl
 
 test('screen stroke scales with zoom and agrees with physical widths, including inches', () => {
   for (const factor of [1, 25.4]) {
-    const fl = flatten(roundtrip([withWidth(line(1, 1, 3, 1), .5 / factor, factor)]));
+    const fl = flatten(roundtrip([line(1, 1, 3, 1), arc(3, 3, 1, 0, 90), circle(4, 4, 1), lwpoly([[1, 2], [2, 2]])]
+      .map((e) => withWidth(e, .5 / factor, factor))));
     for (const scale of [2, 10]) {
       const strokes = [];
       let matrix, width;
-      const c = { setTransform: (...m) => { matrix = m; }, clearRect() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {},
+      const c = { setTransform: (...m) => { matrix = m; }, clearRect() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {}, arc() {},
         set lineWidth(w) { width = w; }, stroke() { strokes.push(width * Math.abs(matrix[0])); } };
       paintDrawing({ width: 5000, height: 5000, getContext: () => c }, { fl, off: new Set(), factor, sheetH: 100, ox: 0, oy: 0, scale, w: 5000, h: 5000, dpr: 2 });
-      near(strokes[0], .5 * scale * 2);
+      assert.ok(strokes.length);
+      for (const w of strokes) near(w, .5 * scale * 2, factor * scale * 2 * 1e-6); // DXF widths save to six decimals in drawing units.
     }
   }
 });

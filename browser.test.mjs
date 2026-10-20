@@ -5029,6 +5029,10 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     await openGrips(dl.text, 'outline-width-reopened.dxf'); await click(40, 20); await frames();
     assert.equal(await preset('2').getAttribute('aria-pressed'), 'true', 'width returns after reopening');
+    await openPdf(); await t('pdf-page-sheet').check();
+    const pdf = pdfText(await downloaded(() => t('pdf-go').click()));
+    assert.match(pdf, /\n2 w\n/, 'reopened constant width reaches PDF / Print');
+    assert.match(pdf, /\n0\.05 w\n/, 'Hairline stays 0.05 mm in the output');
     const inch = newDoc(1); addEntities(inch, dxfLine(1, 1, 3, 1));
     await openGrips(writeDxf(inch), 'outline-inches.dxf'); await click(50.8, 25.4); await frames();
     assert.match(await t('prop-width').textContent(), /Selection · in/);
