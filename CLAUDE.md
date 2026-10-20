@@ -81,6 +81,7 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 
 ## 3. House rules
 
+- Terms: GLOSSARY.md (use its words; add new ones there).
 - **Text from a file never reaches HTML unescaped**: layer names, block names and text from a
   DXF, DWG or .cdr are built into the DOM with `textContent` / an `h()` helper (Project R's
   `dom.js`), never `innerHTML`.

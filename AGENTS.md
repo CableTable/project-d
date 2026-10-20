@@ -5,6 +5,7 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 `CLAUDE.md` has the house rules; the ones that matter for a build are below.
 
 ## Rules
+- Terms: GLOSSARY.md (use its words; add new ones there).
 - Commit on the branch you are given; **never push, fetch or pull** (no git credentials in the sandbox; the lead pushes).
   The git folder is separate (`--separate-git-dir`), so a `.git` file, not a folder, sits in the clone.
 - Don't stage `mockups/` or `shots/`.
