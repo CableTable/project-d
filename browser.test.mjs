@@ -6914,7 +6914,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       await alias('Contour').fill('co, mi'); await dialog.getByRole('button', { name: 'Cancel alias clash' }).click();
       assert.equal(await alias('Contour').inputValue(), 'co, ww', 'Cancel restores previous alias cell');
       await key('Contour').click(); await p.keyboard.press('w');
-      assert.match(await dialog.locator('.sc-status').textContent(), /command bar/);
+      assert.match(await dialog.locator('.sc-status').textContent(), /typing and drawing/);
       assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
       // A failed storage write keeps the dialog and does not activate its draft.
       await p.evaluate(() => {

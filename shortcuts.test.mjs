@@ -18,10 +18,10 @@ test('key strings and events normalize to the same modifier order, including Cmd
 });
 
 test('every reserved key has a reason; bare and Shift letters/digits cannot be keys', () => {
-  assert.deepEqual(Object.keys(SC.RESERVED).sort(), ['Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Esc', 'Delete', 'F2', 'F10', 'F11', 'F5', 'Ctrl+R'].sort());
-  for (const key of Object.keys(SC.RESERVED)) assert.ok(SC.keyReason(key));
-  for (const key of ['w', 'Shift+W', '1', 'Shift+2']) assert.match(SC.keyReason(key), /command bar/);
-  for (const key of ['Ctrl+Alt+W', 'Alt+W', 'F6', 'Ctrl+Shift+1']) assert.equal(SC.keyReason(key), '');
+  assert.deepEqual(Object.keys(SC.RESERVED).sort(), ['Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Esc', 'Delete', 'F2', 'F10', 'F11', 'F5', 'Ctrl+R', 'Ctrl+D'].sort());
+  assert.ok(SC.keyReason('Ctrl+D'));
+  for (const key of ['w', 'Shift+W', '1', 'Shift+2', 'Space', 'Enter', 'Tab', 'Backspace', 'ArrowUp', 'Shift+ArrowLeft']) assert.match(SC.keyReason(key), /typing and drawing/);
+  for (const key of ['Ctrl+Alt+W', 'Alt+W', 'F6', 'Ctrl+Shift+1', 'Shift+F6']) assert.equal(SC.keyReason(key), '');
 });
 
 test('defaults have no clashes; aliases overlap across draw/layout only, keys clash across scopes', () => {

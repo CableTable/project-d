@@ -484,7 +484,6 @@ function guardClose() {
   if (w && w.onCloseRequested) w.onCloseRequested(async (event) => { event.preventDefault(); if (await mayClose()) await w.destroy(); });
   window.addEventListener('beforeunload', (e) => { if (dirtyDocs().length) { e.preventDefault(); e.returnValue = ''; } });
   document.addEventListener('keydown', (e) => {                      // in the exe a reload would drop every tab with no question
-    if (document.querySelector('.pop-back, .pdlg-back')) return;
     const reload = e.key === 'F5' || ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'r');
     if (reload && window.__TAURI__ && dirtyDocs().length) { e.preventDefault(); note('Reload is off while a drawing has unsaved changes. Save it first'); }
   }, true);
@@ -5324,10 +5323,11 @@ function editKey(e) {
     else if (d && d.sel.size) setSel(d, new Set());
     return;
   }
-  if (e.target && e.target.closest && e.target.closest('input, textarea, select')) return;
-  const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
-  if (own) { e.preventDefault(); runCommand(own); return; }
+  const inField = e.target && e.target.closest && e.target.closest('input, textarea, select');
+  if (own && (!inField || own.name === 'properties')) { e.preventDefault(); runCommand(own); return; }       // Properties' key works in a field too, as Ctrl+1 always did
+  if (inField) return;
+  const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const dialog = !!document.querySelector('.pop-back, .pdlg-back'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (cmpKey(e, mod)) return;

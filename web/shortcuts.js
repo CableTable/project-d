@@ -6,6 +6,7 @@ export const RESERVED = {
   'Ctrl+Shift+S': 'Reserved for Save As.',
   'Ctrl+Z': 'Reserved for Undo.', 'Ctrl+Y': 'Reserved for Redo.', 'Ctrl+Shift+Z': 'Reserved for Redo.',
   Esc: 'Reserved for cancel / close / clear selection.', Delete: 'Reserved for deleting the selection.',
+  'Ctrl+D': 'Reserved for Duplicate in a layout.',
   F2: 'Reserved for command history.', F10: 'Reserved for polar tracking.', F11: 'Reserved for object snap tracking.',
   F5: 'Reserved for the desktop reload guard.', 'Ctrl+R': 'Reserved for the desktop reload guard.',
 };
@@ -40,7 +41,7 @@ export function keyReason(key) {
   const k = normalizeKey(key);
   if (k == null) return 'Press a recognised key combination.';
   if (RESERVED[k]) return RESERVED[k];
-  if (/^(Shift\+)?[A-Z0-9]$/.test(k)) return 'Letters and digits without Ctrl or Alt open the command bar.';
+  if (!/^(Ctrl|Alt)\+/.test(k) && !/^(Shift\+)?F\d+$/.test(k)) return 'Keys without Ctrl or Alt are kept for typing and drawing (letters, Space, Enter, Tab, arrows).';
   return '';
 }
 
