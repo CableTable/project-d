@@ -10,7 +10,8 @@ import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { cutterDoc } from './web/dxf-cutter.js';
 import * as GR from './web/grips.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
@@ -7253,6 +7254,7 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
     assert.equal(await t('cutter-name').textContent(), 'cut-plate-cutter.dxf');
     assert.equal(await t('cutter-tol').inputValue(), '0.01');
+    assert.match(await dlg.textContent(), /Line widths are not written \(cutters ignore them\)\./);
     assert.equal(await t('cutter-left').textContent(), '1 text / fill object left out');
     for (const bad of ['abc', '0', '-1']) {
       await t('cutter-tol').fill(bad);
@@ -7289,6 +7291,17 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       assert.match(await prompt(), /Exported plate-cutter\.dxf for the cutter, curves flattened to 0\.05 mm \(1 text \/ fill object left out\)/);
       assert.deepEqual(await tabNames(), ['cut-plate.dxf'], 'the tab keeps its own name and file');
     } finally { await page.evaluate(() => { delete window.__TAURI__; delete window.__cut; }); }
+    await closeTabs(/./);
+
+    const inch = newDoc(1); addEntities(inch, dxfEllipse(0, 0, 4, 0, .4));
+    await openGrips(writeDxf(inch), 'cutter-inches.dxf');
+    for (const mm of [.01, .05]) {
+      await menuItem('File', 'Export for cutter…'); await dlg.waitFor();
+      if (mm !== .01) await t('cutter-tol').fill(String(mm));
+      const back = readDxf((await downloaded(() => t('cutter-go').click())).text);
+      const expected = readDxf(writeDxf(cutterDoc(inch, mm / 25.4).doc));
+      assert.equal(fieldOf(back.entities[0], 90), fieldOf(expected.entities[0], 90), 'inch export converts ' + mm + ' mm to drawing units');
+    }
     await closeTabs(/./);
   });
 

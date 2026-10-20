@@ -2398,7 +2398,8 @@ function exportCutter() {
   if (!d || (!d.raw && !d.lay)) { note('Export for cutter: open a drawing first'); return; }
   if (document.querySelector('.cutdlg')) return;
   const raw = d.lay ? LD.layoutRaw(d.lay) : d.raw;
-  let made = { tol: 0.01, res: cutterDoc(raw, 0.01) };                 // the count of what is left out does not depend on the tolerance
+  const factor = d.lay ? 1 : d.factor;
+  let made = { tol: 0.01, res: cutterDoc(raw, 0.01 / factor) };        // the count of what is left out does not depend on the tolerance
   const want = baseName(dxfName(d.openPath ? d.openPath.split(/[\\/]/).pop() : d.name)) + '-cutter.dxf';
   const { left, other } = made.res;
   const leftText = left ? `${left} text / fill ${left === 1 ? 'object' : 'objects'} left out` : 'No text or fills to leave out';
@@ -2418,7 +2419,7 @@ function exportCutter() {
     finish();
     const t = window.__TAURI__;
     try {
-      if (made.tol !== tol) made = { tol, res: cutterDoc(raw, tol) };
+      if (made.tol !== tol) made = { tol, res: cutterDoc(raw, tol / factor) };
       const text = writeDxf(made.res.doc, { escapeUnicode: true });
       let name = want, dir = '';
       if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
@@ -2446,6 +2447,7 @@ function exportCutter() {
     h('div', { class: 'cutnote' }, h('label', { class: 'row' }, 'Curves flattened to', input, 'mm'),
       h('span', { class: 'lbl' }, 'Maximum curve deviation · arcs stay arcs where possible.'), err),
     h('span', { class: 'lbl' }, 'Only lines, arcs and polylines are written. Blocks are exploded and a circle becomes two arcs. Runs on the export copy: the original stays as it is.'),
+    h('span', { class: 'lbl' }, 'Line widths are not written (cutters ignore them).'),
     h('div', { class: 'cutnote' + (left ? ' bad' : ''), 'data-testid': 'cutter-left' }, leftText,
       other ? h('span', { class: 'lbl' }, `${other} other object${other === 1 ? '' : 's'} (points, 3D faces, missing blocks) cannot be kept`) : null),
     h('div', { class: 'row' }, h('span', { class: 'lbl', style: 'flex:1' }, 'Next: native file picker'), cancel, choose));

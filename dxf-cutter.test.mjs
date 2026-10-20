@@ -64,6 +64,17 @@ test('a spline is flattened to a polyline within the tolerance', () => {
   }
 });
 
+test('mm dialog tolerance converted to drawing units keeps an inch ellipse within mm tolerance', () => {
+  const d = W.newDoc(1), factor = 25.4;
+  W.addEntities(d, W.ellipse(0, 0, 4, 0, .4));
+  for (const mm of [.01, .05]) {
+    const back = D.readDxf(W.writeDxf(cutterDoc(d, mm / factor).doc));
+    const pts = verts(back.entities[0]).map((p) => p.map((v) => v * factor));
+    assert.ok(deviation((u) => [4 * factor * Math.cos(u * 2 * Math.PI), 1.6 * factor * Math.sin(u * 2 * Math.PI)], 4000, pts, true) <= mm);
+    assert.equal(back.header.$INSUNITS, '1');
+  }
+});
+
 test('a block reference is exploded, with its rotation, scale and mirror', () => {
   const d = W.newDoc();
   W.addBlock(d, 'B', [W.line(1, 0, 2, 0, { layer: '0' }), W.circle(0, 0, 1), W.arc(0, 0, 1, 0, 90), W.text(0, 0, 1, 'hi')]);
@@ -80,6 +91,19 @@ test('a block reference is exploded, with its rotation, scale and mirror', () =>
 
   const m = cutterDoc(Object.assign(W.newDoc(), { blocks: d.blocks, entities: [W.insert('B', 0, 0, { sx: -1 })] }), 0.01);
   assert.deepEqual([f(m.doc.entities[3], 50), f(m.doc.entities[3], 51)].map(Math.round), [90, 180], 'mirrored in X: the arc still runs anticlockwise');
+
+  W.addBlock(d, 'Nested', [W.insert('B', 3, 4, { sx: -1 })]);
+  const nested = cutterDoc({ ...d, entities: [W.insert('Nested', 10, 20, { sx: -1 })] }, .01);
+  const [nline, , , narc] = nested.doc.entities;
+  assert.deepEqual([f(nline, 10), f(nline, 20), f(nline, 11), f(nline, 21)], [8, 24, 9, 24], 'two mirrors restore line direction');
+  assert.deepEqual([f(narc, 10), f(narc, 20), f(narc, 50), f(narc, 51)], [7, 24, 0, 90], 'nested mirrors restore arc sweep');
+  assert.equal(nested.left, 1);
+
+  W.addBlock(d, 'Bulge', [W.lwpoly([[1, 2, .5], [3, 4]], { width: 2 })]);
+  const bulge = cutterDoc({ ...d, entities: [W.insert('Bulge', 10, 20, { sx: -1 })] }, .01).doc.entities[0];
+  assert.deepEqual(verts(bulge), [[9, 22], [7, 24]]);
+  assert.equal(f(bulge, 42), -.5, 'a mirrored polyline reverses the bulge');
+  assert.equal(bulge.r.c.includes(43), false, 'cutter copy drops widths');
 });
 
 test('a block stretched out of round gives polylines within the tolerance', () => {
