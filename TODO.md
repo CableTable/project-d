@@ -113,6 +113,19 @@ From the v0.1.30 exe test (Pip-test, 2026-10-20):
 
 65. ✅ (built, session 10) **Contour colour and line style**: R13 swatches and Solid / Dashed / Dotted, both previews, Properties, DXF round trip and PDF; one-step undo.
 
+From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/VPxPFSo6u1vonP7QdBetXE; his ask: all of it):
+66. **More Modify tools** (S–L): Move and Copy (base point, then target or typed distance) first, then Rotate and Scale, then Fillet and Extend; in the Modify menu and the command bar (AutoCAD M, CO, RO, SC, F, EX).
+67. **Guide lines when placing parts** (M): dragging a part on a layout snaps its edges and centre to other parts and the sheet, with a thin line and the gap in mm (CorelDRAW Dynamic Guides, Illustrator Smart Guides).
+68. **Snap per type** (M): a popover on the SNAP chip with a tick box per type; add intersection and quadrant (perpendicular, tangent later); the type's name beside the marker (AutoCAD Object Snap).
+69. **Live numbers at the cursor** (M): a tag by the cursor with length, angle, Δx, Δy; typing fills the first field, Tab the next (AutoCAD Dynamic Input, F12).
+70. **Relative and polar typed input** (S): `@dx,dy` and `len<angle` in every point prompt; Enter on an empty command bar repeats the last command (check first what already works).
+71. **Selection feedback** (S–M): left-to-right box = window (solid blue, fully inside), right-to-left = crossing (dashed green, touching); Alt + click cycles overlapping objects (doubled DXF lines). Check first what exists.
+72. **Right-click while drawing** (S): during a tool, right-click finishes (Enter); a menu with Cancel, Close, Undo last point and the snap list.
+73. **Tooltips and F-keys** (S): tooltip = name + alias + key; add F3 snap, F8 ortho, F9 grid; optional "show labels" on the rail.
+74. **More zooms** (S): Zoom Window, Zoom Selection, Zoom Previous (Z W, Z S, Z P).
+75. **Array on a drawing** (M): rows / columns / spacing, plus polar (holes in a ring); step and repeat today is layouts only.
+76. **Dimensions drive the drawing** (L, later): double-click a dimension, type a value, the line stretches; no full constraints.
+
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
 1. ✅ (built, PR #10) Drawing tools: line, polyline, rectangle, rounded rectangle, circle, ellipse, arc, text and dimension, with snaps, ortho and polar tracking, and typed coordinates. (Text: TODO 17. Polar tracking: TODO 21, built in PR #12.)
