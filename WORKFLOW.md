@@ -122,6 +122,8 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
 # Before a build: git -C ../ProjectD-rowan fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
+# If package-lock.json changed since its last build, Rook runs `npm.cmd ci` in ProjectD-rowan first (its sandbox cannot
+# install: EPERM on the npm cache; session 12 lost a Rowan round to a missing imagetracerjs).
 # If Codex blocks Rowan's commit, Rook commits in ProjectD-rowan itself. Rowan's TODO / DECISIONS / HISTORY edits
 # conflict on cherry-pick into the repo: keep both sides.
 # Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
