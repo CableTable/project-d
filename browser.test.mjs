@@ -4980,6 +4980,63 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await page.keyboard.press('Control+1'); await closeTabs(/./);
   });
 
+  await step('Outline width: presets, Custom, varies, one undo for the selection, polyline save and light/dark screenshots (TODO 48)', async () => {
+    await propsOpen(); await propsOnNow(); await click(70, 30); await frames();
+    const preset = (value) => t('prop-width').locator(`[data-width="${value}"]`);
+    assert.deepEqual(await t('prop-width').locator('button').allTextContents(), ['ByLayer', 'Hairline', '0.10', '0.25', '0.50', '1.00', '2.00']);
+    assert.equal(await preset('ByLayer').getAttribute('aria-pressed'), 'true');
+    const bounds = await Promise.all([t('prop-lt').boundingBox(), t('prop-width').boundingBox()]);
+    assert.ok(bounds[1].y > bounds[0].y + bounds[0].height, 'below Line type');
+    await preset('0.5').click();
+    assert.equal((await savedDoc()).entities[0].lw, 50);
+    const before = (await histLabels()).length;
+    await t('prop-width-custom').fill('0.37'); await t('prop-width-custom').press('Enter');
+    assert.equal((await savedDoc()).entities[0].lw, 37);
+    await page.keyboard.press('Control+z');
+    assert.equal((await savedDoc()).entities[0].lw, 50);
+    await click(70, 30); await click(190, 100, { shift: true }); await frames();
+    assert.equal(await t('prop-width-custom').getAttribute('placeholder'), '*varies*');
+    await preset('2').click();
+    let saved = await savedDoc();
+    assert.deepEqual([saved.entities[0].lw, saved.entities[2].lw], [200, 200]);
+    assert.equal((await histLabels()).length, before + 1, 'one step for both selected objects');
+    await page.keyboard.press('Control+z'); saved = await savedDoc();
+    assert.deepEqual([saved.entities[0].lw, saved.entities[2].lw], [50, -1]);
+    await click(170, 30); await frames();
+    await t('prop-width-custom').fill('0.63'); await t('prop-width-custom').press('Enter');
+    saved = await savedDoc(); assert.equal(fieldOf(saved.entities[4], 43), .63);
+    const history = await histLabels();
+    await t('prop-width-custom').fill('-1'); await t('prop-width-custom').press('Enter');
+    assert.match(await prompt(), /Outline width: type a positive number/);
+    assert.deepEqual(await histLabels(), history, 'invalid input does not create an undo step');
+    await t('prop-width-custom').fill('3'); await t('prop-width-custom').press('Escape');
+    assert.equal(await t('prop-width-custom').inputValue(), '0.63', 'Escape cancels Custom');
+    await preset('Hairline').click(); saved = await savedDoc();
+    assert.equal(saved.entities[4].lw, 5); assert.equal(saved.entities[4].r.c.includes(43), false);
+    await preset('ByLayer').click(); saved = await savedDoc(); assert.equal(saved.entities[4].lw, -1);
+    const plate = newDoc();
+    addEntities(plate, roundRect(20, 20, 50, 30, 2), dxfCircle(26, 44, 2, { lw: 5 }), dxfCircle(64, 44, 2, { lw: 5 }), dxfCircle(45, 33, 7, { lw: 5 }), dxfLine(20, 10, 70, 10, { lw: 5 }));
+    await openGrips(writeDxf(plate), 'outline-width.dxf'); await click(40, 20); await frames(); await preset('2').click();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      assert.equal(await t('prop-width').evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return [...el.querySelectorAll('button, input, .lbl')].every((e) => e.getBoundingClientRect().right <= r.right + .5);
+      }), true, 'width controls and units fit the panel');
+      await page.screenshot({ path: shotDir + '/s11-48-' + theme + '.png' });
+    }
+    await menuItem('View', 'Theme: light');
+    const dl = await downloaded(() => page.keyboard.press('Control+s'));
+    await openGrips(dl.text, 'outline-width-reopened.dxf'); await click(40, 20); await frames();
+    assert.equal(await preset('2').getAttribute('aria-pressed'), 'true', 'width returns after reopening');
+    const inch = newDoc(1); addEntities(inch, dxfLine(1, 1, 3, 1));
+    await openGrips(writeDxf(inch), 'outline-inches.dxf'); await click(50.8, 25.4); await frames();
+    assert.match(await t('prop-width').textContent(), /Selection · in/);
+    await t('prop-width-custom').fill('0.1'); await t('prop-width-custom').press('Enter');
+    assert.equal((await savedDoc()).entities[0].lw, 254, 'typed Custom uses drawing inches');
+    await page.keyboard.press('Control+1'); await closeTabs(/./);
+  });
+
   // ---- TODO 23: resize the sheet on a layout (R5c, right pane): select the sheet, drag a side handle, whole mm, the parts stay where they are ----
   const sheetSize = async () => [await page.locator('[data-key=sheetW]').inputValue(), await page.locator('[data-key=sheetH]').inputValue()];
   const sizeNum = async () => (await sheetSize()).map(Number);

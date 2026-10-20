@@ -1,6 +1,6 @@
 // render.js — draws a flattened drawing (drawing.js) on a <canvas> laid over the sheet.
 // Ported from Project R's viewer: strokes batched by colour/width/dash, text, hatches, ACI 7 flipped for the sheet.
-import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle } from './drawing.js';
+import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './drawing.js';
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#18181b', fg: '#e8e8ec' } };
@@ -10,8 +10,6 @@ export const FONT_FAMILY = { Standard: '"Segoe UI", Roboto, system-ui, sans-seri
 export const fontOf = (it) => (it.bold ? 'bold ' : '') + '100px ' + FONT_FAMILY[fontOfStyle(it.st)];
 const lum = (css) => { const n = parseInt(css.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
 const darken = (css, f) => '#' + [16, 8, 0].map((s) => Math.round(((parseInt(css.slice(1), 16) >> s) & 255) * f).toString(16).padStart(2, '0')).join('');
-/** A weight (1/100 mm) as screen pixels. */
-const weightPx = (lw) => (lw <= 25 ? 1.2 : Math.min(1.2 * lw / 25, 6));
 
 /** A line colour as it shows on the sheet: white goes dark on the light sheet, black goes light on the dark one. */
 export const DIM_LIGHT = '#0f766e', DIM_DARK = '#5eead4';   // the theme's dimension colour (--dim); a new Dimensions layer is DIM_LIGHT
@@ -67,7 +65,7 @@ export function paintDrawing(canvas, o) {
         const X = xs.map((p) => p[0]), Y = xs.map((p) => p[1]);
         if (Math.max(...X) < view[0] || Math.min(...X) > view[2] || Math.max(...Y) < view[1] || Math.min(...Y) > view[3]) continue;
       }
-      paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg);
+      paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor);
     }
     return;
   }
@@ -76,8 +74,8 @@ export function paintDrawing(canvas, o) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide);
-  if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5');
+  paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor);
+  if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', factor);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
@@ -106,19 +104,20 @@ function drawGaps(c, pts, T, dpr, col) {
 }
 
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
-function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide) {
+function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor) {
   const mats = fl.mats;
   let cur = -1, kk = k, open = false, pc = null, pw = 0, pd = null;
   const flush = () => { if (open) c.stroke(); open = false; };
   for (const it of shownItems(fl)) {
     const b = it.b;
-    if (vr && (b[2] < vr[0] || b[0] > vr[2] || b[3] < vr[1] || b[1] > vr[3])) continue;
-    if (it.k !== 'n' && (b[2] - b[0]) * k < 0.4 && (b[3] - b[1]) * k < 0.4) continue;       // under half a pixel
+    const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
+    if (vr && (b[2] + pad < vr[0] || b[0] - pad > vr[2] || b[3] + pad < vr[1] || b[1] - pad > vr[3])) continue;
+    if (it.k !== 'n' && (b[2] - b[0] + 2 * pad) * k < 0.4 && (b[3] - b[1] + 2 * pad) * k < 0.4) continue;       // under half a pixel
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
     if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur]; c.setTransform(...mmul(T, M)); kk = k * mscale(M) || k; }
     if (it.k === 'p' && !it.fill) {
-      const px = weightPx(it.lw) * dpr / kk, lw = it.w ? Math.max(it.w, px) : px;
+      const lw = strokeWidth(it, factor, kk / k) * k / factor / kk;
       const dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
       const css = col(it.css);
       if (!open || css !== pc || lw !== pw || dash !== pd) {
@@ -140,12 +139,12 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide) {
 }
 
 /** The selection: its paths again in the accent colour, a little heavier; a filled or text item gets its box. */
-function highlight(c, items, mats, T, k, dpr, accent) {
+function highlight(c, items, mats, T, k, dpr, accent, factor) {
   c.strokeStyle = accent; c.fillStyle = accent; c.setLineDash([]);
   let cur = -1, kk = k;
   for (const it of items) {
     if (it.m !== cur) { cur = it.m; const M = mats[cur]; c.setTransform(...mmul(T, M)); kk = k * mscale(M) || k; }
-    c.lineWidth = 2.6 * dpr / kk;
+    c.lineWidth = Math.max(strokeWidth(it, factor, kk / k) * k / factor, 2.6 * dpr) / kk;
     c.beginPath();
     if (it.k === 'p') { trace(c, it.ops); if (it.fill) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0], it.b[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
   }

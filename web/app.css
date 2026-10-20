@@ -487,6 +487,13 @@ select.fld { font-family: var(--sans); }
 .cs:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cswatch { width: 14px; height: 14px; border-radius: 3px; outline: 1px solid var(--line); flex-shrink: 0; }
 .propbox .fld:disabled { opacity: .7; }
+.widthbox { margin-top: 4px; border-top: 1px solid var(--line); padding-top: 10px; }
+.widthhead { justify-content: space-between; }
+.widthbox .proprow > .lbl:last-child { width: auto; }
+.widthpresets { display: flex; flex-wrap: wrap; gap: 4px; margin: 7px 0; }
+.widthpresets .btn { padding: 0 7px; font-size: 11px; }
+.widthpresets .btn[aria-pressed='true'] { border-color: var(--accent); background: var(--sel); color: var(--accent); }
+.widthnote { margin: 6px 0 4px; }
 .matchpill { max-width: calc(100% - 340px); }
 
 /* Sheet resize (TODO 23; R5c right pane) */

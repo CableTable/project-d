@@ -5623,9 +5623,9 @@ function drawSheetSel() {
 const PROPS_SAVED = 'pd-props';
 const VARIES = '*varies*';
 /** [index, entity] of the selection without kept dimensions (a dimension has its own text-height field). */
-function propEnts(d) {
+function propEnts(d, all = false) {
   const out = [];
-  for (const e of d.sel) { const ent = d.raw.entities[e]; if (ent && ent.layer !== Ed.DIM_LAYER) out.push([e, ent]); }
+  for (const e of d.sel) { const ent = d.raw.entities[e]; if (ent && (all || ent.layer !== Ed.DIM_LAYER)) out.push([e, ent]); }
   return out;
 }
 /** The layers to pick from: the file's, and the ones the selection is on (not the kept-dimensions layer). */
@@ -5651,14 +5651,31 @@ function buildPropsSection() {
   ui.propLayer.addEventListener('change', () => propSet('layer', ui.propLayer.value));
   ui.propColour.addEventListener('change', () => propSet('colour', ui.propColour.value));
   ui.propLt.addEventListener('change', () => propSet('lt', ui.propLt.value));
+  ui.propWidthUnits = h('span', { class: 'lbl' });
+  ui.propWidthHint = h('span', { class: 'lbl' });
+  ui.propWidthInput = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', autocomplete: 'off', 'aria-label': 'Custom outline width in drawing units', 'data-testid': 'prop-width-custom' });
+  ui.propWidthInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); ui.propWidthInput.blur(); }
+    else if (e.key === 'Escape') { ui.propWidthInput.dataset.cancel = '1'; ui.propWidthInput.blur(); }
+  });
+  ui.propWidthInput.addEventListener('change', () => {
+    if (!ui.propWidthInput.dataset.cancel) propWidthSet(PL.parseMm(ui.propWidthInput.value));
+  });
+  ui.propWidthInput.addEventListener('blur', () => { delete ui.propWidthInput.dataset.cancel; renderEdit(); });
+  ui.propWidthPresets = h('div', { class: 'widthpresets', role: 'group', 'aria-label': 'Outline width presets' },
+    PR.WIDTHS.map((value) => h('button', { class: 'btn', type: 'button', 'data-width': String(value), 'aria-pressed': 'false', onclick: () => propWidthSet(value) }, typeof value === 'number' ? fmt(value) : value)));
+  ui.propWidth = h('div', { class: 'widthbox', 'data-testid': 'prop-width' },
+    h('div', { class: 'proprow widthhead' }, h('b', {}, 'Outline width'), ui.propWidthHint), ui.propWidthPresets,
+    h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Custom'), ui.propWidthInput, ui.propWidthUnits),
+    h('p', { class: 'lbl widthnote' }, 'True width on screen · scales with zoom'));
   ui.propGeo = h('div', { class: 'propgeo', 'data-testid': 'prop-geo' });
   ui.propSimilar = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-similar', title: 'Select every shape like the first one selected', onclick: (e) => selectSimilarMenu(e.currentTarget) }, 'Select similar ▾');
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
-  ui.propBody = h('div', { class: 'propbody' },
-    row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt), ui.propGeo,
-    h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch));
+  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt));
+  ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch);
+  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo, ui.propButtons);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody);
   return ui.propSec;
@@ -5673,9 +5690,19 @@ function renderPropsPanel(d) {
   const show = state.propsOn && !!d && state.panel !== 'library';
   ui.propSec.hidden = !show;
   if (!show) return;
-  const pe = propEnts(d), ents = pe.map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
-  ui.propEmpty.hidden = !none; ui.propBody.hidden = none; ui.propChip.hidden = none;
+  const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
+  ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none;
+  ui.propCommon.hidden = none; ui.propGeo.hidden = none; ui.propButtons.hidden = none;
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
+  const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
+  const units = d.fl.units === 'unitless' ? 'units' : d.fl.units;
+  ui.propWidthHint.textContent = 'Selection · ' + units;
+  ui.propWidthUnits.textContent = units;
+  for (const b of ui.propWidthPresets.children) b.setAttribute('aria-pressed', String(String(width) === b.dataset.width));
+  if (document.activeElement !== ui.propWidthInput) {
+    ui.propWidthInput.value = typeof width === 'number' ? String(+width.toPrecision(10)) : '';
+    ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
+  }
   if (none) return;
   ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
@@ -5710,8 +5737,8 @@ function renderPropsPanel(d) {
 }
 
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
-function propCommit(d, label, fn) {
-  const pe = propEnts(d), repl = new Map();
+function propCommit(d, label, fn, all = false) {
+  const pe = propEnts(d, all), repl = new Map();
   for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
   if (!repl.size) return 0;
   const keep = new Set(d.sel);
@@ -5719,6 +5746,22 @@ function propCommit(d, label, fn) {
   commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks }, label);
   setSel(d, keep);
   return repl.size;
+}
+function propWidthSet(value) {
+  const d = editable();
+  if (!d) return;
+  const all = propEnts(d, true);
+  if (!all.length) return;
+  if (!PR.withWidth(all[0][1], value, d.factor)) {
+    note('Outline width: type a positive number up to ' + String(327.67 / d.factor) + ' ' + d.fl.units); renderEdit(); return;
+  }
+  const label = typeof value === 'number' ? String(value) + ' ' + d.fl.units : value;
+  const n = propCommit(d, 'Outline width → ' + label, (ent) => {
+    const next = PR.withWidth(ent, value, d.factor);
+    return PR.widthKey(next, d.factor) === PR.widthKey(ent, d.factor) ? null : next;
+  }, true);
+  if (n) note(`Outline width ${label} on ${n} shape${n === 1 ? '' : 's'}. Ctrl+Z takes it back`);
+  renderEdit();
 }
 function propSet(what, value) {
   const d = editable();

@@ -522,6 +522,9 @@ function arrow(from, tip, size, base, put) {
   put({ k: 'p', ...base, dash: undefined, dpx: undefined, ops, fill: 1, b: opsBox(ops) });
 }
 
+/** Physical stroke in mm: polyline widths follow geometry; lineweight is already in 1/100 mm. */
+export const strokeWidth = (it, factor = 1, scale = 1) => Math.max(it.w ? it.w * factor * scale : (it.lw || 0) / 100, 0.05);
+
 function lwpoly(e, f, base, path, put) {
   const r = e.r, pts = [];
   let cur = null;

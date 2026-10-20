@@ -84,7 +84,7 @@ From the exe review (2026-10-17, session 3):
     the command history; autocomplete suggestions as you type; options in [brackets] that can be clicked or typed by
     their capital letter; typed coordinates (absolute, `@x,y`, `@len<angle`); Esc cancels; F2 opens the full command
     history. Mock-up first. TODO 34 (own aliases) builds on it.
-48. **Line width, CorelDRAW style** (his ask, 2026-10-19): an outline-width picker for the selected objects (preset
+48. ✅ (built, session 11, R14 option A) **Line width, CorelDRAW style** (his ask, 2026-10-19): an outline-width picker for the selected objects (preset
     widths plus a typed value, in the drawing's units), shown on screen at true width and kept on Save (DXF lineweight /
     polyline width) and in PDF / Print. Mock-up first. Note: the second-pass review found Mirror / Offset / Trim drop a
     polyline's width; that fix lands first.
