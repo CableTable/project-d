@@ -35,7 +35,7 @@ test('contour colour and linetype round trip, with missing and existing LTYPE en
     assert.deepEqual(back.ltypes.DOT.pattern, existing ? [0, -4] : [0, -0.25]);
     const items = D.flatten(back).items;
     assert.equal(items[0].css, '#ff0000'); assert.equal(items[1].css, '#0000ff'); assert.equal(items[2].css, '#00ff00');
-    assert.deepEqual(items[0].dpx, [6, 4]); assert.deepEqual(items[1].dpx, [1.5, 4]);
+    assert.equal(items[0].dpx, undefined); assert.equal(items[1].dpx, undefined);
     assert.ok(items[0].dash.length && items[1].dash.length);
     assert.equal(items[2].dash, undefined);
   }

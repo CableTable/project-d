@@ -5,6 +5,8 @@ const fs = await import('node:fs');
 const D = await import('./web/drawing.js');
 const G = await import('./web/geom.js');
 const W = await import('./web/dxf-write.js');
+const { paintDrawing } = await import('./web/render.js');
+const { planPdf } = await import('./web/pdf-export.js');
 
 const near = (a, b, tol = 1e-6) => assert.ok(Math.abs(a - b) <= tol, a + ' ≠ ' + b);
 const g = (...pairs) => pairs.map(([c, v]) => c + '\n' + v).join('\n');
@@ -102,6 +104,43 @@ test('line types: dashes, gaps and dots become a canvas dash list', () => {
   const tables = g([0, 'TABLE'], [2, 'LTYPE']) + '\n' + g([0, 'LTYPE'], [2, 'DASHED'], [73, 2], [40, 3], [49, 2], [49, -1]) + '\n' + g([0, 'ENDTAB']);
   const fl = lay(dxf([g([0, 'LINE'], [8, '0'], [6, 'DASHED'], [48, 2], [10, 0], [20, 0], [11, 10], [21, 0])], { tables, header: g([9, '$LTSCALE'], [40, 5]) }));
   assert.deepEqual(fl.items[0].dash, [20, 10]);                       // × $LTSCALE × its own scale
+});
+
+const smallDashes = (fl, factor) => {
+  const screen = [], c = {
+    setTransform() {}, clearRect() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
+    setLineDash(dash) { screen.push(dash); }
+  };
+  paintDrawing({ getContext: () => c }, { fl, factor, off: new Set(), sheetH: 1000, ox: 0, oy: 0, scale: 0.01, w: 100, h: 100, dpr: 1 });
+  const print = planPdf({ fl, factor, sheetW: 100000, sheetH: 100000 }, { page: 'check', separate: false }).build(0).cmds.filter((c) => c[0] === 'd').map((c) => c[1]);
+  return { screen, print };
+};
+
+test('Contour-created patterns use dash / factor and keep pixel dashes when small', () => {
+  for (const factor of [1, 25.4]) for (const [name, dash, px] of [['DASHED', [7, 4], [6, 4]], ['DOT', [0, 4], [1.5, 4]]]) {
+    const doc = W.newDoc();
+    doc.ltypes[name] = { pattern: dash.map((x, i) => (i % 2 ? -x : x) / factor), contour: true };
+    doc.entities = [W.line(0, 0, 1000 / factor, 0, { layer: 'Contour', lt: name })];
+    const fl = D.flatten(doc), { screen, print } = smallDashes(fl, factor);
+    assert.deepEqual(fl.items[0].dash, dash.map((x) => x / factor));
+    assert.deepEqual(fl.items[0].dpx, px);
+    assert.equal(screen.length, 1);
+    screen[0].forEach((x, i) => near(x * factor * 0.01, px[i]));
+    assert.ok(print.some((d) => d.length), 'small PDF keeps dashes');
+  }
+});
+
+test('a file-defined tiny DASHED, CENTER or HIDDEN draws solid on screen and in a small PDF', () => {
+  for (const name of ['DASHED', 'CENTER', 'HIDDEN']) {
+    const doc = W.newDoc();
+    doc.ltypes[name] = { pattern: [0.001, -0.001] };
+    doc.entities = [W.line(0, 0, 1000, 0, { layer: 'Contour', lt: name })];
+    const fl = D.flatten(D.readDxf(W.writeDxf(doc))), { screen, print } = smallDashes(fl, 1);
+    assert.deepEqual(fl.items[0].dash, [0.001, 0.001]);
+    assert.equal(fl.items[0].dpx, undefined);
+    assert.deepEqual(screen, [[]]);
+    assert.ok(print.every((d) => !d.length), 'small PDF stays solid');
+  }
 });
 
 test('layers: off and frozen ones start hidden; ByLayer colours, ACI and true colour', () => {
