@@ -496,6 +496,8 @@ export function flatten(doc) {
       }
     }
   }
+  // Counts and layer controls must also reach entities beyond the draw limit.
+  for (const e of doc.entities) layerOf(e.layer);
   walk(doc.entities, { m: 0, L: null, layer: null, css: null, lw: null, lt: null, ps: null }, 0);
 
   const boxes = { model: null, paper: null };

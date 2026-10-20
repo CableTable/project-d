@@ -10,7 +10,7 @@ import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
@@ -6334,6 +6334,38 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     assert.equal(await t('entities').textContent(), 'Entities 20');
     await t('ptab-drawing').click();
     await closeTabs(/sample/);                                                  // back to the objects.dxf tab for the steps below
+  });
+
+  await step('TODO 61: counts and layer eye / lock still work after the 400,000-piece draw limit', async () => {
+    const doc = newDoc(4);
+    addLayer(doc, 'First', { aci: 7 }); addLayer(doc, 'Later', { aci: 5 });
+    doc.blocks.Many = { base: [0, 0], entities: Array.from({ length: 41 }, (_, i) => dxfLine(i, 0, i, 1)) };
+    addEntities(doc, dxfInsert('Many', 0, 0, { layer: 'First', rows: 100, cols: 100 }),
+      dxfLine(50, 0, 51, 1, { layer: 'Later' }), dxfLine(51, 1, 52, 2, { layer: 'Later' }));
+    await t('picker').setInputFiles({ name: 'draw-limit.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc, { extents: [0, 0, 52, 2] }), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'draw-limit.dxf');
+    await t('ptab-drawing').click();
+    const later = page.locator('.layer[data-file-layer]', { hasText: 'Later' });
+    assert.equal(await later.locator('.lbl').textContent(), '2');
+    assert.equal(await t('entities').textContent(), 'Entities 3');
+    await t('ptab-objects').click();
+    assert.match(await t('obj-count').textContent(), /^3 objects/);
+    assert.equal(await oLayer('Later').locator('.ocnt').textContent(), '2');
+    await oLayer('Later').locator('[data-act=vis]').click();
+    assert.equal(await isDim(oLayer('Later')), true);
+    assert.match(await t('obj-filter-hidden').textContent(), /Hidden 2/);
+    assert.equal(await later.evaluate((e) => e.classList.contains('hidden-layer')), true);
+    await oLayer('Later').locator('[data-act=vis]').click();
+    assert.equal(await isDim(oLayer('Later')), false);
+    await oLayer('Later').locator('[data-act=lock]').click();
+    assert.match(await t('obj-filter-locked').textContent(), /Locked 2/);
+    await oLayer('Later').click();
+    assert.equal(await oLayer('Later').getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.locator('[data-testid=obj-tree] .or.obj .chp.w').count(), 2);
+    await oLayer('Later').locator('[data-act=lock]').click();
+    assert.match(await t('obj-filter-locked').textContent(), /Locked 0/);
+    await t('ptab-drawing').click();
+    await closeTabs(/draw-limit/);
   });
 
   await step('Objects tab: a click on a row selects that object on the sheet; a pick on the sheet lights its row (its layer opens)', async () => {
