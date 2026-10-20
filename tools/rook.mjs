@@ -9,6 +9,7 @@ import { homedir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
+import { peakContext } from './rook-result.mjs';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -16,12 +17,15 @@ const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : Math.round(n / 1e3) + 
 
 if (cmd === 'result') {
   if (arg.endsWith('.jsonl')) {
-    const line = readFileSync(arg, 'utf8').trim().split('\n').reverse().find((l) => l.includes('"type":"result"'));
-    if (!line) { console.log('no result yet'); process.exit(1); }
-    const r = JSON.parse(line), u = r.usage;
+    const events = readFileSync(arg, 'utf8').trim().split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+    const r = events.findLast((e) => e.type === 'result');
+    if (!r) { console.log('no result yet'); process.exit(1); }
+    const u = r.usage;
     console.log(r.result);
     const fresh = u.input_tokens + u.cache_creation_input_tokens + u.output_tokens;
     console.log(`tokens ${k(fresh + u.cache_read_input_tokens)} (${k(fresh)} new) · denials ${r.permission_denials.length}` + (r.permission_denials.length ? ': ' + r.permission_denials.map((d) => String(d.tool_input.command || d.tool_name).slice(0, 60)).join(' | ') : ''));
+    const peak = peakContext(events);
+    console.log(`peak context ${Math.round(peak / 1e3)}k` + (peak > 150_000 ? ' (over 150k: split the ticket)' : ''));
   } else {
     console.log(readFileSync(arg, 'utf8').trim());
     const log = arg.replace(/\.txt$/, '.log');
