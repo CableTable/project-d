@@ -231,6 +231,7 @@ const message = document.getElementById('message');
 const signin = document.getElementById('signin'), signout = document.getElementById('signout');
 const refreshButton = document.getElementById('refresh'), dashboard = document.getElementById('dashboard');
 const lastUpdateLabel = document.getElementById('last-update'), offline = document.getElementById('offline');
+const lastErrorLabel = document.getElementById('last-error');
 let currentStatus = {}, pending = null, allowed = false;
 
 function finishUpdate(text) {
@@ -243,9 +244,13 @@ function finishUpdate(text) {
 function showStatus() {
   const last = currentStatus.lastUpdate?.toMillis();
   const heartbeat = currentStatus.agentHeartbeat?.toMillis();
+  const errorAt = currentStatus.lastErrorAt?.toMillis();
   lastUpdateLabel.textContent = 'Last update: ' + (last ? IST.format(new Date(last)) + ' IST' : '—');
+  lastErrorLabel.hidden = !allowed || !currentStatus.lastError;
+  lastErrorLabel.textContent = currentStatus.lastError ? 'Refresh failed' + (errorAt ? ' (' + IST.format(new Date(errorAt)) + ' IST)' : '') + ': ' + currentStatus.lastError : '';
   offline.hidden = !allowed || (heartbeat != null && Date.now() - heartbeat <= 180_000);
   if (pending?.requestedAt != null && last > pending.requestedAt) finishUpdate('Updated.');
+  else if (pending?.requestedAt != null && errorAt > pending.requestedAt) finishUpdate('Refresh failed. See the error below Last update.');
 }
 setInterval(showStatus, 10_000);
 

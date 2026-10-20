@@ -6,6 +6,8 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSyn
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+import { uptime } from 'node:os';
+import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
@@ -116,12 +118,15 @@ function acquireLock(path) {
   }
   try {
     if (existsSync(path)) {
-      const pid = Number(readFileSync(path, 'utf8'));
-      if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Invalid agent lock: ${path}; remove it after checking no agent is running.`);
-      let running = true;
-      try { process.kill(pid, 0); }
-      catch (e) { if (e.code !== 'ESRCH') throw e; running = false; }
-      if (running) throw new Error(`Usage agent already running (pid ${pid}).`);
+      const mtimeMs = statSync(path).mtimeMs, bootTime = Date.now() - uptime() * 1000;
+      if (!isLockStale(mtimeMs, bootTime)) {
+        const pid = Number(readFileSync(path, 'utf8'));
+        if (!Number.isInteger(pid) || pid <= 0) throw new Error(`Invalid agent lock: ${path}; remove it after checking no agent is running.`);
+        let stale = false;
+        try { process.kill(pid, 0); }
+        catch (e) { stale = isLockStale(mtimeMs, bootTime, e); }
+        if (!stale) throw new Error(`Usage agent already running (pid ${pid}).`);
+      }
       unlinkSync(path);
     }
     const fd = openSync(path, 'wx');
@@ -192,9 +197,9 @@ async function main() {
       return response.json();
     }
     const timestamp = (fieldPath) => ({ fieldPath, setToServerValue: 'REQUEST_TIME' });
-    const statusWrite = (fields) => ({
-      update: { name: `${database}/usage/status`, fields: {} },
-      updateMask: { fieldPaths: [] }, updateTransforms: fields.map(timestamp),
+    const statusWrite = (fields, data = {}) => ({
+      update: { name: `${database}/usage/status`, fields: firestoreValue(data).mapValue.fields },
+      updateMask: { fieldPaths: Object.keys(data) }, updateTransforms: fields.map(timestamp),
     });
     const heartbeat = () => request(':commit', { writes: [statusWrite(['agentHeartbeat'])] });
     let lastHandled = 0, nextRefresh = 0, nextHeartbeat = 0, busy = false;
@@ -206,11 +211,13 @@ async function main() {
         await run(process.execPath, ['tools/rook.mjs', 'usage'], { cwd: repo, windowsHide: true, timeout: 180_000, maxBuffer: 1024 * 1024 });
         const dataDir = join(repo, 'mockups', '_design', 'usage');
         const docs = ['limits', 'history', 'runs'].map((name) => {
-          let rows = parseCsv(readFileSync(join(dataDir, name + '.csv'), 'utf8'));
+          const path = join(dataDir, name + '.csv');
+          let rows = name === 'runs' && !existsSync(path) ? [] : parseCsv(readFileSync(path, 'utf8'));
           if (name === 'history') rows = rows.slice(-2000);
           return [name, { rows }];
         });
-        const items = JSON.parse(readFileSync(join(dataDir, 'analysis.json'), 'utf8'));
+        const analysisPath = join(dataDir, 'analysis.json');
+        const items = existsSync(analysisPath) ? JSON.parse(readFileSync(analysisPath, 'utf8')) : [];
         if (!Array.isArray(items) || items.some((i) => !i || typeof i.id !== 'string' || typeof i.topic !== 'string' || typeof i.note !== 'string')) throw new Error('analysis.json must be an array of {id, topic, note} strings');
         docs.push(['analysis', { items }]);
         docs.push(['todo', parseTodo(readFileSync(join(repo, 'TODO.md'), 'utf8'))]);
@@ -220,12 +227,15 @@ async function main() {
           if (Buffer.byteLength(JSON.stringify(fields)) > 900_000) throw new Error(`${name} exceeds the safe document size (900 KB encoded)`);
           return { update: { name: `${database}/usage/${name}`, fields } };
         });
-        writes.push(statusWrite(['lastUpdate', 'agentHeartbeat']));
+        writes.push(statusWrite(['lastUpdate', 'agentHeartbeat'], { lastError: '', lastErrorAt: null }));
         await request(':commit', { writes });
-        lastHandled = requestedAt;
         log('refresh OK');
-      } catch (e) { log(`refresh ERROR: ${e.message}`); }
-      finally { busy = false; }
+      } catch (e) {
+        log(`refresh ERROR: ${e.message}`);
+        try {
+          await request(':commit', { writes: [statusWrite(['lastErrorAt', 'agentHeartbeat'], { lastError: e.message })] });
+        } catch (error) { log(`error status ERROR: ${error.message}`); }
+      } finally { lastHandled = requestedAt; busy = false; }
     }
 
     console.log(`Usage agent running; log: ${logPath}`);
@@ -239,7 +249,7 @@ async function main() {
         const control = await request('/control/refresh');
         const value = control?.fields?.requestedAt?.timestampValue;
         const requestedAt = value ? Date.parse(value) : 0;
-        if (!busy && (Date.now() >= nextRefresh || requestedAt > lastHandled)) void refresh(requestedAt);
+        if (shouldRefresh({ busy, now: Date.now(), nextRefresh, requestedAt, lastHandled })) void refresh(requestedAt);
       } catch (e) {
         log(`poll ERROR: ${e.message}`);
         if (!busy && Date.now() >= nextRefresh) void refresh(lastHandled);

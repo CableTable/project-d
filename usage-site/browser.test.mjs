@@ -14,10 +14,11 @@ export class GoogleAuthProvider {}
 export const signInWithPopup = async () => {}, signInWithRedirect = async () => {}, getRedirectResult = async () => {}, signOut = async () => {};
 export const onAuthStateChanged = (auth, callback) => queueMicrotask(() => callback({ uid: 'fixture' }));
 export const doc = (db, collection, name) => name;
-export const setDoc = async () => {}, serverTimestamp = () => {}, getDocFromServer = async () => ({});
-window.snapshots = {};
+export const setDoc = async () => { window.requestedAt = Date.now(); }, serverTimestamp = () => {};
+export const getDocFromServer = async () => ({ data: () => ({ requestedAt: { toMillis: () => window.requestedAt } }) });
+window.snapshots = {}; window.usageStatus = {};
 export const onSnapshot = (name, options, callback) => {
-  window.snapshots[name] = () => callback({ metadata: { fromCache: false }, data: () => name === 'todo' ? ${JSON.stringify(todo)} : {} });
+  window.snapshots[name] = () => callback({ metadata: { fromCache: false }, data: () => name === 'todo' ? ${JSON.stringify(todo)} : name === 'status' ? window.usageStatus : {} });
   queueMicrotask(window.snapshots[name]);
   return () => {};
 };`;
@@ -56,6 +57,22 @@ try {
   assert.equal(await cards.first().locator('details').evaluate((e) => e.open), true);
   await cards.first().locator('summary').click();
   await cards.last().evaluate((e) => e.remove());
+  assert.equal(await page.locator('#last-error').isVisible(), false);
+  await page.locator('#refresh').click();
+  await page.waitForFunction(() => window.requestedAt != null);
+  await page.evaluate((payload) => {
+    window.usageStatus = {
+      lastUpdate: { toMillis: () => window.requestedAt - 60_000 },
+      lastError: payload + 'x'.repeat(200),
+      lastErrorAt: { toMillis: () => window.requestedAt + 1000 },
+    };
+    window.snapshots.status();
+  }, payload);
+  await page.waitForFunction(() => !document.getElementById('refresh').disabled);
+  assert.match(await page.locator('#last-error').textContent(), /Refresh failed.*IST.*<img/);
+  assert.equal(await page.locator('#last-error img').count(), 0);
+  assert.match(await page.locator('#message').textContent(), /Refresh failed/);
+  assert.equal(await page.evaluate(() => window.injected), undefined);
   mkdirSync(new URL('../shots/', import.meta.url), { recursive: true });
   for (const width of [320, 1440]) for (const colorScheme of ['light', 'dark']) {
     await page.setViewportSize({ width, height: 900 });
@@ -63,6 +80,11 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, `${width} ${colorScheme} overflow`);
     await page.screenshot({ path: fileURLToPath(new URL(`../shots/usage-todo-${width}-${colorScheme}.png`, import.meta.url)), fullPage: true });
   }
+  await page.evaluate(() => {
+    window.usageStatus = { lastUpdate: { toMillis: () => window.requestedAt + 2000 }, lastError: '', lastErrorAt: null };
+    window.snapshots.status();
+  });
+  assert.equal(await page.locator('#last-error').isVisible(), false);
   assert.deepEqual(errors, []);
-  console.log('Usage TODO: sections, folds, safe text, phone/desktop and light/dark passed.');
+  console.log('Usage TODO and refresh errors: safe text, recovery, phone/desktop and light/dark passed.');
 } finally { await browser.close(); }
