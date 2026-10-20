@@ -4593,9 +4593,17 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
     await click(70, 30); await gripWhen(3);
     await typeCmd('unknowncommand');
     await t('cmd-fade').locator('.er', { hasText: 'Unknown command: unknowncommand' }).waitFor();
-    assert.equal(await t('grip-hint').isVisible(), true);
-    const messages = await t('cmd-fade').boundingBox(), hint = await t('grip-hint').boundingBox();
-    assert.ok(messages && hint && messages.y + messages.height <= hint.y, 'command messages sit above the grip hint without overlapping');
+    const viewport = page.viewportSize();
+    try {
+      for (const size of [viewport, { width: 1280, height: 720 }]) {
+        await page.setViewportSize(size);
+        await t('cmd-fade').waitFor({ state: 'visible' });
+        await t('grip-hint').waitFor({ state: 'visible' });
+        const messages = await t('cmd-fade').boundingBox(), hint = await t('grip-hint').boundingBox();
+        assert.ok(messages && hint && messages.y + messages.height <= hint.y + 1,
+          `command messages sit above the grip hint without overlapping at ${size.width}x${size.height}: ${JSON.stringify({ messages, hint })}`);
+      }
+    } finally { await page.setViewportSize(viewport); }
   });
 
   await step('Grips: a selected line, circle, arc and polyline show blue squares (line 3, circle 5, arc 4, polyline per vertex); none with nothing selected, with a drawing tool, or past 200 selected', async () => {

@@ -833,7 +833,8 @@ function buildCanvas() {
   });
   ui.textArea.addEventListener('input', placeTextEditor);
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
-  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.gripHint, ui.matchHint, ui.textEd, ui.rubber, ui.dropHint, ui.hintPill, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets, ui.cmdUI.fade, ui.cmdUI.drawer, ui.cmdUI.bar,
+  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
+    h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
       ui.pct,
