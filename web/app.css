@@ -178,6 +178,8 @@ select.fld { font-family: var(--sans); }
 .drawbox .layers-head { gap: 2px; }
 .drawbox .layers-head .tog { margin-left: 0; }
 .drawbox .tools { margin-left: auto; display: flex; gap: 2px; }
+.unitrow { display: flex; gap: 4px; margin: 2px 0 6px; }
+.unitrow .tog { border: 1px solid var(--line); }
 .btn.sm { height: 26px; padding: 0 10px; justify-content: center; }
 .tog:disabled { opacity: .4; cursor: default; }
 .tog:hover:not(:disabled):not(.on) { color: var(--text); }

@@ -8,6 +8,7 @@ import { idbStore } from './idbstore.js';
 import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
+import * as UF from './unitfix.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
@@ -3580,7 +3581,7 @@ function partBox(d) {
 const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, bl: d.balloons });
+const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
@@ -3643,15 +3644,19 @@ function hideRubber() { if (ui.rubber) ui.rubber.hidden = true; }
 
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. */
 function commit(d, next, label) { d.hist.push(snapshotOf(d), label); d.newLayer = null; restore(d, next); }
+function restoreBg(d, st) {
+  if (st.mm != null && d.bg) d.bg.mm = st.mm;
+  if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
+}
 function restore(d, st) {
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if ('bl' in st) d.balloons = st.bl;                           // a drawing edit does not carry balloons, an undo step does
   if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
-    if (st.mm != null && d.bg) d.bg.mm = st.mm;
+    restoreBg(d, st);
     d.dirty = true; showDoc(); return;
   }
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
-  if (st.mm != null && d.bg) d.bg.mm = st.mm;
+  restoreBg(d, st);
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
@@ -3699,6 +3704,25 @@ function scaleDrawing(d, s, label = 'Scale') {
   commit(d, r, `${label} ×${s.toFixed(3)}`);
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', '), nb = partBox(d);
   note(`Scaled ×${+s.toPrecision(6)}: now ${fmtSize(nb[2] - nb[0])} × ${fmtSize(nb[3] - nb[1])} mm` + (left ? ` (not scaled: ${left})` : ''));
+}
+/** ×25.4 / ÷25.4 (TODO 51): the whole chosen target, whatever is selected, about 0,0, widths too, one undo step; the unit header stays. */
+function unitFix(fix) {
+  const d = editable(), before = d && sizeBox(d);
+  if (!d || !before) return;
+  state.setlen = null; if (ui.realLen) ui.realLen.blur();
+  const was = UF.unitFixSize(before, 1);
+  if (sizeTarget(d) === 'bg') {
+    d.hist.push(snapshotOf(d), `Unit fix ${fix.text} background`);
+    d.bg = UF.bgUnitFixed(d.bg, fix.s);
+    if (view.fitted) fit(); else paintOverlay();
+    renderEdit();
+    note(UF.unitFixLine(fix, was, UF.unitFixSize(Ed.bgBox(d.bg), 1)));
+    return;
+  }
+  const r = Ed.scaleAbout(d.raw, fix.s, 0, 0, spaceOf(d.fl));
+  commit(d, r, `Unit fix ${fix.text}`);
+  const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', ');
+  note(UF.unitFixLine(fix, was, UF.unitFixSize(partBox(d), 1)) + (left ? ` (not scaled: ${left})` : ''));
 }
 function sizeTyped(input, axis) {
   input.blur();
@@ -5389,9 +5413,12 @@ function buildDrawingSection() {
   ui.drawSec = h('section', { class: 'drawbox', hidden: true, 'data-testid': 'drawing-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Drawing scale'),
       h('span', { class: 'tools' },
-        tog('Set length', 'set-length', startSetlen, 'Click two points, then type the real distance between them'),
         tog('Undo', 'undo', () => { const d = editable(); if (d) undo(d); }, 'Undo (Ctrl+Z)'),
         tog('Redo', 'redo', () => { const d = editable(); if (d) redo(d); }, 'Redo (Ctrl+Y)'))),
+    h('div', { class: 'unitrow' },
+      tog('Set length', 'set-length', startSetlen, 'Click two points, then type the real distance between them'),
+      tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
+      tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
     ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
     h('div', { class: 'lbl sizelbl', title: 'The part itself, without kept dimensions. Set length and a typed size scale the drawing by it' }, 'Whole drawing'),
@@ -6027,6 +6054,7 @@ function renderEdit() {
   put(ui.dw, b ? fmtSize(b[2] - b[0]) : ''); put(ui.dh, b ? fmtSize(b[3] - b[1]) : '');
   ui.dw.disabled = ui.dh.disabled = ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
+  for (const [id, fix] of [['unit-up', UF.UNIT_FIXES.up], ['unit-down', UF.UNIT_FIXES.down]]) { ui[id].disabled = !scalable; ui[id].title = UF.unitFixTip(fix, b); }
   ui.undo.disabled = !d.hist.canUndo; ui.redo.disabled = !d.hist.canRedo;
   const gl = gapsOf(d);
   ui.gapRow.hidden = !d.ed;

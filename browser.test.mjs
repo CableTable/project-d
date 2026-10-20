@@ -1044,6 +1044,26 @@ try {
     assert.equal(await t('redo').isDisabled(), true);
   });
 
+  await step('edit: Unit fix ×25.4 / ÷25.4 scales the whole drawing in one undo step and says before → after', async () => {
+    assert.match(await t('unit-up').getAttribute('title'), /Would give 1587\.50 × 952\.50 mm/);
+    assert.match(await t('unit-down').getAttribute('title'), /Would give 2\.46 × 1\.48 mm/);
+    await t('unit-up').click(); await waitSize('1587.5', '952.5');
+    assert.match(await t('cmd-prompt').textContent(), /Unit fix ×25\.4 · 62\.50 × 37\.50 → 1587\.50 × 952\.50 mm/);
+    const dir = process.env.SHOTS_DIR || 'shots';
+    mkdirSync(dir, { recursive: true });
+    await page.waitForTimeout(600);
+    await page.screenshot({ path: dir + '/s11-51-light.png' });
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: dark', exact: true }).click();
+    await page.waitForTimeout(150);
+    await page.screenshot({ path: dir + '/s11-51-dark.png' });
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: light', exact: true }).click();
+    await t('unit-down').click(); await waitSize('62.5', '37.5');
+    assert.match(await t('cmd-prompt').textContent(), /Unit fix ÷25\.4 · 1587\.50 × 952\.50 → 62\.50 × 37\.50 mm/);
+    await page.keyboard.press('Control+z'); await waitSize('1587.5', '952.5');        // one undo step each
+    await page.keyboard.press('Control+z'); await waitSize('62.5', '37.5');
+    assert.equal(await t('undo').isDisabled(), false, 'the earlier steps are still there');
+  });
+
   await step('edit: Save writes the edited drawing: 8 entities, 62.5 × 37.5, nothing else', async () => {
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     assert.equal(dl.name, 'outline-edited.dxf', 'the opened file is left alone: the first Save is a Save As');
