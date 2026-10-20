@@ -33,18 +33,24 @@ export function startHidden(fl) {
   return new Set(fl.layers.map((l, i) => (l.on ? -1 : i)).filter((i) => i >= 0));
 }
 
-/**
- * Entities in the shown space, counted from the file's entities, as the Objects tab does: a block reference (a kept dimension
- * with its lines, arrowheads and text) is one, and so is one that draws nothing (an IMAGE, a block with no contents).
- */
-export function entityCount(raw, fl) {
-  return layerCounts(raw, fl).reduce((a, b) => a + b, 0);
+/** Top-level entity indexes in the shown space, including unsupported objects preserved on Save. */
+export function shownEntityIndexes(raw, fl) {
+  const sp = spaceOf(fl);
+  return raw.entities.flatMap((e, i) => !e.hidden && (e.ps ? 1 : 0) === sp ? [i] : []);
 }
 
-/** Entities per layer index of `fl.layers`, shown space only; hidden entities and ones on a layer missing from the table are not counted. */
+/** Entities in the shown space: a block or dimension counts once, on its own layer. */
+export function entityCount(raw, fl) {
+  return shownEntityIndexes(raw, fl).length;
+}
+
+/** Entities per layer index, using the same top-level objects as the Objects tree. */
 export function layerCounts(raw, fl) {
-  const sp = spaceOf(fl), at = new Map(fl.layers.map((l, i) => [l.name, i])), n = new Array(fl.layers.length).fill(0);
-  for (const e of raw.entities) if (!e.hidden && (e.ps ? 1 : 0) === sp && at.has(e.layer)) n[at.get(e.layer)]++;
+  const n = new Array(fl.layers.length).fill(0), at = new Map(fl.layers.map((l, i) => [l.name, i]));
+  for (const e of shownEntityIndexes(raw, fl)) {
+    const l = at.get(raw.entities[e].layer);
+    if (l != null) n[l]++;
+  }
   return n;
 }
 
