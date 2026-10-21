@@ -57,7 +57,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
             { id: 'a3', topic: 'Invalid date', note: 'Still renders', as_of: '2026-99-99T00:00:00Z' },
           ] },
           todo: { sections: [{ title: 'Whole TODO', items: [{ num: 95, title: '<img src=x>', size: 'M', done: false, text: 'Open item' }, { num: 98, title: 'Finished', done: true, text: 'Built' }] }] },
-          tokens: { rows: Array.from({ length: 14 }, (_, i) => ({ day: '2026-10-' + String(i + 8).padStart(2, '0'), Rook: i * 10, Bishop: i * 20, Knight: i * 30 })) },
+          tokens: { rows: Array.from({ length: 14 }, (_, i) => ({ day: '2026-10-' + String(i + 8).padStart(2, '0'), Rook: i * 100000, Bishop: i * 101000, Knight: i * 102000 })) },
           tickets: { rows: [
             { id: 'T14', status: 'building', size: 'M', type: 'ask', tags: ['feature', 'usage-page', 'mod'], title: '<img src=x onerror=alert(1)>', todo: '95', updated: '2026-10-21', note: '<script>plain note</script>\nSecond line.' },
             { id: 'T17', status: 'checked in exe', size: 'S', type: 'bug', tags: ['bug', 'usage-page'], title: 'Refresh error', todo: '98', updated: '2026-10-21', note: 'Keep last good readings.' },
@@ -69,7 +69,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
         const url = new URL(route.request().url());
         if (url.hostname === 'usage.test') {
           const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js'].includes(name));
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js'].includes(name));
           return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
         }
         if (url.pathname.endsWith('firebase-app.js')) return route.fulfill({ body: 'export const initializeApp = () => ({});', contentType: 'text/javascript' });
@@ -82,8 +82,11 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       await page.goto('http://usage.test/');
       await page.locator('#agents h3').last().waitFor();
       assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'Knight']);
-      assert.equal(await page.locator('#token-chart rect').count(), 42);
-      assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /14 days in IST; cache reads excluded/);
+      assert.equal(await page.locator('#token-chart rect').count(), 0);
+      assert.equal(await page.locator('#token-chart polyline').count(), 3);
+      assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /running total.*14 days in IST; input \+ output \+ cache creation; cache reads excluded/);
+      assert.equal(await page.locator('#token-chart').locator('..').locator('h3').textContent(), 'Tokens used, running total');
+      assert.equal(await page.locator('#token-chart').locator('..').locator('p').textContent(), 'Last 14 days in IST. Input + output + cache creation; cache reads excluded.');
       assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'Knight']);
       assert.match(await page.locator('#notes tr[data-key=a1] td').first().textContent(), /^Bishop and KnightThu,? 22 Oct, 00:15 IST$/);
       assert.match(await page.locator('#notes tr[data-key=a2] td').first().textContent(), /^Thu,? 22 Oct, 00:15 IST$/);
@@ -98,22 +101,66 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
           });
         });
         for (const id of ['token-chart', 'chart']) {
-          const labels = await page.locator(`#${id} text[y="234"]`).evaluateAll((nodes) => nodes.map((node) => {
-            const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
+          const { labels, box } = await page.locator(`#${id}`).evaluate((chart) => ({
+            labels: [...chart.querySelectorAll('text[y="234"]')].map((node) => {
+              const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
+            }),
+            box: chart.getBoundingClientRect().toJSON(),
           }));
           assert.equal(labels.at(-1).text, id === 'token-chart' ? '21-Oct' : '22-Oct');
           if (id === 'chart') assert.deepEqual(labels.map((label) => label.text), ['20-Oct', '21-Oct', '22-Oct']);
-          const box = await page.locator(`#${id}`).boundingBox();
           assert.ok(labels.length > 1);
           for (const label of labels) {
             assert.match(label.text, /^\d{2}-[A-Z][a-z]{2}$/);
-            assert.ok(label.left >= box.x && label.right <= box.x + box.width, 'Date labels stay inside the chart');
+            assert.ok(label.left >= box.x && label.right <= box.x + box.width, `Date labels stay inside ${id}: ${JSON.stringify({ label, box })}`);
           }
           for (let i = 1; i < labels.length; i++) assert.ok(labels[i].left > labels[i - 1].right + 4, 'Date labels must have a readable gap');
         }
       };
+      const endLabels = async () => {
+        const { labels, box } = await page.locator('#token-chart').evaluate((chart) => ({
+          labels: [...chart.querySelectorAll('.token-end')].map((node) => {
+            const { left, right, top, bottom } = node.getBoundingClientRect(); return { left, right, top, bottom };
+          }),
+          box: chart.getBoundingClientRect().toJSON(),
+        }));
+        assert.equal(labels.length, 3);
+        for (const label of labels) {
+          assert.ok(label.left >= box.x && label.right <= box.x + box.width, 'End values stay inside the chart');
+          assert.ok(label.top >= box.y && label.bottom < box.y + 224, 'End values stay above the dates');
+        }
+        for (let i = 1; i < labels.length; i++) assert.ok(labels[i].top > labels[i - 1].bottom + 2, 'Close end values have a readable gap');
+      };
+      const runningChart = async () => {
+        const lines = await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('polyline')].map((node) => ({
+          points: [...node.points].map(({ x, y }) => ({ x, y })), color: getComputedStyle(node).stroke,
+        })));
+        assert.equal(lines.length, 3);
+        for (let a = 0; a < lines.length; a++) {
+          assert.equal(lines[a].points.length, 14);
+          for (let i = 0; i < 14; i++) {
+            const expected = 212 - (i * (i + 1) / 2 * [100000, 101000, 102000][a]) / 9282000 * 190;
+            assert.ok(Math.abs(lines[a].points[i].y - expected) < .001, 'Line plots cumulative tokens on the shared scale');
+          }
+        }
+        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['9.3M', '9.2M', '9.1M']);
+        assert.deepEqual(await page.locator('#token-chart text[text-anchor=end]').allTextContents(), ['0', '4.6M', '9.3M']);
+        assert.deepEqual(lines.map((line) => line.color), await page.locator('#token-legend').evaluate((legend) => [...legend.querySelectorAll('i')].map((node) => getComputedStyle(node).backgroundColor)));
+        assert.deepEqual(await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('.token-end')].map((node) => getComputedStyle(node).fill)), lines.map((line) => line.color).reverse());
+        assert.equal(await page.locator('#token-chart title').last().textContent(), '21-Oct IST · Knight: 9,282,000 tokens, running total');
+        await endLabels();
+        // All-zero totals and two zero agents keep labels inside the lower edge too.
+        for (const rook of [0, 1000000]) {
+          await page.evaluate((Rook) => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ day: row.day, Rook, Bishop: 0, Knight: 0 })) }), rook);
+          await endLabels();
+        }
+        await page.evaluate(() => window.__emit('tokens', { rows: [] }));
+        assert.equal(await page.locator('#token-chart').textContent(), 'No token data uploaded yet.');
+        await page.evaluate(() => window.__emit('tokens', window.__docs.tokens));
+      };
       await noOverflow();
       await readableDates();
+      await runningChart();
       assert.match(await page.locator('#token-chart title').last().textContent(), /^21-Oct IST/);
       assert.match(await page.locator('#chart title').last().textContent(), /22-Oct 00:00 IST$/);
       for (const [when, date] of [['2026-10-31T18:30:00Z', '01-Nov'], ['2026-08-31T18:30:00Z', '01-Sep']]) {
@@ -159,7 +206,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       assert.equal(await page.locator('#message').textContent(), '');
       assert.equal(await page.locator('#last-error').textContent(), 'Rook usage probe failed, exit 1');
       assert.equal(await page.locator('#agents').textContent(), before);
-      assert.equal(await page.locator('#token-chart rect').count(), 42);
+      assert.equal(await page.locator('#token-chart polyline').count(), 3);
       await page.evaluate(() => window.__emit('status', { ...window.__docs.status, lastError: 'stack trace secret hook_started JSON', lastErrorAt: Date.now() }));
       assert.equal(await page.locator('#last-error').textContent(), 'Usage refresh failed; see the local agent log');
       await page.evaluate(() => window.__emit('status', { ...window.__docs.status, lastError: 'Main account: 100%, limit reached', lastErrorAt: Date.now() }));
@@ -171,6 +218,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       const brand = await page.locator('#top').boundingBox(), tabs = await page.locator('.page-tabs').boundingBox();
       assert.ok(tabs.x > brand.x + brand.width && Math.abs((tabs.y + tabs.height / 2) - (brand.y + brand.height / 2)) < 2, 'Desktop brand and tabs share a row');
       await readableDates();
+      await runningChart();
       await page.screenshot({ path: `shots/s15-usage-fix-desktop-${colorScheme}.png`, fullPage: true });
       for (const tab of ['usage', 'todo', 'tickets']) { await page.locator(`[data-tab=${tab}]`).click(); await noOverflow(); }
 

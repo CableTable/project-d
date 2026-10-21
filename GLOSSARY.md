@@ -283,4 +283,4 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Ticket tag**: A comma-separated label in support/tickets.md, uploaded as a Tags array and used by the Tickets tab's filter chips (for example bug, feature or mod). Where: usage page, Tickets. Avoid: A separate Bugs / Features tab.
 
-**Tokens per day**: The usage page's 14-day IST chart of input + output + cache-creation tokens for Rook, Bishop and Knight, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Usage-limit percentages or the per-session runs table.
+**Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.

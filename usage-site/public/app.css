@@ -49,6 +49,8 @@ button[aria-pressed=true] { color: var(--color-bg); background: var(--color-fg);
 .ud-chart { min-height: 240px; min-width: 0; }
 .ud-chart svg { display: block; width: 100%; height: auto; }
 .ud-chart svg text { fill: var(--color-fg-muted); font: 11px 'Space Grotesk', system-ui, sans-serif; }
+.token-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.ud-chart svg .token-end { font-weight: 600; font-variant-numeric: tabular-nums; }
 .legend { font-size: 13px; color: var(--color-fg-muted); }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { width: 10px; height: 10px; border-radius: 50%; }
