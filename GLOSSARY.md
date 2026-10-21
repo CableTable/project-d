@@ -100,6 +100,20 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 ## Drawing / CAD
 
+**Advance**: The font's distance to the next glyph, including spacing adjustments. TXO keeps this distance when skipping a missing glyph. Where: `web/textoutline.js`.
+
+**Composite glyph**: A font glyph made from other glyphs with their own offsets or transforms, such as Å or é. TXO expands its components into ordinary closed outlines. Where: `DECISIONS.md`, Text to outlines: composite glyphs.
+
+**Counter**: A hole inside a glyph, such as the centre of O or the ring above Å; retained as a separate closed outline with opposite winding. Where: `web/textoutline.js`.
+
+**DXF text escape**: A sequence in TEXT such as %%d (°), %%p (±), %%c (⌀) or `\U+00E9` (é), decoded before rendering or TXO. Where: `web/drawing.js`, plainText.
+
+**Glyph**: The shape and metrics a font supplies for a character or shaped character sequence. Where: `web/textoutline.js`.
+
+**Missing glyph (.notdef)**: The font's index-zero replacement, often drawn as a box. TXO skips its path, keeps its advance and names the unsupported character and Unicode code point in the result. Where: `DECISIONS.md`, Text to outlines: missing glyphs.
+
+**Text to outlines (TXO)**: Replaces selected single-line TEXT with closed polylines on its layer, keeping counters and placement, in one undo step. MTEXT is planned in TODO 53d. Where: Modify menu; `web/textoutline.js`.
+
 **1:1**: A drawing or output size in which one mm of geometry represents one physical mm. Where: `DECISIONS.md`, 1:1 scale and Output. Avoid: Fit to window.
 
 **3DFACE**: A DXF face whose edges can be shown by the 2D reader but which is left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.

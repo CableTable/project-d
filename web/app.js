@@ -3620,13 +3620,14 @@ async function textToOutlines() {
   } catch { note('Text to outlines: no font file could be read'); return; }
   if (!state.docs.includes(d) || d.raw.entities !== raw) { note('Text to outlines: the drawing changed meanwhile, run it again'); return; }
   const r = TO.outlineEntities(items, raw, (it) => fonts.get(keyOf(it)).font, 0.01 / d.factor);      // flattened to 0.01 mm, as Export for cutter
-  if (!r.ents.length) { note('Text to outlines: the selected text has no letters to outline'); return; }
+  const missing = r.missing.length ? '. Missing glyphs skipped (advance kept): ' + r.missing.map((ch) => `${ch} (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})`).join(', ') : '';
+  if (!r.ents.length) { note('Text to outlines: the selected text has no letters to outline' + missing + skipped); return; }
   const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
   view.fitted = false;
   commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`);
   setSel(d, new Set(r.ents.map((_, i) => at + i)));
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
-  note(`${r.texts} text${r.texts === 1 ? '' : 's'} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + skipped + '. Ctrl+Z takes them back');
+  note(`${r.texts} text${r.texts === 1 ? '' : 's'} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + skipped + '. Ctrl+Z takes them back');
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----

@@ -7684,6 +7684,43 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 53b: TXO accented/composite TEXT keeps closed outlines and holes; missing glyphs are named without .notdef boxes', async () => {
+    await closeTabs(/./);
+    const source = newDoc(4);
+    addLayer(source, 'Accents', { aci: 7 }); addLayer(source, 'Missing', { aci: 3 });
+    addEntities(source, dxfText(20, 60, 12, 'Åé°ñ Ø25', { layer: 'Accents' }), dxfText(20, 30, 12, 'A🦄V', { layer: 'Missing' }));
+    await t('picker').setInputFiles({ name: 's13-53b-accents.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(source, { escapeUnicode: true }), 'ascii') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('s13-53b-accents.dxf'));
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await typeCmd('txo');
+    await page.waitForFunction(() => /Missing glyphs skipped/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    assert.match(await prompt(), /^2 texts → 19 outlines\./);
+    assert.match(await prompt(), /Missing glyphs skipped \(advance kept\): 🦄 \(U\+1F984\)/);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s13-53b-outlines-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    const doc = await savedDoc(), accents = doc.entities.filter((e) => e.layer === 'Accents'), missing = doc.entities.filter((e) => e.layer === 'Missing');
+    assert.equal(accents.length, 16); assert.equal(missing.length, 3, 'A and V only; no missing-glyph box');
+    assert.ok(doc.entities.every((e) => e.type === 'LWPOLYLINE' && fieldOf(e, 70) === 1), 'every outline is closed, TEXT replaced');
+    const polys = accents.map((e) => e.r.c.flatMap((c, i) => c === 10 ? [[+e.r.v[i], +e.r.v[i + 1]]] : []));
+    const inside = (p, poly) => { let yes = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) yes = !yes; return yes; };
+    assert.ok(polys.filter((p, i) => polys.some((q, j) => j !== i && inside(p[0], q))).length >= 4, 'A, ring, e, degree and slashed O keep counters');
+    assert.ok(polys.flat().every(([x, y]) => Number.isFinite(x) && Number.isFinite(y) && x >= 19 && y > 59 && y < 77), 'same baseline and accent height');
+    await page.keyboard.press('Control+z');
+    assert.equal((await savedDoc()).entities.filter((e) => e.type === 'TEXT').length, 2, 'one undo restores both texts');
+    await closeTabs(/./);
+    const absent = newDoc(4); addEntities(absent, dxfText(20, 30, 12, '🦄'));
+    await t('picker').setInputFiles({ name: 's13-53b-missing.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(absent, { escapeUnicode: true }), 'ascii') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('s13-53b-missing.dxf'));
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await typeCmd('txo');
+    await page.waitForFunction(() => /no letters to outline.*U\+1F984/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    assert.equal((await savedDoc()).entities[0].type, 'TEXT', 'entirely missing text stays for correction');
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

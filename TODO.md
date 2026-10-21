@@ -99,7 +99,7 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
 52. ✅ (built, session 11, R14 option B) **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
 53. **Text to outlines** (L): removes font problems for film and cut files (needs font outlines without a build step).
     - 53a ✅ (built, session 12) TXO / Modify menu: single-line TEXT → closed polylines (holes kept), one undo. Browser run not yet green here (see HISTORY / PR).
-    - 53b composite / accented glyphs: not built.
+    - 53b ✅ (built, session 13) composite / accented glyphs keep their components, holes and placement; missing glyphs skipped with advance kept and named in the result; DXF TEXT escapes covered.
     - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message; MTEXT left alone with a note.
     - 53d MTEXT: not built (Bold used by 53d).
 54. ✅ (built, session 12) **Wireframe (outline-only) view** (S): View → Wireframe, status-bar chip and F9; thin outlines without fills or background pictures, remembered across all tabs. PDF / Print and exports keep their fills.
