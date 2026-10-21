@@ -9,6 +9,8 @@ const ORDER = ['Rook', 'Pip', 'Rowan'];
 const label = (text) => String(text).replace(/\bPip\b/g, 'Bishop').replace(/\bRowan\b/g, 'Knight');
 const IST = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 const HM = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+const DAY = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short' });
+const chartDate = (time) => DAY.format(new Date(time)).replace(' ', '-').slice(0, 6);
 const compact = (n) => Intl.NumberFormat('en', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
 const num = (x) => (x === '' || x == null ? null : Number(x));
 
@@ -151,9 +153,9 @@ function drawChart(hist) {
     add('line', { x1: left, x2: right, y1: y(v), y2: y(v), stroke: 'var(--cds-chart-grid)' });
     add('text', { x: left - 5, y: y(v) + 4, 'text-anchor': 'end' }, v + '%');
   }
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < (min === max ? 1 : 3); i++) {
     const t = min + (max - min) * i / 2;
-    add('text', { x: x(t), y: 234, 'text-anchor': 'middle' }, HM.format(new Date(t)));
+    add('text', { x: x(t), y: 234, 'text-anchor': 'middle' }, chartDate(t));
   }
   const ends = [];
   for (const agent of ORDER) {
@@ -162,7 +164,7 @@ function drawChart(hist) {
     add('polyline', { points: pts.map((p) => x(p.t) + ',' + y(p.v)).join(' '), fill: 'none', stroke: AGENT_COLOR[agent], 'stroke-width': 2 });
     for (const p of pts) {
       const dot = add('circle', { cx: x(p.t), cy: y(p.v), r: 3, fill: AGENT_COLOR[agent] });
-      add('title', {}, agent + ' ' + p.v + '% ? ' + IST.format(new Date(p.t)) + ' IST', dot);
+      add('title', {}, agent + ' ' + p.v + '% ? ' + chartDate(p.t) + ' ' + HM.format(new Date(p.t)) + ' IST', dot);
     }
     const last = pts.at(-1); ends.push({ agent, v: last.v, y: y(last.v) });
   }
@@ -238,10 +240,10 @@ function drawTokenChart() {
     const item = el('span'), dot = el('i'); dot.style.background = AGENT_COLOR[agent]; item.append(dot, document.createTextNode(agent)); legend.append(item);
   }
   if (!data.tokens.length) { box.append(el('p', 'ud-muted', 'No token data uploaded yet.')); return; }
-  const W = Math.max(260, box.clientWidth), H = 240, left = 38, right = W - 8, bottom = 212;
+  const W = Math.max(260, box.clientWidth), H = 240, left = 38, right = W - 24, bottom = 212;
   const max = Math.max(1, ...data.tokens.flatMap((row) => agents.map((a) => Number(row[a]) || 0)));
   const step = (right - left) / data.tokens.length;
-  const labelEvery = Math.max(1, Math.ceil(48 / step));
+  const labelEvery = Math.max(1, Math.ceil(60 / step));
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', 'Tokens used per day by Rook, Bishop and Knight over the last 14 days in IST; cache reads excluded');
@@ -261,9 +263,9 @@ function drawTokenChart() {
     agents.forEach((agent, j) => {
       const tokens = Math.max(0, Number(row[agent]) || 0), height = tokens / max * 190;
       const bar = add('rect', { x: left + i * step + (j + .2) * step / 3, y: bottom - height, width: step / 3 * .8, height, fill: AGENT_COLOR[agent] });
-      add('title', {}, `${row.day} IST · ${agent}: ${tokens.toLocaleString('en')} tokens`, bar);
+      add('title', {}, `${chartDate(row.day)} IST · ${agent}: ${tokens.toLocaleString('en')} tokens`, bar);
     });
-    if ((data.tokens.length - 1 - i) % labelEvery === 0) add('text', { x: left + (i + .5) * step, y: 234, 'text-anchor': 'middle' }, row.day.slice(5));
+    if ((data.tokens.length - 1 - i) % labelEvery === 0) add('text', { x: left + (i + .5) * step, y: 234, 'text-anchor': 'middle' }, chartDate(row.day));
   });
 }
 

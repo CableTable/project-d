@@ -49,7 +49,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
         window.__failure = 'Rook usage probe failed, exit 1';
         window.__docs = {
           limits: { rows: ['Rook', 'Pip', 'Rowan'].flatMap((agent) => ['5h', 'week'].map((window) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: '42', cap_pct: '', starts: '2026-10-01T00:00:00Z', resets: '2027-01-01T00:00:00Z', as_of: when }))) },
-          history: { rows: ['Rook', 'Pip', 'Rowan'].map((agent) => ({ when, agent, window: 'week', used_pct: '42' })) },
+          history: { rows: ['Rook', 'Pip', 'Rowan'].flatMap((agent) => ['2026-10-20T18:29:00Z', '2026-10-21T18:30:00Z'].map((when) => ({ when, agent, window: 'week', used_pct: '42' }))) },
           runs: { rows: [{ id: 'run1', agent: 'Rowan', session: '15', task: '<img src=x onerror=alert(1)>', kind: 'build', model: 'Fixture', new_tokens: '10', total_tokens: '20', verdict: 'OK' }] },
           analysis: { items: [
             { id: 'a1', topic: 'Pip and Rowan', note: '<script>plain text</script>', as_of: '2026-10-21T18:45:00Z' },
@@ -92,18 +92,35 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       const readableDates = async () => {
         // Wait for the ResizeObserver to redraw at the current viewport width.
         await page.waitForFunction(() => {
-          const box = document.getElementById('token-chart');
-          return +box.querySelector('svg').getAttribute('viewBox').split(' ')[2] === Math.max(260, box.clientWidth);
+          return ['token-chart', 'chart'].every((id) => {
+            const box = document.getElementById(id);
+            return +box.querySelector('svg').getAttribute('viewBox').split(' ')[2] === Math.max(260, box.clientWidth);
+          });
         });
-        const labels = await page.locator('#token-chart text[y="234"]').evaluateAll((nodes) => nodes.map((node) => {
-          const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
-        }));
-        assert.equal(labels.at(-1).text, '10-21');
-        assert.ok(labels.length > 1);
-        for (let i = 1; i < labels.length; i++) assert.ok(labels[i].left > labels[i - 1].right + 4, 'Date labels must have a readable gap');
+        for (const id of ['token-chart', 'chart']) {
+          const labels = await page.locator(`#${id} text[y="234"]`).evaluateAll((nodes) => nodes.map((node) => {
+            const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
+          }));
+          assert.equal(labels.at(-1).text, id === 'token-chart' ? '21-Oct' : '22-Oct');
+          if (id === 'chart') assert.deepEqual(labels.map((label) => label.text), ['20-Oct', '21-Oct', '22-Oct']);
+          const box = await page.locator(`#${id}`).boundingBox();
+          assert.ok(labels.length > 1);
+          for (const label of labels) {
+            assert.match(label.text, /^\d{2}-[A-Z][a-z]{2}$/);
+            assert.ok(label.left >= box.x && label.right <= box.x + box.width, 'Date labels stay inside the chart');
+          }
+          for (let i = 1; i < labels.length; i++) assert.ok(labels[i].left > labels[i - 1].right + 4, 'Date labels must have a readable gap');
+        }
       };
       await noOverflow();
       await readableDates();
+      assert.match(await page.locator('#token-chart title').last().textContent(), /^21-Oct IST/);
+      assert.match(await page.locator('#chart title').last().textContent(), /22-Oct 00:00 IST$/);
+      for (const [when, date] of [['2026-10-31T18:30:00Z', '01-Nov'], ['2026-08-31T18:30:00Z', '01-Sep']]) {
+        await page.evaluate((when) => window.__emit('history', { rows: [{ when, agent: 'Rook', window: 'week', used_pct: '42' }] }), when);
+        assert.deepEqual(await page.locator('#chart text[y="234"]').allTextContents(), [date]);
+      }
+      await page.evaluate(() => window.__emit('history', window.__docs.history));
       const task = await page.locator('#runrows td').nth(2).boundingBox();
       const tokens = await page.locator('#runrows td').nth(3).boundingBox();
       assert.ok(task.width > 280 && tokens.width > 280 && tokens.y > task.y, 'Phone runs stack full-width task and new tokens');

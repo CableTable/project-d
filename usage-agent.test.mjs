@@ -46,10 +46,30 @@ test('tickets redact Windows paths in fields and notes before upload', () => {
   const result = parseTickets(String.raw`| T1 | open | S | bug | | Fix C:\Users\owner\secret.txt | 95 | today |
 ### T1 Note
 See [E:\private\drawing.dxf] and (D:/private/log.txt), then continue.
-Lowercase c:\secret\file and F:/private/other.txt
+Lowercase c:\secret\file, and F:/private/other.txt
 Keep https://example.test/help and relative/file.txt.`);
   assert.equal(result.rows[0].title, 'Fix (local path)');
-  assert.equal(result.rows[0].note, 'See [(local path)] and ((local path)), then continue.\nLowercase (local path) and (local path)\nKeep https://example.test/help and relative/file.txt.');
+  assert.equal(result.rows[0].note, 'See [(local path)] and ((local path)), then continue.\nLowercase (local path), and (local path)\nKeep https://example.test/help and relative/file.txt.');
+});
+
+test('ticket paths keep spaces private and preserve the text after each delimiter', () => {
+  for (const [text, expected] of [
+    [String.raw`E:\Project B\Claude\ProjectD\x.dxf`, '(local path)'],
+    [String.raw`[e:/Project B/Claude/ProjectD/x.dxf] next`, '[(local path)] next'],
+    [String.raw`(E:\Project B\x.dxf) next`, '((local path)) next'],
+    [String.raw`"E:\Project B\x.dxf" next`, '"(local path)" next'],
+    [String.raw`'E:/Project B/x.dxf' next`, "'(local path)' next"],
+    ['`E:/Project B/x.dxf` next', '`(local path)` next'],
+    [String.raw`E:\Project B\x.dxf, then continue`, '(local path), then continue'],
+    [String.raw`E:\Project B, Claude\x.dxf, then continue`, '(local path), then continue'],
+    [String.raw`\\server\shared drawings\Project D\x.dxf, then continue`, '(local path), then continue'],
+    [String.raw`[\server\share\Project D\x.dxf] next`, '[(local path)] next'],
+    [String.raw`E:\Project B\x.dxf` + '\nKeep this line.', '(local path)\nKeep this line.'],
+  ]) {
+    const result = parseTickets(`| T1 | open | S | bug | | ${text.split('\n')[0]} | 95 | today |\n### T1 Note\n${text}`);
+    assert.equal(result.rows[0].title, expected.split('\n')[0], text);
+    assert.equal(result.rows[0].note, expected, text);
+  }
 });
 
 const now = Date.parse('2026-10-21T20:00:00Z'); // Oct 22 in IST.

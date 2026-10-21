@@ -16,7 +16,7 @@ const run = promisify(execFile);
 
 export function parseTickets(text, log = console.error) {
   const rows = [], notes = new Map();
-  const redact = (text) => text.replace(/\b[A-Z]:[\\/][^\s\])}]+/gi, '(local path)');
+  const redact = (text) => text.replace(/(?:\b[A-Za-z]:[\\/]|\\{1,2}[^\\/\s]+[\\/])(?:(?!, [a-z])[^\])"'\x60\r\n])*/g, '(local path)');
   let note;
   for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const heading = line.match(/^###\s+(T\d+)\b/);
