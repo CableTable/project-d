@@ -172,7 +172,7 @@ const state = {
   ldr: null,                       // the Leader tool in progress: { pts: [[x, y] drawing units, up to 3], hover, cursor }
   bal: null,                       // the Balloon tool in progress: { tip: [x, y] mm (the arrow's end, once clicked) | null, hover: [x, y] mm | null }
   balSel: null, balDrag: null,     // the selected balloon's id; a balloon grip being dragged: { id, which ('c' or 'tip'), set (the changed set), moved }
-  balDock: { h: 240, collapsed: false, sheet: 'all' },   // the balloons table docked above the command line: its height (px), collapsed, and the sheet it shows
+  balDock: { h: 140, collapsed: false, sheet: 'all' },   // the balloons table docked above the command line: its height (px), collapsed, and the sheet it shows
   sidecars: new Map(),             // balloon files picked or dropped in a browser, waiting for their drawing: lower-case name → text
   dimDrag: null,                   // a selected dimension being dragged: { e, name, params, dp, start, offset, moved }
   gapMm: 0.01, gapShow: true,      // Tiny gaps (TODO 46): the tolerance in mm (remembered on this PC) and whether the gaps are marked on the drawing
@@ -4494,7 +4494,7 @@ function buildBalloonDock() {
     const y0 = e.clientY, h0 = state.balDock.h;
     capture(handle, e);
     const mv = (ev) => { state.balDock.h = Math.round(Math.max(90, Math.min(window.innerHeight * 0.6, h0 + y0 - ev.clientY))); renderBalloons(); };
-    const up = () => { handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up); };
+    const up = () => { try { localStorage.setItem('pd-baldock-height', String(state.balDock.h)); } catch { /* ignore */ } handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up); };
     handle.addEventListener('pointermove', mv); handle.addEventListener('pointerup', up); handle.addEventListener('pointercancel', up);
   });
   ui.balDock = h('section', { class: 'baldock', hidden: true, 'aria-label': 'Balloons', 'data-testid': 'bal-dock' }, handle,
@@ -6565,6 +6565,7 @@ async function init() {
   state.dimStyles = loadDimStyles();
   try { const v = localStorage.getItem('pd-dimtype'); if (DIM_TYPES.some((x) => x[0] === v)) state.dimType = v; } catch { /* ignore */ }
   const cmdLog = buildCommand();                           // before the canvas: the bar, the fade and the history sit on it
+  try { const v = Number(localStorage.getItem('pd-baldock-height')); if (Number.isFinite(v) && v >= 90) state.balDock.h = Math.min(v, window.innerHeight * 0.6); } catch { /* ignore */ }
   const balDock = buildBalloonDock();                      // before the canvas: its picture-only chip and sheet switcher sit on the canvas
   app.append(h('div', { class: 'shell' },
     buildMenus(), buildTabs(), buildPropbar(), buildSelbar(), buildTextbar(),

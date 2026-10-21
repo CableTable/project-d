@@ -8134,6 +8134,39 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 88: compact remembered Balloons dock and faster toasts at 1024x768 (light then dark)', async () => {
+    const small = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+    const p = await small.newPage(), q = (id) => p.locator('[data-testid=' + id + ']');
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+      for (const theme of ['light', 'dark']) {
+        await q('picker').setInputFiles('fixtures/outline.dxf');
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + theme, exact: true }).click();
+        await p.locator('[data-tool=balloon]').click();
+        assert.equal((await q('bal-dock').boundingBox()).height, 140);
+        assert.ok((await q('canvas').boundingBox()).height > 350, 'canvas keeps room at 1024?768');
+        await p.waitForTimeout(400);
+        await p.screenshot({ path: shotDir + '/s15-88-' + theme + '.png' });
+        await q('cmd-fade').filter({ has: p.locator('.cb-fade-rows') }).waitFor();
+        await p.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle'), null, { timeout: 4000 });
+        await p.waitForTimeout(650);
+        assert.equal(await q('cmd-fade').locator('.cb-fade-rows').evaluate(e => getComputedStyle(e).opacity), '0');
+        const drag = await q('bal-drag').boundingBox();
+        await p.mouse.move(drag.x + 30, drag.y + drag.height / 2); await p.mouse.down(); await p.mouse.move(drag.x + 30, drag.y + drag.height / 2 - 40); await p.mouse.up();
+        assert.equal((await q('bal-dock').boundingBox()).height, 180);
+        await q('bal-collapse').click(); assert.ok((await q('bal-dock').boundingBox()).height < 60);
+        await q('bal-collapse').click(); assert.equal((await q('bal-dock').boundingBox()).height, 180);
+        await p.reload(); await q('picker').setInputFiles('fixtures/outline.dxf');
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await p.locator('[data-tool=balloon]').click();
+        assert.equal((await q('bal-dock').boundingBox()).height, 180, 'own height survives reload');
+        await p.evaluate(() => localStorage.removeItem('pd-baldock-height')); await p.reload(); await q('new-tab').waitFor();
+      }
+    } finally { await small.close(); }
+  });
+
   await step('Usage site: remembered tabs, tag filters, notes, token chart, safe refresh errors; phone and desktop, light and dark', async () => {
     const result = spawnSync(process.execPath, ['--test', 'tools/usage-site.browser.test.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
     assert.equal(result.status, 0, result.stdout + result.stderr);

@@ -124,7 +124,7 @@ export function buildCmdUI(hooks) {
   function fadeUp() {
     fade.classList.remove('idle');
     clearTimeout(idle);
-    idle = setTimeout(() => { if (bar.hidden && drawer.hidden) fade.classList.add('idle'); }, 9000);
+    idle = setTimeout(() => { if (bar.hidden && drawer.hidden) fade.classList.add('idle'); }, 3000);
   }
 
   /** A line the bar sends: a picked option, a typed answer, a command by name or a highlighted suggestion. */
