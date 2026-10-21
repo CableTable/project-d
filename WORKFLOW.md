@@ -95,6 +95,8 @@ OUT='--output-format stream-json --verbose'
 $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
   --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" $ALLOW $OUT < brief.txt > run.jsonl
 
+# In a worktree or Rowan's clone the git dir is elsewhere: add --add-dir "<repo>/.git" (or ProjectD-rowan-git) and
+# --add-dir for the runs folder holding the brief, or every git commit is refused (2026-10-21, twice).
 # Fixes: a FRESH builder session with a short brief (the findings + the commit range), not --resume
 # (each resume re-sends the whole conversation: one builder reached $22 over 3 resumed jobs, 2026-10-19).
 # --resume only to finish a run that was cut off mid-work (usage limit), then start fresh again.
