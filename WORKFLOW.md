@@ -207,11 +207,11 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   firebase-tools@15.30.2 deploy --only hosting,firestore:rules --project project-d-usage` (usage-site/, his OK per deploy).
   The old claude.ai usage artifact is retired.
 
-## Rook low mode (his call, 2026-10-21)
+## Castle mode (his call, 2026-10-21)
 
 For when Rook (main account) runs short of usage: Pip leads and reviews, Rowan builds, Rook only helps.
 
-- **Switch on:** when Rook reaches its daily cap or a 5-hour limit is close, or when he says "Rook low". Rook writes a
+- **Switch on:** when Rook reaches its daily cap or a 5-hour limit is close, or when he says "Castle". Rook writes a
   hand-over (branch, PR, the item in hand, next items, open questions) to `side-session-notes/handover-pip.md`, then
   opens Pip-lead itself, the way a new Rook session is opened, but on account 2 through the CLI, with Remote Control
   so he can reach it from his phone:
@@ -222,6 +222,8 @@ For when Rook (main account) runs short of usage: Pip leads and reviews, Rowan b
 - **Reviews:** every Rowan build still gets a Pip-review (headless, own throwaway worktree) launched by Pip-lead.
 - **Merging:** Pip-lead merges on green with his OK, same rule as Rook:
   `gh pr merge <n> --merge --match-head-commit <sha>`. Builders and reviewers still never merge.
+- **Small items only:** Pip-lead takes only S TODO items and tickets (one Rowan build each, no grilling). M / L items and
+  plans wait for Rook; if only M / L items are left, Pip-lead says so and pauses.
 - **Pip's budget:** 20% of the weekly limit per day while the mode is on (14% otherwise).
 - **Rook:** only small things: reviewing S items, one-line answers, a CI check. No plans, no builds, no M/L reviews.
 - **Switch back:** when he says "hand over back to Rook". Pip-lead writes `side-session-notes/handover-rook.md` the
@@ -231,9 +233,9 @@ For when Rook (main account) runs short of usage: Pip leads and reviews, Rowan b
 
 **Pip-lead prompt:**
 
-> Project D, Rook low mode. You are Pip-lead, the lead on account 2 (Opus): read CLAUDE.md, WORKFLOW.md (its
-> "Rook low mode" part wins over the rest) and side-session-notes/handover-pip.md, and follow them. Rowan builds
-> everything; you brief it, launch a Pip-review (headless claude2, own worktree) for every build, and keep the
+> Project D, Castle mode (Rook low on usage). You are Pip-lead, the lead on account 2 (Opus): read CLAUDE.md, WORKFLOW.md (its
+> "Castle mode" part wins over the rest) and side-session-notes/handover-pip.md, and follow them. Rowan builds
+> only S TODO items and tickets (M / L wait for Rook); you brief Rowan, launch a Pip-review (headless claude2, own worktree) for every build, and keep the
 > usage gate (Pip up to 20% of the week a day). Stay on the branch and PR in the hand-over. Merge on green only with
 > my OK. Rook (main account) helps only with small reviews or questions. When I say "hand over back to Rook",
 > write the hand-over and open Rook as WORKFLOW.md says. Times in IST, keep answers short, repeat any question in
