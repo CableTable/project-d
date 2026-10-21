@@ -98,11 +98,11 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
 51. ✅ (built, session 11, R14 option A) **One-click unit fix, ×25.4 / ÷25.4** (S), next to Set length: the commonest "my file is the wrong size" cause.
 52. ✅ (built, session 11, R14 option B) **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
 53. **Text to outlines** (L): removes font problems for film and cut files (needs font outlines without a build step).
-    53a. Convert selected single-line TEXT using a locally chosen TrueType font's simple glyphs into closed polylines, with height and placement preserved, undo, DXF / PDF checks and a browser flow; report unsupported glyphs without replacing their text.
-    53b. (after 53a) Convert composite TrueType glyphs, including accented letters, through the same action, with contour-placement unit tests and a browser conversion / undo check.
-    53c. (after 53a) Preserve TEXT rotation, alignment, width factor and mirroring when outlining, with geometry tests and a browser Save / reopen check.
-    53d. (after 53b, 53c) Outline MTEXT line by line with its wrapping, spacing and supported formatting, reporting unsupported runs without losing text, with unit and browser export checks.
 54. ✅ (built, session 12) **Wireframe (outline-only) view** (S): View → Wireframe, status-bar chip and F9; thin outlines without fills or background pictures, remembered across all tabs. PDF / Print and exports keep their fills.
+    - 53a ✅ (built, session 12) TXO / Modify menu: single-line TEXT → closed polylines (holes kept), one undo. Browser run not yet green here (see HISTORY / PR).
+    - 53b composite / accented glyphs: not built.
+    - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message; MTEXT left alone with a note.
+    - 53d MTEXT: not built.
 55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
     55a. Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings.
     55b. (after 55a) If rendering lags, skip off-screen drawing items using their existing bounds, with conservative-bound unit tests and browser checks that panning and zooming reveal every object.

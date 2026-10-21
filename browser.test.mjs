@@ -7601,6 +7601,39 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT) and an SHX text become outlines; MTEXT stays and is named; save and reopen give the same outlines', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/txo.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo.dxf'));
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    const msg = await prompt();
+    assert.match(msg, /^2 texts → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
+    assert.match(msg, /1 MTEXT not yet supported, left as it is/);
+    const dl = await downloaded(() => page.keyboard.press('Control+s'));
+    const doc = readDxf(dl.text), polys = doc.entities.filter((e) => e.type === 'LWPOLYLINE'), cut = polys.filter((e) => e.layer === 'CUT');
+    assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 1, 'MTEXT untouched');
+    assert.equal(doc.entities.filter((e) => e.type === 'TEXT').length, 0);
+    assert.ok(cut.length >= 5 && cut.length < polys.length, 'HELLO is on its layer: ' + cut.length + ' of ' + polys.length);
+    assert.ok(polys.every((e) => e.r.v[e.r.c.indexOf(70)] === '1'), 'all closed');
+    const pts = (es, code) => es.flatMap((e) => e.r.c.flatMap((c, k) => (c === code ? [+e.r.v[k]] : [])));
+    const bx = pts(cut, 10), by = pts(cut, 20), w = Math.max(...bx) - Math.min(...bx), hh = Math.max(...by) - Math.min(...by);
+    assert.ok(Math.abs((Math.min(...bx) + Math.max(...bx)) / 2 - 100) < 12 && Math.abs((Math.min(...by) + Math.max(...by)) / 2 - 50) < 12, 'centred on its anchor');
+    assert.ok(w > 10 && hh > 10 && w < 45 && hh < 45, 'turned 30 degrees: both extents are real: ' + w.toFixed(1) + ' x ' + hh.toFixed(1));
+    // reopen the saved file: the same outlines, and a second run finds only the MTEXT
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'txo2.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo2.dxf'));
+    const again = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+    assert.equal(again.entities.length, doc.entities.length);
+    assert.deepEqual(pts(again.entities.filter((e) => e.layer === 'CUT' && e.type === 'LWPOLYLINE'), 10), bx, 'the same points after reopening');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    assert.equal(await prompt(), 'Text to outlines: MTEXT not yet supported, left as it is');
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

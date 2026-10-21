@@ -3607,12 +3607,16 @@ const isTextEnt = (e) => !!e && (e.type === 'TEXT' || e.type === 'MTEXT');
 async function textToOutlines() {
   const d = editable();
   if (!d) { note('Text to outlines works on a drawing tab: open a drawing first'); return; }
-  const sel = new Set([...d.sel].filter((i) => isTextEnt(d.raw.entities[i])));
+  const picked = [...d.sel].filter((i) => isTextEnt(d.raw.entities[i])), sel = new Set(picked.filter((i) => d.raw.entities[i].type === 'TEXT'));
+  const mtext = picked.length - sel.size, skipped = mtext ? `. ${mtext} MTEXT not yet supported, left as it is` : '';       // MTEXT is TODO 53d
+  if (!sel.size && mtext) { note('Text to outlines: MTEXT not yet supported, left as it is'); return; }
   if (!sel.size) { setTool('select'); state.txoWait = true; note('Text to outlines: select the texts (click or drag a box), then press Enter'); return; }
-  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)), fonts = new Map();
-  const keyOf = (it) => TX.fontOfStyle(it.st) + (it.bold ? ':b' : '');
+  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)), fonts = new Map(), shx = new Set();
+  const styleFile = (name) => { const s = d.raw.styles && d.raw.styles[name]; return (s && s.v[s.c.indexOf(3)]) || ''; };       // the STYLE's font file (group 3)
+  const fontOf = (it) => { if (/.shx$/i.test(styleFile(it.st).trim())) { shx.add(styleFile(it.st).trim()); return 'Arial'; } return TX.fontOfStyle(it.st); };      // SHX has no outlines: Arial stands in
+  const keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
   try {
-    for (const it of items) if (!fonts.has(keyOf(it))) fonts.set(keyOf(it), await loadFont(TX.fontOfStyle(it.st), it.bold));
+    for (const it of items) if (!fonts.has(keyOf(it))) fonts.set(keyOf(it), await loadFont(fontOf(it), it.bold));
   } catch { note('Text to outlines: no font file could be read'); return; }
   if (!state.docs.includes(d) || d.raw.entities !== raw) { note('Text to outlines: the drawing changed meanwhile, run it again'); return; }
   const r = TO.outlineEntities(items, raw, (it) => fonts.get(keyOf(it)).font, 0.01 / d.factor);      // flattened to 0.01 mm, as Export for cutter
@@ -3622,7 +3626,7 @@ async function textToOutlines() {
   commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`);
   setSel(d, new Set(r.ents.map((_, i) => at + i)));
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
-  note(`${r.texts} text${r.texts === 1 ? '' : 's'} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + '. Ctrl+Z takes them back');
+  note(`${r.texts} text${r.texts === 1 ? '' : 's'} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + skipped + '. Ctrl+Z takes them back');
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
