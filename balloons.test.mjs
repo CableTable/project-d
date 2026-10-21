@@ -72,7 +72,17 @@ test('the sidecar name: the file\'s name without its extension, next to it', () 
   assert.equal(B.sidecarName('scan-0142.pdf'), 'scan-0142.pdballoons.json');
   assert.equal(B.sidecarPath('C:\\jobs\\v2.1\\a.b.PDF'), 'C:\\jobs\\v2.1\\a.b.pdballoons.json');
   assert.equal(B.sidecarPath('/x/dir.v2/noext'), '/x/dir.v2/noext.pdballoons.json');
+  for (const folder of ['C:/jobs', 'C:\\jobs', '\\\\?\\C:\\jobs', '\\\\server\\share\\jobs']) {
+    const sep = folder.includes('/') ? '/' : '\\';
+    assert.equal(B.sidecarPath(folder + sep + 'plate $& [1].DXF'), folder + sep + 'plate $& [1].pdballoons.json');
+  }
   assert.ok(B.isSidecar('A.PDBALLOONS.JSON') && !B.isSidecar('a.json'));
+});
+
+test('sidecar paths agree for typed Save names and drawing extensions', () => {
+  for (const [name, stem] of [['noext', 'noext'], ['plate.v2', 'plate.v2'], ['a.b.DXF', 'a.b'], ['a.b.pdf', 'a.b'], ['.dxf', '.dxf'], ['photo.PNG', 'photo']]) {
+    assert.equal(B.sidecarPath('C:/jobs.v2/' + name), 'C:/jobs.v2/' + stem + '.pdballoons.json');
+  }
 });
 
 test('encode then decode gives the same balloons; the count and the cells come back', () => {

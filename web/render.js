@@ -4,7 +4,7 @@ import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './d
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 
-const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#18181b', fg: '#e8e8ec' } };
+const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
 const TEXT_FONT = '100px "Segoe UI", Roboto, system-ui, sans-serif';
 /** The canvas font of a text item: its style's font (Standard, Arial-like or Mono), bold when its MTEXT font code says so. */
 export const FONT_FAMILY = { Standard: '"Segoe UI", Roboto, system-ui, sans-serif', Arial: 'Arial, "Liberation Sans", Helvetica, sans-serif', Mono: '"Cascadia Mono", Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace' };
@@ -186,7 +186,7 @@ function drawDimPreview(c, g, T, dpr, accent) {
 }
 
 /** Set length's / Measure's points: a ring and a cross at each, a line between two; the point under the cursor gets the shape of its snap. */
-const SNAP_NAME = { end: 'end', centre: 'centre', mid: 'middle', node: 'point', near: 'on line' };
+const SNAP_NAME = { end: 'end', centre: 'centre', mid: 'middle', node: 'point', near: 'nearest' };
 function drawMarks(c, pts, T, dpr, accent) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.6 * dpr; c.setLineDash([]);
@@ -201,7 +201,7 @@ function drawMarks(c, pts, T, dpr, accent) {
     else if (k === 'centre') c.arc(x, y, h, 0, Math.PI * 2);
     else if (k === 'mid') { c.moveTo(x, y - h); c.lineTo(x + h, y + h); c.lineTo(x - h, y + h); c.closePath(); }
     else if (k === 'node') { c.moveTo(x - h, y); c.lineTo(x, y - h); c.lineTo(x + h, y); c.lineTo(x, y + h); c.closePath(); }
-    else if (k === 'near') { c.moveTo(x - h, y - h); c.lineTo(x + h, y + h); c.moveTo(x + h, y - h); c.lineTo(x - h, y + h); }
+    else if (k === 'near') { c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.closePath(); }       // AutoCAD's hourglass
     else { c.moveTo(x - h, y); c.lineTo(x + h, y); c.moveTo(x, y - h); c.lineTo(x, y + h); }
     c.stroke();
     if (k) { c.font = `${11 * dpr}px system-ui, sans-serif`; c.textBaseline = 'middle'; c.fillText(SNAP_NAME[k] || k, x + h + 4 * dpr, y - h - 2 * dpr); }

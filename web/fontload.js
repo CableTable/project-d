@@ -4,7 +4,7 @@
 //   loadFont(font, bold) → { font (opentype.js), name (the family), fallback (true: Liberation Sans stood in), wanted (the family asked for) }
 import { fontFiles } from './textoutline.js';
 
-// shortcut: Windows is taken to be on C:, the app's drive-letter fs scope allows it; read %WINDIR% through Rust if a PC ever differs
+// shortcut: Windows is taken to be on C:, with a read-file-only Fonts/*.ttf scope; read %WINDIR% through Rust if a PC ever differs
 const DIR = 'C:/Windows/Fonts/';
 const WANTED = { Standard: 'Segoe UI', Arial: 'Arial', Mono: 'Cascadia Mono / Consolas' };
 let ot = null;

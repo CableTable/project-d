@@ -867,7 +867,7 @@ try {
   const waitSel = (txt) => page.waitForFunction((x) => document.querySelector('[data-testid=sel-count]').textContent.trim() === x, txt, { timeout: 8000 }).catch(async (e) => { throw new Error('waiting for ' + txt + ', it says ' + (await t('sel-count').textContent()) + ' / ' + (await t('cmd-prompt').textContent())); });
   // pixels of the drawing canvas close to the accent colour (the selection)
   const accentInk = () => t('drawing').evaluate((c) => {
-    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, a = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, a = getComputedStyle(document.documentElement).getPropertyValue('--selection').trim();
     const n = parseInt(a.slice(1), 16), R = n >> 16, G = (n >> 8) & 255, B = n & 255;
     let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && Math.abs(d[i] - R) < 40 && Math.abs(d[i + 1] - G) < 40 && Math.abs(d[i + 2] - B) < 40) k++;
     return k;
@@ -2040,32 +2040,36 @@ try {
   });
 
   await step('review: ORTHO is a sticky Shift in Measure, Dimension and Set length; Shift still works', async () => {
+    await t('tog-snap').click();                                                  // (free picks: a snap, Nearest too, beats ORTHO since TODO 89)
     await typeCmd('m');
     assert.match(await t('cmd-prompt').textContent(), /Measure: click the first point/);
     await click(50, 20); await click(80, 40);
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 20/, 'without ORTHO the points are as picked');
+    const dxy = async () => (await t('cmd-prompt').textContent()).match(/ΔX (-?[\d.]+)\s+ΔY (-?[\d.]+)/).slice(1).map(Number);      // (free picks land to the pixel)
+    const is = async (x, y, msg) => { const [a, b] = await dxy(); assert.ok(Math.abs(a - x) < 3 && (y === 0 ? b === 0 : Math.abs(b - y) < 3), msg + ': ' + await t('cmd-prompt').textContent()); };
+    await is(30, 20, 'without ORTHO the points are as picked');
     await page.keyboard.press('Escape');
     await t('tog-ortho').click();
     assert.equal(await t('tog-ortho').getAttribute('aria-pressed'), 'true');
     assert.match(await t('cmd-prompt').textContent(), /Ortho on/);
     await click(50, 20); await click(80, 40);
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 0   Angle 0°/, 'straight along X');
+    await is(30, 0, 'straight along X');
     await click(50, 20); await click(52, 40);
     assert.match(await t('cmd-prompt').textContent(), /ΔX 0   ΔY [\d.]+   Angle 90°/, 'straight along Y');
     await page.keyboard.press('Escape'); await typeCmd('d');
     await click(50, 20); await click(80, 40);
     assert.match(await t('cmd-prompt').textContent(), /Dimension: move the line/);
     await click(65, 50);
-    assert.match(await t('cmd-prompt').textContent(), /Dimension placed: 30\.00 mm/, 'a dimension made with ORTHO on is straight too');
+    assert.ok(Math.abs(Number((await t('cmd-prompt').textContent()).match(/Dimension placed: ([\d.]+) mm/)[1]) - 30) < 3, 'a dimension made with ORTHO on is straight too');
     await page.keyboard.press('Control+z');
     await t('tog-ortho').click();
     assert.equal(await t('tog-ortho').getAttribute('aria-pressed'), 'false');
     await typeCmd('m');
     await click(50, 20); await click(80, 40);
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 20/, 'ORTHO off: as picked again');
+    await is(30, 20, 'ORTHO off: as picked again');
     await click(50, 20, { shift: true }); await click(80, 40, { shift: true });
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 0   Angle 0°/, 'Shift still straightens one pick');
+    await is(30, 0, 'Shift still straightens one pick');
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await t('tog-snap').click();
     assert.ok((await page.locator('[data-tool=select]').getAttribute('class')).split(' ').includes('on'));
   });
 
@@ -4746,6 +4750,17 @@ try {
     await t('tog-ortho').click();
   });
 
+  await step('Grips: with ORTHO a line\'s end dragged onto the line\'s own old place still ends straight (Nearest leaves the dragged shape out)', async () => {
+    await pick(70, 30, 3);
+    await dragGripTo('0:b', 120, 45);                          // slants it: (20, 30) to (120, 45)
+    await t('tog-ortho').click();
+    await dragGripTo('0:b', 70, 37.5);                         // on the slanted line itself
+    const e = entOf(await savedDoc(), 0);
+    assert.equal(fieldOf(e, 21), 30, 'straight along X, not back on the old slant'); assert.ok(near(fieldOf(e, 11), 70, 0.6));
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    await t('tog-ortho').click();
+  });
+
   await step('Grips: a circle\'s quadrant sets its radius, its centre moves it; an arc\'s middle changes the bulge (3 points), its ends re-fit it, its centre moves it; a polyline vertex moves', async () => {
     await pick(190, 100, 5);
     await dragGripTo('1:q0', 200, 100);
@@ -5595,15 +5610,15 @@ try {
     await page.locator('[data-tool=line]').click();
     await typeCmd('20,50');
     const a = await at(60, 140); await page.mouse.move(a.x, a.y); await page.waitForTimeout(750);
-    const p = await at(60.3, 50 + 40 * Math.tan(Math.PI / 12) + 0.3);                          // near where the 15° ray from (20, 50) meets x = 60
+    const p = await at(60.3, 50 + 40 + 0.3);                                                    // near where the 45° ray from (20, 50) meets x = 60 (not 15°: that crosses the line x = 60, y 20–70, and Nearest beats POLAR)
     await page.mouse.move(p.x, p.y);
-    await tipWhen(/^Endpoint: 90° · Polar: 15°$/);
+    await tipWhen(/^Endpoint: 90° · Polar: 45°$/);
     assert.equal(await trkN('trk-x'), 1);
     await page.waitForTimeout(250);
     await page.screenshot({ path: `${shotDir}/tracking-light.png` });
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await page.mouse.move(p.x + 1, p.y); await page.mouse.move(p.x, p.y);
-    await tipWhen(/^Endpoint: 90° · Polar: 15°$/);
+    await tipWhen(/^Endpoint: 90° · Polar: 45°$/);
     await page.waitForTimeout(250);
     await page.screenshot({ path: `${shotDir}/tracking-dark.png` });
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
@@ -7150,6 +7165,81 @@ try {
     }
   });
 
+  await step('TODO 82: exact balloon sidecar grants: missing is silent, open/save need no second dialog, real write errors stay dirty', async () => {
+    await closeTabs(/./);
+    await page.evaluate(async (bytes) => {
+      const { sidecarPath } = await import('./balloons.js');
+      const log = window.__sidecarLog = { dialogs: [], wrote: [], checked: [], grants: [] };
+      const allowed = new Set(), files = new Map();
+      const grant = (path) => { allowed.add(path); return path; };
+      const check = (path) => { if (!allowed.has(path)) throw new Error('forbidden path: ' + path); };
+      window.__balloonWriteFails = true;
+      window.__TAURI__ = {
+        core: { invoke: async (command, { path }) => {
+          if (command !== 'grant_balloon_sidecar') throw new Error('unexpected command: ' + command);
+          check(path);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          allowed.add(sidecarPath(path)); log.grants.push(path);
+        } },
+        dialog: {
+          open: async () => grant('C:/jobs/plate.dxf'),
+          save: async (o) => { log.dialogs.push(o.defaultPath); return grant('D:/output/plate-edited.dxf'); },
+          ask: async () => true,
+        },
+        fs: {
+          readFile: async (p) => { check(p); return new Uint8Array(bytes); },
+          exists: async (p) => { check(p); log.checked.push(p); return files.has(p); },
+          readTextFile: async (p) => { check(p); return files.get(p); },
+          writeTextFile: async (p, text) => {
+            check(p);
+            if (/\.json$/.test(p) && window.__balloonWriteFails) throw new Error('disk is read-only');
+            log.wrote.push(p); files.set(p, text);
+          },
+        },
+      };
+    }, [...readFileSync('fixtures/outline.dxf')]);
+    try {
+      for (const native of [true, false]) {
+        await closeTabs(/./);
+        await page.evaluate(() => { window.__sidecarLog.dialogs.length = 0; window.__sidecarLog.wrote.length = 0; window.__balloonWriteFails = true; });
+        if (native) await menuItem('File', 'Open…');
+        else await t('picker').setInputFiles('fixtures/outline.dxf');
+        await page.waitForFunction(() => /^Opened /.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.doesNotMatch(await prompt(), /could not be read|forbidden path/);
+        if (native) {
+          await page.waitForFunction(() => window.__sidecarLog.checked.includes('C:/jobs/plate.pdballoons.json'));
+          assert.deepEqual(await page.evaluate(() => window.__sidecarLog.checked), ['C:/jobs/plate.pdballoons.json']);
+        }
+        await typeCmd('b'); await page.waitForTimeout(200); await frames();
+        await balPlace([20, 20], [50, 50]);
+        await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+        assert.deepEqual(await balNums(), ['1']);
+        await page.keyboard.press('Control+s');
+        await page.waitForFunction(() => /Saving the balloons failed: disk is read-only/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1, 'a real error keeps the tab dirty');
+        assert.match(await prompt(), /^Saved plate-edited.dxf\./, 'the warning confirms the DXF was saved');
+        assert.deepEqual(await page.evaluate(() => window.__sidecarLog.wrote), ['D:/output/plate-edited.dxf'], 'a sidecar failure never blocks the DXF');
+        assert.equal((await page.evaluate(() => window.__sidecarLog.dialogs)).length, 1);
+        await menuItem('File', 'Save As…');
+        await page.waitForFunction(() => window.__sidecarLog.wrote.length === 2 && /Saving the balloons failed/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1);
+        await page.evaluate(() => { window.__balloonWriteFails = false; });
+        await page.keyboard.press('Control+s');
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-edited.dxf' && !document.querySelector('.tabs .dtab.on .dot'));
+        const log = await page.evaluate(() => window.__sidecarLog);
+        assert.equal(log.dialogs.length, 2, 'only the two drawing Save As dialogs were shown: ' + JSON.stringify(log));
+        assert.ok(log.grants.includes('D:/output/plate-edited.dxf'), 'the Save picker grant is extended by an awaited command');
+        if (native) assert.ok(log.grants.includes('C:/jobs/plate.dxf'), 'Open extends the grant before checking the sidecar');
+        assert.ok(log.wrote.includes(native ? 'C:/jobs/plate.pdballoons.json' : 'D:/output/plate-edited.pdballoons.json'));
+        assert.ok(log.wrote.includes('D:/output/plate-edited.dxf'));
+        assert.ok(!log.wrote.includes('C:/jobs/plate.dxf'), 'source drawing is protected');
+      }
+      await closeTabs(/./);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__sidecarLog; delete window.__balloonWriteFails; localStorage.removeItem('pd-recent'); });
+    }
+  });
+
   await step('Save in the exe: the opened file is never written; a name without .dxf that exists asks first; a balloons file that could not be read is not written over', async () => {
     const insp = [...balPdf()], sample = [...readFileSync('fixtures/sample.dxf')];
     await page.evaluate(([insp, sample]) => {
@@ -7564,13 +7654,20 @@ try {
     await page.evaluate(async () => {
       const b = new Uint8Array(await (await fetch('vendor/fonts/LiberationSans-Regular.ttf')).arrayBuffer());
       window.__fontReads = [];
-      window.__TAURI__ = { fs: { readFile: async (p) => { window.__fontReads.push(p); if (/segoeui\.ttf$/.test(p)) return b; throw new Error('no ' + p); } } };
+      window.__fontDenied = true;
+      window.__TAURI__ = { fs: { readFile: async (p) => { window.__fontReads.push(p); if (!window.__fontDenied && /segoeui\.ttf$/.test(p)) return b; throw new Error('forbidden path: ' + p); } } };
     });
+    await menuItem('Modify', 'Text to outlines');
+    await txoDone('83 bundled');
+    assert.equal(await prompt(), '1 text → 8 outlines. Font file not found, used the fallback font (Segoe UI → Liberation Sans). Ctrl+Z takes them back', 'TODO 83: a denied Windows read still loads the embedded font');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+a');
+    await page.evaluate(() => { window.__fontDenied = false; window.__fontReads.length = 0; });
     await menuItem('Modify', 'Text to outlines');
     await txoDone(1);
     assert.equal(await prompt(), '1 text → 8 outlines. Ctrl+Z takes them back', 'B has two counters, O one: three letters, eight outlines; no fallback named');
     assert.deepEqual(await page.evaluate(() => window.__fontReads), ['C:/Windows/Fonts/segoeui.ttf']);
-    await page.evaluate(() => { delete window.__TAURI__; delete window.__fontReads; });
+    await page.evaluate(() => { delete window.__TAURI__; delete window.__fontReads; delete window.__fontDenied; });
     await page.screenshot({ path: shotDir + '/txo-after-light.png' });
     await theme('dark'); await page.screenshot({ path: shotDir + '/txo-after-dark.png' }); await theme('light');
     let doc = await savedDoc();
@@ -7751,6 +7848,137 @@ try {
     await page.keyboard.press('Control+z');
     const restored = (await savedDoc()).entities;
     assert.equal(restored.length, 1); assert.deepEqual(restored[0], original, 'one undo restores the original MTEXT, codes, insertion, attachment, height and width');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 90: black dark drawing area, contrasting selection / hover / grips / snaps, light and PDF unchanged', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 60, 120, 60));
+    await openGrips(writeDxf(doc), 'black-canvas.dxf');
+    await click(70, 30); await gripWhen(3);
+    const colours = () => page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement), token = (n) => root.getPropertyValue(n).trim();
+      const canvas = document.querySelector('[data-testid=canvas]');
+      return { background: getComputedStyle(canvas).backgroundColor, surround: token('--canvas'), sheet: token('--sheet'), part: token('--part'),
+        selection: token('--selection'), accent: token('--accent'), panel: token('--panel'), paper: token('--pdpaper'),
+        hot: token('--hot'), mark: token('--mark'), muted: token('--muted'), guide: token('--guide'),
+        grip: getComputedStyle(document.querySelector('[data-testid=grip]')).fill };
+    });
+    // WCAG relative luminance against #000, including translucent feedback composited on black.
+    const contrast = (hex, opacity = 1) => {
+      const rgb = hex.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16) / 255 * opacity);
+      const linear = rgb.map((c) => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
+      return (linear[0] * .2126 + linear[1] * .7152 + linear[2] * .0722 + .05) / .05;
+    };
+    let lightPdf;
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      const c = await colours();
+      if (theme === 'light') {
+        assert.equal(c.background, 'rgb(255, 255, 255)');
+        assert.deepEqual([c.surround, c.sheet, c.part, c.selection, c.accent, c.panel, c.paper],
+          ['#ececef', '#ffffff', '#ffffff', '#4f46e5', '#4f46e5', '#ffffff', '#ffffff']);
+        assert.equal(c.grip, 'rgb(79, 70, 229)');
+      } else {
+        assert.equal(c.background, 'rgb(0, 0, 0)');
+        assert.deepEqual([c.surround, c.sheet, c.part], ['#000000', '#000000', '#000000']);
+        assert.deepEqual([c.accent, c.panel, c.paper], ['#8a8fff', '#131316', '#f4f5f6'], 'UI and PDF preview tokens stay as before');
+        assert.equal(c.grip, 'rgb(96, 165, 250)');
+        for (const name of ['selection', 'hot', 'mark', 'muted', 'guide']) {
+          assert.ok(contrast(c[name]) >= 4.5, `${name} ${c[name]} contrasts at least 4.5:1 with black`);
+        }
+        const hover = await page.evaluate(() => {
+          const svg = document.querySelector('.ovl svg'), edge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          edge.setAttribute('class', 'dr-edge'); svg.append(edge);
+          const cs = getComputedStyle(edge), result = { colour: cs.stroke, opacity: +cs.strokeOpacity };
+          edge.remove(); return result;
+        });
+        assert.equal(hover.colour, c.grip, 'hover and grips use the drawing selection colour');
+        assert.ok(contrast(c.selection, hover.opacity) >= 4.5, 'translucent hover contrasts at least 4.5:1 on black');
+      }
+      assert.ok(await accentWhen((n) => n > 100) > 100, 'selected line is painted in the selection token');
+      await page.screenshot({ path: `${shotDir}/s14-90-${theme}.png` });
+      await openPdf();
+      await t('pdf-negative').uncheck(); await t('pdf-strip').uncheck();
+      const pdf = pdfText(await downloaded(() => t('pdf-go').click()));
+      const paperPixel = await page.evaluate(async (text) => {
+        const { renderPdfPage } = await import('./pdf-read.js');
+        const { canvas } = await renderPdfPage(Uint8Array.from(text, (c) => c.charCodeAt(0)), { dpi: 36 });
+        return [...canvas.getContext('2d').getImageData(5, 5, 1, 1).data];
+      }, pdf);
+      assert.deepEqual(paperPixel, [255, 255, 255, 255], 'exported PDF renders on white paper');
+      if (theme === 'light') lightPdf = pdf;
+      else assert.equal(pdf, lightPdf, 'exported PDF is identical in light and dark themes');
+    }
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; }); await frames();
+    assert.equal((await colours()).background, 'rgb(0, 0, 0)', 'Windows dark theme also uses black');
+    assert.equal((await colours()).selection, '#60a5fa');
+    await menuItem('View', 'Theme: dark');
+    await t('new-layout').click(); await frames();
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)', 'layout surround is black too');
+    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 0, 0)', 'layout sheet is black too');
+    await menuItem('View', 'Theme: light'); await frames();
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(236, 236, 239)');
+    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(255, 255, 255)');
+    await page.emulateMedia({ colorScheme: 'light' });
+    await closeTabs(/./);
+  });
+
+  // ---- TODO 89: the Nearest snap (hourglass) and a snap beats ORTHO; with ORTHO on a Dimension is linear ----
+  await step('Nearest snap (89): with ORTHO on, Measure and Dimension land on the arc where it was picked, a free pick is still bent straight, and the dimension is linear (only the X or the Y distance)', async () => {
+    await openGrips(dimDoc(), 'dims-89.dxf');
+    const arcPt = (r) => [200 + r * Math.cos(Math.PI / 4), 150 + r * Math.sin(Math.PI / 4)];      // 45° on the arc (centre 200, 150, R20), r a bit outside it
+    const dx = 200 + 20 * Math.cos(Math.PI / 4) - 60, dy = 150 + 20 * Math.sin(Math.PI / 4) - 20;   // from the line at (60, 20) to that point on the arc
+    await t('tog-ortho').click();
+    assert.equal(await t('tog-ortho').getAttribute('aria-pressed'), 'true');
+    await page.locator('[data-tool=measure]').click();
+    await click(60, 20);                                                          // Nearest on the horizontal line (no end, middle or centre there)
+    await click(...arcPt(20.4));
+    const xy = async () => (await prompt()).match(/ΔX (-?[\d.]+)\s+ΔY (-?[\d.]+)/).slice(1).map(Number);      // (a click lands to the pixel, and a pixel is more than 1 mm here)
+    let [mx, my] = await xy();
+    assert.ok(Math.abs(mx - dx) < 3 && Math.abs(my - dy) < 3, 'ORTHO did not bend a point that sits on a snap: ' + await prompt());
+    await page.keyboard.press('Escape');
+    await click(60, 20); await click(120, 60);
+    [mx, my] = await xy();
+    assert.ok(Math.abs(mx - 60) < 3 && my === 0, 'a free pick is still kept straight: ' + await prompt());
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await page.locator('[data-tool=dimension]').click();
+    await typeCmd('d');
+    await click(60, 20);
+    const hov = await at(...arcPt(20.4)); await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/s14-89-nearest-hover-light.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.mouse.move(hov.x + 1, hov.y); await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(250);
+    await page.screenshot({ path: shotDir + '/s14-89-nearest-hover-dark.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; }); await page.waitForTimeout(150);
+    await click(...arcPt(20.4));
+    assert.match(await prompt(), /Dimension: move the line up or down and click to place it/);
+    await click(140, 5);                                                          // the line below both points (on screen, as the Linear step's): horizontal
+    const placed = async () => { const m = (await prompt()).match(/Dimension placed: ([\d.]+)("| mm)/); if (!m) throw new Error('no dimension placed, the prompt says: ' + await prompt()); return Number(m[1]) * (m[2] === '"' ? 25.4 : 1); };       // (an earlier step may have left the Inch style on)
+    const startD = async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.locator('[data-tool=dimension]').click(); await typeCmd('d'); };
+    assert.ok(Math.abs(await placed() - dx) < 3, 'the X distance only: ' + await prompt());
+    const onArc = (p) => Math.abs(Math.hypot(p.b[0] - 200, p.b[1] - 150) - 20) < 0.01 && Math.abs(p.a[1] - 20) < 1e-6 && p.b[1] > 150;       // the 2nd point on the arc, the 1st on the line
+    const d1 = (await dimBlocks()).PD_DIM_1;
+    assert.deepEqual([d1.kind, d1.params.axis], ['linear', 'h'], 'kept as a linear dimension: ' + JSON.stringify(d1));
+    assert.ok(onArc(d1.params), 'the 2nd point is on the arc, the 1st on the line: ' + JSON.stringify(d1.params));
+    await page.screenshot({ path: shotDir + '/s14-89-linear-light.png' });
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+z');          // (its extension lines would snap the next picks)
+    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(35, 90);       // the line to the left (the right-hand corner of the canvas holds the zoom box): vertical
+    assert.ok(Math.abs(await placed() - dy) < 3, 'the Y distance only: ' + await prompt());
+    const d2 = (await dimBlocks()).PD_DIM_1;
+    assert.deepEqual([d2.kind, d2.params.axis], ['linear', 'v']);
+    assert.ok(onArc(d2.params), JSON.stringify(d2.params));
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
+    await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/s14-89-linear-dark.png' });
+    await menuItem('View', 'Theme: light');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+z');
+    await t('tog-ortho').click();
+    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(140, 5);        // without ORTHO it stays aligned
+    assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned: the true distance ' + await prompt());
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     await closeTabs(/./);
   });
 

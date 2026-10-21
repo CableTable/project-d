@@ -2355,7 +2355,6 @@ async function save(forceAs) {
   const d = curDoc();
   if (!d) return;
   if (!d.raw && !d.lay) { note('Nothing to save yet: open a DXF first'); return; }
-  if (!d.lay) await balSave(d, false);                              // the balloons first: they go next to the file they came with, whatever the DXF dialog does
   if (!d.lay && d.bg && !d.raw.entities.length && balOf(d).items.length) {          // a picture alone: only its balloons are saved
     await balSave(d);
     if (d.balSaved === balOf(d)) { d.dirty = false; renderTabs(); }
@@ -2381,6 +2380,10 @@ async function save(forceAs) {
         if (!path) return;
         path = await withExt(t, path, 'dxf');
         if (!path) return;
+        if (t.core) {                                                  // on the final path: "x.pdf" becomes x.pdf.dxf, so its sidecar is x.pdf.pdballoons.json
+          try { await t.core.invoke('grant_balloon_sidecar', { path }); }
+          catch (err) { console.warn('Balloon file scope:', err); } // A sidecar failure must not prevent the DXF save.
+        }
       }
       if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save never writes over it'); return; }
       await t.fs.writeTextFile(path, text);
@@ -2390,14 +2393,17 @@ async function save(forceAs) {
       download(name, text);
     }
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
-    if (!d.lay) await balSave(d);                                   // a new drawing's balloons go next to the DXF just saved
-    dropCopy(d);
+    const balloonsSaved = d.lay || await balSave(d) !== false;
+    d.dirty = !balloonsSaved;
+    if (balloonsSaved) dropCopy(d);
     if (path) rememberRecent(path);
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
+    const without = bad.length ? ' (without ' + bad.map((b) => b.type + ' ' + b.count).join(', ') + ')' : '';
+    if (!balloonsSaved) { note('Saved ' + name + without + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
-    note('Saved ' + name + (bad.length ? ' (without ' + bad.map((b) => b.type + ' ' + b.count).join(', ') + ')' : '') + (dir ? ' to ' + dir : '') + (d.bg ? '. The background picture is not saved in the DXF' : ''));
+    note('Saved ' + name + without + (dir ? ' to ' + dir : '') + (d.bg ? '. The background picture is not saved in the DXF' : ''));
   } catch (err) {
     note('Save failed: ' + (err && err.message ? err.message : err));
   }
@@ -3259,7 +3265,7 @@ function paintOverlay() {
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', cssVar('--text', '#18181b')) : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
-      accent: cssVar('--accent', '#4f46e5'),
+      accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
   });
 }
@@ -3760,12 +3766,12 @@ function toDrawing(d, cx, cy) {
 }
 const pickTol = (d) => 7 / (view.scale * d.factor);
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
-const snapPoint = (d, p) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
-/** A Measure / Dimension / Leader pick: the snaps, then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point. */
+const snapPoint = (d, p, skip) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
+/** A Measure / Dimension / Leader pick: the snaps (any kind, Nearest too), then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point (a snapped point is never bent). */
 function pickPoint(d, p, pts, shift, hover = false) {
   const q = snapPoint(d, p), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
   const tq = !d.lay && editable() === d ? trackPick(d, p, q, base, straight, hover) : null;
-  return tq ? [tq[0], tq[1]] : straight ? Ed.orthoLock(base, q) : q;
+  return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
 function setSel(d, sel) {
@@ -3950,10 +3956,11 @@ function dimDraft(at) {
   const D = state.dim, type = state.dimType;
   if (!D) return null;
   if (type === 'aligned' || type === 'linear') {
+    const lin = type === 'linear' || state.ortho || D.shift;               // ORTHO / Shift: AutoCAD's DIMLINEAR, only the X or the Y distance
     if (D.pts.length === 1 && D.hover) return { kind: 'aligned', params: { a: D.pts[0], b: D.hover, offset: 0 } };
     if (D.pts.length !== 2 || !at) return null;
     const [a, b] = D.pts;
-    if (type === 'aligned') return { kind: 'aligned', params: { a, b, offset: Ed.dimOffsetAt(a, b, at) } };
+    if (!lin) return { kind: 'aligned', params: { a, b, offset: Ed.dimOffsetAt(a, b, at) } };
     const axis = D.force || Ed.linearAxis(a, b, at);
     return { kind: 'linear', params: { a, b, axis, offset: Ed.dimOffsetAt(a, b, at, axis) } };
   }
@@ -3974,7 +3981,7 @@ function previewDim(d) {
 }
 function dimHover(d, p, shift) {
   const D = state.dim;
-  D.cursor = p;
+  D.cursor = p; D.shift = shift;
   if (D.pts.length < 2 && (state.dimType === 'aligned' || state.dimType === 'linear')) D.hover = pickPoint(d, p, D.pts, shift, true);
   paintOverlay();
 }
@@ -4005,7 +4012,7 @@ function dimensionPoint(d, p, shift = false) {
     D.cursor = p; note(dimPrompt()); paintOverlay();
     return;
   }
-  if (D.pts.length === 2) { dimPlace(d, dimDraft(p)); return; }
+  if (D.pts.length === 2) { D.shift = shift; dimPlace(d, dimDraft(p)); return; }
   const q = pickPoint(d, p, D.pts, shift);
   if (D.pts.length === 1 && Math.hypot(q[0] - D.pts[0][0], q[1] - D.pts[0][1]) < 1e-9) { note('Dimension: that is the first point again, pick another'); return; }
   D.pts.push(q); D.hover = null; D.cursor = p;
@@ -4384,7 +4391,15 @@ async function balLoad(d, path, name) {
   const side = BAL.sidecarName(name), t = window.__TAURI__;
   let text = null;
   if (path) d.balloonPath = BAL.sidecarPath(path);
-  if (path && t && t.fs && t.fs.readTextFile) { try { if (await t.fs.exists(d.balloonPath)) text = await t.fs.readTextFile(d.balloonPath); } catch (err) { d.balBlocked = true; note(side + ': could not be read (' + (err && err.message ? err.message : err) + ')'); return; } }
+  if (path && t && t.fs && t.fs.readTextFile) {
+    try {
+      if (t.core) {
+        try { await t.core.invoke('grant_balloon_sidecar', { path }); }
+        catch (err) { console.warn('Balloon file scope:', err); } // Recent files may already be readable through the static scope.
+      }
+      if (await t.fs.exists(d.balloonPath)) text = await t.fs.readTextFile(d.balloonPath);
+    } catch (err) { d.balBlocked = true; note(side + ': could not be read (' + (err && err.message ? err.message : err) + ')'); return; }
+  }
   else { text = state.sidecars.get(side.toLowerCase()) ?? null; state.sidecars.delete(side.toLowerCase()); }
   if (text != null) balAttach(d, text, side);
 }
@@ -4409,14 +4424,14 @@ async function balSave(d, ask = true) {
         if (!ask || !t.dialog || !t.dialog.save) return;
         path = await t.dialog.save({ defaultPath: BAL.sidecarName(d.balName || d.name), filters: [{ name: 'Balloons', extensions: ['json'] }] });
         path = path && await withExt(t, path, 'json');
-        if (!path) return;
+        if (!path) { note('The balloons are still unsaved'); return false; }
         d.balloonPath = String(path); d.balBlocked = false;
       }
       await t.fs.writeTextFile(path, text);
       note('Saved the balloons to ' + path);
     } else download(BAL.sidecarName(d.balName || d.name), text);
     d.balSaved = set;
-  } catch (err) { note('Saving the balloons failed: ' + (err && err.message ? err.message : err)); }
+  } catch (err) { note('Saving the balloons failed: ' + (err && err.message ? err.message : err)); return false; }
 }
 
 /** Balloon files first, so a drawing picked together with its balloons finds them waiting. */
@@ -4684,7 +4699,7 @@ function drawPick(d, cx, cy, shift, hover) {
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return [tq[0] * f, tq[1] * f, null];
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];           // a free pick lands on 0.01 mm
-  if (straight) q = Ed.orthoLock(base, q);
+  if (straight && q.length === 2) q = Ed.orthoLock(base, q);                // a snap beats ORTHO
   return [q[0] * f, q[1] * f, q[2] || null];
 }
 function drawHoverAt(d, cx, cy, shift) {
@@ -5290,7 +5305,7 @@ function trackPick(d, p, q, base, straight, hover) {
   t.res = null;
   if (hover) trackWatch(d, q);
   if ((q.length === 3 && q[2] !== 'near') || straight) return null;
-  const inc = state.polar.on && base ? state.polar.inc : 0;
+  const inc = state.polar.on && base && q.length === 2 ? state.polar.inc : 0;       // Nearest beats POLAR (as in AutoCAD) but not OTRACK, which lines up with a point even over a line
   if (!inc && !(state.otrack && t.acq.length)) return null;
   t.res = TK.resolve({ p, base, inc, acq: state.otrack ? t.acq : [], tol: 8 / (view.scale * d.factor), step: 0.01 / d.factor, scale: d.factor });
   return t.res && t.res.q;
@@ -5336,12 +5351,12 @@ function gripAt(d, cx, cy) {
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
-  let q = snapPoint(d, p);
+  let q = snapPoint(d, p, g.e);                                  // not to the shape being dragged: its old place is going away
   const ref = GR.refPoint(g.ent, g.id), base = ref && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
-  if (straight) q = Ed.orthoLock(base, q);
+  if (straight && q.length === 2) q = Ed.orthoLock(base, q);
   return q;
 }
 /** The grip's drag is now at q: what the shape becomes. */

@@ -5,13 +5,15 @@
   --accent: #4f46e5; --accentink: #ffffff; --sel: #eceeff; --mark: #c2410c; --grip: rgba(79, 70, 229, .10);
   --field: #ffffff; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #1d7a3a; --pdpaper: #ffffff;
   --r: 5px; --dim: #0f766e;
+  --selection: #4f46e5; --edge-opacity: .35;
   --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, 'DejaVu Sans Mono', monospace;
   color-scheme: light;
 }
 :root[data-theme='dark'] {
   --app: #0b0b0d; --panel: #131316; --line: #26262b; --text: #ededef; --muted: #a0a0ab;
-  --canvas: #0e0e10; --sheet: #18181b; --sheetline: #5b5b66; --part: #18181b; --partline: #e8e8ec;
+  --canvas: #000000; --sheet: #000000; --sheetline: #5b5b66; --part: #000000; --partline: #e8e8ec;
+  --selection: #60a5fa; --edge-opacity: .8;
   --accent: #8a8fff; --accentink: #0b0b14; --sel: #1d1f3d; --mark: #fb923c; --grip: rgba(138, 143, 255, .12);
   --field: #0b0b0d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #5eead4;
   color-scheme: dark;
@@ -19,7 +21,8 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
     --app: #0b0b0d; --panel: #131316; --line: #26262b; --text: #ededef; --muted: #a0a0ab;
-  --canvas: #0e0e10; --sheet: #18181b; --sheetline: #5b5b66; --part: #18181b; --partline: #e8e8ec;
+  --canvas: #000000; --sheet: #000000; --sheetline: #5b5b66; --part: #000000; --partline: #e8e8ec;
+  --selection: #60a5fa; --edge-opacity: .8;
   --accent: #8a8fff; --accentink: #0b0b14; --sel: #1d1f3d; --mark: #fb923c; --grip: rgba(138, 143, 255, .12);
   --field: #0b0b0d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #5eead4;
     color-scheme: dark;
@@ -88,6 +91,8 @@ select.fld { font-family: var(--sans); }
 
 .canvas { user-select: none; flex: 1; min-width: 0; position: relative; background: var(--canvas); overflow: hidden; touch-action: none; }
 .canvas.part { background: var(--sheet); }
+/* Drawing feedback has its own accent; panels and menus keep the UI accent. */
+.canvas > svg, .canvas > .ovl, .canvas > .rubber { --accent: var(--selection); }
 .canvas.part > svg { visibility: hidden; }
 .canvas.pick { cursor: crosshair; }
 .canvas.pan { cursor: grab; } .canvas.panning { cursor: grabbing; }
@@ -145,7 +150,7 @@ select.fld { font-family: var(--sans); }
 .field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
 .grid4 { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
 .gap-hit { fill: none; stroke: transparent; stroke-width: 10px; vector-effect: non-scaling-stroke; pointer-events: stroke; cursor: pointer; }
-.gap-hit:hover { stroke: color-mix(in srgb, var(--accent) 35%, transparent); }
+.gap-hit:hover { stroke: color-mix(in srgb, var(--accent) calc(var(--edge-opacity) * 100%), transparent); }
 .gap-sel { fill: color-mix(in srgb, var(--accent) 30%, transparent); stroke: var(--accent); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; }
 .bgrow { display: flex; align-items: center; gap: 6px; }
 .bgrow .bgname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -444,7 +449,7 @@ select.fld { font-family: var(--sans); }
 .canvas > .ovl svg { display: block; width: 100%; height: 100%; }
 .ovl .dr-shape { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .ovl .dr-guide { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
-.ovl .dr-edge { fill: none; stroke: var(--accent); stroke-width: 4; stroke-opacity: 0.35; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.ovl .dr-edge { fill: none; stroke: var(--accent); stroke-width: 4; stroke-opacity: var(--edge-opacity); stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .drawtip { position: absolute; z-index: 5; padding: 3px 9px; border-radius: var(--r); background: var(--accent); color: var(--accentink); font: 500 13px var(--mono); white-space: nowrap; pointer-events: none; }
 .drawtip[hidden] { display: none; }
 

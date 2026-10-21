@@ -345,6 +345,37 @@ test('snap: ends, centres, middles and the nearest point on a line, nearest firs
   assert.equal(E.snapPick(hidden, 100.2, 10.1, 0.5), null, 'a hidden layer does not snap');
 });
 
+test('Nearest snap (TODO 89): the closest point on a line, arc, circle, ellipse, polyline with a bulge and spline, and it ranks below every other snap', () => {
+  const doc = W.newDoc(4);
+  W.addEntities(doc, [
+    W.line(0, 0, 100, 0),                                       // 0
+    W.arc(50, 50, 20, 0, 90),                                   // 1: ends (70, 50) and (50, 70)
+    W.circle(200, 50, 10),                                      // 2
+    W.ellipse(300, 50, 20, 0, 0.5),                             // 3: 20 wide, 10 high
+    W.lwpoly([[400, 0], [440, 0, 1], [440, 40]]),               // 4: a bulge of 1 is a half circle, centre (440, 20)... from (440, 0) to (440, 40)
+    W.entity('SPLINE', [[70, 8], [71, 3], [74, 3], [11, 500], [21, 0], [31, 0], [11, 510], [21, 10], [31, 0], [11, 520], [21, 0], [31, 0]]),   // 5
+  ]);
+  const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+  const k = (x, y, tol = 1) => E.snapPick(ed, x, y, tol, true);
+  let n = k(30, 0.6); assert.equal(n.kind, 'near'); near(n.x, 30); near(n.y, 0);
+  n = k(50 + 20 * Math.cos(0.7) * 1.03, 50 + 20 * Math.sin(0.7) * 1.03, 1); assert.equal(n.kind, 'near', 'arc'); near(Math.hypot(n.x - 50, n.y - 50), 20); near(Math.atan2(n.y - 50, n.x - 50), 0.7, 'on the pointer\'s ray', 1e-6);
+  n = k(200 - 10.5, 50); assert.equal(n.kind, 'near', 'circle'); near(n.x, 190); near(n.y, 50);
+  n = k(316.684, 55.888); assert.equal(n.kind, 'near', 'ellipse'); assert.ok(Math.hypot(n.x - 316.507, n.y - 55.646) < 0.05, 'the point of the ellipse at t = 0.6 (flattened, so a hair off)');
+  n = k(440 + 20.4 * Math.cos(0.5), 20 + 20.4 * Math.sin(0.5)); assert.equal(n.kind, 'near', 'polyline bulge'); near(n.x, 440 + 20 * Math.cos(0.5), 'on the half circle', 1e-3); near(n.y, 20 + 20 * Math.sin(0.5), '', 1e-3);
+  n = k(405, -0.5); assert.equal(n.kind, 'near', 'polyline line'); near(n.x, 405); near(n.y, 0);
+  n = k(505, 5.4); assert.equal(n.kind, 'near', 'spline'); near(n.x - n.y, 500, 'on its first piece (y = x - 500)'); assert.ok(Math.hypot(n.x - 505, n.y - 5.4) < 0.5);
+  n = k(510, 10.3); assert.equal(n.kind, 'near', 'a spline joint is no end or middle snap'); near(n.y, 10);
+  assert.equal(k(30, 3), null, 'outside the aperture');
+  // lowest priority: an end, a middle or a centre inside the aperture wins even when the curve is closer
+  n = k(0.8, 0.1); assert.equal(n.kind, 'end'); near(n.x, 0);
+  n = k(50.7, 0.05); assert.equal(n.kind, 'mid'); near(n.x, 50);
+  n = k(200.7, 50.7); assert.equal(n.kind, 'centre'); near(n.x, 200);
+  n = k(70, 49.4); assert.equal(n.kind, 'end', 'the arc\'s end beats the arc'); near(n.y, 50);
+  assert.equal(E.snapPick(ed, 30, 0.6, 1, true, 0), null, 'skip: the entity being dragged is left out (Nearest and ends alike)');
+  assert.equal(E.snapPick(ed, 0.8, 0.1, 1, true, 0), null);
+  assert.equal(E.snapPick(ed, 30, 0.6, 1, true, 1).kind, 'near', 'another entity skipped: no change');
+});
+
 test('background: its box in mm from its pixels, and scaling keeps the bottom-left corner', () => {
   const bg = { w: 400, h: 200, mm: 0.25, x: 10, y: 20 };
   assert.deepEqual(E.bgBox(bg), [10, 20, 110, 70]);
