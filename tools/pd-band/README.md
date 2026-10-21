@@ -14,9 +14,9 @@ Rook 5h 12% wk 40% · Pip 5h 3% wk 21% · Rowan 5h 5% wk 9% · 2m ago  |  Pip tx
 
 The mod is used where it is; nothing is copied or installed. Not installed yet: that is your call.
 
-1. One CLI session: `claude --plugin-dir "E:\Project B\Claude\ProjectD-fixC\tools\pd-band"`.
-2. Always on, desktop app too: in the `settings.json` of the account the app uses (`%USERPROFILE%\.claude\settings.json`; a guess for the 2nd account, whose folder is `.claude-account2`), add under `env`: `"CLAUDE_CODE_PLUGIN_DIRS": "E:\\Project B\\Claude\\ProjectD-fixC\\tools\\pd-band"`, then restart the app.
-3. The two paths are in `/config` (rows "Runs folder" and "Usage cache"; a guess that they show there) and reload the mod.
+1. One CLI session: `claude --plugin-dir "E:\Project B\Claude\Project D\tools\pd-band"`.
+2. Always on, desktop app too: in the `settings.json` of the account the app uses (`%USERPROFILE%\.claude\settings.json`; a guess for the 2nd account, whose folder is `.claude-account2`), add under `env`: `"CLAUDE_CODE_PLUGIN_DIRS": "E:\\Project B\\Claude\\Project D\\tools\\pd-band"`, then restart the app.
+3. The two paths are in `/config` (rows "Runs folder" and "Usage cache") and reload the mod.
 
 ## Remove
 

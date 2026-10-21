@@ -14,13 +14,14 @@ async function refresh($: any, runsDir: string, usageFile: string) {
     csv = await $.fs.read(usageFile)
     csvAge = now - (await $.fs.stat(usageFile)).mtimeMs
   } catch {}
-  let files: { name: string; mtimeMs: number }[] = []
+  let files: { name: string; mtimeMs: number; size?: number }[] = []
   try {
     files = (await $.fs.list(runsDir)).filter((f: any) => f.kind === 'file')
   } catch {}
   const texts: Record<string, string> = {}
   for (const name of recentJsonl(files, now)) {
-    // shortcut: a file over 4 MiB cannot be read, so it counts as still running; upgrade if a finished run that big shows up
+    // shortcut: a file over 4 MiB is not read, so it counts as still running; upgrade if a finished run that big shows up
+    if ((files.find((f) => f.name === name)?.size ?? 0) > 4 * 1024 * 1024) continue
     try { texts[name] = await $.fs.read(`${runsDir}/${name}`) } catch {}
   }
   await update($, line, () => bandLine(csv, csvAge, files, now, texts))

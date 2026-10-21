@@ -29,6 +29,11 @@ test('a Rowan run is a recent log with no newer -r.txt', () => {
   assert.deepEqual(findRuns([f('rowan-x.log', 3.1)], now, {}), []);
 });
 
+test('a CSV with a blank line, and a file time in the future', () => {
+  assert.equal(usageText(csv.replace('\nPip,r,m,5h', '\n\nPip,r,m,5h'), MIN), 'Rook 5h 12% wk 40% · Pip 5h 3% wk 21% · Rowan 5h 5% wk ? · 1m ago');
+  assert.deepEqual(findRuns([f('pip-future.jsonl', -1), f('rowan-future.log', -1)], now, {}), []);
+});
+
 test('the line joins usage and runs, or says idle', () => {
   assert.equal(runsText([]), 'idle');
   const files = [f('pip-txo-suite.jsonl', 12 - 10), f('rowan-54.log', 4 - 1)];

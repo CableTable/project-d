@@ -1,6 +1,7 @@
 {
   "name": "pd-band",
   "version": "0.1.0",
+  "author": { "name": "Rakshith" },
   "description": "One line above the prompt: Rook / Pip / Rowan usage from the cached CSV, and the Pip / Rowan runs now running.",
   "types": "./types/index.d.ts",
   "userConfig": {
