@@ -70,6 +70,7 @@ function lay(n, size, gap, extra, start) {
  *   The grid is centred (or top-left) on the usable area even if it does not fit; `fits` says whether it does.
  * extraRows / extraCols: [{ after, mm }] extra room after row `after` (counted from the top, 1 = the first row) or
  * after column `after` (from the left), on top of gapY / gapX. One that lies beyond the last row / column is ignored.
+ * occupied: placed-part boxes [x0, y0, x1, y1], sheet mm, y down; Fit skips overlapping cells (touching edges are OK).
  * Returns the footprint (partW/partH already swapped when rotated) and the top-left of each copy, plus
  * rowGaps / colGaps: [{ after, at, size }] the strip between two rows / columns (sheet mm, with its extra).
  */
@@ -93,20 +94,24 @@ export function stepRepeat(o) {
     if (!(partW > 0 && partH > 0) || cols * rows > MAX_COUNT) { cols = 0; rows = 0; }
   }
   const pw = rotated ? partH : partW, ph = rotated ? partW : partH;
-  const count = cols * rows;
   const gridW = lay(cols, pw, gapX, ex, 0).len, gridH = lay(rows, ph, gapY, ey, 0).len;
   const x0 = align === 'topleft' ? area.x : area.x + (area.w - gridW) / 2;
   const y0 = align === 'topleft' ? area.y : area.y + (area.h - gridH) / 2;
   const xs = lay(cols, pw, gapX, ex, x0).at, ys = lay(rows, ph, gapY, ey, y0).at;
   const positions = [];
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) positions.push({ x: xs[c], y: ys[r] });
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const x = xs[c], y = ys[r];
+    if (!manual && (o.occupied || []).some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9)) continue;
+    positions.push({ x, y });
+  }
+  const count = positions.length, skipped = cols * rows - count;
   const colGaps = xs.slice(0, -1).map((x, i) => ({ after: i + 1, at: x + pw, size: xs[i + 1] - x - pw }));
   const rowGaps = ys.slice(0, -1).map((y, i) => ({ after: i + 1, at: y + ph, size: ys[i + 1] - y - ph }));
   const base = manual ? { cols, rows } : rotated ? base90 : base0;
   const sheetArea = o.sheetW * o.sheetH;
   const usedPct = sheetArea > 0 ? (count * partW * partH) / sheetArea * 100 : 0;
   const fits = count > 0 && gridW <= area.w + 1e-9 && gridH <= area.h + 1e-9;      // always true when the grid was worked out
-  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, colGaps, rowGaps, manual, fits };
+  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, skipped, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, colGaps, rowGaps, manual, fits };
 }
 
 /**

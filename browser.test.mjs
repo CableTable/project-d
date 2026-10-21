@@ -9,7 +9,7 @@ import { read as readLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
-import { readMeta } from './web/layoutdoc.js';
+import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
 import { COMMANDS } from './web/cmdbar.js';
@@ -1858,7 +1858,7 @@ try {
   await step('step and repeat per layout: pick the part; Fit to sheet on works out rows × columns, off lets them be typed (it may not fit, and says so); Apply makes them placed parts', async () => {
     await t('panel-main').click();
     await t('part').selectOption({ label: 'Plate A · 100 × 60' });
-    const worked = stepRepeat({ ...base, partW: 100, partH: 60 });
+    const worked = gridOf(layoutFromRaw(readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text)));
     assert.equal(await t('count').textContent(), String(worked.count));
     assert.equal(await t('fit-switch').isChecked(), true); assert.equal(await t('fit-state').textContent(), 'On');
     const rows = page.locator('[data-key=rows]'), cols = page.locator('[data-key=cols]');
@@ -7979,6 +7979,38 @@ try {
     await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(140, 5);        // without ORTHO it stays aligned
     assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned: the true distance ' + await prompt());
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await closeTabs(/./);
+  });
+
+  const fitFixture = async (name, placed = true) => {
+    await closeTabs(/./);
+    const lay = newLayout(name), doc = newDoc(4);
+    addEntities(doc, roundRect(0, 0, 100, 100, 0));
+    lay.parts.fit = makePart('fit', 'Fit plate', doc);
+    Object.assign(lay.s, { sheetW: 400, sheetH: 300, gripBottom: 0, gapX: 0, gapY: 0, align: 'topleft', gridPart: 'fit' });
+    if (placed) lay.placed.push({ partId: 'fit', x: 0, y: 200, rot: 0, mirrorX: false, mirrorY: false });
+    await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
+    await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    await t('panel-main').click();
+  };
+  await step('TODO 86: Fit skips placed parts, reports skipped cells, and Apply keeps them clear (light then dark)', async () => {
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await fitFixture('fit-skip.dxf');
+      assert.equal(await t('count').textContent(), '11');
+      assert.equal(await t('step-hint').textContent(), '1 cell skipped: overlap with placed parts.');
+      assert.equal(await sheetParts(), 12);
+      await page.screenshot({ path: shotDir + `/s15-86-fit-${theme}.png` });
+      await t('apply').click();
+      assert.match(await prompt(), /11 copies.*1 cell skipped/);
+      const meta = readMeta(await savedDoc());
+      assert.equal(meta.s.gridPart, null); assert.equal(meta.placed.length, 12);
+      assert.equal(new Set(meta.placed.map((p) => `${p.x},${p.y}`)).size, 12, 'no cell overlaps the original');
+      await t('part').selectOption('fit');
+      assert.equal(await t('count').textContent(), '0');
+      assert.match(await t('step-hint').textContent(), /^12 cells skipped/);
+      assert.equal(await t('apply').isDisabled(), true);
+    }
     await closeTabs(/./);
   });
 

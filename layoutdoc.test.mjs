@@ -228,4 +228,18 @@ test('groups and locks are kept in the settings block and come back; an old file
   assert.ok(plain.placed.every((p) => !('g' in p) && !('lock' in p)));
 });
 
+test('Fit clears rotated mirrored placed boxes in sheet coordinates, including saved layouts', () => {
+  const lay = LD.newLayout('Occupied');
+  Object.assign(lay.s, { sheetW: 400, sheetH: 300, gripBottom: 0, gapX: 0, gapY: 0, align: 'topleft', gridPart: 'a' });
+  lay.parts.a = LD.makePart('a', 'Plate', plate(100, 100));
+  lay.placed.push(placement1('a', 100, 300, 90, true, false));
+  const grid = LD.gridOf(lay);
+  assert.equal(grid.skipped, 1); assert.equal(grid.count, 11);
+  assert.deepEqual(grid.positions[0], { x: 100, y: 0 });
+  assert.equal(LD.placedAll(lay).length, 12);
+  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))), 'Occupied.dxf');
+  assert.deepEqual(LD.gridOf(back), grid);
+  assert.equal(LD.layoutRaw(lay).entities.filter((e) => e.type === 'INSERT').length, 12);
+});
+
 console.log(n + ' tests passed');

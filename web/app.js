@@ -1124,12 +1124,12 @@ function apply() {
   if (!lay) { note('Apply is on a layout tab: Add to layout, or New layout'); return; }
   if (!lay.s.gridPart) { note('Pick a part for step and repeat first'); return; }
   if (!layout.count) { note('Nothing fits on the sheet, so there is nothing to apply'); return; }
-  const grid = placedNow.filter((p) => p.src === 'grid'), id = lay.s.gridPart;
+  const grid = placedNow.filter((p) => p.src === 'grid'), id = lay.s.gridPart, skipped = layout.skipped;
   pushLay(d, null, '', 'Apply the grid');
   for (const p of grid) lay.placed.push(placement1(p.partId, p.x, p.y, p.rot));
   lay.s.gridPart = null;
   touch(); update();
-  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. Pick a part in Step and repeat to make another grid`);
+  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. ${skipped ? `${skipped} cell${skipped === 1 ? '' : 's'} skipped: overlap with placed parts. ` : ''}Pick a part in Step and repeat to make another grid`);
 }
 
 // ---- Auto-nest (nestdlg.js is the dialog, nest.js the packer): the preview is only applied by Apply, as one undo step ----
@@ -1994,7 +1994,7 @@ function renderStep() {
   const bad = layout.count > 0 && !layout.fits;
   ui.fitNote.hidden = !bad;
   ui.fitNote.textContent = bad ? `Does not fit: the grid is ${fmtSize(layout.gridW)} × ${fmtSize(layout.gridH)} mm, the usable area ${fmtSize(layout.area.w)} × ${fmtSize(layout.area.h)} mm.` : '';
-  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : !layout.count && on ? 'The part is larger than the usable area.' : '';
+  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : layout.skipped ? `${layout.skipped} cell${layout.skipped === 1 ? '' : 's'} skipped: overlap with placed parts.` : !layout.count && on ? 'The part is larger than the usable area.' : '';
   ui.stepFoot.classList.toggle('idle', !!lay && !s.gridPart);     // no grid part: just the hint, not a floating "0" and a greyed Apply
   ui.applyBtn.disabled = !lay || !layout.count;
   ui.applyBtn.title = !lay ? 'Apply is on a layout tab' : !s.gridPart ? 'Pick a part for step and repeat first' : '';

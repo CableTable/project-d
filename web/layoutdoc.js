@@ -79,7 +79,11 @@ export function nextName(base, taken) {
 /** The grid of the layout's step-and-repeat part (a stepRepeat result), or null when no part is picked. */
 export function gridOf(lay) {
   const p = lay.s.gridPart && lay.parts[lay.s.gridPart];
-  return p ? stepRepeat({ ...lay.s, partW: p.w, partH: p.h }) : null;
+  const occupied = lay.placed.filter((pl) => lay.parts[pl.partId]).map((pl) => {
+    const [x0, y0, x1, y1] = boxOfPlaced(lay, pl);
+    return [x0, lay.s.sheetH - y1, x1, lay.s.sheetH - y0];
+  });
+  return p ? stepRepeat({ ...lay.s, partW: p.w, partH: p.h, occupied }) : null;
 }
 
 /** Every placed part: the grid's copies, then the loose ones — [{ partId, x, y, rot, mirrorX, mirrorY, src, i }]. */
