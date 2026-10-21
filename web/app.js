@@ -3259,7 +3259,7 @@ function paintOverlay() {
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', cssVar('--text', '#18181b')) : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
-      accent: cssVar('--accent', '#4f46e5'),
+      accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
   });
 }

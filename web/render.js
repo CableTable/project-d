@@ -4,7 +4,7 @@ import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './d
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 
-const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#18181b', fg: '#e8e8ec' } };
+const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
 const TEXT_FONT = '100px "Segoe UI", Roboto, system-ui, sans-serif';
 /** The canvas font of a text item: its style's font (Standard, Arial-like or Mono), bold when its MTEXT font code says so. */
 export const FONT_FAMILY = { Standard: '"Segoe UI", Roboto, system-ui, sans-serif', Arial: 'Arial, "Liberation Sans", Helvetica, sans-serif', Mono: '"Cascadia Mono", Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace' };
