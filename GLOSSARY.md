@@ -278,3 +278,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 - Can the open duplicate of TODO 65 be removed? `TODO.md` lists Contour colour and line style as both open and completed, while `DECISIONS.md` records it built; the Contour entry follows the decision.
 
 **Castle mode**: The fallback when Rook runs short of usage: Bishop-lead leads and reviews, Knight builds, only S items are taken. Where: `WORKFLOW.md`, Castle mode.
+
+**Ticket tag**: A comma-separated label in support/tickets.md, uploaded as a Tags array and used by the Tickets tab's filter chips (for example bug, feature or mod). Where: usage page, Tickets. Avoid: A separate Bugs / Features tab.
+
+**Tokens per day**: The usage page's 14-day IST chart of input + output + cache-creation tokens for Rook, Bishop and Knight, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Usage-limit percentages or the per-session runs table.

@@ -5,91 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="light dark">
 <title>Project D usage</title>
-<style>
-:root {
-  color-scheme: light dark;
-  --font-anthropic-sans: system-ui, sans-serif; --font-anthropic-serif: Georgia, serif;
-  --cds-gap-xs: 4px; --cds-gap-sm: 8px; --cds-gap-md: 16px; --cds-gap-xl: 28px;
-  --cds-font-size-title: 32px; --cds-font-size-heading: 22px; --cds-font-size-body: 16px; --cds-font-size-caption: 13px;
-  --cds-font-weight-medium: 600; --cds-radius: 10px; --cds-pad-xs: 6px; --cds-pad-sm: 10px; --cds-pad-lg: 20px;
-  --color-bg: #f7f6f2; --color-panel: #fff; --color-fg: #242620; --color-fg-muted: #666b61; --color-border-line: #d9ddd3;
-  --color-bad: #b52d35; --color-ok: #26744c; --color-warn: #916000;
-  --cds-chart-grid: #e2e5dc; --cds-chart-muted: #6a7569; --cds-chart-status-critical: var(--color-bad);
-  --ud-pip: #ae642a; --ud-rowan: #665bc4;
-}
-@media (prefers-color-scheme: dark) {
-  :root { --color-bg: #181b18; --color-panel: #232823; --color-fg: #edf0e9; --color-fg-muted: #b3bbaf; --color-border-line: #454e43;
-    --color-bad: #ff8b93; --color-ok: #81d5a5; --color-warn: #f0c16b; --cds-chart-grid: #3e483b; --ud-pip: #e5a46c; --ud-rowan: #b1a7ff; }
-}
-* { box-sizing: border-box; }
-body { margin: 0; padding: 24px max(16px, env(safe-area-inset-right)) 32px max(16px, env(safe-area-inset-left)); background: var(--color-bg); color: var(--color-fg); }
-[hidden] { display: none !important; }
-button { font: inherit; padding: 8px 14px; border: 1px solid var(--color-border-line); border-radius: 8px; color: var(--color-fg); background: var(--color-panel); cursor: pointer; }
-button:disabled { opacity: .6; cursor: wait; }
-:focus-visible { outline: 2px solid var(--ud-rowan); outline-offset: 3px; }
-.ud > *, .ud-sec > *, .ud-twrap { min-width: 0; }
-.ud td, .ud th, .ud-muted, #message { overflow-wrap: anywhere; }
-.ud-twrap table { table-layout: fixed; }
-.ud-chart svg { display: block; width: 100%; height: auto; }
-#message { font-family: system-ui, sans-serif; max-width: 72rem; margin: 0 auto 16px; }
-#offline { color: var(--color-bad); border-color: var(--color-bad); }
-@media (max-width: 40rem) {
-  .ud-card { padding: 12px; }
-  .ud td, .ud th { padding: 6px 3px; }
-  .ud .bar { display: none; }
-  .ud-note td:first-child { white-space: normal; }
-  .ud-mrow { flex-wrap: wrap; }
-}
-#dash-root { --dash-gutter: max(16px, env(safe-area-inset-left, 0px)); }
-.ud { display: grid; gap: var(--cds-gap-xl); font-family: var(--font-anthropic-sans); max-width: 72rem; margin-inline: auto; }
-.ud-head { display: grid; gap: var(--cds-gap-xs); }
-.ud h1 { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; text-wrap: balance; }
-.ud h2 { font-size: var(--cds-font-size-heading); font-weight: var(--cds-font-weight-medium); margin: 0; }
-.ud h3 { font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium); margin: 0; }
-.ud-take { margin: 0; font-size: var(--cds-font-size-body); }
-.ud-muted { color: var(--color-fg-muted); font-size: var(--cds-font-size-caption); margin: 0; }
-.ud-sec { display: grid; gap: var(--cds-gap-md); }
-.ud-grid { display: grid; gap: var(--cds-gap-md); grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); }
-.ud-card { background: var(--color-panel); border: 1px solid var(--color-border-line); border-radius: var(--cds-radius); padding: var(--cds-pad-lg); display: grid; gap: var(--cds-gap-md); align-content: start; min-width: 0; }
-.ud-agent { display: flex; justify-content: space-between; align-items: baseline; gap: var(--cds-gap-sm); flex-wrap: wrap; }
-.ud-meter { display: grid; gap: var(--cds-gap-xs); }
-.ud-mrow { display: flex; justify-content: space-between; align-items: baseline; gap: var(--cds-gap-sm); font-variant-numeric: tabular-nums; }
-.ud-big { font-family: var(--font-anthropic-serif); font-size: var(--cds-font-size-title); font-weight: 400; line-height: 1; }
-.ud-track { position: relative; height: 10px; border-radius: 5px; background: var(--cds-chart-grid); }
-.ud-fill { position: absolute; inset: 0 auto 0 0; border-radius: 5px; }
-.ud-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--color-fg); border-radius: 1px; }
-.ud-tick.cap { background: var(--cds-chart-status-critical); }
-.ud-chip { font-size: var(--cds-font-size-caption); padding: 1px 8px; border-radius: 999px; border: 1px solid var(--color-border-line); white-space: nowrap; }
-.ud .ud-hit { color: var(--color-bad); font-weight: var(--cds-font-weight-medium); }
-.ud-chip.ok { color: var(--color-ok); } .ud-chip.warn { color: var(--color-warn); } .ud-chip.bad { color: var(--color-bad); }
-.ud-tabs { display: flex; gap: var(--cds-gap-xs); }
-.ud-tabs button { font: inherit; font-size: var(--cds-font-size-caption); padding: 2px 10px; border-radius: 999px; border: 1px solid var(--color-border-line); background: transparent; color: var(--color-fg-muted); cursor: pointer; }
-.ud-tabs button[aria-pressed="true"] { color: var(--color-fg); border-color: var(--color-fg); }
-.ud-chart { position: relative; min-height: 240px; }
-.ud-chart svg text { fill: var(--color-fg-muted); font-size: var(--cds-font-size-caption); font-family: var(--font-anthropic-sans); }
-.ud-tip { position: absolute; pointer-events: none; background: var(--cds-surface-popover); border: 1px solid var(--cds-border); border-radius: var(--cds-radius); box-shadow: var(--cds-shadow-popover); padding: var(--cds-pad-xs) var(--cds-pad-sm); font-size: var(--cds-font-size-caption); white-space: nowrap; }
-.ud-tip .t { color: var(--cds-text-secondary); }
-.ud-twrap { overflow-x: auto; max-height: 32rem; overflow-y: auto; }
-.ud table { border-collapse: collapse; width: 100%; font-size: var(--cds-font-size-caption); font-variant-numeric: tabular-nums; }
-.ud th { text-align: left; font-weight: var(--cds-font-weight-medium); color: var(--color-fg-muted); padding: var(--cds-pad-xs) var(--cds-pad-sm); position: sticky; top: 0; background: var(--color-panel); border-bottom: 1px solid var(--color-border-line); }
-.ud td { padding: var(--cds-pad-xs) var(--cds-pad-sm); border-bottom: 1px solid var(--color-border-line); vertical-align: top; }
-.ud td.num, .ud th.num { text-align: right; white-space: nowrap; }
-.ud .bar { display: inline-block; height: 6px; border-radius: 3px; background: var(--cds-chart-muted); vertical-align: middle; margin-right: 6px; }
-.ud .bar.pip { background: var(--ud-pip); } .ud .bar.rowan { background: var(--ud-rowan); }
-.ud input[type=search] { font: inherit; font-size: var(--cds-font-size-caption); padding: 4px 10px; border-radius: var(--cds-radius); border: 1px solid var(--color-border-line); background: var(--color-bg); color: var(--color-fg); width: min(100%, 16rem); }
-.ud-note td:first-child { font-weight: var(--cds-font-weight-medium); white-space: nowrap; }
-.ud-note td { font-size: var(--cds-font-size-body); line-height: 1.5; }
-.ud-todo { overflow-wrap: anywhere; }
-.ud-todo-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; }
-.ud-todo-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: baseline; }
-.ud-todo-list p { margin-top: 4px; line-height: 1.5; white-space: pre-wrap; }
-.ud-todo summary { cursor: pointer; color: var(--color-fg-muted); }
-.ud-todo details[open] summary { margin-bottom: 16px; }
-[data-dash-source-state=empty] { color: transparent; }
-[data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
-@media (max-width: 40rem) { .ud .hide-narrow { display: none; } }
-@media (max-width: 40rem) { .ud-note td:first-child { white-space: normal; } }
-</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&amp;display=swap">
+<link rel="stylesheet" href="./app.css">
 </head>
 <body>
 <p id="message" role="status" aria-live="polite">Sign in to see usage.</p>
@@ -101,17 +20,23 @@ button:disabled { opacity: .6; cursor: wait; }
       <button id="refresh" type="button" disabled>Update now</button></div>
     <p class="ud-muted" aria-live="polite"><span id="last-update">Last update: ?</span> <span id="offline" class="ud-chip bad" hidden>PC offline</span></p>
     <p id="last-error" class="ud-muted" role="status" hidden></p>
-    <p class="ud-take" id="takeaway"><span class="">—</span></p>
-    <p class="ud-muted">Readings as of <span id="asof">—</span>. A tick on each bar marks where even use would be by now; red marks Pip's daily cap.</p>
   </header>
 
   <main id="dashboard" class="ud-sec" hidden>
+  <nav class="page-tabs" aria-label="Page">
+    <button type="button" data-tab="usage" aria-pressed="true" aria-controls="usage">Usage</button>
+    <button type="button" data-tab="todo" aria-pressed="false" aria-controls="todo">TODO</button>
+    <button type="button" data-tab="tickets" aria-pressed="false" aria-controls="tickets">Tickets</button>
+  </nav>
+  <div id="usage" class="ud-sec" data-page>
+    <p class="ud-take" id="takeaway"><span class="">—</span></p>
+    <p class="ud-muted">Readings as of <span id="asof">—</span>. A tick on each bar marks where even use would be by now; red marks Bishop's daily cap.</p>
   <section class="ud-sec" id="limits">
     <h2>Limits now</h2>
     <div class="ud-grid" id="agents"></div>
   </section>
 
-  <section class="ud-sec">
+  <section class="ud-grid charts" aria-label="Usage charts">
     <div class="ud-card" id="trend">
       <div class="ud-agent">
         <div><h3>Use over time</h3><p class="ud-muted">Each reading Rook took (IST). A drop is a window reset.</p></div>
@@ -120,7 +45,12 @@ button:disabled { opacity: .6; cursor: wait; }
           <button type="button" id="w-5h" aria-pressed="false">5 hours</button>
         </div>
       </div>
-      <div class="ud-chart " id="chart"></div>
+      <div class="ud-chart" id="chart"></div>
+    </div>
+    <div class="ud-card">
+      <div><h3>Tokens per day</h3><p class="ud-muted">Last 14 days in IST. Input + output + cache creation; cache reads excluded.</p></div>
+      <div class="ud-chart" id="token-chart"></div>
+      <div class="legend" id="token-legend" aria-label="Agents"></div>
     </div>
   </section>
 
@@ -132,11 +62,6 @@ button:disabled { opacity: .6; cursor: wait; }
         <tbody id="notes"></tbody>
       </table></div>
     </div>
-  </section>
-
-  <section class="ud-sec" id="todo">
-    <h2>TODO</h2>
-    <div class="ud-sec" id="todo-sections"></div>
   </section>
 
   <section class="ud-sec" id="runs">
@@ -152,7 +77,7 @@ button:disabled { opacity: .6; cursor: wait; }
     </div>
     <div class="ud-card">
       <div class="ud-agent">
-        <div><h3>Every run</h3><p class="ud-muted">Builds, reviews and tests by Pip and Rowan. Bars share one scale.</p></div>
+        <div><h3>Every run</h3><p class="ud-muted">Builds, reviews and tests by Bishop and Knight. Bars share one scale.</p></div>
         <input type="search" id="q" placeholder="Search runs" aria-label="Search runs">
       </div>
       <div class="ud-twrap"><table>
@@ -164,6 +89,15 @@ button:disabled { opacity: .6; cursor: wait; }
         <tbody id="runrows"></tbody>
       </table></div>
     </div>
+  </section>
+  </div>
+  <section class="ud-sec" id="todo" data-page hidden>
+    <h2>TODO</h2><div class="ud-sec" id="todo-sections"></div>
+  </section>
+  <section class="ud-sec" id="tickets" data-page hidden>
+    <h2>Tickets</h2>
+    <div class="tag-filters" id="ticket-tags" role="group" aria-label="Filter tickets by tag"></div>
+    <div id="ticket-list" class="ud-sec"></div>
   </section>
 </main>
 </div>

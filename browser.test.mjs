@@ -1,6 +1,6 @@
 // The UI in Chromium against web/ served locally.   node browser.test.mjs
 // Locally: CHROME=/path/to/chrome node browser.test.mjs   (CI uses Playwright's own Chromium)
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -7982,6 +7982,10 @@ try {
     await closeTabs(/./);
   });
 
+  await step('Usage site: remembered tabs, tag filters, notes, token chart, safe refresh errors; phone and desktop, light and dark', async () => {
+    const result = spawnSync(process.execPath, ['--test', 'tools/usage-site.browser.test.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  });
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

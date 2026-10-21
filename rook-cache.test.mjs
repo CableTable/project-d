@@ -51,7 +51,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     const output = execFileSync(process.execPath, ['--import', './guard.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
     const lines = output.trim().split('\n');
     assert.equal(lines.length, 3);
-    for (const [i, agent] of ['Rook', 'Pip', 'Rowan'].entries()) {
+    for (const [i, agent] of ['Rook', 'Bishop', 'Knight'].entries()) {
       assert.ok(lines[i].startsWith(`${agent}: 5h 20% (resets Tue 18:30) · week 10%`));
       assert.ok(lines[i].endsWith('· ~35% at reset (as of 17:28 IST, 2 min old)'));
     }
