@@ -7510,14 +7510,15 @@ try {
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare two drawings…', exact: true }).click();
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
-      await waitTinted('r > 150 && g < 90 && b < 90', 'Compare keeps drawing 1 in red in Wireframe');
-      await waitTinted('b > 150 && r < 90', 'Compare keeps drawing 2 in blue in Wireframe');
+      // hue tests, since the loop above leaves the dark theme on (red #ff7b7b, blue #6db0ff, mark #fb923c) and light has its own shades
+      await waitTinted('r > 150 && r - g > 60 && Math.abs(g - b) < 20', 'Compare keeps drawing 1 in red in Wireframe');
+      await waitTinted('b > 150 && b - r > 60 && b - g > 40', 'Compare keeps drawing 2 in blue in Wireframe');
       await q('new-layout').click();
       await q('panel-library').click();
       await p.locator('[data-testid=lib-list] .card[data-name="Plate A"] [data-testid=lib-add]').click();
       await q('panel-main').click();
       await q('px').fill('950'); await q('px').press('Enter');
-      await waitTinted('Math.abs(r - 194) < 30 && Math.abs(g - 65) < 30 && Math.abs(b - 12) < 30', 'a part off the sheet keeps the mark colour in Wireframe');
+      await waitTinted('r > 150 && r - g > 40 && g - b > 40', 'a part off the sheet keeps the mark colour in Wireframe');
       await q('new-tab').click();
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
       await q('new-layout').click();
