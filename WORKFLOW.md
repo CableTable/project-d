@@ -57,9 +57,10 @@ usage-agent-install.ps1.
    Rook's recommended answer, `---` between them, until every choice is settled) and for `domain-modeling` (terms go
    into GLOSSARY.md; decisions go into DECISIONS.md rows, our ADRs). S items skip it. (grill-me / grill-with-docs are
    user-only commands, so Rook calls the two skills they wrap; he can still type /grill-me or /grill-with-docs.)
-2. **Two reviews per build**: Pip-review A = spec fidelity (does it do what the brief / TODO item says, every point;
-   Opus medium) and Pip-review B = code standards (`ponytail:ponytail-review`; Sonnet high), separate fresh sessions,
-   run in parallel in two throwaway worktrees (ProjectD-review, ProjectD-review2).
+2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
+   standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
+   security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
+   each in its own folder (ProjectD-review, or ProjectD-fixC when free).
 3. **PR body in the `pr` skill's shape**: a summary visual (file tree / call tree / diff), before / after evidence
    (tests, screenshots), and a merge-danger call: one-way or two-way door, plus blast radius.
 4. **Retro at session end**: before the merge, a Pip run of the `retro` skill over the session's commits, briefs and
