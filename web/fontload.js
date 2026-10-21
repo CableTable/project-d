@@ -26,16 +26,13 @@ async function fromWindows(font, bold) {
   return null;
 }
 
-export function loadFont(font, bold) {
-  const key = font + (bold ? ':b' : '');
-  if (!cache.has(key)) {
-    cache.set(key, (async () => {
-      const got = await fromWindows(font, bold);
-      if (got) return { ...got, wanted: WANTED[font] || WANTED.Standard };
-      const r = await fetch('vendor/fonts/LiberationSans-' + (bold ? 'Bold' : 'Regular') + '.ttf');
-      if (!r.ok) throw new Error('no font could be read');
-      return { font: await parse(await r.arrayBuffer()), name: 'Liberation Sans', fallback: true, wanted: WANTED[font] || WANTED.Standard };
-    })().catch((e) => { cache.delete(key); throw e; }));
-  }
-  return cache.get(key);
+// Only a font read from Windows is kept: a fallback is not cached, so a read that failed once is tried again on the next run.
+export async function loadFont(font, bold) {
+  const key = font + (bold ? ':b' : ''), wanted = WANTED[font] || WANTED.Standard;
+  if (cache.has(key)) return cache.get(key);
+  const got = await fromWindows(font, bold);
+  if (got) { const r = { ...got, wanted }; cache.set(key, r); return r; }
+  const r = await fetch('vendor/fonts/LiberationSans-' + (bold ? 'Bold' : 'Regular') + '.ttf');
+  if (!r.ok) throw new Error('no font could be read');
+  return { font: await parse(await r.arrayBuffer()), name: 'Liberation Sans', fallback: true, wanted };
 }

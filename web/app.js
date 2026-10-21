@@ -3612,8 +3612,8 @@ async function textToOutlines() {
   if (!sel.size && mtext) { note('Text to outlines: MTEXT not yet supported, left as it is'); return; }
   if (!sel.size) { setTool('select'); state.txoWait = true; note('Text to outlines: select the texts (click or drag a box), then press Enter'); return; }
   const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)), fonts = new Map(), shx = new Set();
-  const styleFile = (name) => { const s = d.raw.styles && d.raw.styles[name]; return (s && s.v[s.c.indexOf(3)]) || ''; };       // the STYLE's font file (group 3)
-  const fontOf = (it) => { if (/.shx$/i.test(styleFile(it.st).trim())) { shx.add(styleFile(it.st).trim()); return 'Arial'; } return TX.fontOfStyle(it.st); };      // SHX has no outlines: Arial stands in
+  const styleFile = (name) => { const k = d.raw.styles && Object.keys(d.raw.styles).find((n) => n.toLowerCase() === name.toLowerCase()), s = k && d.raw.styles[k]; return (s && s.v[s.c.indexOf(3)]) || ''; };       // the STYLE's font file (group 3); style names are case-blind, a TEXT with no style is STANDARD
+  const fontOf = (it) => { const st = it.st || 'Standard', f = styleFile(st).trim(); if (/\.shx$/i.test(f)) { shx.add(f); return 'Arial'; } return TX.fontOfStyle(it.st); };      // SHX has no outlines: Arial stands in
   const keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
   try {
     for (const it of items) if (!fonts.has(keyOf(it))) fonts.set(keyOf(it), await loadFont(fontOf(it), it.bold));
