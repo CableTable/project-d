@@ -2,6 +2,7 @@
 // Ported from Project R's viewer: strokes batched by colour/width/dash, text, hatches, ACI 7 flipped for the sheet.
 import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './drawing.js';
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
+import { paintMode } from './wireframe.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#18181b', fg: '#e8e8ec' } };
 const TEXT_FONT = '100px "Segoe UI", Roboto, system-ui, sans-serif';
@@ -42,7 +43,7 @@ export function paintDrawing(canvas, o) {
   const c = canvas.getContext('2d');
   c.setTransform(1, 0, 0, 1, 0, 0);
   if (!o.keep) c.clearRect(0, 0, canvas.width, canvas.height);
-  if (o.bg && o.bg.visible && o.bg.bitmap) {
+  if (!o.wireframe && o.bg && o.bg.visible && o.bg.bitmap) {
     const b = o.bg, k = scale * dpr;                                  // the background, dimmed, under the drawing (mm, y up)
     c.setTransform(k, 0, 0, k, -ox * k, -oy * k);
     c.globalAlpha = 0.4;
@@ -65,7 +66,7 @@ export function paintDrawing(canvas, o) {
         const X = xs.map((p) => p[0]), Y = xs.map((p) => p[1]);
         if (Math.max(...X) < view[0] || Math.min(...X) > view[2] || Math.max(...Y) < view[1] || Math.min(...Y) > view[3]) continue;
       }
-      paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor);
+      paintItems(c, fl, off, mmul(V, M), k, null, dpr, col, sheetBg, null, factor, o.wireframe);
     }
     return;
   }
@@ -74,8 +75,8 @@ export function paintDrawing(canvas, o) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor);
-  if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5');
+  paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe);
+  if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
@@ -103,11 +104,16 @@ function drawGaps(c, pts, T, dpr, col) {
   for (const [x, y] of pts) { const [px, py] = mapply(T, x, y); c.beginPath(); c.arc(px, py, 9 * dpr, 0, Math.PI * 2); c.stroke(); }
 }
 
+// Stroke the already transformed path in screen pixels, including stretched blocks.
+function wireStroke(c, dpr) {
+  c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.lineWidth = dpr; c.stroke(); c.restore();
+}
+
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
-function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor) {
+function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
   let cur = -1, kk = k, open = false, pc = null, pw = 0, pd = null;
-  const flush = () => { if (open) c.stroke(); open = false; };
+  const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
   for (const it of shownItems(fl)) {
     const b = it.b;
     const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
@@ -116,9 +122,10 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor) {
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
     if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur]; c.setTransform(...mmul(T, M)); kk = k * mscale(M) || k; }
-    if (it.k === 'p' && !it.fill) {
-      const lw = Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
-      const dash = it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
+    const mode = paintMode(it, wireframe);
+    if (mode === 'stroke') {
+      const lw = wireframe ? dpr / kk : Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
+      const dash = wireframe ? null : it.dash && it.dash.reduce((a, x) => a + x, 0) * kk > 4 * dpr ? it.dash : it.dpx ? it.dpx : null;
       const css = col(it.css);
       if (!open || css !== pc || lw !== pw || dash !== pd) {
         flush();
@@ -129,24 +136,28 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor) {
       continue;
     }
     flush();
-    if (it.k === 'p') { c.beginPath(); trace(c, it.ops); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css); c.fill('evenodd'); c.globalAlpha = 1; }
-    else if (it.k === 'w') { c.beginPath(); trace(c, it.ops); c.fillStyle = sheetBg; c.fill(); }
-    else if (it.k === 'n') { c.beginPath(); c.arc(it.x, it.y, 1.8 * dpr / kk, 0, Math.PI * 2); c.fillStyle = col(it.css); c.fill(); }
-    else if (it.k === 't') drawText(c, it, kk, dpr, col);
-    else if (it.k === 'h') drawHatch(c, it, kk, dpr, col);
+    if (mode === 'fill') { c.beginPath(); trace(c, it.ops); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css); c.fill('evenodd'); c.globalAlpha = 1; }
+    else if (mode === 'mask') { c.beginPath(); trace(c, it.ops); c.fillStyle = sheetBg; c.fill(); }
+    else if (mode === 'point') {
+      c.beginPath(); c.arc(it.x, it.y, 1.8 * dpr / kk, 0, Math.PI * 2);
+      if (wireframe) { c.strokeStyle = col(it.css); c.setLineDash([]); wireStroke(c, dpr); }
+      else { c.fillStyle = col(it.css); c.fill(); }
+    }
+    else if (mode === 'text') drawText(c, it, kk, dpr, col, wireframe);
+    else if (mode === 'hatch') drawHatch(c, it, kk, dpr, col);
   }
   flush();
 }
 
 /** The selection: a thin accent centre line over the object's true-width stroke. */
-function highlight(c, items, mats, T, k, dpr, accent) {
+function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
   c.strokeStyle = accent; c.fillStyle = accent; c.setLineDash([]);
   let cur = -1, kk = k;
   for (const it of items) {
     if (it.m !== cur) { cur = it.m; const M = mats[cur]; c.setTransform(...mmul(T, M)); kk = k * mscale(M) || k; }
     c.lineWidth = 2.6 * dpr / kk;
     c.beginPath();
-    if (it.k === 'p') { trace(c, it.ops); if (it.fill) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0], it.b[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
+    if (it.k === 'p' || (wireframe && it.ops)) { trace(c, it.ops); if (it.fill && !wireframe) c.fill('evenodd'); else c.stroke(); } else c.strokeRect(it.b[0], it.b[1], it.b[2] - it.b[0], it.b[3] - it.b[1]);
   }
 }
 
@@ -198,21 +209,23 @@ function drawMarks(c, pts, T, dpr, accent) {
 }
 
 /** TEXT and MTEXT: a 100 px font scaled so its capitals are the text's height. */
-function drawText(c, it, kk, dpr, col) {
+function drawText(c, it, kk, dpr, col, wireframe) {
   if (it.h * kk < 3 * dpr) return;
   const U = 100 * CAP / it.h;
   c.save();
   c.translate(it.x, it.y); c.rotate(it.rot); c.scale(it.wf * it.mx / U, -it.my / U);
   c.fillStyle = col(it.css); c.font = it.st || it.bold ? fontOf(it) : TEXT_FONT;
+  if (wireframe) { c.strokeStyle = col(it.css); c.lineWidth = dpr * U / kk; c.setLineDash([]); }
+  const text = (str, x, y) => wireframe ? c.strokeText(str, x, y) : c.fillText(str, x, y);
   c.textAlign = ['left', 'center', 'right'][it.ha] || 'left'; c.textBaseline = 'alphabetic';
   const capU = 100 * CAP;
   if (it.multi) {
     const lines = it.wrap > 0 ? wrapped(c, it, U) : it.lines, lh = it.lh * U, total = (lines.length - 1) * lh + capU;
     const top = it.va === 'top' ? 0 : it.va === 'middle' ? -total / 2 : -total;
-    lines.forEach((l, i) => c.fillText(l, 0, top + capU + i * lh));
+    lines.forEach((l, i) => text(l, 0, top + capU + i * lh));
   } else {
     const y = { alphabetic: 0, bottom: -0.3 * capU, middle: capU / 2, top: capU }[it.va] || 0;
-    c.fillText(it.lines.join(' '), 0, y);
+    text(it.lines.join(' '), 0, y);
   }
   c.restore();
 }

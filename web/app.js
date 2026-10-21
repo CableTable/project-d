@@ -36,12 +36,17 @@ import { withExt } from './savepath.js';
 import * as RC from './recovery.js';
 import { openExport } from './export.js';
 import { openNest } from './nestdlg.js';
+import { openTrace } from './tracedlg.js';
+import * as TR from './trace.js';
+import * as TO from './textoutline.js';
+import { loadFont } from './fontload.js';
 import { outlineOf } from './nestshape.js';
 import { partSource } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
+const viewStore = idbStore('project-d-view', 'settings', 'view settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 function showShortcuts() {
   ui.cmdUI.close();
@@ -158,6 +163,7 @@ const state = {
   ortho: false,                    // the ORTHO toggle: a sticky Shift (picks kept straight along X or Y from the first point)
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
+  wireframe: false,
   dp: 2,                           // decimal places in dimensions (status bar), remembered on this PC
   meas: null,                      // Measure in progress: { pts: [[x, y] drawing units], hover }
   dimStyles: { presets: {}, cur: 'Standard' },   // the dimension style presets (dims.js; Format → Dimension style…), remembered on this PC (pd-dimstyles); dsOpen: that dialog is open
@@ -171,7 +177,7 @@ const state = {
   dimDrag: null,                   // a selected dimension being dragged: { e, name, params, dp, start, offset, moved }
   gapMm: 0.01, gapShow: true,      // Tiny gaps (TODO 46): the tolerance in mm (remembered on this PC) and whether the gaps are marked on the drawing
   setlen: null,                    // Set length in progress: { pts: [[x, y] drawing units], hover, measured (mm) }
-  mod: null, modDoc: null, offDist: 10,   // Offset / Trim / Mirror in progress (newMod), its tab, and the Offset distance in mm (remembered)
+  txoWait: false, mod: null, modDoc: null, offDist: 10,   // Offset / Trim / Mirror in progress (newMod), its tab, and the Offset distance in mm (remembered)
   draw: null, drawDoc: null,       // the drawing tool in progress (draw.js createTool), and the tab it works on
   drawCfg: { radius: 5 },          // the rounded rectangle's corner radius (mm), remembered on this PC
   drawHover: null,                 // where the pointer is for the drawing tool: [x, y (mm), snap kind]
@@ -326,7 +332,7 @@ function recentItems() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
@@ -336,6 +342,7 @@ function buildMenus() {
     View: () => {
       const lay = curLay(), tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fit, 'Ctrl+0'], [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
+        [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!curLay().s.guidesShow), null, () => !!curLay()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!curLay().s.guidesLock), null, () => !!curLay()],
         ['Clear all guides', clearGuides, null, () => !!curLay() && curLay().s.guides.length > 0],
@@ -345,6 +352,7 @@ function buildMenus() {
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'E'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
+  menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
@@ -363,10 +371,10 @@ function buildMenus() {
       close();
       if (was || unbuilt) return;
       const items = typeof menus[name] === 'function' ? menus[name]() : menus[name];
-      drop.replaceChildren(...items.map(([text, fn, hint, enabled, title, sep]) => {
+      drop.replaceChildren(...items.map(([text, fn, hint, enabled, title, sep, checked]) => {
         const bound = CB.COMMANDS.find((c) => c.key === hint && hint);
         if (bound) hint = ownBindings[bound.name].key;
-        const item = h('button', { type: 'button', role: 'menuitem', class: sep ? 'sep' : null, title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
+        const item = h('button', { type: 'button', role: checked == null ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': checked == null ? null : String(checked), class: sep ? 'sep' : null, title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
         item.addEventListener('click', () => { close(); fn(); });
         return item;
       }));
@@ -772,7 +780,7 @@ function setTool(id) {
   if (id === 'contour' && !editable()) { note('Contour works on a drawing tab: open a drawing and pick a closed outline'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
-  state.text.drag = null; state.grip = null; trackClear();
+  state.text.drag = null; state.grip = null; state.txoWait = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
   if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab'); return; }
@@ -809,7 +817,13 @@ function buildCanvas() {
   ui.picker = h('input', { type: 'file', accept: '.dxf,.pdf,.json', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(files)) await openPicked(f); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
-  ui.bgPicker.addEventListener('change', async () => { const f = ui.bgPicker.files[0]; ui.bgPicker.value = ''; if (f) await importBackground(f); });
+  ui.bgPicker.addEventListener('change', async () => {
+    const f = ui.bgPicker.files[0], trace = traceAfter;
+    ui.bgPicker.value = ''; traceAfter = false;
+    if (f) await importBackground(f);
+    if (f && trace) traceBitmap();
+  });
+  ui.bgPicker.addEventListener('cancel', () => { traceAfter = false; });
   ui.pct = h('span', { class: 'pct mono', 'data-testid': 'zoom' }, '100%');
   ui.fitBtn = h('button', { class: 'tog on', type: 'button', onclick: fit }, 'Fit');
   ui.rubber = h('div', { class: 'rubber', hidden: true, 'data-testid': 'rubber' });
@@ -2832,7 +2846,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
-  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || (curLay() && state.mode === 'rotate');
+  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || state.txoWait || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
   return { label: m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
@@ -2845,6 +2859,7 @@ function cmdEnter(raw) {
   if (modLive() && modTyped(editable(), raw)) return;
   if (state.tool === 'text' && editable() && !textEditing()) { textTyped(raw); return; }
   const c = raw.trim().toLowerCase();
+  if (state.txoWait) { state.txoWait = false; if (!c) { textToOutlines(); return; } }          // "Select text": Enter runs it, a typed command replaces it
   if (!c) return;
   if (state.mode === 'rotate' && curLay() && selectedPlaced()) {
     if (c === 'pivot' || c === 'p') { note('Pivot: drag ◎ on the sheet, or pick Custom in the Rotate section and type its X and Y'); return; }
@@ -2878,7 +2893,7 @@ const DO = {
   dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
-  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(),
+  extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   rotate: () => {
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
@@ -2893,6 +2908,7 @@ const DO = {
   redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
   history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
+  wireframe: () => toggleWireframe(),
   shortcuts: () => showShortcuts(),
 };
 /** A command of the table started by its name (typed in the bar, a history line, Space on the drawing). */
@@ -2941,7 +2957,8 @@ function buildStatus() {
   ui.toolChip = h('span', { class: 'lbl tool-chip', 'data-testid': 'tool-chip', title: 'The tool that is on (Esc or S: back to Select)' },
     'Tool: ' + (TOOLS.find((x) => x.id === state.tool) || { label: 'Select' }).label);
   ui.sheetChip = h('span', { class: 'lbl tool-chip', hidden: true, 'data-testid': 'sheet-chip', title: 'The page of the PDF that is shown' });
-  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
+  ui.wireframe = h('button', { class: 'tog' + (state.wireframe ? ' on' : ''), type: 'button', 'data-testid': 'wireframe', 'aria-pressed': String(state.wireframe), 'aria-label': 'Wireframe', title: 'Wireframe: outline-only view; PDF / Print and export keep fills (F9)', onclick: toggleWireframe }, 'Wire');
+  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
     ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), h('span', { class: 'lbl' }, 'mm'),
@@ -2963,6 +2980,15 @@ function setDecimals(n) {
   }
   update();
   note(`Dimensions: ${state.dp} decimal place${state.dp === 1 ? '' : 's'}` + (k ? ` (re-labelled in ${k} drawing${k === 1 ? '' : 's'}; Ctrl+Z undoes)` : ''));
+}
+
+function toggleWireframe() {
+  state.wireframe = !state.wireframe;
+  ui.wireframe.classList.toggle('on', state.wireframe);
+  ui.wireframe.setAttribute('aria-pressed', String(state.wireframe));
+  paintOverlay();
+  note(state.wireframe ? 'Wireframe on: outlines only; PDF / Print and export keep fills' : 'Wireframe off');
+  viewStore.put({ id: 'wireframe', on: state.wireframe }).catch(() => note('Could not remember Wireframe; it still applies until the app closes'));
 }
 
 function renderStatus() {
@@ -3209,7 +3235,7 @@ function paintOverlay() {
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
     const d = curDoc();
-    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: isDark() };
+    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: isDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); return; }
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
@@ -3546,6 +3572,61 @@ function removeBackground() {
   d.bg = null; d.scaleTarget = 'drawing';
   showDoc();
   note('Background removed');
+}
+
+// ---- Trace a bitmap (TODO 40): the background picture becomes closed polylines on a layer, at the picture's position and size ----
+let traceAfter = false;                                            // the picker was opened by Trace, so the dialog opens once a picture is in
+/** Opens the Trace dialog for the tab's background picture; with none, asks for a picture first (it becomes the background, then the dialog opens). */
+function traceBitmap() {
+  const d = curDoc();
+  if (!d || !d.bg) { traceAfter = true; ui.bgPicker.click(); return; }
+  if (!editable()) { note('Trace bitmap works on a drawing or picture tab'); return; }
+  const bg = d.bg;
+  openTrace({
+    name: bg.name, bitmap: bg.bitmap, w: bg.w, h: bg.h, mmW: bg.w * bg.mm, mmH: bg.h * bg.mm, layer: 'Trace',
+    layerProblem: (name) => Ed.layerNameProblem(name, []),
+    onApply: (polys, name) => applyTrace(d, polys, name),
+  });
+}
+/** The outlines are added as closed polylines on the layer (made if new; a name that is already there is used as it is): one undo step. */
+function applyTrace(d, polys, name) {
+  if (!state.docs.includes(d) || !d.bg || !d.hist) return;
+  const had = Object.keys(d.raw.layers).find((n) => n.toLowerCase() === name.toLowerCase()), layer = had || name;
+  const doc = { layers: { ...d.raw.layers } };
+  if (!had) addLayer(doc, layer, { aci: 1 });
+  const ents = TR.traceEntities(polys, { x: d.bg.x, y: d.bg.y, factor: d.factor, layer });
+  commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: doc.layers }, `Trace bitmap × ${ents.length}`);
+  if (!had) d.newLayer = layer;
+  renderLayers();
+  note(`Trace: ${ents.length} closed outline${ents.length === 1 ? '' : 's'} on the layer ${layer}, at the picture's place and size. Ctrl+Z takes them away`);
+}
+
+// ---- Text to outlines (TODO 53): the selected TEXT / MTEXT become closed polylines in their place, one undo step (textoutline.js is the maths) ----
+const isTextEnt = (e) => !!e && (e.type === 'TEXT' || e.type === 'MTEXT');
+/** Makes the selected texts outlines; with none selected it asks for them, and Enter then runs it. */
+async function textToOutlines() {
+  const d = editable();
+  if (!d) { note('Text to outlines works on a drawing tab: open a drawing first'); return; }
+  const picked = [...d.sel].filter((i) => isTextEnt(d.raw.entities[i])), sel = new Set(picked.filter((i) => d.raw.entities[i].type === 'TEXT'));
+  const mtext = picked.length - sel.size, skipped = mtext ? `. ${mtext} MTEXT not yet supported, left as it is` : '';       // MTEXT is TODO 53d
+  if (!sel.size && mtext) { note('Text to outlines: MTEXT not yet supported, left as it is'); return; }
+  if (!sel.size) { setTool('select'); state.txoWait = true; note('Text to outlines: select the texts (click or drag a box), then press Enter'); return; }
+  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)), fonts = new Map(), shx = new Set();
+  const styleFile = (name) => { const k = d.raw.styles && Object.keys(d.raw.styles).find((n) => n.toLowerCase() === name.toLowerCase()), s = k && d.raw.styles[k]; return (s && s.v[s.c.indexOf(3)]) || ''; };       // the STYLE's font file (group 3); style names are case-blind, a TEXT with no style is STANDARD
+  const fontOf = (it) => { const st = it.st || 'Standard', f = styleFile(st).trim(); if (/\.shx$/i.test(f)) { shx.add(f); return 'Arial'; } return TX.fontOfStyle(it.st); };      // SHX has no outlines: Arial stands in
+  const keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
+  try {
+    for (const it of items) if (!fonts.has(keyOf(it))) fonts.set(keyOf(it), await loadFont(fontOf(it), it.bold));
+  } catch { note('Text to outlines: no font file could be read'); return; }
+  if (!state.docs.includes(d) || d.raw.entities !== raw) { note('Text to outlines: the drawing changed meanwhile, run it again'); return; }
+  const r = TO.outlineEntities(items, raw, (it) => fonts.get(keyOf(it)).font, 0.01 / d.factor);      // flattened to 0.01 mm, as Export for cutter
+  if (!r.ents.length) { note('Text to outlines: the selected text has no letters to outline'); return; }
+  const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
+  view.fitted = false;
+  commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`);
+  setSel(d, new Set(r.ents.map((_, i) => at + i)));
+  const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
+  note(`${r.texts} text${r.texts === 1 ? '' : 's'} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + skipped + '. Ctrl+Z takes them back');
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
@@ -5409,6 +5490,7 @@ function editKey(e) {
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.grip) { gripCancel(); note('Stretch cancelled'); }
     else if (state.text.drag) { textDragEnd(true); note('Resize cancelled'); }
+    else if (state.txoWait) { state.txoWait = false; note('Text to outlines cancelled'); }
     else if (modLive()) modEsc(d);
     else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
@@ -5438,6 +5520,7 @@ function editKey(e) {
   if (e.key === 'Enter' && state.meas && state.meas.pts.length === 2) { e.preventDefault(); keepMeasure(); return; }
   if (e.key === 'Enter' && state.ldr && state.ldr.pts.length === 2) { e.preventDefault(); ldrNoteOpen(d); return; }
   if (modLive() && e.key === 'Enter') { e.preventDefault(); modEnter(d); return; }
+  if (state.txoWait && e.key === 'Enter') { e.preventDefault(); state.txoWait = false; textToOutlines(); return; }       // "Select text ... then press Enter"
   if (e.key === 'Delete' && !mod) { e.preventDefault(); deleteSelection(); }
   else if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(d); else undo(d); }
   else if (mod && !e.altKey && k === 'y') { e.preventDefault(); redo(d); }
@@ -5448,7 +5531,8 @@ function buildDrawingSection() {
   ui.bgX = h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove the background', 'data-testid': 'bg-remove', onclick: removeBackground }, '×');
   ui.scaleTarget = h('select', { class: 'fld', 'aria-label': 'Size and Set length act on', 'data-testid': 'scale-target' }, h('option', { value: 'drawing' }, 'Drawing'), h('option', { value: 'bg' }, 'Background'));
   ui.scaleTarget.addEventListener('change', () => { const d = curDoc(); if (d) { d.scaleTarget = ui.scaleTarget.value; renderEdit(); } });
-  ui.bgRow = h('div', { class: 'bgrow' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'bg-import', onclick: () => ui.bgPicker.click() }, 'Background…'), ui.bgName, ui.bgX);
+  ui.bgTrace = h('button', { class: 'btn sm', type: 'button', title: 'Trace this picture into closed outlines on a layer', 'data-testid': 'bg-trace', onclick: traceBitmap }, 'Trace…');
+  ui.bgRow = h('div', { class: 'bgrow' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'bg-import', onclick: () => ui.bgPicker.click() }, 'Background…'), ui.bgName, ui.bgTrace, ui.bgX);
   const useBtn = h('button', { class: 'btn sm primary', type: 'button', 'data-testid': 'add-to-layout', title: 'Put this drawing on a layout (the open layout tab, or a new one)', onclick: addToLayout }, 'Add to layout');
   const size = (label, id, axis) => {
     const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': id, 'aria-label': label + ' in mm' });
@@ -6228,6 +6312,7 @@ function renderEdit() {
   const n = d.sel.size, b = sizeBox(d), scalable = !!b;
   ui.bgName.textContent = d.bg ? d.bg.name : '';
   ui.bgX.hidden = !d.bg;
+  ui.bgTrace.hidden = !d.bg;
   ui.scaleTarget.hidden = !(d.bg && d.box);
   ui.scaleTarget.value = sizeTarget(d);
   ui.selRow.hidden = n === 0;
@@ -6442,6 +6527,7 @@ async function init() {
     if (SC.clashes(loaded).length) shortcutError = 'Saved shortcuts have conflicts; defaults are active. Import a corrected PGP to change them.';
     else { ownBindings = loaded; ownCommands = SC.commandsFor(loaded); }
   } catch (err) { shortcutError = 'Could not load shortcuts; defaults are active: ' + (err.message || err); }
+  try { state.wireframe = (await viewStore.all()).some((r) => r.id === 'wireframe' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();

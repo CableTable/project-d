@@ -4,6 +4,8 @@ Ideas agreed but not built, in the order planned. Move an item to HISTORY.md and
 
 ## Rakshith's list (2026-10-17, session 3): one at a time, each started only when he says
 
+Lettered tickets are separate fresh builder runs, each targeting peak context under 150k tokens and usually 1–3 implementation files plus focused tests; read only the relevant modules and decision rows, and split further if a run exceeds the cap.
+
 1. ✅ (built, PR #6) **Layout view doesn't show the part.** The slots on the sheet are empty rectangles, and the part is still drawn
    at its own position off the sheet (top right). Each slot should show the part itself.
 2. ✅ (built, PR #9) **No way to move the part** around on the layout.
@@ -64,7 +66,7 @@ CorelDRAW-style additions (his picks, 2026-10-17):
 37. ✅ (built, PR #9) **Group / Ungroup and Lock**: move several parts as one; lock things so they can't be bumped.
 38. ✅ (built, PR #9) **Rulers and guidelines**: drag guides out of the rulers and snap to them.
 39. ✅ (built, session 8, Option A of mock-up R11) **Object Manager**: a tree of everything in the file, layer by layer, with show, hide and lock.
-40. **Trace a bitmap** (CorelDRAW's PowerTRACE): a photo or scan of artwork → vector outlines.
+40. ✅ (built, session 12, R14 section 05 option A; see DECISIONS) **Trace a bitmap** (CorelDRAW's PowerTRACE): a photo or scan of artwork → vector outlines. Outline only; Centreline comes later.
 41. ✅ (built, PR #10) **Compare parts by colour**: give each part's outline its own colour (e.g. one red, one blue) and lay them over each
     other to see where they differ, e.g. two revisions of the same part. A button lines them up (same corner, or
     centres, using Align from 36), and an option highlights where the outlines differ by more than a set tolerance
@@ -96,8 +98,15 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
 51. ✅ (built, session 11, R14 option A) **One-click unit fix, ×25.4 / ÷25.4** (S), next to Set length: the commonest "my file is the wrong size" cause.
 52. ✅ (built, session 11, R14 option B) **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
 53. **Text to outlines** (L): removes font problems for film and cut files (needs font outlines without a build step).
-54. **Wireframe (outline-only) view** (S): one toggle that shows objects stacked or hidden behind fills.
+    - 53a ✅ (built, session 12) TXO / Modify menu: single-line TEXT → closed polylines (holes kept), one undo. Browser run not yet green here (see HISTORY / PR).
+    - 53b composite / accented glyphs: not built.
+    - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message; MTEXT left alone with a note.
+    - 53d MTEXT: not built (Bold used by 53d).
+54. ✅ (built, session 12) **Wireframe (outline-only) view** (S): View → Wireframe, status-bar chip and F9; thin outlines without fills or background pictures, remembered across all tabs. PDF / Print and exports keep their fills.
 55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
+    55a. Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings.
+    55b. (after 55a) If rendering lags, skip off-screen drawing items using their existing bounds, with conservative-bound unit tests and browser checks that panning and zooming reveal every object.
+    55c. (after 55a) If picking or snapping lags, index their candidates while preserving hit order and rebuilding after edits / undo, with indexed-versus-current-result unit tests and a large-file browser check.
 56. **Font note on open** (S): name the fonts the file asked for and what is shown instead (check first whether one exists).
 
 From the v0.1.30 exe test (Pip-test, 2026-10-20):
@@ -110,8 +119,63 @@ From the v0.1.30 exe test (Pip-test, 2026-10-20):
 63. ✅ (fixed, session 10: Save As reuses first Save's suggestion in the opened file's folder, as "<name>-edited.dxf"; new drawings keep the last-used folder) **Save As starts in the last-used folder** (question, S): from the TODO 60 exe test; decided 2026-10-20 (see DECISIONS).
 64. ✅ (fixed, session 9: importing a background into a drawing marks it dirty and clears `empty`; browser coverage keeps the fresh tab and its picture on Open) **Import background on a fresh tab is lost on Open** (bug, S): new tab, pick a tool without drawing, Import background, then Open a file: the tab is replaced and the picture lost. `web/app.js:3447`: set `d.dirty = true` in that `else` branch. From the Pip-review of 62 (older than 62).
 65. **Contour: colour and line style** (his ask, 2026-10-20, S–M): the Contour panel picks the new outlines' colour and line style (solid, dashed, dotted). Today they always go on the layer "Contour" with its colour, solid. Saved to DXF as the entity's colour and linetype.
+    65a. Verify the already-built colour picker against the completed 65 below, fixing only missing preview / Apply / undo behaviour and its unit and browser coverage.
+    65b. Verify the already-built Solid / Dashed / Dotted choices against the completed 65 below, fixing only missing DXF round-trip / PDF behaviour and its unit and browser coverage.
 
 65. ✅ (built, session 10) **Contour colour and line style**: R13 swatches and Solid / Dashed / Dotted, both previews, Properties, DXF round trip and PDF; one-step undo.
+
+From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/VPxPFSo6u1vonP7QdBetXE; his ask: all of it):
+66. **More Modify tools** (S–L): Move and Copy (base point, then target or typed distance) first, then Rotate and Scale, then Fillet and Extend; in the Modify menu and the command bar (AutoCAD M, CO, RO, SC, F, EX).
+    66a. Move selected drawing objects from a base point to a clicked or typed target through Modify and M, respecting layer locks and supporting preview, Esc and one-step undo, with unit and browser tests.
+    66b. (after 66a) Copy selected drawing objects using the same base-point / target flow through Modify and CO, preserving the originals and properties with unit and browser undo tests.
+    66c. (after 66a) Rotate selected drawing objects about a chosen pivot by a clicked or typed angle through Modify and RO, with preview, Esc, undo and unit / browser tests.
+    66d. (after 66a) Scale selected drawing objects about a base point by a positive typed factor through Modify and SC, preserving widths and refusing unsupported transforms with unit and browser tests.
+    66e. (after 66d) Fillet two drawing lines with a typed radius through Modify and F, trimming them and inserting a tangent arc as one undo step, with preview, invalid-case unit tests and a browser flow.
+    66f. (after 66e) Fillet line / arc and arc / arc pairs through the same tool, with side selection, impossible-radius feedback and geometry / browser tests.
+    66g. (after 66f) Fillet adjacent polyline segments while preserving bulges, closure and widths through the same tool, with geometry and browser undo / Save tests.
+    66h. (after 66d) Extend a line to a picked boundary through Modify and EX, keeping the opposite end fixed and supporting repeat, Esc and undo with unit and browser tests.
+    66i. (after 66h) Extend arcs and open polylines to boundaries through the same tool, preserving sweep, bulges and widths with unit and browser undo / Save tests.
+67. **Guide lines when placing parts** (M): dragging a part on a layout snaps its edges and centre to other parts and the sheet, with a thin line and the gap in mm (CorelDRAW Dynamic Guides, Illustrator Smart Guides).
+    67a. Snap a dragged part's edges and centre to the sheet's edges and centre with a thin alignment guide, reusing guide tolerances and testing placement, Esc and undo in unit and browser tests.
+    67b. (after 67a) Snap dragged parts to other visible parts' edges and centres with alignment guides, deterministic candidate choice and unit / browser checks for rotated parts and existing guide interactions.
+    67c. (after 67b) Show the relevant edge-to-edge gap in mm beside the active placement guide, with unit tests for gap calculations and browser checks for cleanup on drop or Esc.
+68. **Snap per type** (M): a popover on the SNAP chip with a tick box per type; add intersection and quadrant (perpendicular, tangent later); the type's name beside the marker (AutoCAD Object Snap).
+    68a. Filter the existing snap types through tick boxes on the SNAP chip and show the winning type beside its marker, preserving the master toggle with unit and keyboard / browser tests.
+    68b. (after 68a) Add intersection snaps for line / polyline segments to the picker and marker, with crossing / parallel / visibility unit cases and a browser drawing flow.
+    68c. (after 68b) Add line / arc and arc / arc intersection snaps, including circle and bulged-polyline segments, with tangent / finite-sweep unit cases and browser checks.
+    68d. (after 68a) Add quadrant snaps for circles, arcs and ellipses to the picker and marker, with transformed-geometry unit cases and browser checks.
+69. **Live numbers at the cursor** (M): a tag by the cursor with length, angle, Δx, Δy; typing fills the first field, Tab the next (AutoCAD Dynamic Input, F12).
+    69a. Show length, angle, Δx and Δy beside the cursor during Line's next-point prompt, with F12 toggling it, tested calculations and a browser check that the tag stays on screen.
+    69b. (after 69a) Let typing and Tab edit Line's cursor fields and commit a validated next point through the existing point-input path, with unit and browser checks for invalid input, Enter and Esc.
+    69c. (after 69b) Reuse the cursor fields in Polyline and Rectangle / Rounded rectangle point prompts, with focused browser cases per caller and unit tests for their different anchors.
+    69d. (after 69b) Reuse the cursor fields in Measure, dimension and Set length point prompts, with focused browser cases per caller and unit tests for their different anchors.
+    69e. (after 69b, 66a) Reuse the cursor fields in Modify base-point / target prompts, with unit and browser checks for command-bar focus, typed displacement, F12 and cancellation.
+    69f. (after 69b) Reuse the cursor fields in Circle, Ellipse and Arc point prompts, with focused browser cases per caller and unit tests for centre / axis anchors and tool-specific scalar prompts.
+70. **Relative and polar typed input** (S): `@dx,dy` and `len<angle` in every point prompt; Enter on an empty command bar repeats the last command (check first what already works).
+71. **Selection feedback** (S–M): left-to-right box = window (solid blue, fully inside), right-to-left = crossing (dashed green, touching); Alt + click cycles overlapping objects (doubled DXF lines). Check first what exists.
+    71a. Check existing drawing box selection and complete solid-blue window / dashed-green crossing feedback with matching inside / touching logic, plus unit and browser cases for direction, modifiers and locks.
+    71b. (after 71a) Apply the same window / crossing feedback to layout parts without selecting hidden or locked parts, with unit and browser checks for rotated parts and additive selection.
+    71c. Cycle overlapping drawing objects with repeated Alt + click using stable hit order, highlighting the current candidate and resetting on a new location or edit, with unit and browser tests on duplicate lines.
+72. **Right-click while drawing** (S): during a tool, right-click finishes (Enter); a menu with Cancel, Close, Undo last point and the snap list.
+73. **Tooltips and F-keys** (S): tooltip = name + alias + key; add F3 snap, F8 ortho, F9 grid; optional "show labels" on the rail.
+74. **More zooms** (S): Zoom Window, Zoom Selection, Zoom Previous (Z W, Z S, Z P).
+75. **Array on a drawing** (M): rows / columns / spacing, plus polar (holes in a ring); step and repeat today is layouts only.
+    75a. Add a rectangular array of selected drawing objects with validated rows, columns and spacing, preview, Apply / Cancel and one-step undo, with geometry and browser Save / reopen tests.
+    75b. (after 75a) Add a polar array using a picked centre, count and angular spacing in the same flow, with rotated-copy geometry tests and browser Apply / Cancel / undo checks.
+76. **Dimensions drive the drawing** (L, later): double-click a dimension, type a value, the line stretches; no full constraints.
+    76a. Associate a newly placed linear dimension with one picked LINE and let double-clicking its value stretch that line's second end, with positive-value validation, undo and unit / browser tests.
+    76b. (after 76a) Support horizontal and vertical driving dimensions on a LINE while preserving its other coordinate, with unit and browser checks for unchanged unrelated geometry and layer locks.
+    76c. (after 76b) Keep driving-dimension associations through Save / reopen and recovery using stable references, disabling the edit with a clear message if the source was deleted or detached, with round-trip unit and browser tests.
+
+From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/Sp3eoq15FKgsVFQpxmpPd7; his picks):
+77. **Layer search box** (S): a small search box above the Layers list and the Objects tree; matches show, the rest hide (QCAD forum, 7 Oct 2026).
+78. **Trim preview** (M): while the pointer is over a segment in Trim, draw the part that would go in faint red; the preview must match the result (LibreCAD #2632, #2647).
+    78a. Preview the portion of a hovered LINE that Trim would remove in faint red by sharing the trim calculation, with unit and browser checks for selected edges, all edges, no cut and locked layers.
+    78b. (after 78a) Preview removed portions of arcs, circles and polylines through that same calculation, with geometry and browser checks for bulges, multiple intersections and click-to-result agreement.
+    78c. (after 78b) Clear or recompute Trim's preview on pointer leave, Esc, boundary changes, pan / zoom and undo, with focused browser cases that prevent stale red geometry.
+79. **Grips on big selections** (S): after Text to outlines, every vertex of the new outlines shows a grip, so the letters look blocky (Pip-look, session 12). Hide or thin grips when a selection has many vertices.
+80. **Menus above tool hints** (S): the Text tool's hint box overlaps the bottom edge of an open menu by a few pixels (Pip-look, session 12). Give menus a higher z-index or hide the hint while a menu is open.
+81. **Test hygiene from the session 12 retro** (S): the Shortcuts browser step reads the command count from the COMMANDS table instead of a fixed number; browser steps that check colours set their theme first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

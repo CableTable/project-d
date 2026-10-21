@@ -81,6 +81,7 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 
 ## 3. House rules
 
+- Terms: GLOSSARY.md (use its words; add new ones there).
 - **Text from a file never reaches HTML unescaped**: layer names, block names and text from a
   DXF, DWG or .cdr are built into the DOM with `textContent` / an `h()` helper (Project R's
   `dom.js`), never `innerHTML`.
@@ -104,8 +105,8 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   plan) is the **default builder** (his call, 2026-10-20; it commits, Rook pushes) and does web research, never
   reviews; Pip-build takes mock-ups, screenshots and overflow builds. **Scout** (Antigravity) only quick lookups.
   Pip never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
-  **Pip's budget:** at most 14% of its weekly limit per day (above only with his OK); after every
-  merge, report Rook / Pip / Rowan usage. A new worktree folder needs trusting once on account 2.
+  **Pip's budget:** at most 14% of its weekly limit per day (above only with his OK). No usage report after a merge: the band and the usage page show it (his call, 2026-10-21).
+  A new worktree folder needs trusting once on account 2.
 - **Keep the context lean**: screenshot checks and broad searches go to a helper agent that reports
   back in a few lines. Never print whole logs, diffs or files. Edit CLAUDE.md at most once a
   session, near the end. After a PR merges, suggest `/compact` or a new session.

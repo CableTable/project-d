@@ -1329,6 +1329,68 @@ try {
     await page.locator('[data-tool=step]').click();
   });
 
+  await step('TODO 40: Trace bitmap: asks for a picture when there is none, previews, validates the layer name, traces at the picture\'s size, one undo', async () => {
+    await t('new-tab').click();
+    assert.equal(await t('bg-trace').isVisible(), false, 'no picture, no Trace button');
+    const [chooser] = await Promise.all([page.waitForEvent('filechooser'), menuItem('File', 'Trace bitmap…')]);
+    await chooser.setFiles('fixtures/bg.png');
+    const dlg = t('trace-dialog');
+    await dlg.waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    assert.ok(Number(await dlg.getAttribute('data-count')) >= 2, 'the frame and the grid cells are outlines');
+    assert.equal(await t('trace-mode-centreline').isDisabled(), true);
+    assert.equal(await t('trace-mode-centreline').getAttribute('title'), 'Centreline: coming later');
+    assert.equal(await t('trace-threshold').isDisabled(), false, 'two colours: the threshold works');
+    assert.match(await t('trace-limit').textContent(), /reduced to 1000 px before tracing/);
+    assert.match(await t('trace-stats').textContent(), /\d+ outlines? · \d+ points/);
+    assert.equal(await t('trace-layer').inputValue(), 'Trace');
+    assert.equal(await t('trace-apply').textContent(), 'Trace');
+    // a control changes: the preview is out of date until Update preview
+    await t('trace-colours').fill('3'); await t('trace-colours').press('Tab');
+    assert.equal(await dlg.getAttribute('data-state'), 'stale');
+    assert.equal(await t('trace-apply').isDisabled(), true);
+    assert.equal(await t('trace-threshold').isDisabled(), true, 'more colours: no threshold');
+    await t('trace-colours').fill('2'); await t('trace-colours').press('Tab');
+    await t('trace-update').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    // a bad layer name
+    await t('trace-layer').fill('a<b');
+    assert.equal(await t('trace-apply').isDisabled(), true);
+    assert.match(await t('trace-layer-error').textContent(), /can't hold/);
+    await t('trace-layer').fill('Trace');
+    await page.screenshot({ path: shotDir + '/trace-dialog-light.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; }); await page.waitForTimeout(150);      // the dialog covers the menus
+    await page.screenshot({ path: shotDir + '/trace-dialog-dark.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; }); await page.waitForTimeout(150);
+    await t('trace-cancel').click();
+    assert.equal(await dlg.count(), 0, 'Cancel changes nothing');
+    assert.ok(!(await page.locator('.layer .nm').allTextContents()).includes('Trace'));
+    // the Trace… button and the command open it again; Esc closes it
+    await t('bg-trace').click(); await dlg.waitFor();
+    await page.keyboard.press('Escape');
+    assert.equal(await dlg.count(), 0);
+    await typeCmd('trace'); await dlg.waitFor();
+    await page.waitForFunction(() => document.querySelector('[data-testid=trace-dialog]').dataset.state === 'ready', null, { timeout: 60000 });
+    await t('trace-apply').click();
+    assert.equal(await dlg.count(), 0);
+    assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Trace'), 'the new layer');
+    assert.match(await t('cmd-prompt').textContent(), /Trace: \d+ closed outlines? on the layer Trace/);
+    // true size: the picture is 400 × 200 px at 96 dpi = 105.83 × 52.92 mm; the traced frame is that, within a pixel (0.27 mm) or two
+    await t('scale-target').selectOption('drawing');
+    await page.waitForFunction(() => Math.abs(parseFloat(document.querySelector('[data-testid=dw]').value) - 105.83) < 1, null, { timeout: 5000 });
+    assert.ok(Math.abs(parseFloat(await t('dh').inputValue()) - 52.92) < 1, 'height');
+    await page.waitForFunction(() => !document.querySelector('[data-testid=outlines]').textContent.includes('Reading the drawing'), null, { timeout: 30000 });
+    await page.screenshot({ path: shotDir + '/trace-result-light.png' });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/trace-result-dark.png' });
+    await menuItem('View', 'Theme: light'); await page.waitForTimeout(150);
+    // one undo takes the outlines and the layer away
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => ![...document.querySelectorAll('.layer .nm')].some((n) => n.textContent === 'Trace'));
+    assert.equal(await t('scale-target').isVisible(), false, 'only the picture again');
+    await closeTabs(/bg\.png/);
+  });
+
   await step('TODO 64: Open keeps a fresh tab and its imported background after picking a tool without drawing', async () => {
     const originalName = await page.locator('.tabs .dtab.on .tname').textContent();
     await t('new-tab').click();
@@ -3212,7 +3274,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
+      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await t('rulers-show').isChecked(), false);
@@ -3359,8 +3421,10 @@ try {
     assert.equal(await guideLines(), 0); assert.equal(await t('guides-show').isChecked(), false);
     // View menu: Guides, Lock guides, Clear all guides
     await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 6)), ['✓ Rulers', '  Guides', '✓ Lock guides', 'Clear all guides']);
-await page.locator('.dropdown button').nth(3).click();    assert.equal(await guideLines(), 1); assert.equal(await t('guides-show').isChecked(), true);    await page.locator('[data-menu=View]').click();    await page.locator('.dropdown button').nth(5).click();
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 7)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', 'Clear all guides']);
+    await page.getByRole('menuitem', { name: /Guides/ }).click();
+    assert.equal(await guideLines(), 1); assert.equal(await t('guides-show').isChecked(), true);
+    await menuItem('View', 'Clear all guides');
     assert.equal((await guideVals()).length, 0);
     assert.match(await prompt(), /^1 guide cleared\. Ctrl\+Z brings it back:?$/);
     await page.keyboard.press('Control+z');
@@ -7195,8 +7259,8 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
       await open();
-      assert.equal(await dialog.locator('tr[data-command]').count(), 50);
-      assert.equal(await dialog.locator('.sc-count').textContent(), '50 commands');
+      assert.equal(await dialog.locator('tr[data-command]').count(), 53);
+      assert.equal(await dialog.locator('.sc-count').textContent(), '53 commands');
       await dialog.getByRole('searchbox').fill('contour'); assert.equal(await dialog.locator('.sc-count').textContent(), '1 commands');
       await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
       assert.equal(await dialog.locator('tr[data-command]:visible').count(), 5);
@@ -7356,6 +7420,218 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       }
       assert.ok(worst <= mm + .0001, `inch export deviation ${worst} mm exceeds ${mm} mm (plus DXF rounding)`);
     }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 54 Wireframe: menu, chip and F9; fills, pictures, selection, snaps, persistence, all tabs; PDF and DXF unchanged', async () => {
+    const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await c.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: item, exact: true }).click(); await frame(); };
+    const download = async (act) => { const [dl] = await Promise.all([p.waitForEvent('download'), act()]); return readFileSync(await dl.path()); };
+    const pdf = async () => {
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
+      const preview = await q('pdf-preview').evaluate((el) => el.toDataURL());
+      const bytes = await download(() => q('pdf-go').click());
+      await q('pdf-dialog').waitFor({ state: 'detached' });
+      return { preview, bytes };
+    };
+    const pixelCount = () => q('drawing').evaluate((el) => {
+      const pixels = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let n = 0; for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) n++;
+      return n;
+    });
+    const clickPoint = async (x, y) => {
+      const pt = await p.evaluate(([x, y]) => {
+        const svg = document.querySelector('[data-testid=canvas] > svg'), v = svg.viewBox.baseVal, b = svg.getBoundingClientRect();
+        const h = +document.querySelector('[data-key=sheetH]').value;
+        return { x: b.x + (x - v.x) * b.width / v.width, y: b.y + (h - y - v.y) * b.height / v.height };
+      }, [x, y]);
+      await p.mouse.click(pt.x, pt.y);
+    };
+    try {
+      await p.goto(URL_); await q('wireframe').waitFor();
+      await q('picker').setInputFiles('fixtures/wireframe.dxf');
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'wireframe.dxf');
+      await q('bg-picker').setInputFiles('fixtures/bg.png');
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
+      const saved = await download(() => p.keyboard.press('Control+s'));
+      const drawingName = await p.locator('.tabs .dtab.on .tname').textContent();
+      const normalPdf = await pdf();
+      for (const theme of ['light', 'dark']) {
+        await menu('Theme: ' + theme);
+        const beforePdf = await pdf();
+        const normal = await pixelCount();
+        await p.screenshot({ path: `${shotDir}/wire-${theme}-normal.png` });
+        await p.locator('[data-menu=View]').click();
+        const item = p.getByRole('menuitemcheckbox', { name: /Wireframe/ });
+        assert.equal(await item.getAttribute('aria-checked'), 'false');
+        assert.equal(await item.getAttribute('aria-keyshortcuts'), 'F9');
+        await item.click(); await frame();
+        assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
+        assert.ok(await pixelCount() < normal / 3, 'fills and picture are gone');
+        assert.equal(await p.locator('.tabs .dtab.on .dot').count(), 0, 'a view toggle does not dirty the drawing');
+        await p.screenshot({ path: `${shotDir}/wire-${theme}-wireframe.png` });
+        const afterPdf = await pdf();
+        assert.deepEqual(afterPdf.bytes, normalPdf.bytes, 'PDF bytes keep fills, colours and widths in either theme');
+        assert.ok(afterPdf.preview === beforePdf.preview, 'PDF preview keeps fills, colours and widths');
+        assert.deepEqual(await download(() => p.keyboard.press('Control+s')), saved, 'DXF is unchanged');
+        await q('wireframe').click(); await frame();
+        assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'false');
+        assert.equal(await pixelCount(), normal, 'turning off restores the picture and fills');
+      }
+      await p.keyboard.press('F9'); await frame();
+      await clickPoint(8, 55);
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=grip]').length === 3);
+      await p.keyboard.press('Escape');
+      await p.locator('[data-tool=measure]').click();
+      await clickPoint(5.3, 55.2); await clickPoint(234.7, 55.2);
+      assert.match(await q('cmd-prompt').textContent(), /Distance 230 mm.*ΔX 230.*ΔY 0/);
+      await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+      // tints survive Wireframe: Compare's two colours, and a part off the sheet in the mark colour
+      const tinted = (test) => q('drawing').evaluate((el, src) => {
+        const t = new Function('r', 'g', 'b', 'return ' + src), d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+        let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 60 && t(d[i], d[i + 1], d[i + 2])) n++;
+        return n;
+      }, test);
+      const waitTinted = async (test, what) => {
+        let n = await tinted(test);
+        for (let i = 0; i < 40 && n < 10; i++) { await p.waitForTimeout(50); n = await tinted(test); }
+        assert.ok(n >= 10, what + ': ' + n);
+      };
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+      await clickPoint(50, 0);
+      await p.waitForFunction(() => !document.querySelector('[data-testid=bar-extract]').disabled);
+      await q('bar-extract').click();
+      await q('name-input').fill('Plate A'); await p.keyboard.press('Enter');
+      await q('name-dialog').waitFor({ state: 'detached' });
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare two drawings…', exact: true }).click();
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
+      // hue tests, since the loop above leaves the dark theme on (red #ff7b7b, blue #6db0ff, mark #fb923c) and light has its own shades
+      await waitTinted('r > 150 && r - g > 60 && Math.abs(g - b) < 20', 'Compare keeps drawing 1 in red in Wireframe');
+      await waitTinted('b > 150 && b - r > 60 && b - g > 40', 'Compare keeps drawing 2 in blue in Wireframe');
+      await q('new-layout').click();
+      await q('panel-library').click();
+      await p.locator('[data-testid=lib-list] .card[data-name="Plate A"] [data-testid=lib-add]').click();
+      await q('panel-main').click();
+      await q('px').fill('950'); await q('px').press('Enter');
+      await waitTinted('r > 150 && r - g > 40 && g - b > 40', 'a part off the sheet keeps the mark colour in Wireframe');
+      await q('new-tab').click();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
+      await q('new-layout').click();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true', 'layout tabs share the setting');
+      await p.locator('.tabs .dtab', { hasText: drawingName }).click();
+      await p.reload(); await q('wireframe').waitFor();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true', 'remembered after restart');
+      await p.locator('[data-menu=View]').click();
+      assert.equal(await p.getByRole('menuitemcheckbox', { name: /Wireframe/ }).getAttribute('aria-checked'), 'true');
+      await p.keyboard.press('Escape'); await q('wireframe').click();
+      await p.waitForFunction(async () => {
+        const { idbStore } = await import('./idbstore.js');
+        return (await idbStore('project-d-view', 'settings', 'test').all()).some((r) => r.id === 'wireframe' && r.on === false);
+      });
+      await p.reload(); await q('wireframe').waitFor();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'false', 'off is remembered too');
+    } finally { await c.close(); }
+  });
+
+  await step('TODO 53: Text to outlines (Modify menu, TXO): closed polylines in the text\'s place and size, one undo; the Windows font file when it can be read, the bundled Liberation Sans (named in the message) when not; "Select text" prompt', async () => {
+    const txoDone = async (which) => { try { await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 }); } catch (e) { throw new Error('run ' + which + ': no result; the prompt says: ' + (await prompt()) + ' / console: ' + errors.join(' | ')); } };
+    const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
+    await closeTabs(/./); await t('new-tab').click();
+    await page.locator('[data-tool=text]').click();
+    await t('text-height').fill('12'); await t('text-height').press('Enter'); await t('text-font').selectOption('Standard');
+    await click(30, 100); await t('text-editor').waitFor(); await page.keyboard.type('BOB'); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 1);
+    await page.screenshot({ path: shotDir + '/txo-before-light.png' });
+    await theme('dark'); await page.screenshot({ path: shotDir + '/txo-before-dark.png' }); await theme('light');
+    // the Modify menu lists it, with its alias
+    await page.locator('[data-menu=Modify]').click();
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents().then((a) => a.filter((x) => /outlines/.test(x))).then((a) => a.map((x) => x.replace(/\s+/g, ' ').trim())), ['Text to outlinesTXO']);
+    await page.screenshot({ path: shotDir + '/txo-menu-light.png' });
+    await theme('dark'); await page.locator('[data-menu=Modify]').click(); await page.screenshot({ path: shotDir + '/txo-menu-dark.png' }); await page.keyboard.press('Escape'); await theme('light');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');                  // Esc let go of the text: select it again
+    const t0 = (await savedDoc()).entities[0], ax = fieldOf(t0, 10), ay = fieldOf(t0, 20);       // where the text is, as saved
+    // the app: C:\Windows\Fonts is read through Tauri's fs (here a stub that has only the Segoe UI file)
+    await page.evaluate(async () => {
+      const b = new Uint8Array(await (await fetch('vendor/fonts/LiberationSans-Regular.ttf')).arrayBuffer());
+      window.__fontReads = [];
+      window.__TAURI__ = { fs: { readFile: async (p) => { window.__fontReads.push(p); if (/segoeui\.ttf$/.test(p)) return b; throw new Error('no ' + p); } } };
+    });
+    await menuItem('Modify', 'Text to outlines');
+    await txoDone(1);
+    assert.equal(await prompt(), '1 text → 8 outlines. Ctrl+Z takes them back', 'B has two counters, O one: three letters, eight outlines; no fallback named');
+    assert.deepEqual(await page.evaluate(() => window.__fontReads), ['C:/Windows/Fonts/segoeui.ttf']);
+    await page.evaluate(() => { delete window.__TAURI__; delete window.__fontReads; });
+    await page.screenshot({ path: shotDir + '/txo-after-light.png' });
+    await theme('dark'); await page.screenshot({ path: shotDir + '/txo-after-dark.png' }); await theme('light');
+    let doc = await savedDoc();
+    assert.equal(doc.entities.length, 8); assert.ok(doc.entities.every((e) => e.type === 'LWPOLYLINE' && e.layer === '0' && e.r.v[e.r.c.indexOf(70)] === '1'), 'closed polylines, no TEXT left');
+    const xs = doc.entities.flatMap((e) => e.r.c.flatMap((c, k) => (c === 10 ? [+e.r.v[k]] : []))), ys = doc.entities.flatMap((e) => e.r.c.flatMap((c, k) => (c === 20 ? [+e.r.v[k]] : [])));
+    assert.ok(Math.abs(Math.min(...ys) - ay) < 0.6, 'on the baseline of the text: ' + Math.min(...ys));
+    assert.ok(Math.max(...ys) - Math.min(...ys) > 11 && Math.max(...ys) - Math.min(...ys) < 14, 'the 12 mm text height');
+    assert.ok(Math.min(...xs) > ax - 1 && Math.min(...xs) < ax + 3 && Math.max(...xs) - Math.min(...xs) > 20, 'starts at the text');
+    assert.equal(await t('selbar').isVisible() || await t('textbar').isVisible(), true);
+    assert.deepEqual((await histLabels()).slice(-1), ['Text to outlines × 1']);
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 1, 'one undo brings the text back');
+    doc = await savedDoc();
+    assert.equal(doc.entities[0].type, 'TEXT');
+    // a second text in Arial-like; no Tauri here, so the bundled font stands in and the message says which
+    await page.locator('[data-tool=text]').click(); await t('text-font').selectOption('Arial');
+    await click(30, 60); await t('text-editor').waitFor(); await page.keyboard.type('AB'); await page.keyboard.press('Enter');
+    await page.locator('[data-tool=select]').click();                                       // the text tool's own prompt would cover the message
+    await menuItem('Modify', 'Text to outlines');
+    await txoDone(2);
+    assert.equal(await prompt(), '1 text → 5 outlines. Font file not found, used the fallback font (Arial → Liberation Sans). Ctrl+Z takes them back');
+    await page.keyboard.press('Control+z');
+    // nothing selected: the command asks for text, Enter runs it on what was picked
+    await page.locator('[data-tool=select]').click();
+    await click(150, 20);
+    await typeCmd('txo');
+    assert.equal(await prompt(), 'Text to outlines: select the texts (click or drag a box), then press Enter');
+    await page.keyboard.press('Control+a');
+    await page.keyboard.press('Enter');                                                      // on the drawing, as the prompt says
+    await txoDone(3);
+    assert.match(await prompt(), /^2 texts → 13 outlines/);
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT) and an SHX text become outlines; MTEXT stays and is named; save and reopen give the same outlines', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/txo.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo.dxf'));
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    const msg = await prompt();
+    assert.match(msg, /^2 texts → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
+    assert.match(msg, /1 MTEXT not yet supported, left as it is/);
+    const dl = await downloaded(() => page.keyboard.press('Control+s'));
+    const doc = readDxf(dl.text), polys = doc.entities.filter((e) => e.type === 'LWPOLYLINE'), cut = polys.filter((e) => e.layer === 'CUT');
+    assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 1, 'MTEXT untouched');
+    assert.equal(doc.entities.filter((e) => e.type === 'TEXT').length, 0);
+    assert.ok(cut.length >= 5 && cut.length < polys.length, 'HELLO is on its layer: ' + cut.length + ' of ' + polys.length);
+    assert.ok(polys.every((e) => e.r.v[e.r.c.indexOf(70)] === '1'), 'all closed');
+    const pts = (es, code) => es.flatMap((e) => e.r.c.flatMap((c, k) => (c === code ? [+e.r.v[k]] : [])));
+    const bx = pts(cut, 10), by = pts(cut, 20), w = Math.max(...bx) - Math.min(...bx), hh = Math.max(...by) - Math.min(...by);
+    assert.ok(Math.abs((Math.min(...bx) + Math.max(...bx)) / 2 - 100) < 12 && Math.abs((Math.min(...by) + Math.max(...by)) / 2 - 50) < 12, 'centred on its anchor');
+    assert.ok(w > 10 && hh > 10 && w < 45 && hh < 45, 'turned 30 degrees: both extents are real: ' + w.toFixed(1) + ' x ' + hh.toFixed(1));
+    // reopen the saved file: the same outlines, and a second run finds only the MTEXT
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'txo2.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo2.dxf'));
+    const again = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+    assert.equal(again.entities.length, doc.entities.length);
+    assert.deepEqual(pts(again.entities.filter((e) => e.layer === 'CUT' && e.type === 'LWPOLYLINE'), 10), bx, 'the same points after reopening');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    assert.equal(await prompt(), 'Text to outlines: MTEXT not yet supported, left as it is');
     await closeTabs(/./);
   });
 
