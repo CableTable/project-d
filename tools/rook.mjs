@@ -34,7 +34,10 @@ if (cmd === 'result') {
   }
 } else if (cmd === 'usage') {
   const claude = (bin) => {
-    const out = execSync(`echo Reply OK| ${bin} -p --model claude-haiku-5-5 --output-format stream-json --verbose`, { encoding: 'utf8' });
+    const env = { ...process.env };
+    // Rook must use the main account even when the caller is on account 2.
+    if (bin === 'claude') delete env.CLAUDE_CONFIG_DIR;
+    const out = execSync(`echo Reply OK| ${bin} -p --model claude-haiku-5-5 --output-format stream-json --verbose`, { encoding: 'utf8', env });
     const w = JSON.parse(out.split('\n').find((l) => l.includes('rate_limit_event'))).rate_limit_info.unifiedWindows;
     return { h5: [w.five_hour.utilization * 100, w.five_hour.resetsAt], wk: [w.seven_day.utilization * 100, w.seven_day.resetsAt] };
   };

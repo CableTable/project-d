@@ -63,11 +63,17 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       secondary: { used_percent: 10, window_minutes: 10080, resets_at: Date.parse(resetWeek) / 1000 },
     }));
     writeFileSync(join(repo, 'live.mjs'), `
+      import assert from 'node:assert/strict';
       import child from 'node:child_process';
       import os from 'node:os';
       import { syncBuiltinESMExports } from 'node:module';
       let calls = 0;
-      child.execSync = () => { calls++; return JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: {
+      process.env.CLAUDE_CONFIG_DIR = 'account2-test';
+      child.execSync = (command, { env }) => {
+        assert.equal(env.CLAUDE_CONFIG_DIR, command.includes('claude2.cmd') ? 'account2-test' : undefined);
+        assert.ok(env.PATH === process.env.PATH);
+        assert.equal(process.env.CLAUDE_CONFIG_DIR, 'account2-test');
+        calls++; return JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: {
         five_hour: { utilization: 0.2, resetsAt: ${Date.parse(reset5h) / 1000} },
         seven_day: { utilization: 0.1, resetsAt: ${Date.parse(resetWeek) / 1000} }
       } } }); };
