@@ -7732,6 +7732,65 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 85: Preflight follows its drawing tab, Escape closes it, Close stays above Balloons, light then dark', async () => {
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      await openGrips(cleanupDrawing(), 'preflight-owner.dxf');
+      const owner = page.locator('.tabs .dtab', { hasText: 'preflight-owner.dxf' });
+      await menuItem('Tools', 'Preflight…');
+      const count = await t('preflight-text-count').textContent();
+      await t('new-tab').click();
+      assert.equal(await t('preflight').isVisible(), false, 'hidden on another drawing');
+      const otherDoc = newDoc(4); addEntities(otherDoc, dxfLine(0, 0, 10, 0));
+      const other = 'preflight-other.dxf';
+      await t('picker').setInputFiles({ name: other, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(otherDoc), 'latin1') });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, other);
+      await menuItem('Tools', 'Preflight…');
+      assert.equal(await t('preflight-text-count').textContent(), '0');
+      await owner.click();
+      assert.equal(await t('preflight').isVisible(), true, 'back on its owner');
+      assert.equal(await t('preflight-text-count').textContent(), count, 'checks belong to this drawing');
+      await menuItem('File', 'New layout');
+      assert.equal(await t('preflight').isVisible(), false, 'hidden on a layout');
+      await owner.click();
+      await page.locator('[data-tool=select]').focus(); await page.keyboard.press('Escape');
+      assert.equal(await t('preflight').isVisible(), false, 'Escape from outside the panel');
+      await page.locator('.tabs .dtab', { hasText: other }).click();
+      assert.equal(await t('preflight').isVisible(), true, 'the other drawing kept its panel');
+      await owner.click();
+      assert.equal(await t('preflight').isVisible(), false, 'Escape persists after a round trip');
+      await menuItem('Tools', 'Preflight…');
+      await t('preflight-recheck').focus(); await page.keyboard.press('Escape');
+      assert.equal(await t('preflight').isVisible(), false, 'Escape inside the panel');
+      await page.setViewportSize({ width: 1024, height: 768 });
+      await page.locator('[data-tool=balloon]').click();
+      if (await t('bal-collapse').getAttribute('aria-label') === 'Expand') await t('bal-collapse').click();
+      const dockHeight = (await t('bal-dock').boundingBox()).height;
+      const handle = await t('bal-drag').boundingBox();
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2); await page.mouse.down();
+      await page.mouse.move(handle.x + handle.width / 2, 100); await page.mouse.up();
+      await menuItem('Tools', 'Preflight…');
+      await frames();
+      assert.equal(await t('bal-dock').isVisible(), true);
+      assert.equal(await t('preflight-close').evaluate((el) => {
+        const r = el.getBoundingClientRect(), top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return !!top && el.contains(top);
+      }), true, 'Close is reachable without scrolling the panel');
+      await page.screenshot({ path: `${shotDir}/s15-85-${th}.png` });
+      await t('preflight-close').click();
+      assert.equal(await t('preflight').isVisible(), false);
+      await page.locator('.tabs .dtab', { hasText: other }).click(); await owner.click();
+      assert.equal(await t('preflight').isVisible(), false, 'Close persists after a round trip');
+      await page.locator('[data-tool=balloon]').click();
+      const resizedHandle = await t('bal-drag').boundingBox(), resizedHeight = (await t('bal-dock').boundingBox()).height;
+      await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2); await page.mouse.down();
+      await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2 + resizedHeight - dockHeight); await page.mouse.up();
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.locator('[data-tool=select]').click();
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 79: after Text to outlines the new outlines have too many vertices for grips: none are drawn, light and dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
     await page.locator('[data-tool=text]').click();

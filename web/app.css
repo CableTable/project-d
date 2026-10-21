@@ -194,17 +194,18 @@ select.fld { font-family: var(--sans); }
 .gaprow2 > .lbl { white-space: nowrap; }
 .gaprow2 .btn { padding: 0 8px; }
 .gaprow2 .tog { margin-left: auto; }
-.preflightpanel { position: absolute; right: 16px; top: 48px; width: min(448px, calc(100% - 32px)); max-height: calc(100% - 64px); overflow: auto; z-index: 6; font-size: 12px; box-shadow: 0 8px 24px var(--shadow); }
+.preflightpanel { position: absolute; right: 16px; top: 48px; width: min(448px, calc(100% - 32px)); max-height: calc(100% - 64px); display: flex; flex-direction: column; overflow: hidden; z-index: 6; font-size: 12px; box-shadow: 0 8px 24px var(--shadow); }
 .preflightpanel[hidden] { display: none; }
 .pfhead { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.pfbody { padding: 12px; }
+.pfbody { padding: 12px; overflow: auto; min-height: 0; }
+.pfhead, .pfbuttons { flex-shrink: 0; }
 .pfbody p { margin: 6px 0 10px; line-height: 1.5; }
 .pfrow { display: grid; grid-template-columns: minmax(0, 1fr) 104px 53px 68px; align-items: center; gap: 6px; min-height: 48px; border-top: 1px solid var(--line); }
 .pfcols { min-height: 30px; border: 0; color: var(--muted); font-size: 11px; }
 .pfrow .btn { padding: 0 7px; font-size: 12px; }
 .pfcount { color: var(--mark); font-family: var(--mono); font-weight: 600; text-align: center; }
 .pfmanual { text-align: center; color: var(--muted); font-size: 11px; }
-.pfbuttons { display: flex; justify-content: flex-end; gap: 8px; }
+.pfbuttons { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .selrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 8px; border-radius: var(--r); background: var(--sel); }
 .selrow .lbl { flex: 1 1 auto; white-space: nowrap; color: var(--text); font-weight: 600; }
 .selrow .btn { flex: 0 0 auto; }

@@ -5499,6 +5499,7 @@ function editKey(e) {
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
+    if (ui.preflight && !ui.preflight.hidden) { closePreflight(); e.preventDefault(); return; }
     if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
     const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
     if (shut === 'drawer' || (shut === 'bar' && !wasOn)) return;
@@ -6261,11 +6262,15 @@ function showPreflight() {
   ui.cmdUI.close();
   if (!ui.preflight) {
     ui.preflight = h('section', { class: 'pop preflightpanel', role: 'dialog', 'aria-modal': 'false', 'aria-label': 'Preflight', 'data-testid': 'preflight' });
-    ui.preflight.addEventListener('keydown', (e) => { if (e.key === 'Escape') { ui.preflight.hidden = true; e.stopPropagation(); } });
     ui.canvas.append(ui.preflight);
   }
   ui.preflight.hidden = false;
+  editable().preflightOpen = true;
   recheckPreflight();
+}
+function closePreflight() {
+  ui.preflightDoc.preflightOpen = false;
+  ui.preflight.hidden = true;
 }
 function recheckPreflight(check) {
   const d = editable();
@@ -6304,8 +6309,8 @@ function recheckPreflight(check) {
         h('span', { class: 'pfcount', 'data-testid': `preflight-${r.id}-count` }, r.count ?? 'n/a (no sheet)'),
         button('Select', `preflight-${r.id}-select`, () => select(r.id), !r.count),
         r.fix ? button(r.fix, `preflight-${r.id}-fix`, () => fix(r.id), !r.count) : h('span', { class: 'pfmanual' }, 'Manual'))),
-      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`),
-      h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', () => recheckPreflight()), button('Close', 'preflight-close', () => { ui.preflight.hidden = true; })))
+      h('p', { class: 'lbl' }, `Tiny gaps use Drawing scale’s ${state.gapMm} mm tolerance. Hairline: 0.05 mm. Hidden / locked objects are checked; fixes skip locks. Warnings only; output is never blocked.`)),
+    h('div', { class: 'pfbuttons' }, button('Recheck', 'preflight-recheck', () => recheckPreflight()), button('Close', 'preflight-close', closePreflight))
   );
   return fresh[0];
 }
@@ -6315,10 +6320,12 @@ function renderEdit() {
   renderStatus();                                          // the status bar's layer follows the selection
   renderBalloons();
   const d = curDoc(), on = !!editable(), L = state.setlen, lib = state.panel === 'library';
-  if (ui.preflight && !ui.preflight.hidden) {
-    if (!on) ui.preflight.hidden = true;
-    else if (ui.preflightDoc !== d) recheckPreflight();
-    else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
+  if (ui.preflight) {
+    ui.preflight.hidden = !on || !d.preflightOpen;
+    if (!ui.preflight.hidden) {
+      if (ui.preflightDoc !== d) recheckPreflight();
+      else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
+    }
   }
   ui.drawSec.hidden = !on || lib; ui.outSec.hidden = !on || lib;
   if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
