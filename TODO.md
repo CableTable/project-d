@@ -173,6 +173,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     78a. Preview the portion of a hovered LINE that Trim would remove in faint red by sharing the trim calculation, with unit and browser checks for selected edges, all edges, no cut and locked layers.
     78b. (after 78a) Preview removed portions of arcs, circles and polylines through that same calculation, with geometry and browser checks for bulges, multiple intersections and click-to-result agreement.
     78c. (after 78b) Clear or recompute Trim's preview on pointer leave, Esc, boundary changes, pan / zoom and undo, with focused browser cases that prevent stale red geometry.
+79. **Grips on big selections** (S): after Text to outlines, every vertex of the new outlines shows a grip, so the letters look blocky (Pip-look, session 12). Hide or thin grips when a selection has many vertices.
+80. **Menus above tool hints** (S): the Text tool's hint box overlaps the bottom edge of an open menu by a few pixels (Pip-look, session 12). Give menus a higher z-index or hide the hint while a menu is open.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
