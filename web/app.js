@@ -3607,26 +3607,32 @@ const isTextEnt = (e) => !!e && (e.type === 'TEXT' || e.type === 'MTEXT');
 async function textToOutlines() {
   const d = editable();
   if (!d) { note('Text to outlines works on a drawing tab: open a drawing first'); return; }
-  const picked = [...d.sel].filter((i) => isTextEnt(d.raw.entities[i])), sel = new Set(picked.filter((i) => d.raw.entities[i].type === 'TEXT'));
-  const mtext = picked.length - sel.size, skipped = mtext ? `. ${mtext} MTEXT not yet supported, left as it is` : '';       // MTEXT is TODO 53d
-  if (!sel.size && mtext) { note('Text to outlines: MTEXT not yet supported, left as it is'); return; }
+  const sel = new Set([...d.sel].filter((i) => isTextEnt(d.raw.entities[i])));
   if (!sel.size) { setTool('select'); state.txoWait = true; note('Text to outlines: select the texts (click or drag a box), then press Enter'); return; }
-  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)), fonts = new Map(), shx = new Set();
+  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)).map((it) => TO.outlineItem(it, raw[it.e])), fonts = new Map(), shx = new Set();
   const styleFile = (name) => { const k = d.raw.styles && Object.keys(d.raw.styles).find((n) => n.toLowerCase() === name.toLowerCase()), s = k && d.raw.styles[k]; return (s && s.v[s.c.indexOf(3)]) || ''; };       // the STYLE's font file (group 3); style names are case-blind, a TEXT with no style is STANDARD
   const fontOf = (it) => { const st = it.st || 'Standard', f = styleFile(st).trim(); if (/\.shx$/i.test(f)) { shx.add(f); return 'Arial'; } return TX.fontOfStyle(it.st); };      // SHX has no outlines: Arial stands in
   const keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
   try {
-    for (const it of items) if (!fonts.has(keyOf(it))) fonts.set(keyOf(it), await loadFont(fontOf(it), it.bold));
+    for (const item of items) for (const run of item.runs || [item]) {
+      const it = { ...item, ...run };
+      if (!fonts.has(keyOf(it))) fonts.set(keyOf(it), await loadFont(fontOf(it), it.bold));
+    }
   } catch { note('Text to outlines: no font file could be read'); return; }
   if (!state.docs.includes(d) || d.raw.entities !== raw) { note('Text to outlines: the drawing changed meanwhile, run it again'); return; }
   const r = TO.outlineEntities(items, raw, (it) => fonts.get(keyOf(it)).font, 0.01 / d.factor);      // flattened to 0.01 mm, as Export for cutter
-  if (!r.ents.length) { note('Text to outlines: the selected text has no letters to outline'); return; }
+  const missing = r.missing.length ? '. Missing glyphs skipped (advance kept): ' + TO.missingGlyphsLabel(r.missing) : '';
+  if ([...fonts.values()].some((f) => f.regularForBold)) r.notes.push('Bold face unavailable, used regular');
+  const notes = r.notes.length ? '. ' + r.notes.join('. ') : '';
+  if (!r.ents.length) { note('Text to outlines: the selected text has no letters to outline' + missing + notes); return; }
   const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
   view.fitted = false;
   commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`);
   setSel(d, new Set(r.ents.map((_, i) => at + i)));
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
-  note(`${r.texts} text${r.texts === 1 ? '' : 's'} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + skipped + '. Ctrl+Z takes them back');
+  const mtexts = [...r.done].filter((i) => raw[i].type === 'MTEXT').length, texts = r.texts - mtexts;
+  const count = [texts ? `${texts} text${texts === 1 ? '' : 's'}` : '', mtexts ? `${mtexts} MTEXT` : ''].filter(Boolean).join(' + ');
+  note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
@@ -5312,12 +5318,13 @@ function gripList(d) {
   const list = [];
   for (const e of d.sel) {
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
-    if (lp) { for (const g of GR.gripsOf(lp)) { if (list.length < GR.MAX_GRIPS) list.push({ e, ...g }); } continue; }       // a leader: a grip at each point
+    if (lp) { for (const g of GR.gripsOf(lp)) { if (list.length <= GR.MAX_GRIPS) list.push({ e, ...g }); } continue; }       // a leader: a grip at each point
     if (!ent || ent.layer === Ed.DIM_LAYER) continue;
-    for (const g of GR.gripsOf(ent)) { if (list.length < GR.MAX_GRIPS) list.push({ e, ...g }); }
+    for (const g of GR.gripsOf(ent)) { if (list.length <= GR.MAX_GRIPS) list.push({ e, ...g }); }
   }
-  d.gripCache = { sel: d.sel, ents, list };
-  return list;
+  const shown = GR.capGrips(list);
+  d.gripCache = { sel: d.sel, ents, list: shown };
+  return shown;
 }
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
 /** The grip under a pointer position (8 px), or null. */

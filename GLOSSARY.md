@@ -48,7 +48,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Gripper**: A reserved band in mm on any sheet edge that parts must keep clear of, with zero meaning none. Where: `DECISIONS.md`, Gripper. Avoid: Grip; an extra margin added to a gripper.
 
-**Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius. Where: `DECISIONS.md`, Grips. Avoid: Grippers.
+**Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius; none show when the selection has more than 200 of them (`MAX_GRIPS`). Where: `DECISIONS.md`, Grips. Avoid: Grippers.
 
 **Group**: A set of placed parts that selects, moves, turns and copies as one while keeping its members as parts. Where: `DECISIONS.md`, Group and Ungroup. Avoid: DXF block.
 
@@ -100,6 +100,24 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 ## Drawing / CAD
 
+**Advance**: The font's distance to the next glyph, including spacing adjustments. TXO keeps this distance when skipping a missing glyph. Where: `web/textoutline.js`.
+
+**Attachment point**: The top, middle or bottom and left, centre or right point of an MTEXT box placed at its insertion point. TXO keeps this anchor after wrapping. Where: `web/textoutline.js`.
+
+**Composite glyph**: A font glyph made from other glyphs with their own offsets or transforms, such as Å or é. TXO expands its components into ordinary closed outlines. Where: `DECISIONS.md`, Text to outlines: composite glyphs.
+
+**Counter**: A hole inside a glyph, such as the centre of O or the ring above Å; retained as a separate closed outline with opposite winding. Where: `web/textoutline.js`.
+
+**DXF text escape**: A sequence in TEXT such as %%d (°), %%p (±), %%c (⌀) or `\U+00E9` (é), decoded before rendering or TXO. Where: `web/drawing.js`, plainText.
+
+**Glyph**: The shape and metrics a font supplies for a character or shaped character sequence. Where: `web/textoutline.js`.
+
+**Missing glyph (.notdef)**: The font's index-zero replacement, often drawn as a box. TXO skips its path, keeps its advance and names the unsupported character and Unicode code point in the result. Where: `DECISIONS.md`, Text to outlines: missing glyphs.
+
+**Text to outlines (TXO)**: Replaces selected TEXT and MTEXT with closed polylines on their own layers and colours, keeping counters, placement and MTEXT wrapping, in one undo step. Names skipped glyphs and simplified formatting. Where: Modify menu; `web/textoutline.js`.
+
+**Text run**: Consecutive MTEXT characters sharing height, width factor, oblique angle and bold face. Brace groups restore the previous formatting; TXO measures runs together when wrapping words. Where: `web/textoutline.js`.
+
 **1:1**: A drawing or output size in which one mm of geometry represents one physical mm. Where: `DECISIONS.md`, 1:1 scale and Output. Avoid: Fit to window.
 
 **3DFACE**: A DXF face whose edges can be shown by the 2D reader but which is left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
@@ -142,6 +160,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Layer**: A named collection of drawing entities with shared appearance and visibility settings, with drawing locks applied per layer. Where: `DECISIONS.md`, Layers and Objects tab. Avoid: One physical film colour in every file.
 
+**Line spacing factor**: Multiplies MTEXT's default baseline pitch of 5/3 of its text height. TXO retains the saved factor. Where: `web/drawing.js`, `web/textoutline.js`.
+
 **LEADER**: A DXF arrowed annotation read from other drawings, while leaders made here use editable blocks on Dimensions. Where: `DECISIONS.md`, Leaders. Avoid: An inspection balloon.
 
 **LINE**: A DXF straight segment between two endpoints. Where: `web/drawing.js`, `web/dxf-write.js`.
@@ -154,7 +174,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Model space / Paper space**: The DXF drawing and sheet spaces, with Project D showing model space unless only paper space is available. Where: `DECISIONS.md`, Drawing render. Avoid: Project D's drawing-tab and layout-tab distinction.
 
-**MTEXT**: A DXF multiline text entity. Where: `web/drawing.js`, `web/dxf-write.js`.
+**MTEXT**: A DXF multiline text entity with paragraphs, a wrapping box, attachment point and inline formatting. TXO turns its laid-out text runs into closed polylines in one undo step. Where: `web/drawing.js`, `web/dxf-write.js`, `web/textoutline.js`.
 
 **MULTILEADER / MLEADER**: Imported DXF annotation names handled by the reader's multileader renderer. Where: `web/drawing.js`.
 

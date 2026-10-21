@@ -97,11 +97,11 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
     the sheet, lines wider than a hairline, text not outlined; each row selects the offenders.
 51. ✅ (built, session 11, R14 option A) **One-click unit fix, ×25.4 / ÷25.4** (S), next to Set length: the commonest "my file is the wrong size" cause.
 52. ✅ (built, session 11, R14 option B) **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
-53. **Text to outlines** (L): removes font problems for film and cut files (needs font outlines without a build step).
-    - 53a ✅ (built, session 12) TXO / Modify menu: single-line TEXT → closed polylines (holes kept), one undo. Browser run not yet green here (see HISTORY / PR).
-    - 53b composite / accented glyphs: not built.
-    - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message; MTEXT left alone with a note.
-    - 53d MTEXT: not built (Bold used by 53d).
+53. ✅ (built, session 13) **Text to outlines** (L): TEXT and MTEXT → closed polylines for film and cut files, using font outlines without a build step.
+    - 53a ✅ (built, session 12) TXO / Modify menu: single-line TEXT → closed polylines (holes kept), one undo.
+    - 53b ✅ (built, session 13) composite / accented glyphs keep their components, holes and placement; missing glyphs skipped with advance kept and named in the result; DXF TEXT escapes covered.
+    - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message.
+    - 53d ✅ (built, session 13) MTEXT paragraphs, word wrap, attachment, rotation, height and line spacing; scoped height / width / oblique and bold runs; named formatting simplifications; one undo.
 54. ✅ (built, session 12) **Wireframe (outline-only) view** (S): View → Wireframe, status-bar chip and F9; thin outlines without fills or background pictures, remembered across all tabs. PDF / Print and exports keep their fills.
 55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
     55a. Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings.
@@ -173,9 +173,16 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     78a. Preview the portion of a hovered LINE that Trim would remove in faint red by sharing the trim calculation, with unit and browser checks for selected edges, all edges, no cut and locked layers.
     78b. (after 78a) Preview removed portions of arcs, circles and polylines through that same calculation, with geometry and browser checks for bulges, multiple intersections and click-to-result agreement.
     78c. (after 78b) Clear or recompute Trim's preview on pointer leave, Esc, boundary changes, pan / zoom and undo, with focused browser cases that prevent stale red geometry.
-79. **Grips on big selections** (S): after Text to outlines, every vertex of the new outlines shows a grip, so the letters look blocky (Pip-look, session 12). Hide or thin grips when a selection has many vertices.
-80. **Menus above tool hints** (S): the Text tool's hint box overlaps the bottom edge of an open menu by a few pixels (Pip-look, session 12). Give menus a higher z-index or hide the hint while a menu is open.
-81. **Test hygiene from the session 12 retro** (S): the Shortcuts browser step reads the command count from the COMMANDS table instead of a fixed number; browser steps that check colours set their theme first.
+79. ✅ (built, session 13) **Grips on big selections** (S): after Text to outlines, every vertex of the new outlines shows a grip, so the letters look blocky (Pip-look, session 12). Hide or thin grips when a selection has many vertices.
+80. ✅ (built, session 13: could not be reproduced, no CSS change, a browser step pins the stacking) **Menus above tool hints** (S): the Text tool's hint box overlaps the bottom edge of an open menu by a few pixels (Pip-look, session 12). Give menus a higher z-index or hide the hint while a menu is open.
+81. ✅ (built, session 13) **Test hygiene from the session 12 retro** (S): the Shortcuts browser step reads the command count from the COMMANDS table instead of a fixed number; browser steps that check colours set their theme first.
+82. **Balloon file "forbidden path" in the exe** (M, bug, PC test v0.1.46): every open says "sample.pdballoons.json: could not be read (forbidden path …)" though none exists; saving a drawing with balloons raises a second Save As for the .pdballoons.json and the tab stays dirty until it is answered. A missing balloon file is silent; it is written beside the drawing with no second dialog (Tauri fs scope?).
+83. **Text to outlines uses the fallback font in the exe** (M, bug, PC test v0.1.46): "Font file not found, used the fallback" and blocky letters for Standard text. The released exe must find the font (bundled or Windows\Fonts).
+84. **Ellipse menu hint says E, but E is Extract part** (S, PC test): the menu hint must match the alias (EL).
+85. **Preflight panel: Esc and tabs** (S, PC test): Esc closes it; it belongs to its tab (not floating over every tab); its Close button stays reachable when the Balloons dock is open.
+86. **Fit to sheet ignores parts already placed** (S, PC test): Fit placed 72 copies on top of a placed part with no warning; skip or warn about overlaps.
+87. **Auto-nest counts an unapplied grid preview as taken** (S, PC test): "0 of 10 placed" while a Fit preview shows; ignore the preview or say it blocks.
+88. **1024×768: Balloons dock and toasts eat the canvas** (S, PC test): smaller default dock height, toasts fade sooner. Also uia.ps1 should match SplitButton (local helper). Seen once, not reproduced: a dirty tab closed by × without a prompt.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

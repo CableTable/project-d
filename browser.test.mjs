@@ -10,8 +10,9 @@ import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
+import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
 const PORT = Number(process.env.TEST_PORT) || Number(process.argv[2]) || 5181;   // TEST_PORT or `npm run test:browser -- 5291`
@@ -2667,6 +2668,7 @@ try {
   });
 
   await step('placing: Duplicate along X or Y (gap edge to edge), Copy once / Ctrl+D, Delete, off the sheet is tinted and said once', async () => {
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });      // markPixels looks for the light mark colour
     await freshLayoutWithPlate();
     await t('px').fill('50'); await t('px').press('Enter'); await t('py').fill('100'); await t('py').press('Enter');
     assert.equal(await t('dup-x').getAttribute('aria-pressed'), 'true');
@@ -3720,6 +3722,7 @@ try {
   });
 
   await step('TODO 65: Contour Red / Dashed previews, Apply, one selected edge in Properties, DXF reopen and remembered style', async () => {
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });      // the pixel checks below look for pure red / green
     await closeTabs(/./);
     const doc = newDoc();
     addEntities(doc, dxfPoly([[100, 100], [200, 100], [200, 200], [100, 200]], { closed: true }));
@@ -4848,10 +4851,10 @@ try {
     assert.equal(await gripCount(), 0, '205 selected: no grips');
     assert.equal(await t('grip-hint').isVisible(), false);
     await page.keyboard.press('Escape');
-    const c = await at(0, 0), d = await at(100, 130);                     // a box round the left half
+    const c = await at(0, 0), d = await at(50, 130);                      // a box round the left quarter: 3 grips a line, at most MAX_GRIPS of them
     await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(d.x, d.y, { steps: 4 }); await page.mouse.up();
     const n = Number((await t('sel-count').textContent()).replace(/\D+/g, ''));
-    assert.ok(n > 0 && n <= 200, 'a part of them: ' + n);
+    assert.ok(n > 0 && 3 * n <= GR.MAX_GRIPS, 'a part of them: ' + n);
     await gripWhen(3 * n);
   });
 
@@ -7259,11 +7262,11 @@ try {
       await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
       await open();
-      assert.equal(await dialog.locator('tr[data-command]').count(), 53);
-      assert.equal(await dialog.locator('.sc-count').textContent(), '53 commands');
+      assert.equal(await dialog.locator('tr[data-command]').count(), COMMANDS.length);
+      assert.equal(await dialog.locator('.sc-count').textContent(), COMMANDS.length + ' commands');
       await dialog.getByRole('searchbox').fill('contour'); assert.equal(await dialog.locator('.sc-count').textContent(), '1 commands');
       await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
-      assert.equal(await dialog.locator('tr[data-command]:visible').count(), 5);
+      assert.equal(await dialog.locator('tr[data-command]:visible').count(), COMMANDS.filter((c) => c.cat === 'File').length);
       await dialog.getByLabel('Category', { exact: true }).selectOption('');
       await alias('Contour').fill('co, ww');
       await key('Contour').click(); await p.keyboard.press('Control+Alt+w');
@@ -7452,6 +7455,7 @@ try {
     };
     try {
       await p.goto(URL_); await q('wireframe').waitFor();
+      await menu('Theme: light');
       await q('picker').setInputFiles('fixtures/wireframe.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'wireframe.dxf');
       await q('bg-picker').setInputFiles('fixtures/bg.png');
@@ -7510,7 +7514,8 @@ try {
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare two drawings…', exact: true }).click();
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
-      // hue tests, since the loop above leaves the dark theme on (red #ff7b7b, blue #6db0ff, mark #fb923c) and light has its own shades
+      // hue tests in the dark theme (red #ff7b7b, blue #6db0ff, mark #fb923c); light has its own shades
+      await menu('Theme: dark');
       await waitTinted('r > 150 && r - g > 60 && Math.abs(g - b) < 20', 'Compare keeps drawing 1 in red in Wireframe');
       await waitTinted('b > 150 && b - r > 60 && b - g > 40', 'Compare keeps drawing 2 in blue in Wireframe');
       await q('new-layout').click();
@@ -7582,7 +7587,8 @@ try {
     assert.equal(doc.entities[0].type, 'TEXT');
     // a second text in Arial-like; no Tauri here, so the bundled font stands in and the message says which
     await page.locator('[data-tool=text]').click(); await t('text-font').selectOption('Arial');
-    await click(30, 60); await t('text-editor').waitFor(); await page.keyboard.type('AB'); await page.keyboard.press('Enter');
+    await page.mouse.click(500, 700); await t('text-editor').waitFor(); await page.keyboard.type('AB'); await page.keyboard.press('Enter');      // an empty spot: the text tool edits a text it is clicked on, and BOB is right there
+    assert.equal(await entCount(), 2, 'AB is a new text, not typed into BOB');
     await page.locator('[data-tool=select]').click();                                       // the text tool's own prompt would cover the message
     await menuItem('Modify', 'Text to outlines');
     await txoDone(2);
@@ -7602,7 +7608,50 @@ try {
     await closeTabs(/./);
   });
 
-  await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT) and an SHX text become outlines; MTEXT stays and is named; save and reopen give the same outlines', async () => {
+  await step('TODO 79: after Text to outlines the new outlines have too many vertices for grips: none are drawn, light and dark', async () => {
+    await closeTabs(/./); await t('new-tab').click();
+    await page.locator('[data-tool=text]').click();
+    await t('text-height').fill('12'); await t('text-height').press('Enter'); await t('text-font').selectOption('Standard');
+    await click(30, 100); await t('text-editor').waitFor(); await page.keyboard.type('BOBOBOBO'); await page.keyboard.press('Enter');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    const vertices = (await savedDoc()).entities.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
+    assert.ok(vertices > GR.MAX_GRIPS, 'the outlines have more vertices than the limit: ' + vertices);
+    await frames();
+    assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'no vertex grips on a selection of ' + vertices + ' vertices');
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s13-grips-${th}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await closeTabs(/./);
+  });
+
+  await step('TODO 80: with the Text tool on, every open menu is above the tool hint, down to its bottom edge, light and dark', async () => {
+    await closeTabs(/./); await t('new-tab').click();
+    const menus = await page.locator('[data-menu]:not(.off)').evaluateAll((els) => els.map((e) => e.getAttribute('data-menu')));
+    assert.ok(menus.includes('Modify'));
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      for (const m of menus) {
+        await page.locator('[data-tool=text]').click();
+        assert.equal(await t('text-hint').isVisible(), true);
+        await page.locator(`[data-menu=${m}]`).click();
+        assert.equal(await page.evaluate(() => {
+          const dd = [...document.querySelectorAll('.dropdown')].find((d) => !d.hidden), r = dd.getBoundingClientRect();
+          const el = document.elementFromPoint(r.left + 10, r.bottom - 2);                // the menu's bottom edge, where the hint's top used to show through
+          return !!el && dd.contains(el);
+        }), true, m + ' menu: its bottom edge is on top of the hint');
+        if (m === 'Modify') await page.screenshot({ path: `${shotDir}/s13-menuhint-${th}.png`, clip: { x: 0, y: 0, width: 700, height: 260 } });
+        await page.keyboard.press('Escape');
+      }
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await closeTabs(/./);
+  });
+
+  await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT), an SHX text and MTEXT become outlines; save and reopen give the same outlines', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/txo.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo.dxf'));
@@ -7610,11 +7659,10 @@ try {
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     const msg = await prompt();
-    assert.match(msg, /^2 texts → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
-    assert.match(msg, /1 MTEXT not yet supported, left as it is/);
+    assert.match(msg, /^2 texts \+ 1 MTEXT → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const doc = readDxf(dl.text), polys = doc.entities.filter((e) => e.type === 'LWPOLYLINE'), cut = polys.filter((e) => e.layer === 'CUT');
-    assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 1, 'MTEXT untouched');
+    assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 0, 'MTEXT replaced too');
     assert.equal(doc.entities.filter((e) => e.type === 'TEXT').length, 0);
     assert.ok(cut.length >= 5 && cut.length < polys.length, 'HELLO is on its layer: ' + cut.length + ' of ' + polys.length);
     assert.ok(polys.every((e) => e.r.v[e.r.c.indexOf(70)] === '1'), 'all closed');
@@ -7622,7 +7670,7 @@ try {
     const bx = pts(cut, 10), by = pts(cut, 20), w = Math.max(...bx) - Math.min(...bx), hh = Math.max(...by) - Math.min(...by);
     assert.ok(Math.abs((Math.min(...bx) + Math.max(...bx)) / 2 - 100) < 12 && Math.abs((Math.min(...by) + Math.max(...by)) / 2 - 50) < 12, 'centred on its anchor');
     assert.ok(w > 10 && hh > 10 && w < 45 && hh < 45, 'turned 30 degrees: both extents are real: ' + w.toFixed(1) + ' x ' + hh.toFixed(1));
-    // reopen the saved file: the same outlines, and a second run finds only the MTEXT
+    // reopen the saved file: the same outlines, and a second run asks for text
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'txo2.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo2.dxf'));
@@ -7631,7 +7679,78 @@ try {
     assert.deepEqual(pts(again.entities.filter((e) => e.layer === 'CUT' && e.type === 'LWPOLYLINE'), 10), bx, 'the same points after reopening');
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
     await menuItem('Modify', 'Text to outlines');
-    assert.equal(await prompt(), 'Text to outlines: MTEXT not yet supported, left as it is');
+    assert.equal(await prompt(), 'Text to outlines: select the texts (click or drag a box), then press Enter');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 53b: TXO accented/composite TEXT keeps closed outlines and holes; missing glyphs are named without .notdef boxes', async () => {
+    await closeTabs(/./);
+    const source = newDoc(4);
+    addLayer(source, 'Accents', { aci: 7 }); addLayer(source, 'Missing', { aci: 3 });
+    addEntities(source, dxfText(20, 60, 12, 'Åé°ñ Ø25', { layer: 'Accents' }), dxfText(20, 30, 12, 'A🦄V', { layer: 'Missing' }));
+    await t('picker').setInputFiles({ name: 's13-53b-accents.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(source, { escapeUnicode: true }), 'ascii') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('s13-53b-accents.dxf'));
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await typeCmd('txo');
+    await page.waitForFunction(() => /Missing glyphs skipped/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    assert.match(await prompt(), /^2 texts → 19 outlines\./);
+    assert.match(await prompt(), /Missing glyphs skipped \(advance kept\): 🦄 \(U\+1F984\)/);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s13-53b-outlines-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    const doc = await savedDoc(), accents = doc.entities.filter((e) => e.layer === 'Accents'), missing = doc.entities.filter((e) => e.layer === 'Missing');
+    assert.equal(accents.length, 16); assert.equal(missing.length, 3, 'A and V only; no missing-glyph box');
+    assert.ok(doc.entities.every((e) => e.type === 'LWPOLYLINE' && fieldOf(e, 70) === 1), 'every outline is closed, TEXT replaced');
+    const polys = accents.map((e) => e.r.c.flatMap((c, i) => c === 10 ? [[+e.r.v[i], +e.r.v[i + 1]]] : []));
+    const inside = (p, poly) => { let yes = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) if ((poly[i][1] > p[1]) !== (poly[j][1] > p[1]) && p[0] < (poly[j][0] - poly[i][0]) * (p[1] - poly[i][1]) / (poly[j][1] - poly[i][1]) + poly[i][0]) yes = !yes; return yes; };
+    assert.ok(polys.filter((p, i) => polys.some((q, j) => j !== i && inside(p[0], q))).length >= 4, 'A, ring, e, degree and slashed O keep counters');
+    assert.ok(polys.flat().every(([x, y]) => Number.isFinite(x) && Number.isFinite(y) && x >= 19 && y > 59 && y < 77), 'same baseline and accent height');
+    await page.keyboard.press('Control+z');
+    assert.equal((await savedDoc()).entities.filter((e) => e.type === 'TEXT').length, 2, 'one undo restores both texts');
+    await closeTabs(/./);
+    const absent = newDoc(4); addEntities(absent, dxfText(20, 30, 12, '🦄'));
+    await t('picker').setInputFiles({ name: 's13-53b-missing.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(absent, { escapeUnicode: true }), 'ascii') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('s13-53b-missing.dxf'));
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await typeCmd('txo');
+    await page.waitForFunction(() => /no letters to outline.*U\+1F984/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    assert.equal((await savedDoc()).entities[0].type, 'TEXT', 'entirely missing text stays for correction');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 53d: MTEXT with two paragraphs, a bold run and word wrap becomes closed outlines on three lines; one undo restores the original', async () => {
+    await closeTabs(/./);
+    const source = newDoc(4), content = String.raw`HH {\fArial|b1|i0;HH} HH\PHH HH`;
+    addLayer(source, 'Notes', { aci: 3 });
+    addEntities(source, entity('MTEXT', [[10, 20], [20, 100], [40, 10], [41, 52], [44, 1.2], [71, 1], [1, content]], { layer: 'Notes', aci: 3 }));
+    await t('picker').setInputFiles({ name: 's13-53d-mtext.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(source), 'ascii') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('s13-53d-mtext.dxf'));
+    const original = (await savedDoc()).entities[0];
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await typeCmd('txo');
+    await page.waitForFunction(() => /^1 MTEXT →/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    assert.match(await prompt(), /^1 MTEXT → 10 outlines\./);
+    await page.waitForFunction(() => /1 MTEXT → 10 outlines/.test(document.querySelector('[data-testid=cmd-fade]').textContent));
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s13-53d-outlines-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    assert.deepEqual(await histLabels(), ['Start', 'Text to outlines × 1']);
+    const converted = await savedDoc(), polys = converted.entities;
+    assert.equal(polys.length, 10, 'ten H glyphs, including the bold pair');
+    assert.ok(polys.every((e) => e.type === 'LWPOLYLINE' && fieldOf(e, 70) === 1 && e.layer === 'Notes' && e.aci === 3), 'closed outlines keep the entity layer and colour');
+    const ys = polys.map((e) => Math.min(...e.r.c.flatMap((c, i) => c === 20 ? [+e.r.v[i]] : [])));
+    const baselines = [...new Set(ys.map((y) => Math.round(y * 1000) / 1000))].sort((a, b) => a - b);
+    assert.deepEqual(baselines, [50, 70, 90], 'three lines: width wraps paragraph one, paragraph two starts a line; spacing factor 1.2 kept');
+    const widthOf = (e) => { const xs = e.r.c.flatMap((c, i) => c === 10 ? [+e.r.v[i]] : []); return Math.max(...xs) - Math.min(...xs); };
+    assert.ok(widthOf(polys[2]) > widthOf(polys[0]), 'the bold pair uses the bold glyph outlines');
+    await page.keyboard.press('Control+z');
+    const restored = (await savedDoc()).entities;
+    assert.equal(restored.length, 1); assert.deepEqual(restored[0], original, 'one undo restores the original MTEXT, codes, insertion, attachment, height and width');
     await closeTabs(/./);
   });
 
