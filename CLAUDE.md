@@ -29,7 +29,7 @@ Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare,
 Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close
 prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). Session 8
 (2026-10-19/20, PR #3): Objects tab (39), floating command bar (47), three review rounds and a whole-repo audit
-(recovery, No plot, big PDFs, one storage helper), and the Rook / Pip / Rowan / Scout workflow. See HISTORY.md.
+(recovery, No plot, big PDFs, one storage helper), and the Rook / Bishop / Knight / Pawn workflow. See HISTORY.md.
 
 ## The app
 
@@ -99,14 +99,14 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 - Windows: PowerShell 5.1 has no `<` redirect and blocks `.ps1` shims, so use `npm.cmd` there.
 - **How a session runs: WORKFLOW.md** (the roles, the exact commands, the loop, the budgets). In short:
   **Rook** is the lead (Opus, main account, this session): plans, writes briefs, reads short reports,
-  merges, and writes no code: review findings, however small, go to Rowan (his call, 2026-10-20). **Pip** is everything on the 2nd account
-  (`claude2`): Pip-build (Sonnet high, a FRESH session per build or fix round, capped with
-  `--max-budget-usd`), Pip-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
-  build gets one), Pip-look (Haiku), Pip-test (the exe on his PC). **Rowan** (Codex, his ChatGPT Go
+  merges, and writes no code: review findings, however small, go to Knight (his call, 2026-10-20). **Bishop** is everything on the 2nd account
+  (`claude2`): Bishop-build (Sonnet high, a FRESH session per build or fix round, capped with
+  `--max-budget-usd`), Bishop-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
+  build gets one), Bishop-look (Haiku), Bishop-test (the exe on his PC). **Knight** (Codex, his ChatGPT Go
   plan) is the **default builder** (his call, 2026-10-20; it commits, Rook pushes) and does web research, never
-  reviews; Pip-build takes mock-ups, screenshots and overflow builds. **Scout** (Antigravity) only quick lookups.
-  Pip never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
-  **Pip's budget:** at most 14% of its weekly limit per day (above only with his OK). No usage report after a merge: the band and the usage page show it (his call, 2026-10-21).
+  reviews; Bishop-build takes mock-ups, screenshots and overflow builds. **Pawn** (Antigravity) only quick lookups.
+  Bishop never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
+  **Bishop's budget:** at most 14% of its weekly limit per day (above only with his OK). No usage report after a merge: the band and the usage page show it (his call, 2026-10-21).
   A new worktree folder needs trusting once on account 2.
 - **Keep the context lean**: screenshot checks and broad searches go to a helper agent that reports
   back in a few lines. Never print whole logs, diffs or files. Edit CLAUDE.md at most once a
