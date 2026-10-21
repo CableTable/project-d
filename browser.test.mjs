@@ -3280,7 +3280,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
+      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await t('rulers-show').isChecked(), false);
@@ -7963,6 +7963,97 @@ try {
     const restored = (await savedDoc()).entities;
     assert.equal(restored.length, 1); assert.deepEqual(restored[0], original, 'one undo restores the original MTEXT, codes, insertion, attachment, height and width');
     await closeTabs(/./);
+  });
+
+  await step('TODO 96: independent work area, cycle and checked menu, ACI 7, feedback, persistence and unchanged paper / PDF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + name, exact: true }).click(); await frame(); };
+    const work = async (name) => {
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frame();
+    };
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 30, 120, 30, { aci: 7 }), dxfLine(20, 60, 120, 60, { tc: 0 }),
+      dxfLine(20, 90, 70, 90, { tc: 0xffffff }), dxfLine(70.005, 90, 120, 90, { aci: 7 }));
+    const open = async () => {
+      await q('picker').setInputFiles({ name: 'work-area.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc), 'latin1') });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'work-area.dxf');
+      await frame();
+    };
+    const pixels = (hex) => q('drawing').evaluate((el, hex) => {
+      const rgb = hex.match(/\w\w/g).map((v) => parseInt(v, 16));
+      const data = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) if (data[i + 3] > 150 && rgb.every((v, j) => Math.abs(data[i + j] - v) < 12)) n++;
+      return n;
+    }, hex);
+    const pdf = async () => {
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
+      await q('pdf-negative').uncheck(); await q('pdf-strip').uncheck();
+      const preview = await q('pdf-preview').evaluate((el) => el.toDataURL());
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('pdf-go').click()]);
+      await q('pdf-dialog').waitFor({ state: 'detached' });
+      return { preview, bytes: readFileSync(await dl.path()) };
+    };
+    try {
+      await p.goto(URL_); await q('work-area').waitFor(); await theme('light'); await open();
+      assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: Follow app');
+      for (const name of ['Light', 'Dark', 'Follow app']) {
+        await q('work-area').click(); await frame();
+        assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + name);
+        assert.equal(await q('work-area').getAttribute('title'), 'Work area: ' + name);
+      }
+      for (const [app, area, background, ink, selection, mark] of [
+        ['light', 'Dark', 'rgb(0, 0, 0)', 'e8e8ec', '60a5fa', 'fb923c'],
+        ['dark', 'Light', 'rgb(255, 255, 255)', '1b1d22', '4f46e5', 'c2410c'],
+      ]) {
+        await theme(app); const originalPdf = await pdf();
+        const appBg = await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
+        await work(area);
+        assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), background);
+        assert.equal(await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor), appBg);
+        assert.ok(await pixels(ink) > 400, 'ACI 7 and black / white drawing lines contrast with the work area');
+        assert.ok(await pixels(area === 'Dark' ? 'ffffff' : '000000') > 400, 'both white / ACI 7 and black lines remain visible');
+        assert.ok(await pixels(mark) > 30, 'tiny-gap rings follow the work area');
+        assert.deepEqual(await pdf(), originalPdf, 'PDF preview and bytes are unchanged by the work area');
+        await p.locator('[data-menu=View]').click();
+        assert.deepEqual(await p.getByRole('menuitemcheckbox', { name: /Work area:/ }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-checked'))),
+          area === 'Dark' ? ['false', 'false', 'true'] : ['false', 'true', 'false']);
+        await p.keyboard.press('Escape');
+        await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a'); await frame();
+        assert.ok(await pixels(selection) > 400, 'selected lines follow the work area');
+        const grip = q('grip').first(); await grip.waitFor();
+        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(96, 165, 250)' : 'rgb(79, 70, 229)');
+        const hover = await p.evaluate(() => {
+          const svg = document.querySelector('.ovl svg'), edge = document.createElementNS(svg.namespaceURI, 'path');
+          edge.setAttribute('class', 'dr-edge'); svg.append(edge);
+          const cs = getComputedStyle(edge), result = [cs.stroke, cs.strokeOpacity]; edge.remove(); return result;
+        });
+        assert.deepEqual(hover, area === 'Dark' ? ['rgb(96, 165, 250)', '0.8'] : ['rgb(79, 70, 229)', '0.35']);
+        await p.screenshot({ path: `${shotDir}/s15-96-app-${app}-work-${area.toLowerCase()}.png` });
+        const endpoint = await grip.boundingBox();
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+        await p.locator('[data-tool=line]').click();
+        await p.mouse.move(endpoint.x + endpoint.width / 2, endpoint.y + endpoint.height / 2); await frame();
+        assert.ok(await pixels(selection) > 10, 'snap marker follows the work area');
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+        await q('new-layout').click(); await frame();
+        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
+        await p.reload(); await q('work-area').waitFor(); await frame();
+        assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + area, 'remembered after reload');
+        await open();
+        assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), background);
+        assert.ok(await pixels(ink) > 400, 'ACI 7 remains visible after reload');
+        await work('Follow app');
+      }
+      await p.emulateMedia({ colorScheme: 'dark' }); await theme('follow system');
+      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
+      await p.emulateMedia({ colorScheme: 'light' }); await frame();
+      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
+    } finally { await context.close(); }
   });
 
   await step('TODO 90: black dark drawing area, contrasting selection / hover / grips / snaps, light and PDF unchanged', async () => {

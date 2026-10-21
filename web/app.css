@@ -91,6 +91,18 @@ select.fld { font-family: var(--sans); }
 
 .canvas { user-select: none; flex: 1; min-width: 0; position: relative; background: var(--canvas); overflow: hidden; touch-action: none; }
 .canvas.part { background: var(--sheet); }
+.canvas[data-work-area='Light'] {
+  --selection: #4f46e5; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
+  background: #ececef;
+}
+.canvas.part[data-work-area='Light'] { background: #ffffff; }
+.canvas[data-work-area='Dark'] {
+  --selection: #60a5fa; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #5eead4; --guide: #5eead4;
+  background: #000000;
+}
+.canvas[data-work-area='Light'] > .ovl { --muted: #62626b; --partline: #18181b; --sheet: #ffffff; }
+.canvas[data-work-area='Dark'] > .ovl { --muted: #a0a0ab; --partline: #e8e8ec; --sheet: #000000; }
+.status .work-area { display: inline-flex; align-items: center; justify-content: center; }
 /* Drawing feedback has its own accent; panels and menus keep the UI accent. */
 .canvas > svg, .canvas > .ovl, .canvas > .rubber { --accent: var(--selection); }
 .canvas.part > svg { visibility: hidden; }
@@ -272,6 +284,8 @@ select.fld { font-family: var(--sans); }
 .dtab svg { flex-shrink: 0; }
 .dtab .tname { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas.layout-view { background: var(--canvas); }
+.canvas.layout-view[data-work-area='Light'] { background: #ececef; }
+.canvas.layout-view[data-work-area='Dark'] { background: #000000; }
 .panelsw { align-self: flex-start; flex-shrink: 0; }
 .panelsw .seg { height: 26px; }
 .swrow { justify-content: space-between; }

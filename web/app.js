@@ -5,6 +5,7 @@ import { buildCmdUI } from './cmdui.js';
 import * as SC from './shortcuts.js';
 import { openShortcuts } from './shortcutdlg.js';
 import { idbStore } from './idbstore.js';
+import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
@@ -164,6 +165,7 @@ const state = {
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
   wireframe: false,
+  workArea: 'Follow app',
   dp: 2,                           // decimal places in dimensions (status bar), remembered on this PC
   meas: null,                      // Measure in progress: { pts: [[x, y] drawing units], hover }
   dimStyles: { presets: {}, cur: 'Standard' },   // the dimension style presets (dims.js; Format → Dimension style…), remembered on this PC (pd-dimstyles); dsOpen: that dialog is open
@@ -218,7 +220,7 @@ const note = (text) => { state.msg = text; renderCommand(); };
 const fmt = (n) => Number(n).toFixed(2);
 const partHid = (p) => { const d = curDoc(); return !!(d && d.hiddenParts && d.hiddenParts.has(p.partId)); };       // hidden in the Objects tab: not drawn, not hit, not selected
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
-const cssVar = (name, fallback) => { const c = cssCache || (cssCache = new Map()); if (!c.has(name)) c.set(name, getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback); return c.get(name); };
+const cssVar = (name, fallback) => { const c = cssCache || (cssCache = new Map()); if (!c.has(name)) c.set(name, getComputedStyle(ui.canvas).getPropertyValue(name).trim() || fallback); return c.get(name); };
 const capture = (el, e) => { try { el.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ } };
 const clampSel = () => { if (state.sel >= placedNow.length || (state.sel < 0 && placedNow.length)) state.sel = placedNow.length ? 0 : -1; };
 /** The grid of the open layout: its step-and-repeat part laid out by the settings, or an empty grid (count 0). */
@@ -232,6 +234,7 @@ function setTheme(mode) {
   cssCache = null;
   if (mode === 'light' || mode === 'dark') root.dataset.theme = mode; else delete root.dataset.theme;
   try { localStorage.setItem('pd-theme', mode); } catch { /* storage may be blocked */ }
+  renderWorkArea();
   if (ui.dcanvas && layout) { paintOverlay(); renderLayers(); }
   if (cmpDoc()) update(); // Compare colours and drawing tints are per theme
 }
@@ -239,6 +242,25 @@ const isDark = () => {
   const t = document.documentElement.dataset.theme;
   return t === 'dark' || (t !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 };
+const workDark = () => workAreaDark(state.workArea, isDark());
+
+function renderWorkArea() {
+  ui.canvas.dataset.workArea = state.workArea;
+  const label = 'Work area: ' + state.workArea;
+  ui.workArea.title = label;
+  ui.workArea.setAttribute('aria-label', label);
+  ui.workArea.replaceChildren(icon(workDark()
+    ? '<path d="M20 14a8 8 0 0 1-10-10 8 8 0 1 0 10 10z"/>'
+    : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5"/>', { size: 16 }));
+}
+
+function setWorkArea(mode) {
+  state.workArea = mode;
+  cssCache = null;
+  renderWorkArea();
+  update();
+  viewStore.put({ id: 'workArea', mode }).catch(() => note('Could not remember Work area; it still applies until the app closes'));
+}
 
 // ---- building the page ----
 /** Marks a number field as refused (red edge, aria-invalid) until it is focused or typed in again. */
@@ -346,6 +368,7 @@ function buildMenus() {
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!curLay().s.guidesShow), null, () => !!curLay()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!curLay().s.guidesLock), null, () => !!curLay()],
         ['Clear all guides', clearGuides, null, () => !!curLay() && curLay().s.guides.length > 0],
+        ...WORK_AREAS.map((mode, i) => [tick(state.workArea === mode, 'Work area: ' + mode), () => setWorkArea(mode), null, null, null, i === 0, state.workArea === mode]),
         ['Theme: follow system', () => setTheme('system'), null, null, null, true], ['Theme: light', () => setTheme('light')], ['Theme: dark', () => setTheme('dark')]];
     },
   };
@@ -2495,14 +2518,14 @@ function layerRows() {
   }
   // a drawing tab: the open file's own layers
   const file = d && d.fl
-    ? d.fl.layers.map((l, i) => ({ name: l.name, color: ink(l.css, isDark()), count: d.counts[i], fileLayer: i }))
+    ? d.fl.layers.map((l, i) => ({ name: l.name, color: ink(l.css, workDark()), count: d.counts[i], fileLayer: i }))
     : [];
   const bgRow = d && d.bg ? [{ id: 'bg', name: 'Background', color: '#9aa5b1', count: 1, eye: EYE, live: true, bg: true }] : [];
   const curName = d && d.raw ? curLayerName(d) : null;                // the layer new shapes go on; "0" has no row until something is on it
   const added = d && d.raw && d.addedLayers ? [...d.addedLayers].filter((n) => d.raw.layers[n] && !file.some((l) => l.name === n)) : [];      // layers added by hand, still empty
   const shown = curName && !file.some((l) => l.name === curName) && !added.includes(curName) ? curName : added.length && !file.some((l) => l.name === '0') ? '0' : null;      // "0" stays listed once layers were added, so it can be made current again
   const virt = shown ? [{ name: shown, color: 'var(--partline)', count: 0, eye: EYE, live: false, zero: shown === '0' }] : [];
-  virt.push(...added.map((n) => ({ name: n, css: layerCss(d.raw.layers[n]), color: ink(layerCss(d.raw.layers[n]), isDark()), count: 0, eye: EYE, live: false, added: true })));
+  virt.push(...added.map((n) => ({ name: n, css: layerCss(d.raw.layers[n]), color: ink(layerCss(d.raw.layers[n]), workDark()), count: 0, eye: EYE, live: false, added: true })));
   return [...file.map((l) => ({ ...l, eye: EYE, live: true, chip: d.newLayer === l.name ? 'new' : null })), ...virt, ...bgRow].map((l) => ({ ...l, cur: curName != null && l.name === curName && !l.bg }));
 }
 
@@ -2632,7 +2655,7 @@ function markObjSel(d, reveal) {
 }
 function renderObjects(reveal = false) {
   if (!ui.objTree || state.ptab !== 'objects') return;
-  const d = curDoc(), lay = d && d.lay, ed = lay ? null : editable(), dark = isDark();
+  const d = curDoc(), lay = d && d.lay, ed = lay ? null : editable(), dark = workDark();
   const filterBtns = (hidden, locked) => {
     const f = d && d.om ? d.om.filter : 'all';
     ui.objFall.classList.toggle('on', f === 'all'); ui.objFhidden.classList.toggle('on', f === 'hidden'); ui.objFlocked.classList.toggle('on', f === 'locked');
@@ -2965,7 +2988,8 @@ function buildStatus() {
     'Tool: ' + (TOOLS.find((x) => x.id === state.tool) || { label: 'Select' }).label);
   ui.sheetChip = h('span', { class: 'lbl tool-chip', hidden: true, 'data-testid': 'sheet-chip', title: 'The page of the PDF that is shown' });
   ui.wireframe = h('button', { class: 'tog' + (state.wireframe ? ' on' : ''), type: 'button', 'data-testid': 'wireframe', 'aria-pressed': String(state.wireframe), 'aria-label': 'Wireframe', title: 'Wireframe: outline-only view; PDF / Print and export keep fills (F9)', onclick: toggleWireframe }, 'Wire');
-  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
+  ui.workArea = h('button', { class: 'tog work-area', type: 'button', 'data-testid': 'work-area', onclick: () => setWorkArea(WORK_AREAS[(WORK_AREAS.indexOf(state.workArea) + 1) % WORK_AREAS.length]) });
+  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.workArea, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
     ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), h('span', { class: 'lbl' }, 'mm'),
@@ -3242,7 +3266,8 @@ function paintOverlay() {
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
     const d = curDoc();
-    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: isDark(), wireframe: state.wireframe };
+    // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
+    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); return; }
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
@@ -3264,7 +3289,7 @@ function paintOverlay() {
     paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
       bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
-      contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', cssVar('--text', '#18181b')) : null, contourDash: contourStyle().dash,
+      contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
@@ -6384,7 +6409,7 @@ function renderEdit() {
 // A Compare tab (d.cmp) holds two sides { name, fl, factor, off, polys, box }; the second is moved by c.off (Line up) and every place where
 // the outlines differ by more than the tolerance is a difference (c.res), drawn as a glow in the overlay and listed in the panel.
 const cmpDoc = () => { const d = curDoc(); return d && d.cmp ? d : null; };
-const cmpCss = (id) => { const k = C.COLOURS.find((x) => x.id === id) || C.COLOURS[0]; return isDark() ? k.dark : k.css; };
+const cmpCss = (id) => { const k = C.COLOURS.find((x) => x.id === id) || C.COLOURS[0]; return workDark() ? k.dark : k.css; };
 const cmpOff = (c) => C.lineUp(c.a && c.a.box, c.b && c.b.box, c.mode, c.manual);
 const cmpSide = (name, fl, factor, off) => ({ name, fl, factor, off, ...C.polylines(fl, factor, off) });
 /** What the Compare tab covers (mm, y up): both drawings, the second where it is moved to. */
@@ -6561,7 +6586,12 @@ async function init() {
     if (SC.clashes(loaded).length) shortcutError = 'Saved shortcuts have conflicts; defaults are active. Import a corrected PGP to change them.';
     else { ownBindings = loaded; ownCommands = SC.commandsFor(loaded); }
   } catch (err) { shortcutError = 'Could not load shortcuts; defaults are active: ' + (err.message || err); }
-  try { state.wireframe = (await viewStore.all()).some((r) => r.id === 'wireframe' && r.on === true); } catch { /* storage may be blocked */ }
+  try {
+    const saved = await viewStore.all();
+    state.wireframe = saved.some((r) => r.id === 'wireframe' && r.on === true);
+    const mode = saved.find((r) => r.id === 'workArea')?.mode;
+    if (WORK_AREAS.includes(mode)) state.workArea = mode;
+  } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();
@@ -6581,7 +6611,8 @@ async function init() {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
     editKey(e);
   });
-  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { cssCache = null; paintOverlay(); renderLayers(); });
+  renderWorkArea();
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { cssCache = null; renderWorkArea(); update(); });
   try { const t = localStorage.getItem('pd-theme'); if (t) setTheme(t); } catch { /* ignore */ }
   let dp = 2;
   try { const v = localStorage.getItem('pd-decimals'); if (v != null) dp = +v; } catch { /* ignore */ }
