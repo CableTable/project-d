@@ -7564,13 +7564,20 @@ try {
     await page.evaluate(async () => {
       const b = new Uint8Array(await (await fetch('vendor/fonts/LiberationSans-Regular.ttf')).arrayBuffer());
       window.__fontReads = [];
-      window.__TAURI__ = { fs: { readFile: async (p) => { window.__fontReads.push(p); if (/segoeui\.ttf$/.test(p)) return b; throw new Error('no ' + p); } } };
+      window.__fontDenied = true;
+      window.__TAURI__ = { fs: { readFile: async (p) => { window.__fontReads.push(p); if (!window.__fontDenied && /segoeui\.ttf$/.test(p)) return b; throw new Error('forbidden path: ' + p); } } };
     });
+    await menuItem('Modify', 'Text to outlines');
+    await txoDone('83 bundled');
+    assert.equal(await prompt(), '1 text → 8 outlines. Font file not found, used the fallback font (Segoe UI → Liberation Sans). Ctrl+Z takes them back', 'TODO 83: a denied Windows read still loads the embedded font');
+    await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+a');
+    await page.evaluate(() => { window.__fontDenied = false; window.__fontReads.length = 0; });
     await menuItem('Modify', 'Text to outlines');
     await txoDone(1);
     assert.equal(await prompt(), '1 text → 8 outlines. Ctrl+Z takes them back', 'B has two counters, O one: three letters, eight outlines; no fallback named');
     assert.deepEqual(await page.evaluate(() => window.__fontReads), ['C:/Windows/Fonts/segoeui.ttf']);
-    await page.evaluate(() => { delete window.__TAURI__; delete window.__fontReads; });
+    await page.evaluate(() => { delete window.__TAURI__; delete window.__fontReads; delete window.__fontDenied; });
     await page.screenshot({ path: shotDir + '/txo-after-light.png' });
     await theme('dark'); await page.screenshot({ path: shotDir + '/txo-after-dark.png' }); await theme('light');
     let doc = await savedDoc();

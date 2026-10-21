@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
-const caps = JSON.parse(readFileSync('src-tauri/capabilities/default.json', 'utf8')).permissions.filter((p) => typeof p === 'string');
+const caps = JSON.parse(readFileSync('src-tauri/capabilities/default.json', 'utf8')).permissions.map((p) => typeof p === 'string' ? p : p.identifier);
 const kebab = (s) => s.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
 const files = readdirSync('web').filter((f) => f.endsWith('.js'));
 const needed = new Map();                 // permission → the files that need it
