@@ -1865,7 +1865,7 @@ try {
     assert.equal(await rows.evaluate((e) => e.readOnly), true);
     assert.equal(await rows.inputValue(), String(worked.rows)); assert.equal(await cols.inputValue(), String(worked.cols));
     assert.equal(await rows.locator('xpath=..').textContent().then((x) => x.trim()), 'Rows');
-    assert.match(await t('grid').textContent(), new RegExp(`^fit · ${worked.cols} × ${worked.rows}`));
+    assert.match(await t('grid').textContent(), new RegExp(worked.skipped ? `^fit · ${worked.count} copies` : `^fit · ${worked.cols} × ${worked.rows}`));
     // off: typed by hand, starting from what was worked out
     await t('fit-switch').click();
     assert.equal(await t('fit-state').textContent(), 'Off');
