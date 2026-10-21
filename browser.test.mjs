@@ -7587,7 +7587,8 @@ try {
     assert.equal(doc.entities[0].type, 'TEXT');
     // a second text in Arial-like; no Tauri here, so the bundled font stands in and the message says which
     await page.locator('[data-tool=text]').click(); await t('text-font').selectOption('Arial');
-    await click(30, 60); await t('text-editor').waitFor(); await page.keyboard.type('AB'); await page.keyboard.press('Enter');
+    await page.mouse.click(500, 700); await t('text-editor').waitFor(); await page.keyboard.type('AB'); await page.keyboard.press('Enter');      // an empty spot: the text tool edits a text it is clicked on, and BOB is right there
+    assert.equal(await entCount(), 2, 'AB is a new text, not typed into BOB');
     await page.locator('[data-tool=select]').click();                                       // the text tool's own prompt would cover the message
     await menuItem('Modify', 'Text to outlines');
     await txoDone(2);
