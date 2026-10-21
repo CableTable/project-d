@@ -7651,7 +7651,6 @@ try {
     await closeTabs(/./);
   });
 
-  await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT) and an SHX text become outlines; MTEXT stays and is named; save and reopen give the same outlines', async () => {
   await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT), an SHX text and MTEXT become outlines; save and reopen give the same outlines', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/txo.dxf');
