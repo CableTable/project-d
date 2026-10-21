@@ -18,6 +18,19 @@ test('peak context takes the largest assistant input plus cache read and write, 
     { type: 'user', message: { usage: { input_tokens: 999_999 } } },
   ]), 161_000);
   assert.equal(peakContext([assistant({ input_tokens: 1234 })]), 1234);
+  assert.equal(peakContext([assistant({ input_tokens: 10 }), { ...assistant({ input_tokens: 99_999 }), parent_tool_use_id: 'toolu_1' }]), 10, 'sub-agent turns are skipped');
+});
+
+test('result skips a half-written last line: no result yet for an unfinished run, the result once it is there', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
+  try {
+    const run = join(dir, 'run.jsonl'), line = (e) => JSON.stringify(e) + '\n';
+    const result = { type: 'result', result: 'Done', usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 }, permission_denials: [] };
+    writeFileSync(run, line(assistant({ input_tokens: 5 })) + '{"type":"assis');
+    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'no result yet');
+    writeFileSync(run, line(assistant({ input_tokens: 5 })) + line(result) + '{"type":"assis');
+    assert.match(execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }), /^Done/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('result prints peak context and warns strictly above 150k; Codex logs skip it', () => {

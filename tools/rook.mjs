@@ -17,7 +17,7 @@ const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : Math.round(n / 1e3) + 
 
 if (cmd === 'result') {
   if (arg.endsWith('.jsonl')) {
-    const events = readFileSync(arg, 'utf8').trim().split('\n').filter((l) => l.trim()).map((l) => JSON.parse(l));
+    const events = readFileSync(arg, 'utf8').trim().split('\n').filter((l) => l.trim()).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } }); // a run in progress has a half-written last line
     const r = events.findLast((e) => e.type === 'result');
     if (!r) { console.log('no result yet'); process.exit(1); }
     const u = r.usage;
