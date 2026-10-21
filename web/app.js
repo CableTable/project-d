@@ -3635,7 +3635,8 @@ async function textToOutlines() {
   const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
   view.fitted = false;
   commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`);
-  setSel(d, new Set(r.ents.map((_, i) => at + i)));
+  d.txoSel = new Set(r.ents.map((_, i) => at + i));    // keep the new letters readable; a fresh selection enables their grips
+  setSel(d, d.txoSel);
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
   const mtexts = [...r.done].filter((i) => raw[i].type === 'MTEXT').length, texts = r.texts - mtexts;
   const count = [texts ? `${texts} text${texts === 1 ? '' : 's'}` : '', mtexts ? `${mtexts} MTEXT` : ''].filter(Boolean).join(' + ');
@@ -5326,7 +5327,7 @@ function trackOvl(d, out, k) {
 
 // ---- grips (grips.js; mock-up R5c, left pane): blue squares on a selected line, arc, circle or polyline to drag ----
 /** Do grips show? On a drawing tab with the Select tool, something selected (not too many things), and no text handles in the way. */
-const gripOn = (d) => !!d && !d.lay && !state.match && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
+const gripOn = (d) => !!d && !d.lay && !state.match && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -5334,9 +5335,9 @@ function gripList(d) {
   const list = [];
   for (const e of d.sel) {
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
-    if (lp) { for (const g of GR.gripsOf(lp)) { if (list.length <= GR.MAX_GRIPS) list.push({ e, ...g }); } continue; }       // a leader: a grip at each point
+    if (lp) { for (const g of GR.gripsOf(lp)) list.push({ e, ...g }); continue; }       // a leader: a grip at each point
     if (!ent || ent.layer === Ed.DIM_LAYER) continue;
-    for (const g of GR.gripsOf(ent)) { if (list.length <= GR.MAX_GRIPS) list.push({ e, ...g }); }
+    for (const g of GR.gripsOf(ent)) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
   d.gripCache = { sel: d.sel, ents, list: shown };

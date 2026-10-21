@@ -4866,10 +4866,10 @@ try {
     assert.equal(await gripCount(), 0, '205 selected: no grips');
     assert.equal(await t('grip-hint').isVisible(), false);
     await page.keyboard.press('Escape');
-    const c = await at(0, 0), d = await at(50, 130);                      // a box round the left quarter: 3 grips a line, at most MAX_GRIPS of them
+    const c = await at(0, 0), d = await at(100, 130);                     // fewer than 200 shapes, but more than 200 grips
     await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(d.x, d.y, { steps: 4 }); await page.mouse.up();
     const n = Number((await t('sel-count').textContent()).replace(/\D+/g, ''));
-    assert.ok(n > 0 && 3 * n <= GR.MAX_GRIPS, 'a part of them: ' + n);
+    assert.ok(n <= GR.MAX_GRIPS && 3 * n > GR.MAX_GRIPS, 'a part of them: ' + n);
     await gripWhen(3 * n);
   });
 
@@ -7791,7 +7791,7 @@ try {
     }
   });
 
-  await step('TODO 79: after Text to outlines the new outlines have too many vertices for grips: none are drawn, light and dark', async () => {
+  await step('TODO 79: the immediate Text to outlines selection has no grips; selecting it again uses the shape cap, light and dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
     await page.locator('[data-tool=text]').click();
     await t('text-height').fill('12'); await t('text-height').press('Enter'); await t('text-font').selectOption('Standard');
@@ -7799,15 +7799,17 @@ try {
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
-    const vertices = (await savedDoc()).entities.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
-    assert.ok(vertices > GR.MAX_GRIPS, 'the outlines have more vertices than the limit: ' + vertices);
+    const outlines = (await savedDoc()).entities, vertices = outlines.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
+    assert.ok(vertices > GR.MAX_GRIPS && outlines.length < GR.MAX_GRIPS, 'many vertices on a few outlines');
     await frames();
-    assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'no vertex grips on a selection of ' + vertices + ' vertices');
+    assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'the immediate TXO result keeps the letters readable');
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.waitForTimeout(150);
       await page.screenshot({ path: `${shotDir}/s13-grips-${th}.png` });
     }
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.keyboard.press('Control+a');
+    await gripWhen(vertices);
     await closeTabs(/./);
   });
 

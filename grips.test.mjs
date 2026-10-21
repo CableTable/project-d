@@ -154,10 +154,14 @@ test('a mirrored shape (extrusion -1) has no grips; the cap is 200 selected', ()
   assert.equal(GR.MAX_SELECTED, 200);
 });
 
-test('capGrips: up to MAX_GRIPS are shown, one more and none', () => {
-  const some = (k) => Array.from({ length: k }, (_, i) => ({ id: i }));
-  assert.equal(GR.capGrips(some(GR.MAX_GRIPS)).length, GR.MAX_GRIPS);
+test('capGrips: count selected shapes, including exactly 200, rather than their grips', () => {
+  const some = (k) => Array.from({ length: k }, (_, e) => GR.gripsOf(line(0, 0, 1, 1)).map((g) => ({ e, ...g }))).flat();
+  const boundary = some(GR.MAX_GRIPS);
+  assert.equal(GR.capGrips(boundary), boundary, 'all 600 grips on 200 shapes');
   assert.deepEqual(GR.capGrips(some(GR.MAX_GRIPS + 1)), []);
+  const dense = GR.gripsOf(lwpoly(Array.from({ length: 300 }, (_, i) => [i, i % 2]))).map((g) => ({ e: 0, ...g }));
+  assert.equal(GR.capGrips(dense), dense, 'one polyline with 300 vertices still has every grip');
+  assert.deepEqual(GR.capGrips([]), []);
 });
 
 console.log(n + ' grips tests passed');
