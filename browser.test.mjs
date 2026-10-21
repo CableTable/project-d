@@ -12,6 +12,7 @@ import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
+import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
 const PORT = Number(process.env.TEST_PORT) || Number(process.argv[2]) || 5181;   // TEST_PORT or `npm run test:browser -- 5291`
@@ -2667,6 +2668,7 @@ try {
   });
 
   await step('placing: Duplicate along X or Y (gap edge to edge), Copy once / Ctrl+D, Delete, off the sheet is tinted and said once', async () => {
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });      // markPixels looks for the light mark colour
     await freshLayoutWithPlate();
     await t('px').fill('50'); await t('px').press('Enter'); await t('py').fill('100'); await t('py').press('Enter');
     assert.equal(await t('dup-x').getAttribute('aria-pressed'), 'true');
@@ -3720,6 +3722,7 @@ try {
   });
 
   await step('TODO 65: Contour Red / Dashed previews, Apply, one selected edge in Properties, DXF reopen and remembered style', async () => {
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });      // the pixel checks below look for pure red / green
     await closeTabs(/./);
     const doc = newDoc();
     addEntities(doc, dxfPoly([[100, 100], [200, 100], [200, 200], [100, 200]], { closed: true }));
@@ -7259,11 +7262,11 @@ try {
       await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
       await open();
-      assert.equal(await dialog.locator('tr[data-command]').count(), 53);
-      assert.equal(await dialog.locator('.sc-count').textContent(), '53 commands');
+      assert.equal(await dialog.locator('tr[data-command]').count(), COMMANDS.length);
+      assert.equal(await dialog.locator('.sc-count').textContent(), COMMANDS.length + ' commands');
       await dialog.getByRole('searchbox').fill('contour'); assert.equal(await dialog.locator('.sc-count').textContent(), '1 commands');
       await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
-      assert.equal(await dialog.locator('tr[data-command]:visible').count(), 5);
+      assert.equal(await dialog.locator('tr[data-command]:visible').count(), COMMANDS.filter((c) => c.cat === 'File').length);
       await dialog.getByLabel('Category', { exact: true }).selectOption('');
       await alias('Contour').fill('co, ww');
       await key('Contour').click(); await p.keyboard.press('Control+Alt+w');
@@ -7452,6 +7455,7 @@ try {
     };
     try {
       await p.goto(URL_); await q('wireframe').waitFor();
+      await menu('Theme: light');
       await q('picker').setInputFiles('fixtures/wireframe.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'wireframe.dxf');
       await q('bg-picker').setInputFiles('fixtures/bg.png');
@@ -7510,7 +7514,8 @@ try {
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare two drawings…', exact: true }).click();
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
-      // hue tests, since the loop above leaves the dark theme on (red #ff7b7b, blue #6db0ff, mark #fb923c) and light has its own shades
+      // hue tests in the dark theme (red #ff7b7b, blue #6db0ff, mark #fb923c); light has its own shades
+      await menu('Theme: dark');
       await waitTinted('r > 150 && r - g > 60 && Math.abs(g - b) < 20', 'Compare keeps drawing 1 in red in Wireframe');
       await waitTinted('b > 150 && b - r > 60 && b - g > 40', 'Compare keeps drawing 2 in blue in Wireframe');
       await q('new-layout').click();
