@@ -15,7 +15,12 @@
 
 <div class="ud">
   <header class="ud-head">
-    <h1 id="top">Project D usage</h1>
+    <h1 id="top">Project D</h1>
+    <nav class="page-tabs" aria-label="Page" hidden>
+      <button type="button" data-tab="usage" aria-pressed="true" aria-controls="usage">Usage</button>
+      <button type="button" data-tab="todo" aria-pressed="false" aria-controls="todo">TODO</button>
+      <button type="button" data-tab="tickets" aria-pressed="false" aria-controls="tickets">Tickets</button>
+    </nav>
     <div class="ud-agent"><div><button id="signin" type="button">Sign in with Google</button><button id="signout" type="button" hidden>Sign out</button></div>
       <button id="refresh" type="button" disabled>Update now</button></div>
     <p class="ud-muted" aria-live="polite"><span id="last-update">Last update: ?</span> <span id="offline" class="ud-chip bad" hidden>PC offline</span></p>
@@ -23,11 +28,6 @@
   </header>
 
   <main id="dashboard" class="ud-sec" hidden>
-  <nav class="page-tabs" aria-label="Page">
-    <button type="button" data-tab="usage" aria-pressed="true" aria-controls="usage">Usage</button>
-    <button type="button" data-tab="todo" aria-pressed="false" aria-controls="todo">TODO</button>
-    <button type="button" data-tab="tickets" aria-pressed="false" aria-controls="tickets">Tickets</button>
-  </nav>
   <div id="usage" class="ud-sec" data-page>
     <p class="ud-take" id="takeaway"><span class="">—</span></p>
     <p class="ud-muted">Readings as of <span id="asof">—</span>. A tick on each bar marks where even use would be by now; red marks Bishop's daily cap.</p>
@@ -80,7 +80,7 @@
         <div><h3>Every run</h3><p class="ud-muted">Builds, reviews and tests by Bishop and Knight. Bars share one scale.</p></div>
         <input type="search" id="q" placeholder="Search runs" aria-label="Search runs">
       </div>
-      <div class="ud-twrap"><table>
+      <div class="ud-twrap"><table class="run-table">
         <thead><tr>
           <th>S</th><th>Agent</th><th>Task</th>
           <th class="num">New</th><th class="num hide-narrow">Total</th>

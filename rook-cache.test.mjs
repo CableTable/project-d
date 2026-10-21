@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -95,5 +95,16 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     rmSync(usage, { recursive: true });
     const live = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
     assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
+    for (const missingRoot of [false, true]) {
+      if (missingRoot) rmSync(join(repo, '.codex'), { recursive: true });
+      else writeFileSync(join(repo, '.codex', 'sessions', 'reading.jsonl'), '{}\n');
+      const partial = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
+      assert.deepEqual(partial.trim().split('\n'), [...lines.slice(0, 2).map((line) => line.replace(/ \(as of .*\)$/, ' (live)')), 'Knight: no reading (live)']);
+      const limits = readFileSync(join(usage, 'limits.csv'), 'utf8');
+      assert.match(limits, /Rook,role|Rook,Lead/);
+      assert.match(limits, /Pip,Builds/);
+      assert.doesNotMatch(limits, /Rowan,/);
+      assert.deepEqual(readFileSync(join(usage, 'history.csv'), 'utf8').trim().split('\n').slice(-4).map((row) => row.split(',')[1]), ['Rook', 'Rook', 'Pip', 'Pip']);
+    }
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });

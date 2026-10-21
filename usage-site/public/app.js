@@ -183,6 +183,7 @@ function drawRuns(runs) {
       const nt = el('td', 'num');
       if (r.new_tokens !== '' && r.new_tokens != null) { const b = el('span', 'bar ' + r.agent.toLowerCase()); b.style.width = Math.max(2, (Number(r.new_tokens) / max) * 60) + 'px'; nt.append(b, document.createTextNode(compact(Number(r.new_tokens)))); } else nt.textContent = '—';
       tr.append(nt, el('td', 'num hide-narrow', compact(Number(r.total_tokens))), el('td', 'hide-narrow', r.verdict || ''));
+      [...tr.children].forEach((td, i) => { td.dataset.label = ['Session', 'Agent', 'Task', 'New tokens', 'Total', 'Verdict'][i]; });
       tb.append(tr);
     });
 }
@@ -194,7 +195,12 @@ function drawByAgent(rows) {
 
 function drawNotes(notes) {
   const tb = document.getElementById('notes'); tb.replaceChildren();
-  notes.forEach((n) => { const tr = el('tr'); tr.dataset.key = n.id; const c = el('td'); c.append(el('div', null, n.topic), el('div', 'ud-muted', n.as_of)); tr.append(c, el('td', null, n.note)); tb.append(tr); });
+  notes.forEach((n) => {
+    const tr = el('tr'); tr.dataset.key = n.id;
+    const [topic, asOf] = [n.topic, n.as_of].map((text) => /^\d{4}-\d{2}-\d{2}T/.test(text) && Number.isFinite(Date.parse(text)) ? IST.format(new Date(text)) + ' IST' : text);
+    const c = el('td'); c.append(el('div', null, topic), el('div', 'ud-muted', asOf));
+    tr.append(c, el('td', null, n.note)); tb.append(tr);
+  });
 }
 
 function drawTodo(sections) {
@@ -235,6 +241,7 @@ function drawTokenChart() {
   const W = Math.max(260, box.clientWidth), H = 240, left = 38, right = W - 8, bottom = 212;
   const max = Math.max(1, ...data.tokens.flatMap((row) => agents.map((a) => Number(row[a]) || 0)));
   const step = (right - left) / data.tokens.length;
+  const labelEvery = Math.max(1, Math.ceil(48 / step));
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('role', 'img');
   svg.setAttribute('aria-label', 'Tokens used per day by Rook, Bishop and Knight over the last 14 days in IST; cache reads excluded');
@@ -256,7 +263,7 @@ function drawTokenChart() {
       const bar = add('rect', { x: left + i * step + (j + .2) * step / 3, y: bottom - height, width: step / 3 * .8, height, fill: AGENT_COLOR[agent] });
       add('title', {}, `${row.day} IST · ${agent}: ${tokens.toLocaleString('en')} tokens`, bar);
     });
-    if (i % 3 === 0 || i === data.tokens.length - 1) add('text', { x: left + (i + .5) * step, y: 234, 'text-anchor': 'middle' }, row.day.slice(5));
+    if ((data.tokens.length - 1 - i) % labelEvery === 0) add('text', { x: left + (i + .5) * step, y: 234, 'text-anchor': 'middle' }, row.day.slice(5));
   });
 }
 
@@ -311,6 +318,7 @@ chartObserver.observe(document.getElementById('chart')); chartObserver.observe(d
 const message = document.getElementById('message');
 const signin = document.getElementById('signin'), signout = document.getElementById('signout');
 const refreshButton = document.getElementById('refresh'), dashboard = document.getElementById('dashboard');
+const pageTabs = document.querySelector('.page-tabs');
 const lastUpdateLabel = document.getElementById('last-update'), offline = document.getElementById('offline');
 const lastErrorLabel = document.getElementById('last-error');
 let currentStatus = {}, pending = null, allowed = false;
@@ -347,7 +355,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   function stopListening() { subscriptions.forEach((stop) => stop()); subscriptions = []; }
   function report(error) {
     if (error.code === 'permission-denied' && auth.currentUser) {
-      allowed = false; dashboard.hidden = true; stopListening();
+      allowed = false; dashboard.hidden = pageTabs.hidden = true; stopListening();
       finishUpdate('Not allowed. Your uid: ' + auth.currentUser.uid);
       showStatus();
     } else finishUpdate('Could not load/update usage: ' + error.message);
@@ -369,12 +377,12 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
     data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [] };
     drawTodo([]); drawTickets();
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
-    dashboard.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
+    dashboard.hidden = pageTabs.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
     if (!user) return;
     for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'tokens', 'status']) {
       subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
-        allowed = true; dashboard.hidden = false;
+        allowed = true; dashboard.hidden = pageTabs.hidden = false;
         refreshButton.disabled = !!pending;
         if (message.textContent === 'Loading…') message.textContent = 'Signed in.';
         const value = snapshot.data() || {};

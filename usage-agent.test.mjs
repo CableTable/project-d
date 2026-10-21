@@ -28,7 +28,28 @@ Unrelated.`;
     { id: 'T2', status: 'open', size: 'M', type: 'ask', tags: [], title: 'Another', todo: '', updated: '', note: 'Second note.' },
   ] });
   assert.deepEqual(parseTickets(''), { rows: [] });
-  assert.throws(() => parseTickets('| T1 | open |'), /eight columns/);
+});
+
+test('tickets skip and locally log a malformed row while keeping valid rows and notes', () => {
+  const logs = [];
+  const result = parseTickets(`| T1 | open | S | bug | ui | First | 95 | today |
+| T2 | open |
+| T3 | open | S | bug | | Third | 98 | today |
+### T3 Third
+Still uploaded.`, (message) => logs.push(message));
+  assert.deepEqual(result.rows.map((row) => row.id), ['T1', 'T3']);
+  assert.equal(result.rows[1].note, 'Still uploaded.');
+  assert.deepEqual(logs, ['Skipping malformed ticket T2: expected eight columns, got 2']);
+});
+
+test('tickets redact Windows paths in fields and notes before upload', () => {
+  const result = parseTickets(String.raw`| T1 | open | S | bug | | Fix C:\Users\owner\secret.txt | 95 | today |
+### T1 Note
+See [E:\private\drawing.dxf] and (D:/private/log.txt), then continue.
+Lowercase c:\secret\file and F:/private/other.txt
+Keep https://example.test/help and relative/file.txt.`);
+  assert.equal(result.rows[0].title, 'Fix (local path)');
+  assert.equal(result.rows[0].note, 'See [(local path)] and ((local path)), then continue.\nLowercase (local path) and (local path)\nKeep https://example.test/help and relative/file.txt.');
 });
 
 const now = Date.parse('2026-10-21T20:00:00Z'); // Oct 22 in IST.
@@ -76,6 +97,23 @@ test('collector uses all three transcript roots, skips stale files and tolerates
       }
     }
     assert.deepEqual((await collectTokens(folder, now)).rows.at(-1), { day: '2026-10-22', Rook: 12, Bishop: 12, Knight: 17 });
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('resumed Claude transcripts count copied messages once across files in each account', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'projectd-resumed-'));
+  try {
+    for (const directory of ['.claude/projects/a', '.claude-account2/projects/b']) {
+      const root = join(folder, directory); mkdirSync(root, { recursive: true });
+      const old = claudeEvent('2026-10-21T19:00:00Z', 'old', { input_tokens: 10, output_tokens: 2 });
+      const fresh = claudeEvent('2026-10-21T19:10:00Z', 'fresh', { input_tokens: 20, output_tokens: 3 });
+      for (const [name, events] of [['original', [old]], ['resumed', [old, fresh]]]) {
+        const path = join(root, name + '.jsonl');
+        writeFileSync(path, events.map((event) => JSON.stringify(event)).join('\n') + '\n');
+        utimesSync(path, new Date(now), new Date(now));
+      }
+    }
+    assert.deepEqual((await collectTokens(folder, now)).rows.at(-1), { day: '2026-10-22', Rook: 35, Bishop: 35, Knight: 0 });
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 

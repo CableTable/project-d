@@ -14,8 +14,9 @@ import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
 
-export function parseTickets(text) {
+export function parseTickets(text, log = console.error) {
   const rows = [], notes = new Map();
+  const redact = (text) => text.replace(/\b[A-Z]:[\\/][^\s\])}]+/gi, '(local path)');
   let note;
   for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const heading = line.match(/^###\s+(T\d+)\b/);
@@ -24,11 +25,14 @@ export function parseTickets(text) {
     else if (note) notes.get(note).push(line);
     if (!/^\|\s*T\d+\s*\|/.test(line)) continue;
     const cells = line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((s) => s.trim().replace(/\\\|/g, '|'));
-    if (cells.length !== 8) throw new Error('Ticket rows must have eight columns, including Tags');
-    const [id, status, size, type, tags, title, todo, updated] = cells;
+    if (cells.length !== 8) {
+      log(`Skipping malformed ticket ${cells[0]}: expected eight columns, got ${cells.length}`);
+      continue;
+    }
+    const [id, status, size, type, tags, title, todo, updated] = cells.map(redact);
     rows.push({ id, status, size, type, tags: [...new Set(tags.split(',').map((s) => s.trim()).filter(Boolean))], title, todo, updated });
   }
-  return { rows: rows.map((row) => ({ ...row, note: (notes.get(row.id) || []).join('\n').trim() })) };
+  return { rows: rows.map((row) => ({ ...row, note: redact((notes.get(row.id) || []).join('\n').trim()) })) };
 }
 
 const istDay = (time) => new Date(time + 19800e3).toISOString().slice(0, 10);
@@ -313,7 +317,7 @@ async function main() {
         if (!Array.isArray(items) || items.some((i) => !i || typeof i.id !== 'string' || typeof i.topic !== 'string' || typeof i.note !== 'string')) throw new Error('analysis.json must be an array of {id, topic, note} strings');
         docs.push(['analysis', { items }]);
         docs.push(['todo', parseTodo(readFileSync(join(repo, 'TODO.md'), 'utf8'))]);
-        try { docs.push(['tickets', parseTickets(readFileSync(join(repo, '..', 'support', 'tickets.md'), 'utf8'))]); }
+        try { docs.push(['tickets', parseTickets(readFileSync(join(repo, '..', 'support', 'tickets.md'), 'utf8'), log)]); }
         catch (e) { if (e.code !== 'ENOENT') throw e; }
         docs.push(['tokens', await collectTokens()]);
         const writes = docs.map(([name, data]) => {

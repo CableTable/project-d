@@ -1,7 +1,7 @@
 // Called by browser.test.mjs, after CI installs Chromium; never touches the live account or Hosting.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 
 const authModule = `
@@ -36,6 +36,7 @@ export const getDocFromServer = async () => ({data: () => ({requestedAt: stamp(w
 `;
 
 test('Usage site: tabs, tickets, token chart and safe refresh failures on phone and desktop', async (t) => {
+  mkdirSync('shots', { recursive: true });
   const local = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
   const executablePath = process.env.CHROME || (existsSync(local) && !process.env.CI ? local : undefined);
   const browser = await chromium.launch(executablePath ? { executablePath } : {});
@@ -50,7 +51,11 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
           limits: { rows: ['Rook', 'Pip', 'Rowan'].flatMap((agent) => ['5h', 'week'].map((window) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: '42', cap_pct: '', starts: '2026-10-01T00:00:00Z', resets: '2027-01-01T00:00:00Z', as_of: when }))) },
           history: { rows: ['Rook', 'Pip', 'Rowan'].map((agent) => ({ when, agent, window: 'week', used_pct: '42' })) },
           runs: { rows: [{ id: 'run1', agent: 'Rowan', session: '15', task: '<img src=x onerror=alert(1)>', kind: 'build', model: 'Fixture', new_tokens: '10', total_tokens: '20', verdict: 'OK' }] },
-          analysis: { items: [{ id: 'a1', topic: 'Pip and Rowan', note: '<script>plain text</script>', as_of: when }] },
+          analysis: { items: [
+            { id: 'a1', topic: 'Pip and Rowan', note: '<script>plain text</script>', as_of: '2026-10-21T18:45:00Z' },
+            { id: 'a2', topic: '2026-10-21T18:45:00Z', note: 'Timestamp topic' },
+            { id: 'a3', topic: 'Invalid date', note: 'Still renders', as_of: '2026-99-99T00:00:00Z' },
+          ] },
           todo: { sections: [{ title: 'Whole TODO', items: [{ num: 95, title: '<img src=x>', size: 'M', done: false, text: 'Open item' }, { num: 98, title: 'Finished', done: true, text: 'Built' }] }] },
           tokens: { rows: Array.from({ length: 14 }, (_, i) => ({ day: '2026-10-' + String(i + 8).padStart(2, '0'), Rook: i * 10, Bishop: i * 20, Knight: i * 30 })) },
           tickets: { rows: [
@@ -80,9 +85,32 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       assert.equal(await page.locator('#token-chart rect').count(), 42);
       assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /14 days in IST; cache reads excluded/);
       assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'Knight']);
+      assert.match(await page.locator('#notes tr[data-key=a1] td').first().textContent(), /^Bishop and KnightThu,? 22 Oct, 00:15 IST$/);
+      assert.match(await page.locator('#notes tr[data-key=a2] td').first().textContent(), /^Thu,? 22 Oct, 00:15 IST$/);
+      assert.equal(await page.locator('#notes tr[data-key=a3] .ud-muted').textContent(), '2026-99-99T00:00:00Z');
       const noOverflow = async () => assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      const readableDates = async () => {
+        // Wait for the ResizeObserver to redraw at the current viewport width.
+        await page.waitForFunction(() => {
+          const box = document.getElementById('token-chart');
+          return +box.querySelector('svg').getAttribute('viewBox').split(' ')[2] === Math.max(260, box.clientWidth);
+        });
+        const labels = await page.locator('#token-chart text[y="234"]').evaluateAll((nodes) => nodes.map((node) => {
+          const { left, right } = node.getBoundingClientRect(); return { left, right, text: node.textContent };
+        }));
+        assert.equal(labels.at(-1).text, '10-21');
+        assert.ok(labels.length > 1);
+        for (let i = 1; i < labels.length; i++) assert.ok(labels[i].left > labels[i - 1].right + 4, 'Date labels must have a readable gap');
+      };
       await noOverflow();
+      await readableDates();
+      const task = await page.locator('#runrows td').nth(2).boundingBox();
+      const tokens = await page.locator('#runrows td').nth(3).boundingBox();
+      assert.ok(task.width > 280 && tokens.width > 280 && tokens.y > task.y, 'Phone runs stack full-width task and new tokens');
+      assert.equal(await page.locator('#runrows .bar').isVisible(), true);
+      assert.equal(await page.locator('#runrows td').nth(4).isVisible(), false);
       assert.equal(await page.locator('.page-tabs').evaluate((node) => getComputedStyle(node).position), 'fixed');
+      await page.screenshot({ path: `shots/s15-usage-fix-phone-${colorScheme}.png`, fullPage: true });
 
       // TODO is complete, and completed entries still expand.
       await page.locator('[data-tab=todo]').click();
@@ -120,9 +148,13 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       await page.evaluate(() => window.__emit('status', { ...window.__docs.status, lastError: 'Main account: 100%, limit reached', lastErrorAt: Date.now() }));
       assert.equal(await page.locator('#last-error').textContent(), 'Main account: 100%, limit reached');
 
-      await page.setViewportSize({ width: 1200, height: 900 });
+      await page.setViewportSize({ width: 1280, height: 900 });
       assert.equal(await page.locator('.page-tabs').evaluate((node) => getComputedStyle(node).position), 'static');
       assert.equal(await page.locator('.charts').evaluate((node) => getComputedStyle(node).gridTemplateColumns.split(' ').length), 2);
+      const brand = await page.locator('#top').boundingBox(), tabs = await page.locator('.page-tabs').boundingBox();
+      assert.ok(tabs.x > brand.x + brand.width && Math.abs((tabs.y + tabs.height / 2) - (brand.y + brand.height / 2)) < 2, 'Desktop brand and tabs share a row');
+      await readableDates();
+      await page.screenshot({ path: `shots/s15-usage-fix-desktop-${colorScheme}.png`, fullPage: true });
       for (const tab of ['usage', 'todo', 'tickets']) { await page.locator(`[data-tab=${tab}]`).click(); await noOverflow(); }
 
       // Denied storage still permits all tabs, and signing out clears private ticket DOM.
@@ -132,6 +164,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       await page.locator('[data-tab=tickets]').click();
       await page.locator('#signout').click();
       assert.equal(await page.locator('#dashboard').isVisible(), false);
+      assert.equal(await page.locator('.page-tabs').isVisible(), false);
       assert.equal(await page.locator('.ticket').count(), 0);
       assert.deepEqual(errors, []);
     } finally { await context.close(); }

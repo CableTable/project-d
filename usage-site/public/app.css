@@ -72,17 +72,22 @@ summary { cursor: pointer; } details[open] > summary { margin-bottom: 16px; }
 .ticket-table th:last-child { width: 12%; }
 .ticket-table summary { color: var(--accent-text); }
 @media (max-width: 40rem) {
-  .hide-narrow, .bar { display: none; }
-  .ticket-table, .ticket-table tbody { display: block; }
-  .ticket-table thead { display: none; }
-  .ticket-table tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--color-border-line); }
-  .ticket-table td { display: block; border: 0; padding: 0; }
-  .ticket-table td::before { content: attr(data-label); display: block; color: var(--color-fg-muted); font-size: 11px; margin-bottom: 3px; }
+  .hide-narrow { display: none !important; }
+  .ticket-table, .ticket-table tbody, .run-table, .run-table tbody { display: block; }
+  .ticket-table thead, .run-table thead { display: none; }
+  .ticket-table tr, .run-table tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-block: 12px; border-bottom: 1px solid var(--color-border-line); }
+  .ticket-table td, .run-table td { display: block; border: 0; padding: 0; }
+  .ticket-table td::before, .run-table td::before { content: attr(data-label); display: block; color: var(--color-fg-muted); font-size: 11px; margin-bottom: 3px; }
   .ticket-table td:nth-child(2), .ticket-table td:nth-child(5) { grid-column: span 2; }
   .ticket-table td:nth-child(6) { grid-column: 1 / -1; }
+  .run-table tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .run-table td:nth-child(3), .run-table td:nth-child(4) { grid-column: 1 / -1; }
+  .run-table .num { text-align: left; }
 }
 @media (min-width: 48rem) {
   body { padding-bottom: 32px; }
+  .ud-head { grid-template-columns: auto 1fr auto; align-items: center; column-gap: 24px; }
+  .ud-head > p { grid-column: 1 / -1; }
   .page-tabs { position: static; display: flex; justify-self: start; border: 1px solid var(--color-border-line); border-radius: 10px; padding: 3px; gap: 3px; }
   .page-tabs button { min-height: 36px; border-radius: 7px; }
   .page-tabs button[aria-pressed=true] { color: #1a1407; background: var(--accent); box-shadow: none; }

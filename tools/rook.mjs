@@ -59,7 +59,9 @@ if (cmd === 'result') {
   const codex = () => {
     const files = [];
     const walk = (d) => readdirSync(d).forEach((f) => { const p = join(d, f); statSync(p).isDirectory() ? walk(p) : p.endsWith('.jsonl') && files.push(p); });
-    walk(join(homedir(), '.codex', 'sessions'));
+    const root = join(homedir(), '.codex', 'sessions');
+    if (!existsSync(root)) return;
+    walk(root);
     files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     for (const f of files.slice(0, 3)) {
       const m = [...readFileSync(f, 'utf8').matchAll(/"primary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)\},"secondary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)/g)].pop();
@@ -89,10 +91,11 @@ if (cmd === 'result') {
     ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
     ['Rowan', 'Default builder (Codex)', 'gpt-6.1-sol', codex()],
   ];
-  for (const [a, , , u] of agents) if (!u) throw new Error(`${label(a)} usage probe failed, exit unknown`);
+  for (const [a, , , u] of agents) if (!u && a !== 'Rowan') throw new Error(`${label(a)} usage probe failed, exit unknown`);
   const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
   if (!cached) mkdirSync(U, { recursive: true });
   for (const [a, role, model, u] of agents) {
+    if (!u) { console.log(`${label(a)}: no reading${suffix}`); continue; }
     const wkLen = 7 * 864e5, s = u.wk[1] * 1e3 - wkLen, el = now - s;
     const cap = a === 'Pip' ? Math.min(100, 14 * Math.ceil((now - s) / 864e5)) : '';
     const atReset = el > 12 * 36e5 && u.wk[0] > 0 ? Math.round((u.wk[0] * wkLen) / el) : null;
