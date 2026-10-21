@@ -867,7 +867,7 @@ try {
   const waitSel = (txt) => page.waitForFunction((x) => document.querySelector('[data-testid=sel-count]').textContent.trim() === x, txt, { timeout: 8000 }).catch(async (e) => { throw new Error('waiting for ' + txt + ', it says ' + (await t('sel-count').textContent()) + ' / ' + (await t('cmd-prompt').textContent())); });
   // pixels of the drawing canvas close to the accent colour (the selection)
   const accentInk = () => t('drawing').evaluate((c) => {
-    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, a = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, a = getComputedStyle(document.documentElement).getPropertyValue('--selection').trim();
     const n = parseInt(a.slice(1), 16), R = n >> 16, G = (n >> 8) & 255, B = n & 255;
     let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && Math.abs(d[i] - R) < 40 && Math.abs(d[i + 1] - G) < 40 && Math.abs(d[i + 2] - B) < 40) k++;
     return k;
@@ -7751,6 +7751,80 @@ try {
     await page.keyboard.press('Control+z');
     const restored = (await savedDoc()).entities;
     assert.equal(restored.length, 1); assert.deepEqual(restored[0], original, 'one undo restores the original MTEXT, codes, insertion, attachment, height and width');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 90: black dark drawing area, contrasting selection / hover / grips / snaps, light and PDF unchanged', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 60, 120, 60));
+    await openGrips(writeDxf(doc), 'black-canvas.dxf');
+    await click(70, 30); await gripWhen(3);
+    const colours = () => page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement), token = (n) => root.getPropertyValue(n).trim();
+      const canvas = document.querySelector('[data-testid=canvas]');
+      return { background: getComputedStyle(canvas).backgroundColor, surround: token('--canvas'), sheet: token('--sheet'), part: token('--part'),
+        selection: token('--selection'), accent: token('--accent'), panel: token('--panel'), paper: token('--pdpaper'),
+        hot: token('--hot'), mark: token('--mark'), muted: token('--muted'), guide: token('--guide'),
+        grip: getComputedStyle(document.querySelector('[data-testid=grip]')).fill };
+    });
+    // WCAG relative luminance against #000, including translucent feedback composited on black.
+    const contrast = (hex, opacity = 1) => {
+      const rgb = hex.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16) / 255 * opacity);
+      const linear = rgb.map((c) => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
+      return (linear[0] * .2126 + linear[1] * .7152 + linear[2] * .0722 + .05) / .05;
+    };
+    let lightPdf;
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      const c = await colours();
+      if (theme === 'light') {
+        assert.equal(c.background, 'rgb(255, 255, 255)');
+        assert.deepEqual([c.surround, c.sheet, c.part, c.selection, c.accent, c.panel, c.paper],
+          ['#ececef', '#ffffff', '#ffffff', '#4f46e5', '#4f46e5', '#ffffff', '#ffffff']);
+        assert.equal(c.grip, 'rgb(79, 70, 229)');
+      } else {
+        assert.equal(c.background, 'rgb(0, 0, 0)');
+        assert.deepEqual([c.surround, c.sheet, c.part], ['#000000', '#000000', '#000000']);
+        assert.deepEqual([c.accent, c.panel, c.paper], ['#8a8fff', '#131316', '#f4f5f6'], 'UI and PDF preview tokens stay as before');
+        assert.equal(c.grip, 'rgb(96, 165, 250)');
+        for (const name of ['selection', 'hot', 'mark', 'muted', 'guide']) {
+          assert.ok(contrast(c[name]) >= 4.5, `${name} ${c[name]} contrasts at least 4.5:1 with black`);
+        }
+        const hover = await page.evaluate(() => {
+          const svg = document.querySelector('.ovl svg'), edge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+          edge.setAttribute('class', 'dr-edge'); svg.append(edge);
+          const cs = getComputedStyle(edge), result = { colour: cs.stroke, opacity: +cs.strokeOpacity };
+          edge.remove(); return result;
+        });
+        assert.equal(hover.colour, c.grip, 'hover and grips use the drawing selection colour');
+        assert.ok(contrast(c.selection, hover.opacity) >= 4.5, 'translucent hover contrasts at least 4.5:1 on black');
+      }
+      assert.ok(await accentWhen((n) => n > 100) > 100, 'selected line is painted in the selection token');
+      await page.screenshot({ path: `${shotDir}/s14-90-${theme}.png` });
+      await openPdf();
+      await t('pdf-negative').uncheck(); await t('pdf-strip').uncheck();
+      const pdf = pdfText(await downloaded(() => t('pdf-go').click()));
+      const paperPixel = await page.evaluate(async (text) => {
+        const { renderPdfPage } = await import('./pdf-read.js');
+        const { canvas } = await renderPdfPage(Uint8Array.from(text, (c) => c.charCodeAt(0)), { dpi: 36 });
+        return [...canvas.getContext('2d').getImageData(5, 5, 1, 1).data];
+      }, pdf);
+      assert.deepEqual(paperPixel, [255, 255, 255, 255], 'exported PDF renders on white paper');
+      if (theme === 'light') lightPdf = pdf;
+      else assert.equal(pdf, lightPdf, 'exported PDF is identical in light and dark themes');
+    }
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; }); await frames();
+    assert.equal((await colours()).background, 'rgb(0, 0, 0)', 'Windows dark theme also uses black');
+    assert.equal((await colours()).selection, '#60a5fa');
+    await menuItem('View', 'Theme: dark');
+    await t('new-layout').click(); await frames();
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)', 'layout surround is black too');
+    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 0, 0)', 'layout sheet is black too');
+    await menuItem('View', 'Theme: light'); await frames();
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(236, 236, 239)');
+    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(255, 255, 255)');
+    await page.emulateMedia({ colorScheme: 'light' });
     await closeTabs(/./);
   });
 
