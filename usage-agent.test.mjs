@@ -96,17 +96,20 @@ test('14-day IST tally dedupes Claude blocks and Codex totals, excludes cache re
     record('Knight', codexEvent('2026-10-21T18:31:00Z', first, first), 'two'),
     record('Knight', codexEvent('2026-10-21T18:32:00Z', { input_tokens: 5, output_tokens: 2 }), 'two'), // Counter reset.
   ], now);
-  assert.equal(result.rows.length, 14);
-  assert.equal(result.rows[0].day, '2026-10-09');
-  assert.deepEqual(result.rows.at(-2), { day: '2026-10-21', Rook: 38, Bishop: 0, Knight: 30 });
-  assert.deepEqual(result.rows.at(-1), { day: '2026-10-22', Rook: 35, Bishop: 35, Knight: 49 });
-  assert.deepEqual(result.rows[0], { day: '2026-10-09', Rook: 0, Bishop: 0, Knight: 0 });
+  // Hourly rows from IST midnight on Oct 9 (2026-10-08T18:30Z) to the hour holding 'now' (01:30 IST on Oct 22).
+  const start = Date.parse('2026-10-08T18:30:00Z');
+  assert.equal(result.rows.length, 13 * 24 + 2);
+  assert.deepEqual(result.rows.map((row) => row.t), result.rows.map((_, i) => start + i * 3600e3));
+  assert.deepEqual(result.rows.at(-3), { t: Date.parse('2026-10-21T17:30:00Z'), Rook: 38, Bishop: 0, Knight: 30 });
+  assert.deepEqual(result.rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 35, Bishop: 35, Knight: 49 });
+  assert.deepEqual(result.rows.at(-1), { t: Date.parse('2026-10-21T19:30:00Z'), Rook: 0, Bishop: 0, Knight: 0 });
+  assert.deepEqual(result.rows[0], { t: start, Rook: 0, Bishop: 0, Knight: 0 });
 });
 
 test('collector uses all three transcript roots, skips stale files and tolerates partial JSONL/missing roots', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'projectd-tokens-'));
   try {
-    assert.equal((await collectTokens(folder, now)).rows.length, 14);
+    assert.equal((await collectTokens(folder, now)).rows.length, 13 * 24 + 2);
     for (const [directory, agent] of [['.claude/projects/a', 'Rook'], ['.claude-account2/projects/b', 'Bishop'], ['.codex/sessions/2026/10', 'Knight']]) {
       const root = join(folder, directory); mkdirSync(root, { recursive: true });
       const event = agent === 'Knight' ? codexEvent('2026-10-21T19:00:00Z', { input_tokens: 20, cached_input_tokens: 5, output_tokens: 2 })
@@ -116,7 +119,7 @@ test('collector uses all three transcript roots, skips stale files and tolerates
         const time = new Date(now - (name === 'stale.jsonl' ? 16 * 864e5 : 0)); utimesSync(path, time, time);
       }
     }
-    assert.deepEqual((await collectTokens(folder, now)).rows.at(-1), { day: '2026-10-22', Rook: 12, Bishop: 12, Knight: 17 });
+    assert.deepEqual((await collectTokens(folder, now)).rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 12, Bishop: 12, Knight: 17 });
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
@@ -133,7 +136,7 @@ test('resumed Claude transcripts count copied messages once across files in each
         utimesSync(path, new Date(now), new Date(now));
       }
     }
-    assert.deepEqual((await collectTokens(folder, now)).rows.at(-1), { day: '2026-10-22', Rook: 35, Bishop: 35, Knight: 0 });
+    assert.deepEqual((await collectTokens(folder, now)).rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 35, Bishop: 35, Knight: 0 });
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 

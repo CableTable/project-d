@@ -44,30 +44,31 @@ function freshTokens(usage, codex = false) {
 
 // An async iterable lets the disk reader stream transcripts; arrays make the same tally easy to test.
 export async function tallyTokens(records, now) {
-  const days = Array.from({ length: 14 }, (_, i) => istDay(now - (13 - i) * 864e5));
-  const totals = new Map(days.map((day) => [day, { day, Rook: 0, Bishop: 0, Knight: 0 }]));
+  // Hourly buckets aligned to IST midnight, from 13 days back to the hour holding `now`: rows[].t is the bucket start (ms), at most 14 x 24 rows.
+  const HOUR = 3600e3, first = Date.parse(istDay(now - 13 * 864e5) + 'T00:00:00Z') - 19800e3;
+  const rows = Array.from({ length: Math.floor((now - first) / HOUR) + 1 }, (_, i) => ({ t: first + i * HOUR, Rook: 0, Bishop: 0, Knight: 0 }));
   const messages = new Map(), sessions = new Map();
   for await (const { agent, session, event } of records) {
     const time = Date.parse(event.timestamp);
     if (!Number.isFinite(time) || time > now) continue;
-    const day = istDay(time);
+    const row = rows[Math.floor((time - first) / HOUR)]; // undefined before the window
     if ((agent === 'Rook' || agent === 'Bishop') && event.type === 'assistant' && event.message?.usage) {
       const { id, usage } = event.message;
       if (!id) continue;
       const key = `${agent}|${id}|${event.requestId || ''}`;
       const tokens = freshTokens(usage), previous = messages.get(key);
       // Split assistant blocks repeat the message, sometimes with a later output-token count.
-      if (!previous || tokens > previous.tokens) messages.set(key, { agent, day, tokens });
+      if (!previous || tokens > previous.tokens) messages.set(key, { agent, row, tokens });
     } else if (agent === 'Knight' && event.payload?.type === 'token_count' && event.payload.info?.total_token_usage) {
       const total = freshTokens(event.payload.info.total_token_usage, true);
       let tokens = total - (sessions.get(session) || 0);
       if (tokens < 0) tokens = total; // A restarted counter begins a new run.
       sessions.set(session, total);
-      if (totals.has(day)) totals.get(day).Knight += tokens;
+      if (row) row.Knight += tokens;
     }
   }
-  for (const { agent, day, tokens } of messages.values()) if (totals.has(day)) totals.get(day)[agent] += tokens;
-  return { rows: [...totals.values()] };
+  for (const { agent, row, tokens } of messages.values()) if (row) row[agent] += tokens;
+  return { rows };
 }
 
 export async function collectTokens(home = homedir(), now = Date.now()) {

@@ -3,7 +3,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebas
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
-import { cumulativeTokens, tokenEndLabels } from './token-chart.js';
+import { cumulativeTokens, resetTimes, tokenEndLabels } from './token-chart.js';
 
 const AGENT_COLOR = { Rook: 'var(--ud-rook)', Pip: 'var(--ud-pip)', Rowan: 'var(--ud-rowan)', Bishop: 'var(--ud-pip)', Knight: 'var(--ud-rowan)' };
 const ORDER = ['Rook', 'Pip', 'Rowan'];
@@ -242,14 +242,15 @@ function drawTokenChart() {
   }
   if (!data.tokens.length) { box.append(el('p', 'ud-muted', 'No token data uploaded yet.')); return; }
   const W = Math.max(260, box.clientWidth), H = 240, left = 38, right = W - 70, bottom = 212;
-  const series = agents.map((agent) => ({ agent, values: cumulativeTokens(data.tokens, agent) }));
-  const max = Math.max(1, ...series.map((line) => line.values.at(-1)));
-  const step = (right - left) / Math.max(1, data.tokens.length - 1);
-  const labelEvery = Math.max(1, Math.ceil(60 / step));
+  const rows = data.tokens, lastDay = Math.floor((rows.length - 1) / 24);
+  const series = agents.map((agent) => ({ agent, values: cumulativeTokens(rows, agent, resetTimes(agent, data.limits, data.history, rows[0].t, rows.at(-1).t + 3600e3)) }));
+  const max = Math.max(1, ...series.flatMap((line) => line.values));
+  const step = (right - left) / Math.max(1, rows.length - 1);
+  const labelEvery = Math.max(1, Math.ceil(60 / (24 * step)));
   const y = (value) => bottom - value / max * 190;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Tokens used, running total by Rook, Bishop and Knight over the last 14 days in IST; input + output + cache creation; cache reads excluded');
+  svg.setAttribute('aria-label', 'Tokens used, running total by Rook, Bishop and Knight over the last 14 days in IST, back to 0 at each weekly reset; input + output + cache creation; cache reads excluded');
   box.append(svg);
   function add(tag, attrs, text, parent = svg) {
     const node = document.createElementNS(svg.namespaceURI, tag);
@@ -264,20 +265,23 @@ function drawTokenChart() {
   }
   const ends = [];
   for (const { agent, values } of series) {
-    add('polyline', { class: 'token-line', points: values.map((value, i) => `${left + i * step},${y(value)}`).join(' '), stroke: AGENT_COLOR[agent] });
+    // A value below the one before is a reset: go straight down at the same x.
+    const points = values.flatMap((value, i) => (i && value < values[i - 1] ? [[i, values[i - 1]]] : []).concat([[i, value]]));
+    add('polyline', { class: 'token-line', points: points.map(([i, value]) => `${left + i * step},${y(value)}`).join(' '), stroke: AGENT_COLOR[agent] });
     values.forEach((value, i) => {
+      if (i % 24 !== 23 && i !== values.length - 1) return; // one dot per day, with the day's closing total
       const dot = add('circle', { cx: left + i * step, cy: y(value), r: 2.5, fill: AGENT_COLOR[agent] });
-      add('title', {}, `${chartDate(data.tokens[i].day)} IST · ${agent}: ${value.toLocaleString('en')} tokens, running total`, dot);
+      add('title', {}, `${chartDate(rows[i].t)} IST · ${agent}: ${value.toLocaleString('en')} tokens, running total`, dot);
     });
     ends.push({ agent, value: values.at(-1), y: y(values.at(-1)) });
   }
-  const endX = left + (data.tokens.length - 1) * step;
+  const endX = left + (rows.length - 1) * step;
   for (const end of tokenEndLabels(ends, bottom)) {
     add('line', { x1: endX, y1: y(end.value), x2: endX + 8, y2: end.y, stroke: AGENT_COLOR[end.agent] });
     add('text', { class: 'token-end', x: endX + 12, y: end.y, 'dominant-baseline': 'middle', style: 'fill:' + AGENT_COLOR[end.agent] }, compact(end.value));
   }
-  data.tokens.forEach((row, i) => {
-    if ((data.tokens.length - 1 - i) % labelEvery === 0) add('text', { x: left + i * step, y: 234, 'text-anchor': 'middle' }, chartDate(row.day));
+  rows.forEach((row, i) => {
+    if (i % 24 === 0 && (lastDay - i / 24) % labelEvery === 0) add('text', { x: left + i * step, y: 234, 'text-anchor': 'middle' }, chartDate(row.t));
   });
 }
 

@@ -57,7 +57,8 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
             { id: 'a3', topic: 'Invalid date', note: 'Still renders', as_of: '2026-99-99T00:00:00Z' },
           ] },
           todo: { sections: [{ title: 'Whole TODO', items: [{ num: 95, title: '<img src=x>', size: 'M', done: false, text: 'Open item' }, { num: 98, title: 'Finished', done: true, text: 'Built' }] }] },
-          tokens: { rows: Array.from({ length: 14 }, (_, i) => ({ day: '2026-10-' + String(i + 8).padStart(2, '0'), Rook: i * 100000, Bishop: i * 101000, Knight: i * 102000 })) },
+          // 14 IST days of hourly buckets, Oct 8 00:00 IST to Oct 21 23:00 IST. Every agent's weekly resetsAt is 2027-01-01T00:00Z, so its week resets Fridays 00:00Z (Oct 9 and Oct 16 here).
+          tokens: { rows: Array.from({ length: 336 }, (_, i) => ({ t: Date.UTC(2026, 9, 7, 18, 30) + i * 3600e3, Rook: 1000, Bishop: 1010, Knight: 1020 })) },
           tickets: { rows: [
             { id: 'T14', status: 'building', size: 'M', type: 'ask', tags: ['feature', 'usage-page', 'mod'], title: '<img src=x onerror=alert(1)>', todo: '95', updated: '2026-10-21', note: '<script>plain note</script>\nSecond line.' },
             { id: 'T17', status: 'checked in exe', size: 'S', type: 'bug', tags: ['bug', 'usage-page'], title: 'Refresh error', todo: '98', updated: '2026-10-21', note: 'Keep last good readings.' },
@@ -84,9 +85,9 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'Knight']);
       assert.equal(await page.locator('#token-chart rect').count(), 0);
       assert.equal(await page.locator('#token-chart polyline').count(), 3);
-      assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /running total.*14 days in IST; input \+ output \+ cache creation; cache reads excluded/);
+      assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /running total.*14 days in IST, back to 0 at each weekly reset; input \+ output \+ cache creation; cache reads excluded/);
       assert.equal(await page.locator('#token-chart').locator('..').locator('h3').textContent(), 'Tokens used, running total');
-      assert.equal(await page.locator('#token-chart').locator('..').locator('p').textContent(), 'Last 14 days in IST. Input + output + cache creation; cache reads excluded.');
+      assert.equal(await page.locator('#token-chart').locator('..').locator('p').textContent(), 'Running total since each agent\'s weekly reset. Last 14 days in IST. Input + output + cache creation; cache reads excluded.');
       assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'Knight']);
       assert.match(await page.locator('#notes tr[data-key=a1] td').first().textContent(), /^Bishop and KnightThu,? 22 Oct, 00:15 IST$/);
       assert.match(await page.locator('#notes tr[data-key=a2] td').first().textContent(), /^Thu,? 22 Oct, 00:15 IST$/);
@@ -136,22 +137,39 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
           points: [...node.points].map(({ x, y }) => ({ x, y })), color: getComputedStyle(node).stroke,
         })));
         assert.equal(lines.length, 3);
+        // Independent expectation: hourly rate per agent, back to 0 in the buckets holding the Oct 9 and Oct 16 00:00Z resets (rows 29 and 197), drawn as a vertical drop.
+        const resetRows = [29, 197], rates = [1000, 1010, 1020], max = 168 * 1020;
         for (let a = 0; a < lines.length; a++) {
-          assert.equal(lines[a].points.length, 14);
-          for (let i = 0; i < 14; i++) {
-            const expected = 212 - (i * (i + 1) / 2 * [100000, 101000, 102000][a]) / 9282000 * 190;
-            assert.ok(Math.abs(lines[a].points[i].y - expected) < .001, 'Line plots cumulative tokens on the shared scale');
+          const expected = []; let total = 0;
+          for (let i = 0; i < 336; i++) {
+            if (resetRows.includes(i)) { expected.push({ i, total }); total = 0; }
+            expected.push({ i, total: (total += rates[a]) });
+          }
+          assert.equal(lines[a].points.length, 338);
+          expected.forEach((point, k) => {
+            assert.ok(Math.abs(lines[a].points[k].y - (212 - point.total / max * 190)) < .001, 'Line plots the running total on the shared scale');
+            if (k) assert.ok(lines[a].points[k].x >= lines[a].points[k - 1].x);
+          });
+          for (const row of resetRows) {
+            const k = expected.findIndex((point) => point.i === row);
+            assert.equal(lines[a].points[k].x, lines[a].points[k + 1].x, 'A reset is a vertical drop');
+            assert.ok(lines[a].points[k + 1].y > lines[a].points[k].y);
           }
         }
-        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['9.3M', '9.2M', '9.1M']);
-        assert.deepEqual(await page.locator('#token-chart text[text-anchor=end]').allTextContents(), ['0', '4.6M', '9.3M']);
+        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['141.8K', '140.4K', '139K']);
+        assert.deepEqual(await page.locator('#token-chart text[text-anchor=end]').allTextContents(), ['0', '85.7K', '171.4K']);
         assert.deepEqual(lines.map((line) => line.color), await page.locator('#token-legend').evaluate((legend) => [...legend.querySelectorAll('i')].map((node) => getComputedStyle(node).backgroundColor)));
         assert.deepEqual(await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('.token-end')].map((node) => getComputedStyle(node).fill)), lines.map((line) => line.color).reverse());
-        assert.equal(await page.locator('#token-chart title').last().textContent(), '21-Oct IST · Knight: 9,282,000 tokens, running total');
+        assert.equal(await page.locator('#token-chart title').last().textContent(), '21-Oct IST · Knight: 141,780 tokens, running total');
         await endLabels();
+        // An extra drop in a stored week % (a manual reset; Knight is stored as Rowan) restarts that line only.
+        await page.evaluate(() => window.__emit('history', { rows: [...window.__docs.history.rows, { when: '2026-10-20T08:00:00Z', agent: 'Rowan', window: 'week', used_pct: '60' }, { when: '2026-10-20T09:00:00Z', agent: 'Rowan', window: 'week', used_pct: '2' }] }));
+        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['140.4K', '139K', '34.7K']);
+        assert.equal(await page.locator('#token-chart polyline').nth(2).evaluate((node) => node.points.length), 339);
+        await page.evaluate(() => window.__emit('history', window.__docs.history));
         // All-zero totals and two zero agents keep labels inside the lower edge too.
         for (const rook of [0, 1000000]) {
-          await page.evaluate((Rook) => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ day: row.day, Rook, Bishop: 0, Knight: 0 })) }), rook);
+          await page.evaluate((Rook) => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ t: row.t, Rook, Bishop: 0, Knight: 0 })) }), rook);
           await endLabels();
         }
         await page.evaluate(() => window.__emit('tokens', { rows: [] }));
