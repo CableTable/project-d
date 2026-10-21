@@ -154,4 +154,10 @@ test('a mirrored shape (extrusion -1) has no grips; the cap is 200 selected', ()
   assert.equal(GR.MAX_SELECTED, 200);
 });
 
+test('capGrips: up to MAX_GRIPS are shown, one more and none', () => {
+  const some = (k) => Array.from({ length: k }, (_, i) => ({ id: i }));
+  assert.equal(GR.capGrips(some(GR.MAX_GRIPS)).length, GR.MAX_GRIPS);
+  assert.deepEqual(GR.capGrips(some(GR.MAX_GRIPS + 1)), []);
+});
+
 console.log(n + ' grips tests passed');

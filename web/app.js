@@ -5312,12 +5312,13 @@ function gripList(d) {
   const list = [];
   for (const e of d.sel) {
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
-    if (lp) { for (const g of GR.gripsOf(lp)) { if (list.length < GR.MAX_GRIPS) list.push({ e, ...g }); } continue; }       // a leader: a grip at each point
+    if (lp) { for (const g of GR.gripsOf(lp)) { if (list.length <= GR.MAX_GRIPS) list.push({ e, ...g }); } continue; }       // a leader: a grip at each point
     if (!ent || ent.layer === Ed.DIM_LAYER) continue;
-    for (const g of GR.gripsOf(ent)) { if (list.length < GR.MAX_GRIPS) list.push({ e, ...g }); }
+    for (const g of GR.gripsOf(ent)) { if (list.length <= GR.MAX_GRIPS) list.push({ e, ...g }); }
   }
-  d.gripCache = { sel: d.sel, ents, list };
-  return list;
+  const shown = GR.capGrips(list);
+  d.gripCache = { sel: d.sel, ents, list: shown };
+  return shown;
 }
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
 /** The grip under a pointer position (8 px), or null. */

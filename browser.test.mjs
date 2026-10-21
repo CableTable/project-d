@@ -7607,6 +7607,26 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 79: after Text to outlines the new outlines have too many vertices for grips: none are drawn, light and dark', async () => {
+    await closeTabs(/./); await t('new-tab').click();
+    await page.locator('[data-tool=text]').click();
+    await t('text-height').fill('12'); await t('text-height').press('Enter'); await t('text-font').selectOption('Standard');
+    await click(30, 100); await t('text-editor').waitFor(); await page.keyboard.type('BOBOBOBO'); await page.keyboard.press('Enter');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    const vertices = (await savedDoc()).entities.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
+    assert.ok(vertices > GR.MAX_GRIPS, 'the outlines have more vertices than the limit: ' + vertices);
+    await frames();
+    assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'no vertex grips on a selection of ' + vertices + ' vertices');
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s13-grips-${th}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await closeTabs(/./);
+  });
+
   await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT) and an SHX text become outlines; MTEXT stays and is named; save and reopen give the same outlines', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/txo.dxf');
