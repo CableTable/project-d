@@ -3621,7 +3621,7 @@ async function textToOutlines() {
   } catch { note('Text to outlines: no font file could be read'); return; }
   if (!state.docs.includes(d) || d.raw.entities !== raw) { note('Text to outlines: the drawing changed meanwhile, run it again'); return; }
   const r = TO.outlineEntities(items, raw, (it) => fonts.get(keyOf(it)).font, 0.01 / d.factor);      // flattened to 0.01 mm, as Export for cutter
-  const missing = r.missing.length ? '. Missing glyphs skipped (advance kept): ' + r.missing.map((ch) => `${ch} (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})`).join(', ') : '';
+  const missing = r.missing.length ? '. Missing glyphs skipped (advance kept): ' + TO.missingGlyphsLabel(r.missing) : '';
   if ([...fonts.values()].some((f) => f.regularForBold)) r.notes.push('Bold face unavailable, used regular');
   const notes = r.notes.length ? '. ' + r.notes.join('. ') : '';
   if (!r.ents.length) { note('Text to outlines: the selected text has no letters to outline' + missing + notes); return; }

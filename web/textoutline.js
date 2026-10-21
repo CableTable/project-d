@@ -23,6 +23,13 @@ const FILES = {
 };
 export const fontFiles = (font, bold) => (FILES[font] || FILES.Standard)[bold ? 1 : 0];
 
+/** Missing characters with Unicode labels, capped for the result message. */
+export function missingGlyphsLabel(chars) {
+  const labels = chars.slice(0, 10).map((ch) => `${ch} (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')})`);
+  if (chars.length > 10) labels.push(`+${chars.length - 10} more`);
+  return labels.join(', ');
+}
+
 const sameRun = (a, b) => a.h === b.h && a.wf === b.wf && a.oblique === b.oblique && a.bold === b.bold;
 const addRun = (runs, run) => {
   const last = runs[runs.length - 1];
@@ -174,6 +181,7 @@ export function lineLayout(it, width) {
 
 /** Glyph paths (including components) are y-down: turn y, then mirror, widen, rotate and move. Missing glyphs keep their advance only. */
 export function textPolys(it, font, tol, missing = new Set()) {
+  if (font.charToGlyphIndex('⌀') === 0) it = { ...it, lines: it.lines.map((line) => line.replace(/⌀/g, 'Ø')) };
   const size = it.h / CAP, c = Math.cos(it.rot), s = Math.sin(it.rot), sx = it.wf * it.mx, sy = it.my;
   const shear = Math.tan((it.oblique || 0) * Math.PI / 180);
   const polys = [];

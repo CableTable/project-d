@@ -28,6 +28,15 @@ test('the three fonts name their Windows files, bold ones too', () => {
   assert.deepEqual(TO.fontFiles('nonsense', false), ['segoeui.ttf']);
 });
 
+test('missing glyph labels use padded uppercase code points and cap the list at ten', () => {
+  assert.equal(TO.missingGlyphsLabel([]), '');
+  assert.equal(TO.missingGlyphsLabel(['é', '🦄']), 'é (U+00E9), 🦄 (U+1F984)');
+  const chars = [...'ABCDEFGHIJKL'], firstTen = chars.slice(0, 10).map((ch, i) => `${ch} (U+00${(65 + i).toString(16).toUpperCase()})`).join(', ');
+  assert.equal(TO.missingGlyphsLabel(chars.slice(0, 10)), firstTen);
+  assert.equal(TO.missingGlyphsLabel(chars.slice(0, 11)), firstTen + ', +1 more');
+  assert.equal(TO.missingGlyphsLabel(chars), firstTen + ', +2 more');
+});
+
 test('a curve is cut within the tolerance; a repeated first point and a flat contour are dropped', () => {
   const cmds = [{ type: 'M', x: 0, y: 0 }, { type: 'Q', x1: 5, y1: 10, x: 10, y: 0 }, { type: 'L', x: 0, y: 0 }, { type: 'Z' },
     { type: 'M', x: 0, y: 0 }, { type: 'L', x: 5, y: 0 }, { type: 'L', x: 9, y: 0 }, { type: 'Z' }];
@@ -173,7 +182,21 @@ test('DXF TEXT escapes decode before glyph lookup, including escaped accented an
   const literal = itemsOf([text(100, 50, 10, 'Åé°ñ Ø25 ± ⌀')]);
   assert.deepEqual(TO.textPolys(escaped.items[0], font, 0.01), TO.textPolys(literal.items[0], font, 0.01));
   const r = TO.outlineEntities(escaped.items, escaped.raw.entities, () => font, 0.01);
-  assert.deepEqual(r.missing, ['⌀'], 'the bundled font lacks the diameter sign; do not silently substitute a slashed O');
+  assert.deepEqual(r.missing, [], 'the bundled font uses slashed O outlines for the absent diameter sign');
+});
+
+test('%%c25 outlines the absent diameter sign as Ø with closed contours and no skipped glyph note', () => {
+  assert.equal(font.charToGlyphIndex('⌀'), 0);
+  const { raw, items } = itemsOf([text(100, 50, 10, '%%c25')]), before = structuredClone(items[0]);
+  assert.deepEqual(items[0].lines, ['⌀25'], 'screen text keeps the diameter sign');
+  const r = TO.outlineEntities(items, raw.entities, () => font, 0.01);
+  const expected = itemsOf([text(100, 50, 10, 'Ø25')]);
+  assert.deepEqual(r.ents, TO.outlineEntities(expected.items, expected.raw.entities, () => font, 0.01).ents);
+  assert.ok(r.ents.length >= 3, 'includes all three Ø contours');
+  assert.ok(r.ents.every((e) => e.type === 'LWPOLYLINE' && e.r.v[e.r.c.indexOf(70)] === '1'));
+  assert.deepEqual(r.missing, []); assert.deepEqual(r.notes, []);
+  assert.deepEqual(items[0], before, 'outlining does not mutate screen text');
+  assert.deepEqual(TO.textPolys({ ...items[0], ha: 1 }, font, 0.01), TO.textPolys({ ...expected.items[0], ha: 1 }, font, 0.01), 'alignment uses the replacement glyph advance');
 });
 
 test('MTEXT escapes, paragraphs, real newlines, nonbreaking spaces and scoped braces', () => {
