@@ -102,7 +102,7 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
     53b. (after 53a) Convert composite TrueType glyphs, including accented letters, through the same action, with contour-placement unit tests and a browser conversion / undo check.
     53c. (after 53a) Preserve TEXT rotation, alignment, width factor and mirroring when outlining, with geometry tests and a browser Save / reopen check.
     53d. (after 53b, 53c) Outline MTEXT line by line with its wrapping, spacing and supported formatting, reporting unsupported runs without losing text, with unit and browser export checks.
-54. **Wireframe (outline-only) view** (S): one toggle that shows objects stacked or hidden behind fills.
+54. ✅ (built, session 12) **Wireframe (outline-only) view** (S): View → Wireframe, status-bar chip and F9; thin outlines without fills or background pictures, remembered across all tabs. PDF / Print and exports keep their fills.
 55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
     55a. Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings.
     55b. (after 55a) If rendering lags, skip off-screen drawing items using their existing bounds, with conservative-bound unit tests and browser checks that panning and zooming reveal every object.

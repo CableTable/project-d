@@ -44,6 +44,7 @@ import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
+const viewStore = idbStore('project-d-view', 'settings', 'view settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 function showShortcuts() {
   ui.cmdUI.close();
@@ -160,6 +161,7 @@ const state = {
   ortho: false,                    // the ORTHO toggle: a sticky Shift (picks kept straight along X or Y from the first point)
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
+  wireframe: false,
   dp: 2,                           // decimal places in dimensions (status bar), remembered on this PC
   meas: null,                      // Measure in progress: { pts: [[x, y] drawing units], hover }
   dimStyles: { presets: {}, cur: 'Standard' },   // the dimension style presets (dims.js; Format → Dimension style…), remembered on this PC (pd-dimstyles); dsOpen: that dialog is open
@@ -338,6 +340,7 @@ function buildMenus() {
     View: () => {
       const lay = curLay(), tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fit, 'Ctrl+0'], [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
+        [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!curLay().s.guidesShow), null, () => !!curLay()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!curLay().s.guidesLock), null, () => !!curLay()],
         ['Clear all guides', clearGuides, null, () => !!curLay() && curLay().s.guides.length > 0],
@@ -365,10 +368,10 @@ function buildMenus() {
       close();
       if (was || unbuilt) return;
       const items = typeof menus[name] === 'function' ? menus[name]() : menus[name];
-      drop.replaceChildren(...items.map(([text, fn, hint, enabled, title, sep]) => {
+      drop.replaceChildren(...items.map(([text, fn, hint, enabled, title, sep, checked]) => {
         const bound = CB.COMMANDS.find((c) => c.key === hint && hint);
         if (bound) hint = ownBindings[bound.name].key;
-        const item = h('button', { type: 'button', role: 'menuitem', class: sep ? 'sep' : null, title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
+        const item = h('button', { type: 'button', role: checked == null ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': checked == null ? null : String(checked), class: sep ? 'sep' : null, title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
         item.addEventListener('click', () => { close(); fn(); });
         return item;
       }));
@@ -2901,6 +2904,7 @@ const DO = {
   redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
   history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
+  wireframe: () => toggleWireframe(),
   shortcuts: () => showShortcuts(),
 };
 /** A command of the table started by its name (typed in the bar, a history line, Space on the drawing). */
@@ -2949,7 +2953,8 @@ function buildStatus() {
   ui.toolChip = h('span', { class: 'lbl tool-chip', 'data-testid': 'tool-chip', title: 'The tool that is on (Esc or S: back to Select)' },
     'Tool: ' + (TOOLS.find((x) => x.id === state.tool) || { label: 'Select' }).label);
   ui.sheetChip = h('span', { class: 'lbl tool-chip', hidden: true, 'data-testid': 'sheet-chip', title: 'The page of the PDF that is shown' });
-  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
+  ui.wireframe = h('button', { class: 'tog' + (state.wireframe ? ' on' : ''), type: 'button', 'data-testid': 'wireframe', 'aria-pressed': String(state.wireframe), title: 'Outline-only view; PDF / Print and export keep fills', onclick: toggleWireframe }, 'Wireframe');
+  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
     ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), h('span', { class: 'lbl' }, 'mm'),
@@ -2971,6 +2976,15 @@ function setDecimals(n) {
   }
   update();
   note(`Dimensions: ${state.dp} decimal place${state.dp === 1 ? '' : 's'}` + (k ? ` (re-labelled in ${k} drawing${k === 1 ? '' : 's'}; Ctrl+Z undoes)` : ''));
+}
+
+function toggleWireframe() {
+  state.wireframe = !state.wireframe;
+  ui.wireframe.classList.toggle('on', state.wireframe);
+  ui.wireframe.setAttribute('aria-pressed', String(state.wireframe));
+  paintOverlay();
+  note(state.wireframe ? 'Wireframe on: outlines only; PDF / Print and export keep fills' : 'Wireframe off');
+  viewStore.put({ id: 'wireframe', on: state.wireframe }).catch(() => note('Could not remember Wireframe; it still applies until the app closes'));
 }
 
 function renderStatus() {
@@ -3217,7 +3231,7 @@ function paintOverlay() {
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
     const d = curDoc();
-    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: isDark() };
+    const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: isDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); return; }
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
@@ -6479,6 +6493,7 @@ async function init() {
     if (SC.clashes(loaded).length) shortcutError = 'Saved shortcuts have conflicts; defaults are active. Import a corrected PGP to change them.';
     else { ownBindings = loaded; ownCommands = SC.commandsFor(loaded); }
   } catch (err) { shortcutError = 'Could not load shortcuts; defaults are active: ' + (err.message || err); }
+  try { state.wireframe = (await viewStore.all()).some((r) => r.id === 'wireframe' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();

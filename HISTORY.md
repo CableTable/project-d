@@ -1,5 +1,7 @@
 # Project D: history
 
+**2026-10-21 (session 12): Wireframe (TODO 54).** View → Wireframe, the status-bar chip and F9 toggle thin coloured outlines across drawing, layout and Compare tabs. Fills, hatch patterns and masks become outlines; background pictures are hidden. The app remembers the setting through the storage helper without changing drawings or output. Pure paint-mode and screen tests cover the rendering; the browser flow covers selection, grips, snaps, on/off persistence, and identical PDF bytes, preview and DXF. Light/dark normal and wireframe captures are in shots/wire-*.png; the local As-built board is mockups/R16_AB_Wireframe.html. Native exe and physical printing were not checked.
+
 **2026-10-20 (session 12): whole TODO on the usage page.** Every agent refresh uploads all TODO.md sections to usage/todo. The pure parser keeps continuation text and section-local numbering, with completed entries replacing duplicate open ones. The page shows open items with bold titles and size chips, and folds completed items under a count. npm test passes (224 tests); the offline Firebase browser check covers all sections, safe text, folds and 320/1440 px in light/dark, with captures in shots/usage-todo-*.png and an As-built board in mockups/Usage_TODO_AB.html. Live Firebase writes/deployment were not checked.
 
 **2026-10-16**: The idea came up at the end of a Project R session, right after Project R's

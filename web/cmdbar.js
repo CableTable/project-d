@@ -52,6 +52,7 @@ const TABLE = [
   ['delete', 'Edit', 'Delete the selection', ['del', 'erase'], '', 'Delete'],
   ['fit', 'View', 'Fit the view to the window', ['z', 'zoom', 'ze'], '', 'Ctrl+0'],
   ['rulers', 'View', 'Show or hide the rulers', [], ''],
+  ['wireframe', 'View', 'Outline-only view; PDF / Print keeps fills', [], '', 'F9'],
   ['properties', 'View', 'Show or hide the Properties bar', ['props'], '', 'Ctrl+1'],
   ['shortcuts', 'Edit', 'Own typed aliases and key shortcuts', [], ''],
 ];

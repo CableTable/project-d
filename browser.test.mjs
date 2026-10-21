@@ -3274,7 +3274,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
+      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await t('rulers-show').isChecked(), false);
@@ -3421,8 +3421,10 @@ try {
     assert.equal(await guideLines(), 0); assert.equal(await t('guides-show').isChecked(), false);
     // View menu: Guides, Lock guides, Clear all guides
     await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 6)), ['✓ Rulers', '  Guides', '✓ Lock guides', 'Clear all guides']);
-await page.locator('.dropdown button').nth(3).click();    assert.equal(await guideLines(), 1); assert.equal(await t('guides-show').isChecked(), true);    await page.locator('[data-menu=View]').click();    await page.locator('.dropdown button').nth(5).click();
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 7)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', 'Clear all guides']);
+    await page.getByRole('menuitem', { name: /Guides/ }).click();
+    assert.equal(await guideLines(), 1); assert.equal(await t('guides-show').isChecked(), true);
+    await menuItem('View', 'Clear all guides');
     assert.equal((await guideVals()).length, 0);
     assert.match(await prompt(), /^1 guide cleared\. Ctrl\+Z brings it back:?$/);
     await page.keyboard.press('Control+z');
@@ -7257,8 +7259,8 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
       await open();
-      assert.equal(await dialog.locator('tr[data-command]').count(), 51);
-      assert.equal(await dialog.locator('.sc-count').textContent(), '51 commands');
+      assert.equal(await dialog.locator('tr[data-command]').count(), 52);
+      assert.equal(await dialog.locator('.sc-count').textContent(), '52 commands');
       await dialog.getByRole('searchbox').fill('contour'); assert.equal(await dialog.locator('.sc-count').textContent(), '1 commands');
       await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
       assert.equal(await dialog.locator('tr[data-command]:visible').count(), 5);
@@ -7419,6 +7421,91 @@ await page.locator('.dropdown button').nth(3).click();    assert.equal(await gui
       assert.ok(worst <= mm + .0001, `inch export deviation ${worst} mm exceeds ${mm} mm (plus DXF rounding)`);
     }
     await closeTabs(/./);
+  });
+
+  await step('TODO 54 Wireframe: menu, chip and F9; fills, pictures, selection, snaps, persistence, all tabs; PDF and DXF unchanged', async () => {
+    const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await c.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: item, exact: true }).click(); await frame(); };
+    const download = async (act) => { const [dl] = await Promise.all([p.waitForEvent('download'), act()]); return readFileSync(await dl.path()); };
+    const pdf = async () => {
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
+      const preview = await q('pdf-preview').evaluate((el) => el.toDataURL());
+      const bytes = await download(() => q('pdf-go').click());
+      await q('pdf-dialog').waitFor({ state: 'detached' });
+      return { preview, bytes };
+    };
+    const pixelCount = () => q('drawing').evaluate((el) => {
+      const pixels = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let n = 0; for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) n++;
+      return n;
+    });
+    const clickPoint = async (x, y) => {
+      const pt = await p.evaluate(([x, y]) => {
+        const svg = document.querySelector('[data-testid=canvas] > svg'), v = svg.viewBox.baseVal, b = svg.getBoundingClientRect();
+        const h = +document.querySelector('[data-key=sheetH]').value;
+        return { x: b.x + (x - v.x) * b.width / v.width, y: b.y + (h - y - v.y) * b.height / v.height };
+      }, [x, y]);
+      await p.mouse.click(pt.x, pt.y);
+    };
+    try {
+      await p.goto(URL_); await q('wireframe').waitFor();
+      await q('picker').setInputFiles('fixtures/wireframe.dxf');
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'wireframe.dxf');
+      await q('bg-picker').setInputFiles('fixtures/bg.png');
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
+      const saved = await download(() => p.keyboard.press('Control+s'));
+      const drawingName = await p.locator('.tabs .dtab.on .tname').textContent();
+      const normalPdf = await pdf();
+      for (const theme of ['light', 'dark']) {
+        await menu('Theme: ' + theme);
+        const beforePdf = await pdf();
+        const normal = await pixelCount();
+        await p.screenshot({ path: `${shotDir}/wire-${theme}-normal.png` });
+        await p.locator('[data-menu=View]').click();
+        const item = p.getByRole('menuitemcheckbox', { name: /Wireframe/ });
+        assert.equal(await item.getAttribute('aria-checked'), 'false');
+        assert.equal(await item.getAttribute('aria-keyshortcuts'), 'F9');
+        await item.click(); await frame();
+        assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
+        assert.ok(await pixelCount() < normal / 3, 'fills and picture are gone');
+        assert.equal(await p.locator('.tabs .dtab.on .dot').count(), 0, 'a view toggle does not dirty the drawing');
+        await p.screenshot({ path: `${shotDir}/wire-${theme}-wireframe.png` });
+        const afterPdf = await pdf();
+        assert.deepEqual(afterPdf.bytes, normalPdf.bytes, 'PDF bytes keep fills, colours and widths in either theme');
+        assert.ok(afterPdf.preview === beforePdf.preview, 'PDF preview keeps fills, colours and widths');
+        assert.deepEqual(await download(() => p.keyboard.press('Control+s')), saved, 'DXF is unchanged');
+        await q('wireframe').click(); await frame();
+        assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'false');
+        assert.equal(await pixelCount(), normal, 'turning off restores the picture and fills');
+      }
+      await p.keyboard.press('F9'); await frame();
+      await clickPoint(8, 55);
+      await p.waitForFunction(() => document.querySelectorAll('[data-testid=grip]').length === 3);
+      await p.keyboard.press('Escape');
+      await p.locator('[data-tool=measure]').click();
+      await clickPoint(5.3, 55.2); await clickPoint(234.7, 55.2);
+      assert.match(await q('cmd-prompt').textContent(), /Distance 230 mm.*ΔX 230.*ΔY 0/);
+      await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+      await q('new-tab').click();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
+      await q('new-layout').click();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true', 'layout tabs share the setting');
+      await p.locator('.tabs .dtab', { hasText: drawingName }).click();
+      await p.reload(); await q('wireframe').waitFor();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true', 'remembered after restart');
+      await p.locator('[data-menu=View]').click();
+      assert.equal(await p.getByRole('menuitemcheckbox', { name: /Wireframe/ }).getAttribute('aria-checked'), 'true');
+      await p.keyboard.press('Escape'); await q('wireframe').click();
+      await p.waitForFunction(async () => {
+        const { idbStore } = await import('./idbstore.js');
+        return (await idbStore('project-d-view', 'settings', 'test').all()).some((r) => r.id === 'wireframe' && r.on === false);
+      });
+      await p.reload(); await q('wireframe').waitFor();
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'false', 'off is remembered too');
+    } finally { await c.close(); }
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

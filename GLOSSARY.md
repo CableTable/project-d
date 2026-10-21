@@ -190,6 +190,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **WIPEOUT**: A DXF masking boundary that covers geometry behind it in the renderer. Where: `web/drawing.js`. Avoid: Deleting the covered geometry.
 
+**Wireframe**: An app-wide outline-only view with one-pixel coloured lines, no fills and no background pictures. Remembered for the app; saved drawings, PDF / Print and exports keep their normal appearance. Where: `DECISIONS.md`, Wireframe; View menu and status bar.
+
 ## Screen printing
 
 **All colours black**: Prints every artwork layer in black rather than its drawing colour for film output. Where: `DECISIONS.md`, PDF colour pages.
