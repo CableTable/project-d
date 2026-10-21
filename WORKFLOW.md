@@ -245,7 +245,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 
 - "You ARE the claude2 builder / reviewer: do the work yourself, never launch claude2 or Agent subagents."
   (Without it, claude2 reads CLAUDE.md's builder rule and tries to start claude2 itself.)
-- Use ponytail lite; plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
+- Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
 - Builders: tests (`npm.cmd test`, `npm.cmd run test:browser`) must pass; screenshots light + dark into `shots/`.
 - Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
