@@ -10,13 +10,13 @@
 //   (a leader, leader.js, is passed in as { type: 'LEADER', model } and has a grip at each of its points)
 //   readoutOf(ent, id, next, factor) → "331.06 mm · 25.02°", "Move ΔX 10.00 ΔY 40.00", "R 25.00" …
 //   MAX_SELECTED                 → grips are off when more entities than this are selected
-//   capGrips(list)               → the list, or [] when its grips belong to more than MAX_GRIPS selected shapes
+//   capGrips(list)               → the list, or [] when it exceeds MAX_GRIPS handles
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 
 export const MAX_SELECTED = 200;
-export const MAX_GRIPS = MAX_SELECTED;    // cap selected shapes, not their vertices; TXO's immediate result selection hides grips separately
-/** The grips to show: all of them, or none when they belong to more than MAX_GRIPS shapes (entity index e). */
-export const capGrips = (list) => (new Set(list.map((g) => g.e)).size > MAX_GRIPS ? [] : list);
+export const MAX_GRIPS = 5000;    // shortcut: hide all grips above 5000 handles; use a virtualized overlay if denser editing is needed
+/** The grips to show: all of them, or none when there are too many handles. */
+export const capGrips = (list) => (list.length > MAX_GRIPS ? [] : list);
 const DEG = Math.PI / 180;
 const TYPES = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE']);
 

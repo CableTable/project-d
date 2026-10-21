@@ -4870,7 +4870,7 @@ try {
     const c = await at(0, 0), d = await at(100, 130);                     // fewer than 200 shapes, but more than 200 grips
     await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(d.x, d.y, { steps: 4 }); await page.mouse.up();
     const n = Number((await t('sel-count').textContent()).replace(/\D+/g, ''));
-    assert.ok(n <= GR.MAX_GRIPS && 3 * n > GR.MAX_GRIPS, 'a part of them: ' + n);
+    assert.ok(n <= GR.MAX_SELECTED && 3 * n > GR.MAX_SELECTED, 'a part of them: ' + n);
     await gripWhen(3 * n);
   });
 
@@ -7792,7 +7792,31 @@ try {
     }
   });
 
-  await step('TODO 79: the immediate Text to outlines selection has no grips; selecting it again uses the shape cap, light and dark', async () => {
+  await step('Preflight Esc: fields and the command bar take priority; cancel a running command before closing Preflight', async () => {
+    await openGrips();
+    await click(70, 30); await propsOnNow();
+    await menuItem('Tools', 'Preflight…');
+    await t('prop-layer').focus(); await page.keyboard.press('Escape');
+    assert.equal(await t('preflight').isVisible(), true, 'Escape in Properties leaves Preflight open');
+    await cmdLine().fill('line'); await page.keyboard.press('Escape');
+    assert.equal(await t('cmd-bar').isVisible(), false, 'Escape closes an idle command bar');
+    assert.equal(await t('preflight').isVisible(), true);
+    for (const barOpen of [false, true]) {
+      await typeCmd('line');
+      assert.match(await page.locator('[data-tool=line]').getAttribute('class'), /\bon\b/);
+      if (barOpen) await cmdLine().fill('');
+      await page.keyboard.press('Escape');
+      assert.match(await page.locator('[data-tool=select]').getAttribute('class'), /\bon\b/, 'first Escape cancels Line');
+      assert.equal(await t('cmd-bar').isVisible(), false);
+      assert.equal(await t('preflight').isVisible(), true, 'first Escape keeps Preflight open');
+      await page.keyboard.press('Escape');
+      assert.equal(await t('preflight').isVisible(), false, 'second Escape closes Preflight');
+      if (!barOpen) await menuItem('Tools', 'Preflight…');
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 79: the immediate Text to outlines selection has no grips; selecting it again uses both caps, light and dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
     await page.locator('[data-tool=text]').click();
     await t('text-height').fill('12'); await t('text-height').press('Enter'); await t('text-font').selectOption('Standard');
@@ -7801,7 +7825,7 @@ try {
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     const outlines = (await savedDoc()).entities, vertices = outlines.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
-    assert.ok(vertices > GR.MAX_GRIPS && outlines.length < GR.MAX_GRIPS, 'many vertices on a few outlines');
+    assert.ok(vertices > GR.MAX_SELECTED && vertices <= GR.MAX_GRIPS && outlines.length < GR.MAX_SELECTED, 'many vertices on a few outlines, within the handle cap');
     await frames();
     assert.equal(await t('sel-count').textContent(), `${outlines.length} selected`, 'the TXO result is selected before checking its hidden grips');
     assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'the immediate TXO result keeps the letters readable');
@@ -8088,6 +8112,8 @@ try {
       await menuItem('View', 'Theme: ' + theme);
       await fitFixture('fit-skip.dxf');
       assert.equal(await t('count').textContent(), '11');
+      assert.equal(await t('grid').textContent(), 'fit · 11 copies');
+      assert.match(await prompt(), /^11 fit copies,/);
       assert.equal(await t('step-hint').textContent(), '1 cell skipped: overlap with placed parts.');
       assert.equal(await sheetParts(), 12);
       await page.screenshot({ path: shotDir + `/s15-86-fit-${theme}.png` });

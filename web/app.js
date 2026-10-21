@@ -1990,7 +1990,7 @@ function renderStep() {
   if (document.activeElement !== ui.rows) ui.rows.value = String(on ? layout.rows : s.rows);
   if (document.activeElement !== ui.cols) ui.cols.value = String(on ? layout.cols : s.cols);
   ui.count.textContent = String(layout.count);
-  ui.grid.textContent = layout.count ? `${on ? 'fit' : 'placed'} · ${layout.cols} × ${layout.rows}` + (layout.rotated ? ' · 90°' : '') : '';
+  ui.grid.textContent = layout.count ? `${on ? 'fit' : 'placed'} · ${layout.skipped ? `${layout.count} copies` : `${layout.cols} × ${layout.rows}`}` + (layout.rotated ? ' · 90°' : '') : '';
   ui.pctSheet.textContent = layout.count ? Math.round(layout.usedPct) + '% of sheet' : '';
   const bad = layout.count > 0 && !layout.fits;
   ui.fitNote.hidden = !bad;
@@ -3450,7 +3450,7 @@ function renderCommand() {
     : state.tool === 'contour' && ed ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:')
     : lay ? (gp
-      ? (layout.count ? `${layout.count} ${word} (${layout.cols} × ${layout.rows}), ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. [Apply / Rotate / Nest]:`
+      ? (layout.count ? `${layout.count} ${word}${layout.skipped ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. [Apply / Rotate / Nest]:`
         : '0 fit: the part is larger than the usable area. [Apply / Rotate / Nest]:')
       : `${placedNow.length} placed part${placedNow.length === 1 ? '' : 's'}. Pick a part for step and repeat, or add one from the Parts library:`)
     : state.tool === 'balloon' && ed ? balPrompt()
@@ -5500,8 +5500,8 @@ function editKey(e) {
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
-    if (ui.preflight && !ui.preflight.hidden) { closePreflight(); e.preventDefault(); return; }
     if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
+    if (ui.preflight && !ui.preflight.hidden && !activeCmd() && !ui.cmdUI.isOpen()) { closePreflight(); e.preventDefault(); return; }
     const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
     if (shut === 'drawer' || (shut === 'bar' && !wasOn)) return;
     if (gdrag) cancelGuideDrag();

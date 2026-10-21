@@ -48,7 +48,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Gripper**: A reserved band in mm on any sheet edge that parts must keep clear of, with zero meaning none. Where: `DECISIONS.md`, Gripper. Avoid: Grip; an extra margin added to a gripper.
 
-**Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius; none show when more than 200 shapes are selected (`MAX_GRIPS`), or on the immediate Text to outlines result selection. Selecting those outlines again enables their grips within the shape limit. Where: `DECISIONS.md`, Grips. Avoid: Grippers.
+**Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius; none show when more than 200 shapes are selected (`MAX_SELECTED`), when their total handles exceed 5000 (`MAX_GRIPS`), or on the immediate Text to outlines result selection. Selecting those outlines again enables their grips within both limits. Where: `DECISIONS.md`, Grips. Avoid: Grippers.
 
 **Group**: A set of placed parts that selects, moves, turns and copies as one while keeping its members as parts. Where: `DECISIONS.md`, Group and Ungroup. Avoid: DXF block.
 
