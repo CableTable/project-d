@@ -11,7 +11,10 @@
     "dialog:allow-message",
     "dialog:allow-ask",
     "fs:allow-read-text-file",
-    "fs:allow-read-file",
+    {
+      "identifier": "fs:allow-read-file",
+      "allow": [{ "path": "C:/Windows/Fonts/*.ttf" }]
+    },
     "fs:allow-write-text-file",
     "fs:allow-write-file",
     "fs:allow-read-dir",

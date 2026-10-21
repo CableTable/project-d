@@ -12,6 +12,19 @@ globalThis.fetch = async () => { fetches++; return { ok: true, arrayBuffer: asyn
 let n = 0;
 async function test(name, fn) { await fn(); n++; console.log('ok', name); }
 
+await test('exe font candidates have a concrete read-only scope; fallback faces are embedded frontend assets', async () => {
+  const cap = JSON.parse(readFileSync('src-tauri/capabilities/default.json', 'utf8'));
+  const read = cap.permissions.find((p) => p.identifier === 'fs:allow-read-file');
+  assert.deepEqual(read.allow, [{ path: 'C:/Windows/Fonts/*.ttf' }]);
+  assert.ok(!cap.permissions.some((p) => p.identifier !== 'fs:allow-read-file' && JSON.stringify(p).includes('Windows/Fonts')));
+  for (const font of ['Standard', 'Arial', 'Mono']) for (const bold of [false, true]) {
+    for (const file of fontFiles(font, bold)) assert.match(file, /^[\w]+\.ttf$/);
+  }
+  const config = JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+  assert.equal(config.build.frontendDist, '../web');
+  for (const face of ['Regular', 'Bold']) assert.ok(readFileSync(`web/vendor/fonts/LiberationSans-${face}.ttf`).length > 100000);
+});
+
 await test('a failed Windows read falls back to Liberation Sans and is not cached', async () => {
   const a = await loadFont('Arial', false);
   assert.equal(a.fallback, true); assert.equal(a.name, 'Liberation Sans'); assert.equal(a.wanted, 'Arial');
