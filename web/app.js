@@ -2957,7 +2957,7 @@ function buildStatus() {
   ui.toolChip = h('span', { class: 'lbl tool-chip', 'data-testid': 'tool-chip', title: 'The tool that is on (Esc or S: back to Select)' },
     'Tool: ' + (TOOLS.find((x) => x.id === state.tool) || { label: 'Select' }).label);
   ui.sheetChip = h('span', { class: 'lbl tool-chip', hidden: true, 'data-testid': 'sheet-chip', title: 'The page of the PDF that is shown' });
-  ui.wireframe = h('button', { class: 'tog' + (state.wireframe ? ' on' : ''), type: 'button', 'data-testid': 'wireframe', 'aria-pressed': String(state.wireframe), title: 'Outline-only view; PDF / Print and export keep fills', onclick: toggleWireframe }, 'Wireframe');
+  ui.wireframe = h('button', { class: 'tog' + (state.wireframe ? ' on' : ''), type: 'button', 'data-testid': 'wireframe', 'aria-pressed': String(state.wireframe), 'aria-label': 'Wireframe', title: 'Wireframe: outline-only view; PDF / Print and export keep fills (F9)', onclick: toggleWireframe }, 'Wire');
   return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),

@@ -762,7 +762,7 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cb-echo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
 @media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* narrow: the echo is its icon only */
-@media (max-width: 1100px) { .status .cb-echo { display: none; } }       /* 1024 px: the status bar is as before TODO 47, so it fits with CI fonts (typing still opens the bar) */
+@media (max-width: 1100px) { .status .cb-echo { display: none; } .status .coords { min-width: 180px; } }       /* 1024 px: the status bar is as before TODO 47, so it fits with CI fonts (typing still opens the bar) */
 
 /* TODO 34: R12 Shortcuts, using the same tokens as the mock-up. */
 .sc-back { background: color-mix(in srgb, var(--canvas) 75%, transparent); }
