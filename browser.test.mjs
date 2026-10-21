@@ -7802,6 +7802,7 @@ try {
     const outlines = (await savedDoc()).entities, vertices = outlines.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
     assert.ok(vertices > GR.MAX_GRIPS && outlines.length < GR.MAX_GRIPS, 'many vertices on a few outlines');
     await frames();
+    assert.equal(await t('sel-count').textContent(), `${outlines.length} selected`, 'the TXO result is selected before checking its hidden grips');
     assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'the immediate TXO result keeps the letters readable');
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.waitForTimeout(150);
