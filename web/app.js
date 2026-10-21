@@ -2355,7 +2355,6 @@ async function save(forceAs) {
   const d = curDoc();
   if (!d) return;
   if (!d.raw && !d.lay) { note('Nothing to save yet: open a DXF first'); return; }
-  if (!d.lay && await balSave(d, false) === false) return;          // keep the error and unsaved balloons if their file cannot be written
   if (!d.lay && d.bg && !d.raw.entities.length && balOf(d).items.length) {          // a picture alone: only its balloons are saved
     await balSave(d);
     if (d.balSaved === balOf(d)) { d.dirty = false; renderTabs(); }
@@ -2379,6 +2378,10 @@ async function save(forceAs) {
       if (ask || !path) {
         path = await t.dialog.save({ defaultPath: d.openPath ? d.openPath.replace(/[^\\/]*$/, () => want) : want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
         if (!path) return;
+        if (t.core) {
+          try { await t.core.invoke('grant_balloon_sidecar', { path }); }
+          catch (err) { console.warn('Balloon file scope:', err); } // A sidecar failure must not prevent the DXF save.
+        }
         path = await withExt(t, path, 'dxf');
         if (!path) return;
       }
@@ -2390,12 +2393,14 @@ async function save(forceAs) {
       download(name, text);
     }
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
-    if (!d.lay && await balSave(d) === false) { d.dirty = true; renderTabs(); return; }
-    dropCopy(d);
+    const balloonsSaved = d.lay || await balSave(d) !== false;
+    d.dirty = !balloonsSaved;
+    if (balloonsSaved) dropCopy(d);
     if (path) rememberRecent(path);
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
+    if (!balloonsSaved) { note('Saved ' + name + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
     note('Saved ' + name + (bad.length ? ' (without ' + bad.map((b) => b.type + ' ' + b.count).join(', ') + ')' : '') + (dir ? ' to ' + dir : '') + (d.bg ? '. The background picture is not saved in the DXF' : ''));
   } catch (err) {
@@ -4384,7 +4389,15 @@ async function balLoad(d, path, name) {
   const side = BAL.sidecarName(name), t = window.__TAURI__;
   let text = null;
   if (path) d.balloonPath = BAL.sidecarPath(path);
-  if (path && t && t.fs && t.fs.readTextFile) { try { if (await t.fs.exists(d.balloonPath)) text = await t.fs.readTextFile(d.balloonPath); } catch (err) { d.balBlocked = true; note(side + ': could not be read (' + (err && err.message ? err.message : err) + ')'); return; } }
+  if (path && t && t.fs && t.fs.readTextFile) {
+    try {
+      if (t.core) {
+        try { await t.core.invoke('grant_balloon_sidecar', { path }); }
+        catch (err) { console.warn('Balloon file scope:', err); } // Recent files may already be readable through the static scope.
+      }
+      if (await t.fs.exists(d.balloonPath)) text = await t.fs.readTextFile(d.balloonPath);
+    } catch (err) { d.balBlocked = true; note(side + ': could not be read (' + (err && err.message ? err.message : err) + ')'); return; }
+  }
   else { text = state.sidecars.get(side.toLowerCase()) ?? null; state.sidecars.delete(side.toLowerCase()); }
   if (text != null) balAttach(d, text, side);
 }
@@ -4409,7 +4422,7 @@ async function balSave(d, ask = true) {
         if (!ask || !t.dialog || !t.dialog.save) return;
         path = await t.dialog.save({ defaultPath: BAL.sidecarName(d.balName || d.name), filters: [{ name: 'Balloons', extensions: ['json'] }] });
         path = path && await withExt(t, path, 'json');
-        if (!path) return false;
+        if (!path) { note('The balloons are still unsaved'); return false; }
         d.balloonPath = String(path); d.balBlocked = false;
       }
       await t.fs.writeTextFile(path, text);

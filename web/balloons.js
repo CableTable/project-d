@@ -87,7 +87,7 @@ export function bodyAt(it, p, r, tol) {
 
 // ---- the sidecar: <name>.pdballoons.json next to the file (a PDF is never rewritten) ----
 /** "scan-0142.pdf" → "scan-0142.pdballoons.json" (a path keeps its folder). */
-export const sidecarPath = (path) => String(path).replace(/(?:\.[^.\\/]*)?$/, '') + '.pdballoons.json';
+export const sidecarPath = (path) => String(path).replace(/([^\\/])\.(?:dxf|pdf|png|jpe?g)$/i, '$1') + '.pdballoons.json';
 export const sidecarName = (name) => sidecarPath(String(name).split(/[\\/]/).pop());
 export const isSidecar = (name) => /\.pdballoons\.json$/i.test(name);
 

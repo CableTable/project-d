@@ -1,13 +1,17 @@
 use std::path::{Path, PathBuf};
 
 pub fn sidecar_path(path: &Path) -> Option<PathBuf> {
-    path.file_name()?;
+    let mut name = path.file_name()?.to_os_string();
     match path.extension().and_then(|s| s.to_str()) {
-        Some(ext) if ext.eq_ignore_ascii_case("dxf") || ext.eq_ignore_ascii_case("pdf") => {}
-        None => {} // Save dialogs may return a name before the .dxf extension is added.
-        _ => return None,
+        Some(ext) if ["dxf", "pdf", "png", "jpg", "jpeg"].iter().any(|known| ext.eq_ignore_ascii_case(known)) => {
+            Some(path.with_extension("pdballoons.json"))
+        }
+        _ => {
+            // A typed Save name may have dots before the .dxf extension is added.
+            name.push(".pdballoons.json");
+            Some(path.with_file_name(name))
+        }
     }
-    Some(path.with_extension("pdballoons.json"))
 }
 
 #[cfg(test)]
@@ -20,13 +24,14 @@ mod tests {
             ("jobs.v2/a.b.DXF", "jobs.v2/a.b.pdballoons.json"),
             ("jobs/inspection.pdf", "jobs/inspection.pdballoons.json"),
             ("jobs/noext", "jobs/noext.pdballoons.json"),
+            ("jobs/plate.v2", "jobs/plate.v2.pdballoons.json"),
+            ("jobs/.dxf", "jobs/.dxf.pdballoons.json"),
+            ("jobs/photo.PNG", "jobs/photo.pdballoons.json"),
             ("jobs/plate $& [1].dxf", "jobs/plate $& [1].pdballoons.json"),
         ] {
             assert_eq!(sidecar_path(Path::new(input)), Some(PathBuf::from(output)));
         }
-        for input in ["jobs/a.pdballoons.json", "jobs/arial.ttf", "jobs/aliases.pgp", "/"] {
-            assert_eq!(sidecar_path(Path::new(input)), None);
-        }
+        assert_eq!(sidecar_path(Path::new("/")), None);
     }
 
     #[cfg(windows)]
