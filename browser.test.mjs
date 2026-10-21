@@ -7259,8 +7259,8 @@ try {
       await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs').textContent.includes('outline.dxf'));
       await open();
-      assert.equal(await dialog.locator('tr[data-command]').count(), 52);
-      assert.equal(await dialog.locator('.sc-count').textContent(), '52 commands');
+      assert.equal(await dialog.locator('tr[data-command]').count(), 53);
+      assert.equal(await dialog.locator('.sc-count').textContent(), '53 commands');
       await dialog.getByRole('searchbox').fill('contour'); assert.equal(await dialog.locator('.sc-count').textContent(), '1 commands');
       await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
       assert.equal(await dialog.locator('tr[data-command]:visible').count(), 5);
