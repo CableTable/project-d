@@ -32,7 +32,9 @@ export async function loadFont(font, bold) {
   if (cache.has(key)) return cache.get(key);
   const got = await fromWindows(font, bold);
   if (got) { const r = { ...got, wanted }; cache.set(key, r); return r; }
-  const r = await fetch('vendor/fonts/LiberationSans-' + (bold ? 'Bold' : 'Regular') + '.ttf');
+  let r = await fetch('vendor/fonts/LiberationSans-' + (bold ? 'Bold' : 'Regular') + '.ttf');
+  const regularForBold = bold && !r.ok;
+  if (regularForBold) r = await fetch('vendor/fonts/LiberationSans-Regular.ttf');
   if (!r.ok) throw new Error('no font could be read');
-  return { font: await parse(await r.arrayBuffer()), name: 'Liberation Sans', fallback: true, wanted };
+  return { font: await parse(await r.arrayBuffer()), name: 'Liberation Sans', fallback: true, wanted, regularForBold };
 }

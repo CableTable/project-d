@@ -10,7 +10,7 @@ import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 
@@ -7602,7 +7602,7 @@ try {
     await closeTabs(/./);
   });
 
-  await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT) and an SHX text become outlines; MTEXT stays and is named; save and reopen give the same outlines', async () => {
+  await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT), an SHX text and MTEXT become outlines; save and reopen give the same outlines', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/txo.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo.dxf'));
@@ -7610,11 +7610,10 @@ try {
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     const msg = await prompt();
-    assert.match(msg, /^2 texts → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
-    assert.match(msg, /1 MTEXT not yet supported, left as it is/);
+    assert.match(msg, /^2 texts \+ 1 MTEXT → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const doc = readDxf(dl.text), polys = doc.entities.filter((e) => e.type === 'LWPOLYLINE'), cut = polys.filter((e) => e.layer === 'CUT');
-    assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 1, 'MTEXT untouched');
+    assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 0, 'MTEXT replaced too');
     assert.equal(doc.entities.filter((e) => e.type === 'TEXT').length, 0);
     assert.ok(cut.length >= 5 && cut.length < polys.length, 'HELLO is on its layer: ' + cut.length + ' of ' + polys.length);
     assert.ok(polys.every((e) => e.r.v[e.r.c.indexOf(70)] === '1'), 'all closed');
@@ -7622,7 +7621,7 @@ try {
     const bx = pts(cut, 10), by = pts(cut, 20), w = Math.max(...bx) - Math.min(...bx), hh = Math.max(...by) - Math.min(...by);
     assert.ok(Math.abs((Math.min(...bx) + Math.max(...bx)) / 2 - 100) < 12 && Math.abs((Math.min(...by) + Math.max(...by)) / 2 - 50) < 12, 'centred on its anchor');
     assert.ok(w > 10 && hh > 10 && w < 45 && hh < 45, 'turned 30 degrees: both extents are real: ' + w.toFixed(1) + ' x ' + hh.toFixed(1));
-    // reopen the saved file: the same outlines, and a second run finds only the MTEXT
+    // reopen the saved file: the same outlines, and a second run asks for text
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'txo2.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('txo2.dxf'));
@@ -7631,7 +7630,8 @@ try {
     assert.deepEqual(pts(again.entities.filter((e) => e.layer === 'CUT' && e.type === 'LWPOLYLINE'), 10), bx, 'the same points after reopening');
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
     await menuItem('Modify', 'Text to outlines');
-    assert.equal(await prompt(), 'Text to outlines: MTEXT not yet supported, left as it is');
+    assert.equal(await prompt(), 'Text to outlines: select the texts (click or drag a box), then press Enter');
+    await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
 
@@ -7669,6 +7669,39 @@ try {
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await typeCmd('txo');
     await page.waitForFunction(() => /no letters to outline.*U\+1F984/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     assert.equal((await savedDoc()).entities[0].type, 'TEXT', 'entirely missing text stays for correction');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 53d: MTEXT with two paragraphs, a bold run and word wrap becomes closed outlines on three lines; one undo restores the original', async () => {
+    await closeTabs(/./);
+    const source = newDoc(4), content = String.raw`HH {\fArial|b1|i0;HH} HH\PHH HH`;
+    addLayer(source, 'Notes', { aci: 3 });
+    addEntities(source, entity('MTEXT', [[10, 20], [20, 100], [40, 10], [41, 52], [44, 1.2], [71, 1], [1, content]], { layer: 'Notes', aci: 3 }));
+    await t('picker').setInputFiles({ name: 's13-53d-mtext.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(source), 'ascii') });
+    await page.waitForFunction(() => document.querySelector('.tabs').textContent.includes('s13-53d-mtext.dxf'));
+    const original = (await savedDoc()).entities[0];
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await typeCmd('txo');
+    await page.waitForFunction(() => /^1 MTEXT →/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    assert.match(await prompt(), /^1 MTEXT → 10 outlines\./);
+    await page.waitForFunction(() => /1 MTEXT → 10 outlines/.test(document.querySelector('[data-testid=cmd-fade]').textContent));
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s13-53d-outlines-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    assert.deepEqual(await histLabels(), ['Start', 'Text to outlines × 1']);
+    const converted = await savedDoc(), polys = converted.entities;
+    assert.equal(polys.length, 10, 'ten H glyphs, including the bold pair');
+    assert.ok(polys.every((e) => e.type === 'LWPOLYLINE' && fieldOf(e, 70) === 1 && e.layer === 'Notes' && e.aci === 3), 'closed outlines keep the entity layer and colour');
+    const ys = polys.map((e) => Math.min(...e.r.c.flatMap((c, i) => c === 20 ? [+e.r.v[i]] : [])));
+    const baselines = [...new Set(ys.map((y) => Math.round(y * 1000) / 1000))].sort((a, b) => a - b);
+    assert.deepEqual(baselines, [50, 70, 90], 'three lines: width wraps paragraph one, paragraph two starts a line; spacing factor 1.2 kept');
+    const widthOf = (e) => { const xs = e.r.c.flatMap((c, i) => c === 10 ? [+e.r.v[i]] : []); return Math.max(...xs) - Math.min(...xs); };
+    assert.ok(widthOf(polys[2]) > widthOf(polys[0]), 'the bold pair uses the bold glyph outlines');
+    await page.keyboard.press('Control+z');
+    const restored = (await savedDoc()).entities;
+    assert.equal(restored.length, 1); assert.deepEqual(restored[0], original, 'one undo restores the original MTEXT, codes, insertion, attachment, height and width');
     await closeTabs(/./);
   });
 

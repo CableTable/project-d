@@ -97,11 +97,11 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
     the sheet, lines wider than a hairline, text not outlined; each row selects the offenders.
 51. ✅ (built, session 11, R14 option A) **One-click unit fix, ×25.4 / ÷25.4** (S), next to Set length: the commonest "my file is the wrong size" cause.
 52. ✅ (built, session 11, R14 option B) **Cutter-safe DXF save** (S–M): lines, arcs and polylines only, curves flattened to a typed tolerance. First check what dxf-write.js writes today.
-53. **Text to outlines** (L): removes font problems for film and cut files (needs font outlines without a build step).
-    - 53a ✅ (built, session 12) TXO / Modify menu: single-line TEXT → closed polylines (holes kept), one undo. Browser run not yet green here (see HISTORY / PR).
+53. ✅ (built, session 13) **Text to outlines** (L): TEXT and MTEXT → closed polylines for film and cut files, using font outlines without a build step.
+    - 53a ✅ (built, session 12) TXO / Modify menu: single-line TEXT → closed polylines (holes kept), one undo.
     - 53b ✅ (built, session 13) composite / accented glyphs keep their components, holes and placement; missing glyphs skipped with advance kept and named in the result; DXF TEXT escapes covered.
-    - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message; MTEXT left alone with a note.
-    - 53d MTEXT: not built (Bold used by 53d).
+    - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message.
+    - 53d ✅ (built, session 13) MTEXT paragraphs, word wrap, attachment, rotation, height and line spacing; scoped height / width / oblique and bold runs; named formatting simplifications; one undo.
 54. ✅ (built, session 12) **Wireframe (outline-only) view** (S): View → Wireframe, status-bar chip and F9; thin outlines without fills or background pictures, remembered across all tabs. PDF / Print and exports keep their fills.
 55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
     55a. Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings.
