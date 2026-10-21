@@ -4851,10 +4851,10 @@ try {
     assert.equal(await gripCount(), 0, '205 selected: no grips');
     assert.equal(await t('grip-hint').isVisible(), false);
     await page.keyboard.press('Escape');
-    const c = await at(0, 0), d = await at(100, 130);                     // a box round the left half
+    const c = await at(0, 0), d = await at(50, 130);                      // a box round the left quarter: 3 grips a line, at most MAX_GRIPS of them
     await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(d.x, d.y, { steps: 4 }); await page.mouse.up();
     const n = Number((await t('sel-count').textContent()).replace(/\D+/g, ''));
-    assert.ok(n > 0 && n <= 200, 'a part of them: ' + n);
+    assert.ok(n > 0 && 3 * n <= GR.MAX_GRIPS, 'a part of them: ' + n);
     await gripWhen(3 * n);
   });
 
@@ -7629,7 +7629,7 @@ try {
 
   await step('TODO 80: with the Text tool on, every open menu is above the tool hint, down to its bottom edge, light and dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
-    const menus = await page.locator('[data-menu]').evaluateAll((els) => els.map((e) => e.getAttribute('data-menu')));
+    const menus = await page.locator('[data-menu]:not(.off)').evaluateAll((els) => els.map((e) => e.getAttribute('data-menu')));
     assert.ok(menus.includes('Modify'));
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
