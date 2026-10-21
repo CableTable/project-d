@@ -195,6 +195,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **POLYLINE**: The older DXF polyline form with separate VERTEX records, distinct from LWPOLYLINE and sometimes carrying mesh data. Where: `web/drawing.js`, `web/dxf-write.js`.
 
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
+**Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
 **SOLID / TRACE**: DXF filled shapes handled together by the reader and left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`. Avoid: Bitmap tracing for TRACE.
 

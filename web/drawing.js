@@ -415,7 +415,7 @@ export function flatten(doc) {
             else if (c === 41) w.push(num(r.v[k]));
           }
           const pts = nurbs(cp, knots, num(f[71], 3), w, fit);
-          if (pts.length > 1) path(lineOps(pts, false));
+          if (pts.length > 1) path(lineOps(pts, false), { spl: 1 });
           break;
         }
         case 'TEXT': text(base, f, false, put); break;
@@ -744,16 +744,17 @@ export function pickIndex(fl, paper) {
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
     if (it.k !== 'p' || it.fill) return;
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;
-    let cur = null, first = null, justMoved = false;
+    const curve = !!(it.ell || it.spl), s0 = snaps.length;                 // an ellipse or spline is flattened: the joints of its pieces are no ends or middles (only its own ends are), Nearest finds the curve
+    let cur = null, first = null, justMoved = false, closed = false;
     const seg = (a, b) => {
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-12) return;
       pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1] });
-      snaps.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid', it: idx });
+      if (!curve) snaps.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid', it: idx });
     };
     for (let i = 0; i < ops.length; justMoved = ops[i] === 0, i += ops[i] === 2 ? 7 : ops[i] === 9 ? 1 : 3) {
       const op = ops[i];
       if (op === 0) { cur = first = mapply(m, ops[i + 1], ops[i + 2]); snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }
-      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p); cur = p; snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
+      else if (op === 1) { const p = mapply(m, ops[i + 1], ops[i + 2]); if (cur) seg(cur, p); cur = p; if (!curve) snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
       else if (op === 2) {
         const [cx, cy, r, a0, a1, cw] = ops.slice(i + 1, i + 7);
         const [s, sw] = arcSweep(a0, a1, cw), full = sw > TAU - 1e-6;
@@ -775,8 +776,9 @@ export function pickIndex(fl, paper) {
           const c = mapply(m, cx, cy); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
         }
         cur = pe;
-      } else { if (cur && first) seg(cur, first); cur = first; }
+      } else { if (cur && first) seg(cur, first); cur = first; closed = true; }
     }
+    if (curve) { if (closed) snaps.splice(s0, 1); else if (cur) snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }   // a closed curve has no end; an open one, its last point
     if (it.ell) { const c = mapply(m, it.ell[0], it.ell[1]); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx }); }
   });
   // the grid

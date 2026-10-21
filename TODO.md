@@ -183,7 +183,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 86. **Fit to sheet ignores parts already placed** (S, PC test): Fit placed 72 copies on top of a placed part with no warning; skip or warn about overlaps.
 87. **Auto-nest counts an unapplied grid preview as taken** (S, PC test): "0 of 10 placed" while a Fit preview shows; ignore the preview or say it blocks.
 88. **1024×768: Balloons dock and toasts eat the canvas** (S, PC test): smaller default dock height, toasts fade sooner. Also uia.ps1 should match SplitButton (local helper). Seen once, not reproduced: a dirty tab closed by × without a prompt.
-89. **Nearest snap; a snap beats ORTHO in Dimension** (S–M, his ask 2026-10-21): with ORTHO on, the Dimension tool forces the 2nd point onto the X/Y line from the 1st, so it can't land on a curve elsewhere (there is no Nearest snap, only ends / middles / centres). AutoCAD way: add a Nearest snap (closest point on the curve under the pointer); a snap wins over ORTHO; with ORTHO on the dimension is linear (horizontal or vertical, measuring only that distance), picked by where the dimension line is dragged.
+89. ✅ (built, session 14) **Nearest snap; a snap beats ORTHO in Dimension** (S–M, his ask 2026-10-21): with ORTHO on, the Dimension tool forces the 2nd point onto the X/Y line from the 1st, so it can't land on a curve elsewhere (there is no Nearest snap, only ends / middles / centres). AutoCAD way: add a Nearest snap (closest point on the curve under the pointer); a snap wins over ORTHO; with ORTHO on the dimension is linear (horizontal or vertical, measuring only that distance), picked by where the dimension line is dragged.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
