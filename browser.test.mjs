@@ -7627,6 +7627,29 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 80: with the Text tool on, every open menu is above the tool hint, down to its bottom edge, light and dark', async () => {
+    await closeTabs(/./); await t('new-tab').click();
+    const menus = await page.locator('[data-menu]').evaluateAll((els) => els.map((e) => e.getAttribute('data-menu')));
+    assert.ok(menus.includes('Modify'));
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      for (const m of menus) {
+        await page.locator('[data-tool=text]').click();
+        assert.equal(await t('text-hint').isVisible(), true);
+        await page.locator(`[data-menu=${m}]`).click();
+        assert.equal(await page.evaluate(() => {
+          const dd = [...document.querySelectorAll('.dropdown')].find((d) => !d.hidden), r = dd.getBoundingClientRect();
+          const el = document.elementFromPoint(r.left + 10, r.bottom - 2);                // the menu's bottom edge, where the hint's top used to show through
+          return !!el && dd.contains(el);
+        }), true, m + ' menu: its bottom edge is on top of the hint');
+        if (m === 'Modify') await page.screenshot({ path: `${shotDir}/s13-menuhint-${th}.png`, clip: { x: 0, y: 0, width: 700, height: 260 } });
+        await page.keyboard.press('Escape');
+      }
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await closeTabs(/./);
+  });
+
   await step('TODO 53c: a turned, mirrored, widened, centred text (layer CUT) and an SHX text become outlines; MTEXT stays and is named; save and reopen give the same outlines', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/txo.dxf');
