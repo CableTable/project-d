@@ -8014,6 +8014,37 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 87: Auto-nest ignores the grid preview, keeps placed obstacles, Cancel preserves it and Apply replaces it in one undo (light then dark)', async () => {
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await fitFixture('nest-preview.dxf');
+      const runTen = async () => {
+        await t('nest').click();
+        for (const input of await page.locator('[data-testid^=nest-count-]').all()) { await input.fill('0'); await input.press('Tab'); }
+        await nestSetCount(0, 10); await t('nest-rot-none').click(); await nestRun();
+        assert.equal(await t('nest-placed').textContent(), '10 of 10 placed');
+        assert.equal(await page.locator('[data-testid=nest-svg] polygon:not([data-testid])').count(), 1, 'only the placed part is fixed');
+      };
+      await runTen();
+      await page.screenshot({ path: shotDir + `/s15-87-nest-${theme}.png` });
+      await t('nest-cancel').click();
+      assert.equal(await t('count').textContent(), '11', 'Cancel preserves the grid preview');
+      assert.equal(await sheetParts(), 12);
+      await runTen(); await t('nest-apply').click();
+      assert.match(await prompt(), /Auto-nest: 10 parts placed.*Step and repeat preview cleared/);
+      assert.equal(await t('part').inputValue(), ''); assert.equal(await sheetParts(), 11);
+      const meta = readMeta(await savedDoc());
+      assert.equal(meta.s.gridPart, null); assert.equal(meta.placed.length, 11);
+      assert.deepEqual([meta.placed[0].x, meta.placed[0].y], [0, 200], 'original part stays put');
+      await page.keyboard.press('Control+z');
+      assert.equal(await t('part').inputValue(), 'fit'); assert.equal(await t('count').textContent(), '11');
+      assert.equal(await sheetParts(), 12, 'one undo restores the preview and original part');
+      await page.keyboard.press('Control+Shift+z');
+      assert.equal(await t('part').inputValue(), ''); assert.equal(await sheetParts(), 11);
+    }
+    await closeTabs(/./);
+  });
+
   await step('Usage site: remembered tabs, tag filters, notes, token chart, safe refresh errors; phone and desktop, light and dark', async () => {
     const result = spawnSync(process.execPath, ['--test', 'tools/usage-site.browser.test.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
     assert.equal(result.status, 0, result.stdout + result.stderr);

@@ -1146,7 +1146,7 @@ function openNestDialog(counts = null, autoRun = false) {
     if (!thumb) { if (!nestThumbs.has(part.id)) nestThumbs.set(part.id, thumbFor(part)); thumb = nestThumbs.get(part.id); }
     return { id: part.id, name: part.name, w: part.w, h: part.h, thumb, count: counts ? (counts[part.id] || 0) : (inLayout ? 1 : 0), outline: () => outlineFor(part) };
   });
-  const fixed = LD.placedAll(lay, LD.gridOf(lay)).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
+  const fixed = LD.placedAll(lay, null).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
   const area = { x: s.gripLeft, y: s.gripBottom, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom };
   if (!(area.w > 0 && area.h > 0)) { note('Auto-nest: the grippers leave no room on the sheet'); return; }
   openNest({
@@ -1161,7 +1161,8 @@ function applyNest(d, res) {
   const lay = d.lay, r6 = (v) => Math.round(v * 1e6) / 1e6;
   if (!res || !res.placed) return 0;
   pushLay(d, null, '', 'Auto-nest');
-  const first = lay.placed.length;
+  const first = lay.placed.length, hadGrid = !!lay.s.gridPart;
+  lay.s.gridPart = null;
   for (const pl of res.placements) {
     if (!lay.parts[pl.partId]) { const rec = lib.items.find((r) => r.id === pl.partId), part = rec && libPart(rec); if (!part) continue; lay.parts[pl.partId] = { ...part }; }
     lay.placed.push(placement1(pl.partId, r6(pl.x), r6(pl.y), pl.rot));
@@ -1169,7 +1170,7 @@ function applyNest(d, res) {
   const n = lay.placed.length - first;
   selLooseMany = Array.from({ length: n }, (_, k) => first + k);
   touch(); update();
-  note(`Auto-nest: ${n} part${n === 1 ? '' : 's'} placed, ${Math.round(res.usedPct)} % of the usable sheet used. Ctrl+Z takes them off again`);
+  note(`Auto-nest: ${n} part${n === 1 ? '' : 's'} placed, ${Math.round(res.usedPct)} % of the usable sheet used. Ctrl+Z takes them off again${hadGrid ? '. Step and repeat preview cleared' : ''}`);
   return n;
 }
 /** Applies the nest, then a new layout tab (same sheet, grippers and gap) opens the dialog with the left-overs ready to run. */
