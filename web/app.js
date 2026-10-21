@@ -245,7 +245,8 @@ const isDark = () => {
 const workDark = () => workAreaDark(state.workArea, isDark());
 
 function renderWorkArea() {
-  ui.canvas.dataset.workArea = state.workArea;
+  const d = curDoc();
+  if (d && d.lay) delete ui.canvas.dataset.workArea; else ui.canvas.dataset.workArea = state.workArea; // layout tabs follow the app theme
   const label = 'Work area: ' + state.workArea;
   ui.workArea.title = label;
   ui.workArea.setAttribute('aria-label', label);
@@ -437,6 +438,7 @@ let wasLayout = null;
 function applyKind() {
   const d = curDoc(), lay = !!(d && d.lay), lib = state.panel === 'library';
   ui.canvas.classList.toggle('part', !lay);
+  renderWorkArea();
   for (const sec of [ui.sheetSec, ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
   ui.layersSec.hidden = lib || !!(d && d.cmp); ui.libSec.hidden = !lib;
   ui.propbar.hidden = !lay;
@@ -2518,14 +2520,14 @@ function layerRows() {
   }
   // a drawing tab: the open file's own layers
   const file = d && d.fl
-    ? d.fl.layers.map((l, i) => ({ name: l.name, color: ink(l.css, workDark()), count: d.counts[i], fileLayer: i }))
+    ? d.fl.layers.map((l, i) => ({ name: l.name, color: ink(l.css, isDark()), count: d.counts[i], fileLayer: i }))
     : [];
   const bgRow = d && d.bg ? [{ id: 'bg', name: 'Background', color: '#9aa5b1', count: 1, eye: EYE, live: true, bg: true }] : [];
   const curName = d && d.raw ? curLayerName(d) : null;                // the layer new shapes go on; "0" has no row until something is on it
   const added = d && d.raw && d.addedLayers ? [...d.addedLayers].filter((n) => d.raw.layers[n] && !file.some((l) => l.name === n)) : [];      // layers added by hand, still empty
   const shown = curName && !file.some((l) => l.name === curName) && !added.includes(curName) ? curName : added.length && !file.some((l) => l.name === '0') ? '0' : null;      // "0" stays listed once layers were added, so it can be made current again
   const virt = shown ? [{ name: shown, color: 'var(--partline)', count: 0, eye: EYE, live: false, zero: shown === '0' }] : [];
-  virt.push(...added.map((n) => ({ name: n, css: layerCss(d.raw.layers[n]), color: ink(layerCss(d.raw.layers[n]), workDark()), count: 0, eye: EYE, live: false, added: true })));
+  virt.push(...added.map((n) => ({ name: n, css: layerCss(d.raw.layers[n]), color: ink(layerCss(d.raw.layers[n]), isDark()), count: 0, eye: EYE, live: false, added: true })));
   return [...file.map((l) => ({ ...l, eye: EYE, live: true, chip: d.newLayer === l.name ? 'new' : null })), ...virt, ...bgRow].map((l) => ({ ...l, cur: curName != null && l.name === curName && !l.bg }));
 }
 
@@ -2655,7 +2657,7 @@ function markObjSel(d, reveal) {
 }
 function renderObjects(reveal = false) {
   if (!ui.objTree || state.ptab !== 'objects') return;
-  const d = curDoc(), lay = d && d.lay, ed = lay ? null : editable(), dark = workDark();
+  const d = curDoc(), lay = d && d.lay, ed = lay ? null : editable(), dark = isDark();
   const filterBtns = (hidden, locked) => {
     const f = d && d.om ? d.om.filter : 'all';
     ui.objFall.classList.toggle('on', f === 'all'); ui.objFhidden.classList.toggle('on', f === 'hidden'); ui.objFlocked.classList.toggle('on', f === 'locked');

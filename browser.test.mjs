@@ -8015,8 +8015,11 @@ try {
         await work(area);
         assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), background);
         assert.equal(await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor), appBg);
+        const swatch = await p.locator('.layer[data-file-layer] .swatch').first().evaluate((el) => getComputedStyle(el).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
+        assert.equal(Math.max(...swatch) > 128, app === 'dark', 'layer "0" swatch contrasts with the app-themed panel, not the work area');
         assert.ok(await pixels(ink) > 400, 'ACI 7 and black / white drawing lines contrast with the work area');
         assert.ok(await pixels(area === 'Dark' ? 'ffffff' : '000000') > 400, 'both white / ACI 7 and black lines remain visible');
+        if (await q('gap-show').getAttribute('aria-pressed') === 'false') { await q('gap-show').click(); await frame(); } // TODO 92: rings start off per drawing
         assert.ok(await pixels(mark) > 30, 'tiny-gap rings follow the work area');
         assert.deepEqual(await pdf(), originalPdf, 'PDF preview and bytes are unchanged by the work area');
         await p.locator('[data-menu=View]').click();
@@ -8041,6 +8044,7 @@ try {
         assert.ok(await pixels(selection) > 10, 'snap marker follows the work area');
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await q('new-layout').click(); await frame();
+        assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), undefined, 'layout tabs follow the app theme entirely');
         assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
         await p.reload(); await q('work-area').waitFor(); await frame();
         assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + area, 'remembered after reload');

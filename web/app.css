@@ -284,8 +284,6 @@ select.fld { font-family: var(--sans); }
 .dtab svg { flex-shrink: 0; }
 .dtab .tname { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .canvas.layout-view { background: var(--canvas); }
-.canvas.layout-view[data-work-area='Light'] { background: #ececef; }
-.canvas.layout-view[data-work-area='Dark'] { background: #000000; }
 .panelsw { align-self: flex-start; flex-shrink: 0; }
 .panelsw .seg { height: 26px; }
 .swrow { justify-content: space-between; }
