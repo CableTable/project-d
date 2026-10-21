@@ -2040,32 +2040,36 @@ try {
   });
 
   await step('review: ORTHO is a sticky Shift in Measure, Dimension and Set length; Shift still works', async () => {
+    await t('tog-snap').click();                                                  // (free picks: a snap, Nearest too, beats ORTHO since TODO 89)
     await typeCmd('m');
     assert.match(await t('cmd-prompt').textContent(), /Measure: click the first point/);
     await click(50, 20); await click(80, 40);
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 20/, 'without ORTHO the points are as picked');
+    const dxy = async () => (await t('cmd-prompt').textContent()).match(/ΔX (-?[\d.]+)\s+ΔY (-?[\d.]+)/).slice(1).map(Number);      // (free picks land to the pixel)
+    const is = async (x, y, msg) => { const [a, b] = await dxy(); assert.ok(Math.abs(a - x) < 3 && (y === 0 ? b === 0 : Math.abs(b - y) < 3), msg + ': ' + await t('cmd-prompt').textContent()); };
+    await is(30, 20, 'without ORTHO the points are as picked');
     await page.keyboard.press('Escape');
     await t('tog-ortho').click();
     assert.equal(await t('tog-ortho').getAttribute('aria-pressed'), 'true');
     assert.match(await t('cmd-prompt').textContent(), /Ortho on/);
     await click(50, 20); await click(80, 40);
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 0   Angle 0°/, 'straight along X');
+    await is(30, 0, 'straight along X');
     await click(50, 20); await click(52, 40);
     assert.match(await t('cmd-prompt').textContent(), /ΔX 0   ΔY [\d.]+   Angle 90°/, 'straight along Y');
     await page.keyboard.press('Escape'); await typeCmd('d');
     await click(50, 20); await click(80, 40);
     assert.match(await t('cmd-prompt').textContent(), /Dimension: move the line/);
     await click(65, 50);
-    assert.match(await t('cmd-prompt').textContent(), /Dimension placed: 30\.00 mm/, 'a dimension made with ORTHO on is straight too');
+    assert.ok(Math.abs(Number((await t('cmd-prompt').textContent()).match(/Dimension placed: ([\d.]+) mm/)[1]) - 30) < 3, 'a dimension made with ORTHO on is straight too');
     await page.keyboard.press('Control+z');
     await t('tog-ortho').click();
     assert.equal(await t('tog-ortho').getAttribute('aria-pressed'), 'false');
     await typeCmd('m');
     await click(50, 20); await click(80, 40);
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 20/, 'ORTHO off: as picked again');
+    await is(30, 20, 'ORTHO off: as picked again');
     await click(50, 20, { shift: true }); await click(80, 40, { shift: true });
-    assert.match(await t('cmd-prompt').textContent(), /ΔX 30   ΔY 0   Angle 0°/, 'Shift still straightens one pick');
+    await is(30, 0, 'Shift still straightens one pick');
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await t('tog-snap').click();
     assert.ok((await page.locator('[data-tool=select]').getAttribute('class')).split(' ').includes('on'));
   });
 
@@ -7907,6 +7911,59 @@ try {
     assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(236, 236, 239)');
     assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(255, 255, 255)');
     await page.emulateMedia({ colorScheme: 'light' });
+    await closeTabs(/./);
+  });
+
+  // ---- TODO 89: the Nearest snap (hourglass) and a snap beats ORTHO; with ORTHO on a Dimension is linear ----
+  await step('Nearest snap (89): with ORTHO on, Measure and Dimension land on the arc where it was picked, a free pick is still bent straight, and the dimension is linear (only the X or the Y distance)', async () => {
+    await openGrips(dimDoc(), 'dims-89.dxf');
+    const arcPt = (r) => [200 + r * Math.cos(Math.PI / 4), 150 + r * Math.sin(Math.PI / 4)];      // 45° on the arc (centre 200, 150, R20), r a bit outside it
+    const dx = 200 + 20 * Math.cos(Math.PI / 4) - 60, dy = 150 + 20 * Math.sin(Math.PI / 4) - 20;   // from the line at (60, 20) to that point on the arc
+    await t('tog-ortho').click();
+    assert.equal(await t('tog-ortho').getAttribute('aria-pressed'), 'true');
+    await page.locator('[data-tool=measure]').click();
+    await click(60, 20);                                                          // Nearest on the horizontal line (no end, middle or centre there)
+    await click(...arcPt(20.4));
+    const xy = async () => (await prompt()).match(/ΔX (-?[\d.]+)\s+ΔY (-?[\d.]+)/).slice(1).map(Number);      // (a click lands to the pixel, and a pixel is more than 1 mm here)
+    let [mx, my] = await xy();
+    assert.ok(Math.abs(mx - dx) < 3 && Math.abs(my - dy) < 3, 'ORTHO did not bend a point that sits on a snap: ' + await prompt());
+    await page.keyboard.press('Escape');
+    await click(60, 20); await click(120, 60);
+    [mx, my] = await xy();
+    assert.ok(Math.abs(mx - 60) < 3 && my === 0, 'a free pick is still kept straight: ' + await prompt());
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await page.locator('[data-tool=dimension]').click();
+    await typeCmd('d');
+    await click(60, 20);
+    const hov = await at(...arcPt(20.4)); await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/s14-89-nearest-hover-light.png' });
+    await click(...arcPt(20.4));
+    assert.match(await prompt(), /Dimension: move the line up or down and click to place it/);
+    await click(140, 5);                                                          // the line below both points (on screen, as the Linear step's): horizontal
+    const placed = async () => { const m = (await prompt()).match(/Dimension placed: ([\d.]+)("| mm)/); if (!m) throw new Error('no dimension placed, the prompt says: ' + await prompt()); return Number(m[1]) * (m[2] === '"' ? 25.4 : 1); };       // (an earlier step may have left the Inch style on)
+    const startD = async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.locator('[data-tool=dimension]').click(); await typeCmd('d'); };
+    assert.ok(Math.abs(await placed() - dx) < 3, 'the X distance only: ' + await prompt());
+    const onArc = (p) => Math.abs(Math.hypot(p.b[0] - 200, p.b[1] - 150) - 20) < 0.01 && Math.abs(p.a[1] - 20) < 1e-6 && p.b[1] > 150;       // the 2nd point on the arc, the 1st on the line
+    const d1 = (await dimBlocks()).PD_DIM_1;
+    assert.deepEqual([d1.kind, d1.params.axis], ['linear', 'h'], 'kept as a linear dimension: ' + JSON.stringify(d1));
+    assert.ok(onArc(d1.params), 'the 2nd point is on the arc, the 1st on the line: ' + JSON.stringify(d1.params));
+    await page.screenshot({ path: shotDir + '/s14-89-linear-light.png' });
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+z');          // (its extension lines would snap the next picks)
+    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(35, 90);       // the line to the left (the right-hand corner of the canvas holds the zoom box): vertical
+    assert.ok(Math.abs(await placed() - dy) < 3, 'the Y distance only: ' + await prompt());
+    const d2 = (await dimBlocks()).PD_DIM_1;
+    assert.deepEqual([d2.kind, d2.params.axis], ['linear', 'v']);
+    assert.ok(onArc(d2.params), JSON.stringify(d2.params));
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
+    await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/s14-89-linear-dark.png' });
+    await menuItem('View', 'Theme: light');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+z');
+    await t('tog-ortho').click();
+    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(140, 5);        // without ORTHO it stays aligned
+    assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned: the true distance ' + await prompt());
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     await closeTabs(/./);
   });
 

@@ -3766,11 +3766,11 @@ function toDrawing(d, cx, cy) {
 const pickTol = (d) => 7 / (view.scale * d.factor);
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
 const snapPoint = (d, p) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
-/** A Measure / Dimension / Leader pick: the snaps, then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point. */
+/** A Measure / Dimension / Leader pick: the snaps (any kind, Nearest too), then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point (a snapped point is never bent). */
 function pickPoint(d, p, pts, shift, hover = false) {
   const q = snapPoint(d, p), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
   const tq = !d.lay && editable() === d ? trackPick(d, p, q, base, straight, hover) : null;
-  return tq ? [tq[0], tq[1]] : straight ? Ed.orthoLock(base, q) : q;
+  return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
 function setSel(d, sel) {
@@ -3955,10 +3955,11 @@ function dimDraft(at) {
   const D = state.dim, type = state.dimType;
   if (!D) return null;
   if (type === 'aligned' || type === 'linear') {
+    const lin = type === 'linear' || state.ortho || D.shift;               // ORTHO / Shift: AutoCAD's DIMLINEAR, only the X or the Y distance
     if (D.pts.length === 1 && D.hover) return { kind: 'aligned', params: { a: D.pts[0], b: D.hover, offset: 0 } };
     if (D.pts.length !== 2 || !at) return null;
     const [a, b] = D.pts;
-    if (type === 'aligned') return { kind: 'aligned', params: { a, b, offset: Ed.dimOffsetAt(a, b, at) } };
+    if (!lin) return { kind: 'aligned', params: { a, b, offset: Ed.dimOffsetAt(a, b, at) } };
     const axis = D.force || Ed.linearAxis(a, b, at);
     return { kind: 'linear', params: { a, b, axis, offset: Ed.dimOffsetAt(a, b, at, axis) } };
   }
@@ -3979,7 +3980,7 @@ function previewDim(d) {
 }
 function dimHover(d, p, shift) {
   const D = state.dim;
-  D.cursor = p;
+  D.cursor = p; D.shift = shift;
   if (D.pts.length < 2 && (state.dimType === 'aligned' || state.dimType === 'linear')) D.hover = pickPoint(d, p, D.pts, shift, true);
   paintOverlay();
 }
@@ -4010,7 +4011,7 @@ function dimensionPoint(d, p, shift = false) {
     D.cursor = p; note(dimPrompt()); paintOverlay();
     return;
   }
-  if (D.pts.length === 2) { dimPlace(d, dimDraft(p)); return; }
+  if (D.pts.length === 2) { D.shift = shift; dimPlace(d, dimDraft(p)); return; }
   const q = pickPoint(d, p, D.pts, shift);
   if (D.pts.length === 1 && Math.hypot(q[0] - D.pts[0][0], q[1] - D.pts[0][1]) < 1e-9) { note('Dimension: that is the first point again, pick another'); return; }
   D.pts.push(q); D.hover = null; D.cursor = p;
@@ -4697,7 +4698,7 @@ function drawPick(d, cx, cy, shift, hover) {
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return [tq[0] * f, tq[1] * f, null];
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];           // a free pick lands on 0.01 mm
-  if (straight) q = Ed.orthoLock(base, q);
+  if (straight && q.length === 2) q = Ed.orthoLock(base, q);                // a snap beats ORTHO
   return [q[0] * f, q[1] * f, q[2] || null];
 }
 function drawHoverAt(d, cx, cy, shift) {
@@ -5354,7 +5355,7 @@ function gripPick(g, cx, cy, shift, hover) {
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
-  if (straight) q = Ed.orthoLock(base, q);
+  if (straight && q.length === 2) q = Ed.orthoLock(base, q);
   return q;
 }
 /** The grip's drag is now at q: what the shape becomes. */
