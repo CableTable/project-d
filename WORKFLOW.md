@@ -74,7 +74,8 @@ by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. Fro
 after the reset, like Pip. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
 **Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
 (`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
-wait for a reset, or pause the session.
+wait for a reset, or pause the session. **Pip first** (his call, 2026-10-21): while Pip is under today's 14% cap, a build
+or fix round goes to Pip-build; Rowan takes it only when Pip is at its cap or already busy.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
 
