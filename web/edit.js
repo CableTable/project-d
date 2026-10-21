@@ -198,10 +198,10 @@ export function snapEnd(ed, x, y, tol) {
 /**
  * The snap under (x, y) within tol: an end, centre, midpoint or point first (the nearest; ends win a tie), else the nearest
  * point on a line or arc ('near'). → { x, y, kind: 'end' | 'centre' | 'mid' | 'node' | 'near' } or null.
- * on: false → null (the exact clicked point is used).
+ * on: false → null (the exact clicked point is used). skip: an entity index left out (the one a grip is dragging).
  */
 const RANK = { end: 0, centre: 1, node: 2, mid: 3 };
-export function snapPick(ed, x, y, tol, on = true) {
+export function snapPick(ed, x, y, tol, on = true, skip = -1) {
   if (!on) return null;
   const ix = ed.ix;
   if (!ix.G) return null;
@@ -210,12 +210,12 @@ export function snapPick(ed, x, y, tol, on = true) {
   let best = null, bd = tol;
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const k of ix.sc.get(i * 4096 + j) || []) {
     const sn = ix.snaps[k];
-    if (!ed.vis[sn.it]) continue;
+    if (!ed.vis[sn.it] || ed.items[sn.it].e === skip) continue;
     const d = Math.hypot(sn.x - x, sn.y - y);
     if (d < bd - 1e-12 || (d <= bd + 1e-12 && best && RANK[sn.kind] < RANK[best.kind])) { bd = d; best = { x: sn.x, y: sn.y, kind: sn.kind }; }
   }
   if (best) return best;
-  const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1);
+  const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip);
   return p.ent && p.near ? { x: p.near[0], y: p.near[1], kind: 'near' } : null;
 }
 

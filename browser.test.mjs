@@ -4750,6 +4750,17 @@ try {
     await t('tog-ortho').click();
   });
 
+  await step('Grips: with ORTHO a line\'s end dragged onto the line\'s own old place still ends straight (Nearest leaves the dragged shape out)', async () => {
+    await pick(70, 30, 3);
+    await dragGripTo('0:b', 120, 45);                          // slants it: (20, 30) to (120, 45)
+    await t('tog-ortho').click();
+    await dragGripTo('0:b', 70, 37.5);                         // on the slanted line itself
+    const e = entOf(await savedDoc(), 0);
+    assert.equal(fieldOf(e, 21), 30, 'straight along X, not back on the old slant'); assert.ok(near(fieldOf(e, 11), 70, 0.6));
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    await t('tog-ortho').click();
+  });
+
   await step('Grips: a circle\'s quadrant sets its radius, its centre moves it; an arc\'s middle changes the bulge (3 points), its ends re-fit it, its centre moves it; a polyline vertex moves', async () => {
     await pick(190, 100, 5);
     await dragGripTo('1:q0', 200, 100);
@@ -5599,15 +5610,15 @@ try {
     await page.locator('[data-tool=line]').click();
     await typeCmd('20,50');
     const a = await at(60, 140); await page.mouse.move(a.x, a.y); await page.waitForTimeout(750);
-    const p = await at(60.3, 50 + 40 * Math.tan(Math.PI / 12) + 0.3);                          // near where the 15° ray from (20, 50) meets x = 60
+    const p = await at(60.3, 50 + 40 + 0.3);                                                    // near where the 45° ray from (20, 50) meets x = 60 (not 15°: that crosses the line x = 60, y 20–70, and Nearest beats POLAR)
     await page.mouse.move(p.x, p.y);
-    await tipWhen(/^Endpoint: 90° · Polar: 15°$/);
+    await tipWhen(/^Endpoint: 90° · Polar: 45°$/);
     assert.equal(await trkN('trk-x'), 1);
     await page.waitForTimeout(250);
     await page.screenshot({ path: `${shotDir}/tracking-light.png` });
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await page.mouse.move(p.x + 1, p.y); await page.mouse.move(p.x, p.y);
-    await tipWhen(/^Endpoint: 90° · Polar: 15°$/);
+    await tipWhen(/^Endpoint: 90° · Polar: 45°$/);
     await page.waitForTimeout(250);
     await page.screenshot({ path: `${shotDir}/tracking-dark.png` });
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
@@ -7937,6 +7948,10 @@ try {
     await click(60, 20);
     const hov = await at(...arcPt(20.4)); await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(150);
     await page.screenshot({ path: shotDir + '/s14-89-nearest-hover-light.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+    await page.mouse.move(hov.x + 1, hov.y); await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(250);
+    await page.screenshot({ path: shotDir + '/s14-89-nearest-hover-dark.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; }); await page.waitForTimeout(150);
     await click(...arcPt(20.4));
     assert.match(await prompt(), /Dimension: move the line up or down and click to place it/);
     await click(140, 5);                                                          // the line below both points (on screen, as the Linear step's): horizontal

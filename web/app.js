@@ -2378,12 +2378,12 @@ async function save(forceAs) {
       if (ask || !path) {
         path = await t.dialog.save({ defaultPath: d.openPath ? d.openPath.replace(/[^\\/]*$/, () => want) : want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
         if (!path) return;
-        if (t.core) {
+        path = await withExt(t, path, 'dxf');
+        if (!path) return;
+        if (t.core) {                                                  // on the final path: "x.pdf" becomes x.pdf.dxf, so its sidecar is x.pdf.pdballoons.json
           try { await t.core.invoke('grant_balloon_sidecar', { path }); }
           catch (err) { console.warn('Balloon file scope:', err); } // A sidecar failure must not prevent the DXF save.
         }
-        path = await withExt(t, path, 'dxf');
-        if (!path) return;
       }
       if (d.openPath && pathKey(path) === pathKey(d.openPath)) { note('Pick another name: that is the opened file, and Save never writes over it'); return; }
       await t.fs.writeTextFile(path, text);
@@ -2400,9 +2400,10 @@ async function save(forceAs) {
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
-    if (!balloonsSaved) { note('Saved ' + name + '. ' + state.msg); return; }
+    const without = bad.length ? ' (without ' + bad.map((b) => b.type + ' ' + b.count).join(', ') + ')' : '';
+    if (!balloonsSaved) { note('Saved ' + name + without + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
-    note('Saved ' + name + (bad.length ? ' (without ' + bad.map((b) => b.type + ' ' + b.count).join(', ') + ')' : '') + (dir ? ' to ' + dir : '') + (d.bg ? '. The background picture is not saved in the DXF' : ''));
+    note('Saved ' + name + without + (dir ? ' to ' + dir : '') + (d.bg ? '. The background picture is not saved in the DXF' : ''));
   } catch (err) {
     note('Save failed: ' + (err && err.message ? err.message : err));
   }
@@ -3765,7 +3766,7 @@ function toDrawing(d, cx, cy) {
 }
 const pickTol = (d) => 7 / (view.scale * d.factor);
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
-const snapPoint = (d, p) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
+const snapPoint = (d, p, skip) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
 /** A Measure / Dimension / Leader pick: the snaps (any kind, Nearest too), then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point (a snapped point is never bent). */
 function pickPoint(d, p, pts, shift, hover = false) {
   const q = snapPoint(d, p), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
@@ -5304,7 +5305,7 @@ function trackPick(d, p, q, base, straight, hover) {
   t.res = null;
   if (hover) trackWatch(d, q);
   if ((q.length === 3 && q[2] !== 'near') || straight) return null;
-  const inc = state.polar.on && base ? state.polar.inc : 0;
+  const inc = state.polar.on && base && q.length === 2 ? state.polar.inc : 0;       // Nearest beats POLAR (as in AutoCAD) but not OTRACK, which lines up with a point even over a line
   if (!inc && !(state.otrack && t.acq.length)) return null;
   t.res = TK.resolve({ p, base, inc, acq: state.otrack ? t.acq : [], tol: 8 / (view.scale * d.factor), step: 0.01 / d.factor, scale: d.factor });
   return t.res && t.res.q;
@@ -5350,7 +5351,7 @@ function gripAt(d, cx, cy) {
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
-  let q = snapPoint(d, p);
+  let q = snapPoint(d, p, g.e);                                  // not to the shape being dragged: its old place is going away
   const ref = GR.refPoint(g.ent, g.id), base = ref && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;

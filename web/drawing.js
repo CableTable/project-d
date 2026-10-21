@@ -400,7 +400,9 @@ export function flatten(doc) {
           const steps = Math.max(8, Math.ceil(96 * (t1 - t0) / TAU)), pts = [];
           for (let i = 0; i <= steps; i++) { const t = t0 + (t1 - t0) * i / steps; pts.push([cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]); }
           const full = t1 - t0 > TAU - 1e-6;
-          path(lineOps(full ? pts.slice(0, -1) : pts, full), { ell: [cx, cy] });
+          const quads = [];                                                // the 4 axis ends (inside a partial ellipse's sweep): quadrant snaps, as before it was flattened
+          for (let k = Math.ceil((t0 - 1e-9) / (TAU / 4)); k * TAU / 4 <= (full ? t1 - 1e-6 : t1 + 1e-9); k++) { const t = k * TAU / 4; quads.push([cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]); }
+          path(lineOps(full ? pts.slice(0, -1) : pts, full), { ell: [cx, cy, quads] });
           break;
         }
         case 'LWPOLYLINE': lwpoly(e, f, base, path, put); break;
@@ -779,7 +781,10 @@ export function pickIndex(fl, paper) {
       } else { if (cur && first) seg(cur, first); cur = first; closed = true; }
     }
     if (curve) { if (closed) snaps.splice(s0, 1); else if (cur) snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }   // a closed curve has no end; an open one, its last point
-    if (it.ell) { const c = mapply(m, it.ell[0], it.ell[1]); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx }); }
+    if (it.ell) {
+      const c = mapply(m, it.ell[0], it.ell[1]); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
+      for (const q of it.ell[2]) { const p = mapply(m, q[0], q[1]); snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
+    }
   });
   // the grid
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;

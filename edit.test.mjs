@@ -371,6 +371,9 @@ test('Nearest snap (TODO 89): the closest point on a line, arc, circle, ellipse,
   n = k(50.7, 0.05); assert.equal(n.kind, 'mid'); near(n.x, 50);
   n = k(200.7, 50.7); assert.equal(n.kind, 'centre'); near(n.x, 200);
   n = k(70, 49.4); assert.equal(n.kind, 'end', 'the arc\'s end beats the arc'); near(n.y, 50);
+  assert.equal(E.snapPick(ed, 30, 0.6, 1, true, 0), null, 'skip: the entity being dragged is left out (Nearest and ends alike)');
+  assert.equal(E.snapPick(ed, 0.8, 0.1, 1, true, 0), null);
+  assert.equal(E.snapPick(ed, 30, 0.6, 1, true, 1).kind, 'near', 'another entity skipped: no change');
 });
 
 test('background: its box in mm from its pixels, and scaling keeps the bottom-left corner', () => {
