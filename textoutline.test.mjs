@@ -219,6 +219,20 @@ test('MTEXT bold toggles and restores; colours, decorations, stacks and unknown 
   assert.deepEqual(p.notes, ['Underline / overline skipped', 'Inline colours ignored', 'Stacked fractions drawn as a/b', 'Unknown MTEXT codes stripped']);
 });
 
+test('MTEXT valueless codes preserve following text; alignment and paragraph formatting are stripped quietly', () => {
+  for (const [source, expected] of [
+    [String.raw`\Kitem A; item B\k`, 'item A; item B'],
+    [String.raw`col\Ntwo; x`, 'col\ntwo; x'],
+    [String.raw`\A1;x`, 'x'],
+    [String.raw`\pxqc;x`, 'x'],
+    [String.raw`a\Xb; c`, 'ab; c'],
+  ]) {
+    const p = TO.parseMtext(source, 10);
+    assert.equal(p.runs.map((r) => r.text).join(''), expected);
+    assert.deepEqual(p.notes, []);
+  }
+});
+
 const mitem = (source, o = {}) => ({ h: 10, x: 20, y: 100, ha: 0, va: 'top', lh: 50 / 3, wrap: 0, ...TO.parseMtext(source, 10), ...o });
 const fakeFont = (r) => ({ getAdvanceWidth: (t, size) => t.length * size * CAP * (r.bold ? 2 : 1) });
 const lineTexts = (lines) => lines.map((l) => l.runs.map((r) => r.text).join(''));
@@ -236,15 +250,15 @@ test('MTEXT wraps whole words using each run\'s face, height and width; formatti
   assert.deepEqual(lineTexts(TO.mtextLayout(mitem(String.raw`\Sa b#c d;`, { wrap: 20 }), fakeFont)), ['a\u00a0b/c\u00a0d']);
 });
 
-test('MTEXT attachment anchors the wrapping box, all nine positions, with the saved line spacing', () => {
+test('MTEXT aligns each line at all nine attachment positions, with the saved line spacing', () => {
   for (const ha of [0, 1, 2]) for (const va of ['top', 'middle', 'bottom']) {
     const lines = TO.mtextLayout(mitem('AA\nB', { ha, va, wrap: 60, lh: 20 }), fakeFont);
-    near(lines[0].runs[0].x, -30 * ha); near(lines[1].runs[0].x, -30 * ha);
+    near(lines[0].runs[0].x, -10 * ha); near(lines[1].runs[0].x, -5 * ha);
     near(lines[0].y, va === 'top' ? -10 : va === 'middle' ? 5 : 20);
     near(lines[1].y, lines[0].y - 20);
   }
   const auto = TO.mtextLayout(mitem('AA\nB', { ha: 1 }), fakeFont);
-  near(auto[0].runs[0].x, -10); near(auto[1].runs[0].x, -10);
+  near(auto[0].runs[0].x, -10); near(auto[1].runs[0].x, -5);
   const tall = TO.mtextLayout(mitem(String.raw`A\P{\H50;B}`), fakeFont);
   near(tall[1].y + 50, 0, 1e-9);
   near(TO.mtextLayout(mitem(String.raw`\H7;A`), fakeFont)[0].y, -7);
@@ -280,6 +294,14 @@ test('MTEXT outlines use the regular and bold glyphs, height, width and oblique 
   const expected = TO.textPolys({ ...items[0], ...second, multi: false, ha: 0, va: 'alphabetic', lines: ['B'], x: 40, y: 100 + advance }, boldFont, 0.01);
   const actual = r.ents.slice(2).map((e) => e.r.c.flatMap((c, i) => c === 10 ? [[+e.r.v[i], +e.r.v[i + 1]]] : []));
   assert.deepEqual(actual, expected);
+});
+
+test('outlineEntities reuses prepared MTEXT runs without reading its source again', () => {
+  const { raw, items } = itemsOf([mtext(String.raw`A{\fArial|b1;B}`)]);
+  const prepared = items.map((it) => TO.outlineItem(it, raw.entities[it.e]));
+  const expected = TO.outlineEntities(items, raw.entities, fontOf, 0.01);
+  const entities = raw.entities.map((e) => ({ ...e, get r() { assert.fail('MTEXT source already parsed'); } }));
+  assert.deepEqual(TO.outlineEntities(prepared, entities, fontOf, 0.01), expected);
 });
 
 test('MTEXT preserves entity colour and layer, names simplifications and missing glyphs, keeps missing advance and all-missing text', () => {

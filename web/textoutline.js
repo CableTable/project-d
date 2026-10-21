@@ -51,13 +51,15 @@ export function parseMtext(source, h) {
     const code = s[i++];
     if (code === undefined) break;
     if ('\\{}'.includes(code)) { put(code); continue; }
-    if (code === 'P') { put('\n'); continue; }
+    if (code === 'P' || code === 'N') { put('\n'); continue; }
     if (code === '~') { put('\u00a0'); continue; }
     if (code === 'U' && /^\+[\da-f]{4}/i.test(s.slice(i))) { put(String.fromCharCode(parseInt(s.slice(i + 1, i + 5), 16))); i += 5; continue; }
     if ('LlOo'.includes(code)) { notes.add('Underline / overline skipped'); continue; }
+    if ('KkX'.includes(code)) continue;
     const param = /^[^\\{};\n]*;/.exec(s.slice(i));
     const value = param ? param[0].slice(0, -1) : '';
     if (param) i += param[0].length;
+    if (code === 'A' || code === 'p') continue;
     const n = Number(value.replace(/x$/i, ''));
     if (code === 'H' && n > 0 && Number.isFinite(n)) {
       const next = /x$/i.test(value) ? style.h * n : n;
@@ -105,9 +107,8 @@ export function mtextLayout(it, fontOf) {
   end();
   const above = Math.max(...lines.map((l, i) => l.h - i * it.lh)), total = above + (lines.length - 1) * it.lh;
   const top = it.va === 'middle' ? total / 2 : it.va === 'bottom' ? total : 0;
-  const boxWidth = it.wrap > 0 ? it.wrap : Math.max(...lines.map((l) => l.width));
   return lines.map((line, i) => {
-    let x = -boxWidth * it.ha / 2;
+    let x = -line.width * it.ha / 2;
     const placed = line.runs.map((r) => { const out = { ...r, x }; x += measure([r]); return out; });
     return { ...line, runs: placed, y: top - above - i * it.lh };
   });
@@ -209,7 +210,7 @@ export function textPolys(it, font, tol, missing = new Set()) {
 export function outlineEntities(items, raw, fontOf, tol) {
   const ents = [], done = new Set(), missing = new Set(), notes = new Set();
   for (const item of items) {
-    const it = outlineItem(item, raw[item.e] || {});
+    const it = item.runs ? item : outlineItem(item, raw[item.e] || {});
     const e = raw[it.e];
     if (it.k !== 't' || !e || (e.type !== 'TEXT' && e.type !== 'MTEXT')) continue;
     for (const note of it.notes || []) notes.add(note);
