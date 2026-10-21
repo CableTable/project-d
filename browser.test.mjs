@@ -7705,6 +7705,33 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
+    await closeTabs(/./); await t('new-tab').click();
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      for (const menu of ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools']) {
+        await page.locator(`[data-menu=${menu}]`).click();
+        const items = await page.locator('.dropdown [role^=menuitem]').evaluateAll((els) => els.map((e) => ({ label: e.firstChild.textContent.trim().replace(/^[✓\s]+/, ''), hint: e.querySelector('.hint')?.textContent })));
+        for (const { label, hint } of items) {
+          if (!hint || ['Drawing checks', 'Aliases + keys', 'Ctrl+D'].includes(hint)) continue;
+          const cmd = COMMANDS.find((c) => c.name === (names[label] || label.toLowerCase()));
+          assert.ok(cmd, label);
+          assert.ok(cmd.alias.includes(hint.toLowerCase()) || cmd.key.split(' / ').includes(hint) || (cmd.name === 'delete' && hint === 'Del'), label + ': ' + hint);
+        }
+        if (menu === 'Draw') {
+          assert.equal(await page.getByRole('menuitem', { name: 'Ellipse', exact: true }).locator('.hint').textContent(), 'EL');
+          await page.screenshot({ path: `${shotDir}/s15-84-${th}.png` });
+        }
+        await page.keyboard.press('Escape');
+      }
+      const tools = await page.locator('[data-tool][title]').evaluateAll((els) => els.map((e) => ({ id: e.dataset.tool, dimension: /^Dimension · (\w+)/.exec(e.title)?.[1], hint: /\(([A-Z]+)\)$/.exec(e.title)?.[1] })));
+      for (const { id, dimension, hint } of tools) if (hint) assert.ok(COMMANDS.find((c) => c.name === (dimNames[dimension] || names[id] || id))?.alias.includes(hint.toLowerCase()), id + ': ' + hint);
+    }
+    await closeTabs(/./);
+  });
+
   await step('TODO 79: after Text to outlines the new outlines have too many vertices for grips: none are drawn, light and dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
     await page.locator('[data-tool=text]').click();
