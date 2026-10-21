@@ -3801,6 +3801,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
     assert.equal(await t('gap-tol').inputValue(), '0.01');
+    await t('gap-show').click();
     await shotBoth('tiny-gaps', async () => {}, async () => {});
     await t('gap-tol').fill('0.005'); await t('gap-tol').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '1');
@@ -8165,6 +8166,63 @@ try {
         await p.evaluate(() => localStorage.removeItem('pd-baldock-height')); await p.reload(); await q('new-tab').waitFor();
       }
     } finally { await small.close(); }
+  });
+
+  await step('TODO 92: tiny gaps skip annotations, require Show per drawing and cap rings at 50 (light then dark)', async () => {
+    const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await isolated.newPage(), q = (id) => p.locator('[data-testid=' + id + ']');
+    await p.addInitScript(() => {
+      const proto = CanvasRenderingContext2D.prototype, clear = proto.clearRect, arc = proto.arc;
+      proto.clearRect = function (...args) { if (this.canvas.dataset.testid === 'drawing') window.__gapRings = 0; return clear.apply(this, args); };
+      proto.arc = function (...args) { if (this.canvas.dataset.testid === 'drawing' && Math.abs(args[2] - 9 * devicePixelRatio) < 1e-6) window.__gapRings++; return arc.apply(this, args); };
+    });
+    const fixture = (n) => {
+      const raw = newDoc();
+      for (const layer of ['Cut', 'Text', 'Dimensions', 'A-ANNO', 'Hatch', 'Leaders', 'Scale_Marks', 'Arrows']) {
+        addLayer(raw, layer);
+        const row = layer === 'Cut' ? 0 : 120 + Object.keys(raw.layers).length * 15;
+        for (let i = 0; i < (layer === 'Cut' ? n : 4); i++) {
+          const x = (i % 10) * 25, y = row + Math.floor(i / 10) * 15;
+          addEntities(raw, dxfLine(x, y, x + 10, y, { layer }), dxfLine(x + 10.004, y, x + 20, y, { layer }));
+        }
+      }
+      addEntities(raw, dxfText(0, 280, 5, 'Letters and arrows stay unmarked'));
+      return Buffer.from(writeDxf(raw));
+    };
+    const open = async (n) => {
+      await q('picker').setInputFiles({ name: 'gaps-' + n + '.dxf', mimeType: 'application/dxf', buffer: fixture(n) });
+      await p.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === 'gaps-' + n + '.dxf' && document.querySelector('[data-testid=gap-count]').textContent === (n > 50 ? n + ' (count only)' : String(n)), n);
+      await p.waitForTimeout(150);
+    };
+    try {
+      await p.goto(URL_); await q('new-tab').waitFor();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + theme, exact: true }).click();
+        await open(50);
+        assert.equal(await q('gap-show').getAttribute('aria-pressed'), 'false');
+        assert.equal(await p.evaluate(() => window.__gapRings), 0, 'import does not mark gaps');
+        await q('gap-show').click();
+        await p.waitForFunction(() => window.__gapRings === 50);
+        await p.screenshot({ path: shotDir + '/s15-92-rings-' + theme + '.png' });
+        await q('gap-show').click(); await p.waitForFunction(() => window.__gapRings === 0);
+        await q('gap-show').click(); await p.waitForFunction(() => window.__gapRings === 50);
+        await open(51);
+        assert.equal(await q('gap-show').getAttribute('aria-pressed'), 'false', 'each imported drawing starts off');
+        assert.equal(await q('gap-show').isDisabled(), true);
+        assert.equal(await p.evaluate(() => window.__gapRings), 0, 'over the cap draws no rings');
+        await p.screenshot({ path: shotDir + '/s15-92-summary-' + theme + '.png' });
+        await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Preflight', exact: false }).click();
+        assert.equal(await q('preflight-gaps-count').textContent(), '51', 'Preflight uses the same annotation filter');
+        await p.getByRole('button', { name: 'Close', exact: true }).click();
+        await q('gap-join').click();
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
+        await p.keyboard.press('Control+z');
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '51 (count only)');
+        assert.equal(await p.evaluate(() => window.__gapRings), 0);
+        p.once('dialog', d => d.accept()); await p.locator('.tabs .dtab.on .x').click();
+        await p.waitForFunction(() => window.__gapRings === 50);
+      }
+    } finally { await isolated.close(); }
   });
 
   await step('Usage site: remembered tabs, tag filters, notes, token chart, safe refresh errors; phone and desktop, light and dark', async () => {

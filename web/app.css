@@ -189,7 +189,7 @@ select.fld { font-family: var(--sans); }
 .btn.sm { height: 26px; padding: 0 10px; justify-content: center; }
 .tog:disabled { opacity: .4; cursor: default; }
 .tog:hover:not(:disabled):not(.on) { color: var(--text); }
-.gaprow2 { display: flex; align-items: center; gap: 4px 6px; }
+.gaprow2 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .gaprow2 .fld { width: 52px; height: 24px; }
 .gaprow2 > .lbl { white-space: nowrap; }
 .gaprow2 .btn { padding: 0 8px; }

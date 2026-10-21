@@ -615,3 +615,22 @@ test('layerNameProblem: empty, bad characters, too long, taken', () => {
   assert.match(E.layerNameProblem('cut', names), /already there/);
   assert.equal(E.layerNameProblem('CUT', names, 'Cut'), '', 'its own name in another case is fine');
 });
+
+test('findGaps excludes annotation types and layer words without excluding ordinary cut geometry', () => {
+  const annotations = ['TEXT', 'MTEXT', 'ATTRIB', 'ATTDEF', 'DIMENSION', 'HATCH', 'LEADER', 'MLEADER', 'MULTILEADER'];
+  const layers = ['Text', 'Dimensions', 'A-ANNO-DIMS', 'annotation', 'HATCH', 'hatches', 'leaders', 'Arrows', 'Scale', 'ticks', 'txt', 'dim'];
+  const entities = [...annotations.map(type => ({ type, layer: '0' })), ...layers.map(layer => ({ type: 'LINE', layer })), ...['Cut', 'outline', 'scalene'].map(layer => ({ type: 'LINE', layer }))];
+  // Supply close ends even for types normally excluded by makeIndex, so this exercises the filter itself.
+  const ends = new Float64Array(entities.flatMap((_, i) => [i * 10, 0, i * 10 + 0.004, 0]));
+  const ed = { raw: { entities }, shown: entities.map((_, i) => i), ends };
+  assert.deepEqual(E.findGaps(ed, 0.01).map(g => g.ends[0].e), [entities.length - 3, entities.length - 2, entities.length - 1]);
+});
+
+test('gapMarks requires Show; 50 rings are allowed, 51 keeps the count and draws none', () => {
+  const gaps = Array.from({ length: 51 }, (_, x) => ({ x, y: 1 }));
+  assert.deepEqual(E.gapMarks(gaps.slice(0, 50), false), []);
+  assert.equal(E.gapMarks(gaps.slice(0, 50), true).length, 50);
+  assert.deepEqual(E.gapMarks(gaps, true), []);
+  assert.deepEqual(E.gapMarks([], true), []);
+  assert.equal(gaps.length, 51, 'the count is never truncated');
+});

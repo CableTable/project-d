@@ -286,7 +286,12 @@ const JOINED = 2e-6;
  */
 export function findGaps(ed, tol) {
   const ids = [];
-  for (const e of ed.shown) if (!Number.isNaN(ed.ends[e * 4])) ids.push(e * 2, e * 2 + 1);
+  for (const e of ed.shown) {
+    const ent = ed.raw.entities[e];
+    if (/^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/.test(ent.type) ||
+        /(?:^|[^a-z])(?:anno(?:tation)?s?|dims?|dimensions?|text|txt|hatch(?:es)?|leaders?|arrows?|scales?|ticks?)(?:$|[^a-z])/i.test(ent.layer)) continue;
+    if (!Number.isNaN(ed.ends[e * 4])) ids.push(e * 2, e * 2 + 1);
+  }
   const px = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2], py = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2 + 1];
   const cell = Math.max(tol, 1e-12), map = new Map(), key = (i, j) => i + ',' + j;
   for (const id of ids) { const k = key(Math.floor(px(id) / cell), Math.floor(py(id) / cell)); const l = map.get(k); if (l) l.push(id); else map.set(k, [id]); }
@@ -318,6 +323,10 @@ export function findGaps(ed, tol) {
   }
   return out.sort((a, b) => a.ends[0].e - b.ends[0].e);
 }
+
+export const GAP_MARK_CAP = 50;
+/** Keep the full count, but draw no rings above the cap or until Show is pressed. */
+export const gapMarks = (gaps, show) => show && gaps.length <= GAP_MARK_CAP ? gaps.map((g) => [g.x, g.y]) : [];
 
 const JOINABLE = new Set(['LINE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'SPLINE']);
 const setv = (r, idx) => { const v = r.v.slice(); for (const [k, x] of idx) v[k] = text(x); return { ...r, v }; };

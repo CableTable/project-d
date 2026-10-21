@@ -175,7 +175,7 @@ const state = {
   balDock: { h: 140, collapsed: false, sheet: 'all' },   // the balloons table docked above the command line: its height (px), collapsed, and the sheet it shows
   sidecars: new Map(),             // balloon files picked or dropped in a browser, waiting for their drawing: lower-case name → text
   dimDrag: null,                   // a selected dimension being dragged: { e, name, params, dp, start, offset, moved }
-  gapMm: 0.01, gapShow: true,      // Tiny gaps (TODO 46): the tolerance in mm (remembered on this PC) and whether the gaps are marked on the drawing
+  gapMm: 0.01,      // Tiny gaps (TODO 46): the tolerance in mm (remembered on this PC); each drawing opts into rings with Show
   setlen: null,                    // Set length in progress: { pts: [[x, y] drawing units], hover, measured (mm) }
   txoWait: false, mod: null, modDoc: null, offDist: 10,   // Offset / Trim / Mirror in progress (newMod), its tab, and the Offset distance in mm (remembered)
   draw: null, drawDoc: null,       // the drawing tool in progress (draw.js createTool), and the tab it works on
@@ -3262,7 +3262,7 @@ function paintOverlay() {
     const L2 = state.setlen || state.meas || state.dim || state.ldr;
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
     paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
-      bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && state.gapShow && d.ed && editable() ? gapsOf(d).map((g) => [g.x, g.y]) : null,
+      bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', cssVar('--text', '#18181b')) : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
@@ -5585,7 +5585,7 @@ function buildDrawingSection() {
   ui.gapTol = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'gap-tol', 'aria-label': 'Tiny gap tolerance in mm' });
   ui.gapTol.addEventListener('change', gapTolTyped);
   ui.gapTol.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.gapTol.blur(); });
-  ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { state.gapShow = !state.gapShow; paintOverlay(); renderEdit(); } }, 'Show');
+  ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
   ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Move the ends of each gap together, to the middle between them (one undo step)', onclick: joinTinyGaps }, 'Join');
   ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin);
   ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
@@ -6367,9 +6367,12 @@ function renderEdit() {
   ui.undo.disabled = !d.hist.canUndo; ui.redo.disabled = !d.hist.canRedo;
   const gl = gapsOf(d);
   ui.gapRow.hidden = !d.ed;
-  ui.gapCount.textContent = gl ? String(gl.length) : '…';
+  const countOnly = gl && gl.length > Ed.GAP_MARK_CAP;
+  ui.gapCount.textContent = gl ? String(gl.length) + (countOnly ? ' (count only)' : '') : '\u2026';
+  ui.gapCount.title = countOnly ? `Above ${Ed.GAP_MARK_CAP} gaps: rings hidden to keep the drawing clear` : '';
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
-  ui.gapShow.classList.toggle('on', state.gapShow); ui.gapShow.disabled = ui.gapJoin.disabled = !gl || !gl.length;
+  ui.gapShow.classList.toggle('on', !!d.gapShow); ui.gapShow.setAttribute('aria-pressed', String(!!d.gapShow));
+  ui.gapJoin.disabled = !gl || !gl.length; ui.gapShow.disabled = ui.gapJoin.disabled || countOnly;
   const duplicates = d.duplicates?.source === d.raw.entities ? d.duplicates : null;
   ui.duplicateCount.textContent = duplicates ? `${duplicates.count} found` : 'Check';
   ui.duplicateRemove.disabled = duplicates?.count === 0;
