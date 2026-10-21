@@ -193,6 +193,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 96. **Work area light / dark toggle** (S, ask, T15): canvas background light or dark independent of the app theme (plus "follow app theme"), remembered; selection / layer colours still read on both. As-built board update.
 97. **Group / Ungroup on drawing tabs, and more edit tools** (L, ask, T16): Group (G, Ctrl+G) / Ungroup are layout-only now; make them work on drawing tabs, one undo step, saved in the DXF. Then ask him which extra tools first: Stretch, Break, Join, Chamfer, Lengthen, Align / Distribute, Weld / Intersect / Trim shapes, Reverse, Divide / Measure (66a–i, 75, 91 already listed).
 98. ✅ (built, session 15) **Usage page "Refresh failed" dumps a stack trace** (S, bug, T17): one short failure / limit-reached line, last good numbers retained, full diagnostics only in the agent's local log; Rook probe retries once.
+99. **Fix round for 92 / 88 (session 15 review)** (S, next session first): (a) Medium: web/edit.js ~291 drops gaps on layers whose names hold "text", "dim" or "arrow" (e.g. "Text-cut", "DIM-OUTLINE"; Text to outlines keeps the text layer), so real cut outlines lose Tiny gaps / Join / the Preflight gap check. Drop the layer pattern, keep the entity-type check, add a test. (b) Low: web/cmdui.js ~127 error lines fade after 3 s like the rest; keep 9 s for errors.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
