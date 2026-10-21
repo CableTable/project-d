@@ -54,7 +54,7 @@ export function paintDrawing(canvas, o) {
   const k0 = scale * dpr, V = [k0, 0, 0, k0, -ox * k0, -oy * k0];
   const k = k0 * factor;                                   // pixels in one drawing unit
   c.lineJoin = 'round'; c.lineCap = 'round';
-  const col = o.tint && !o.wireframe ? () => o.tint : (css) => ink(css, dark);
+  const col = o.tint ? () => o.tint : (css) => ink(css, dark);
   const sheetBg = dark ? SHEETS.dark.bg : SHEETS.light.bg;
   if (o.slots) {
     // Layout: the drawing once per slot (drawing units → sheet mm), any slot in view; no per-item culling

@@ -7489,6 +7489,35 @@ try {
       await clickPoint(5.3, 55.2); await clickPoint(234.7, 55.2);
       assert.match(await q('cmd-prompt').textContent(), /Distance 230 mm.*ΔX 230.*ΔY 0/);
       await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+      // tints survive Wireframe: Compare's two colours, and a part off the sheet in the mark colour
+      const tinted = (test) => q('drawing').evaluate((el, src) => {
+        const t = new Function('r', 'g', 'b', 'return ' + src), d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+        let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 60 && t(d[i], d[i + 1], d[i + 2])) n++;
+        return n;
+      }, test);
+      const waitTinted = async (test, what) => {
+        let n = await tinted(test);
+        for (let i = 0; i < 40 && n < 10; i++) { await p.waitForTimeout(50); n = await tinted(test); }
+        assert.ok(n >= 10, what + ': ' + n);
+      };
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+      await clickPoint(50, 0);
+      await p.waitForFunction(() => !document.querySelector('[data-testid=bar-extract]').disabled);
+      await q('bar-extract').click();
+      await q('name-input').fill('Plate A'); await p.keyboard.press('Enter');
+      await q('name-dialog').waitFor({ state: 'detached' });
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare two drawings…', exact: true }).click();
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+      assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
+      await waitTinted('r > 150 && g < 90 && b < 90', 'Compare keeps drawing 1 in red in Wireframe');
+      await waitTinted('b > 150 && r < 90', 'Compare keeps drawing 2 in blue in Wireframe');
+      await q('new-layout').click();
+      await q('panel-library').click();
+      await p.locator('[data-testid=lib-list] .card[data-name="Plate A"] [data-testid=lib-add]').click();
+      await q('panel-main').click();
+      await q('px').fill('950'); await q('px').press('Enter');
+      await waitTinted('Math.abs(r - 194) < 30 && Math.abs(g - 65) < 30 && Math.abs(b - 12) < 30', 'a part off the sheet keeps the mark colour in Wireframe');
       await q('new-tab').click();
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
       await q('new-layout').click();
