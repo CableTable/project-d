@@ -160,9 +160,7 @@ echo "Reply OK" | $C2 -p --model claude-haiku-5-5 --output-format stream-json --
 
 `unifiedWindows.five_hour.utilization` / `seven_day.utilization` (0–1) and their `resetsAt` (Unix time; convert to IST).
 The same line with `claude` instead of `$C2` gives the main account's usage. Report both.
-Check it before starting big work and after each run. **After every merge** (a branch into the session branch, or the PR
-into main) report Rook, Pip (5-hour, weekly, resets in IST) and Rowan (month %) as a table, and add a row to
-`mockups/_design/usage-log.md` (his rule, 2026-10-20).
+Check it before starting big work and after each run. No usage report after a merge: the pd-band line and the usage page show it (his call, 2026-10-21; replaces the 2026-10-20 rule).
 **Pip's daily budget** (his rule, 2026-10-20): at most 14% of the weekly limit per day, so the week lasts 7 days. The week
 resets Mon 15:30 IST; by the end of day k (reset + k×24 h) Pip's weekly use may be at most 14% × k (unused budget carries
 over). Check before each Pip run; a run that would cross today's cap waits. Going above needs his OK, each time. Above ~0.85 of the 5-hour window, don't start a new
@@ -226,5 +224,5 @@ he runs `claude2` there and accepts.
 > under its daily budget (14% of the week a day). Make a new branch claude/session<N> from main. First:
 > <items, or the next unticked items in TODO.md "Rakshith's list">. Mock up new UI in the Project D Mockups
 > canvas first and ask me to pick. Every build gets a Pip-review in its own worktree; fixes go to a fresh
-> Pip-build. One PR for the session; merge on green only with my OK, and report usage after every merge.
+> Pip-build. One PR for the session; merge on green only with my OK.
 > Times in IST, keep answers short.
