@@ -176,6 +176,13 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 79. **Grips on big selections** (S): after Text to outlines, every vertex of the new outlines shows a grip, so the letters look blocky (Pip-look, session 12). Hide or thin grips when a selection has many vertices.
 80. **Menus above tool hints** (S): the Text tool's hint box overlaps the bottom edge of an open menu by a few pixels (Pip-look, session 12). Give menus a higher z-index or hide the hint while a menu is open.
 81. **Test hygiene from the session 12 retro** (S): the Shortcuts browser step reads the command count from the COMMANDS table instead of a fixed number; browser steps that check colours set their theme first.
+82. **Balloon file "forbidden path" in the exe** (M, bug, PC test v0.1.46): every open says "sample.pdballoons.json: could not be read (forbidden path …)" though none exists; saving a drawing with balloons raises a second Save As for the .pdballoons.json and the tab stays dirty until it is answered. A missing balloon file is silent; it is written beside the drawing with no second dialog (Tauri fs scope?).
+83. **Text to outlines uses the fallback font in the exe** (M, bug, PC test v0.1.46): "Font file not found, used the fallback" and blocky letters for Standard text. The released exe must find the font (bundled or Windows\Fonts).
+84. **Ellipse menu hint says E, but E is Extract part** (S, PC test): the menu hint must match the alias (EL).
+85. **Preflight panel: Esc and tabs** (S, PC test): Esc closes it; it belongs to its tab (not floating over every tab); its Close button stays reachable when the Balloons dock is open.
+86. **Fit to sheet ignores parts already placed** (S, PC test): Fit placed 72 copies on top of a placed part with no warning; skip or warn about overlaps.
+87. **Auto-nest counts an unapplied grid preview as taken** (S, PC test): "0 of 10 placed" while a Fit preview shows; ignore the preview or say it blocks.
+88. **1024×768: Balloons dock and toasts eat the canvas** (S, PC test): smaller default dock height, toasts fade sooner. Also uia.ps1 should match SplitButton (local helper). Seen once, not reproduced: a dirty tab closed by × without a prompt.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
