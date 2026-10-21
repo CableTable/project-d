@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: core, closing the window after the unsaved-changes prompt, Open/Save dialogs, and read/write of files the user picks. fs scope: home, Desktop, Documents, Downloads, and any drive letter (A-Z:/**). Dialog-picked paths are also added to the scope at runtime.",
+  "description": "Main window: core, closing the window after the unsaved-changes prompt, Open/Save dialogs, and read/write of files the user picks. Static fs scope: home, Desktop, Documents, Downloads, and legacy drive-letter globs. Windows Fonts/*.ttf has command-specific read-file access. Dialog-picked paths and their exact balloon sidecars are added to the scope at runtime; no sibling folder grant.",
   "windows": ["main"],
   "permissions": [
     "core:default",

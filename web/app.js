@@ -2355,7 +2355,7 @@ async function save(forceAs) {
   const d = curDoc();
   if (!d) return;
   if (!d.raw && !d.lay) { note('Nothing to save yet: open a DXF first'); return; }
-  if (!d.lay) await balSave(d, false);                              // the balloons first: they go next to the file they came with, whatever the DXF dialog does
+  if (!d.lay && await balSave(d, false) === false) return;          // keep the error and unsaved balloons if their file cannot be written
   if (!d.lay && d.bg && !d.raw.entities.length && balOf(d).items.length) {          // a picture alone: only its balloons are saved
     await balSave(d);
     if (d.balSaved === balOf(d)) { d.dirty = false; renderTabs(); }
@@ -2390,7 +2390,7 @@ async function save(forceAs) {
       download(name, text);
     }
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
-    if (!d.lay) await balSave(d);                                   // a new drawing's balloons go next to the DXF just saved
+    if (!d.lay && await balSave(d) === false) { d.dirty = true; renderTabs(); return; }
     dropCopy(d);
     if (path) rememberRecent(path);
     if (d.lay) d.lay.name = name;
@@ -4409,14 +4409,14 @@ async function balSave(d, ask = true) {
         if (!ask || !t.dialog || !t.dialog.save) return;
         path = await t.dialog.save({ defaultPath: BAL.sidecarName(d.balName || d.name), filters: [{ name: 'Balloons', extensions: ['json'] }] });
         path = path && await withExt(t, path, 'json');
-        if (!path) return;
+        if (!path) return false;
         d.balloonPath = String(path); d.balBlocked = false;
       }
       await t.fs.writeTextFile(path, text);
       note('Saved the balloons to ' + path);
     } else download(BAL.sidecarName(d.balName || d.name), text);
     d.balSaved = set;
-  } catch (err) { note('Saving the balloons failed: ' + (err && err.message ? err.message : err)); }
+  } catch (err) { note('Saving the balloons failed: ' + (err && err.message ? err.message : err)); return false; }
 }
 
 /** Balloon files first, so a drawing picked together with its balloons finds them waiting. */
