@@ -186,7 +186,9 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   head commit asks his OK to merge. On his yes: `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
   (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then start the next Rook session itself
   (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
-  of handing him a prompt. No scheduled or polled CI checks. Every Rook turn re-reads the whole conversation, so a
+  of handing him a prompt. No scheduled or polled CI checks.
+  **CI monitor** (his call, 2026-10-21): right after opening the session PR, bind it (ccd_pr `get_status` / `bind_pr`) and turn
+  on its CI monitor (`set_monitor`); on green with his merge OK, merge at once; on red, send the failing step to a Pip fix round. Every Rook turn re-reads the whole conversation, so a
   long one costs the most.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
   `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
