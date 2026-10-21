@@ -31,4 +31,15 @@ await test('no Tauri: the fallback; a missing bundled file throws', async () => 
   globalThis.fetch = async () => ({ ok: false });
   await assert.rejects(loadFont('Mono', true), /no font/);
 });
+await test('MTEXT bold uses the bundled bold face; if absent, regular is marked for the result note', async () => {
+  const bold = readFileSync('web/vendor/fonts/LiberationSans-Bold.ttf'), paths = [];
+  globalThis.fetch = async (p) => { paths.push(p); return { ok: true, arrayBuffer: async () => bold }; };
+  const face = await loadFont('Standard', true);
+  assert.match(face.font.names.fontSubfamily.en, /Bold/);
+  assert.equal(face.regularForBold, false); assert.ok(paths[0].endsWith('Bold.ttf'));
+  globalThis.fetch = async (p) => ({ ok: p.endsWith('Regular.ttf'), arrayBuffer: async () => bytes });
+  const regular = await loadFont('Standard', true);
+  assert.equal(regular.regularForBold, true);
+  assert.match(regular.font.names.fontSubfamily.en, /Regular/);
+});
 console.log(n + ' tests');
