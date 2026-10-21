@@ -1,6 +1,6 @@
 // textoutline.js — Text to outlines (TODO 53), pure (no DOM, no font loading): textoutline.test.mjs.
 //
-// A text item of the flattened drawing (drawing.js: k 't') + a font (anything with opentype.js's getPath / getAdvanceWidth) becomes closed
+// A text item of the flattened drawing (drawing.js: k 't') + an opentype.js font becomes closed
 // polylines at the place, height, angle, width factor and alignment render.js draws it with. Letters with holes give one polyline per
 // contour (outer and holes); a cutter or an even-odd fill reads them as the letter.
 //
@@ -8,7 +8,7 @@
 //   flattenCommands(cmds, tol)        → [[ [x, y] … ]] the closed contours of an opentype.js path, curves cut into pieces within tol
 //   lineLayout(it, width)             → [{ text, x, y }] each line's start and baseline in the text's own frame (y up), drawing units
 //   textPolys(it, font, tol)          → [[ [x, y] … ]] the outlines in drawing units, absolute
-//   outlineEntities(items, raw, fontOf, tol) → { ents, texts, done } LWPOLYLINEs on the text's layer / colour / line style
+//   outlineEntities(items, raw, fontOf, tol) → { ents, texts, done, missing } LWPOLYLINEs on the text's layer / colour / line style
 import { CAP } from './drawing.js';
 import { lwpoly } from './dxf-write.js';
 
@@ -86,18 +86,22 @@ export function lineLayout(it, width) {
   return [at(lines.join(' '), down)];
 }
 
-/** The outlines of one text item in drawing units: font.getPath(text, x, y, size) is y-down, so y is turned; then mirrored, widened, turned, moved. */
-export function textPolys(it, font, tol) {
+/** Glyph paths (including components) are y-down: turn y, then mirror, widen, rotate and move. Missing glyphs keep their advance only. */
+export function textPolys(it, font, tol, missing = new Set()) {
   const size = it.h / CAP, c = Math.cos(it.rot), s = Math.sin(it.rot), sx = it.wf * it.mx, sy = it.my;
   const polys = [];
   for (const l of lineLayout(it, (t) => font.getAdvanceWidth(t, size))) {
-    if (!l.text.trim()) continue;
-    for (const poly of flattenCommands(font.getPath(l.text, 0, 0, size).commands, tol)) {
-      polys.push(poly.map(([gx, gy]) => {
-        const X = sx * (l.x + gx), Y = sy * (l.y - gy);
-        return [r5(it.x + X * c - Y * s), r5(it.y + X * s + Y * c)];
-      }));
-    }
+    for (const ch of l.text) if (!font.charToGlyphIndex(ch)) missing.add(ch);
+    // Keep opentype's shaping, kerning and advances; index 0 is the .notdef box, never a cut path.
+    font.forEachGlyph(l.text, 0, 0, size, {}, (glyph, x, y, fontSize, options) => {
+      if (!glyph.index) return;
+      for (const poly of flattenCommands(glyph.getPath(x, y, fontSize, options, font).commands, tol)) {
+        polys.push(poly.map(([gx, gy]) => {
+          const X = sx * (l.x + gx), Y = sy * (l.y - gy);
+          return [r5(it.x + X * c - Y * s), r5(it.y + X * s + Y * c)];
+        }));
+      }
+    });
   }
   return polys;
 }
@@ -105,16 +109,16 @@ export function textPolys(it, font, tol) {
 /**
  * The outline entities for text items: items are flatten()'s k 't' items, raw the drawing's entities (the item's `e` indexes it; only a
  * TEXT or MTEXT at the top level counts), fontOf(it) → the font object, tol in drawing units. → { ents, texts (made into outlines),
- * done (the entity indexes) }
+ * done (the entity indexes), missing (unique characters absent from their font) }
  */
 export function outlineEntities(items, raw, fontOf, tol) {
-  const ents = [], done = new Set();
+  const ents = [], done = new Set(), missing = new Set();
   for (const it of items) {
     const e = raw[it.e];
     if (it.k !== 't' || !e || (e.type !== 'TEXT' && e.type !== 'MTEXT')) continue;
-    const polys = textPolys(it, fontOf(it), tol);
+    const polys = textPolys(it, fontOf(it), tol, missing);
     if (polys.length) done.add(it.e);                      // a blank text has no outlines: it stays
     for (const p of polys) ents.push(lwpoly(p, { closed: true, layer: e.layer, lt: e.lt, aci: e.aci, tc: e.tc, lw: e.lw, lts: e.lts, hidden: e.hidden, ps: e.ps }));
   }
-  return { ents, texts: done.size, done };
+  return { ents, texts: done.size, done, missing: [...missing] };
 }

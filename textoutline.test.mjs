@@ -1,11 +1,11 @@
 // textoutline.js — Text to outlines, the pure part.   node textoutline.test.mjs
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import opentype from 'opentype.js';
+import opentype from './web/vendor/opentype/opentype.js';
 import * as TO from './web/textoutline.js';
 import * as TX from './web/text.js';
-import { readDxf, flatten } from './web/drawing.js';
-import { newDoc, addEntities, writeDxf } from './web/dxf-write.js';
+import { readDxf, flatten, plainText, CAP } from './web/drawing.js';
+import { newDoc, addEntities, writeDxf, text } from './web/dxf-write.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -99,6 +99,78 @@ test('a blank text makes nothing and is not marked done', () => {
   const { raw, items } = itemsOf([TX.encode(model({ lines: ['  '] }))]);
   const r = TO.outlineEntities(items, raw.entities, () => font, 0.01);
   assert.equal(r.ents.length, 0); assert.equal(r.done.size, 0);
+});
+
+test('real accented and engineering glyphs keep their contours, component offsets and holes', () => {
+  const expected = { 'é': 3, 'ü': 3, 'ñ': 2, 'Å': 4, 'ø': 3, 'ç': 2, '°': 2, '±': 2, 'Ø': 3, '²': 1, 'ǻ': 5 };
+  for (const [ch, count] of Object.entries(expected)) {
+    const glyph = font.charToGlyph(ch), polys = polysOf(model({ lines: [ch] }));
+    assert.notEqual(glyph.index, 0, ch + ' exists in the bundled font');
+    assert.equal(polys.length, count, ch + ' contour count');
+    assert.ok(polys.flat().every((p) => p.every(Number.isFinite)), ch + ' finite vertices');
+  }
+  // These are actual TrueType component references, not just non-ASCII simple glyphs.
+  for (const [accented, base] of [['é', 'e'], ['ü', 'u'], ['ñ', 'n'], ['Å', 'A'], ['ç', 'c'], ['ǻ', 'a']]) {
+    const glyph = font.charToGlyph(accented), component = glyph.components[0], scale = 10 / CAP / font.unitsPerEm;
+    assert.equal(glyph.isComposite, true, accented);
+    assert.equal(component.glyphIndex, font.charToGlyphIndex(base));
+    const polys = polysOf(model({ lines: [accented] })), plain = polysOf(model({ lines: [base] }));
+    for (let i = 0; i < plain.length; i++) for (let j = 0; j < plain[i].length; j++) {
+      near(polys[i][j][0], plain[i][j][0] + component.dx * scale, 0.00002);
+      near(polys[i][j][1], plain[i][j][1] + component.dy * scale, 0.00002);
+    }
+  }
+  const signedArea = (p) => p.reduce((s, a, i) => { const b = p[(i + 1) % p.length]; return s + a[0] * b[1] - b[0] * a[1]; }, 0);
+  for (const ch of ['Å', 'é', '°', 'ø', 'Ø']) {
+    const polys = polysOf(model({ lines: [ch] }));
+    assert.ok(polys.some((hole, i) => polys.some((outer, j) => i !== j && inside(hole[0], outer) && signedArea(hole) * signedArea(outer) < 0)), ch + ' has a nested counter with opposite winding');
+  }
+});
+
+test('composite paths have the same placement, kerning and transforms as plain letters', () => {
+  const { items } = itemsOf([TX.encode(model({ lines: ['Åé°ñ Ø25'] }))]), it = items[0];
+  const actual = TO.textPolys(it, font, 0.01);
+  const expected = TO.flattenCommands(font.getPath(it.lines[0], 0, 0, it.h / CAP).commands, 0.01);
+  assert.equal(actual.length, expected.length);
+  for (let i = 0; i < actual.length; i++) for (let j = 0; j < actual[i].length; j++) {
+    near(actual[i][j][0], it.x + expected[i][j][0], 0.00001);
+    near(actual[i][j][1], it.y - expected[i][j][1], 0.00001);
+  }
+  const moved = TO.textPolys({ ...it, ha: 1, mx: -1, my: -1, wf: 1.5, rot: Math.PI / 2 }, font, 0.01);
+  const half = font.getAdvanceWidth(it.lines[0], it.h / CAP) / 2;
+  for (let i = 0; i < actual.length; i++) for (let j = 0; j < actual[i].length; j++) {
+    near(moved[i][j][0], it.x + actual[i][j][1] - it.y, 0.00002);
+    near(moved[i][j][1], it.y - 1.5 * (actual[i][j][0] - it.x - half), 0.00002);
+  }
+});
+
+test('missing glyphs make no .notdef contours, keep advance and alignment, and are named once', () => {
+  const { raw, items } = itemsOf([TX.encode(model({ lines: ['A🦄V🦄'] }))]), it = items[0], size = it.h / CAP;
+  assert.equal(font.charToGlyphIndex('🦄'), 0);
+  const r = TO.outlineEntities(items, raw.entities, () => font, 0.01);
+  assert.deepEqual(r.missing, ['🦄']);
+  assert.equal(r.texts, 1); assert.equal(r.ents.length, 3, 'only A (two contours) and V (one)');
+  const polys = TO.textPolys(it, font, 0.01), v = polysOf(model({ lines: ['V'] }));
+  const advance = font.getAdvanceWidth('A🦄', size);
+  for (let j = 0; j < v[0].length; j++) {
+    near(polys[2][j][0], v[0][j][0] + advance, 0.00002);
+    near(polys[2][j][1], v[0][j][1], 0.00002);
+  }
+  const centred = TO.textPolys({ ...it, ha: 1 }, font, 0.01), half = font.getAdvanceWidth(it.lines[0], size) / 2;
+  near(centred[0][0][0], polys[0][0][0] - half, 0.00002);
+  const only = itemsOf([TX.encode(model({ lines: ['🦄🦄'] }))]);
+  const empty = TO.outlineEntities(only.items, only.raw.entities, () => font, 0.01);
+  assert.deepEqual(empty.missing, ['🦄']); assert.equal(empty.ents.length, 0); assert.equal(empty.done.size, 0, 'an entirely missing text stays for correction');
+});
+
+test('DXF TEXT escapes decode before glyph lookup, including escaped accented and missing characters', () => {
+  assert.deepEqual(plainText('%%d %%D %%p %%P %%c %%C \\U+00C5\\U+00e9 \\U+D83E\\U+DD84', false), ['° ° ± ± ⌀ ⌀ Åé 🦄']);
+  assert.deepEqual(plainText('\\U+XYZ1 \\U+123', false), ['\\U+XYZ1 \\U+123'], 'malformed escapes stay literal');
+  const escaped = itemsOf([text(100, 50, 10, '\\U+00C5\\U+00e9%%d\\U+00F1 \\U+00D825 %%p %%c')]);
+  const literal = itemsOf([text(100, 50, 10, 'Åé°ñ Ø25 ± ⌀')]);
+  assert.deepEqual(TO.textPolys(escaped.items[0], font, 0.01), TO.textPolys(literal.items[0], font, 0.01));
+  const r = TO.outlineEntities(escaped.items, escaped.raw.entities, () => font, 0.01);
+  assert.deepEqual(r.missing, ['⌀'], 'the bundled font lacks the diameter sign; do not silently substitute a slashed O');
 });
 
 console.log(n + ' tests');
