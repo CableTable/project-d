@@ -79,6 +79,12 @@ test('the sidecar name: the file\'s name without its extension, next to it', () 
   assert.ok(B.isSidecar('A.PDBALLOONS.JSON') && !B.isSidecar('a.json'));
 });
 
+test('sidecar paths agree for typed Save names and drawing extensions', () => {
+  for (const [name, stem] of [['noext', 'noext'], ['plate.v2', 'plate.v2'], ['a.b.DXF', 'a.b'], ['a.b.pdf', 'a.b'], ['.dxf', '.dxf'], ['photo.PNG', 'photo']]) {
+    assert.equal(B.sidecarPath('C:/jobs.v2/' + name), 'C:/jobs.v2/' + stem + '.pdballoons.json');
+  }
+});
+
 test('encode then decode gives the same balloons; the count and the cells come back', () => {
   let s = place(B.EMPTY, [1.5, 2.5], [10, 20], 2);
   s = B.update(place(s, [3, 4], [5, 6]), 2, { dim: 'Ø15 H7', tp: '+0.018', tm: '0', note: 'Pin "hole", 2x' });

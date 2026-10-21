@@ -7154,12 +7154,18 @@ try {
     await closeTabs(/./);
     await page.evaluate(async (bytes) => {
       const { sidecarPath } = await import('./balloons.js');
-      const log = window.__sidecarLog = { dialogs: [], wrote: [], checked: [] };
+      const log = window.__sidecarLog = { dialogs: [], wrote: [], checked: [], grants: [] };
       const allowed = new Set(), files = new Map();
-      const grant = (path) => { allowed.add(path); allowed.add(sidecarPath(path)); return path; };
+      const grant = (path) => { allowed.add(path); return path; };
       const check = (path) => { if (!allowed.has(path)) throw new Error('forbidden path: ' + path); };
       window.__balloonWriteFails = true;
       window.__TAURI__ = {
+        core: { invoke: async (command, { path }) => {
+          if (command !== 'grant_balloon_sidecar') throw new Error('unexpected command: ' + command);
+          check(path);
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          allowed.add(sidecarPath(path)); log.grants.push(path);
+        } },
         dialog: {
           open: async () => grant('C:/jobs/plate.dxf'),
           save: async (o) => { log.dialogs.push(o.defaultPath); return grant('D:/output/plate-edited.dxf'); },
@@ -7185,7 +7191,10 @@ try {
         else await t('picker').setInputFiles('fixtures/outline.dxf');
         await page.waitForFunction(() => /^Opened /.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
         assert.doesNotMatch(await prompt(), /could not be read|forbidden path/);
-        if (native) assert.deepEqual(await page.evaluate(() => window.__sidecarLog.checked), ['C:/jobs/plate.pdballoons.json']);
+        if (native) {
+          await page.waitForFunction(() => window.__sidecarLog.checked.includes('C:/jobs/plate.pdballoons.json'));
+          assert.deepEqual(await page.evaluate(() => window.__sidecarLog.checked), ['C:/jobs/plate.pdballoons.json']);
+        }
         await typeCmd('b'); await page.waitForTimeout(200); await frames();
         await balPlace([20, 20], [50, 50]);
         await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
@@ -7193,12 +7202,19 @@ try {
         await page.keyboard.press('Control+s');
         await page.waitForFunction(() => /Saving the balloons failed: disk is read-only/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
         assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1, 'a real error keeps the tab dirty');
-        assert.equal((await page.evaluate(() => window.__sidecarLog.dialogs)).length, native ? 0 : 1);
+        assert.match(await prompt(), /^Saved plate-edited.dxf\./, 'the warning confirms the DXF was saved');
+        assert.deepEqual(await page.evaluate(() => window.__sidecarLog.wrote), ['D:/output/plate-edited.dxf'], 'a sidecar failure never blocks the DXF');
+        assert.equal((await page.evaluate(() => window.__sidecarLog.dialogs)).length, 1);
+        await menuItem('File', 'Save As…');
+        await page.waitForFunction(() => window.__sidecarLog.wrote.length === 2 && /Saving the balloons failed/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1);
         await page.evaluate(() => { window.__balloonWriteFails = false; });
         await page.keyboard.press('Control+s');
         await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-edited.dxf' && !document.querySelector('.tabs .dtab.on .dot'));
         const log = await page.evaluate(() => window.__sidecarLog);
-        assert.equal(log.dialogs.length, 1, 'only the drawing Save As was shown: ' + JSON.stringify(log));
+        assert.equal(log.dialogs.length, 2, 'only the two drawing Save As dialogs were shown: ' + JSON.stringify(log));
+        assert.ok(log.grants.includes('D:/output/plate-edited.dxf'), 'the Save picker grant is extended by an awaited command');
+        if (native) assert.ok(log.grants.includes('C:/jobs/plate.dxf'), 'Open extends the grant before checking the sidecar');
         assert.ok(log.wrote.includes(native ? 'C:/jobs/plate.pdballoons.json' : 'D:/output/plate-edited.pdballoons.json'));
         assert.ok(log.wrote.includes('D:/output/plate-edited.dxf'));
         assert.ok(!log.wrote.includes('C:/jobs/plate.dxf'), 'source drawing is protected');

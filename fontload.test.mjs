@@ -16,7 +16,11 @@ await test('exe font candidates have a concrete read-only scope; fallback faces 
   const cap = JSON.parse(readFileSync('src-tauri/capabilities/default.json', 'utf8'));
   const read = cap.permissions.find((p) => p.identifier === 'fs:allow-read-file');
   assert.deepEqual(read.allow, [{ path: 'C:/Windows/Fonts/*.ttf' }]);
-  assert.ok(!cap.permissions.some((p) => p.identifier !== 'fs:allow-read-file' && JSON.stringify(p).includes('Windows/Fonts')));
+  for (const command of ['fs:allow-write-text-file', 'fs:allow-write-file']) {
+    const write = cap.permissions.find((p) => p.identifier === command);
+    assert.deepEqual(write.deny, [{ path: 'C:/Windows/Fonts' }, { path: 'C:/Windows/Fonts/**' }]);
+    assert.equal(write.allow, undefined);
+  }
   for (const font of ['Standard', 'Arial', 'Mono']) for (const bold of [false, true]) {
     for (const file of fontFiles(font, bold)) assert.match(file, /^[\w]+\.ttf$/);
   }
