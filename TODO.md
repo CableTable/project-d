@@ -175,6 +175,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     78c. (after 78b) Clear or recompute Trim's preview on pointer leave, Esc, boundary changes, pan / zoom and undo, with focused browser cases that prevent stale red geometry.
 79. **Grips on big selections** (S): after Text to outlines, every vertex of the new outlines shows a grip, so the letters look blocky (Pip-look, session 12). Hide or thin grips when a selection has many vertices.
 80. **Menus above tool hints** (S): the Text tool's hint box overlaps the bottom edge of an open menu by a few pixels (Pip-look, session 12). Give menus a higher z-index or hide the hint while a menu is open.
+81. **Test hygiene from the session 12 retro** (S): the Shortcuts browser step reads the command count from the COMMANDS table instead of a fixed number; browser steps that check colours set their theme first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

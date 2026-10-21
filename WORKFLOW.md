@@ -207,6 +207,14 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
 - Builders: tests (`npm.cmd test`, `npm.cmd run test:browser`) must pass; screenshots light + dark into `shots/`.
 - Rowan-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Pip-look.
+- **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in
+  GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit. Review A checks the same list.
+- **Time limits:** the full browser suite runs in the background with a 25-min limit (it takes ~20 min); any run
+  stops and reports at 60 min. A WIP commit of untested code says so in the report's first line.
+- **Browser steps set their own theme** (light, then dark) at the start; never rely on the step before. Counts that
+  grow with features (commands, menu items) are read from their table, not hard-coded.
+- **Git access:** a builder outside the main folder gets `--add-dir` for the git dir (see the builder command) and
+  `git add` / `git commit` in `--allowedTools`; a run whose first commit is refused stops and reports.
 - Reviewers: `ponytail:ponytail-review` for a build's commits, `ponytail:ponytail-audit` for a whole-codebase pass; verified findings only, "severity · file:line · problem · fix", then "ship as is" or "fix first".
 
 ## Permissions
