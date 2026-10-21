@@ -2846,7 +2846,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
-  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || (curLay() && state.mode === 'rotate');
+  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || state.txoWait || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
   return { label: m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
@@ -5520,6 +5520,7 @@ function editKey(e) {
   if (e.key === 'Enter' && state.meas && state.meas.pts.length === 2) { e.preventDefault(); keepMeasure(); return; }
   if (e.key === 'Enter' && state.ldr && state.ldr.pts.length === 2) { e.preventDefault(); ldrNoteOpen(d); return; }
   if (modLive() && e.key === 'Enter') { e.preventDefault(); modEnter(d); return; }
+  if (state.txoWait && e.key === 'Enter') { e.preventDefault(); state.txoWait = false; textToOutlines(); return; }       // "Select text ... then press Enter"
   if (e.key === 'Delete' && !mod) { e.preventDefault(); deleteSelection(); }
   else if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redo(d); else undo(d); }
   else if (mod && !e.altKey && k === 'y') { e.preventDefault(); redo(d); }

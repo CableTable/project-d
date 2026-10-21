@@ -7593,7 +7593,7 @@ try {
     await typeCmd('txo');
     assert.equal(await prompt(), 'Text to outlines: select the texts (click or drag a box), then press Enter');
     await page.keyboard.press('Control+a');
-    await cmdLine().press('Enter');
+    await page.keyboard.press('Enter');                                                      // on the drawing, as the prompt says
     await txoDone(3);
     assert.match(await prompt(), /^2 texts → 13 outlines/);
     await page.keyboard.press('Control+z');
