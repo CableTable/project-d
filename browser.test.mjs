@@ -7150,6 +7150,65 @@ try {
     }
   });
 
+  await step('TODO 82: exact balloon sidecar grants: missing is silent, open/save need no second dialog, real write errors stay dirty', async () => {
+    await closeTabs(/./);
+    await page.evaluate(async (bytes) => {
+      const { sidecarPath } = await import('./balloons.js');
+      const log = window.__sidecarLog = { dialogs: [], wrote: [], checked: [] };
+      const allowed = new Set(), files = new Map();
+      const grant = (path) => { allowed.add(path); allowed.add(sidecarPath(path)); return path; };
+      const check = (path) => { if (!allowed.has(path)) throw new Error('forbidden path: ' + path); };
+      window.__balloonWriteFails = true;
+      window.__TAURI__ = {
+        dialog: {
+          open: async () => grant('C:/jobs/plate.dxf'),
+          save: async (o) => { log.dialogs.push(o.defaultPath); return grant('D:/output/plate-edited.dxf'); },
+          ask: async () => true,
+        },
+        fs: {
+          readFile: async (p) => { check(p); return new Uint8Array(bytes); },
+          exists: async (p) => { check(p); log.checked.push(p); return files.has(p); },
+          readTextFile: async (p) => { check(p); return files.get(p); },
+          writeTextFile: async (p, text) => {
+            check(p);
+            if (/\.json$/.test(p) && window.__balloonWriteFails) throw new Error('disk is read-only');
+            log.wrote.push(p); files.set(p, text);
+          },
+        },
+      };
+    }, [...readFileSync('fixtures/outline.dxf')]);
+    try {
+      for (const native of [true, false]) {
+        await closeTabs(/./);
+        await page.evaluate(() => { window.__sidecarLog.dialogs.length = 0; window.__sidecarLog.wrote.length = 0; window.__balloonWriteFails = true; });
+        if (native) await menuItem('File', 'Open…');
+        else await t('picker').setInputFiles('fixtures/outline.dxf');
+        await page.waitForFunction(() => /^Opened /.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.doesNotMatch(await prompt(), /could not be read|forbidden path/);
+        if (native) assert.deepEqual(await page.evaluate(() => window.__sidecarLog.checked), ['C:/jobs/plate.pdballoons.json']);
+        await typeCmd('b'); await page.waitForTimeout(200); await frames();
+        await balPlace([20, 20], [50, 50]);
+        await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+        assert.deepEqual(await balNums(), ['1']);
+        await page.keyboard.press('Control+s');
+        await page.waitForFunction(() => /Saving the balloons failed: disk is read-only/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 1, 'a real error keeps the tab dirty');
+        assert.equal((await page.evaluate(() => window.__sidecarLog.dialogs)).length, native ? 0 : 1);
+        await page.evaluate(() => { window.__balloonWriteFails = false; });
+        await page.keyboard.press('Control+s');
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-edited.dxf' && !document.querySelector('.tabs .dtab.on .dot'));
+        const log = await page.evaluate(() => window.__sidecarLog);
+        assert.equal(log.dialogs.length, 1, 'only the drawing Save As was shown: ' + JSON.stringify(log));
+        assert.ok(log.wrote.includes(native ? 'C:/jobs/plate.pdballoons.json' : 'D:/output/plate-edited.pdballoons.json'));
+        assert.ok(log.wrote.includes('D:/output/plate-edited.dxf'));
+        assert.ok(!log.wrote.includes('C:/jobs/plate.dxf'), 'source drawing is protected');
+      }
+      await closeTabs(/./);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__sidecarLog; delete window.__balloonWriteFails; localStorage.removeItem('pd-recent'); });
+    }
+  });
+
   await step('Save in the exe: the opened file is never written; a name without .dxf that exists asks first; a balloons file that could not be read is not written over', async () => {
     const insp = [...balPdf()], sample = [...readFileSync('fixtures/sample.dxf')];
     await page.evaluate(([insp, sample]) => {
