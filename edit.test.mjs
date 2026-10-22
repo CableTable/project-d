@@ -649,6 +649,26 @@ test('TODO 104 guards: inclusive own length, true arc / polyline length, direct 
   assert.deepEqual(contact.entities.at(-1), indirect);
 });
 
+test('TODO 104 fix: a nearly closed single polyline joins; a connected micro chain and locked neighbours keep their pieces', () => {
+  const run = (entities, eligible) => {
+    const raw = W.newDoc(); raw.entities = entities;
+    const r = E.joinTinyGaps(raw, E.makeIndex(raw, D.flatten(raw)), .01, eligible), next = { ...raw, entities: r.entities };
+    return { r, gaps: E.findGaps(E.makeIndex(next, D.flatten(next)), .01).length };
+  };
+  const open = run([W.lwpoly([[0, 0], [10, 0], [10, 10], [0, .005]])]);
+  assert.equal(open.r.joined, 1, 'a polyline whose ends are 0.005 apart is a gap again');
+  assert.equal(open.gaps, 0);
+  assert.equal(E.findGaps(...(() => { const raw = W.newDoc(); raw.entities = [W.line(0, 0, .005, 0)]; return [E.makeIndex(raw, D.flatten(raw)), .01]; })()).length, 0, 'a lone micro piece is still not a gap');
+  const chain = run([W.line(-10, 0, 0, 0), W.line(0, 0, .008, 0), W.line(.008, 0, .016, 0), W.line(.016, 0, 10, 0)]);
+  assert.equal(chain.r.removed, 0, 'micro pieces that connect the long lines stay');
+  assert.equal(chain.r.entities.length, 4);
+  assert.equal(chain.gaps, 0, 'the outline stays closed');
+  const wide = run([W.line(-10, 0, -.01, 0), W.line(-.002, 0, .006, 0), W.line(.016, 0, 10, 0)]);
+  assert.equal(wide.r.removed, 0, 'a piece bridging ends further apart than tolerance stays');
+  const locked = run([W.line(-10, 0, 0, 0), W.line(0, 0, .008, 0), W.line(.012, 0, 10, 0)], (e) => e !== 2);
+  assert.equal(locked.r.removed, 0, 'a locked neighbour end that would have to move keeps the piece');
+});
+
 test('newLayerName: the first free Layer1, Layer2… (any case)', () => {
   assert.equal(E.newLayerName(['0']), 'Layer1');
   assert.equal(E.newLayerName(['0', 'Layer1', 'layer2', 'Layer4']), 'Layer3');
