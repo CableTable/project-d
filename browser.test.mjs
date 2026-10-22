@@ -7219,7 +7219,7 @@ try {
         await page.evaluate(() => { window.__next = null; });
         await suggestion(() => menuItem('File', 'Save As…'), want);
         await openPdf();
-        await suggestion(() => t('pdf-print').click(), source.replace(/[^\\/]*$/, 'chosen.pdf'));
+        await suggestion(() => t('pdf-print').click(), 'C:\\elsewhere\\chosen.pdf');            // after Save As elsewhere the PDF starts where the drawing now lives
         await t('pdf-cancel').click();
         await closeTabs(/./);
         await page.evaluate(() => { window.__log.wrote.length = 0; });

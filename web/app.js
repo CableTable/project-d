@@ -2250,8 +2250,8 @@ function shownLayout(d) {
 function exportSource() {
   const d = curDoc();
   if (!d) return null;
-  const path = d.openPath || d.path;
-  if (d.lay) {                                                       // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
+  const path = d.path || d.openPath;
+  if (d.lay) {                                                     // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
     return { name: d.name, path, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, hide: ['Sheet', 'Marks'] };
@@ -2404,7 +2404,7 @@ async function save(forceAs) {
     let path = d.path, name = d.name;
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
-        path = await t.dialog.save({ defaultPath: d.openPath ? d.openPath.replace(/[^\\/]*$/, () => want) : want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+        path = await t.dialog.save({ defaultPath: saveDefault(want, d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
         if (!path) return;
         path = await withExt(t, path, 'dxf');
         if (!path) return;
@@ -2472,7 +2472,7 @@ function exportCutter() {
       const text = writeDxf(made.res.doc, { escapeUnicode: true });
       let name = want, dir = '';
       if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
-        let path = await t.dialog.save({ defaultPath: d.openPath ? d.openPath.replace(/[^\\/]*$/, () => want) : want, filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
+        let path = await t.dialog.save({ defaultPath: saveDefault(want, d.openPath), filters: [{ name: 'DXF drawing', extensions: ['dxf'] }] });
         if (!path) return;
         path = await withExt(t, path, 'dxf');
         if (!path) return;
@@ -4385,7 +4385,7 @@ async function balExport(excel) {
   const t = window.__TAURI__;
   try {
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
-      const picked = await t.dialog.save({ defaultPath: saveDefault(name, d.openPath || d.path), filters: [{ name: 'CSV table', extensions: ['csv'] }] });
+      const picked = await t.dialog.save({ defaultPath: saveDefault(name, d.path || d.openPath), filters: [{ name: 'CSV table', extensions: ['csv'] }] });
       const path = picked && await withExt(t, picked, 'csv');
       if (!path) return;
       await t.fs.writeTextFile(path, text);
@@ -4454,7 +4454,7 @@ async function balSave(d, ask = true) {
       let path = d.balBlocked ? null : balPath(d);
       if (!path) {
         if (!ask || !t.dialog || !t.dialog.save) return;
-        path = await t.dialog.save({ defaultPath: saveDefault(BAL.sidecarName(d.balName || d.name), d.openPath || d.path), filters: [{ name: 'Balloons', extensions: ['json'] }] });
+        path = await t.dialog.save({ defaultPath: saveDefault(BAL.sidecarName(d.balName || d.name), d.path || d.openPath), filters: [{ name: 'Balloons', extensions: ['json'] }] });
         path = path && await withExt(t, path, 'json');
         if (!path) { note('The balloons are still unsaved'); return false; }
         d.balloonPath = String(path); d.balBlocked = false;
