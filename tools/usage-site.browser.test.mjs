@@ -70,7 +70,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
         const url = new URL(route.request().url());
         if (url.hostname === 'usage.test') {
           const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
-          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js'].includes(name));
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
           return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
         }
         if (url.pathname.endsWith('firebase-app.js')) return route.fulfill({ body: 'export const initializeApp = () => ({});', contentType: 'text/javascript' });
@@ -83,6 +83,14 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       await page.goto('http://usage.test/');
       await page.locator('#agents h3').last().waitFor();
       assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'Knight']);
+      const knight = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'Knight', exact: true})});
+      assert.equal(await knight.locator('.ud-agent p').textContent(), 'Builder and web research (Codex)');
+      for (const resets of ['2020-01-01T00:00:00Z', '']) {
+        await page.evaluate((resets) => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, used_pct: '100', resets} : r)}), resets);
+        assert.deepEqual(await knight.locator('[data-field=used_pct]').allTextContents(), ['0', '0']);
+        assert.deepEqual(await knight.locator('[data-field=resets]').allTextContents(), ['Reset', 'Reset']);
+      }
+      await page.evaluate(() => window.__emit('limits', window.__docs.limits));
       assert.equal(await page.locator('#token-chart rect').count(), 0);
       assert.equal(await page.locator('#token-chart polyline').count(), 3);
       assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /running total.*14 days in IST, back to 0 at each weekly reset; input \+ output \+ cache creation; cache reads excluded/);

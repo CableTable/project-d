@@ -58,6 +58,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
 
+**Padlock**: The W / H proportions control: locked scales both sides together; unlocked changes each side independently. It starts locked and applies to selection size or the whole drawing when nothing is selected. Where: Drawing size fields; `web/app.js`. Avoid: Layer Lock.
+
 **Lock**: Prevents edits to a layer's objects on a drawing or movement of locked parts on a layout. Where: `DECISIONS.md`, Objects tab; `TODO.md`, item 37. Avoid: Hide.
 
 **Measure**: Picks points or geometry to report a distance, size or angle without adding a saved callout unless it is kept. Where: `DECISIONS.md`, Measure and Dimensions; `web/drawing.js`. Avoid: Dimension.

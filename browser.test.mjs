@@ -2137,7 +2137,7 @@ try {
   await step('review: a kept dimension never changes a part\'s size; Selection and Whole drawing are labelled; a dimension alone cannot be kept or extracted; one wording and one count', async () => {
     const [w0, h0] = await sizeNow();
     assert.deepEqual([w0, h0], ['136', '60']);
-    assert.equal(await page.locator('.selbar .sizelbl').textContent(), 'Selection');
+    assert.equal(await page.locator('.selbar .sizelbl').textContent(), 'Size');
     assert.equal(await page.locator('[data-testid=drawing-panel] .sizelbl').textContent(), 'Whole drawing');
     const n0 = await entitiesN();
     await typeCmd('d');
@@ -8534,6 +8534,38 @@ try {
     const result = spawnSync(process.execPath, ['--test', 'tools/usage-site.browser.test.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
     assert.equal(result.status, 0, result.stdout + result.stderr);
   });
+  await step('T22a: padlock resizes a selected rectangle to 26.5 x 10, anchors its bottom-left, and undoes each edit', async () => {
+    await closeTabs(/./);
+    await page.locator('[data-tool=rect]').click(); await typeCmd('20,20'); await typeCmd('20,20');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await click(30, 20); await waitSel('1 selected');
+    assert.equal(await t('size-padlock').getAttribute('aria-pressed'), 'true');
+    await t('size-padlock').click();
+    assert.equal(await t('panel-size-padlock').getAttribute('aria-pressed'), 'false');
+    await t('sel-w').fill('26.5'); await t('sel-w').press('Enter');
+    await t('sel-h').fill('10'); await t('sel-h').press('Enter');
+    assert.deepEqual([await t('sel-w').inputValue(), await t('sel-h').inputValue()], ['26.50', '10.00']);
+    assert.deepEqual(await sizeNow(), ['26.5', '10']);
+    const saved = await downloaded(() => page.keyboard.press('Control+s'));
+    assert.deepEqual(flatten(readDxf(saved.text)).boxes.model, [20, 20, 46.5, 30]);
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({path: shotDir + '/t22a-padlock-' + theme + '.png'});
+    }
+    await menuItem('View', 'Theme: light');
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['26.5', '20']);
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
+    await click(30, 20); await waitSel('1 selected');
+    await t('panel-size-padlock').click();
+    await t('dw').fill('40'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['40', '40']);
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
+    await page.keyboard.press('Escape');
+    await t('size-padlock').click();
+    await t('dw').fill('26.5'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['26.5', '20']);
+    await t('size-padlock').click();
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

@@ -202,7 +202,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 105. **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md. Grill first.
 106. **Build dynamic input (TODO 69) now, for every drawing tool** (L, ask, T23): see T23 in support/tickets.md. Grill first.
 107. **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): see T24 in support/tickets.md. Grill first.
-108. **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
+108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
@@ -221,6 +221,10 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 102. ✅ (built, session 16) **PDF / CSV / balloons save folder** (S, T19): suggest the open file's own folder (a saved layout's path for layouts), keeping the pre-filled filename; tabs with no disk path use the native dialog's last-used folder, like Save As.
 
 103. ✅ (built, session 16) **Zoom in further** (S, T20): zoom-in cap 1000 px per mm; zoom-out minimum remains 0.05 px per mm. Check widths, grips, snap markers, text, dimension arrows, backgrounds and panning at the cap.
+
+108. ✅ (built, session 16) **Knight usage after reset** (S, T25): expired five-hour and weekly readings show 0% and “Reset”; next reset stays unknown until Knight runs again. Role: Builder and web research (Codex).
+
+105. (a built, session 16) **W / H with a padlock** (T22a): selection size about its bottom-left; otherwise whole drawing. Locked proportions by default, unlocked sides independently, one undo per edit. Non-uniform curved / unsupported geometry is refused clearly. Edge dragging (T22b) and dimension-driven size (76d) remain open.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

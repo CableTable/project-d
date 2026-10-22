@@ -22,6 +22,8 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
   const repo = mkdtempSync(join(tmpdir(), 'projectd-rook-'));
   try {
     mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'usage-site/public'), { recursive: true });
+    copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
     for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) {
@@ -52,7 +54,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     const lines = output.trim().split('\n');
     assert.equal(lines.length, 3);
     for (const [i, agent] of ['Rook', 'Bishop', 'Knight'].entries()) {
-      assert.ok(lines[i].startsWith(`${agent}: 5h 20% (resets Tue 18:30) · week 10%`));
+      assert.ok(lines[i].startsWith(`${agent}: 5h 20% (Resets Tue 18:30) · week 10%`));
       assert.ok(lines[i].endsWith('· ~35% at reset (as of 17:28 IST, 2 min old)'));
     }
     assert.match(lines[1], /10% of 28% cap/);

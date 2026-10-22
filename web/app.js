@@ -748,11 +748,17 @@ function buildPropbar() {
 }
 /** On a drawing tab with something selected: what it is, its size, Keep only and Extract part…. */
 function buildSelbar() {
-  const ro = (label, id) => { const input = h('input', { class: 'fld', readonly: true, 'data-testid': id, 'aria-label': label }); ui[id] = input; return h('label', { class: 'lbl inline' }, label, input); };
+  const size = (label, id, axis) => {
+    const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': id, 'aria-label': label + ' in mm' });
+    input.addEventListener('change', () => sizeTyped(input, axis));
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+    ui[id] = input;
+    return h('label', { class: 'lbl inline' }, label, input);
+  };
   ui.selName = h('span', { class: 'name', 'data-testid': 'sel-name' });
   ui.selLayer = h('span', { class: 'lbl', 'data-testid': 'sel-layer' });
   return ui.selbar = h('div', { class: 'propbar selbar', hidden: true, 'data-testid': 'selbar' },
-    ui.selName, ui.selLayer, h('span', { class: 'lbl sizelbl', title: 'The size of what is selected (the panel on the right has the whole drawing)' }, 'Selection'), ro('W', 'sel-w'), ro('H', 'sel-h'),
+    ui.selName, ui.selLayer, h('span', { class: 'lbl sizelbl', title: 'Resize the selection, or the whole drawing when nothing is selected, about its bottom-left' }, 'Size'), size('W', 'sel-w', 'w'), size('H', 'sel-h', 'h'), sizePadlock('size-padlock'),
     ui.selContour = h('span', { class: 'lbl ctlabel', hidden: true, 'data-testid': 'sel-contour' }),
     ui.selArea = h('span', { class: 'lbl area', 'data-testid': 'sel-area', title: 'Area of the closed outlines (holes taken off) and the length of every line and arc selected' }),
     ui.barKeep = h('button', { class: 'btn', type: 'button', 'data-testid': 'bar-keep', onclick: keepSelection }, 'Keep only'),
@@ -3923,16 +3929,44 @@ function unitFix(fix) {
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', ');
   note(UF.unitFixLine(fix, was, UF.unitFixSize(partBox(d), 1)) + (left ? ` (not scaled: ${left})` : ''));
 }
+let sizeLocked = true;
+function sizePadlock(id) {
+  return h('button', { class: 'tog', type: 'button', 'data-testid': id, 'aria-label': 'Lock proportions', 'aria-pressed': 'true', title: 'Padlock locked: scale W and H proportionally', onclick: () => { sizeLocked = !sizeLocked; renderEdit(); } }, icon(ICONS.lock, { size: 16 }));
+}
+function resizeBox(d) {
+  if (!d.sel.size) return sizeBox(d);
+  const ed = edIndex(d);
+  let box = null;
+  for (const e of d.sel) {
+    if (d.raw.entities[e].layer === Ed.DIM_LAYER || !ed.byEnt[e]) continue;
+    const b = Array.from(ed.box.slice(e * 4, e * 4 + 4), (n) => n * d.factor);
+    box = unionBox(box, b);
+  }
+  return box;
+}
 function sizeTyped(input, axis) {
   input.blur();
   const d = editable();
-  const b = d && sizeBox(d);
+  const b = d && resizeBox(d);
   if (!d || !b) return;
   const cur = axis === 'w' ? b[2] - b[0] : b[3] - b[1];
   const s = Ed.scaleFactor(Number(input.value.trim().replace(',', '.')), cur);
   if (s == null) { note('Type the size in mm: a number above 0'); renderEdit(); return; }
   if (Math.abs(s - 1) < 1e-9) { renderEdit(); return; }
-  scaleDrawing(d, s);
+  if (!d.sel.size && sizeLocked) { scaleDrawing(d, s); return; }
+  if (!d.sel.size && sizeTarget(d) === 'bg') { note('Background pictures need the padlock locked to keep their proportions'); renderEdit(); return; }
+  const selection = d.sel.size ? new Set(d.sel) : null;
+  if (d.raw.entities.some((e, i) => (!selection || selection.has(i)) && lockedEnt(d, i))) {
+    note('Unlock the affected layers in Objects before resizing'); renderEdit(); return;
+  }
+  const sx = sizeLocked || axis === 'w' ? s : 1, sy = sizeLocked || axis === 'h' ? s : 1;
+  try {
+    const r = Ed.resizeAbout(d.raw, sx, sy, b[0] / d.factor, b[1] / d.factor, spaceOf(d.fl), selection);
+    if (Object.keys(r.skipped).length) { note('Cannot resize this selection: some objects do not support scaling'); renderEdit(); return; }
+    commit(d, r, 'Resize ' + (selection ? 'selection' : 'drawing'));
+    if (selection) setSel(d, selection);
+    note('Resized ' + (selection ? 'selection' : 'drawing') + ' about its bottom-left. Ctrl+Z undoes this size change');
+  } catch (error) { note(error.message); renderEdit(); }
 }
 
 // Set length: two points, then the real distance between them in mm
@@ -5639,7 +5673,7 @@ function buildDrawingSection() {
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
     ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
     h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount),
-    h('div', { class: 'lbl sizelbl', title: 'The part itself, without kept dimensions. Set length and a typed size scale the drawing by it' }, 'Whole drawing'),
+    ui.sizeHeading = h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
   ui.outList = h('div', { class: 'outlist', 'data-testid': 'outlines' });
@@ -6371,7 +6405,7 @@ function renderEdit() {
   ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!editable() && state.tool === 'measure'));
   if (!on) return;
   renderSelection(d);
-  const n = d.sel.size, b = sizeBox(d), scalable = !!b;
+  const n = d.sel.size, b = sizeBox(d), rb = resizeBox(d), scalable = !!b;
   ui.bgName.textContent = d.bg ? d.bg.name : '';
   ui.bgX.hidden = !d.bg;
   ui.bgTrace.hidden = !d.bg;
@@ -6391,8 +6425,18 @@ function renderEdit() {
     ui.ldrStyle.textContent = `Style: ${state.dimStyles.cur}. Note lands ${LR.sideOf(sl.model.pts) > 0 ? 'right' : 'left'}.`;
   }
   const put = (input, v) => { if (document.activeElement !== input) input.value = v; };
-  put(ui.dw, b ? fmtSize(b[2] - b[0]) : ''); put(ui.dh, b ? fmtSize(b[3] - b[1]) : '');
-  ui.dw.disabled = ui.dh.disabled = ui['set-length'].disabled = !scalable;
+  ui.sizeLabel.textContent = n ? 'Selection' : sizeTarget(d) === 'bg' ? 'Background' : 'Whole drawing';
+  for (const id of ['size-padlock', 'panel-size-padlock']) {
+    const button = document.querySelector('[data-testid=' + id + ']');
+    button.setAttribute('aria-pressed', String(sizeLocked));
+    button.title = sizeLocked ? 'Padlock locked: scale W and H proportionally' : 'Padlock unlocked: resize W and H separately';
+    button.replaceChildren(icon(sizeLocked ? ICONS.lock : ICONS.unlock, { size: 16 }));
+    button.disabled = !rb;
+  }
+  put(ui.dw, rb ? fmtSize(rb[2] - rb[0]) : ''); put(ui.dh, rb ? fmtSize(rb[3] - rb[1]) : '');
+  if (!n) { put(ui['sel-w'], rb ? fmtSize(rb[2] - rb[0]) : '—'); put(ui['sel-h'], rb ? fmtSize(rb[3] - rb[1]) : '—'); }
+  ui.dw.disabled = ui.dh.disabled = ui['sel-w'].disabled = ui['sel-h'].disabled = !rb;
+  ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
   for (const [id, fix] of [['unit-up', UF.UNIT_FIXES.up], ['unit-down', UF.UNIT_FIXES.down]]) { ui[id].disabled = !scalable; ui[id].title = UF.unitFixTip(fix, b); }
   ui.undo.disabled = !d.hist.canUndo; ui.redo.disabled = !d.hist.canRedo;

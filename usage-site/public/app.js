@@ -2,6 +2,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
+import { codexWindow, resetLabel } from './usage-window.js';
 import { firebaseConfig } from './firebase-config.js';
 import { cumulativeTokens, resetTimes, tokenEndLabels } from './token-chart.js';
 
@@ -69,12 +70,13 @@ function drawAgents(limits, pace) {
     const card = el('div', 'ud-card');
     const head = el('div', 'ud-agent');
     const t = el('div'); t.append(el('h3', null, a)); t.append(mark(el('p', 'ud-muted', rows[0].role + ' · ' + rows[0].model), 'limits', 'role', 'agent=' + a + '&window=' + rows[0].window));
-    t.lastChild.textContent = label(rows[0].role); head.append(t);
+    t.lastChild.textContent = a === 'Rowan' ? 'Builder and web research (Codex)' : label(rows[0].role); head.append(t);
     head.append(mark(el('span', 'ud-muted', rows[0].model), 'limits', 'model', wh(a, rows[0].window)));
     card.append(head);
     ['5h', 'week'].forEach((w) => {
       const r = rows.find((x) => x.window === w); if (!r) return;
-      const used = Number(r.used_pct), p = pk.get(a + '|' + w), cap = num(r.cap_pct);
+      const [used, resets] = a === 'Rowan' ? codexWindow([Number(r.used_pct), r.resets ? Date.parse(r.resets) / 1000 : null]) : [Number(r.used_pct), Date.parse(r.resets) / 1000];
+      const p = resets == null ? null : pk.get(a + '|' + w), cap = num(r.cap_pct);
       const m = el('div', 'ud-meter');
       const top = el('div', 'ud-mrow');
       const left = el('div');
@@ -94,10 +96,10 @@ function drawAgents(limits, pace) {
       const fl = el('span'); fl.append(document.createTextNode('Even use: '), mark(el('span', null, String(p ?? '—')), 'pace', 'pace_pct', wh(a, w)), document.createTextNode('%'));
       if (cap != null) { fl.append(document.createTextNode(' · cap today: '), mark(el('span', null, String(cap)), 'limits', 'cap_pct', wh(a, w)), document.createTextNode('%')); }
       foot.append(fl);
-      const rs = el('span'); rs.append(document.createTextNode('Resets '), mark(el('span', null, w === '5h' ? HM.format(new Date(r.resets)) : IST.format(new Date(r.resets))), 'limits', 'resets', wh(a, w)));
+      const rs = mark(el('span', null, resetLabel(resets, (s) => (w === '5h' ? HM : IST).format(new Date(s * 1000)))), 'limits', 'resets', wh(a, w));
       foot.append(rs);
       m.append(foot);
-      const fc = w === 'week' && fk.get(a);
+      const fc = resets != null && w === 'week' && fk.get(a);
       if (fc) {
         const fp = el('div', 'ud-mrow');
         const s = el('span');

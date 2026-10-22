@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { peakContext } from './rook-result.mjs';
+import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -65,7 +66,7 @@ if (cmd === 'result') {
     files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     for (const f of files.slice(0, 3)) {
       const m = [...readFileSync(f, 'utf8').matchAll(/"primary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)\},"secondary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)/g)].pop();
-      if (m) return { h5: [+m[1], +m[2]], wk: [+m[3], +m[4]] };
+      if (m) return { h5: codexWindow([+m[1], +m[2]]), wk: codexWindow([+m[3], +m[4]]) };
     }
   };
   const now = Date.now(), iso = (t) => new Date(t + 19800e3).toISOString().slice(0, 19) + '+05:30';
@@ -79,7 +80,7 @@ if (cmd === 'result') {
         cached = ['Rook', 'Pip', 'Rowan'].map((a) => {
           const h5 = limits.find((r) => r.agent === a && r.window === '5h');
           const wk = limits.find((r) => r.agent === a && r.window === 'week');
-          return [a, h5?.role, h5?.model, h5 && wk ? { h5: [+h5.used_pct, Date.parse(h5.resets) / 1e3], wk: [+wk.used_pct, Date.parse(wk.resets) / 1e3] } : null];
+          return [a, h5?.role, h5?.model, h5 && wk ? { h5: [+h5.used_pct, h5.resets ? Date.parse(h5.resets) / 1e3 : null], wk: [+wk.used_pct, wk.resets ? Date.parse(wk.resets) / 1e3 : null] } : null];
         });
         const time = new Date(now - age).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
         suffix = ` (as of ${time} IST, ${Math.floor(age / 60_000)} min old)`;
@@ -89,21 +90,22 @@ if (cmd === 'result') {
   const agents = cached || [
     ['Rook', 'Lead (main account)', 'Opus 5.5', claudeUsage('claude')],
     ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
-    ['Rowan', 'Default builder (Codex)', 'gpt-6.1-sol', codex()],
+    ['Rowan', 'Builder and web research (Codex)', 'gpt-6.1-sol', codex()],
   ];
   for (const [a, , , u] of agents) if (!u && a !== 'Rowan') throw new Error(`${label(a)} usage probe failed, exit unknown`);
   const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
   if (!cached) mkdirSync(U, { recursive: true });
   for (const [a, role, model, u] of agents) {
     if (!u) { console.log(`${label(a)}: no reading${suffix}`); continue; }
+    if (a === 'Rowan') for (const w of ['h5', 'wk']) u[w] = codexWindow(u[w], now);
     const wkLen = 7 * 864e5, s = u.wk[1] * 1e3 - wkLen, el = now - s;
     const cap = a === 'Pip' ? Math.min(100, 14 * Math.ceil((now - s) / 864e5)) : '';
     const atReset = el > 12 * 36e5 && u.wk[0] > 0 ? Math.round((u.wk[0] * wkLen) / el) : null;
     const fc = atReset == null ? 'too early' : atReset >= 100 ? `hits 100% ${ist((s + (el * 100) / u.wk[0]) / 1e3)}` : `~${atReset}% at reset`;
-    console.log(`${label(a)}: 5h ${Math.round(u.h5[0])}% (resets ${ist(u.h5[1])}) · week ${Math.round(u.wk[0])}%${cap ? ' of ' + cap + '% cap' : ''} (resets ${ist(u.wk[1])}) · ${fc}${suffix}`);
+    console.log(`${label(a)}: 5h ${Math.round(u.h5[0])}% (${resetLabel(u.h5[1], ist)}) · week ${Math.round(u.wk[0])}%${cap ? ' of ' + cap + '% cap' : ''} (${resetLabel(u.wk[1], ist)}) · ${fc}${suffix}`);
     if (cached) continue;
-    rows.push([a, role, model, '5h', Math.round(u.h5[0]), '', iso(u.h5[1] * 1e3 - 5 * 36e5), iso(u.h5[1] * 1e3), iso(now)].join(','));
-    rows.push([a, role, model, 'week', Math.round(u.wk[0]), cap, iso(s), iso(u.wk[1] * 1e3), iso(now)].join(','));
+    rows.push([a, role, model, '5h', Math.round(u.h5[0]), '', u.h5[1] == null ? '' : iso(u.h5[1] * 1e3 - 5 * 36e5), u.h5[1] == null ? '' : iso(u.h5[1] * 1e3), iso(now)].join(','));
+    rows.push([a, role, model, 'week', Math.round(u.wk[0]), cap, u.wk[1] == null ? '' : iso(s), u.wk[1] == null ? '' : iso(u.wk[1] * 1e3), iso(now)].join(','));
     appendFileSync(join(U, 'history.csv'), `${iso(now)},${a},5h,${Math.round(u.h5[0])}\n${iso(now)},${a},week,${Math.round(u.wk[0])}\n`);
   }
   if (!cached) writeFileSync(join(U, 'limits.csv'), rows.join('\n') + '\n');
