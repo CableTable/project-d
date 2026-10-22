@@ -58,6 +58,9 @@ usage-agent-install.ps1.
    Rook's recommended answer, `---` between them, until every choice is settled) and for `domain-modeling` (terms go
    into GLOSSARY.md; decisions go into DECISIONS.md rows, our ADRs). S items too: a short round is fine. Bishop-support grills before adding a ticket. (grill-me / grill-with-docs are
    user-only commands, so Rook calls the two skills they wrap; he can still type /grill-me or /grill-with-docs.)
+   **The skill is loaded at session start** (his call, 2026-10-22): Rook's (and Bishop-lead's) first action in a
+   session is the Skill tool for `grilling`, before any other work, and every grill round after that uses it; never
+   questions written without it.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
@@ -241,7 +244,8 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 **Bishop-lead prompt:**
 
 > Project D, Castle mode (Rook low on usage). You are Bishop-lead, the lead on account 2 (Opus): read CLAUDE.md, WORKFLOW.md (its
-> "Castle mode" part wins over the rest) and side-session-notes/handover-pip.md, and follow them. Knight builds
+> "Castle mode" part wins over the rest) and side-session-notes/handover-pip.md, and follow them. Your first action:
+> load the `grilling` skill (Skill tool) and grill me on every item before its brief. Knight builds
 > only S TODO items and tickets (M / L wait for Rook); you brief Knight, launch a Bishop-review (headless claude2, own worktree) for every build, and keep the
 > usage gate (Bishop up to 20% of the week a day). Stay on the branch and PR in the hand-over. Merge on green only with
 > my OK. Rook (main account) helps only with small reviews or questions. When I say "hand over back to Rook",
@@ -276,10 +280,11 @@ he runs `claude2` there and accepts.
 ## Starting prompt for a fresh lead session
 
 > Project D session <N>. You are Rook, the lead (Opus, main account): read CLAUDE.md, then WORKFLOW.md, and
-> follow them. Keep main-account tokens minimal: Bishop (claude2) builds, reviews and looks things up; Knight
+> follow them. Your first action: load the `grilling` skill (Skill tool, mattpocock-skills:grilling) and grill me on
+> every item before its brief. Keep main-account tokens minimal: Bishop (claude2) builds, reviews and looks things up; Knight
 > researches; don't read whole files, diffs or logs yourself. Check Rook / Bishop / Knight usage first and keep Bishop
 > under its daily budget (14% of the week a day). Make a new branch claude/session<N> from main. First:
-> <items, or the next unticked items in TODO.md "Rakshith's list">. Mock up new UI in the Project D Mockups
-> canvas first and ask me to pick. Every build gets a Bishop-review in its own worktree; fixes go to a fresh
+> <items, or the next unticked items in TODO.md "Rakshith's list">. Bugs first. No mock-ups unless I ask: you
+> decide the UI and record it in DECISIONS.md. Every build gets a Bishop-review in its own worktree; fixes go to a fresh
 > Bishop-build. One PR for the session; merge on green only with my OK.
 > Times in IST, keep answers short.

@@ -213,6 +213,10 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 116. **Open a Parts library part in a drawing tab** (S, ask, T33): see T33 in support/tickets.md. Grill first.
 117. **Delete sheets, and why a sheet change warns that edits will be gone** (S, ask, T34): see T34 in support/tickets.md. Grill first.
 118. **Alt+W closes the tab, Ctrl+Tab cycles tabs** (S, ask, T35): see T35 in support/tickets.md. Grill first.
+119. **View menu: Theme items uneven spacing, corner-only highlight, no tick** (S, bug, T36): see T36 in support/tickets.md. Grilled by support.
+120. **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): see T37 in support/tickets.md. Grill first.
+121. **Join gaps: CorelDRAW-style join methods (Extend, Chamfer, Fillet)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
+122. **Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary** (L, ask, his screenshot 2026-10-23): boolean operations on closed outlines. After the bugs. Grill first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
