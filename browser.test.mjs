@@ -8304,7 +8304,8 @@ try {
         const row = layer === 'Cut' ? 0 : 120 + Object.keys(raw.layers).length * 15;
         for (let i = 0; i < (layer === 'Cut' ? n : 4); i++) {
           const x = (i % 10) * 25, y = row + Math.floor(i / 10) * 15;
-          addEntities(raw, dxfLine(x, y, x + 10, y, { layer }), dxfLine(x + 10.004, y, x + 20, y, { layer }));
+          if (layer === 'Cut') addEntities(raw, dxfLine(x, y, x + 10, y, { layer }), dxfLine(x + 10.004, y, x + 20, y, { layer }));
+          else addEntities(raw, dxfText(x, y, 3, 'note', { layer }));       // TODO 99: annotations are skipped by entity type, not layer name
         }
       }
       addEntities(raw, dxfText(0, 280, 5, 'Letters and arrows stay unmarked'));
