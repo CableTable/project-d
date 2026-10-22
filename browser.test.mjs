@@ -5520,6 +5520,26 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
   });
 
+  await step('Compare: dragging drawing 2 snaps its corner onto drawing 1\'s corner, with a marker and a name; SNAP off drops where released (TODO 112)', async () => {
+    await t('cmp-lineup-manual').click();
+    await page.getByRole('button', { name: 'Fit', exact: true }).click();     // both corners in view
+    const drag = async (shot) => {                                      // drawing 2's bottom-left corner (0, 0) to drawing 1's bottom-right one (300, 0), 4 px short and 3 px high
+      const a = await at(0, 0), z = await at(300, 0);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x - 4, z.y - 3, { steps: 6 });
+      if (shot) await page.screenshot({ path: `${shotDir}/s16-compare-snap-light.png` });
+      await page.mouse.up();
+    };
+    await drag(true);
+    assert.deepEqual(await page.evaluate(() => /X (-?[\d.]+), Y (-?[\d.]+)/.exec(document.querySelector('[data-testid=cmp-hint]').textContent).slice(1).map(Number)), [300, 0], 'the drop lands exactly on the target corner');
+    await t('cmp-lineup-bl').click(); await t('cmp-lineup-manual').click();
+    await t('tog-snap').click();
+    await drag(false);
+    const [x, y] = await page.evaluate(() => /X (-?[\d.]+), Y (-?[\d.]+)/.exec(document.querySelector('[data-testid=cmp-hint]').textContent).slice(1).map(Number));
+    assert.ok(x !== 300 && Math.abs(x - 300) < 2 && y !== 0, `SNAP off: the exact released point, not the corner (${x}, ${y})`);
+    await t('tog-snap').click();
+    await t('cmp-lineup-bl').click();
+  });
+
   await step('Compare: screenshots, light and dark; the top bar still fits at 1024', async () => {
     await shotBoth('compare');
     await page.setViewportSize({ width: 1024, height: 700 });

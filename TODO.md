@@ -206,7 +206,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
-112. **Compare, manual mode: no snapping** (S, bug, T29): see T29 in support/tickets.md. Grill first.
+112. ✅ (built, session 16) **Compare, manual mode: no snapping** (S, bug, T29): see T29 in support/tickets.md. Grill first.
 113. ✅ (built, session 16) **Compare runs constantly: make it a toggle or a run-once button** (S, bug, T30): see T30 in support/tickets.md. Grill first.
 114. **Compare: choose which drawings, more than two, from Parts library or drawing tabs** (M, ask, T31): see T31 in support/tickets.md. Grill first.
 115. **Text in the YEB Sport drawing is converted to both curves and text** (M, bug, T32): see T32 in support/tickets.md. Grill first.

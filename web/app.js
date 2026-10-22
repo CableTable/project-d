@@ -6512,7 +6512,7 @@ function renderCompare() {
     for (const b of u.sel.children) { b.style.background = cmpCss(b.dataset.colour); b.setAttribute('aria-pressed', String(b.dataset.colour === c['c' + k])); }
   }
   for (const b of ui.cmpModes) { const on = b.dataset.m === c.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
-  ui.cmpHint.textContent = (c.mode === 'manual' ? `Drag drawing 2 on the canvas, or use the arrow keys (${state.nudge} mm). ` : '') + `Drawing 2 moved X ${fmt(c.off[0])}, Y ${fmt(c.off[1])} mm`;
+  ui.cmpHint.textContent = (c.mode === 'manual' ? `Drag drawing 2 on the canvas (it snaps to drawing 1 while SNAP is on), or use the arrow keys (${state.nudge} mm). ` : '') + `Drawing 2 moved X ${fmt(c.off[0])}, Y ${fmt(c.off[1])} mm`;
   if (document.activeElement !== ui.cmpTol) ui.cmpTol.value = String(c.tol);
   ui.cmpShow.checked = c.show;
   const diffs = c.res ? c.res.diffs : [];
@@ -6548,6 +6548,12 @@ function cmpPaint(canvas, c, base) {
   for (const [sd, col, o] of [[c.a, c.ca, [0, 0]], [c.b, c.cb, c.off]]) {
     if (sd) paintDrawing(canvas, { ...base, keep: true, fl: sd.fl, off: sd.off, factor: sd.factor, slots: [[sd.factor, 0, 0, -sd.factor, o[0], state.sheetH - o[1]]], tint: cmpCss(col) });
   }
+  if (c.moving && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
+    const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
+    ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
+    ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
+    drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent);
+  }
 }
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
 function cmpGlow(c, out) {
@@ -6560,15 +6566,30 @@ function cmpGlow(c, out) {
   }
 }
 
-/** Manual line up: dragging on the canvas moves drawing 2 (the differences are worked out again on release). */
+/** A Compare side's snap index: the editor's own snap points and pick grid (edit.js snapPick), built once per side. */
+const cmpSnapEd = (sd) => sd.sn || (sd.sn = { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1), items: sd.fl.items, vis: Uint8Array.from(sd.fl.items, (it) => (itemVisible(it, sd.off) ? 1 : 0)) });
+/** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
+function cmpSnap(sd, o, p) {
+  const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap);
+  return sn && { x: sn.x * f + o[0], y: sn.y * f + o[1], kind: sn.kind };
+}
+/** Manual line up: dragging on the canvas moves drawing 2, its grabbed point snapping to drawing 1 (the differences wait for the Compare button). */
 function cmpDown(e) {
   const d = cmpDoc(), c = d && d.cmp;
   if (!c || c.mode !== 'manual' || !c.b) return false;
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...c.off];
+  const grab = cmpSnap(c.b, m0, p0), g = grab ? [grab.x, grab.y] : p0;      // the point of drawing 2 taken hold of: a snap of it, else the pointer
   c.moving = true;
   let moved = false;
-  const move = (ev) => { const p = sheetAt(ev.clientX, ev.clientY); moved = true; c.manual = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]]; c.off = cmpOff(c); paintOverlay(); };
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; if (moved) cmpMoved(d); else update(); };
+  const move = (ev) => {
+    const p = sheetAt(ev.clientX, ev.clientY);
+    let o = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]];
+    const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = c.a && cmpSnap(c.a, [0, 0], q);     // where the grabbed point is now, and what of drawing 1 it snaps to
+    c.snap = drop || (grab ? { x: q[0], y: q[1], kind: grab.kind } : null);
+    if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
+    moved = true; c.manual = o; c.off = cmpOff(c); paintOverlay();
+  };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) cmpMoved(d); else update(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   return true;
 }
