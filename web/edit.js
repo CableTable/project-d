@@ -288,8 +288,7 @@ export function findGaps(ed, tol) {
   const ids = [];
   for (const e of ed.shown) {
     const ent = ed.raw.entities[e];
-    if (/^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/.test(ent.type) ||
-        /(?:^|[^a-z])(?:anno(?:tation)?s?|dims?|dimensions?|text|txt|hatch(?:es)?|leaders?|arrows?|scales?|ticks?)(?:$|[^a-z])/i.test(ent.layer)) continue;
+    if (/^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/.test(ent.type)) continue;
     if (!Number.isNaN(ed.ends[e * 4])) ids.push(e * 2, e * 2 + 1);
   }
   const px = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2], py = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2 + 1];
