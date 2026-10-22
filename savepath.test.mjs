@@ -1,6 +1,6 @@
 // savepath.js — the Save dialog's path with its extension, asking before a file is replaced.   node savepath.test.mjs
 import assert from 'node:assert/strict';
-import { withExt } from './web/savepath.js';
+import { saveDefault, withExt } from './web/savepath.js';
 
 let n = 0;
 async function test(name, fn) { await fn(); n++; console.log('ok', name); }
@@ -8,6 +8,17 @@ const fake = (files, answer) => {
   const asked = [];
   return { asked, fs: { exists: async (p) => files.includes(p) }, dialog: { ask: async (m) => { asked.push(m); return answer; } } };
 };
+
+await test('save suggestions use the source folder and preserve literal names, or leave the native last folder alone', () => {
+  for (const [path, want] of [
+    ['C:\\jobs\\plate.dxf', 'C:\\jobs\\plate $&.pdf'], ['C:/jobs/plate.pdf', 'C:/jobs/plate $&.pdf'],
+    ['\\\\server\\jobs\\plate.dxf', '\\\\server\\jobs\\plate $&.pdf'], ['C:\\plate.dxf', 'C:\\plate $&.pdf'], ['/plate.dxf', '/plate $&.pdf'],
+  ]) {
+    assert.equal(saveDefault('plate $&.pdf', path), want);
+  }
+  assert.equal(saveDefault('Drawing 1.pdf', null), 'Drawing 1.pdf');
+  assert.equal(saveDefault('Drawing 1.csv'), 'Drawing 1.csv');
+});
 
 await test('a path that already ends in the extension is left alone (the dialog asked about it)', async () => {
   const t = fake(['C:\\a\\x.pdf'], false);

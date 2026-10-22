@@ -2,21 +2,20 @@
 // A folder at once. The pages themselves are planned and drawn by pdf-export.js (pure); this file is the UI, saving and
 // printing. Settings are kept for the session (this object), never in a file. Text from a file goes in as text, via h().
 import { h, fill } from './dom.js';
-import { withExt } from './savepath.js';
+import { saveDefault, withExt } from './savepath.js';
 import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, checkFit, scaleText, PAPERS, PART_BORDER } from './pdf-export.js';
 import { drawingBoxMm, startHidden, unitFactor } from './doc.js';
 
 const layoutSettings = {
-  ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0, dir: null,
+  ...DEFAULT_OPTIONS, tab: 'one', pageIdx: 0,
   batch: { folder: '', dxf: true, dwg: true, cdr: true, sub: false, mode: 'same', saveTo: 'same', saveDir: null, all: [], busy: false },
 };
 
 /** The Part screen's own settings: one page, as drawn (no mirror, no marks, no separations), fitted to A4 unless changed. */
-const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0, dir: null, batch: layoutSettings.batch };
+const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0, batch: layoutSettings.batch };
 
 const baseName = (n) => String(n).replace(/\.[^.\\/]*$/, '');
 const joinPath = (dir, name) => String(dir).replace(/[\\/]+$/, '') + (String(dir).includes('\\') ? '\\' : '/') + name;
-const dirOf = (path) => String(path).replace(/[\\/][^\\/]*$/, '');
 const today = () => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); };
 const errText = (e) => (e && e.message ? e.message : String(e));
 const TYPES = { dxf: 'DXF', dwg: 'DWG', cdr: 'CorelDRAW' };
@@ -84,7 +83,7 @@ export function paintPage(canvas, page, box, colours) {
 // ---------------------------------------------------------------- the dialog
 
 /**
- * host: { source() → { name, fl, factor, off, sheetW, sheetH, hide } | null, sheet() → { w, h },
+ * host: { source() → { name, path, fl, factor, off, sheetW, sheetH, hide } | null, sheet() → { w, h },
  *         readDrawing(bytes) → { ok, result, doc, sorry, error }, note(text) }
  */
 export function openExport(host) {
@@ -268,8 +267,7 @@ export function openExport(host) {
       btn.addEventListener('click', () => { settings.pageIdx = i; refresh(); });
       return btn;
     }), plan.count > 60 ? h('span', { class: 'lbl' }, `+${plan.count - 60} more`) : null);
-    const dir = settings.dir ? settings.dir.replace(/[\\/]+$/, '') + (settings.dir.includes('\\') ? '\\' : '/') : '';
-    ref.foot.textContent = dir + fileName();
+    ref.foot.textContent = saveDefault(fileName(), src.path);
     ref.foot.classList.remove('bad');
     paint();
   }
@@ -286,12 +284,11 @@ export function openExport(host) {
   async function saveOne(print) {
     const bytes = plan.bytes(), name = fileName();
     if (inApp) {
-      let path = await t.dialog.save({ defaultPath: settings.dir ? joinPath(settings.dir, name) : name, filters: [{ name: 'PDF', extensions: ['pdf'] }] });
+      let path = await t.dialog.save({ defaultPath: saveDefault(name, src.path), filters: [{ name: 'PDF', extensions: ['pdf'] }] });
       if (!path) return null;
       path = await withExt(t, path, 'pdf');
       if (!path) return null;
       await t.fs.writeFile(path, bytes);
-      settings.dir = dirOf(path);
       return { path, name: path.split(/[\\/]/).pop(), bytes };
     }
     if (print) {

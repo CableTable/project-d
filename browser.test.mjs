@@ -784,6 +784,12 @@ try {
     assert.match(got.asked[0], /\.pdf$/);
     assert.deepEqual(got.wrote, ['C:\\prints\\mine.pdf']);
     assert.match(await t('cmd-prompt').textContent(), /Saved C:\\prints\\mine\.pdf/);
+    await page.evaluate(() => { window.__pick = null; });
+    await openPdf();
+    await t('pdf-go').click();
+    await page.waitForFunction(() => window.__saved.asked.length === 3);
+    assert.equal(await page.evaluate(() => window.__saved.asked.at(-1)), 'sample-copy layout.pdf', 'a tab without a disk path leaves the last folder to the native picker');
+    await t('pdf-cancel').click();
     await page.evaluate(() => { delete window.__TAURI__; delete window.__saved; });
   });
 
@@ -7160,7 +7166,7 @@ try {
     await t('ptab-drawing').click();
   });
 
-  await step('TODO 63: Save As and first Save suggest the source folder and edited name; a new drawing keeps the last-used folder', async () => {
+  await step('TODO 63 / 102: Save As and PDF suggest each source folder; a new drawing keeps the last-used folder', async () => {
     await closeTabs(/./);
     await page.evaluate((bytes) => {
       window.__log = { dlg: [], wrote: [] }; window.__next = null;
@@ -7172,6 +7178,7 @@ try {
         },
         fs: {
           readFile: async () => new Uint8Array(bytes), exists: async () => false,
+          writeFile: async () => {},
           writeTextFile: async (p) => { window.__log.wrote.push(p); },
         },
       };
@@ -7188,6 +7195,9 @@ try {
         await menuItem('File', 'Open…');
         const name = source.split(/[\\/]/).pop();
         await page.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, name);
+        await openPdf();
+        await suggestion(() => t('pdf-go').click(), source.replace(/[^\\/]*$/, () => name.replace(/\.dxf$/, '.pdf')));
+        await t('pdf-cancel').click();
         const want = source.slice(0, -4) + '-edited.dxf';
         await suggestion(() => page.keyboard.press('Control+s'), want);
         await suggestion(() => menuItem('File', 'Save As…'), want);
@@ -7204,6 +7214,9 @@ try {
         assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\elsewhere\\chosen.dxf', 'C:\\elsewhere\\chosen.dxf']);
         await page.evaluate(() => { window.__next = null; });
         await suggestion(() => menuItem('File', 'Save As…'), want);
+        await openPdf();
+        await suggestion(() => t('pdf-print').click(), source.replace(/[^\\/]*$/, 'chosen.pdf'));
+        await t('pdf-cancel').click();
         await closeTabs(/./);
         await page.evaluate(() => { window.__log.wrote.length = 0; });
       }
@@ -7309,6 +7322,7 @@ try {
           readFile: async (p) => new Uint8Array(/\.pdf$/.test(p) ? insp : sample),
           exists: async (p) => window.__exists.has(p),
           readTextFile: async () => '{ not json',
+          writeFile: async (p) => { log.wrote.push(p); },
           writeTextFile: async (p) => { log.wrote.push(p); },
         },
       };
@@ -7326,6 +7340,12 @@ try {
       await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
       assert.equal(await t('bal-count').textContent(), '1');
       // Save: the dialog returns a name without .dxf, and that .dxf exists: Cancel in the question writes nothing
+      await openPdf(); await t('pdf-go').click();
+      await page.waitForFunction(() => window.__log.dlg.at(-1) === 'C:\\work\\insp.pdf');
+      await t('pdf-cancel').click();
+      await t('bal-csv').click(); await t('bal-excel').click();
+      assert.deepEqual(await page.evaluate(() => window.__log.dlg.slice(-2)), ['C:\\work\\insp-balloons.csv', 'C:\\work\\insp-balloons-excel.csv'], 'both tables suggest the source folder');
+      assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'cancelled table exports write nothing');
       await page.evaluate(() => { window.__next = 'C:\\work\\insp-x'; });
       await page.keyboard.press('Control+s');
       await page.waitForFunction(() => window.__log.ask.length === 1).catch(async (e) => { throw new Error(e.message + ' | prompt: ' + (await prompt()) + ' | log: ' + (await page.evaluate(() => JSON.stringify(window.__log)))); });
@@ -7336,7 +7356,7 @@ try {
       await page.keyboard.press('Control+s');
       await page.waitForFunction(() => window.__log.wrote.length === 2);
       assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\work\\insp-x.dxf', 'C:\\work\\keep.pdballoons.json']);
-      assert.ok((await page.evaluate(() => window.__log.dlg)).includes('insp.pdballoons.json'), 'it asked where to put the balloons');
+      assert.ok((await page.evaluate(() => window.__log.dlg)).includes('C:\\work\\insp.pdballoons.json'), 'balloon Save As suggests the source folder');
       // the opened .dxf: Save refuses it, even in another case
       await closeTabs(/./);
       await page.evaluate(() => { window.__log.wrote.length = 0; window.__open = 'C:\\work\\a.dxf'; window.__exists = new Set(); window.__next = 'C:\\work\\A.DXF'; });

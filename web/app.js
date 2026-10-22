@@ -33,7 +33,7 @@ import * as OB from './objects.js';
 import * as C from './compare.js';
 import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
-import { withExt } from './savepath.js';
+import { saveDefault, withExt } from './savepath.js';
 import * as RC from './recovery.js';
 import { openExport } from './export.js';
 import { openNest } from './nestdlg.js';
@@ -625,7 +625,7 @@ async function openPdf(name, buf, path = null) {
   }
   const raw = r.doc, fl = flatten(raw);
   const base = name.replace(/\.[^.\\/]*$/, ''), dxfName = base + '.dxf';
-  const doc = { name: dxfName, path: null, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, orig: raw.entities, origBlocks: raw.blocks }, ...tabFields(raw, fl) };
+  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, orig: raw.entities, origBlocks: raw.blocks }, ...tabFields(raw, fl) };
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${dxfName}` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
@@ -2249,16 +2249,17 @@ function shownLayout(d) {
 function exportSource() {
   const d = curDoc();
   if (!d) return null;
+  const path = d.openPath || d.path;
   if (d.lay) {                                                       // a layout: the sheet as the page, the placed parts as artwork (its Sheet and Marks layers are not artwork)
     const lay = shownLayout(d);
     if (!LD.placedAll(lay).length) return null;
-    return { name: d.name, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, hide: ['Sheet', 'Marks'] };
+    return { name: d.name, path, fl: flatten(LD.layoutRaw(lay)), factor: 1, off: new Set(), sheetW: d.lay.s.sheetW, sheetH: d.lay.s.sheetH, hide: ['Sheet', 'Marks'] };
   }
   const hid = hidIdx(d), fl = hid && hid.size ? { ...d.fl, items: d.fl.items.filter((it) => !hid.has(it.e)) } : d.fl;       // objects hidden one by one are left out too: what you see is what prints
   if (d.fl && partView(d) && !d.bgOnly) {                            // a drawing tab: the drawing and its dimensions alone (never the background or a sheet)
-    return partSource({ fl, factor: d.factor, off: d.off, name: d.name, hide: [] });
+    return partSource({ fl, factor: d.factor, off: d.off, name: d.name, path, hide: [] });
   }
-  if (d.fl) return { name: d.name, fl, factor: d.factor, off: d.off, sheetW: state.sheetW, sheetH: state.sheetH, hide: [] };
+  if (d.fl) return { name: d.name, path, fl, factor: d.factor, off: d.off, sheetW: state.sheetW, sheetH: state.sheetH, hide: [] };
   return null;
 }
 function exportPdf() {
@@ -3588,7 +3589,7 @@ function placeBackground(name, bitmap, mm, how, newTab = false, src = null) {
   const bg = { name, bitmap, w: bitmap.width, h: bitmap.height, mm, x: 0, y: 0, visible: true };
   if (!d || !d.raw) {
     const raw = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [] };
-    d = { name, path: null, dirty: false, ...tabFields(raw, flatten(raw)) };
+    d = { name, path: null, openPath: src && src.path, dirty: false, ...tabFields(raw, flatten(raw)) };
     d.bg = bg;
     addTab(d);
     balLoad(d, src && src.path, name);
@@ -4382,7 +4383,7 @@ async function balExport(excel) {
   const t = window.__TAURI__;
   try {
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
-      const picked = await t.dialog.save({ defaultPath: name, filters: [{ name: 'CSV table', extensions: ['csv'] }] });
+      const picked = await t.dialog.save({ defaultPath: saveDefault(name, d.openPath || d.path), filters: [{ name: 'CSV table', extensions: ['csv'] }] });
       const path = picked && await withExt(t, picked, 'csv');
       if (!path) return;
       await t.fs.writeTextFile(path, text);
@@ -4451,7 +4452,7 @@ async function balSave(d, ask = true) {
       let path = d.balBlocked ? null : balPath(d);
       if (!path) {
         if (!ask || !t.dialog || !t.dialog.save) return;
-        path = await t.dialog.save({ defaultPath: BAL.sidecarName(d.balName || d.name), filters: [{ name: 'Balloons', extensions: ['json'] }] });
+        path = await t.dialog.save({ defaultPath: saveDefault(BAL.sidecarName(d.balName || d.name), d.openPath || d.path), filters: [{ name: 'Balloons', extensions: ['json'] }] });
         path = path && await withExt(t, path, 'json');
         if (!path) { note('The balloons are still unsaved'); return false; }
         d.balloonPath = String(path); d.balBlocked = false;

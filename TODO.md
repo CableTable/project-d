@@ -196,7 +196,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 99. **Fix round for 92 / 88 (session 15 review)** ✅ (built, session 16) (S): (a) Medium: web/edit.js ~291 drops gaps on layers whose names hold "text", "dim" or "arrow" (e.g. "Text-cut", "DIM-OUTLINE"; Text to outlines keeps the text layer), so real cut outlines lose Tiny gaps / Join / the Preflight gap check. Drop the layer pattern, keep the entity-type check, add a test. (b) Low: web/cmdui.js ~127 error lines fade after 3 s like the rest; keep 9 s for errors.
 100. ✅ (built, session 15) **Usage page: token chart as cumulative lines** (S, his pick 2026-10-21): replace the grouped daily bars with one running-total line per agent (Rook, Bishop, Knight) over the 14 IST days, dd-mmm labels, legend, end value labelled; same token definition (cache reads excluded).
 101. **Edit the footnote / title block text that prints on the PDF** (S–M, ask, T18): see T18 in support/tickets.md. Grill first.
-102. **PDF save: start in the drawing's own folder, like Save As** (S, ask, T19): see T19 in support/tickets.md. Grill first.
+102. ✅ (built, session 16) **PDF save: start in the drawing's own folder, like Save As** (S, ask, T19): see T19 in support/tickets.md. Grill first.
 103. **Allow much more zoom (now max 40 px per mm)** (S, ask, T20): see T20 in support/tickets.md. Grill first.
 104. **Join gaps leaves ~half the gaps: micro-arcs shorter than the tolerance block it** (M, bug, T21): see T21 in support/tickets.md. Grill first.
 105. **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md. Grill first.
@@ -217,6 +217,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 120. **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): see T37 in support/tickets.md. Grill first.
 121. **Join gaps: CorelDRAW-style join methods (Extend, Chamfer, Fillet)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
 122. **Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary** (L, ask, his screenshot 2026-10-23): boolean operations on closed outlines. After the bugs. Grill first.
+
+102. ✅ (built, session 16) **PDF / CSV / balloons save folder** (S, T19): suggest the open file's own folder (a saved layout's path for layouts), keeping the pre-filled filename; tabs with no disk path use the native dialog's last-used folder, like Save As.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
