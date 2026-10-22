@@ -8738,6 +8738,42 @@ try {
     await closeTabs(/./);
   });
 
+  await step('T22b: rectangle edge drag snaps, updates selection and panel W / H, Shift keeps proportions, one Undo', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfPoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), dxfLine(150, 50, 170, 50));
+    await openGrips(writeDxf(doc), 'rectangle-edges.dxf');
+    await click(70, 20); await gripWhen(8);
+    const size = async (w, h) => {
+      assert.deepEqual([await t('sel-w').inputValue(), await t('sel-h').inputValue()], [w.toFixed(2), h.toFixed(2)]);
+      assert.deepEqual(await sizeNow(), [String(w), String(h)]);
+    };
+    if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
+    await dragGripTo('0:e1', 149.8, 50.2); await frames();
+    await size(130, 60);
+    const changed = await savedDoc();
+    assert.deepEqual(GR.lwVertices(changed.entities[0].r).map((v) => [v.x, v.y]), [[20, 20], [150, 20], [150, 80], [20, 80]], 'only the right side moves');
+    assert.deepEqual(GR.shapeOf(changed.entities[1]), GR.shapeOf(doc.entities[1]), 'the snap target stays put');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: shotDir + '/t22b-edge-' + theme + '.png' });
+    }
+    await menuItem('View', 'Theme: light');
+    await undoAndPick(70, 20, 8); await size(100, 60);
+    await gripWhen(8);
+    await t('tog-snap').click();
+    await dragGripTo('0:e1', 149.8, 50.2); await frames();
+    const freeW = Number(await t('sel-w').inputValue());
+    assert.ok(Math.abs(freeW - 129.8) < .8 && freeW !== 130, 'SNAP off leaves the pick on the free grid, within one screen pixel');
+    await size(freeW, 60);
+    await undoAndPick(70, 20, 8); await size(100, 60);
+    await t('tog-snap').click();
+    await page.keyboard.down('Shift');
+    await dragGripTo('0:e1', 170, 50);
+    await page.keyboard.up('Shift'); await frames(); await size(150, 90);
+    await undoAndPick(70, 20, 8); await size(100, 60);
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

@@ -3,8 +3,8 @@
 // A selected LINE, ARC, CIRCLE or LWPOLYLINE shows small squares to drag. Everything here works on the entity record (dxf-write.js shape:
 // { type, layer, …, r: { c: [codes], v: [values] } }) in the drawing's own units, y up; `factor` turns units into mm for what is shown.
 //
-//   gripsOf(ent)                 → [{ id, kind: 'end' | 'mid' | 'centre' | 'quad' | 'vertex', x, y }]
-//   dragGrip(ent, id, to)        → { ent: the changed record, label } or null (nothing sensible: the point is the same, three points in a line)
+//   gripsOf(ent)                 → [{ id, kind: 'end' | 'mid' | 'centre' | 'quad' | 'vertex' | 'edge', x, y }]
+//   dragGrip(ent, id, to, shift) → { ent: the changed record, label } or null (nothing sensible: the point is the same, three points in a line)
 //   refPoint(ent, id)            → the point the rubber band starts from (the fixed end of a line, the centre of a circle, else the grip itself)
 //   shapeOf(ent, factor)         → the shape in mm as draw.js svgPath draws it
 //   (a leader, leader.js, is passed in as { type: 'LEADER', model } and has a grip at each of its points)
@@ -57,6 +57,19 @@ function arcOf(r) {
   return { c, r: rad, a0, a1, sweep: sw, s: at0(a0), e: at0(a1), m: at0(a0 + sw / 2) };
 }
 
+/** Four straight, nonzero sides meeting at right angles, in either winding and any rotation. */
+function rectangleVertices(r) {
+  const vs = lwVertices(r);
+  if (!((get(r, 70) ?? 0) & 1) || vs.length !== 4 || vs.some((v) => v.b)) return null;
+  const sides = vs.map((v, i) => [vs[(i + 1) % 4].x - v.x, vs[(i + 1) % 4].y - v.y]);
+  const lengths = sides.map((s) => Math.hypot(...s));
+  if (lengths.some((n) => n <= 1e-9)) return null;
+  return sides.every((s, i) => {
+    const j = (i + 1) % 4, t = sides[j];
+    return Math.abs(s[0] * t[0] + s[1] * t[1]) <= 1e-9 * lengths[i] * lengths[j];
+  }) ? vs : null;
+}
+
 /** The grips of an entity: [{ id, kind, x, y }] (empty when it has none). */
 export function gripsOf(ent) {
   if (!hasGrips(ent)) return [];
@@ -74,7 +87,9 @@ export function gripsOf(ent) {
     const a = arcOf(r);
     return [{ id: 'a', kind: 'end', x: a.s[0], y: a.s[1] }, { id: 'm', kind: 'mid', x: a.m[0], y: a.m[1] }, { id: 'b', kind: 'end', x: a.e[0], y: a.e[1] }, { id: 'c', kind: 'centre', x: a.c[0], y: a.c[1] }];
   }
-  return lwVertices(r).map((v, i) => ({ id: 'v' + i, kind: 'vertex', x: v.x, y: v.y }));
+  const vertices = lwVertices(r).map((v, i) => ({ id: 'v' + i, kind: 'vertex', x: v.x, y: v.y }));
+  const rect = rectangleVertices(r);
+  return rect ? vertices.concat(rect.map((v, i) => ({ id: 'e' + i, kind: 'edge', x: (v.x + rect[(i + 1) % 4].x) / 2, y: (v.y + rect[(i + 1) % 4].y) / 2 }))) : vertices;
 }
 
 const find = (ent, id) => gripsOf(ent).find((g) => g.id === id) || null;
@@ -95,7 +110,7 @@ export function refPoint(ent, id) {
  * a quadrant sets the radius. An arc's ends and middle re-fit the arc through three points (its middle is the bulge); its centre moves it.
  * A polyline vertex moves that vertex (the bulges stay).
  */
-export function dragGrip(ent, id, to) {
+export function dragGrip(ent, id, to, shift = false) {
   const g = find(ent, id);
   if (!g || !to || !Number.isFinite(to[0]) || !Number.isFinite(to[1])) return null;
   if (ent.type === 'LEADER') {
@@ -135,6 +150,20 @@ export function dragGrip(ent, id, to) {
     const f = arcThrough3(p[0], p[1], p[2]);
     if (!f) return null;
     return { ent: withValues(ent, [[at(r, 10), f.c[0]], [at(r, 20), f.c[1]], [at(r, 40), f.r], [at(r, 50), f.a0], [at(r, 51), f.a1]]), label: id === 'm' ? 'Arc bulge' : 'Stretch arc' };
+  }
+  if (g.kind === 'edge') {
+    const vs = rectangleVertices(r), i = +id.slice(1), j = (i + 1) % 4;
+    const a = vs[(i + 2) % 4], b = vs[(i + 3) % 4], ox = (a.x + b.x) / 2, oy = (a.y + b.y) / 2;
+    const span = Math.hypot(g.x - ox, g.y - oy), nx = (g.x - ox) / span, ny = (g.y - oy) / span;
+    const delta = (to[0] - g.x) * nx + (to[1] - g.y) * ny, size = span + delta;
+    if (size <= 1e-9 || Math.abs(delta) < 1e-12) return null;
+    const ratio = shift ? size / span : 1;
+    const edits = vs.flatMap((v, k) => {
+      const along = (v.x - ox) * -ny + (v.y - oy) * nx;
+      const move = k === i || k === j ? delta : 0;
+      return [[v.kx, v.x + nx * move - ny * along * (ratio - 1)], [v.ky, v.y + ny * move + nx * along * (ratio - 1)]];
+    });
+    return { ent: withValues(ent, edits), label: 'Resize rectangle' };
   }
   const vs = lwVertices(r), v = vs[+id.slice(1)];
   if (!v || dist([v.x, v.y], to) < 1e-12) return null;

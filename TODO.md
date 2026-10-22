@@ -199,7 +199,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 102. ✅ (built, session 16) **PDF save: start in the drawing's own folder, like Save As** (S, ask, T19): see T19 in support/tickets.md. Grill first.
 103. ✅ (built, session 16) **Allow much more zoom (now max 40 px per mm)** (S, ask, T20): see T20 in support/tickets.md. Grill first.
 104. ✅ (built, session 17) **Join gaps leaves ~half the gaps: micro-arcs shorter than the tolerance block it** (M, bug, T21): guarded micro-piece removal before the existing average-point join; count reported, one Undo restores everything. Synthetic fixture checks closure and <= 0.1% total length change.
-105. (a built, session 16: W / H padlock; b = edge drag, 76d next) **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md. Grill first.
+105. (a built, session 16: W / H padlock; b built, session 17: rectangle edge drag; 76d next) **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md.
+105c. Circle radius grip and ellipse axis grips resize them (later, T22).
 106. **Build dynamic input (TODO 69) now, for every drawing tool** (L, ask, T23): see T23 in support/tickets.md. Grill first.
 107. **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): see T24 in support/tickets.md. Grill first.
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.

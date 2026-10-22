@@ -34,6 +34,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Duplicate**: Makes copies of a placed part along a chosen direction, with distance measured edge to edge. Where: `DECISIONS.md`, Duplicate and Duplicate both ways.
 
+**Edge grip**: A handle at the middle of a selected rectangle's side. Dragging it moves that side along its normal, keeping a rectangle; Shift keeps proportions about the opposite side's midpoint. Where: `DECISIONS.md`, Rectangle edge grips. Avoid: Gripper.
+
 **Extra gap**: Adds room after one chosen row or column of the repeat grid and drops rows or columns that no longer fit. Where: `DECISIONS.md`, Extra gap.
 
 **Extract part**: Names the selected drawing geometry and saves it in the Parts library for reuse at the drawing's prepared scale. Where: `TODO.md`, items 5, 6 and 19; `web/app.js`.

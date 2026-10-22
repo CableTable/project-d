@@ -29,10 +29,61 @@ test('a circle has its centre and four quadrants; an arc its ends, middle and ce
   const wrap = GR.gripsOf(arc(0, 0, 10, 270, 90));                       // an arc across 0°: the middle is at 0°
   nearPt([wrap[1].x, wrap[1].y], [10, 0]);
   const p = GR.gripsOf(rect(0, 0, 10, 5));
-  assert.deepEqual(p.map((x) => x.id), ['v0', 'v1', 'v2', 'v3']); assert.deepEqual(pts(p), [[0, 0], [10, 0], [10, 5], [0, 5]]);
+  assert.deepEqual(p.map((x) => x.id), ['v0', 'v1', 'v2', 'v3', 'e0', 'e1', 'e2', 'e3']);
+  assert.deepEqual(pts(p), [[0, 0], [10, 0], [10, 5], [0, 5], [5, 0], [10, 2.5], [5, 5], [0, 2.5]]);
   assert.deepEqual(GR.gripsOf(ellipse(0, 0, 10, 0, 0.5)), [], 'no grips on an ellipse');
   assert.deepEqual(GR.gripsOf(text(0, 0, 5, 'a')), []);
   assert.deepEqual(GR.gripsOf(null), []);
+});
+
+test('rectangle edge grips resize each side along its normal, any rotation or winding; Shift keeps proportions', () => {
+  for (const angle of [0, Math.PI / 5]) for (const reverse of [false, true]) {
+    const rotate = ([x, y]) => [30 + x * Math.cos(angle) - y * Math.sin(angle), 40 + x * Math.sin(angle) + y * Math.cos(angle)];
+    const corners = [[0, 0], [20, 0], [20, 10], [0, 10]];
+    if (reverse) corners.reverse();
+    const original = corners.map(rotate), ent = lwpoly(original, { closed: true }), before = structuredClone(ent);
+    const grips = GR.gripsOf(ent);
+    assert.equal(grips.filter((g) => g.kind === 'edge').length, 4);
+    for (let i = 0; i < 4; i++) for (const shift of [false, true]) for (const scale of [0.5, 1.5]) {
+      const j = (i + 1) % 4, a = original[(i + 2) % 4], b = original[(i + 3) % 4];
+      const opposite = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], g = grips[4 + i];
+      const normal = [g.x - opposite[0], g.y - opposite[1]], span = Math.hypot(...normal), unit = normal.map((v) => v / span);
+      // A tangential pointer movement must not shear or move the side along itself.
+      const to = [g.x + normal[0] * (scale - 1) - unit[1] * 7, g.y + normal[1] * (scale - 1) + unit[0] * 7];
+      const result = GR.dragGrip(ent, 'e' + i, to, shift);
+      assert.equal(result.label, 'Resize rectangle');
+      const vs = GR.lwVertices(result.ent.r);
+      assert.equal(GR.gripsOf(result.ent).length, 8, 'it stays a rectangle');
+      vs.forEach((v, k) => {
+        const p = original[k], moved = k === i || k === j;
+        if (!shift) nearPt([v.x, v.y], [p[0] + (moved ? normal[0] * (scale - 1) : 0), p[1] + (moved ? normal[1] * (scale - 1) : 0)]);
+        else nearPt([v.x, v.y], [opposite[0] + (p[0] - opposite[0]) * scale, opposite[1] + (p[1] - opposite[1]) * scale]);
+      });
+      const na = vs[(i + 2) % 4], nb = vs[(i + 3) % 4];
+      const nextOpposite = [(na.x + nb.x) / 2, (na.y + nb.y) / 2];
+      nearPt(nextOpposite, opposite);
+      assert.equal(GR.dragGrip(ent, 'e' + i, opposite, shift), null, 'cannot collapse');
+      assert.equal(GR.dragGrip(ent, 'e' + i, [opposite[0] - normal[0], opposite[1] - normal[1]], shift), null, 'cannot cross the opposite side');
+      assert.equal(GR.dragGrip(ent, 'e' + i, [g.x, g.y], shift), null, 'no change');
+    }
+    assert.deepEqual(ent, before, 'the source record stays untouched');
+  }
+});
+
+test('only closed straight four-corner rectangles get edge grips', () => {
+  const entities = [
+    lwpoly([[0, 0], [20, 0], [20, 10], [0, 10]]),
+    lwpoly([[0, 0], [20, 0], [25, 10], [5, 10]], { closed: true }),
+    lwpoly([[0, 0], [20, 10], [20, 0], [0, 10]], { closed: true }),
+    lwpoly([[0, 0], [20, 0], [20, 0], [0, 10]], { closed: true }),
+    lwpoly([[0, 0, .1], [20, 0], [20, 10], [0, 10]], { closed: true }),
+    lwpoly([[0, 0], [20, 0], [20, 10]], { closed: true }),
+    circle(0, 0, 10), ellipse(0, 0, 10, 0, .5)
+  ];
+  for (const ent of entities) {
+    assert.ok(GR.gripsOf(ent).every((g) => g.kind !== 'edge'));
+    assert.equal(GR.dragGrip(ent, 'e0', [5, 5]), null);
+  }
 });
 
 test('a line: an end stretches that end; the middle moves the whole line', () => {

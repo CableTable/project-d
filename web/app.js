@@ -3484,7 +3484,7 @@ function renderCommand() {
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
-  if (state.grip && ed) { const gg = state.grip; ui.hist.textContent = `Command: ${GR.commandOf(gg.ent, gg.id)}   ${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):'; return; }
+  if (state.grip && ed) { const gg = state.grip; ui.hist.textContent = `Command: ${GR.commandOf(gg.ent, gg.id)}   ${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = gg.id.startsWith('e') ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):'; return; }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(ed)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
@@ -4853,7 +4853,11 @@ function drawOvl() {
   }
   ui.ovl.replaceChildren(...out);
   ui.grips.replaceChildren(...grips);
-  if (ui.gripHint) ui.gripHint.hidden = !(d && !d.lay && gripOn(d) && gripList(d).length > 0);
+  if (ui.gripHint) {
+    const grips = d && !d.lay && gripOn(d) ? gripList(d) : [];
+    ui.gripHint.hidden = !grips.length;
+    ui.gripHint.textContent = grips.some((g) => g.kind === 'edge') ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+  }
   const t = ui.tip;
   if (!tip) { t.hidden = true; return; }
   const r = canvasSize(), px = (tip.x - view.ox) * view.scale + 16, py = (H - tip.y - view.oy) * view.scale + 16;
@@ -5438,7 +5442,7 @@ function gripAt(d, cx, cy) {
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
   let q = snapPoint(d, p, g.e);                                  // not to the shape being dragged: its old place is going away
-  const ref = GR.refPoint(g.ent, g.id), base = ref && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
+  const ref = GR.refPoint(g.ent, g.id), base = ref && !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
@@ -5446,16 +5450,16 @@ function gripPick(g, cx, cy, shift, hover) {
   return q;
 }
 /** The grip's drag is now at q: what the shape becomes. */
-function gripAim(g, q) {
+function gripAim(g, q, shift = false) {
   g.to = q;
-  const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]]);
+  const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]], shift);
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
 }
 function gripDown(e) {
   const d = editable();
   if (!d) return false;
   const g0 = state.grip;
-  if (g0 && g0.hot && g0.d === d) { gripAim(g0, gripPick(g0, e.clientX, e.clientY, e.shiftKey)); gripCommit(); return true; }       // the second click of click, then click
+  if (g0 && g0.hot && g0.d === d) { gripAim(g0, gripPick(g0, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return true; }       // the second click of click, then click
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
@@ -5468,13 +5472,13 @@ function gripMove(e) {
   if (!g || g.d !== curDoc()) return;
   if (!g.moved && !g.hot && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) < 4) return;
   g.moved = true; g.cursor = [e.clientX, e.clientY];
-  gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey, true));
+  gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey, true), e.shiftKey);
   paintOverlay();
 }
 function gripUp(e) {
   const g = state.grip;
   if (!g || g.hot) return;
-  if (g.moved) { gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey)); gripCommit(); return; }
+  if (g.moved) { gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return; }
   g.hot = true; g.cursor = [e.clientX, e.clientY];                  // a click on the grip: it is hot until the next click puts it down
   renderCommand(); paintOverlay();
 }
@@ -5498,6 +5502,7 @@ function gripTyped(raw) {
   const f = d.factor, inp = DR.parseInput(raw);
   if (inp.kind === 'enter') { if (g.next) gripCommit(); else gripCancel(); return; }
   if (inp.kind === 'word') { if (inp.w === 'x' || inp.w === 'exit' || inp.w === 'esc') { gripCancel(); note('Stretch cancelled'); } else note(`"${inp.w}" is not an option here: type x,y, @dx,dy or a length, or press Esc`); return; }
+  if (g.id.startsWith('e')) { note('Drag the edge to resize; typing a size is not available yet'); return; }
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
   const grip = GR.gripsOf(g.ent).find((x) => x.id === g.id), origMm = [grip.x * f, grip.y * f], refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
   let mm = null;
