@@ -64,6 +64,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Measure**: Picks points or geometry to report a distance, size or angle without adding a saved callout unless it is kept. Where: `DECISIONS.md`, Measure and Dimensions; `web/drawing.js`. Avoid: Dimension.
 
+**Micro piece**: An entity whose own path length is at most the Join gaps tolerance and whose end is within that tolerance of an entity longer than the tolerance. Join gaps removes these pieces before joining, reports the count and restores them with the joins in one Undo. A lone tiny entity stays. Where: `web/edit.js`; `DECISIONS.md`, Join gaps: micro pieces.
+
 **Nest**: The packed arrangement of parts produced by Auto-nest, also the command name that opens its dialog. Where: `DECISIONS.md`, Auto-nest method and UI.
 
 **Nudge**: Moves selected placed parts with the arrow keys by a chosen mm step, or ten times that step with Shift. Where: `DECISIONS.md`, Nudge.

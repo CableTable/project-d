@@ -3943,6 +3943,35 @@ try {
     if (await t('props-panel').isVisible()) await page.keyboard.press('Control+1');
   });
 
+  await step('TODO 104 / T21: Join removes micro pieces, reports the count, and one Undo restores pieces and gaps', async () => {
+    const original = readDxf(decodeDxf(readFileSync('fixtures/micro-gaps.dxf')));
+    // Save regenerates DXF handles and owners; compare the entity geometry and properties.
+    const geometry = (raw) => raw.entities.map((e) => [e.type, e.layer, e.r.c.flatMap((c, i) => c === 5 || c === 330 ? [] : [[c, e.r.v[i]]])]);
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/micro-gaps.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'micro-gaps.dxf');
+    await t('gap-tol').fill('0.01'); await t('gap-tol').press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+    await t('gap-join').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
+    assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps; 2 micro pieces removed/);
+    await t('cmd-fade').getByText(/Joined 2 gaps; 2 micro pieces removed/).waitFor({ state: 'visible' });
+    await shotBoth('104-micro-gaps');
+    const saved = await downloaded(() => page.keyboard.press('Control+s'));
+    const joined = readDxf(saved.text);
+    assert.equal(joined.entities.length, 11);
+    assert.deepEqual(geometry(joined).at(-1), geometry(original).at(-1), 'lone tiny piece stays');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+    const undone = await downloaded(() => page.keyboard.press('Control+s'));
+    assert.deepEqual(geometry(readDxf(undone.text)), geometry(original), 'one Undo restores every original entity and endpoint');
+    // Preflight uses the same repair pipeline.
+    await menuItem('Tools', 'Preflight…');
+    await t('preflight-gaps-fix').click();
+    assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps; 2 micro pieces removed/);
+    await t('preflight-close').click();
+  });
+
   await step('TODO 46: tiny gaps are counted (0.01 mm) and ringed; the tolerance is editable; Join gaps closes them in one undo step', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
@@ -3959,6 +3988,7 @@ try {
     await t('gap-join').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
     assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps/);
+    assert.doesNotMatch(await t('cmd-prompt').textContent(), /micro pieces removed/, 'no removal message when none were removed');
     assert.equal(await t('gap-join').isDisabled(), true);
     await click(50, 0); await waitSel('8 selected');
     assert.equal(await t('sel-area').textContent(), 'Area 5914.16 mm² · Perimeter 302.83 mm', 'the perimeter now includes the 0.01 mm the gaps hid');

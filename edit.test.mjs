@@ -600,6 +600,55 @@ test('joinGaps: lines, polylines and a polyline', () => {
   assert.equal(E.chainAt(ed2, 0, 1e-9).length, 3);
 });
 
+test('TODO 104: remove micro arcs / lines, close both outlines, keep a lone piece and change total length by at most 0.1%', () => {
+  const { raw, fl } = load('micro-gaps.dxf'), ed = E.makeIndex(raw, fl), before = structuredClone(raw);
+  const oldJoin = E.joinGaps(raw, ed, E.findGaps(ed, .01));
+  const oldRaw = { ...raw, ...oldJoin };
+  assert.ok(E.findGaps(E.makeIndex(oldRaw, D.flatten(oldRaw)), .01).length > 0, 'fixture reproduces the blocked join');
+  const r = E.joinTinyGaps(raw, ed, .01), next = { ...raw, entities: r.entities, blocks: r.blocks };
+  const ed2 = E.makeIndex(next, D.flatten(next));
+  assert.deepEqual(raw, before, 'the original geometry is intact for Undo');
+  assert.equal(r.removed, 2);
+  assert.equal(r.joined, 2);
+  assert.deepEqual(r.skipped, {});
+  assert.equal(E.findGaps(ed2, .01).length, 0);
+  assert.deepEqual(next.entities.find((e) => e.layer === 'Lone'), raw.entities.at(-1), 'lone tiny line stays unchanged');
+  const outline = E.areaPerimeter(ed2, ed2.shown, 1, 2e-6);
+  assert.equal(outline.loops, 2);
+  assert.equal(outline.gaps, 0);
+  assert.equal(E.chainAt(ed2, 0, 2e-6).length, 5);
+  assert.equal(E.chainAt(ed2, 5, 2e-6).length, 5);
+  const length = E.areaPerimeter(ed, ed.shown).perimeter;
+  assert.ok(Math.abs(outline.perimeter - length) / length <= .001, 'total drawing length changes by <= 0.1%');
+  const reopened = D.readDxf(W.writeDxf(next));
+  assert.equal(E.findGaps(E.makeIndex(reopened, D.flatten(reopened)), .01).length, 0, 'saved joins stay closed');
+  assert.equal(E.joinTinyGaps(next, ed2, .01).changed, 0, 'a second Join does nothing');
+});
+
+test('TODO 104 guards: inclusive own length, true arc / polyline length, direct contact, locks and micro-only chains', () => {
+  const repair = (entities, eligible) => {
+    const raw = W.newDoc(); raw.entities = entities;
+    return E.joinTinyGaps(raw, E.makeIndex(raw, D.flatten(raw)), .01, eligible);
+  };
+  const tiny = W.line(0, 0, .01, 0), long = W.line(.01, 0, 10, 0);
+  assert.equal(repair([tiny, long]).removed, 1, 'length exactly at tolerance is removed');
+  assert.equal(repair([W.line(0, 0, 0, 0), W.line(0, 0, 10, 0)]).removed, 1, 'zero-length line touching a longer entity is removed');
+  assert.equal(repair([W.line(0, 0, 0, 0)]).changed, 0, 'lone zero-length line stays');
+  assert.equal(repair([W.line(0, 0, .010001, 0), long]).removed, 0, 'just above tolerance stays');
+  assert.equal(repair([W.arc(0, 0, .004, 0, 180), W.line(.004, 0, 10, 0)]).removed, 0, 'arc sweep, not chord');
+  assert.equal(repair([W.lwpoly([[0, 0], [.008, 0], [.004, 0]]), long]).removed, 0, 'whole polyline, not end distance');
+  assert.equal(repair([tiny, long], (e) => e !== 0).removed, 0, 'locked micro piece stays');
+  assert.equal(repair([tiny, long], (e) => e !== 1).removed, 1, 'a locked longer neighbour need not move');
+  const lone = W.arc(40, 0, .002, 0, 180);
+  const alone = repair([lone]);
+  assert.equal(alone.removed, 0); assert.deepEqual(alone.entities, [lone]);
+  assert.equal(repair([W.line(0, 0, .004, 0), W.line(.004, 0, .008, 0)]).removed, 0, 'micro-only chain is kept');
+  const indirect = W.line(.02, 0, .024, 0);
+  const contact = repair([W.line(-10, 0, 0, 0), W.line(.009, 0, .013, 0), indirect]);
+  assert.equal(contact.removed, 1, 'no deletion through a chain of micro pieces');
+  assert.deepEqual(contact.entities.at(-1), indirect);
+});
+
 test('newLayerName: the first free Layer1, Layer2… (any case)', () => {
   assert.equal(E.newLayerName(['0']), 'Layer1');
   assert.equal(E.newLayerName(['0', 'Layer1', 'layer2', 'Layer4']), 'Layer3');
@@ -619,11 +668,14 @@ test('layerNameProblem: empty, bad characters, too long, taken', () => {
 test('findGaps skips annotation entity types but not lines on layers named Text, DIM and the like (TODO 99)', () => {
   const annotations = ['TEXT', 'MTEXT', 'ATTRIB', 'ATTDEF', 'DIMENSION', 'HATCH', 'LEADER', 'MLEADER', 'MULTILEADER'];
   const layers = ['Text-cut', 'DIM-OUTLINE', 'Dimensions', 'A-ANNO-DIMS', 'hatches', 'Arrows', 'Cut', 'outline'];
-  const entities = [...annotations.map(type => ({ type, layer: '0' })), ...layers.map(layer => ({ type: 'LINE', layer }))];
+  const entities = [...annotations.map(type => ({ type, layer: '0' })), ...layers.flatMap(layer => [{ type: 'LINE', layer }, { type: 'LINE', layer }])];
   // Supply close ends even for types normally excluded by makeIndex, so this exercises the filter itself.
-  const ends = new Float64Array(entities.flatMap((_, i) => [i * 10, 0, i * 10 + 0.004, 0]));
+  const ends = new Float64Array(entities.flatMap((_, i) => {
+    const pair = i - annotations.length, x = Math.floor(pair / 2) * 10;
+    return pair % 2 ? [x + 1.004, 0, x + 2, 0] : [x, 0, x + 1, 0];
+  }));
   const ed = { raw: { entities }, shown: entities.map((_, i) => i), ends };
-  assert.deepEqual(E.findGaps(ed, 0.01).map(g => g.ends[0].e), layers.map((_, i) => annotations.length + i));
+  assert.deepEqual(E.findGaps(ed, 0.01).map(g => g.ends[0].e), layers.map((_, i) => annotations.length + i * 2));
 });
 
 test('gapMarks requires Show; 50 rings are allowed, 51 keeps the count and draws none', () => {

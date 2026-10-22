@@ -12,7 +12,7 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, pickIndex, pickAt } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt } from './drawing.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc } from './dxf-write.js';
 
@@ -158,7 +158,7 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
     if (!first || !last) continue;
     const a = mapply(fl.mats[items[list[0]].m], first[0], first[1]), b = mapply(fl.mats[items[list[list.length - 1]].m], last[2], last[3]);
     const size = Math.max(Math.abs(box[e * 4 + 2] - box[e * 4]), Math.abs(box[e * 4 + 3] - box[e * 4 + 1]), 1e-9);
-    if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end
+    if (type !== 'LINE' && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end; zero-length lines can be micro pieces
     ends[e * 4] = a[0]; ends[e * 4 + 1] = a[1]; ends[e * 4 + 2] = b[0]; ends[e * 4 + 3] = b[1];
   }
   return { raw, fl, space, n, vis, byEnt, box, shown, areas, ends, items, ix: pickIndex(fl, space === 1), graph: null };
@@ -279,6 +279,7 @@ export function inBox(ed, b) {
 
 /** Ends closer than this (drawing units) count as joined: a DXF is written with 6 decimals, so ends joined exactly come back up to ~1.4e-6 apart. */
 const JOINED = 2e-6;
+const GAP_SKIP = /^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/;
 /**
  * Ends that almost meet (TODO 46): every free end (ed.ends) within `tol` of another is one cluster (single linkage); a
  * cluster whose ends are all within 2e-6 of each other (joined, up to the file's 6 decimals) is not a gap. Ends that already meet exactly are not gaps.
@@ -288,7 +289,7 @@ export function findGaps(ed, tol) {
   const ids = [];
   for (const e of ed.shown) {
     const ent = ed.raw.entities[e];
-    if (/^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/.test(ent.type)) continue;
+    if (GAP_SKIP.test(ent.type)) continue;
     if (!Number.isNaN(ed.ends[e * 4])) ids.push(e * 2, e * 2 + 1);
   }
   const px = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2], py = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2 + 1];
@@ -311,7 +312,7 @@ export function findGaps(ed, tol) {
   for (const id of ids) { const r = find(id); const l = groups.get(r); if (l) l.push(id); else groups.set(r, [id]); }
   const out = [];
   for (const g of groups.values()) {
-    if (g.length < 2) continue;
+    if (g.length < 2 || g.every((id) => (id >> 1) === (g[0] >> 1))) continue;
     let x = 0, y = 0;
     for (const id of g) { x += px(id); y += py(id); }
     x /= g.length; y /= g.length;
@@ -398,6 +399,54 @@ function moveEnds(e, to) {
     }
     default: return null;
   }
+}
+
+/** Length along an entity's drawn paths, including arc sweeps rather than their chords (drawing units). */
+function entityLength(ed, e) {
+  let length = 0;
+  for (const i of ed.byEnt[e]) {
+    const it = ed.items[i], ops = it.ops, m = ed.fl.mats[it.m];
+    let p;
+    for (let k = 0; k < ops.length;) {
+      const op = ops[k];
+      if (op === 0 || op === 1) {
+        const q = mapply(m, ops[k + 1], ops[k + 2]);
+        if (op === 1) length += Math.hypot(q[0] - p[0], q[1] - p[1]);
+        p = q; k += 3;
+      } else if (op === 2) {
+        length += Math.abs(ops[k + 3] * arcSweepOp(ops[k + 4], ops[k + 5], ops[k + 6] === 1)) * mscale(m);
+        p = mapply(m, ops[k + 1] + ops[k + 3] * Math.cos(ops[k + 5]), ops[k + 2] + ops[k + 3] * Math.sin(ops[k + 5]));
+        k += 7;
+      } else k++;
+    }
+  }
+  return length;
+}
+
+/**
+ * Removes micro pieces (TODO 104): own length <= tol and an end within tol of a longer entity's end.
+ * Then joins the remaining gaps with joinGaps.
+ * eligible protects locked entities; indexes refer to the input document throughout. One result is one undo state.
+ * → { entities, blocks, removed, joined (gaps closed), skipped: { TYPE: ends left }, changed (entities edited or removed) }.
+ */
+export function joinTinyGaps(raw, ed, tol, eligible = () => true) {
+  const lengths = new Map(ed.shown.filter((e) => !GAP_SKIP.test(raw.entities[e].type) && !Number.isNaN(ed.ends[e * 4])).map((e) => [e, entityLength(ed, e)]));
+  const graph = buildGraph(ed, tol), drop = new Set();
+  for (const [e, length] of lengths) {
+    if (!(length <= tol) || !eligible(e)) continue;
+    for (const k of [0, 2]) {
+      const x = ed.ends[e * 4 + k], y = ed.ends[e * 4 + k + 1], cx = Math.floor(x / graph.cell), cy = Math.floor(y / graph.cell);
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        for (const id of graph.map.get(graph.key(cx + i, cy + j)) || []) {
+          const other = id >> 1, off = other * 4 + (id & 1) * 2;
+          if (lengths.get(other) > tol && Math.hypot(ed.ends[off] - x, ed.ends[off + 1] - y) <= tol) drop.add(e);
+        }
+      }
+    }
+  }
+  const gaps = findGaps({ ...ed, shown: ed.shown.filter((e) => !drop.has(e)) }, tol).filter((g) => g.ends.every((x) => eligible(x.e)));
+  const result = joinGaps(raw, ed, gaps);
+  return { ...result, entities: result.entities.filter((_, e) => !drop.has(e)), removed: drop.size, changed: result.changed + drop.size };
 }
 
 /**

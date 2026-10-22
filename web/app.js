@@ -5670,7 +5670,7 @@ function buildDrawingSection() {
   ui.gapTol.addEventListener('change', gapTolTyped);
   ui.gapTol.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.gapTol.blur(); });
   ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
-  ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Move the ends of each gap together, to the middle between them (one undo step)', onclick: joinTinyGaps }, 'Join');
+  ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Remove touching micro pieces, then move gap ends to their average point (one undo step)', onclick: joinTinyGaps }, 'Join');
   ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin);
   ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
   ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', onclick: removeDuplicates }, 'Remove duplicates…');
@@ -6322,13 +6322,12 @@ function gapTolTyped() {
 }
 function joinTinyGaps(whole = false) {
   const d = editable(), ed = d && (whole === true ? CL.checkIndex(d.raw) : edIndex(d));
-  const gaps = ed && Ed.findGaps(ed, state.gapMm / d.factor).filter((g) => g.ends.every((e) => !lockedEnt(d, e.e)));
-  if (!gaps || !gaps.length) return;
-  const r = Ed.joinGaps(d.raw, ed, gaps);
+  if (!ed) return;
+  const r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e));
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
   const left = gapsOf(d) || [];
-  note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
+  note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
