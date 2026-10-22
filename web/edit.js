@@ -312,7 +312,8 @@ export function findGaps(ed, tol) {
   for (const id of ids) { const r = find(id); const l = groups.get(r); if (l) l.push(id); else groups.set(r, [id]); }
   const out = [];
   for (const g of groups.values()) {
-    if (g.length < 2 || g.every((id) => (id >> 1) === (g[0] >> 1))) continue;
+    if (g.length < 2) continue;
+    if (g.every((id) => (id >> 1) === (g[0] >> 1)) && entityLength(ed, g[0] >> 1) <= tol) continue;   // a micro piece alone, not a nearly closed outline
     let x = 0, y = 0;
     for (const id of g) { x += px(id); y += py(id); }
     x /= g.length; y /= g.length;
@@ -431,18 +432,40 @@ function entityLength(ed, e) {
  */
 export function joinTinyGaps(raw, ed, tol, eligible = () => true) {
   const lengths = new Map(ed.shown.filter((e) => !GAP_SKIP.test(raw.entities[e].type) && !Number.isNaN(ed.ends[e * 4])).map((e) => [e, entityLength(ed, e)]));
-  const graph = buildGraph(ed, tol), drop = new Set();
-  for (const [e, length] of lengths) {
-    if (!(length <= tol) || !eligible(e)) continue;
-    for (const k of [0, 2]) {
-      const x = ed.ends[e * 4 + k], y = ed.ends[e * 4 + k + 1], cx = Math.floor(x / graph.cell), cy = Math.floor(y / graph.cell);
+  const graph = buildGraph(ed, tol), drop = new Set(), touch = new Map(), link = new Map();
+  const px = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2], py = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2 + 1];
+  const near = (e, fn) => {
+    for (const k of [0, 1]) {
+      const x = px(e * 2 + k), y = py(e * 2 + k), cx = Math.floor(x / graph.cell), cy = Math.floor(y / graph.cell);
       for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
-        for (const id of graph.map.get(graph.key(cx + i, cy + j)) || []) {
-          const other = id >> 1, off = other * 4 + (id & 1) * 2;
-          if (lengths.get(other) > tol && Math.hypot(ed.ends[off] - x, ed.ends[off + 1] - y) <= tol) drop.add(e);
-        }
+        for (const id of graph.map.get(graph.key(cx + i, cy + j)) || []) if (Math.hypot(px(id) - x, py(id) - y) <= tol) fn(id);
       }
     }
+  };
+  // a micro piece that touches a longer entity's end, and which other such pieces and long ends it meets
+  for (const [e, length] of lengths) {
+    if (!(length <= tol) || !eligible(e)) continue;
+    const longs = new Set();
+    near(e, (id) => { if (lengths.get(id >> 1) > tol) longs.add(id); });
+    if (longs.size) touch.set(e, longs);
+  }
+  for (const e of touch.keys()) { const l = new Set(); near(e, (id) => { if (touch.has(id >> 1) && id >> 1 !== e) l.add(id >> 1); }); link.set(e, l); }
+  // dropping a connected group must leave only gaps that join: its long ends are within tol of each other and free to move
+  const seen = new Set();
+  for (const first of touch.keys()) {
+    if (seen.has(first)) continue;
+    const group = [first], longs = new Set();
+    seen.add(first);
+    for (let n = 0; n < group.length; n++) {
+      for (const id of touch.get(group[n])) longs.add(id);
+      for (const o of link.get(group[n])) if (!seen.has(o)) { seen.add(o); group.push(o); }
+    }
+    const ids = [...longs];
+    const ok = ids.every((a) => ids.every((b) => {
+      const d = Math.hypot(px(a) - px(b), py(a) - py(b));
+      return d <= JOINED || (d <= tol && eligible(a >> 1) && eligible(b >> 1));
+    }));
+    if (ok) for (const e of group) drop.add(e);
   }
   const gaps = findGaps({ ...ed, shown: ed.shown.filter((e) => !drop.has(e)) }, tol).filter((g) => g.ends.every((x) => eligible(x.e)));
   const result = joinGaps(raw, ed, gaps);
