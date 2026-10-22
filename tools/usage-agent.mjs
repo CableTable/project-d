@@ -318,7 +318,8 @@ async function main() {
         if (!Array.isArray(items) || items.some((i) => !i || typeof i.id !== 'string' || typeof i.topic !== 'string' || typeof i.note !== 'string')) throw new Error('analysis.json must be an array of {id, topic, note} strings');
         docs.push(['analysis', { items }]);
         docs.push(['todo', parseTodo(readFileSync(join(repo, 'TODO.md'), 'utf8'))]);
-        try { docs.push(['tickets', parseTickets(readFileSync(join(repo, '..', 'support', 'tickets.md'), 'utf8'), log)]); }
+        const ticketsNew = join(repo, '..', 'Project D extras', 'support', 'tickets.md');
+        try { docs.push(['tickets', parseTickets(readFileSync(existsSync(ticketsNew) ? ticketsNew : join(repo, '..', 'support', 'tickets.md'), 'utf8'), log)]); }
         catch (e) { if (e.code !== 'ENOENT') throw e; }
         docs.push(['tokens', await collectTokens()]);
         const writes = docs.map(([name, data]) => {
