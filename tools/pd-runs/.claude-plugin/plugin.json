@@ -1,11 +1,12 @@
 {
   "name": "pd-runs",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "author": { "name": "Rakshith" },
-  "description": "A side pane of running jobs: Rook background calls, Bishop and Knight runs from the newest runs folder, with usage on top. Disk reads only, 0 tokens.",
+  "description": "A side pane of running jobs: Rook background calls, Bishop and Knight runs from the newest runs folder, with usage on top. Reads files and one process list, 0 tokens.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "extrasDir": { "type": "string", "title": "Extras folder", "description": "Folder holding the runs<N> folders; the highest N is read", "default": "E:/Project B/Claude/Project D extras" },
-    "usageFile": { "type": "string", "title": "Usage cache", "description": "limits.csv that tools/rook.mjs usage writes", "default": "E:/Project B/Claude/Project D/mockups/_design/usage/limits.csv" }
+    "usageFile": { "type": "string", "title": "Usage cache", "description": "limits.csv that tools/rook.mjs usage writes", "default": "E:/Project B/Claude/Project D/mockups/_design/usage/limits.csv" },
+    "repoDir": { "type": "string", "title": "Repo folder", "description": "Git checkout whose current branch's open PR the CI line shows (gh pr view runs here)", "default": "E:/Project B/Claude/Project D" }
   }
 }

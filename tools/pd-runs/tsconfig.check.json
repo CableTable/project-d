@@ -12,7 +12,7 @@
     "jsx": "react",
     "jsxFactory": "h",
     "jsxFragmentFactory": "Fragment",
-    "typeRoots": ["E:/Project B/Claude/Project D/tools/pd-band/.claude-plugin/types"],
+    "typeRoots": ["./.claude-plugin/types"],
     "types": ["claude-code", "claude-code-tools", "claude-code-mcp"]
   },
   "include": ["hooks/register.tsx", "types"]
