@@ -363,14 +363,14 @@ function buildMenus() {
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
     View: () => {
-      const lay = curLay(), tick = (on, text) => (on ? '✓ ' : '  ') + text;
+      const lay = curLay(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fit, 'Ctrl+0'], [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
         [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!curLay().s.guidesShow), null, () => !!curLay()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!curLay().s.guidesLock), null, () => !!curLay()],
         ['Clear all guides', clearGuides, null, () => !!curLay() && curLay().s.guides.length > 0],
         ...WORK_AREAS.map((mode, i) => [tick(state.workArea === mode, 'Work area: ' + mode), () => setWorkArea(mode), null, null, null, i === 0, state.workArea === mode]),
-        ['Theme: follow system', () => setTheme('system'), null, null, null, true], ['Theme: light', () => setTheme('light')], ['Theme: dark', () => setTheme('dark')]];
+        ...[['system', 'follow system'], ['light', 'light'], ['dark', 'dark']].map(([mode, label], i) => [tick(theme === mode, 'Theme: ' + label), () => setTheme(mode), null, null, null, i === 0, theme === mode])];
     },
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
@@ -395,12 +395,12 @@ function buildMenus() {
       close();
       if (was || unbuilt) return;
       const items = typeof menus[name] === 'function' ? menus[name]() : menus[name];
-      drop.replaceChildren(...items.map(([text, fn, hint, enabled, title, sep, checked]) => {
+      drop.replaceChildren(...items.flatMap(([text, fn, hint, enabled, title, sep, checked]) => {
         const bound = CB.COMMANDS.find((c) => c.key === hint && hint);
         if (bound) hint = ownBindings[bound.name].key;
-        const item = h('button', { type: 'button', role: checked == null ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': checked == null ? null : String(checked), class: sep ? 'sep' : null, title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
+        const item = h('button', { type: 'button', role: checked == null ? 'menuitem' : 'menuitemcheckbox', 'aria-checked': checked == null ? null : String(checked), title: title || null, disabled: enabled ? !enabled() : false, 'aria-keyshortcuts': hint || null }, text, hint ? h('span', { class: 'hint', 'aria-hidden': 'true' }, hint) : null);
         item.addEventListener('click', () => { close(); fn(); });
-        return item;
+        return sep ? [h('div', { class: 'msep', role: 'separator' }), item] : [item];
       }));
       drop.style.left = b.offsetLeft + 'px';
       drop.hidden = false;

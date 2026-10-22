@@ -344,7 +344,6 @@ select.fld { font-family: var(--sans); }
 .dropdown button { display: flex; justify-content: space-between; align-items: center; gap: 24px; white-space: nowrap; }
 .dropdown button:disabled { opacity: .45; cursor: default; }
 .dropdown button:disabled:hover { background: none; }
-.dropdown button.sep { margin-top: 5px; border-top: 1px solid var(--line); border-radius: 0 0 var(--r) var(--r); padding-top: 9px; }
 .dropdown .hint { color: var(--muted); font-size: 12px; }
 /* read-only numbers in the bars read as text, not as fields to type in (they become editable in Build B) */
 .propbar .fld[readonly] { background: transparent; border-color: transparent; padding: 0 2px; opacity: 1; cursor: default; width: 64px; font-weight: 500; }
@@ -400,7 +399,7 @@ select.fld { font-family: var(--sans); }
 .ctxmenu .mi .hint { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 .ctxmenu .mi:disabled { opacity: .45; cursor: default; }
 .ctxmenu .mi:disabled:hover { background: none; color: var(--text); }
-.ctxmenu .msep { height: 1px; background: var(--line); margin: 4px 0; }
+.dropdown .msep, .ctxmenu .msep { height: 1px; background: var(--line); margin: 4px 0; }
 .placedsec .fld:disabled { opacity: .5; }
 
 /* Rulers and guides (TODO 38; mock-up R4c) */

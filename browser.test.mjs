@@ -83,6 +83,51 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 119 / T36: View theme rows match, full-row hover, separate dividers and moving theme tick', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_);
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const view = p.locator('[data-menu=View]'), themes = p.getByRole('menuitemcheckbox', { name: /Theme:/ });
+      await view.click();
+      for (const active of ['follow system', 'light', 'dark', 'follow system']) {
+        const rows = await themes.evaluateAll((els) => els.map((el) => [el.textContent.trim(), el.getAttribute('aria-checked')]));
+        assert.deepEqual(rows, ['follow system', 'light', 'dark'].map((mode) => [(mode === active ? '✓ ' : '') + 'Theme: ' + mode, String(mode === active)]));
+        for (const group of ['Work area:', 'Theme:']) {
+          const items = p.getByRole('menuitemcheckbox', { name: new RegExp(group) });
+          const geometry = await items.evaluateAll((els) => els.map((el) => {
+            const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+            return [r.height, r.width, s.margin, s.padding, s.borderRadius];
+          }));
+          assert.equal(geometry.length, 3);
+          assert.deepEqual(geometry, [geometry[0], geometry[0], geometry[0]], group + ' rows have identical geometry');
+          assert.equal(await items.first().evaluate((el) => {
+            const divider = el.previousElementSibling;
+            return divider.getAttribute('role') === 'separator' && divider.getBoundingClientRect().height === 1;
+          }), true, group + ' has its own thin divider');
+          for (const item of await items.all()) {
+            const box = await item.boundingBox();
+            await p.mouse.move(box.x + box.width - 10, box.y + box.height / 2);
+            assert.equal(await item.evaluate((el) => el.matches(':hover') && getComputedStyle(el).backgroundColor === getComputedStyle(document.querySelector('.menu.open')).backgroundColor), true, 'hover at the far edge highlights the full row');
+          }
+        }
+        if (active === 'light' || active === 'dark') {
+          await themes.first().hover();
+          await p.screenshot({ path: `${shotDir}/s16-t36-${active}.png` });
+        }
+        const next = active === 'light' ? 'dark' : active === 'dark' ? 'follow system' : 'light';
+        await themes.filter({ hasText: 'Theme: ' + next }).click();
+        await view.click();
+      }
+      await view.click();
+      await p.reload();
+      await view.click();
+      assert.equal(await themes.filter({ hasText: 'Theme: light' }).getAttribute('aria-checked'), 'true', 'theme tick persists after reload');
+    } finally { await context.close(); }
+  });
+
   const partText = () => t('part').evaluate((s) => s.selectedOptions[0].textContent);
   await step('start state: one empty "Drawing 1", no sample data, Apply disabled with its hint', async () => {
     assert.deepEqual(await tabNames(), ['Drawing 1']);
@@ -98,10 +143,10 @@ try {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: dir + '/s4-start-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: dark', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     await page.waitForTimeout(150);
     await page.screenshot({ path: dir + '/s4-start-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: light', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
   });
 
   await step('× on the only tab leaves a fresh "Drawing 1"; + adds "Drawing 2"; × closes any tab', async () => {
@@ -221,7 +266,7 @@ try {
     const [dl] = await Promise.all([page.waitForEvent('download'), action()]);
     return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'latin1') };
   };
-  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole('menuitem', { name: item, exact: true }).click(); };
+  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); };
   const grip = (side) => page.locator(`[data-key=grip${side}]`);
   await step('gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px', async () => {
     assert.equal(await page.locator('[data-key=margin]').count(), 0, 'no margin field');
@@ -1070,11 +1115,11 @@ try {
     };
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: dark', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     await page.waitForTimeout(150);
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: light', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
     await t('unit-down').click(); await waitSize('62.5', '37.5');
     assert.match(await t('cmd-prompt').textContent(), /Unit fix ÷25\.4 · 1587\.50 × 952\.50 → 62\.50 × 37\.50 mm/);
     await page.keyboard.press('Control+z'); await waitSize('1587.5', '952.5');        // one undo step each
@@ -1977,13 +2022,13 @@ try {
     const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const light = await bg();
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: dark' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     const dark = await bg();
     assert.notEqual(light, dark); assert.equal(dark, 'rgb(11, 11, 13)');
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     await page.screenshot({ path: shotDir + '/a-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: light' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
     assert.equal(await bg(), light);
   });
 
@@ -3286,7 +3331,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
+      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light', false], ['  Theme: dark', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await t('rulers-show').isChecked(), false);
@@ -6348,11 +6393,11 @@ try {
     await page.getByRole('button', { name: 'Fit', exact: true }).click();
     await page.screenshot({ path: dir + '/s2-light.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: dark' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     await page.waitForTimeout(100);
     await page.screenshot({ path: dir + '/s2-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: light' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
   });
 
   // ---- Next sessions 6: Offset, Trim and Mirror (modify.js) ----
@@ -7598,7 +7643,7 @@ try {
     const p = await c.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
     p.on('pageerror', (e) => errors.push(String(e)));
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: item, exact: true }).click(); await frame(); };
+    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); await frame(); };
     const download = async (act) => { const [dl] = await Promise.all([p.waitForEvent('download'), act()]); return readFileSync(await dl.path()); };
     const pdf = async () => {
       await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
@@ -8046,7 +8091,7 @@ try {
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
     p.on('pageerror', (e) => errors.push(String(e)));
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + name, exact: true }).click(); await frame(); };
+    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '$') }).click(); await frame(); };
     const work = async (name) => {
       await p.locator('[data-menu=View]').click();
       await p.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frame();
@@ -8341,7 +8386,7 @@ try {
       for (const theme of ['light', 'dark']) {
         await q('picker').setInputFiles('fixtures/outline.dxf');
         await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + theme, exact: true }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
         await p.locator('[data-tool=balloon]').click();
         assert.equal((await q('bal-dock').boundingBox()).height, 140);
         assert.ok((await q('canvas').boundingBox()).height > 350, 'canvas keeps room at 1024?768');
@@ -8395,7 +8440,7 @@ try {
     try {
       await p.goto(URL_); await q('new-tab').waitFor();
       for (const theme of ['light', 'dark']) {
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + theme, exact: true }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
         await open(50);
         assert.equal(await q('gap-show').getAttribute('aria-pressed'), 'false');
         assert.equal(await p.evaluate(() => window.__gapRings), 0, 'import does not mark gaps');
@@ -8491,7 +8536,7 @@ try {
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
       for (const theme of ['light', 'dark']) {
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + theme, exact: true }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
         await p.screenshot({ path: shotDir + '/s16-103-zoom-' + theme + '.png' });
       }
       const background = await p.evaluate(async () => {
