@@ -349,7 +349,7 @@ function recentItems() {
   if (!t || !t.fs || !t.fs.readFile) return [];
   const list = recentList();
   if (!list.length) return [['Recent files: none yet', () => {}, null, () => false, null, true]];
-  return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p), null, null, p, i === 0]);
+  return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p, true), null, null, p, i === 0]);
 }
 
 function buildMenus() {
@@ -644,11 +644,7 @@ async function openFile() {
   try {
     const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
-    if (!path) return;
-    const name = String(path).split(/[\\/]/).pop();
-    if (!/\.(dxf|pdf)$/i.test(name)) { await openBytes(name, new ArrayBuffer(0)); return; }
-    const bytes = await t.fs.readFile(path);
-    await openBytes(name, bytes, String(path));
+    if (path) await openPath(String(path));
   } catch (err) {
     note('Open failed: ' + (err && err.message ? err.message : err));
   }
@@ -664,13 +660,36 @@ function rememberRecent(path) {
 function forgetRecent(path) {
   try { localStorage.setItem('pd-recent', JSON.stringify(recentList().filter((p) => p !== path))); } catch { /* storage may be blocked */ }
 }
-/** Opens a file by its path (a Recent files entry); one that is gone comes off the list. */
-async function openPath(path) {
+/** Shared by File → Open, Explorer launches and Recent files. */
+async function openPath(path, recent = false) {
   const t = window.__TAURI__, name = path.split(/[\\/]/).pop();
   if (!t || !t.fs || !t.fs.readFile) return;
-  let bytes;
-  try { bytes = await t.fs.readFile(path); } catch { forgetRecent(path); note(name + ': not found (moved or deleted), so it is off Recent files'); return; }
-  await openBytes(name, bytes, path);
+  try {
+    if (!/\.(dxf|pdf)$/i.test(name)) { await openBytes(name, new ArrayBuffer(0)); return; }
+    await openBytes(name, await t.fs.readFile(path), path);
+  } catch (err) {
+    if (recent) { forgetRecent(path); note(name + ': not found (moved or deleted), so it is off Recent files'); }
+    else note('Open failed: ' + (err && err.message ? err.message : err));
+  }
+}
+
+async function attachLaunchFiles() {
+  const t = window.__TAURI__;
+  if (!t?.event?.listen || !t?.core?.invoke) return;
+  let pending = Promise.resolve();
+  const drain = () => {
+    pending = pending.then(async () => {
+      for (const [path, error] of await t.core.invoke('take_launch_files')) {
+        if (error) note('Open failed: ' + error);
+        else await openPath(path);
+      }
+    }).catch((err) => note('Open failed: ' + (err.message || err)));
+    return pending;
+  };
+  try {
+    await t.event.listen('open-launch-files', drain);
+    await drain();
+  } catch (err) { note('Open failed: ' + (err.message || err)); }
 }
 
 /** A file from the browser's own picker or a drop. */
@@ -6706,6 +6725,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
+  await attachLaunchFiles();
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);

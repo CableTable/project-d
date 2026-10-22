@@ -36,7 +36,8 @@ export const getDocFromServer = async () => ({data: () => ({requestedAt: stamp(w
 `;
 
 test('Usage site: tabs, tickets, token chart and safe refresh failures on phone and desktop', async (t) => {
-  mkdirSync('shots', { recursive: true });
+  const shotDir = process.env.SHOTS_DIR || 'shots';
+  mkdirSync(shotDir, { recursive: true });
   const local = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
   const executablePath = process.env.CHROME || (existsSync(local) && !process.env.CI ? local : undefined);
   const browser = await chromium.launch(executablePath ? { executablePath } : {});
@@ -200,7 +201,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       assert.equal(await page.locator('#runrows .bar').isVisible(), true);
       assert.equal(await page.locator('#runrows td').nth(4).isVisible(), false);
       assert.equal(await page.locator('.page-tabs').evaluate((node) => getComputedStyle(node).position), 'fixed');
-      await page.screenshot({ path: `shots/s15-usage-fix-phone-${colorScheme}.png`, fullPage: true });
+      await page.screenshot({ path: `${shotDir}/s15-usage-fix-phone-${colorScheme}.png`, fullPage: true });
 
       // TODO is complete, and completed entries still expand.
       await page.locator('[data-tab=todo]').click();
@@ -245,7 +246,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       assert.ok(tabs.x > brand.x + brand.width && Math.abs((tabs.y + tabs.height / 2) - (brand.y + brand.height / 2)) < 2, 'Desktop brand and tabs share a row');
       await readableDates();
       await runningChart();
-      await page.screenshot({ path: `shots/s15-usage-fix-desktop-${colorScheme}.png`, fullPage: true });
+      await page.screenshot({ path: `${shotDir}/s15-usage-fix-desktop-${colorScheme}.png`, fullPage: true });
       for (const tab of ['usage', 'todo', 'tickets']) { await page.locator(`[data-tab=${tab}]`).click(); await noOverflow(); }
 
       // Denied storage still permits all tabs, and signing out clears private ticket DOM.

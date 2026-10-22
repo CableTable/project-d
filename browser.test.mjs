@@ -83,6 +83,103 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 93 / T12: Explorer startup and later launches share Open, serialize files and survive errors', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const pdf = new Page(80, 50); pdf.rect(10, 10, 60, 30); pdf.stroke();
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.addInitScript(({ dxf, pdf }) => {
+        const log = window.__launchLog = { reads: [], grants: [], active: 0, maxActive: 0, saves: [] };
+        const allowed = new Set();
+        const queue = [['C:/jobs/first plate.dxf', null], ['D:/jobs/second.dxf', null]];
+        window.__launchQueue = queue;
+        window.__TAURI__ = {
+          event: { listen: async (name, fn) => {
+            if (name !== 'open-launch-files') throw new Error('unexpected event: ' + name);
+            window.__launch = fn;
+            queue.push(['C:/jobs/before-ready.dxf', null]);
+            fn(); // A second launch arrives while the listener is registering.
+            return () => {};
+          } },
+          core: { invoke: async (command, args) => {
+            if (command === 'take_launch_files') {
+              return queue.splice(0).map(([path, error]) => {
+                if (!error) { allowed.add(path); log.grants.push(path); }
+                return [path, error];
+              });
+            }
+            if (command !== 'grant_balloon_sidecar' || !allowed.has(args.path)) throw new Error('unexpected grant');
+          } },
+          fs: {
+            readFile: async (path) => {
+              if (!allowed.has(path)) throw new Error('forbidden path: ' + path);
+              log.reads.push(path);
+              if (/missing/.test(path)) throw new Error('file not found');
+              log.maxActive = Math.max(log.maxActive, ++log.active);
+              await new Promise((resolve) => setTimeout(resolve, 30));
+              log.active--;
+              return new Uint8Array(/\.pdf$/i.test(path) ? pdf : dxf);
+            },
+            exists: async () => false,
+            writeTextFile: async () => { throw new Error('launch sources must never be overwritten'); },
+          },
+          dialog: {
+            open: async () => window.__launchPick,
+            save: async (options) => { log.saves.push(options.defaultPath); return null; },
+          },
+        };
+      }, { dxf: [...readFileSync('fixtures/outline.dxf')], pdf: [...writePdf([pdf])] });
+      await p.goto(URL_);
+      const names = () => p.locator('.tabs .dtab .tname').allTextContents();
+      const prompt = () => p.locator('[data-testid=cmd-prompt]').textContent();
+      await p.waitForFunction(() => document.querySelectorAll('.tabs .dtab .tname').length === 3);
+      assert.deepEqual(await names(), ['first plate.dxf', 'second.dxf', 'before-ready.dxf']);
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/vector.pdf', null]);
+        const first = window.__launch();
+        window.__launchQueue.push(['C:/jobs/later.dxf', null]);
+        await Promise.all([first, window.__launch()]);
+      });
+      assert.deepEqual(await names(), ['first plate.dxf', 'second.dxf', 'before-ready.dxf', 'vector.dxf', 'later.dxf']);
+      assert.equal(await p.evaluate(() => window.__launchLog.maxActive), 1, 'launch batches open sequentially');
+      for (const [path, expected] of [
+        ['C:/jobs/missing.dxf', /Open failed: file not found/],
+        ['C:/jobs/unsupported.xyz', /Opens DXF or PDF/],
+        ['C:/jobs/unbuilt.dwg', /DWG: not built yet/],
+      ]) {
+        await p.evaluate(async (path) => { window.__launchQueue.push([path, null]); await window.__launch(); }, path);
+        const message = await prompt();
+        assert.match(message, expected);
+        await p.evaluate((path) => { window.__launchPick = path; }, path);
+        await p.locator('[data-menu=File]').click();
+        await p.getByRole('menuitem', { name: 'Open…', exact: true }).click();
+        await p.waitForFunction((message) => document.querySelector('[data-testid=cmd-prompt]').textContent === message, message);
+        assert.equal(await prompt(), message, 'Explorer uses the same errors as File → Open');
+      }
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/denied.dxf', 'scope grant failed']); await window.__launch();
+      });
+      assert.equal(await prompt(), 'Open failed: scope grant failed');
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/missing.dxf', null], ['C:/jobs/last.dxf', null]);
+        await window.__launch();
+      });
+      assert.equal((await names()).at(-1), 'last.dxf', 'one bad file does not stop the batch');
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/first plate.dxf', null]); await window.__launch();
+      });
+      assert.equal((await names()).length, 6, 'reopening an existing file follows Open and selects its tab');
+      assert.match(await prompt(), /already open/);
+      await p.keyboard.press('Control+s');
+      await p.waitForFunction(() => window.__launchLog.saves.length === 1);
+      assert.deepEqual(await p.evaluate(() => window.__launchLog.saves), ['C:/jobs/first plate-edited.dxf']);
+      await p.screenshot({ path: shotDir + '/explorer-open-light.png' });
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/explorer-open-dark.png' });
+    } finally { await context.close(); }
+  });
   await step('TODO 119 / T36: View theme rows match, full-row hover, separate dividers and moving theme tick', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
