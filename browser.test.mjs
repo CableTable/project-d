@@ -5252,7 +5252,11 @@ try {
     await t('drawing').evaluate((canvas) => {
       const ctx = canvas.getContext('2d'), draw = ctx.drawImage;
       ctx.drawImage = function (image, x, y, w, h) {
-        canvas.__backgroundRect = [x, Number(document.querySelector('[data-key=sheetH]').value) - y - h, w, h];
+        const svg = document.querySelector('.canvas > svg'), view = svg.getAttribute('viewBox').split(' ').map(Number), box = svg.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+        const m = this.getTransform(), a = m.transformPoint({ x, y }), b = m.transformPoint({ x: x + w, y: y + h });
+        canvas.__backgroundRect = [view[0] + a.x / dpr * view[2] / box.width,
+          Number(document.querySelector('[data-key=sheetH]').value) - view[1] - b.y / dpr * view[3] / box.height,
+          (b.x - a.x) / dpr * view[2] / box.width, (b.y - a.y) / dpr * view[3] / box.height];
         return draw.call(this, image, x, y, w, h);
       };
     });
@@ -5262,13 +5266,13 @@ try {
       await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
       await t('scale-target').selectOption('bg'); await waitSize('105.83', '52.92');
       const before = await painted();
-      assert.deepEqual(before.slice(0, 2).map((v) => +v.toFixed(6)), [10, 20], 'nonzero background corner');
+      before.slice(0, 2).forEach((v, i) => assert.ok(Math.abs(v - [10, 20][i]) < .001, 'rendered background corner within a micron'));
       await t('unit-up').click(); await waitSize('2688.17', '1344.08');
       const after = await painted();
-      after.forEach((v, i) => assert.ok(Math.abs(v - before[i] * 25.4) < 1e-6, 'scaled size and corner'));
+      after.forEach((v, i) => assert.ok(Math.abs(v - before[i] * 25.4) < .001, 'scaled rendered size and corner'));
       await page.keyboard.press('Control+z'); await waitSize('105.83', '52.92');
       const restored = await painted();
-      restored.forEach((v, i) => assert.ok(Math.abs(v - before[i]) < 1e-6, 'restored size and corner'));
+      restored.forEach((v, i) => assert.ok(Math.abs(v - before[i]) < .001, 'restored rendered size and corner'));
       await t('scale-target').selectOption('drawing'); await waitSize('20', '0');
     } finally {
       await t('drawing').evaluate((c) => { delete c.getContext('2d').drawImage; });
@@ -8416,6 +8420,113 @@ try {
         p.once('dialog', d => d.accept()); await p.locator('.tabs .dtab.on .x').click();
         await p.waitForFunction(() => window.__gapRings === 50);
       }
+    } finally { await isolated.close(); }
+  });
+
+  await step('TODO 103: 1000 px/mm and back; widths, text, arrows, grips, snaps, background and precise panning', async () => {
+    const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } }), p = await isolated.newPage();
+    const q = (id) => p.locator(`[data-testid="${id}"]`), faults = [];
+    p.on('pageerror', (e) => faults.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') faults.push(m.text()); });
+    await p.addInitScript(() => {
+      const proto = CanvasRenderingContext2D.prototype;
+      for (const method of ['clearRect', 'stroke', 'fill', 'fillText', 'rect']) {
+        const original = proto[method];
+        proto[method] = function (...args) {
+          if (this.canvas.dataset.testid === 'drawing') {
+            if (method === 'clearRect') window.__zoomPaint = { widths: [], texts: [], fills: 0, rects: [] };
+            const log = window.__zoomPaint;
+            if (method === 'stroke') log.widths.push(this.lineWidth * Math.hypot(this.getTransform().a, this.getTransform().b));
+            if (method === 'fill') log.fills++;
+            if (method === 'fillText') log.texts.push(args[0]);
+            if (method === 'rect' && this.getTransform().a === 1) log.rects.push(args.slice(2));
+          }
+          return original.apply(this, args);
+        };
+      }
+    });
+    try {
+      await p.goto(URL_); await q('new-tab').waitFor();
+      const X = 10000.123456, Y = 20000.234567, raw = newDoc(4);
+      addEntities(raw, dxfLine(X, Y, X + .6, Y, { lw: 5 }), dxfText(X + .1, Y + .2, .08, 'Fine'));
+      const { makeDimension, addDimension } = await import('./web/edit.js');
+      Object.assign(raw, addDimension(raw, makeDimension([X, Y], [X + .6, Y], 1, raw.blocks, 2, { offset: -.2, textH: .06, arrow: .04, gap: .02 })));
+      await q('picker').setInputFiles({ name: 'zoom-detail.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-detail.dxf');
+      const svg = p.locator('.canvas > svg').first();
+      const viewNow = async () => (await svg.getAttribute('viewBox')).split(' ').map(Number);
+      const atPoint = async (x, y) => {
+        const b = await q('canvas').boundingBox(), v = await viewNow(), H = Number(await p.locator('rect.sheet').getAttribute('height'));
+        return { x: b.x + (x - v[0]) * b.width / v[2], y: b.y + (H - y - v[1]) * b.height / v[3] };
+      };
+      const anchor = await atPoint(X + .3, Y), initialZoom = await q('zoom').textContent();
+      await q('canvas').dispatchEvent('wheel', { deltaY: -10000, clientX: anchor.x, clientY: anchor.y });
+      await p.waitForFunction(() => document.querySelector('[data-testid=zoom]').textContent === '26458%');
+      const b = await q('canvas').boundingBox(), v = await viewNow();
+      assert.ok(Math.abs(b.width / v[2] - 1000) < 1e-8, 'cap is 1000 px/mm');
+      await q('canvas').dispatchEvent('wheel', { deltaY: -1000, clientX: anchor.x, clientY: anchor.y });
+      assert.deepEqual(await viewNow(), v, 'zooming past the cap stays anchored');
+      await p.waitForFunction(() => window.__zoomPaint?.texts.includes('Fine'));
+      const ink = await p.evaluate(() => window.__zoomPaint);
+      assert.ok(ink.widths.some((w) => Math.abs(w - 50) < .01), '0.05 mm Hairline is 50 pixels');
+      assert.ok(ink.texts.includes('0.60'), 'dimension text is painted');
+      assert.ok(ink.fills >= 2, 'dimension arrows are painted');
+      await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
+      const grip = p.locator('[data-grip="0:m"]'), start = await grip.boundingBox();
+      assert.ok(Math.abs(start.width - 11.2) < .02, 'ten-pixel grips plus their 1.2-pixel stroke stay precise');
+      await p.mouse.move(anchor.x, anchor.y + 60); await p.mouse.down({ button: 'middle' });
+      for (let dx = 1; dx <= 4; dx++) {
+        await p.mouse.move(anchor.x + dx, anchor.y + 60 + dx);
+        await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.ok(Math.abs((await grip.boundingBox()).x - start.x - dx) < .2, 'pan advances one screen pixel without rounding jitter');
+        assert.ok(Math.abs((await grip.boundingBox()).y - start.y - dx) < .2, 'vertical pan also advances one screen pixel');
+      }
+      await p.mouse.move(anchor.x, anchor.y + 60); await p.mouse.up({ button: 'middle' });
+      assert.ok(Math.abs((await viewNow())[0] - v[0]) < 1e-9, 'round-trip pan has no drift');
+      assert.ok(Math.abs((await viewNow())[1] - v[1]) < 1e-9, 'vertical round-trip pan has no drift');
+      await p.keyboard.press('Escape'); await p.locator('[data-tool=line]').click();
+      const end = await atPoint(X + .6, Y); await p.mouse.move(end.x + 3, end.y + 2);
+      await p.waitForFunction(() => window.__zoomPaint?.texts.includes('end'));
+      assert.ok((await p.evaluate(() => window.__zoomPaint.rects)).some(([w, h]) => w === 10 && h === 10), 'endpoint marker stays ten pixels');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: 'Theme: ' + theme, exact: true }).click();
+        await p.screenshot({ path: shotDir + '/s16-103-zoom-' + theme + '.png' });
+      }
+      const background = await p.evaluate(async () => {
+        const { paintDrawing } = await import('./render.js');
+        const { flatten } = await import('./drawing.js');
+        const { newDoc, line } = await import('./dxf-write.js');
+        const bitmap = document.createElement('canvas'); bitmap.width = bitmap.height = 2;
+        bitmap.getContext('2d').fillRect(0, 0, 2, 2);
+        const c = document.createElement('canvas'); c.width = c.height = 200;
+        paintDrawing(c, { fl: null, sheetH: 1, ox: 10000, oy: -20000, scale: 1000, w: 200, h: 200, dpr: 1,
+          bg: { visible: true, bitmap, x: 10000, y: 20000.8, w: 2, h: 2, mm: .1 } });
+        const context = c.getContext('2d'), alpha = context.getImageData(100, 100, 1, 1).data[3];
+        c.width = 600; c.height = 300;
+        const X = 10000.123456, Y = 20000.234567, raw = newDoc(4);
+        raw.entities = [line(X, Y, X + .4, Y, { lw: 5 })];
+        const options = { fl: flatten(raw), off: new Set(), factor: 1, sheetH: 700, ox: X - .1, oy: 700 - Y - .1, scale: 1000, w: 600, h: 300, dpr: 1 };
+        paintDrawing(c, options);
+        const before = context.getImageData(0, 0, 600, 300).data;
+        paintDrawing(c, { ...options, ox: options.ox - .001, oy: options.oy - .001 });
+        const after = context.getImageData(0, 0, 600, 300).data;
+        let differences = 0, ink = 0;
+        for (let y = 2; y < 298; y++) for (let x = 2; x < 598; x++) {
+          const old = ((y - 1) * 600 + x - 1) * 4, next = (y * 600 + x) * 4;
+          if (before[old + 3] > 200) ink++;
+          for (let channel = 0; channel < 4; channel++) if (Math.abs(before[old + channel] - after[next + channel]) > 1) differences++;
+        }
+        return { alpha, differences, ink };
+      });
+      assert.ok(background.alpha > 90, 'background picture paints at the cap with large offsets');
+      assert.ok(background.ink > 1000, 'raster pan fixture rendered');
+      assert.equal(background.differences, 0, 'the actual raster moves exactly one pixel in both axes');
+      await q('canvas').dispatchEvent('wheel', { deltaY: 100000, clientX: anchor.x, clientY: anchor.y });
+      assert.ok(Math.abs(b.width / (await viewNow())[2] - .05) < 1e-10, 'zoom-out cap is unchanged');
+      await p.keyboard.press('Control+0'); assert.equal(await q('zoom').textContent(), initialZoom);
+      assert.deepEqual(faults, []);
     } finally { await isolated.close(); }
   });
 

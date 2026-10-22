@@ -73,12 +73,12 @@ test('screen stroke scales with zoom and agrees with physical widths, including 
   for (const factor of [1, 25.4]) {
     const fl = flatten(roundtrip([line(1, 1, 3, 1), arc(3, 3, 1, 0, 90), circle(4, 4, 1), lwpoly([[1, 2], [2, 2]])]
       .map((e) => withWidth(e, .5, factor))));
-    for (const scale of [.1, 2, 10]) {
+    for (const scale of [.1, 2, 10, 1000]) {
       const strokes = [];
       let matrix, width;
       const c = { setTransform: (...m) => { matrix = m; }, clearRect() {}, setLineDash() {}, beginPath() {}, moveTo() {}, lineTo() {}, arc() {},
         set lineWidth(w) { width = w; }, stroke() { strokes.push(width * Math.abs(matrix[0])); } };
-      paintDrawing({ width: 5000, height: 5000, getContext: () => c }, { fl, off: new Set(), factor, sheetH: 100, ox: 0, oy: 0, scale, w: 5000, h: 5000, dpr: 2 });
+      paintDrawing({ width: 5000, height: 5000, getContext: () => c }, { fl, off: new Set(), factor, sheetH: 100, ox: 0, oy: 0, scale, w: 5000 * Math.max(1, scale), h: 5000 * Math.max(1, scale), dpr: 2 });
       assert.ok(strokes.length);
       for (const w of strokes) near(w, Math.max(.5 * scale * 2, 1.2 * 2), factor * scale * 2 * 1e-6); // DXF widths save to six decimals in drawing units.
     }

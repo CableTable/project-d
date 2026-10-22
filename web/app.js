@@ -859,7 +859,8 @@ function buildCanvas() {
   ui.rulerCorner = h('div', { class: 'ruler corner', 'data-testid': 'ruler-corner' }, 'mm');
   ui.guideTip = h('div', { class: 'pop guidetip', hidden: true, 'data-testid': 'guide-tip' });
   ui.ovl = s('svg', { 'aria-hidden': 'true', 'data-testid': 'overlay' });
-  ui.ovlWrap = h('div', { class: 'ovl' }, ui.ovl);
+  ui.grips = s('svg', { 'aria-hidden': 'true', style: 'position:absolute;inset:0', preserveAspectRatio: 'none' });
+  ui.ovlWrap = h('div', { class: 'ovl' }, ui.ovl, ui.grips);
   ui.tip = h('div', { class: 'drawtip', hidden: true, 'data-testid': 'draw-tip' });
   ui.textHint = h('div', { class: 'pop texthint', hidden: true, 'data-testid': 'text-hint' }, 'Text tool (T): click to place · type · drag a corner to change the height');
   ui.matchHint = h('div', { class: 'pop hintpill matchpill', hidden: true, 'data-testid': 'match-hint' });
@@ -3233,6 +3234,7 @@ function applyView() {
   const { w, h: ch } = canvasSize();
   ui.svg.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.ovl.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`); ui.ovl.setAttribute('preserveAspectRatio', 'none');
+  ui.grips.setAttribute('viewBox', `0 0 ${w} ${ch}`);
   ui.svg.setAttribute('preserveAspectRatio', 'none');
   // 100% = real size on a 96 dpi screen (3.78 px per mm)
   ui.pct.textContent = Math.round(view.scale / (96 / 25.4) * 100) + '%';
@@ -3314,7 +3316,7 @@ function fit() {
 }
 
 function zoomAt(factor, px, py) {
-  const next = Math.min(40, Math.max(0.05, view.scale * factor));
+  const next = Math.min(1000, Math.max(0.05, view.scale * factor));
   const mx = view.ox + px / view.scale, my = view.oy + py / view.scale;
   view.scale = next;
   view.ox = mx - px / next; view.oy = my - py / next;
@@ -4779,7 +4781,7 @@ function drawTyped(raw) {
 /** The overlay over the drawing: the shape being drawn, its helper lines and the readout. */
 function drawOvl() {
   if (!ui.ovl) return;
-  const d = curDoc(), H = state.sheetH, out = [];
+  const d = curDoc(), H = state.sheetH, out = [], grips = [];
   let tip = null;
   if (d && d.cmp && d.cmp.show && !d.cmp.moving && d.cmp.res && !d.cmp.stale) cmpGlow(d.cmp, out);
   if (d && !d.lay && drawLive()) {
@@ -4790,13 +4792,14 @@ function drawOvl() {
   }
   if (d && !d.lay && modLive()) modOvl(d, out);
   if (d && !d.lay && editable()) {
-    const bt = balOvl(d, out, 1 / view.scale), tt = textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale);
+    const bt = balOvl(d, out, 1 / view.scale), tt = textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
     if (bt && !tt) tip = bt;
     if (drawLive() || state.grip || state.meas || state.dim || state.ldr) trackOvl(d, out, 1 / view.scale);
     if (tt && state.grip && state.trk.res) tt.text = state.trk.res.text;
     if (tt) { const cr = ui.canvas.getBoundingClientRect(); tip = { text: tt.text, x: (tt.px[0] - cr.left) / view.scale + view.ox, y: H - ((tt.px[1] - cr.top) / view.scale + view.oy) }; }
   }
   ui.ovl.replaceChildren(...out);
+  ui.grips.replaceChildren(...grips);
   if (ui.gripHint) ui.gripHint.hidden = !(d && !d.lay && gripOn(d) && gripList(d).length > 0);
   const t = ui.tip;
   if (!tip) { t.hidden = true; return; }
@@ -5454,14 +5457,14 @@ function gripTyped(raw) {
   gripCommit();
 }
 /** Grips, and while one is dragged: the original as a dashed ghost, the new shape dashed, the hot grip, and the readout. Returns the readout tip or null. */
-function gripOvl(d, out, k) {
+function gripOvl(d, out, k, grips) {
   const g = state.grip;
   const square = (p, hot, id) => {
-    const [sx, sy] = toSheetPt(d, p), z = (hot ? 12 : 10) * k;
-    const sq = s('rect', { class: 'gr' + (hot ? ' hot' : ''), x: sx - z / 2, y: sy - z / 2, width: z, height: z, 'data-grip': id, 'data-testid': hot ? 'grip-hot' : 'grip' });
-    if (!hot) return sq;
-    const t = 14 * k, u = 8 * k;
-    return s('g', null, sq, s('path', { class: 'gr-tick', d: `M${sx} ${sy - t}v${-u}M${sx} ${sy + t}v${u}M${sx - t} ${sy}h${-u}M${sx + t} ${sy}h${u}` }));
+    const [sx, sy] = toSheetPt(d, p), z = hot ? 12 : 10;
+    const sq = s('rect', { class: 'gr' + (hot ? ' hot' : ''), x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': hot ? 'grip-hot' : 'grip' });
+    // Screen coordinates keep small grips precise even far from the drawing origin.
+    return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
+      hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
   };
   if (g && g.d === d) {
     const ghost = GR.shapeOf(g.ent, d.factor);
@@ -5471,8 +5474,8 @@ function gripOvl(d, out, k) {
       if (nw) out.push(s('path', { class: 'gr-new', d: DR.svgPath(nw, state.sheetH), 'data-testid': 'grip-preview' }));
     }
     const live = g.next ? GR.gripsOf(g.next) : GR.gripsOf(g.ent), hotG = live.find((x) => x.id === g.id);
-    for (const x of live) if (x.id !== g.id) out.push(square([x.x, x.y], false, x.id));
-    if (hotG) out.push(square([hotG.x, hotG.y], true, g.id));
+    for (const x of live) if (x.id !== g.id) grips.push(square([x.x, x.y], false, x.id));
+    if (hotG) grips.push(square([hotG.x, hotG.y], true, g.id));
     if (g.next && g.to) { return { text: GR.readoutOf(g.ent, g.id, g.next, d.factor), px: g.cursor || sheetPx(d, [g.to[0], g.to[1]]) }; }
     return null;
   }
@@ -5486,8 +5489,8 @@ function gripOvl(d, out, k) {
     }
   }
   for (const x of list) {
-    out.push(square([x.x, x.y], false, x.e + ':' + x.id));
-    if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), z = 12 * k; out.push(s('path', { class: 'gr-cross', d: `M${sx - z} ${sy}h${2 * z}M${sx} ${sy - z}v${2 * z}` })); }
+    grips.push(square([x.x, x.y], false, x.e + ':' + x.id));
+    if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;
 }
