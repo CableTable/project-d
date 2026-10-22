@@ -1,4 +1,4 @@
-# Project D: notes for Codex (Rowan)
+# Project D: notes for Codex (Knight)
 
 Project D is Rakshith's Windows desktop app for 2D engineering drawings (DXF, DWG, PDF): Tauri 2, a vanilla JS web UI
 in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; `DECISIONS.md` wins where they disagree.

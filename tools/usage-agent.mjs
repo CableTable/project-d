@@ -2,15 +2,111 @@
 import { createSign } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { uptime } from 'node:os';
+import { homedir, uptime } from 'node:os';
 import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
+
+export function parseTickets(text, log = console.error) {
+  const rows = [], notes = new Map();
+  const redact = (text) => text.replace(/(?:\b[A-Za-z]:[\\/]|\\{1,2}[^\\/\s]+[\\/])(?:(?!, [a-z])[^\])"'\x60\r\n])*/g, '(local path)');
+  let note;
+  for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
+    const heading = line.match(/^###\s+(T\d+)\b/);
+    if (heading) { note = heading[1]; notes.set(note, []); }
+    else if (/^#{1,3}\s/.test(line)) note = null;
+    else if (note) notes.get(note).push(line);
+    if (!/^\|\s*T\d+\s*\|/.test(line)) continue;
+    const cells = line.trim().replace(/^\||\|$/g, '').split(/(?<!\\)\|/).map((s) => s.trim().replace(/\\\|/g, '|'));
+    if (cells.length !== 8) {
+      log(`Skipping malformed ticket ${cells[0]}: expected eight columns, got ${cells.length}`);
+      continue;
+    }
+    const [id, status, size, type, tags, title, todo, updated] = cells.map(redact);
+    rows.push({ id, status, size, type, tags: [...new Set(tags.split(',').map((s) => s.trim()).filter(Boolean))], title, todo, updated });
+  }
+  return { rows: rows.map((row) => ({ ...row, note: redact((notes.get(row.id) || []).join('\n').trim()) })) };
+}
+
+const istDay = (time) => new Date(time + 19800e3).toISOString().slice(0, 10);
+const tokenNumber = (n) => Number.isFinite(n) && n >= 0 ? n : 0;
+function freshTokens(usage, codex = false) {
+  return Math.max(0, tokenNumber(usage.input_tokens) - (codex ? tokenNumber(usage.cached_input_tokens) : 0))
+    + tokenNumber(usage.output_tokens) + tokenNumber(usage.cache_creation_input_tokens ?? usage.cache_write_input_tokens);
+}
+
+// An async iterable lets the disk reader stream transcripts; arrays make the same tally easy to test.
+export async function tallyTokens(records, now) {
+  // Hourly buckets aligned to IST midnight, from 13 days back to the hour holding `now`: rows[].t is the bucket start (ms), at most 14 x 24 rows.
+  const HOUR = 3600e3, first = Date.parse(istDay(now - 13 * 864e5) + 'T00:00:00Z') - 19800e3;
+  const rows = Array.from({ length: Math.floor((now - first) / HOUR) + 1 }, (_, i) => ({ t: first + i * HOUR, Rook: 0, Bishop: 0, Knight: 0 }));
+  const messages = new Map(), sessions = new Map();
+  for await (const { agent, session, event } of records) {
+    const time = Date.parse(event.timestamp);
+    if (!Number.isFinite(time) || time > now) continue;
+    const row = rows[Math.floor((time - first) / HOUR)]; // undefined before the window
+    if ((agent === 'Rook' || agent === 'Bishop') && event.type === 'assistant' && event.message?.usage) {
+      const { id, usage } = event.message;
+      if (!id) continue;
+      const key = `${agent}|${id}|${event.requestId || ''}`;
+      const tokens = freshTokens(usage), previous = messages.get(key);
+      // Split assistant blocks repeat the message, sometimes with a later output-token count.
+      if (!previous || tokens > previous.tokens) messages.set(key, { agent, row, tokens });
+    } else if (agent === 'Knight' && event.payload?.type === 'token_count' && event.payload.info?.total_token_usage) {
+      const total = freshTokens(event.payload.info.total_token_usage, true);
+      let tokens = total - (sessions.get(session) || 0);
+      if (tokens < 0) tokens = total; // A restarted counter begins a new run.
+      sessions.set(session, total);
+      if (row) row.Knight += tokens;
+    }
+  }
+  for (const { agent, row, tokens } of messages.values()) if (row) row[agent] += tokens;
+  return { rows };
+}
+
+export async function collectTokens(home = homedir(), now = Date.now()) {
+  async function* walk(directory) {
+    let entries;
+    try { entries = await readdir(directory, { withFileTypes: true }); }
+    catch (e) { if (e.code === 'ENOENT') return; throw e; }
+    for (const entry of entries) {
+      const path = join(directory, entry.name);
+      if (entry.isDirectory()) yield* walk(path);
+      else if (entry.isFile() && path.endsWith('.jsonl') && (await stat(path)).mtimeMs >= now - 15 * 864e5) yield path;
+    }
+  }
+  async function* records() {
+    for (const [agent, directory] of [['Rook', '.claude/projects'], ['Bishop', '.claude-account2/projects'], ['Knight', '.codex/sessions']]) {
+      for await (const path of walk(join(home, directory))) {
+        const input = createReadStream(path, { encoding: 'utf8' });
+        const lines = createInterface({ input, crlfDelay: Infinity });
+        try {
+          for await (const line of lines) {
+            if (!line.includes('usage')) continue;
+            let event;
+            try { event = JSON.parse(line); } catch { continue; } // A running transcript may end mid-line.
+            yield { agent, session: path, event };
+          }
+        } finally { lines.close(); input.destroy(); }
+      }
+    }
+  }
+  return tallyTokens(records(), now);
+}
+
+export function refreshFailure(error) {
+  // Only the CLI's fixed summary crosses into Firestore; command output stays in the local log.
+  const summary = String(error.stderr || '').match(/^USAGE_ERROR: (.+)$/m)?.[1];
+  return summary && /^(?:(?:Rook|Bishop|Knight) usage probe failed, exit (?:\d+|unknown)|(?:Main|Second) account: 100%, limit reached)$/.test(summary)
+    ? summary : 'Usage refresh failed; see the local agent log';
+}
 
 export function parseTodo(text) {
   const sections = [];
@@ -145,7 +241,7 @@ async function main() {
   const logPath = join(home, 'usage-agent.log');
   function log(message) {
     try {
-      const line = `${new Date().toISOString()} ${message.replace(/[\r\n]+/g, ' ').slice(0, 4000)}\n`;
+      const line = `${new Date().toISOString()} ${message.replace(/[\r\n]+/g, ' ')}\n`;
       let old = '';
       try { if (statSync(logPath).size + Buffer.byteLength(line) > 1_000_000) old = readFileSync(logPath, 'utf8'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
       if (old) {
@@ -208,7 +304,8 @@ async function main() {
       busy = true;
       nextRefresh = Date.now() + 3600_000;
       try {
-        await run(process.execPath, ['tools/rook.mjs', 'usage'], { cwd: repo, windowsHide: true, timeout: 180_000, maxBuffer: 1024 * 1024 });
+        const probe = await run(process.execPath, ['tools/rook.mjs', 'usage'], { cwd: repo, windowsHide: true, timeout: 180_000, maxBuffer: 1024 * 1024 });
+        if (probe.stderr) log(`probe recovered: ${probe.stderr}`);
         const dataDir = join(repo, 'mockups', '_design', 'usage');
         const docs = ['limits', 'history', 'runs'].map((name) => {
           const path = join(dataDir, name + '.csv');
@@ -221,6 +318,10 @@ async function main() {
         if (!Array.isArray(items) || items.some((i) => !i || typeof i.id !== 'string' || typeof i.topic !== 'string' || typeof i.note !== 'string')) throw new Error('analysis.json must be an array of {id, topic, note} strings');
         docs.push(['analysis', { items }]);
         docs.push(['todo', parseTodo(readFileSync(join(repo, 'TODO.md'), 'utf8'))]);
+        const ticketsNew = join(repo, '..', 'Project D extras', 'support', 'tickets.md');
+        try { docs.push(['tickets', parseTickets(readFileSync(existsSync(ticketsNew) ? ticketsNew : join(repo, '..', 'support', 'tickets.md'), 'utf8'), log)]); }
+        catch (e) { if (e.code !== 'ENOENT') throw e; }
+        docs.push(['tokens', await collectTokens()]);
         const writes = docs.map(([name, data]) => {
           const fields = firestoreValue(data).mapValue.fields;
           // shortcut: refuse oversized docs; split runs/analysis into pages if they outgrow one document.
@@ -231,9 +332,9 @@ async function main() {
         await request(':commit', { writes });
         log('refresh OK');
       } catch (e) {
-        log(`refresh ERROR: ${e.message}`);
+        log(`refresh ERROR: ${e.stack || e.message}\n${e.stdout || ''}\n${e.stderr || ''}`);
         try {
-          await request(':commit', { writes: [statusWrite(['lastErrorAt', 'agentHeartbeat'], { lastError: e.message })] });
+          await request(':commit', { writes: [statusWrite(['lastErrorAt', 'agentHeartbeat'], { lastError: refreshFailure(e) })] });
         } catch (error) { log(`error status ERROR: ${error.message}`); }
       } finally { lastHandled = requestedAt; busy = false; }
     }

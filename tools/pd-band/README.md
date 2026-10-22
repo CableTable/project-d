@@ -3,11 +3,11 @@
 A Claude Code mod: one dim line above the prompt in the Code tab, refreshed every 30 s. It costs no model tokens (it only reads two places on disk).
 
 ```
-Rook 5h 12% wk 40% · Pip 5h 3% wk 21% · Rowan 5h 5% wk 9% · 2m ago  |  Pip txo-suite 12m · Rowan 54 4m
+Rook 5h 12% wk 40% · Bishop 5h 3% wk 21% · Knight 5h 5% wk 9% · 2m ago  |  Bishop txo-suite 12m · Knight 54 4m
 ```
 
 - **Usage**: the cache `tools/rook.mjs usage` writes (`mockups/_design/usage/limits.csv`). pd-band only reads it and never starts a live refresh. `2m ago` is the file's age; over 15 min it says `usage stale 20m`; no file says `no usage cache`.
-- **Runs**, in the runs folder (default `E:/Project B/Claude/runs12`): a `*.jsonl` changed in the last 3 min with no `"type":"result"` line is a **Pip** run (name = file name without `pip-`); a `rowan-<name>.log` changed in the last 3 min with no newer `rowan-<name>-r.txt` is a **Rowan** run. The number is minutes since the file last changed. `idle` when none.
+- **Runs**, in the runs folder (default `E:/Project B/Claude/Project D extras/runs16`): a `*.jsonl` changed in the last 3 min with no `"type":"result"` line is a **Bishop** run (name = file name without `pip-`); a `rowan-<name>.log` changed in the last 3 min with no newer `rowan-<name>-r.txt` is a **Knight** run. The number is minutes since the file last changed. `idle` when none.
 - A `.jsonl` over 4 MiB cannot be read by a mod, so while it is under 3 min old it counts as running.
 
 ## Install (no admin)

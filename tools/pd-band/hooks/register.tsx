@@ -28,7 +28,7 @@ async function refresh($: any, runsDir: string, usageFile: string) {
 }
 
 export const register: Register = (on, options) => {
-  const runsDir = String(options.runsDir || 'E:/Project B/Claude/runs12')
+  const runsDir = String(options.runsDir || 'E:/Project B/Claude/Project D extras/runs16')
   const usageFile = String(options.usageFile || 'E:/Project B/Claude/Project D/mockups/_design/usage/limits.csv')
 
   on('session.start', async ($, e, next) => {

@@ -1,6 +1,6 @@
 // The UI in Chromium against web/ served locally.   node browser.test.mjs
 // Locally: CHROME=/path/to/chrome node browser.test.mjs   (CI uses Playwright's own Chromium)
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
@@ -9,7 +9,7 @@ import { read as readLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
-import { readMeta } from './web/layoutdoc.js';
+import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
 import { COMMANDS } from './web/cmdbar.js';
@@ -83,6 +83,51 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 119 / T36: View theme rows match, full-row hover, separate dividers and moving theme tick', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_);
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const view = p.locator('[data-menu=View]'), themes = p.getByRole('menuitemcheckbox', { name: /Theme:/ });
+      await view.click();
+      for (const active of ['follow system', 'light', 'dark', 'follow system']) {
+        const rows = await themes.evaluateAll((els) => els.map((el) => [el.textContent.trim(), el.getAttribute('aria-checked')]));
+        assert.deepEqual(rows, ['follow system', 'light', 'dark'].map((mode) => [(mode === active ? '✓ ' : '') + 'Theme: ' + mode, String(mode === active)]));
+        for (const group of ['Work area:', 'Theme:']) {
+          const items = p.getByRole('menuitemcheckbox', { name: new RegExp(group) });
+          const geometry = await items.evaluateAll((els) => els.map((el) => {
+            const r = el.getBoundingClientRect(), s = getComputedStyle(el);
+            return [r.height, r.width, s.margin, s.padding, s.borderRadius];
+          }));
+          assert.equal(geometry.length, 3);
+          assert.deepEqual(geometry, [geometry[0], geometry[0], geometry[0]], group + ' rows have identical geometry');
+          assert.equal(await items.first().evaluate((el) => {
+            const divider = el.previousElementSibling;
+            return divider.getAttribute('role') === 'separator' && divider.getBoundingClientRect().height === 1;
+          }), true, group + ' has its own thin divider');
+          for (const item of await items.all()) {
+            const box = await item.boundingBox();
+            await p.mouse.move(box.x + box.width - 10, box.y + box.height / 2);
+            assert.equal(await item.evaluate((el) => el.matches(':hover') && getComputedStyle(el).backgroundColor === getComputedStyle(document.querySelector('.menu.open')).backgroundColor), true, 'hover at the far edge highlights the full row');
+          }
+        }
+        if (active === 'light' || active === 'dark') {
+          await themes.first().hover();
+          await p.screenshot({ path: `${shotDir}/s16-t36-${active}.png` });
+        }
+        const next = active === 'light' ? 'dark' : active === 'dark' ? 'follow system' : 'light';
+        await themes.filter({ hasText: 'Theme: ' + next }).click();
+        await view.click();
+      }
+      await view.click();
+      await p.reload();
+      await view.click();
+      assert.equal(await themes.filter({ hasText: 'Theme: light' }).getAttribute('aria-checked'), 'true', 'theme tick persists after reload');
+    } finally { await context.close(); }
+  });
+
   const partText = () => t('part').evaluate((s) => s.selectedOptions[0].textContent);
   await step('start state: one empty "Drawing 1", no sample data, Apply disabled with its hint', async () => {
     assert.deepEqual(await tabNames(), ['Drawing 1']);
@@ -98,10 +143,10 @@ try {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: dir + '/s4-start-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: dark', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     await page.waitForTimeout(150);
     await page.screenshot({ path: dir + '/s4-start-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: light', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
   });
 
   await step('× on the only tab leaves a fresh "Drawing 1"; + adds "Drawing 2"; × closes any tab', async () => {
@@ -221,7 +266,7 @@ try {
     const [dl] = await Promise.all([page.waitForEvent('download'), action()]);
     return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'latin1') };
   };
-  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole('menuitem', { name: item, exact: true }).click(); };
+  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); };
   const grip = (side) => page.locator(`[data-key=grip${side}]`);
   await step('gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px', async () => {
     assert.equal(await page.locator('[data-key=margin]').count(), 0, 'no margin field');
@@ -784,6 +829,12 @@ try {
     assert.match(got.asked[0], /\.pdf$/);
     assert.deepEqual(got.wrote, ['C:\\prints\\mine.pdf']);
     assert.match(await t('cmd-prompt').textContent(), /Saved C:\\prints\\mine\.pdf/);
+    await page.evaluate(() => { window.__pick = null; });
+    await openPdf();
+    await t('pdf-go').click();
+    await page.waitForFunction(() => window.__saved.asked.length === 3);
+    assert.equal(await page.evaluate(() => window.__saved.asked.at(-1)), 'sample-copy layout.pdf', 'a tab without a disk path leaves the last folder to the native picker');
+    await t('pdf-cancel').click();
     await page.evaluate(() => { delete window.__TAURI__; delete window.__saved; });
   });
 
@@ -1064,11 +1115,11 @@ try {
     };
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: dark', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     await page.waitForTimeout(150);
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitem', { name: 'Theme: light', exact: true }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
     await t('unit-down').click(); await waitSize('62.5', '37.5');
     assert.match(await t('cmd-prompt').textContent(), /Unit fix ÷25\.4 · 1587\.50 × 952\.50 → 62\.50 × 37\.50 mm/);
     await page.keyboard.press('Control+z'); await waitSize('1587.5', '952.5');        // one undo step each
@@ -1858,14 +1909,14 @@ try {
   await step('step and repeat per layout: pick the part; Fit to sheet on works out rows × columns, off lets them be typed (it may not fit, and says so); Apply makes them placed parts', async () => {
     await t('panel-main').click();
     await t('part').selectOption({ label: 'Plate A · 100 × 60' });
-    const worked = stepRepeat({ ...base, partW: 100, partH: 60 });
+    const worked = gridOf(layoutFromRaw(readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text)));
     assert.equal(await t('count').textContent(), String(worked.count));
     assert.equal(await t('fit-switch').isChecked(), true); assert.equal(await t('fit-state').textContent(), 'On');
     const rows = page.locator('[data-key=rows]'), cols = page.locator('[data-key=cols]');
     assert.equal(await rows.evaluate((e) => e.readOnly), true);
     assert.equal(await rows.inputValue(), String(worked.rows)); assert.equal(await cols.inputValue(), String(worked.cols));
     assert.equal(await rows.locator('xpath=..').textContent().then((x) => x.trim()), 'Rows');
-    assert.match(await t('grid').textContent(), new RegExp(`^fit · ${worked.cols} × ${worked.rows}`));
+    assert.match(await t('grid').textContent(), new RegExp(worked.skipped ? `^fit · ${worked.count} copies` : `^fit · ${worked.cols} × ${worked.rows}`));
     // off: typed by hand, starting from what was worked out
     await t('fit-switch').click();
     assert.equal(await t('fit-state').textContent(), 'Off');
@@ -1971,13 +2022,13 @@ try {
     const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const light = await bg();
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: dark' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     const dark = await bg();
     assert.notEqual(light, dark); assert.equal(dark, 'rgb(11, 11, 13)');
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     await page.screenshot({ path: shotDir + '/a-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: light' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
     assert.equal(await bg(), light);
   });
 
@@ -2131,7 +2182,7 @@ try {
   await step('review: a kept dimension never changes a part\'s size; Selection and Whole drawing are labelled; a dimension alone cannot be kept or extracted; one wording and one count', async () => {
     const [w0, h0] = await sizeNow();
     assert.deepEqual([w0, h0], ['136', '60']);
-    assert.equal(await page.locator('.selbar .sizelbl').textContent(), 'Selection');
+    assert.equal(await page.locator('.selbar .sizelbl').textContent(), 'Size');
     assert.equal(await page.locator('[data-testid=drawing-panel] .sizelbl').textContent(), 'Whole drawing');
     const n0 = await entitiesN();
     await typeCmd('d');
@@ -3280,7 +3331,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['Theme: follow system', false], ['Theme: light', false], ['Theme: dark', false]]);
+      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light', false], ['  Theme: dark', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await t('rulers-show').isChecked(), false);
@@ -3801,6 +3852,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
     assert.equal(await t('gap-tol').inputValue(), '0.01');
+    await t('gap-show').click();
     await shotBoth('tiny-gaps', async () => {}, async () => {});
     await t('gap-tol').fill('0.005'); await t('gap-tol').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '1');
@@ -4866,10 +4918,10 @@ try {
     assert.equal(await gripCount(), 0, '205 selected: no grips');
     assert.equal(await t('grip-hint').isVisible(), false);
     await page.keyboard.press('Escape');
-    const c = await at(0, 0), d = await at(50, 130);                      // a box round the left quarter: 3 grips a line, at most MAX_GRIPS of them
+    const c = await at(0, 0), d = await at(100, 130);                     // fewer than 200 shapes, but more than 200 grips
     await page.mouse.move(c.x, c.y); await page.mouse.down(); await page.mouse.move(d.x, d.y, { steps: 4 }); await page.mouse.up();
     const n = Number((await t('sel-count').textContent()).replace(/\D+/g, ''));
-    assert.ok(n > 0 && 3 * n <= GR.MAX_GRIPS, 'a part of them: ' + n);
+    assert.ok(n <= GR.MAX_SELECTED && 3 * n > GR.MAX_SELECTED, 'a part of them: ' + n);
     await gripWhen(3 * n);
   });
 
@@ -5245,7 +5297,11 @@ try {
     await t('drawing').evaluate((canvas) => {
       const ctx = canvas.getContext('2d'), draw = ctx.drawImage;
       ctx.drawImage = function (image, x, y, w, h) {
-        canvas.__backgroundRect = [x, Number(document.querySelector('[data-key=sheetH]').value) - y - h, w, h];
+        const svg = document.querySelector('.canvas > svg'), view = svg.getAttribute('viewBox').split(' ').map(Number), box = svg.getBoundingClientRect(), dpr = window.devicePixelRatio || 1;
+        const m = this.getTransform(), a = m.transformPoint({ x, y }), b = m.transformPoint({ x: x + w, y: y + h });
+        canvas.__backgroundRect = [view[0] + a.x / dpr * view[2] / box.width,
+          Number(document.querySelector('[data-key=sheetH]').value) - view[1] - b.y / dpr * view[3] / box.height,
+          (b.x - a.x) / dpr * view[2] / box.width, (b.y - a.y) / dpr * view[3] / box.height];
         return draw.call(this, image, x, y, w, h);
       };
     });
@@ -5255,13 +5311,13 @@ try {
       await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'bg.png');
       await t('scale-target').selectOption('bg'); await waitSize('105.83', '52.92');
       const before = await painted();
-      assert.deepEqual(before.slice(0, 2).map((v) => +v.toFixed(6)), [10, 20], 'nonzero background corner');
+      before.slice(0, 2).forEach((v, i) => assert.ok(Math.abs(v - [10, 20][i]) < .001, 'rendered background corner within a micron'));
       await t('unit-up').click(); await waitSize('2688.17', '1344.08');
       const after = await painted();
-      after.forEach((v, i) => assert.ok(Math.abs(v - before[i] * 25.4) < 1e-6, 'scaled size and corner'));
+      after.forEach((v, i) => assert.ok(Math.abs(v - before[i] * 25.4) < .001, 'scaled rendered size and corner'));
       await page.keyboard.press('Control+z'); await waitSize('105.83', '52.92');
       const restored = await painted();
-      restored.forEach((v, i) => assert.ok(Math.abs(v - before[i]) < 1e-6, 'restored size and corner'));
+      restored.forEach((v, i) => assert.ok(Math.abs(v - before[i]) < .001, 'restored rendered size and corner'));
       await t('scale-target').selectOption('drawing'); await waitSize('20', '0');
     } finally {
       await t('drawing').evaluate((c) => { delete c.getContext('2d').drawImage; });
@@ -5439,7 +5495,11 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
     assert.equal(await t('cmp-name-1').textContent(), 'plate-b.dxf');
     assert.equal(await t('cmp-name-2').textContent(), 'plate-c.dxf');
-    assert.equal(await cmpCount(), '1 difference');
+    assert.equal(await cmpCount(), 'Press Compare', 'nothing is worked out until the button is pressed');
+    assert.equal(await t('cmp-glow').count(), 0);
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
+    assert.equal(await t('cmp-stale').isVisible(), false);
     assert.equal(await t('cmp-glow').count(), 1);
     assert.match(await t('cmp-diff').textContent(), /0\.[56]\d mm/);
     assert.match(await t('cmd-hist').textContent(), /COMPARE.*plate-b\.dxf \(red\) vs plate-c\.dxf \(blue\).*tolerance 0\.1 mm.*1 difference/);
@@ -5449,11 +5509,13 @@ try {
 
   await step('Compare: tolerance is editable (bad values refused), Show differences hides the glow, a click on a difference zooms to it', async () => {
     await t('cmp-tol').fill('1'); await t('cmp-tol').press('Enter');
+    await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === 'No differences');
     await t('cmp-tol').fill('abc'); await t('cmp-tol').press('Enter');
     assert.match(await prompt(), /Tolerance: a number above 0/);
     assert.equal(await t('cmp-tol').inputValue(), '1');
     await t('cmp-tol').fill('0.1'); await t('cmp-tol').press('Enter');
+    await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
     await t('cmp-show').uncheck();
     await page.waitForFunction(() => !document.querySelector('[data-testid=cmp-glow]'));
@@ -5474,17 +5536,63 @@ try {
     await t('cmp-lineup-manual').click();
     await page.keyboard.press('ArrowRight');
     await page.waitForFunction(() => /X 1\.00,/.test(document.querySelector('[data-testid=cmp-hint]').textContent));
-    assert.notEqual(await cmpCount(), '1 difference', 'a 1 mm shift is more than the tolerance everywhere');
+    assert.equal(await t('cmp-stale').isVisible(), true, 'a move marks the result out of date');
+    assert.equal(await cmpCount(), '1 difference', 'the old result stays until Compare is pressed again');
+    assert.equal(await t('cmp-glow').count(), 0, 'the old glow is hidden: it no longer sits on the drawing');
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent !== '1 difference');
+    assert.equal(await t('cmp-stale').isVisible(), false, 'pressing Compare clears the mark');
+    // idle: no repeating work (no animation frames) while a Compare result is on show
+    const frames = await page.evaluate(() => new Promise((res) => { let n = 0; const raf = window.requestAnimationFrame; window.requestAnimationFrame = (f) => { n++; return raf(f); }; setTimeout(() => { window.requestAnimationFrame = raf; res(n); }, 1000); }));
+    assert.equal(frames, 0, 'Compare is idle until something changes');
     const b = await t('canvas').boundingBox();
     await page.mouse.move(b.x + 400, b.y + 300); await page.mouse.down(); await page.mouse.move(b.x + 450, b.y + 300, { steps: 4 }); await page.mouse.up();
     await page.waitForFunction(() => !/X 1\.00,/.test(document.querySelector('[data-testid=cmp-hint]').textContent));
     assert.ok((await cmpOffX()) > 1, 'dragged right');
+    assert.equal(await t('cmp-stale').isVisible(), true, 'a drag marks the result out of date');
     await t('cmp-lineup-bl').click();
     assert.equal(await cmpOffX(), 0);
     const [fc] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-open-2').click()]);
     await fc.setFiles(plateDxf('plate-d.dxf', 31));
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-name-2]').textContent === 'plate-d.dxf');
-    assert.equal(await cmpCount(), '1 difference');
+    assert.equal(await cmpCount(), 'Press Compare', 'a new drawing has no result yet');
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
+  });
+
+  await step('Compare: run once, move, "out of date" mark, run again, mark gone (TODO 113)', async () => {
+    assert.equal(await t('cmp-stale').isVisible(), false);
+    await t('cmp-lineup-manual').click();
+    await page.keyboard.press('ArrowRight');
+    await t('cmp-stale').waitFor();
+    assert.match(await t('cmp-stale').textContent(), /Out of date - press Compare again/);
+    await shotBoth('compare-outofdate');
+    await t('cmp-run').click();
+    await t('cmp-stale').waitFor({ state: 'hidden' });
+    await t('cmp-lineup-bl').click();
+    await t('cmp-stale').waitFor();
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
+  });
+
+  await step('Compare: dragging drawing 2 snaps its corner onto drawing 1\'s corner, with a marker and a name; SNAP off drops where released (TODO 112)', async () => {
+    await t('cmp-lineup-manual').click();
+    await page.getByRole('button', { name: 'Fit', exact: true }).click();     // both corners in view
+    const drag = async (shot) => {                                      // drawing 2's bottom-left corner (0, 0) to drawing 1's bottom-right one (300, 0), 4 px short and 3 px high
+      const a = await at(0, 0), z = await at(300, 0);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x - 4, z.y - 3, { steps: 6 });
+      if (shot) await page.screenshot({ path: `${shotDir}/s16-compare-snap-light.png` });
+      await page.mouse.up();
+    };
+    await drag(true);
+    assert.deepEqual(await page.evaluate(() => /X (-?[\d.]+), Y (-?[\d.]+)/.exec(document.querySelector('[data-testid=cmp-hint]').textContent).slice(1).map(Number)), [300, 0], 'the drop lands exactly on the target corner');
+    await t('cmp-lineup-bl').click(); await t('cmp-lineup-manual').click();
+    await t('tog-snap').click();
+    await drag(false);
+    const [x, y] = await page.evaluate(() => /X (-?[\d.]+), Y (-?[\d.]+)/.exec(document.querySelector('[data-testid=cmp-hint]').textContent).slice(1).map(Number));
+    assert.ok(x !== 300 && Math.abs(x - 300) < 2 && y !== 0, `SNAP off: the exact released point, not the corner (${x}, ${y})`);
+    await t('tog-snap').click();
+    await t('cmp-lineup-bl').click();
   });
 
   await step('Compare: screenshots, light and dark; the top bar still fits at 1024', async () => {
@@ -6285,11 +6393,11 @@ try {
     await page.getByRole('button', { name: 'Fit', exact: true }).click();
     await page.screenshot({ path: dir + '/s2-light.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: dark' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
     await page.waitForTimeout(100);
     await page.screenshot({ path: dir + '/s2-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitem', { name: 'Theme: light' }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
   });
 
   // ---- Next sessions 6: Offset, Trim and Mirror (modify.js) ----
@@ -7107,7 +7215,7 @@ try {
     await t('ptab-drawing').click();
   });
 
-  await step('TODO 63: Save As and first Save suggest the source folder and edited name; a new drawing keeps the last-used folder', async () => {
+  await step('TODO 63 / 102: Save As and PDF suggest each source folder; a new drawing keeps the last-used folder', async () => {
     await closeTabs(/./);
     await page.evaluate((bytes) => {
       window.__log = { dlg: [], wrote: [] }; window.__next = null;
@@ -7119,6 +7227,7 @@ try {
         },
         fs: {
           readFile: async () => new Uint8Array(bytes), exists: async () => false,
+          writeFile: async () => {},
           writeTextFile: async (p) => { window.__log.wrote.push(p); },
         },
       };
@@ -7135,6 +7244,9 @@ try {
         await menuItem('File', 'Open…');
         const name = source.split(/[\\/]/).pop();
         await page.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, name);
+        await openPdf();
+        await suggestion(() => t('pdf-go').click(), source.replace(/[^\\/]*$/, () => name.replace(/\.dxf$/, '.pdf')));
+        await t('pdf-cancel').click();
         const want = source.slice(0, -4) + '-edited.dxf';
         await suggestion(() => page.keyboard.press('Control+s'), want);
         await suggestion(() => menuItem('File', 'Save As…'), want);
@@ -7151,6 +7263,9 @@ try {
         assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\elsewhere\\chosen.dxf', 'C:\\elsewhere\\chosen.dxf']);
         await page.evaluate(() => { window.__next = null; });
         await suggestion(() => menuItem('File', 'Save As…'), want);
+        await openPdf();
+        await suggestion(() => t('pdf-print').click(), 'C:\\elsewhere\\chosen.pdf');            // after Save As elsewhere the PDF starts where the drawing now lives
+        await t('pdf-cancel').click();
         await closeTabs(/./);
         await page.evaluate(() => { window.__log.wrote.length = 0; });
       }
@@ -7256,6 +7371,7 @@ try {
           readFile: async (p) => new Uint8Array(/\.pdf$/.test(p) ? insp : sample),
           exists: async (p) => window.__exists.has(p),
           readTextFile: async () => '{ not json',
+          writeFile: async (p) => { log.wrote.push(p); },
           writeTextFile: async (p) => { log.wrote.push(p); },
         },
       };
@@ -7273,6 +7389,12 @@ try {
       await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
       assert.equal(await t('bal-count').textContent(), '1');
       // Save: the dialog returns a name without .dxf, and that .dxf exists: Cancel in the question writes nothing
+      await openPdf(); await t('pdf-go').click();
+      await page.waitForFunction(() => window.__log.dlg.at(-1) === 'C:\\work\\insp.pdf');
+      await t('pdf-cancel').click();
+      await t('bal-csv').click(); await t('bal-excel').click();
+      assert.deepEqual(await page.evaluate(() => window.__log.dlg.slice(-2)), ['C:\\work\\insp-balloons.csv', 'C:\\work\\insp-balloons-excel.csv'], 'both tables suggest the source folder');
+      assert.deepEqual(await page.evaluate(() => window.__log.wrote), [], 'cancelled table exports write nothing');
       await page.evaluate(() => { window.__next = 'C:\\work\\insp-x'; });
       await page.keyboard.press('Control+s');
       await page.waitForFunction(() => window.__log.ask.length === 1).catch(async (e) => { throw new Error(e.message + ' | prompt: ' + (await prompt()) + ' | log: ' + (await page.evaluate(() => JSON.stringify(window.__log)))); });
@@ -7283,7 +7405,7 @@ try {
       await page.keyboard.press('Control+s');
       await page.waitForFunction(() => window.__log.wrote.length === 2);
       assert.deepEqual(await page.evaluate(() => window.__log.wrote), ['C:\\work\\insp-x.dxf', 'C:\\work\\keep.pdballoons.json']);
-      assert.ok((await page.evaluate(() => window.__log.dlg)).includes('insp.pdballoons.json'), 'it asked where to put the balloons');
+      assert.ok((await page.evaluate(() => window.__log.dlg)).includes('C:\\work\\insp.pdballoons.json'), 'balloon Save As suggests the source folder');
       // the opened .dxf: Save refuses it, even in another case
       await closeTabs(/./);
       await page.evaluate(() => { window.__log.wrote.length = 0; window.__open = 'C:\\work\\a.dxf'; window.__exists = new Set(); window.__next = 'C:\\work\\A.DXF'; });
@@ -7521,7 +7643,7 @@ try {
     const p = await c.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
     p.on('pageerror', (e) => errors.push(String(e)));
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitem', { name: item, exact: true }).click(); await frame(); };
+    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); await frame(); };
     const download = async (act) => { const [dl] = await Promise.all([p.waitForEvent('download'), act()]); return readFileSync(await dl.path()); };
     const pdf = async () => {
       await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
@@ -7705,7 +7827,117 @@ try {
     await closeTabs(/./);
   });
 
-  await step('TODO 79: after Text to outlines the new outlines have too many vertices for grips: none are drawn, light and dark', async () => {
+  await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
+    await closeTabs(/./); await t('new-tab').click();
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      for (const menu of ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools']) {
+        await page.locator(`[data-menu=${menu}]`).click();
+        const items = await page.locator('.dropdown [role^=menuitem]').evaluateAll((els) => els.map((e) => ({ label: e.firstChild.textContent.trim().replace(/^[✓\s]+/, ''), hint: e.querySelector('.hint')?.textContent })));
+        for (const { label, hint } of items) {
+          if (!hint || ['Drawing checks', 'Aliases + keys', 'Ctrl+D'].includes(hint)) continue;
+          const cmd = COMMANDS.find((c) => c.name === (names[label] || label.toLowerCase()));
+          assert.ok(cmd, label);
+          assert.ok(cmd.alias.includes(hint.toLowerCase()) || cmd.key.split(' / ').includes(hint) || (cmd.name === 'delete' && hint === 'Del'), label + ': ' + hint);
+        }
+        if (menu === 'Draw') {
+          assert.equal(await page.getByRole('menuitem', { name: 'Ellipse', exact: true }).locator('.hint').textContent(), 'EL');
+          await page.screenshot({ path: `${shotDir}/s15-84-${th}.png` });
+        }
+        await page.keyboard.press('Escape');
+      }
+      const tools = await page.locator('[data-tool][title]').evaluateAll((els) => els.map((e) => ({ id: e.dataset.tool, dimension: /^Dimension · (\w+)/.exec(e.title)?.[1], hint: /\(([A-Z]+)\)$/.exec(e.title)?.[1] })));
+      for (const { id, dimension, hint } of tools) if (hint) assert.ok(COMMANDS.find((c) => c.name === (dimNames[dimension] || names[id] || id))?.alias.includes(hint.toLowerCase()), id + ': ' + hint);
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 85: Preflight follows its drawing tab, Escape closes it, Close stays above Balloons, light then dark', async () => {
+    for (const th of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
+      await openGrips(cleanupDrawing(), 'preflight-owner.dxf');
+      const owner = page.locator('.tabs .dtab', { hasText: 'preflight-owner.dxf' });
+      await menuItem('Tools', 'Preflight…');
+      const count = await t('preflight-text-count').textContent();
+      await t('new-tab').click();
+      assert.equal(await t('preflight').isVisible(), false, 'hidden on another drawing');
+      const otherDoc = newDoc(4); addEntities(otherDoc, dxfLine(0, 0, 10, 0));
+      const other = 'preflight-other.dxf';
+      await t('picker').setInputFiles({ name: other, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(otherDoc), 'latin1') });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, other);
+      await menuItem('Tools', 'Preflight…');
+      assert.equal(await t('preflight-text-count').textContent(), '0');
+      await owner.click();
+      assert.equal(await t('preflight').isVisible(), true, 'back on its owner');
+      assert.equal(await t('preflight-text-count').textContent(), count, 'checks belong to this drawing');
+      await menuItem('File', 'New layout');
+      assert.equal(await t('preflight').isVisible(), false, 'hidden on a layout');
+      await owner.click();
+      await page.locator('[data-tool=select]').focus(); await page.keyboard.press('Escape');
+      assert.equal(await t('preflight').isVisible(), false, 'Escape from outside the panel');
+      await page.locator('.tabs .dtab', { hasText: other }).click();
+      assert.equal(await t('preflight').isVisible(), true, 'the other drawing kept its panel');
+      await owner.click();
+      assert.equal(await t('preflight').isVisible(), false, 'Escape persists after a round trip');
+      await menuItem('Tools', 'Preflight…');
+      await t('preflight-recheck').focus(); await page.keyboard.press('Escape');
+      assert.equal(await t('preflight').isVisible(), false, 'Escape inside the panel');
+      await page.setViewportSize({ width: 1024, height: 768 });
+      await page.locator('[data-tool=balloon]').click();
+      if (await t('bal-collapse').getAttribute('aria-label') === 'Expand') await t('bal-collapse').click();
+      const dockHeight = (await t('bal-dock').boundingBox()).height;
+      const handle = await t('bal-drag').boundingBox();
+      await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2); await page.mouse.down();
+      await page.mouse.move(handle.x + handle.width / 2, 100); await page.mouse.up();
+      await menuItem('Tools', 'Preflight…');
+      await frames();
+      assert.equal(await t('bal-dock').isVisible(), true);
+      assert.equal(await t('preflight-close').evaluate((el) => {
+        const r = el.getBoundingClientRect(), top = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+        return !!top && el.contains(top);
+      }), true, 'Close is reachable without scrolling the panel');
+      await page.screenshot({ path: `${shotDir}/s15-85-${th}.png` });
+      await t('preflight-close').click();
+      assert.equal(await t('preflight').isVisible(), false);
+      await page.locator('.tabs .dtab', { hasText: other }).click(); await owner.click();
+      assert.equal(await t('preflight').isVisible(), false, 'Close persists after a round trip');
+      await page.locator('[data-tool=balloon]').click();
+      const resizedHandle = await t('bal-drag').boundingBox(), resizedHeight = (await t('bal-dock').boundingBox()).height;
+      await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2); await page.mouse.down();
+      await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2 + resizedHeight - dockHeight); await page.mouse.up();
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await page.locator('[data-tool=select]').click();
+      await closeTabs(/./);
+    }
+  });
+
+  await step('Preflight Esc: fields and the command bar take priority; cancel a running command before closing Preflight', async () => {
+    await openGrips();
+    await click(70, 30); await propsOnNow();
+    await menuItem('Tools', 'Preflight…');
+    await t('prop-layer').focus(); await page.keyboard.press('Escape');
+    assert.equal(await t('preflight').isVisible(), true, 'Escape in Properties leaves Preflight open');
+    await cmdLine().fill('line'); await page.keyboard.press('Escape');
+    assert.equal(await t('cmd-bar').isVisible(), false, 'Escape closes an idle command bar');
+    assert.equal(await t('preflight').isVisible(), true);
+    for (const barOpen of [false, true]) {
+      await typeCmd('line');
+      assert.match(await page.locator('[data-tool=line]').getAttribute('class'), /\bon\b/);
+      if (barOpen) await cmdLine().fill('');
+      await page.keyboard.press('Escape');
+      assert.match(await page.locator('[data-tool=select]').getAttribute('class'), /\bon\b/, 'first Escape cancels Line');
+      assert.equal(await t('cmd-bar').isVisible(), false);
+      assert.equal(await t('preflight').isVisible(), true, 'first Escape keeps Preflight open');
+      await page.keyboard.press('Escape');
+      assert.equal(await t('preflight').isVisible(), false, 'second Escape closes Preflight');
+      if (!barOpen) await menuItem('Tools', 'Preflight…');
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 79: the immediate Text to outlines selection has no grips; selecting it again uses both caps, light and dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
     await page.locator('[data-tool=text]').click();
     await t('text-height').fill('12'); await t('text-height').press('Enter'); await t('text-font').selectOption('Standard');
@@ -7713,15 +7945,18 @@ try {
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a');
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
-    const vertices = (await savedDoc()).entities.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
-    assert.ok(vertices > GR.MAX_GRIPS, 'the outlines have more vertices than the limit: ' + vertices);
+    const outlines = (await savedDoc()).entities, vertices = outlines.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
+    assert.ok(vertices > GR.MAX_SELECTED && vertices <= GR.MAX_GRIPS && outlines.length < GR.MAX_SELECTED, 'many vertices on a few outlines, within the handle cap');
     await frames();
-    assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'no vertex grips on a selection of ' + vertices + ' vertices');
+    assert.equal(await t('sel-count').textContent(), `${outlines.length} selected`, 'the TXO result is selected before checking its hidden grips');
+    assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'the immediate TXO result keeps the letters readable');
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.waitForTimeout(150);
       await page.screenshot({ path: `${shotDir}/s13-grips-${th}.png` });
     }
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.keyboard.press('Control+a');
+    await gripWhen(vertices);
     await closeTabs(/./);
   });
 
@@ -7849,6 +8084,101 @@ try {
     const restored = (await savedDoc()).entities;
     assert.equal(restored.length, 1); assert.deepEqual(restored[0], original, 'one undo restores the original MTEXT, codes, insertion, attachment, height and width');
     await closeTabs(/./);
+  });
+
+  await step('TODO 96: independent work area, cycle and checked menu, ACI 7, feedback, persistence and unchanged paper / PDF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '$') }).click(); await frame(); };
+    const work = async (name) => {
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frame();
+    };
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 30, 120, 30, { aci: 7 }), dxfLine(20, 60, 120, 60, { tc: 0 }),
+      dxfLine(20, 90, 70, 90, { tc: 0xffffff }), dxfLine(70.005, 90, 120, 90, { aci: 7 }));
+    const open = async () => {
+      await q('picker').setInputFiles({ name: 'work-area.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc), 'latin1') });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'work-area.dxf');
+      await frame();
+    };
+    const pixels = (hex) => q('drawing').evaluate((el, hex) => {
+      const rgb = hex.match(/\w\w/g).map((v) => parseInt(v, 16));
+      const data = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let n = 0;
+      for (let i = 0; i < data.length; i += 4) if (data[i + 3] > 150 && rgb.every((v, j) => Math.abs(data[i + j] - v) < 12)) n++;
+      return n;
+    }, hex);
+    const pdf = async () => {
+      await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
+      await q('pdf-negative').uncheck(); await q('pdf-strip').uncheck();
+      const preview = await q('pdf-preview').evaluate((el) => el.toDataURL());
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('pdf-go').click()]);
+      await q('pdf-dialog').waitFor({ state: 'detached' });
+      return { preview, bytes: readFileSync(await dl.path()) };
+    };
+    try {
+      await p.goto(URL_); await q('work-area').waitFor(); await theme('light'); await open();
+      assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: Follow app');
+      for (const name of ['Light', 'Dark', 'Follow app']) {
+        await q('work-area').click(); await frame();
+        assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + name);
+        assert.equal(await q('work-area').getAttribute('title'), 'Work area: ' + name);
+      }
+      for (const [app, area, background, ink, selection, mark] of [
+        ['light', 'Dark', 'rgb(0, 0, 0)', 'e8e8ec', '60a5fa', 'fb923c'],
+        ['dark', 'Light', 'rgb(255, 255, 255)', '1b1d22', '4f46e5', 'c2410c'],
+      ]) {
+        await theme(app); const originalPdf = await pdf();
+        const appBg = await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
+        await work(area);
+        assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), background);
+        assert.equal(await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor), appBg);
+        const swatch = await p.locator('.layer[data-file-layer] .swatch').first().evaluate((el) => getComputedStyle(el).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
+        assert.equal(Math.max(...swatch) > 128, app === 'dark', 'layer "0" swatch contrasts with the app-themed panel, not the work area');
+        assert.ok(await pixels(ink) > 400, 'ACI 7 and black / white drawing lines contrast with the work area');
+        assert.ok(await pixels(area === 'Dark' ? 'ffffff' : '000000') > 400, 'both white / ACI 7 and black lines remain visible');
+        if (await q('gap-show').getAttribute('aria-pressed') === 'false') { await q('gap-show').click(); await frame(); } // TODO 92: rings start off per drawing
+        assert.ok(await pixels(mark) > 30, 'tiny-gap rings follow the work area');
+        assert.deepEqual(await pdf(), originalPdf, 'PDF preview and bytes are unchanged by the work area');
+        await p.locator('[data-menu=View]').click();
+        assert.deepEqual(await p.getByRole('menuitemcheckbox', { name: /Work area:/ }).evaluateAll((els) => els.map((el) => el.getAttribute('aria-checked'))),
+          area === 'Dark' ? ['false', 'false', 'true'] : ['false', 'true', 'false']);
+        await p.keyboard.press('Escape');
+        await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a'); await frame();
+        assert.ok(await pixels(selection) > 400, 'selected lines follow the work area');
+        const grip = q('grip').first(); await grip.waitFor();
+        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(96, 165, 250)' : 'rgb(79, 70, 229)');
+        const hover = await p.evaluate(() => {
+          const svg = document.querySelector('.ovl svg'), edge = document.createElementNS(svg.namespaceURI, 'path');
+          edge.setAttribute('class', 'dr-edge'); svg.append(edge);
+          const cs = getComputedStyle(edge), result = [cs.stroke, cs.strokeOpacity]; edge.remove(); return result;
+        });
+        assert.deepEqual(hover, area === 'Dark' ? ['rgb(96, 165, 250)', '0.8'] : ['rgb(79, 70, 229)', '0.35']);
+        await p.screenshot({ path: `${shotDir}/s15-96-app-${app}-work-${area.toLowerCase()}.png` });
+        const endpoint = await grip.boundingBox();
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+        await p.locator('[data-tool=line]').click();
+        await p.mouse.move(endpoint.x + endpoint.width / 2, endpoint.y + endpoint.height / 2); await frame();
+        assert.ok(await pixels(selection) > 10, 'snap marker follows the work area');
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+        await q('new-layout').click(); await frame();
+        assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), undefined, 'layout tabs follow the app theme entirely');
+        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
+        await p.reload(); await q('work-area').waitFor(); await frame();
+        assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + area, 'remembered after reload');
+        await open();
+        assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), background);
+        assert.ok(await pixels(ink) > 400, 'ACI 7 remains visible after reload');
+        await work('Follow app');
+      }
+      await p.emulateMedia({ colorScheme: 'dark' }); await theme('follow system');
+      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
+      await p.emulateMedia({ colorScheme: 'light' }); await frame();
+      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
+    } finally { await context.close(); }
   });
 
   await step('TODO 90: black dark drawing area, contrasting selection / hover / grips / snaps, light and PDF unchanged', async () => {
@@ -7979,6 +8309,305 @@ try {
     await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(140, 5);        // without ORTHO it stays aligned
     assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned: the true distance ' + await prompt());
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await closeTabs(/./);
+  });
+
+  const fitFixture = async (name, placed = true) => {
+    await closeTabs(/./);
+    const lay = newLayout(name), doc = newDoc(4);
+    addEntities(doc, roundRect(0, 0, 100, 100, 0));
+    lay.parts.fit = makePart('fit', 'Fit plate', doc);
+    Object.assign(lay.s, { sheetW: 400, sheetH: 300, gripBottom: 0, gapX: 0, gapY: 0, align: 'topleft', gridPart: 'fit' });
+    if (placed) lay.placed.push({ partId: 'fit', x: 0, y: 200, rot: 0, mirrorX: false, mirrorY: false });
+    await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
+    await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    await t('panel-main').click();
+  };
+  await step('TODO 86: Fit skips placed parts, reports skipped cells, and Apply keeps them clear (light then dark)', async () => {
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await fitFixture('fit-skip.dxf');
+      assert.equal(await t('count').textContent(), '11');
+      assert.equal(await t('grid').textContent(), 'fit · 11 copies');
+      assert.match(await prompt(), /^11 fit copies,/);
+      assert.equal(await t('step-hint').textContent(), '1 cell skipped: overlap with placed parts.');
+      assert.equal(await sheetParts(), 12);
+      await page.screenshot({ path: shotDir + `/s15-86-fit-${theme}.png` });
+      await t('apply').click();
+      assert.match(await prompt(), /11 copies.*1 cell skipped/);
+      const meta = readMeta(await savedDoc());
+      assert.equal(meta.s.gridPart, null); assert.equal(meta.placed.length, 12);
+      assert.equal(new Set(meta.placed.map((p) => `${p.x},${p.y}`)).size, 12, 'no cell overlaps the original');
+      await t('part').selectOption('fit');
+      assert.equal(await t('count').textContent(), '0');
+      assert.match(await t('step-hint').textContent(), /^12 cells skipped/);
+      assert.equal(await t('apply').isDisabled(), true);
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 87: Auto-nest ignores the grid preview, keeps placed obstacles, Cancel preserves it and Apply replaces it in one undo (light then dark)', async () => {
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await fitFixture('nest-preview.dxf');
+      const runTen = async () => {
+        await t('nest').click();
+        for (const input of await page.locator('[data-testid^=nest-count-]').all()) { await input.fill('0'); await input.press('Tab'); }
+        await nestSetCount(0, 10); await t('nest-rot-none').click(); await nestRun();
+        assert.equal(await t('nest-placed').textContent(), '10 of 10 placed');
+        assert.equal(await page.locator('[data-testid=nest-svg] polygon:not([data-testid])').count(), 1, 'only the placed part is fixed');
+      };
+      await runTen();
+      await page.screenshot({ path: shotDir + `/s15-87-nest-${theme}.png` });
+      await t('nest-cancel').click();
+      assert.equal(await t('count').textContent(), '11', 'Cancel preserves the grid preview');
+      assert.equal(await sheetParts(), 12);
+      await runTen(); await t('nest-apply').click();
+      assert.match(await prompt(), /Auto-nest: 10 parts placed.*Step and repeat preview cleared/);
+      assert.equal(await t('part').inputValue(), ''); assert.equal(await sheetParts(), 11);
+      const meta = readMeta(await savedDoc());
+      assert.equal(meta.s.gridPart, null); assert.equal(meta.placed.length, 11);
+      assert.deepEqual([meta.placed[0].x, meta.placed[0].y], [0, 200], 'original part stays put');
+      await page.keyboard.press('Control+z');
+      assert.equal(await t('part').inputValue(), 'fit'); assert.equal(await t('count').textContent(), '11');
+      assert.equal(await sheetParts(), 12, 'one undo restores the preview and original part');
+      await page.keyboard.press('Control+Shift+z');
+      assert.equal(await t('part').inputValue(), ''); assert.equal(await sheetParts(), 11);
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 88: compact remembered Balloons dock and faster toasts at 1024x768 (light then dark)', async () => {
+    const small = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+    const p = await small.newPage(), q = (id) => p.locator('[data-testid=' + id + ']');
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+      for (const theme of ['light', 'dark']) {
+        await q('picker').setInputFiles('fixtures/outline.dxf');
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.locator('[data-tool=balloon]').click();
+        assert.equal((await q('bal-dock').boundingBox()).height, 140);
+        assert.ok((await q('canvas').boundingBox()).height > 350, 'canvas keeps room at 1024?768');
+        await p.waitForTimeout(400);
+        await p.screenshot({ path: shotDir + '/s15-88-' + theme + '.png' });
+        await q('cmd-fade').filter({ has: p.locator('.cb-fade-rows') }).waitFor();
+        await p.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle'), null, { timeout: 4000 });
+        await p.waitForTimeout(650);
+        assert.equal(await q('cmd-fade').locator('.cb-fade-rows').evaluate(e => getComputedStyle(e).opacity), '0');
+        const drag = await q('bal-drag').boundingBox();
+        await p.mouse.move(drag.x + 30, drag.y + drag.height / 2); await p.mouse.down(); await p.mouse.move(drag.x + 30, drag.y + drag.height / 2 - 40); await p.mouse.up();
+        assert.equal((await q('bal-dock').boundingBox()).height, 180);
+        await q('bal-collapse').click(); assert.ok((await q('bal-dock').boundingBox()).height < 60);
+        await q('bal-collapse').click(); assert.equal((await q('bal-dock').boundingBox()).height, 180);
+        await p.reload(); await q('picker').setInputFiles('fixtures/outline.dxf');
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await p.locator('[data-tool=balloon]').click();
+        assert.equal((await q('bal-dock').boundingBox()).height, 180, 'own height survives reload');
+        await p.evaluate(() => localStorage.removeItem('pd-baldock-height')); await p.reload(); await q('new-tab').waitFor();
+      }
+    } finally { await small.close(); }
+  });
+
+  await step('TODO 92: tiny gaps skip annotations, require Show per drawing and cap rings at 50 (light then dark)', async () => {
+    const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await isolated.newPage(), q = (id) => p.locator('[data-testid=' + id + ']');
+    await p.addInitScript(() => {
+      const proto = CanvasRenderingContext2D.prototype, clear = proto.clearRect, arc = proto.arc;
+      proto.clearRect = function (...args) { if (this.canvas.dataset.testid === 'drawing') window.__gapRings = 0; return clear.apply(this, args); };
+      proto.arc = function (...args) { if (this.canvas.dataset.testid === 'drawing' && Math.abs(args[2] - 9 * devicePixelRatio) < 1e-6) window.__gapRings++; return arc.apply(this, args); };
+    });
+    const fixture = (n) => {
+      const raw = newDoc();
+      for (const layer of ['Cut', 'Text', 'Dimensions', 'A-ANNO', 'Hatch', 'Leaders', 'Scale_Marks', 'Arrows']) {
+        addLayer(raw, layer);
+        const row = layer === 'Cut' ? 0 : 120 + Object.keys(raw.layers).length * 15;
+        for (let i = 0; i < (layer === 'Cut' ? n : 4); i++) {
+          const x = (i % 10) * 25, y = row + Math.floor(i / 10) * 15;
+          if (layer === 'Cut') addEntities(raw, dxfLine(x, y, x + 10, y, { layer }), dxfLine(x + 10.004, y, x + 20, y, { layer }));
+          else addEntities(raw, dxfText(x, y, 3, 'note', { layer }));       // TODO 99: annotations are skipped by entity type, not layer name
+        }
+      }
+      addEntities(raw, dxfText(0, 280, 5, 'Letters and arrows stay unmarked'));
+      return Buffer.from(writeDxf(raw));
+    };
+    const open = async (n) => {
+      await q('picker').setInputFiles({ name: 'gaps-' + n + '.dxf', mimeType: 'application/dxf', buffer: fixture(n) });
+      await p.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === 'gaps-' + n + '.dxf' && document.querySelector('[data-testid=gap-count]').textContent === (n > 50 ? n + ' (count only)' : String(n)), n);
+      await p.waitForTimeout(150);
+    };
+    try {
+      await p.goto(URL_); await q('new-tab').waitFor();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await open(50);
+        assert.equal(await q('gap-show').getAttribute('aria-pressed'), 'false');
+        assert.equal(await p.evaluate(() => window.__gapRings), 0, 'import does not mark gaps');
+        await q('gap-show').click();
+        await p.waitForFunction(() => window.__gapRings === 50);
+        await p.screenshot({ path: shotDir + '/s15-92-rings-' + theme + '.png' });
+        await q('gap-show').click(); await p.waitForFunction(() => window.__gapRings === 0);
+        await q('gap-show').click(); await p.waitForFunction(() => window.__gapRings === 50);
+        await open(51);
+        assert.equal(await q('gap-show').getAttribute('aria-pressed'), 'false', 'each imported drawing starts off');
+        assert.equal(await q('gap-show').isDisabled(), true);
+        assert.equal(await p.evaluate(() => window.__gapRings), 0, 'over the cap draws no rings');
+        await p.screenshot({ path: shotDir + '/s15-92-summary-' + theme + '.png' });
+        await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Preflight', exact: false }).click();
+        assert.equal(await q('preflight-gaps-count').textContent(), '51', 'Preflight uses the same annotation filter');
+        await p.getByRole('button', { name: 'Close', exact: true }).click();
+        await q('gap-join').click();
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
+        await p.keyboard.press('Control+z');
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '51 (count only)');
+        assert.equal(await p.evaluate(() => window.__gapRings), 0);
+        p.once('dialog', d => d.accept()); await p.locator('.tabs .dtab.on .x').click();
+        await p.waitForFunction(() => window.__gapRings === 50);
+      }
+    } finally { await isolated.close(); }
+  });
+
+  await step('TODO 103: 1000 px/mm and back; widths, text, arrows, grips, snaps, background and precise panning', async () => {
+    const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } }), p = await isolated.newPage();
+    const q = (id) => p.locator(`[data-testid="${id}"]`), faults = [];
+    p.on('pageerror', (e) => faults.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') faults.push(m.text()); });
+    await p.addInitScript(() => {
+      const proto = CanvasRenderingContext2D.prototype;
+      for (const method of ['clearRect', 'stroke', 'fill', 'fillText', 'rect']) {
+        const original = proto[method];
+        proto[method] = function (...args) {
+          if (this.canvas.dataset.testid === 'drawing') {
+            if (method === 'clearRect') window.__zoomPaint = { widths: [], texts: [], fills: 0, rects: [] };
+            const log = window.__zoomPaint;
+            if (method === 'stroke') log.widths.push(this.lineWidth * Math.hypot(this.getTransform().a, this.getTransform().b));
+            if (method === 'fill') log.fills++;
+            if (method === 'fillText') log.texts.push(args[0]);
+            if (method === 'rect' && this.getTransform().a === 1) log.rects.push(args.slice(2));
+          }
+          return original.apply(this, args);
+        };
+      }
+    });
+    try {
+      await p.goto(URL_); await q('new-tab').waitFor();
+      const X = 10000.123456, Y = 20000.234567, raw = newDoc(4);
+      addEntities(raw, dxfLine(X, Y, X + .6, Y, { lw: 5 }), dxfText(X + .1, Y + .2, .08, 'Fine'));
+      const { makeDimension, addDimension } = await import('./web/edit.js');
+      Object.assign(raw, addDimension(raw, makeDimension([X, Y], [X + .6, Y], 1, raw.blocks, 2, { offset: -.2, textH: .06, arrow: .04, gap: .02 })));
+      await q('picker').setInputFiles({ name: 'zoom-detail.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-detail.dxf');
+      const svg = p.locator('.canvas > svg').first();
+      const viewNow = async () => (await svg.getAttribute('viewBox')).split(' ').map(Number);
+      const atPoint = async (x, y) => {
+        const b = await q('canvas').boundingBox(), v = await viewNow(), H = Number(await p.locator('rect.sheet').getAttribute('height'));
+        return { x: b.x + (x - v[0]) * b.width / v[2], y: b.y + (H - y - v[1]) * b.height / v[3] };
+      };
+      const anchor = await atPoint(X + .3, Y), initialZoom = await q('zoom').textContent();
+      await q('canvas').dispatchEvent('wheel', { deltaY: -10000, clientX: anchor.x, clientY: anchor.y });
+      await p.waitForFunction(() => document.querySelector('[data-testid=zoom]').textContent === '26458%');
+      const b = await q('canvas').boundingBox(), v = await viewNow();
+      assert.ok(Math.abs(b.width / v[2] - 1000) < 1e-8, 'cap is 1000 px/mm');
+      await q('canvas').dispatchEvent('wheel', { deltaY: -1000, clientX: anchor.x, clientY: anchor.y });
+      assert.deepEqual(await viewNow(), v, 'zooming past the cap stays anchored');
+      await p.waitForFunction(() => window.__zoomPaint?.texts.includes('Fine'));
+      const ink = await p.evaluate(() => window.__zoomPaint);
+      assert.ok(ink.widths.some((w) => Math.abs(w - 50) < .01), '0.05 mm Hairline is 50 pixels');
+      assert.ok(ink.texts.includes('0.60'), 'dimension text is painted');
+      assert.ok(ink.fills >= 2, 'dimension arrows are painted');
+      await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
+      const grip = p.locator('[data-grip="0:m"]'), start = await grip.boundingBox();
+      assert.ok(Math.abs(start.width - 11.2) < .02, 'ten-pixel grips plus their 1.2-pixel stroke stay precise');
+      await p.mouse.move(anchor.x, anchor.y + 60); await p.mouse.down({ button: 'middle' });
+      for (let dx = 1; dx <= 4; dx++) {
+        await p.mouse.move(anchor.x + dx, anchor.y + 60 + dx);
+        await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        assert.ok(Math.abs((await grip.boundingBox()).x - start.x - dx) < .2, 'pan advances one screen pixel without rounding jitter');
+        assert.ok(Math.abs((await grip.boundingBox()).y - start.y - dx) < .2, 'vertical pan also advances one screen pixel');
+      }
+      await p.mouse.move(anchor.x, anchor.y + 60); await p.mouse.up({ button: 'middle' });
+      assert.ok(Math.abs((await viewNow())[0] - v[0]) < 1e-9, 'round-trip pan has no drift');
+      assert.ok(Math.abs((await viewNow())[1] - v[1]) < 1e-9, 'vertical round-trip pan has no drift');
+      await p.keyboard.press('Escape'); await p.locator('[data-tool=line]').click();
+      const end = await atPoint(X + .6, Y); await p.mouse.move(end.x + 3, end.y + 2);
+      await p.waitForFunction(() => window.__zoomPaint?.texts.includes('end'));
+      assert.ok((await p.evaluate(() => window.__zoomPaint.rects)).some(([w, h]) => w === 10 && h === 10), 'endpoint marker stays ten pixels');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.screenshot({ path: shotDir + '/s16-103-zoom-' + theme + '.png' });
+      }
+      const background = await p.evaluate(async () => {
+        const { paintDrawing } = await import('./render.js');
+        const { flatten } = await import('./drawing.js');
+        const { newDoc, line } = await import('./dxf-write.js');
+        const bitmap = document.createElement('canvas'); bitmap.width = bitmap.height = 2;
+        bitmap.getContext('2d').fillRect(0, 0, 2, 2);
+        const c = document.createElement('canvas'); c.width = c.height = 200;
+        paintDrawing(c, { fl: null, sheetH: 1, ox: 10000, oy: -20000, scale: 1000, w: 200, h: 200, dpr: 1,
+          bg: { visible: true, bitmap, x: 10000, y: 20000.8, w: 2, h: 2, mm: .1 } });
+        const context = c.getContext('2d'), alpha = context.getImageData(100, 100, 1, 1).data[3];
+        c.width = 600; c.height = 300;
+        const X = 10000.123456, Y = 20000.234567, raw = newDoc(4);
+        raw.entities = [line(X, Y, X + .4, Y, { lw: 5 })];
+        const options = { fl: flatten(raw), off: new Set(), factor: 1, sheetH: 700, ox: X - .1, oy: 700 - Y - .1, scale: 1000, w: 600, h: 300, dpr: 1 };
+        paintDrawing(c, options);
+        const before = context.getImageData(0, 0, 600, 300).data;
+        paintDrawing(c, { ...options, ox: options.ox - .001, oy: options.oy - .001 });
+        const after = context.getImageData(0, 0, 600, 300).data;
+        let differences = 0, ink = 0;
+        for (let y = 2; y < 298; y++) for (let x = 2; x < 598; x++) {
+          const old = ((y - 1) * 600 + x - 1) * 4, next = (y * 600 + x) * 4;
+          if (before[old + 3] > 200) ink++;
+          for (let channel = 0; channel < 4; channel++) if (Math.abs(before[old + channel] - after[next + channel]) > 1) differences++;
+        }
+        return { alpha, differences, ink };
+      });
+      assert.ok(background.alpha > 90, 'background picture paints at the cap with large offsets');
+      assert.ok(background.ink > 1000, 'raster pan fixture rendered');
+      assert.equal(background.differences, 0, 'the actual raster moves exactly one pixel in both axes');
+      await q('canvas').dispatchEvent('wheel', { deltaY: 100000, clientX: anchor.x, clientY: anchor.y });
+      assert.ok(Math.abs(b.width / (await viewNow())[2] - .05) < 1e-10, 'zoom-out cap is unchanged');
+      await p.keyboard.press('Control+0'); assert.equal(await q('zoom').textContent(), initialZoom);
+      assert.deepEqual(faults, []);
+    } finally { await isolated.close(); }
+  });
+
+  await step('Usage site: remembered tabs, tag filters, notes, token chart, safe refresh errors; phone and desktop, light and dark', async () => {
+    const result = spawnSync(process.execPath, ['--test', 'tools/usage-site.browser.test.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  });
+  await step('T22a: padlock resizes a selected rectangle to 26.5 x 10, anchors its bottom-left, and undoes each edit', async () => {
+    await closeTabs(/./);
+    await page.locator('[data-tool=rect]').click(); await typeCmd('20,20'); await typeCmd('20,20');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await click(30, 20); await waitSel('1 selected');
+    assert.equal(await t('size-padlock').getAttribute('aria-pressed'), 'true');
+    await t('size-padlock').click();
+    assert.equal(await t('panel-size-padlock').getAttribute('aria-pressed'), 'false');
+    await t('sel-w').fill('26.5'); await t('sel-w').press('Enter');
+    await t('sel-h').fill('10'); await t('sel-h').press('Enter');
+    assert.deepEqual([await t('sel-w').inputValue(), await t('sel-h').inputValue()], ['26.50', '10.00']);
+    assert.deepEqual(await sizeNow(), ['26.5', '10']);
+    const saved = await downloaded(() => page.keyboard.press('Control+s'));
+    assert.deepEqual(flatten(readDxf(saved.text)).boxes.model, [20, 20, 46.5, 30]);
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({path: shotDir + '/t22a-padlock-' + theme + '.png'});
+    }
+    await menuItem('View', 'Theme: light');
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['26.5', '20']);
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
+    await click(30, 20); await waitSel('1 selected');
+    await t('panel-size-padlock').click();
+    await t('dw').fill('40'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['40', '40']);
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
+    await page.keyboard.press('Escape');
+    await t('size-padlock').click();
+    await t('dw').fill('26.5'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['26.5', '20']);
+    await t('size-padlock').click();
     await closeTabs(/./);
   });
 

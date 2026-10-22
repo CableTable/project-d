@@ -286,7 +286,11 @@ const JOINED = 2e-6;
  */
 export function findGaps(ed, tol) {
   const ids = [];
-  for (const e of ed.shown) if (!Number.isNaN(ed.ends[e * 4])) ids.push(e * 2, e * 2 + 1);
+  for (const e of ed.shown) {
+    const ent = ed.raw.entities[e];
+    if (/^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/.test(ent.type)) continue;
+    if (!Number.isNaN(ed.ends[e * 4])) ids.push(e * 2, e * 2 + 1);
+  }
   const px = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2], py = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2 + 1];
   const cell = Math.max(tol, 1e-12), map = new Map(), key = (i, j) => i + ',' + j;
   for (const id of ids) { const k = key(Math.floor(px(id) / cell), Math.floor(py(id) / cell)); const l = map.get(k); if (l) l.push(id); else map.set(k, [id]); }
@@ -318,6 +322,10 @@ export function findGaps(ed, tol) {
   }
   return out.sort((a, b) => a.ends[0].e - b.ends[0].e);
 }
+
+export const GAP_MARK_CAP = 50;
+/** Keep the full count, but draw no rings above the cap or until Show is pressed. */
+export const gapMarks = (gaps, show) => show && gaps.length <= GAP_MARK_CAP ? gaps.map((g) => [g.x, g.y]) : [];
 
 const JOINABLE = new Set(['LINE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'SPLINE']);
 const setv = (r, idx) => { const v = r.v.slice(); for (const [k, x] of idx) v[k] = text(x); return { ...r, v }; };
@@ -576,7 +584,7 @@ export function relabelDims(raw, factor, dp) {
   return changed ? { entities: raw.entities, blocks } : null;
 }
 
-export function scaleAbout(raw, s, ax, ay, space = 0) {
+export function scaleAbout(raw, s, ax, ay, space = 0, selection = null) {
   const skipped = {}, blocks = { ...raw.blocks }, doneBlocks = new Set();
   const one = (e) => {
     if (e.type === 'INSERT' && (DIM_BLOCK.test(fieldOf(e.r, 2)) || LDR_BLOCK.test(fieldOf(e.r, 2)))) {         // a kept dimension or leader: its block is scaled (a dimension's value re-labelled); the insert stays put
@@ -595,8 +603,34 @@ export function scaleAbout(raw, s, ax, ay, space = 0) {
     }
     return { ...e, r: { ...e.r, c: r.c, v: r.v }, kids };
   };
-  const entities = raw.entities.map((e) => ((e.ps ? 1 : 0) === space ? one(e) : e));
+  const entities = raw.entities.map((e, i) => ((e.ps ? 1 : 0) === space && (!selection || selection.has(i)) ? one(e) : e));
   return { entities, blocks, skipped };
+}
+
+/** Resize about the bottom-left; refuse the whole edit when an entity cannot stay exact. */
+export function resizeAbout(raw, sx, sy, ax, ay, space = 0, selection = null) {
+  if (![sx, sy, ax, ay].every(Number.isFinite) || sx <= 0 || sy <= 0) throw new Error('Type a size above 0');
+  if (Math.abs(sx - sy) < 1e-12) return scaleAbout(raw, sx, ax, ay, space, selection);
+  // shortcut: other DXF types refuse non-uniform scaling; add exact transforms when those types need independent W / H.
+  const supported = new Set(['LINE', 'POINT', 'LWPOLYLINE', 'POLYLINE', 'SPLINE', 'SOLID', 'TRACE', '3DFACE']);
+  const records = (e) => [e.r, ...(e.kids || [])];
+  const entities = raw.entities.map((e, i) => {
+    if ((e.ps ? 1 : 0) !== space || selection && !selection.has(i)) return e;
+    if (!supported.has(e.type) || records(e).some((r) => r.c.some((c, k) =>
+      ['LWPOLYLINE', 'POLYLINE', 'VERTEX'].includes(r.type) && [40, 41, 42, 43].includes(c) && +r.v[k] !== 0))) {
+      throw new Error('Cannot resize ' + e.type + ' with proportions unlocked. Lock the padlock to scale proportionally; arcs, circles, curved or wide polylines and other unsupported objects stay unchanged.');
+    }
+    const x = e.flip && OCS.has(e.type) ? -ax : ax;
+    const scaled = (r) => ({ ...r, v: r.v.map((v, k) => {
+      const c = r.c[k], pts = SPEC[r.type]?.pts || [];
+      if (pts.includes(c)) return text(x + (+v - x) * sx);
+      if (pts.includes(c - 10)) return text(ay + (+v - ay) * sy);
+      if (e.type === 'SPLINE' && [12, 13, 22, 23].includes(c)) return text(+v * (c < 20 ? sx : sy));
+      return v;
+    }) });
+    return { ...e, r: scaled(e.r), kids: e.kids?.map(scaled) };
+  });
+  return { entities, blocks: raw.blocks, skipped: {} };
 }
 
 // ---------------------------------------------------------------- undo

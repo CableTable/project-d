@@ -91,6 +91,18 @@ select.fld { font-family: var(--sans); }
 
 .canvas { user-select: none; flex: 1; min-width: 0; position: relative; background: var(--canvas); overflow: hidden; touch-action: none; }
 .canvas.part { background: var(--sheet); }
+.canvas[data-work-area='Light'] {
+  --selection: #4f46e5; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
+  background: #ececef;
+}
+.canvas.part[data-work-area='Light'] { background: #ffffff; }
+.canvas[data-work-area='Dark'] {
+  --selection: #60a5fa; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #5eead4; --guide: #5eead4;
+  background: #000000;
+}
+.canvas[data-work-area='Light'] > .ovl { --muted: #62626b; --partline: #18181b; --sheet: #ffffff; }
+.canvas[data-work-area='Dark'] > .ovl { --muted: #a0a0ab; --partline: #e8e8ec; --sheet: #000000; }
+.status .work-area { display: inline-flex; align-items: center; justify-content: center; }
 /* Drawing feedback has its own accent; panels and menus keep the UI accent. */
 .canvas > svg, .canvas > .ovl, .canvas > .rubber { --accent: var(--selection); }
 .canvas.part > svg { visibility: hidden; }
@@ -189,22 +201,23 @@ select.fld { font-family: var(--sans); }
 .btn.sm { height: 26px; padding: 0 10px; justify-content: center; }
 .tog:disabled { opacity: .4; cursor: default; }
 .tog:hover:not(:disabled):not(.on) { color: var(--text); }
-.gaprow2 { display: flex; align-items: center; gap: 4px 6px; }
-.gaprow2 .fld { width: 52px; height: 24px; }
+.gaprow2 { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }       /* one line even in wide fonts (CI) */
+.gaprow2 .fld { width: 48px; height: 24px; }
 .gaprow2 > .lbl { white-space: nowrap; }
 .gaprow2 .btn { padding: 0 8px; }
 .gaprow2 .tog { margin-left: auto; }
-.preflightpanel { position: absolute; right: 16px; top: 48px; width: min(448px, calc(100% - 32px)); max-height: calc(100% - 64px); overflow: auto; z-index: 6; font-size: 12px; box-shadow: 0 8px 24px var(--shadow); }
+.preflightpanel { position: absolute; right: 16px; top: 48px; width: min(448px, calc(100% - 32px)); max-height: calc(100% - 64px); display: flex; flex-direction: column; overflow: hidden; z-index: 6; font-size: 12px; box-shadow: 0 8px 24px var(--shadow); }
 .preflightpanel[hidden] { display: none; }
 .pfhead { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-.pfbody { padding: 12px; }
+.pfbody { padding: 12px; overflow: auto; min-height: 0; }
+.pfhead, .pfbuttons { flex-shrink: 0; }
 .pfbody p { margin: 6px 0 10px; line-height: 1.5; }
 .pfrow { display: grid; grid-template-columns: minmax(0, 1fr) 104px 53px 68px; align-items: center; gap: 6px; min-height: 48px; border-top: 1px solid var(--line); }
 .pfcols { min-height: 30px; border: 0; color: var(--muted); font-size: 11px; }
 .pfrow .btn { padding: 0 7px; font-size: 12px; }
 .pfcount { color: var(--mark); font-family: var(--mono); font-weight: 600; text-align: center; }
 .pfmanual { text-align: center; color: var(--muted); font-size: 11px; }
-.pfbuttons { display: flex; justify-content: flex-end; gap: 8px; }
+.pfbuttons { display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .selrow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 4px 8px; border-radius: var(--r); background: var(--sel); }
 .selrow .lbl { flex: 1 1 auto; white-space: nowrap; color: var(--text); font-weight: 600; }
 .selrow .btn { flex: 0 0 auto; }
@@ -331,7 +344,6 @@ select.fld { font-family: var(--sans); }
 .dropdown button { display: flex; justify-content: space-between; align-items: center; gap: 24px; white-space: nowrap; }
 .dropdown button:disabled { opacity: .45; cursor: default; }
 .dropdown button:disabled:hover { background: none; }
-.dropdown button.sep { margin-top: 5px; border-top: 1px solid var(--line); border-radius: 0 0 var(--r) var(--r); padding-top: 9px; }
 .dropdown .hint { color: var(--muted); font-size: 12px; }
 /* read-only numbers in the bars read as text, not as fields to type in (they become editable in Build B) */
 .propbar .fld[readonly] { background: transparent; border-color: transparent; padding: 0 2px; opacity: 1; cursor: default; width: 64px; font-weight: 500; }
@@ -387,7 +399,7 @@ select.fld { font-family: var(--sans); }
 .ctxmenu .mi .hint { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 .ctxmenu .mi:disabled { opacity: .45; cursor: default; }
 .ctxmenu .mi:disabled:hover { background: none; color: var(--text); }
-.ctxmenu .msep { height: 1px; background: var(--line); margin: 4px 0; }
+.dropdown .msep, .ctxmenu .msep { height: 1px; background: var(--line); margin: 4px 0; }
 .placedsec .fld:disabled { opacity: .5; }
 
 /* Rulers and guides (TODO 38; mock-up R4c) */
@@ -533,6 +545,8 @@ select.fld { font-family: var(--sans); }
 .cmprow { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
 .cmprow .lbl:first-child { flex: 0 0 20px; }
 .cmprow .mono { flex: 0 0 auto; }
+.cmpstale { color: var(--mark); font-weight: 600; }
+.gaplist.stale { opacity: 0.5; }
 .ovl .cmp-glow { pointer-events: none; }
 .ovl .cmp-glow.on { stroke: var(--mark); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .cmp-g0 { stop-color: var(--mark); stop-opacity: .8; }
@@ -767,6 +781,7 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cb-echo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
 @media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* narrow: the echo is its icon only */
+@media (max-width: 1200px) { .status { gap: 2px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 6px; } .status .work-area { padding: 0 4px; } }       /* narrow: the work-area button is a tight icon (its title and aria-label carry the name) and the gaps shrink, so the bar fits with the sheet chip */
 @media (max-width: 1100px) { .status .cb-echo { display: none; } .status .coords { min-width: 180px; } }       /* 1024 px: the status bar is as before TODO 47, so it fits with CI fonts (typing still opens the bar) */
 
 /* TODO 34: R12 Shortcuts, using the same tokens as the mock-up. */

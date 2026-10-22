@@ -50,10 +50,7 @@
       "PowerShell(npx:*)",
       "PowerShell(node:*)"
     ],
-    "ask": [
-      "Bash(gh pr merge:*)",
-      "PowerShell(gh pr merge:*)"
-    ],
+  
     "deny": [
       "Bash(git push * --force*)",
       "Bash(git push * -f*)",

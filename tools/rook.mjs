@@ -4,17 +4,41 @@
 //   node tools/rook.mjs result <file>   a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { peakContext } from './rook-result.mjs';
+import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
 const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : Math.round(n / 1e3) + 'k');
+const label = (a) => ({ Pip: 'Bishop', Rowan: 'Knight' })[a] || a;
 
+export function claudeUsage(bin, execute = execSync, report = console.error) {
+  const env = { ...process.env };
+  if (bin === 'claude') delete env.CLAUDE_CONFIG_DIR;
+  for (let attempt = 0; attempt < (bin === 'claude' ? 2 : 1); attempt++) {
+    let out = '';
+    try {
+      out = execute(`echo Reply OK| ${bin} -p --model claude-haiku-5-5 --output-format stream-json --verbose`, { encoding: 'utf8', env, windowsHide: true, timeout: 45_000, maxBuffer: 1024 * 1024 });
+      const w = JSON.parse(out.split('\n').find((l) => l.includes('rate_limit_event'))).rate_limit_info.unifiedWindows;
+      if (![w.five_hour.utilization, w.five_hour.resetsAt, w.seven_day.utilization, w.seven_day.resetsAt].every(Number.isFinite)) throw new Error('Invalid usage reading');
+      return { h5: [w.five_hour.utilization * 100, w.five_hour.resetsAt], wk: [w.seven_day.utilization * 100, w.seven_day.resetsAt] };
+    } catch (e) {
+      report(`${e.stack || e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`);
+      if (bin === 'claude' && attempt === 0) continue;
+      const output = `${e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`;
+      const limited = /limit (?:has been |is )?reached|you[’']?ve hit your[^\n]*limit|rate_limit_error|usage_limit_reached/i.test(output);
+      throw new Error(limited ? `${bin === 'claude' ? 'Main' : 'Second'} account: 100%, limit reached`
+        : `${bin === 'claude' ? 'Rook' : 'Bishop'} usage probe failed, exit ${Number.isInteger(e.status) ? e.status : 'unknown'}`);
+    }
+  }
+}
+
+function main() {
 if (cmd === 'result') {
   if (arg.endsWith('.jsonl')) {
     const events = readFileSync(arg, 'utf8').trim().split('\n').filter((l) => l.trim()).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } }); // a run in progress has a half-written last line
@@ -33,19 +57,16 @@ if (cmd === 'result') {
     if (m) console.log('tokens ' + m.pop().replace(/tokens used\s*/, '').trim());
   }
 } else if (cmd === 'usage') {
-  const claude = (bin) => {
-    const out = execSync(`echo Reply OK| ${bin} -p --model claude-haiku-5-5 --output-format stream-json --verbose`, { encoding: 'utf8' });
-    const w = JSON.parse(out.split('\n').find((l) => l.includes('rate_limit_event'))).rate_limit_info.unifiedWindows;
-    return { h5: [w.five_hour.utilization * 100, w.five_hour.resetsAt], wk: [w.seven_day.utilization * 100, w.seven_day.resetsAt] };
-  };
   const codex = () => {
     const files = [];
     const walk = (d) => readdirSync(d).forEach((f) => { const p = join(d, f); statSync(p).isDirectory() ? walk(p) : p.endsWith('.jsonl') && files.push(p); });
-    walk(join(homedir(), '.codex', 'sessions'));
+    const root = join(homedir(), '.codex', 'sessions');
+    if (!existsSync(root)) return;
+    walk(root);
     files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     for (const f of files.slice(0, 3)) {
       const m = [...readFileSync(f, 'utf8').matchAll(/"primary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)\},"secondary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)/g)].pop();
-      if (m) return { h5: [+m[1], +m[2]], wk: [+m[3], +m[4]] };
+      if (m) return { h5: codexWindow([+m[1], +m[2]]), wk: codexWindow([+m[3], +m[4]]) };
     }
   };
   const now = Date.now(), iso = (t) => new Date(t + 19800e3).toISOString().slice(0, 19) + '+05:30';
@@ -59,7 +80,7 @@ if (cmd === 'result') {
         cached = ['Rook', 'Pip', 'Rowan'].map((a) => {
           const h5 = limits.find((r) => r.agent === a && r.window === '5h');
           const wk = limits.find((r) => r.agent === a && r.window === 'week');
-          return [a, h5?.role, h5?.model, h5 && wk ? { h5: [+h5.used_pct, Date.parse(h5.resets) / 1e3], wk: [+wk.used_pct, Date.parse(wk.resets) / 1e3] } : null];
+          return [a, h5?.role, h5?.model, h5 && wk ? { h5: [+h5.used_pct, h5.resets ? Date.parse(h5.resets) / 1e3 : null], wk: [+wk.used_pct, wk.resets ? Date.parse(wk.resets) / 1e3 : null] } : null];
         });
         const time = new Date(now - age).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
         suffix = ` (as of ${time} IST, ${Math.floor(age / 60_000)} min old)`;
@@ -67,25 +88,33 @@ if (cmd === 'result') {
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   const agents = cached || [
-    ['Rook', 'Lead (main account)', 'Opus 5.5', claude('claude')],
-    ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claude('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
-    ['Rowan', 'Default builder (Codex)', 'gpt-6.1-sol', codex()],
+    ['Rook', 'Lead (main account)', 'Opus 5.5', claudeUsage('claude')],
+    ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
+    ['Rowan', 'Builder and web research (Codex)', 'gpt-6.1-sol', codex()],
   ];
+  for (const [a, , , u] of agents) if (!u && a !== 'Rowan') throw new Error(`${label(a)} usage probe failed, exit unknown`);
   const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
   if (!cached) mkdirSync(U, { recursive: true });
   for (const [a, role, model, u] of agents) {
-    if (!u) { console.log(a + ': no reading' + suffix); continue; }
+    if (!u) { console.log(`${label(a)}: no reading${suffix}`); continue; }
+    if (a === 'Rowan') for (const w of ['h5', 'wk']) u[w] = codexWindow(u[w], now);
     const wkLen = 7 * 864e5, s = u.wk[1] * 1e3 - wkLen, el = now - s;
     const cap = a === 'Pip' ? Math.min(100, 14 * Math.ceil((now - s) / 864e5)) : '';
     const atReset = el > 12 * 36e5 && u.wk[0] > 0 ? Math.round((u.wk[0] * wkLen) / el) : null;
     const fc = atReset == null ? 'too early' : atReset >= 100 ? `hits 100% ${ist((s + (el * 100) / u.wk[0]) / 1e3)}` : `~${atReset}% at reset`;
-    console.log(`${a}: 5h ${Math.round(u.h5[0])}% (resets ${ist(u.h5[1])}) · week ${Math.round(u.wk[0])}%${cap ? ' of ' + cap + '% cap' : ''} (resets ${ist(u.wk[1])}) · ${fc}${suffix}`);
+    console.log(`${label(a)}: 5h ${Math.round(u.h5[0])}% (${resetLabel(u.h5[1], ist)}) · week ${Math.round(u.wk[0])}%${cap ? ' of ' + cap + '% cap' : ''} (${resetLabel(u.wk[1], ist)}) · ${fc}${suffix}`);
     if (cached) continue;
-    rows.push([a, role, model, '5h', Math.round(u.h5[0]), '', iso(u.h5[1] * 1e3 - 5 * 36e5), iso(u.h5[1] * 1e3), iso(now)].join(','));
-    rows.push([a, role, model, 'week', Math.round(u.wk[0]), cap, iso(s), iso(u.wk[1] * 1e3), iso(now)].join(','));
+    rows.push([a, role, model, '5h', Math.round(u.h5[0]), '', u.h5[1] == null ? '' : iso(u.h5[1] * 1e3 - 5 * 36e5), u.h5[1] == null ? '' : iso(u.h5[1] * 1e3), iso(now)].join(','));
+    rows.push([a, role, model, 'week', Math.round(u.wk[0]), cap, u.wk[1] == null ? '' : iso(s), u.wk[1] == null ? '' : iso(u.wk[1] * 1e3), iso(now)].join(','));
     appendFileSync(join(U, 'history.csv'), `${iso(now)},${a},5h,${Math.round(u.h5[0])}\n${iso(now)},${a},week,${Math.round(u.wk[0])}\n`);
   }
   if (!cached) writeFileSync(join(U, 'limits.csv'), rows.join('\n') + '\n');
 } else {
   console.log('usage: node tools/rook.mjs usage [--cached] | result <file>');
+}
+}
+
+if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  try { main(); }
+  catch (e) { console.error(e.stack || e.message); console.error(`USAGE_ERROR: ${e.message}`); process.exitCode = 1; }
 }

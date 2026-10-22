@@ -174,4 +174,17 @@ test('Fit off: rows and columns typed by hand; the grid may not fit and says so'
 });
 
 
+test('Fit skips overlapping occupied boxes once per cell, permits touching, and keeps manual counts', () => {
+  const o = { sheetW: 40, sheetH: 20, partW: 10, partH: 20, gapX: 0, gapY: 0, rotate: '0', align: 'topleft' };
+  const occupied = [[0, 0, 10, 20], [0, 0, 10, 20], [19, 5, 21, 6]];
+  const r = stepRepeat({ ...o, occupied });
+  assert.deepEqual(r.positions, [{ x: 30, y: 0 }]);
+  assert.equal(r.skipped, 3); assert.equal(r.count, 1); assert.equal(r.usedPct, 25);
+  assert.equal(stepRepeat({ ...o, occupied: [[0, 0, 40, 20]] }).count, 0);
+  const manual = stepRepeat({ ...o, occupied, fit: false, rows: 1, cols: 4 });
+  assert.equal(manual.count, 4); assert.equal(manual.skipped, 0);
+  const turned = stepRepeat({ ...o, partW: 20, partH: 10, rotate: '90', occupied });
+  assert.deepEqual(turned.positions, r.positions);
+});
+
 console.log(n + ' tests passed');

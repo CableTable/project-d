@@ -20,7 +20,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 
-**Compare**: Overlays parts in different colours and can highlight outline differences beyond a chosen tolerance. Where: `TODO.md`, item 41; `web/compare.js`.
+**Compare**: Overlays parts in different colours and can highlight outline differences beyond a chosen tolerance, worked out once when the Compare button is pressed (a move afterwards marks the result "out of date"). Where: `TODO.md`, item 41; `web/compare.js`.
 
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
 
@@ -48,7 +48,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Gripper**: A reserved band in mm on any sheet edge that parts must keep clear of, with zero meaning none. Where: `DECISIONS.md`, Gripper. Avoid: Grip; an extra margin added to a gripper.
 
-**Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius; none show when the selection has more than 200 of them (`MAX_GRIPS`). Where: `DECISIONS.md`, Grips. Avoid: Grippers.
+**Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius; none show when more than 200 shapes are selected (`MAX_SELECTED`), when their total handles exceed 5000 (`MAX_GRIPS`), or on the immediate Text to outlines result selection. Selecting those outlines again enables their grips within both limits. Where: `DECISIONS.md`, Grips. Avoid: Grippers.
 
 **Group**: A set of placed parts that selects, moves, turns and copies as one while keeping its members as parts. Where: `DECISIONS.md`, Group and Ungroup. Avoid: DXF block.
 
@@ -57,6 +57,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
+
+**Padlock**: The W / H proportions control: locked scales both sides together; unlocked changes each side independently. It starts locked and applies to selection size or the whole drawing when nothing is selected. Where: Drawing size fields; `web/app.js`. Avoid: Layer Lock.
 
 **Lock**: Prevents edits to a layer's objects on a drawing or movement of locked parts on a layout. Where: `DECISIONS.md`, Objects tab; `TODO.md`, item 37. Avoid: Hide.
 
@@ -97,6 +99,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Trace**: Converts a background bitmap's coloured regions into closed vector polylines at the picture's position and size, with Outline mode built and Centreline still planned. Where: `DECISIONS.md`, Trace a bitmap. Avoid: DXF TRACE; Contour; OCR.
 
 **Unit fix**: Multiplies or divides the whole drawing or background by 25.4 about 0,0 to correct an inch/mm size mistake without changing the unit header. Where: `DECISIONS.md`, Unit fix. Avoid: Changing display units.
+
+**Work area**: The background used to view and edit a drawing, independently set to Follow app, Light or Dark from the status bar or View menu. Its drawing colours and feedback adapt to the background; sheet paper and PDF / Print keep their appearance. Where: `web/workarea.js`, `DECISIONS.md`, Work area (TODO 96).
 
 ## Drawing / CAD
 
@@ -245,17 +249,17 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **One PR per session**: All session changes use one branch and one pull request, with commits per change and a single merge after approval and green checks for the head commit. Where: `CLAUDE.md`, How changes ship.
 
-**Pip**: The family name for workers on Rakshith's second Claude account, launched through `claude2`. Where: `WORKFLOW.md`, Who does what. Avoid: Rook's main account.
+**Bishop**: The family name for workers on Rakshith's second Claude account, launched through `claude2`. Where: `WORKFLOW.md`, Who does what. Avoid: Rook's main account. Old name: Pip (until 2026-10-21).
 
-**Pip daily cap**: The cumulative weekly allowance of 14% times the number of days since Monday's 15:30 IST reset, carrying unused allowance forward and requiring approval to exceed it. Where: `WORKFLOW.md`, Pip's daily budget. Avoid: 14% of the five-hour window.
+**Bishop daily cap**: The cumulative weekly allowance of 14% times the number of days since Monday's 15:30 IST reset, carrying unused allowance forward and requiring approval to exceed it. Where: `WORKFLOW.md`, Bishop's daily budget. Avoid: 14% of the five-hour window.
 
-**Pip-build**: The second-account builder for mock-ups, screenshots and overflow builds, with a fresh session for each build or fix round. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what.
+**Bishop-build**: The second-account builder for mock-ups, screenshots and overflow builds, with a fresh session for each build or fix round. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what.
 
-**Pip-look**: The Haiku worker that looks at screenshots and reports the visual findings in a few lines for Rook. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Keeping Rook small.
+**Bishop-look**: The Haiku worker that looks at screenshots and reports the visual findings in a few lines for Rook. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Keeping Rook small.
 
-**Pip-review**: The read-only build review role, with separate fresh reviews for spec fidelity and code standards in their own throwaway worktrees. Where: `WORKFLOW.md`, Two reviews per build. Avoid: Rowan review.
+**Bishop-review**: The read-only build review role, with separate fresh reviews for spec fidelity and code standards in their own throwaway worktrees. Where: `WORKFLOW.md`, Two reviews per build. Avoid: Knight review.
 
-**Pip-test**: The worker that downloads the released exe and drives it on the PC, including its native dialogs, using an isolated test profile. Where: `WORKFLOW.md`, PC test. Avoid: Browser-only checks of `web/`.
+**Bishop-test**: The worker that downloads the released exe and drives it on the PC, including its native dialogs, using an isolated test profile. Where: `WORKFLOW.md`, PC test. Avoid: Browser-only checks of `web/`.
 
 **R-boards**: The numbered local design rounds such as R11 or R14 used for proposed screens and their As-built records in the Project D Mockups canvas. Where: `WORKFLOW.md`, Mock-up and As built. Avoid: Files to commit.
 
@@ -263,16 +267,22 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Rook**: The main-account Opus lead who plans, writes briefs, chooses UI, reads short reports and handles pushes and merges. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what.
 
-**Rowan**: The Codex worker for feature and fix builds and web research, which tests and commits builds without pushing and has no review role. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what. Avoid: Pip-build; reviewer.
+**Knight**: The Codex worker for feature and fix builds and web research, which tests and commits builds without pushing and has no review role. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what. Avoid: Bishop-build; reviewer. Old name: Rowan (until 2026-10-21).
 
-**Scout**: The Antigravity worker for quick web lookups in its own research folder. Where: `WORKFLOW.md`, Who does what. Avoid: Builder; reviewer.
+**Pawn**: The Antigravity worker for quick web lookups in its own research folder. Where: `WORKFLOW.md`, Who does what. Avoid: Builder; reviewer. Old name: Scout (until 2026-10-21).
 
 **Session**: A bounded round of Rook-led project work collected in one PR, while each worker build, fix or review uses its own fresh execution session. Where: `CLAUDE.md`, One PR per session; `WORKFLOW.md`, Session end. Avoid: One TODO item per PR.
 
-**Usage gate**: The check of cached Rook, Pip and Rowan usage before launching a worker to choose available headroom, wait for reset or pause. Where: `WORKFLOW.md`, Usage gate; `DECISIONS.md`, Cached usage CLI. Avoid: A per-run money cap.
+**Usage gate**: The check of cached Rook, Bishop and Knight usage before launching a worker to choose available headroom, wait for reset or pause. Where: `WORKFLOW.md`, Usage gate; `DECISIONS.md`, Cached usage CLI. Avoid: A per-run money cap.
 
 ## Open questions
 
-- Should the Agents decisions and workflow summaries be reconciled? `DECISIONS.md` assigns builds to Sonnet and permits small lead edits, while `CLAUDE.md` and the current `WORKFLOW.md` role table make Rowan the default builder and `CLAUDE.md` says Rook writes no code; the workflow's opening and fresh-lead prompt still assign builds to Pip, so the role definitions above leave the disputed default and lead-edit policy unsettled and the recorded decisions take precedence.
-- Should `WORKFLOW.md` and `CLAUDE.md` state both review models consistently? The newer two-review instructions assign Opus medium to spec review and Sonnet high to standards review, while the general role descriptions call Pip-review Opus medium throughout.
+- Should the Agents decisions and workflow summaries be reconciled? `DECISIONS.md` assigns builds to Sonnet and permits small lead edits, while `CLAUDE.md` and the current `WORKFLOW.md` role table make Knight the default builder and `CLAUDE.md` says Rook writes no code; the workflow's opening and fresh-lead prompt still assign builds to Bishop, so the role definitions above leave the disputed default and lead-edit policy unsettled and the recorded decisions take precedence.
+- Should `WORKFLOW.md` and `CLAUDE.md` state both review models consistently? The newer two-review instructions assign Opus medium to spec review and Sonnet high to standards review, while the general role descriptions call Bishop-review Opus medium throughout.
 - Can the open duplicate of TODO 65 be removed? `TODO.md` lists Contour colour and line style as both open and completed, while `DECISIONS.md` records it built; the Contour entry follows the decision.
+
+**Castle mode**: The fallback when Rook runs short of usage: Bishop-lead leads and reviews, Knight builds, only S items are taken. Where: `WORKFLOW.md`, Castle mode.
+
+**Ticket tag**: A comma-separated label in support/tickets.md, uploaded as a Tags array and used by the Tickets tab's filter chips (for example bug, feature or mod). Where: usage page, Tickets. Avoid: A separate Bugs / Features tab.
+
+**Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.

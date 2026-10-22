@@ -10,12 +10,12 @@
 //   (a leader, leader.js, is passed in as { type: 'LEADER', model } and has a grip at each of its points)
 //   readoutOf(ent, id, next, factor) → "331.06 mm · 25.02°", "Move ΔX 10.00 ΔY 40.00", "R 25.00" …
 //   MAX_SELECTED                 → grips are off when more entities than this are selected
-//   capGrips(list)               → the list, or [] when it holds more than MAX_GRIPS
+//   capGrips(list)               → the list, or [] when it exceeds MAX_GRIPS handles
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 
 export const MAX_SELECTED = 200;
-export const MAX_GRIPS = 200;             // more grips than this in one selection (Text to outlines) and none are shown: the squares would hide the shapes
-/** The grips to show: all of them, or none when the selection has more than MAX_GRIPS. */
+export const MAX_GRIPS = 5000;    // shortcut: hide all grips above 5000 handles; use a virtualized overlay if denser editing is needed
+/** The grips to show: all of them, or none when there are too many handles. */
 export const capGrips = (list) => (list.length > MAX_GRIPS ? [] : list);
 const DEG = Math.PI / 180;
 const TYPES = new Set(['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE']);

@@ -120,11 +120,11 @@ export function buildCmdUI(hooks) {
     fadeRows.replaceChildren(...f.map((l) => h('div', { class: 'o' + l.age + (l.cls === 'er' ? ' er' : '') }, h('span', null, l.pre), l.ans ? h('span', { class: 'ans' }, l.ans) : null)));
     fadeUp();
   }
-  /** The lines show for a while after a change, then fade away; they stay while the bar or the drawer is open. */
+  /** The lines show for a while after a change (an error 9 s, so it can be read), then fade away; they stay while the bar or the drawer is open. */
   function fadeUp() {
     fade.classList.remove('idle');
     clearTimeout(idle);
-    idle = setTimeout(() => { if (bar.hidden && drawer.hidden) fade.classList.add('idle'); }, 9000);
+    idle = setTimeout(() => { if (bar.hidden && drawer.hidden) fade.classList.add('idle'); }, lines.length && lines[lines.length - 1].cls === 'er' ? 9000 : 3000);
   }
 
   /** A line the bar sends: a picked option, a typed answer, a command by name or a highlighted suggestion. */

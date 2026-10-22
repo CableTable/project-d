@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtempSync, mkdirSync, copyFileSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync, utimesSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
@@ -22,6 +22,8 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
   const repo = mkdtempSync(join(tmpdir(), 'projectd-rook-'));
   try {
     mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'usage-site/public'), { recursive: true });
+    copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
     for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) {
@@ -51,8 +53,8 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     const output = execFileSync(process.execPath, ['--import', './guard.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
     const lines = output.trim().split('\n');
     assert.equal(lines.length, 3);
-    for (const [i, agent] of ['Rook', 'Pip', 'Rowan'].entries()) {
-      assert.ok(lines[i].startsWith(`${agent}: 5h 20% (resets Tue 18:30) · week 10%`));
+    for (const [i, agent] of ['Rook', 'Bishop', 'Knight'].entries()) {
+      assert.ok(lines[i].startsWith(`${agent}: 5h 20% (Resets Tue 18:30) · week 10%`));
       assert.ok(lines[i].endsWith('· ~35% at reset (as of 17:28 IST, 2 min old)'));
     }
     assert.match(lines[1], /10% of 28% cap/);
@@ -63,11 +65,17 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       secondary: { used_percent: 10, window_minutes: 10080, resets_at: Date.parse(resetWeek) / 1000 },
     }));
     writeFileSync(join(repo, 'live.mjs'), `
+      import assert from 'node:assert/strict';
       import child from 'node:child_process';
       import os from 'node:os';
       import { syncBuiltinESMExports } from 'node:module';
       let calls = 0;
-      child.execSync = () => { calls++; return JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: {
+      process.env.CLAUDE_CONFIG_DIR = 'account2-test';
+      child.execSync = (command, { env }) => {
+        assert.equal(env.CLAUDE_CONFIG_DIR, command.includes('claude2.cmd') ? 'account2-test' : undefined);
+        assert.ok(env.PATH === process.env.PATH);
+        assert.equal(process.env.CLAUDE_CONFIG_DIR, 'account2-test');
+        calls++; return JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: {
         five_hour: { utilization: 0.2, resetsAt: ${Date.parse(reset5h) / 1000} },
         seven_day: { utilization: 0.1, resetsAt: ${Date.parse(resetWeek) / 1000} }
       } } }); };
@@ -89,5 +97,16 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     rmSync(usage, { recursive: true });
     const live = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
     assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
+    for (const missingRoot of [false, true]) {
+      if (missingRoot) rmSync(join(repo, '.codex'), { recursive: true });
+      else writeFileSync(join(repo, '.codex', 'sessions', 'reading.jsonl'), '{}\n');
+      const partial = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
+      assert.deepEqual(partial.trim().split('\n'), [...lines.slice(0, 2).map((line) => line.replace(/ \(as of .*\)$/, ' (live)')), 'Knight: no reading (live)']);
+      const limits = readFileSync(join(usage, 'limits.csv'), 'utf8');
+      assert.match(limits, /Rook,role|Rook,Lead/);
+      assert.match(limits, /Pip,Builds/);
+      assert.doesNotMatch(limits, /Rowan,/);
+      assert.deepEqual(readFileSync(join(usage, 'history.csv'), 'utf8').trim().split('\n').slice(-4).map((row) => row.split(',')[1]), ['Rook', 'Rook', 'Pip', 'Pip']);
+    }
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });

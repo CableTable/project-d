@@ -154,10 +154,16 @@ test('a mirrored shape (extrusion -1) has no grips; the cap is 200 selected', ()
   assert.equal(GR.MAX_SELECTED, 200);
 });
 
-test('capGrips: up to MAX_GRIPS are shown, one more and none', () => {
-  const some = (k) => Array.from({ length: k }, (_, i) => ({ id: i }));
-  assert.equal(GR.capGrips(some(GR.MAX_GRIPS)).length, GR.MAX_GRIPS);
-  assert.deepEqual(GR.capGrips(some(GR.MAX_GRIPS + 1)), []);
+test('capGrips: show all handles through 5000, then none, even on one huge polyline', () => {
+  assert.equal(GR.MAX_GRIPS, 5000);
+  const dense = GR.gripsOf(lwpoly(Array.from({ length: 50000 }, (_, i) => [i, i % 2]))).map((g) => ({ e: 0, ...g }));
+  const boundary = dense.slice(0, GR.MAX_GRIPS);
+  assert.equal(GR.capGrips(boundary), boundary, 'exactly 5000 handles remain available');
+  assert.deepEqual(GR.capGrips(dense.slice(0, GR.MAX_GRIPS + 1)), []);
+  assert.deepEqual(GR.capGrips(dense), [], '50000 vertices on one shape have no grips');
+  const many = Array.from({ length: GR.MAX_SELECTED }, (_, e) => dense.slice(0, 26).map((g) => ({ ...g, e }))).flat();
+  assert.deepEqual(GR.capGrips(many), [], 'total handles across 200 shapes also exceed the cap');
+  assert.deepEqual(GR.capGrips([]), []);
 });
 
 console.log(n + ' grips tests passed');
