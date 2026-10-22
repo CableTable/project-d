@@ -705,6 +705,21 @@ export function resizeAbout(raw, sx, sy, ax, ay, space = 0, selection = null) {
   return { entities, blocks: raw.blocks, skipped: {} };
 }
 
+/** Translate selected records; sizes, direction vectors and shared block definitions stay unchanged. */
+export function moveEntities(raw, selection, dx, dy) {
+  if (![dx, dy].every(Number.isFinite)) throw new Error('Move needs finite distances');
+  const record = (type, r, x) => {
+    const pts = SPEC[type]?.pts;
+    if (!pts || type === 'DIMENSION') throw new Error('Cannot move ' + type);
+    return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
+  };
+  return { entities: raw.entities.map((e, i) => {
+    if (!selection.has(i)) return e;
+    const x = e.flip && OCS.has(e.type) ? -dx : dx;
+    return { ...e, r: record(e.type, e.r, x), kids: e.kids?.map((kid) => record(kid.type, kid, x)) };
+  }), blocks: raw.blocks };
+}
+
 // ---------------------------------------------------------------- undo
 
 /**

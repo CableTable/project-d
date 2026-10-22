@@ -12,6 +12,42 @@ const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 const near = (a, b, m, eps = 1e-3) => assert.ok(Math.abs(a - b) <= eps * (1 + Math.abs(b)), `${m || ''} ${a} !~ ${b}`);
 const read = () => R.readPdf(new Uint8Array(fs.readFileSync('fixtures/vector.pdf')), { pdfjs });
 
+test('T32: searchable invisible text is not artwork; visible text and the original stroked A survive', async () => {
+  const bytes = fs.readFileSync('fixtures/pdf-search-text.pdf');
+  const mixed = await R.readPdf(new Uint8Array(bytes), { pdfjs });
+  assert.equal(mixed.paths, 3); assert.equal(mixed.texts, 1);
+  assert.deepEqual(mixed.doc.entities.filter((e) => e.type === 'TEXT').map((e) => e.r.v[e.r.c.indexOf(1)]), ['C']);
+  const hidden = await R.readPdf(new Uint8Array(bytes), { pdfjs, page: 2 });
+  assert.equal(hidden.paths, 3); assert.equal(hidden.texts, 0);
+  assert.ok(hidden.doc.entities.every((e) => e.type === 'LINE'));
+});
+
+test('T32: rendering modes 3 / 7 are invisible, other modes paint; save and form scopes restore text mode', () => {
+  const OPS = pdfjs.OPS, glyph = (unicode) => ({ unicode, width: 600 });
+  const fnArray = [], argsArray = [], text = [];
+  const op = (fn, a = []) => { fnArray.push(fn); argsArray.push(a); };
+  for (let mode = 0; mode <= 7; mode++) {
+    op(OPS.save); op(OPS.setTextRenderingMode, [mode]); op(OPS.showText, [[glyph(String(mode))]]); op(OPS.restore);
+    text.push({ str: String(mode), transform: [10, 0, 0, 10, mode * 10, 0] });
+  }
+  op(OPS.paintFormXObjectBegin, [null]); op(OPS.setTextRenderingMode, [3]); op(OPS.showText, [[glyph('X')]]); op(OPS.paintFormXObjectEnd);
+  op(OPS.showText, [[glyph('Y')]]);
+  text.push({ str: 'X', transform: [10, 0, 0, 10, 80, 0] }, { str: 'Y', transform: [10, 0, 0, 10, 90, 0] });
+  const r = R.pdfToDoc({ ops: { fnArray, argsArray }, text }, OPS);
+  assert.deepEqual(r.doc.entities.map((e) => e.r.v[e.r.c.indexOf(1)]), ['0', '1', '2', '4', '5', '6', 'Y']);
+});
+
+test('T32: a combined text item splits around invisible glyphs, keeping advances, kerning and rotation', () => {
+  const OPS = pdfjs.OPS, glyph = (unicode, width) => ({ unicode, width });
+  const ops = { fnArray: [OPS.showText, OPS.setTextRenderingMode, OPS.showText, OPS.setTextRenderingMode, OPS.showText],
+    argsArray: [[[glyph('W', 900), -100]], [3], [[glyph('X', 700)]], [0], [[glyph('I', 300)]]] };
+  const { doc } = R.pdfToDoc({ ops, text: [{ str: 'WXI', width: 20, transform: [0, 10, -10, 0, 5, 8] }] }, OPS);
+  const [w, i] = doc.entities, f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  assert.deepEqual(doc.entities.map((e) => e.r.v[e.r.c.indexOf(1)]), ['W', 'I']);
+  near(f(w, 10), 5 * R.PT); near(f(w, 20), 8 * R.PT);
+  near(f(i, 10), 5 * R.PT); near(f(i, 20), (8 + 17) * R.PT); near(f(i, 50), 90);
+});
+
 test('a Bézier quarter circle is an ARC; a wavy one is not', () => {
   const K = 0.5522847498, r = 10;
   const a = R.bezierArc([r, 0], [r, K * r], [K * r, r], [0, r]);

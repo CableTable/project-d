@@ -4110,6 +4110,91 @@ try {
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+  await step('TODO 115 / T32: PDF invisible search text stays out; visible text becomes outlines once, with one Undo', async () => {
+    await closeTabs(/./);
+    await menuItem('File', 'Open…');
+    await t('picker').setInputFiles({ name: 'search-text.pdf', mimeType: 'application/pdf', buffer: readFileSync('fixtures/pdf-search-text.pdf') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'search-text.dxf');
+    const before = await savedDoc();
+    assert.deepEqual(before.entities.map((e) => e.type), ['LINE', 'LINE', 'LINE', 'TEXT']);
+    assert.equal(before.entities[3].r.v[before.entities[3].r.c.indexOf(1)], 'C', 'invisible searchable A is not imported over its strokes');
+    await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    await page.waitForFunction(() => /1 text →/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    const outlined = await savedDoc();
+    assert.deepEqual(outlined.entities.slice(0, 3), before.entities.slice(0, 3), 'original letter strokes stay once');
+    assert.ok(outlined.entities.slice(3).length > 0 && outlined.entities.slice(3).every((e) => e.type === 'LWPOLYLINE'), 'visible text is replaced by curves');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s17-115-outlines-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    await menuItem('Modify', 'Text to outlines');
+    assert.deepEqual((await savedDoc()).entities, outlined.entities, 'running again adds no second copy');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the visible text and the original strokes');
+    await closeTabs(/search-text/);
+  });
+  await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
+    await closeTabs(/./);
+    const empty = await t('canvas').boundingBox(), errorCount = errors.length;
+    await page.mouse.move(empty.x + 100, empty.y + 100); await page.mouse.down();
+    await page.mouse.move(empty.x + 140, empty.y + 140, { steps: 5 }); await page.mouse.up();
+    assert.equal(errors.length, errorCount, 'an untouched empty drawing has no selection set to drag');
+    const pdf = new Page(100, 80);
+    pdf.moveTo(20, 20); pdf.lineTo(30, 50); pdf.lineTo(40, 20); pdf.stroke();
+    pdf.moveTo(25, 30); pdf.lineTo(35, 30); pdf.stroke();
+    pdf.text([8, 0, 0, 8, 60, 30], 'A');
+    await menuItem('File', 'Open…');
+    await t('picker').setInputFiles({ name: 'drag-letter.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([pdf])) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drag-letter.dxf');
+    await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+    assert.match(await t('obj-filter-locked').textContent(), /Locked 0/, 'PDF imports open unlocked');
+    assert.equal(await t('bg-name').textContent(), '', 'File Open creates drawing entities without a background picture');
+    await page.getByRole('tab', { name: 'Drawing', exact: true }).click();
+    if (await t('tog-snap').getAttribute('aria-pressed') === 'true') await t('tog-snap').click();
+    const before = await savedDoc();
+    const boxA = await at(18, 18), boxB = await at(42, 52);
+    await page.mouse.move(boxA.x, boxA.y); await page.mouse.down();
+    await page.mouse.move(boxB.x, boxB.y, { steps: 5 }); await page.mouse.up();
+    await waitSel('3 selected');
+    const start = await at(22.5, 27.5), end = await at(32.5, 32.5);
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
+    const moved = await savedDoc();
+    assert.ok(Math.abs(fieldOf(moved.entities[0], 10) - fieldOf(before.entities[0], 10) - 10) < .05, 'selected A moves');
+    assert.ok(Math.abs(fieldOf(moved.entities[0], 20) - fieldOf(before.entities[0], 20) - 5) < .05);
+    assert.deepEqual(moved.entities[3], before.entities[3], 'unselected text stays');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one undo restores the whole A');
+    // A single imported TEXT also moves by its body, away from its resize handles.
+    await click(63, 32); await waitSel('1 selected');
+    const textStart = await at(63, 32), textEnd = await at(73, 37);
+    await page.mouse.move(textStart.x, textStart.y); await page.mouse.down();
+    await page.mouse.move(textEnd.x, textEnd.y, { steps: 5 }); await page.mouse.up();
+    const textMoved = await savedDoc();
+    assert.ok(Math.abs(fieldOf(textMoved.entities[3], 10) - fieldOf(before.entities[3], 10) - 10) < .05);
+    const cancelStart = await at(73, 37), cancelEnd = await at(83, 42);
+    await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
+    await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 }); await page.keyboard.press('Escape'); await page.mouse.up();
+    assert.deepEqual((await savedDoc()).entities, textMoved.entities, 'Escape cancels');
+    await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
+    await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 });
+    await page.locator('.canvas').dispatchEvent('pointercancel'); await page.mouse.up();
+    assert.deepEqual((await savedDoc()).entities, textMoved.entities, 'pointer cancellation keeps the drawing');
+    await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
+    await page.keyboard.down('Shift'); await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 }); await page.mouse.up(); await page.keyboard.up('Shift');
+    const straight = await savedDoc();
+    assert.ok(Math.abs(fieldOf(straight.entities[3], 10) - fieldOf(textMoved.entities[3], 10) - 10) < .05);
+    assert.equal(fieldOf(straight.entities[3], 20), fieldOf(textMoved.entities[3], 20), 'Shift constrains the move');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await page.screenshot({ path: `${shotDir}/s17-120-moved-A-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
+    await closeTabs(/drag-letter/);
+  });
   const histLabels = async () => {
     await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
     const rows = await page.locator('[data-testid=hist-row] > span:last-child').allTextContents();

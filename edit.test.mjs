@@ -13,6 +13,26 @@ const near = (a, b, m, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * (1 + Ma
 const types = (raw, list) => list.map((i) => raw.entities[i].type);
 const asc = (a) => [...a].sort((x, y) => x - y);
 
+test('move selection translates PDF geometry and text without changing sizes, vectors or other entities', () => {
+  const raw = W.newDoc(4);
+  W.addEntities(raw, [W.line(1, 2, 3, 4), W.arc(5, 6, 2, 10, 80), W.lwpoly([[1, 2], [3, 4]], { closed: true }),
+    W.text(10, 20, 5, 'A'), W.ellipse(5, 6, 3, 4, .5), W.circle(30, 40, 10)]);
+  const before = structuredClone(raw), selected = new Set([0, 1, 2, 3, 4]);
+  const next = E.moveEntities(raw, selected, 7, -3), f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  for (const i of selected) {
+    near(f(next.entities[i], 10), f(raw.entities[i], 10) + 7);
+    near(f(next.entities[i], 20), f(raw.entities[i], 20) - 3);
+  }
+  near(f(next.entities[0], 11), 10); near(f(next.entities[0], 21), 1);
+  near(f(next.entities[1], 40), 2); near(f(next.entities[1], 50), 10);
+  near(f(next.entities[3], 40), 5);
+  near(f(next.entities[4], 11), 3); near(f(next.entities[4], 21), 4, 'ellipse axis stays a vector');
+  assert.equal(next.entities[5], raw.entities[5]); assert.equal(next.blocks, raw.blocks);
+  assert.deepEqual(raw, before, 'the undo snapshot is unchanged');
+  assert.throws(() => E.moveEntities(raw, selected, NaN, 0), /finite/);
+  assert.throws(() => E.moveEntities({ ...raw, entities: [W.entity('HATCH', [])] }, new Set([0]), 1, 2), /Cannot move/);
+});
+
 test('flatten tells each item its entity (a block\'s contents: the INSERT)', () => {
   const { raw, fl } = load('outline.dxf');
   const ins = raw.entities.findIndex((e) => e.type === 'INSERT');

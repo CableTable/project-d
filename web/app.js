@@ -540,6 +540,7 @@ const curDoc = () => state.docs[state.doc];
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  state.entityDrag = null;
   state.sel = -1;                         // the layout selection belongs to the tab it was made on (the setter clears the picks; clampSel picks part 0)
   state.gapSel = null; gapSig = ''; hideMenu();
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
@@ -830,7 +831,7 @@ function setTool(id) {
   if (id === 'contour' && !editable()) { note('Contour works on a drawing tab: open a drawing and pick a closed outline'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
-  state.text.drag = null; state.grip = null; state.txoWait = false; trackClear();
+  state.text.drag = null; state.grip = null; state.entityDrag = null; state.txoWait = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
   if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab'); return; }
@@ -3280,9 +3281,11 @@ function hidIdx(d) {
 /** Entities not painted: the one a grip is dragging (the overlay draws it) and the ones hidden one by one in the Objects tab. */
 function hideNow(d) {
   const drag = d && state.grip && state.grip.d === d && state.grip.next ? state.grip.e : null;
-  if (!d || (drag == null && !(d.hid && d.hid.size))) return null;
+  const move = state.entityDrag;
+  if (!d || (drag == null && !move?.items && !(d.hid && d.hid.size))) return null;
   const out = new Set(hidIdx(d) || []);
   if (drag != null) out.add(drag);
+  if (move?.d === d && move.items) for (const e of move.sel) out.add(e);
   return out;
 }
 // the drawing canvas repaints once per frame, however often the view changes
@@ -3317,12 +3320,13 @@ function paintOverlay() {
     const L2 = state.setlen || state.meas || state.dim || state.ldr;
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
     paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
-      bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+      bg: d && d.bg, hl: d ? (state.entityDrag?.items ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
+    if (state.entityDrag?.items) paintDrawing(c, { ...base, keep: true, fl: state.entityDrag.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
   });
 }
 
@@ -3383,6 +3387,9 @@ function attachCanvasEvents() {
       if (d && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
+        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p)) && !e.shiftKey) {
+          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p };
+        }
         capture(c, e);
       }
       if (curLay() && (state.tool === 'select' || state.tool === 'step')) {
@@ -3412,6 +3419,9 @@ function attachCanvasEvents() {
     const picking = (modLive() && !(state.mod.kind === 'mirror' && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
     if (drag && !picking && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
     if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
+    else if (drag?.moved && drag.move) {
+      if (state.entityDrag === drag.move) moveSelectionTo(drag.move, e);
+    }
     else if (drag && drag.moved && !picking) showRubber(drag, e);
     const act = state.setlen || (state.tool === 'measure' ? state.meas : null);
     if (d && act && act.pts.length < 2) { act.hover = pickPoint(d, toDrawing(d, e.clientX, e.clientY), act.pts, e.shiftKey, true); paintOverlay(); }
@@ -3444,16 +3454,28 @@ function attachCanvasEvents() {
       else if (modLive()) modUp(d, was, p, e.shiftKey);
       else if (state.match && editable() === d) { if (!was.moved) matchClick(d, was.p); }
       else if (was.dim && was.moved) dimDragEnd(d, was.dim);
+      else if (was.move && was.moved) {
+        if (state.entityDrag === was.move) {
+          const ready = moveSelectionTo(was.move, e);
+          const g = was.move; state.entityDrag = null;
+          if (ready && g.items && (g.dx || g.dy) && g.raw === d.raw.entities) {
+            commit(d, Ed.moveEntities(d.raw, g.sel, g.dx, g.dy), 'Move selection'); setSel(d, g.sel);
+            note('Selection moved. Ctrl+Z takes it back');
+          }
+          paintOverlay();
+        }
+      }
       else if (!editable()) { /* a layout tab: its placed parts are picked by the page itself (data-i) */ }
       else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift);
       else clickSelect(d, was.p, e.shiftKey || was.shift);
     }
     end();
+    state.entityDrag = null;
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen) pickGap(gh.dataset.gap); });
   c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
-  c.addEventListener('pointercancel', () => { if (state.grip && !state.grip.hot) gripCancel(); state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
+  c.addEventListener('pointercancel', () => { if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
@@ -3839,6 +3861,19 @@ function setSel(d, sel) {
   for (const e of sel) for (const i of ed.byEnt[e] || []) d.hl.push(ed.items[i]);
   paintOverlay(); renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
+}
+
+function moveSelectionTo(g, e) {
+  if (g.d !== editable() || g.raw !== g.d.raw.entities || [...g.sel].some((i) => lockedEnt(g.d, i))) { state.entityDrag = null; return false; }
+  const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
+  g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
+  g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
+  try {
+    const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.d.raw.entities[i]) };
+    g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), g.dx, g.dy) });
+    g.items = g.preview.items;
+    view.fitted = false; paintOverlay(); return true;
+  } catch (err) { state.entityDrag = null; note(err.message); paintOverlay(); return false; }
 }
 
 /** A click: the edge under it with everything joined to it end to end; Shift adds it or, if it is in already, takes it out. */
@@ -5600,6 +5635,7 @@ function editKey(e) {
     else if (curLay() && multiSel() && !state.setlen) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.match) endMatch();
+    else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.grip) { gripCancel(); note('Stretch cancelled'); }
