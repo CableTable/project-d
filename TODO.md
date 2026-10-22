@@ -195,6 +195,24 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 98. ✅ (built, session 15) **Usage page "Refresh failed" dumps a stack trace** (S, bug, T17): one short failure / limit-reached line, last good numbers retained, full diagnostics only in the agent's local log; Rook probe retries once.
 99. **Fix round for 92 / 88 (session 15 review)** (S, next session first): (a) Medium: web/edit.js ~291 drops gaps on layers whose names hold "text", "dim" or "arrow" (e.g. "Text-cut", "DIM-OUTLINE"; Text to outlines keeps the text layer), so real cut outlines lose Tiny gaps / Join / the Preflight gap check. Drop the layer pattern, keep the entity-type check, add a test. (b) Low: web/cmdui.js ~127 error lines fade after 3 s like the rest; keep 9 s for errors.
 100. ✅ (built, session 15) **Usage page: token chart as cumulative lines** (S, his pick 2026-10-21): replace the grouped daily bars with one running-total line per agent (Rook, Bishop, Knight) over the 14 IST days, dd-mmm labels, legend, end value labelled; same token definition (cache reads excluded).
+101. **Edit the footnote / title block text that prints on the PDF** (S–M, ask, T18): see T18 in support/tickets.md. Grill first.
+102. **PDF save: start in the drawing's own folder, like Save As** (S, ask, T19): see T19 in support/tickets.md. Grill first.
+103. **Allow much more zoom (now max 40 px per mm)** (S, ask, T20): see T20 in support/tickets.md. Grill first.
+104. **Join gaps leaves ~half the gaps: micro-arcs shorter than the tolerance block it** (M, bug, T21): see T21 in support/tickets.md. Grill first.
+105. **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md. Grill first.
+106. **Build dynamic input (TODO 69) now, for every drawing tool** (L, ask, T23): see T23 in support/tickets.md. Grill first.
+107. **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): see T24 in support/tickets.md. Grill first.
+108. **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
+109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
+110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
+111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
+112. **Compare, manual mode: no snapping** (S, bug, T29): see T29 in support/tickets.md. Grill first.
+113. **Compare runs constantly: make it a toggle or a run-once button** (S, bug, T30): see T30 in support/tickets.md. Grill first.
+114. **Compare: choose which drawings, more than two, from Parts library or drawing tabs** (M, ask, T31): see T31 in support/tickets.md. Grill first.
+115. **Text in the YEB Sport drawing is converted to both curves and text** (M, bug, T32): see T32 in support/tickets.md. Grill first.
+116. **Open a Parts library part in a drawing tab** (S, ask, T33): see T33 in support/tickets.md. Grill first.
+117. **Delete sheets, and why a sheet change warns that edits will be gone** (S, ask, T34): see T34 in support/tickets.md. Grill first.
+118. **Alt+W closes the tab, Ctrl+Tab cycles tabs** (S, ask, T35): see T35 in support/tickets.md. Grill first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

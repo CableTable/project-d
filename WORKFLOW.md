@@ -13,8 +13,8 @@ briefs, reading short reports and merging.
 |---|---|---|---|
 | Lead | main account (this session) | Opus | Plans, picks TODO items, writes briefs, reads reports (never whole diffs, logs or files), publishes mock-ups, merges. |
 | Lookup | claude2 | Haiku | Reading TODO / code / logs / CI, quick questions. Replies in a few lines. |
-| Builder (**Knight**, default) | Codex CLI (his ChatGPT Go plan) | gpt-6.1-sol, high | **Default builder** (his call, 2026-10-20, after the 57 / 61 comparison): features and fixes, code, tests, commit. Rook pushes (no git credentials in its sandbox). |
-| Builder (Bishop) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark), and builds when Knight is out of limit or a second build runs at once: code, tests, commit, push. |
+| Builder (**Knight**) | Codex CLI (his ChatGPT Go plan) | gpt-6.1-sol, high | Builder when its weekly usage is lower than Bishop's (his call, 2026-10-22; no default builder): features and fixes, code, tests, commit. Rook pushes (no git credentials in its sandbox). |
+| Builder (Bishop) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark), and builds when its weekly usage is lower than Knight's, or a second build runs at once: code, tests, commit, push. |
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
 | PC tester | claude2 | Sonnet, high | Downloads the released exe and drives it (WebView2 debug port + Playwright), reports what broke. |
 | Fallback | claude2 | Opus, high | Only when Sonnet has failed at a build. |
@@ -52,10 +52,11 @@ or a tool fails silently, the fix round also adds ONE small check for exactly th
 test), and HISTORY.md names it. No big hook collections. First one: the PS 5.1 quote-stripping bug in
 usage-agent-install.ps1.
 **From Matt Pocock's workflow** (his picks 2026-10-20; plugin `mattpocock-skills@mattpocock` v1.3.1 on both accounts):
-1. **Grill before building, always on** (his call 2026-10-20): before every M / L item, and any plan or design he brings,
+1. **Grill before building, always on** (his call 2026-10-20; every size since 2026-10-22): before every TODO item and
+   ticket (S, M or L), and any plan or design he brings,
    Rook runs `grill-with-docs` the way it is built: the Skill tool for `grilling` (rounds of numbered questions, each with
    Rook's recommended answer, `---` between them, until every choice is settled) and for `domain-modeling` (terms go
-   into GLOSSARY.md; decisions go into DECISIONS.md rows, our ADRs). S items skip it. (grill-me / grill-with-docs are
+   into GLOSSARY.md; decisions go into DECISIONS.md rows, our ADRs). S items too: a short round is fine. Bishop-support grills before adding a ticket. (grill-me / grill-with-docs are
    user-only commands, so Rook calls the two skills they wrap; he can still type /grill-me or /grill-with-docs.)
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
@@ -74,8 +75,9 @@ by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. Fro
 after the reset, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
 **Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
 (`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
-wait for a reset, or pause the session. **Bishop first** (his call, 2026-10-21): while Bishop is under today's 14% cap, a build
-or fix round goes to Bishop-build; Knight takes it only when Bishop is at its cap or already busy.
+wait for a reset, or pause the session. **Lower weekly usage builds** (his call, 2026-10-22): a build or fix
+round goes to whichever of Bishop-build and Knight has used less of its weekly limit; the other takes it when that one is
+at its cap (Bishop: today's 14%) or already busy.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
 
@@ -122,17 +124,22 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # Profiles (2026-10-20, Codex docs review, mockups/_design/codex-workflow.md): ~/.codex/researcher.config.toml
 # (gpt-6-luna, read-only, live web search) and ~/.codex/builder.config.toml (gpt-6.1-sol, high, workspace-write,
 # network on). The repo's AGENTS.md carries the build rules Codex reads on every run, so briefs skip them.
-# Knight-build (default builder, 2026-10-20): its own clone ProjectD-rowan, git folder ProjectD-rowan-git (Codex blocks any
+# Knight-build (2026-10-20): its own clone ProjectD-rowan, git folder ProjectD-rowan-git (Codex blocks any
 # folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
-# Before a build: git -C ../ProjectD-rowan fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
+# Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
 # If package-lock.json changed since its last build, Rook runs `npm.cmd ci` in ProjectD-rowan first (its sandbox cannot
 # install: EPERM on the npm cache; session 12 lost a Knight round to a missing imagetracerjs).
 # If Codex blocks Knight's commit, Rook commits in ProjectD-rowan itself. Knight's TODO / DECISIONS / HISTORY edits
 # conflict on cherry-pick into the repo: keep both sides.
+# Side folders (2026-10-22): Knight's clones, their -git folders and the runs<N> log folders live in
+# "E:/Project B/Claude/Project D extras/". Moving a clone: rewrite its hidden .git file and `core.worktree` in its -git.
+# Parallel Knight builds (2026-10-21): extra clones ProjectD-knight2 (+ -git) and ProjectD-knight3 (+ -git), set up the
+# same way. One branch per clone; cherry-pick each into the repo; TODO / DECISIONS conflicts: keep both sides, then drop
+# duplicate TODO rows. Knight runs ponytail "full" too (%APPDATA%\ponytail\config.json), like every builder.
 # Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
-codex.cmd exec -p builder -C "E:/Project B/Claude/ProjectD-rowan" \
-  --add-dir "E:/Project B/Claude/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \
+codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowan" \
+  --add-dir "E:/Project B/Claude/Project D extras/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \
   -o r.txt - < brief.txt > r.log 2>&1
 # Cut off by the 5-hour limit: after the reset, `codex.cmd exec resume <session id> -` (id from r.log) with
 # "continue: check git status and the diff, rerun the tests, finish". Fresh runs stay the rule for new work and fixes.
@@ -222,7 +229,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - **Reviews:** every Knight build still gets a Bishop-review (headless, own throwaway worktree) launched by Bishop-lead.
 - **Merging:** Bishop-lead merges on green with his OK, same rule as Rook:
   `gh pr merge <n> --merge --match-head-commit <sha>`. Builders and reviewers still never merge.
-- **Small items only:** Bishop-lead takes only S TODO items and tickets (one Knight build each, no grilling). M / L items and
+- **Small items only:** Bishop-lead takes only S TODO items and tickets (one Knight build each, grilled first like every item). M / L items and
   plans wait for Rook; if only M / L items are left, Bishop-lead says so and pauses.
 - **Bishop's budget:** 20% of the weekly limit per day while the mode is on (14% otherwise).
 - **Rook:** only small things: reviewing S items, one-line answers, a CI check. No plans, no builds, no M/L reviews.

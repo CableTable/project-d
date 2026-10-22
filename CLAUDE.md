@@ -103,8 +103,9 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   (`claude2`): Bishop-build (Sonnet high, a FRESH session per build or fix round, capped with
   `--max-budget-usd`), Bishop-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
   build gets one), Bishop-look (Haiku), Bishop-test (the exe on his PC). **Knight** (Codex, his ChatGPT Go
-  plan) is the **default builder** (his call, 2026-10-20; it commits, Rook pushes) and does web research, never
-  reviews; Bishop-build takes mock-ups, screenshots and overflow builds. **Pawn** (Antigravity) only quick lookups.
+  plan) builds (it commits, Rook pushes) and does web research, never reviews. **No default builder** (his call,
+  2026-10-22): each build goes to whichever of Knight and Bishop-build has the lower weekly usage; Bishop also takes
+  mock-ups and screenshots. **Pawn** (Antigravity) only quick lookups.
   Bishop never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
   **Bishop's budget:** at most 14% of its weekly limit per day (above only with his OK). No usage report after a merge: the band and the usage page show it (his call, 2026-10-21).
   A new worktree folder needs trusting once on account 2.
