@@ -14,8 +14,8 @@ import * as CL from './cleanup.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
-import { paintDrawing, ink, FONT_FAMILY } from './render.js';
-import { flatten, unionBox, CAP, ACI } from './drawing.js';
+import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
+import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc } from './dxf-write.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
@@ -4780,7 +4780,7 @@ function drawOvl() {
   if (!ui.ovl) return;
   const d = curDoc(), H = state.sheetH, out = [];
   let tip = null;
-  if (d && d.cmp && d.cmp.show && !d.cmp.moving && d.cmp.res) cmpGlow(d.cmp, out);
+  if (d && d.cmp && d.cmp.show && !d.cmp.moving && d.cmp.res && !d.cmp.stale) cmpGlow(d.cmp, out);
   if (d && !d.lay && drawLive()) {
     const pv = DR.toolPreview(state.draw);
     for (const g of pv.guides) out.push(s('path', { class: 'dr-guide', d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
@@ -6420,10 +6420,13 @@ function cmpBox(d) {
   return c ? unionBox(c.a && c.a.box, c.b && c.b.box && [c.b.box[0] + c.off[0], c.b.box[1] + c.off[1], c.b.box[2] + c.off[0], c.b.box[3] + c.off[1]]) : null;
 }
 function cmpCalc(c) {
-  c.off = cmpOff(c); c.sel = 0;
+  c.off = cmpOff(c); c.sel = 0; c.stale = false;
   c.res = c.a && c.b ? C.compare(c.a.polys, c.b.polys, c.tol, { offsetB: c.off }) : null;
 }
-function cmpRun(d, refit = false) { cmpCalc(d.cmp); update(refit && view.fitted); }
+/** The Compare button (TODO 113): the only place the comparison is worked out. */
+function cmpRun(d) { cmpCalc(d.cmp); update(); }
+/** Drawing 2 moved, or the tolerance changed: the result on show is out of date until the button is pressed again. */
+function cmpMoved(d, refit = false) { const c = d.cmp; c.off = cmpOff(c); if (c.res) c.stale = true; update(refit && view.fitted); }
 
 /** File → Compare two drawings…: the Compare tab (the one already open, else a new one with the open drawing tabs as drawing 1 and 2). */
 function cmpStart() {
@@ -6431,8 +6434,8 @@ function cmpStart() {
   if (have >= 0) { state.doc = have; showDoc(); return; }
   const tabs = state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box), cur = curDoc(), first = tabs.includes(cur) ? cur : tabs[0], second = tabs.find((x) => x !== first);
   const side = (x) => (x ? cmpSide(x.name, x.fl, x.factor, x.off) : null);
-  const c = { a: side(first), b: side(second), ca: 'red', cb: 'blue', mode: 'bl', manual: [0, 0], tol: C.DEFAULT_TOL, show: true, res: null, off: [0, 0], sel: 0 };
-  cmpCalc(c);
+  const c = { a: side(first), b: side(second), ca: 'red', cb: 'blue', mode: 'bl', manual: [0, 0], tol: C.DEFAULT_TOL, show: true, res: null, stale: false, off: [0, 0], sel: 0 };
+  c.off = cmpOff(c);
   addTab({ name: 'Compare', path: null, dirty: false, cmp: c });
   note(c.b ? 'Compare: the first two open drawings. Open… picks others' : 'Compare: open two drawings with Open…');
 }
@@ -6454,8 +6457,8 @@ async function cmpLoad(i, name, buf) {
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
   const side = cmpSide(name, r.result, unitFactor(r.result.units), startHidden(r.result));
   if (!side.polys.length) { note(name + ': no outlines to compare (lines, arcs, circles and polylines)'); return; }
-  d.cmp[i] = side;
-  cmpRun(d, true);
+  d.cmp[i] = side; d.cmp.res = null;
+  cmpMoved(d, true);
   note(`Drawing ${i === 'a' ? 1 : 2}: ${name}`);
 }
 
@@ -6473,7 +6476,7 @@ function buildCompareSection() {
   ui.cmpModes = [['bl', 'Bottom-left'], ['centre', 'Centres'], ['manual', 'Manual']].map(([m, text]) => h('button', { class: 'seg', type: 'button', 'data-m': m, 'data-testid': 'cmp-lineup-' + m, onclick: () => {
     const d = cmpDoc(), c = d.cmp;
     if (m === 'manual' && c.mode !== 'manual') c.manual = [...c.off];          // by hand starts where the last Line up put it
-    c.mode = m; cmpRun(d);
+    c.mode = m; cmpMoved(d);
   } }, text));
   ui.cmpHint = h('div', { class: 'lbl', 'data-testid': 'cmp-hint' });
   ui.cmpTol = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'aria-label': 'Tolerance, mm', 'data-testid': 'cmp-tol' });
@@ -6481,16 +6484,19 @@ function buildCompareSection() {
   ui.cmpTol.addEventListener('change', () => {
     const d = cmpDoc(), v = PL.parseMm(ui.cmpTol.value);
     if (v == null || v <= 0 || v > C.MAX_TOL) { note(`Tolerance: a number above 0 and up to ${C.MAX_TOL} mm`); ui.cmpTol.value = String(d.cmp.tol); return; }
-    d.cmp.tol = v; cmpRun(d);
+    d.cmp.tol = v; cmpMoved(d);
   });
   ui.cmpShow = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'aria-label': 'Show differences', 'data-testid': 'cmp-show', onchange: (e) => { cmpDoc().cmp.show = e.target.checked; paintOverlay(); } });
   ui.cmpCount = h('span', { class: 'chip', 'data-testid': 'cmp-count' });
+  ui.cmpRunBtn = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'cmp-run', onclick: () => cmpRun(cmpDoc()) }, 'Compare');
+  ui.cmpStale = h('div', { class: 'lbl cmpstale', role: 'status', 'data-testid': 'cmp-stale', hidden: true }, 'Out of date - press Compare again');
   ui.cmpList = h('div', { class: 'gaplist', 'data-testid': 'cmp-list' });
   ui.cmpSec = h('section', { class: 'propbox cmpbox', hidden: true, 'data-testid': 'compare-panel' },
     h('h2', { class: 'sec' }, 'Compare'), ...side(1, 'a'), ...side(2, 'b'),
     h('div', { class: 'lbl' }, 'Line up'), h('div', { class: 'mode', role: 'group', 'aria-label': 'Line up' }, ui.cmpModes), ui.cmpHint,
     h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Tolerance'), ui.cmpTol, h('span', { class: 'lbl' }, 'mm')),
     h('label', { class: 'row swrow' }, h('span', null, 'Show differences'), ui.cmpShow),
+    ui.cmpRunBtn, ui.cmpStale,
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Differences'), ui.cmpCount), ui.cmpList, ui.cmpPicker);
   return ui.cmpSec;
 }
@@ -6510,7 +6516,8 @@ function renderCompare() {
   if (document.activeElement !== ui.cmpTol) ui.cmpTol.value = String(c.tol);
   ui.cmpShow.checked = c.show;
   const diffs = c.res ? c.res.diffs : [];
-  ui.cmpCount.textContent = !c.res ? 'Choose two drawings' : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
+  ui.cmpRunBtn.disabled = !(c.a && c.b); ui.cmpStale.hidden = !c.stale; ui.cmpList.classList.toggle('stale', !!c.stale);
+  ui.cmpCount.textContent = !c.res ? (c.a && c.b ? 'Press Compare' : 'Choose two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
   if (ui.cmpListRes !== c.res) {
     ui.cmpListRes = c.res;
     ui.cmpList.replaceChildren(...diffs.map((x) => h('button', { class: 'gaprow cmprow', type: 'button', 'data-n': x.n, 'data-testid': 'cmp-diff', title: 'Zoom to this difference', onclick: () => cmpZoom(d, x) },
@@ -6529,6 +6536,7 @@ function zoomToBox(b, pad) {
   applyView();
 }
 function cmpZoom(d, x) {
+  if (d.cmp.stale) { note('Out of date - press Compare again'); return; }
   d.cmp.sel = x.n;
   update();
   zoomToBox(x.box, Math.max(20, x.box[2] - x.box[0], x.box[3] - x.box[1]));
@@ -6558,8 +6566,9 @@ function cmpDown(e) {
   if (!c || c.mode !== 'manual' || !c.b) return false;
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...c.off];
   c.moving = true;
-  const move = (ev) => { const p = sheetAt(ev.clientX, ev.clientY); c.manual = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]]; c.off = cmpOff(c); paintOverlay(); };
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; cmpRun(d); };
+  let moved = false;
+  const move = (ev) => { const p = sheetAt(ev.clientX, ev.clientY); moved = true; c.manual = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]]; c.off = cmpOff(c); paintOverlay(); };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; if (moved) cmpMoved(d); else update(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   return true;
 }
@@ -6569,14 +6578,14 @@ function cmpKey(e, mod) {
   if (!c || c.mode !== 'manual' || !c.b || !dir || mod || e.altKey) return false;
   e.preventDefault();
   c.manual = [PL.r6(c.off[0] + dir[0] * state.nudge), PL.r6(c.off[1] + dir[1] * state.nudge)];
-  cmpRun(d);
+  cmpMoved(d);
   note(`Drawing 2 nudged ${state.nudge} mm`);
   return true;
 }
 function cmpCommand(c) {
   const n = c.res ? c.res.diffs.length : 0, nm = (sd, col) => (sd ? sd.name : '(none)') + ` (${C.COLOURS.find((k) => k.id === col).label.toLowerCase()})`;
-  ui.hist.textContent = `Command: COMPARE   ${nm(c.a, c.ca)} vs ${nm(c.b, c.cb)} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}` : 'choose two drawings');
-  ui.prompt.textContent = state.msg ? state.msg : n ? `Zoom to a difference: click it in the panel (1-${n}):` : 'Line up, Tolerance and Show differences are in the panel:';
+  ui.hist.textContent = `Command: COMPARE   ${nm(c.a, c.ca)} vs ${nm(c.b, c.cb)} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : c.a && c.b ? 'press Compare' : 'choose two drawings');
+  ui.prompt.textContent = state.msg ? state.msg : c.stale ? 'Out of date - press Compare again:' : n ? `Zoom to a difference: click it in the panel (1-${n}):` : 'Line up, Tolerance and Show differences are in the panel:';
 }
 
 async function init() {

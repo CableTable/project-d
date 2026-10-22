@@ -5440,7 +5440,11 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
     assert.equal(await t('cmp-name-1').textContent(), 'plate-b.dxf');
     assert.equal(await t('cmp-name-2').textContent(), 'plate-c.dxf');
-    assert.equal(await cmpCount(), '1 difference');
+    assert.equal(await cmpCount(), 'Press Compare', 'nothing is worked out until the button is pressed');
+    assert.equal(await t('cmp-glow').count(), 0);
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
+    assert.equal(await t('cmp-stale').isVisible(), false);
     assert.equal(await t('cmp-glow').count(), 1);
     assert.match(await t('cmp-diff').textContent(), /0\.[56]\d mm/);
     assert.match(await t('cmd-hist').textContent(), /COMPARE.*plate-b\.dxf \(red\) vs plate-c\.dxf \(blue\).*tolerance 0\.1 mm.*1 difference/);
@@ -5450,11 +5454,13 @@ try {
 
   await step('Compare: tolerance is editable (bad values refused), Show differences hides the glow, a click on a difference zooms to it', async () => {
     await t('cmp-tol').fill('1'); await t('cmp-tol').press('Enter');
+    await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === 'No differences');
     await t('cmp-tol').fill('abc'); await t('cmp-tol').press('Enter');
     assert.match(await prompt(), /Tolerance: a number above 0/);
     assert.equal(await t('cmp-tol').inputValue(), '1');
     await t('cmp-tol').fill('0.1'); await t('cmp-tol').press('Enter');
+    await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
     await t('cmp-show').uncheck();
     await page.waitForFunction(() => !document.querySelector('[data-testid=cmp-glow]'));
@@ -5475,17 +5481,43 @@ try {
     await t('cmp-lineup-manual').click();
     await page.keyboard.press('ArrowRight');
     await page.waitForFunction(() => /X 1\.00,/.test(document.querySelector('[data-testid=cmp-hint]').textContent));
-    assert.notEqual(await cmpCount(), '1 difference', 'a 1 mm shift is more than the tolerance everywhere');
+    assert.equal(await t('cmp-stale').isVisible(), true, 'a move marks the result out of date');
+    assert.equal(await cmpCount(), '1 difference', 'the old result stays until Compare is pressed again');
+    assert.equal(await t('cmp-glow').count(), 0, 'the old glow is hidden: it no longer sits on the drawing');
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent !== '1 difference');
+    assert.equal(await t('cmp-stale').isVisible(), false, 'pressing Compare clears the mark');
+    // idle: no repeating work (no animation frames) while a Compare result is on show
+    const frames = await page.evaluate(() => new Promise((res) => { let n = 0; const raf = window.requestAnimationFrame; window.requestAnimationFrame = (f) => { n++; return raf(f); }; setTimeout(() => { window.requestAnimationFrame = raf; res(n); }, 1000); }));
+    assert.equal(frames, 0, 'Compare is idle until something changes');
     const b = await t('canvas').boundingBox();
     await page.mouse.move(b.x + 400, b.y + 300); await page.mouse.down(); await page.mouse.move(b.x + 450, b.y + 300, { steps: 4 }); await page.mouse.up();
     await page.waitForFunction(() => !/X 1\.00,/.test(document.querySelector('[data-testid=cmp-hint]').textContent));
     assert.ok((await cmpOffX()) > 1, 'dragged right');
+    assert.equal(await t('cmp-stale').isVisible(), true, 'a drag marks the result out of date');
     await t('cmp-lineup-bl').click();
     assert.equal(await cmpOffX(), 0);
     const [fc] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-open-2').click()]);
     await fc.setFiles(plateDxf('plate-d.dxf', 31));
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-name-2]').textContent === 'plate-d.dxf');
-    assert.equal(await cmpCount(), '1 difference');
+    assert.equal(await cmpCount(), 'Press Compare', 'a new drawing has no result yet');
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
+  });
+
+  await step('Compare: run once, move, "out of date" mark, run again, mark gone (TODO 113)', async () => {
+    assert.equal(await t('cmp-stale').isVisible(), false);
+    await t('cmp-lineup-manual').click();
+    await page.keyboard.press('ArrowRight');
+    await t('cmp-stale').waitFor();
+    assert.match(await t('cmp-stale').textContent(), /Out of date - press Compare again/);
+    await shotBoth('compare-outofdate');
+    await t('cmp-run').click();
+    await t('cmp-stale').waitFor({ state: 'hidden' });
+    await t('cmp-lineup-bl').click();
+    await t('cmp-stale').waitFor();
+    await t('cmp-run').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
   });
 
   await step('Compare: screenshots, light and dark; the top bar still fits at 1024', async () => {

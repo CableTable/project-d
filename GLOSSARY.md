@@ -20,7 +20,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 
-**Compare**: Overlays parts in different colours and can highlight outline differences beyond a chosen tolerance. Where: `TODO.md`, item 41; `web/compare.js`.
+**Compare**: Overlays parts in different colours and can highlight outline differences beyond a chosen tolerance, worked out once when the Compare button is pressed (a move afterwards marks the result "out of date"). Where: `TODO.md`, item 41; `web/compare.js`.
 
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
 

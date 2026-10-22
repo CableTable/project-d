@@ -546,6 +546,8 @@ select.fld { font-family: var(--sans); }
 .cmprow { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
 .cmprow .lbl:first-child { flex: 0 0 20px; }
 .cmprow .mono { flex: 0 0 auto; }
+.cmpstale { color: var(--mark); font-weight: 600; }
+.gaplist.stale { opacity: 0.5; }
 .ovl .cmp-glow { pointer-events: none; }
 .ovl .cmp-glow.on { stroke: var(--mark); stroke-width: 2; vector-effect: non-scaling-stroke; }
 .cmp-g0 { stop-color: var(--mark); stop-opacity: .8; }

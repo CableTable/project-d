@@ -187,7 +187,7 @@ function drawDimPreview(c, g, T, dpr, accent) {
 
 /** Set length's / Measure's points: a ring and a cross at each, a line between two; the point under the cursor gets the shape of its snap. */
 const SNAP_NAME = { end: 'end', centre: 'centre', mid: 'middle', node: 'point', near: 'nearest' };
-function drawMarks(c, pts, T, dpr, accent) {
+export function drawMarks(c, pts, T, dpr, accent) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.6 * dpr; c.setLineDash([]);
   const placed = pts.filter((p) => !p[3]).map(([x, y]) => mapply(T, x, y));
