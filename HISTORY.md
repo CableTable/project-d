@@ -151,3 +151,5 @@ the session 17 fix round, two review fix rounds, and the pd-runs side pane (a Cl
 through the user env var CLAUDE_CODE_PLUGIN_DIRS; Rook keeps runs<N>/queue.txt current). Knight's refused commits were
 traced to a stale COMMIT_EDITMSG (see WORKFLOW). Built but not in this PR: T18 title block editor (101) and T49 drag a
 library part onto Compare, for the next PR. New in TODO: 123 Shaping keep originals, 124 Break Apart.
+
+**2026-10-24 (TODO 122b browser fix).** Traced the intermittent missing download to Chromium's limit of 10 burst downloads per second: Ctrl+S reached the app and clicked its download anchor, but Chromium silently dropped download 11 while the status still said Saved. Paced browser-test exports below that limit and added 12 consecutive save snapshots to the Shaping step; no application save or Shaping change.

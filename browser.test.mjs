@@ -435,6 +435,8 @@ try {
 
   // a download the page makes: { name, text }
   const downloaded = async (action) => {
+    // Chromium silently drops burst downloads after 10/s; keep test exports below that limit.
+    await page.waitForTimeout(110);
     const [dl] = await Promise.all([page.waitForEvent('download'), action()]).catch(async (e) => {
       // No download in 30 s: say what the page was doing (a dialog open swallows Ctrl+S; the status line shows a refused save)
       const seen = await page.evaluate(() => ({ dialog: !!document.querySelector('.pop-back, .pdlg-back'), prompt: document.querySelector('[data-testid=cmd-prompt]')?.textContent, focus: document.activeElement?.tagName })).catch(() => ({}));
@@ -8389,6 +8391,7 @@ try {
     // Saving renumbers DXF handles when entities are removed; compare all geometry and attributes without those handles.
     const withoutHandles = (ents) => ents.map((e) => ({ ...e, r: { c: e.r.c.filter((c) => c !== 5), v: e.r.v.filter((_, i) => e.r.c[i] !== 5) } }));
     const original = withoutHandles((await savedDoc()).entities);
+    for (let i = 0; i < 12; i++) assert.deepEqual(withoutHandles((await savedDoc()).entities), original, 'rapid save snapshots all download');
     for (const [cmd, label, count, area, layers] of [
       ['simplify', 'Simplify', 2, '6300.00', ['Back', 'Front']],
       ['frontminus', 'Front minus back', 1, '2700.00', ['Front']],
