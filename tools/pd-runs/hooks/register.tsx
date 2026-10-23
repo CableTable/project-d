@@ -2,12 +2,13 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Ci, Disk, Job, RunRow, UsageCell } from '../types'
-import { findRuns, paneRows, jsonlToRead, newestRunsDir, parseProcs, usageRows, barParts, barColor, endState, fit, ago, queueRows, branchOf, parseCi, snapshot, toastsFor, CI_EVERY_MS, PIECE, WHO_COLOR, PS_ARGV, WIDTH } from './runs.mjs'
+import { findRuns, paneRows, jsonlToRead, newestRunsDir, parseProcs, usageRows, barParts, barColor, endState, fit, ago, queueRows, branchOf, parseCi, snapshot, toastsFor, CI_EVERY_MS, PIECE, WHO_COLOR, PS_ARGV, WIDTH, wrap, ciLines, hiddenIn } from './runs.mjs'
 
 const PANE = 'pd-runs'
 const jobs = atom({ plugin: 'pd-runs', key: 'jobs' } as const, [])
 const disk = atom({ plugin: 'pd-runs', key: 'disk' } as const, null)
 let busy = false
+let hidden = false // this session's folder is in hideInDirs: nothing is registered or tracked
 let ci: Ci | null = null // last gh result; gh runs at most every CI_EVERY_MS, not every tick
 let seen: ReturnType<typeof snapshot> | null = null // the last tick's states; null after a load, so the first tick toasts nothing
 
@@ -71,9 +72,11 @@ export const register: Register = (on, options) => {
   const extrasDir = String(options.extrasDir || 'E:/Project B/Claude/Project D extras')
   const usageFile = String(options.usageFile || 'E:/Project B/Claude/Project D/mockups/_design/usage/limits.csv')
   const repoDir = String(options.repoDir || 'E:/Project B/Claude/Project D')
+  const hideInDirs = String(options.hideInDirs ?? 'E:/Project B/Claude/support') // ?? : an emptied option hides nowhere
 
   on('session.start', async ($, e, next) => {
-    if (!e.isInteractive) return next(e) // no pane, no poller in a -p run
+    hidden = hiddenIn(e.cwd, hideInDirs)
+    if (!e.isInteractive || hidden) return next(e) // no pane, no poller in a -p run or a hidden folder
     await $.command.register({ name: 'runs', description: 'Open the jobs pane (Rook, Bishop, Knight)' })
     await refresh($, extrasDir, usageFile, repoDir)
     $.clock.every(30_000, () => refresh($, extrasDir, usageFile, repoDir))
@@ -88,7 +91,7 @@ export const register: Register = (on, options) => {
 
   // Rook's own background Bash calls.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    if (!e.run_in_background) return next(e)
+    if (hidden || !e.run_in_background) return next(e)
     const startedMs: number = await $.clock.now()
     const job: Job = { id: e.tool_use_id, desc: e.description || e.command.slice(0, 60), command: e.command, startedMs, state: 'running' }
     await update($, jobs, list => [...list, job].slice(-50))
@@ -129,40 +132,44 @@ export const register: Register = (on, options) => {
     const head = (text: string, color: string) => <Text bold color={color}>{text}</Text>
 
     const stateColor = (s: string) => (s.startsWith('queued') ? 'warning' : s === 'testing' ? 'suggestion' : 'success')
+    const indent = ' '.repeat(11) // the label column: dot / mark, piece, name of the agent
     const liveRow = (r: RunRow, i: number) => {
       const w = Math.max(7, r.state.length)
+      const lines = wrap(r.name, WIDTH - 11 - 1 - w - 1 - 4)
       return (
-        <Text key={`l${i}`}>
-          <Text bold color={col(r.who)}>● {piece(r.who)} {fit(r.who, 6)} </Text>
-          <Text bold color={col(r.who)}>{fit(r.name, WIDTH - 11 - 1 - w - 1 - 4)}</Text>
-          <Text color={stateColor(r.state)}> {r.state.padEnd(w)}</Text>
-          <Text dimColor> {ago(r.age).padStart(4)}</Text>
-        </Text>
+        <Box key={`l${i}`} flexDirection="column">
+          <Text>
+            <Text bold color={col(r.who)}>● {piece(r.who)} {fit(r.who, 6)} </Text>
+            <Text bold color={col(r.who)}>{(lines[0] ?? '').padEnd(WIDTH - 11 - 1 - w - 1 - 4)}</Text>
+            <Text color={stateColor(r.state)}> {r.state.padEnd(w)}</Text>
+            <Text dimColor> {ago(r.age).padStart(4)}</Text>
+          </Text>
+          {lines.slice(1).map((l, k) => <Text key={String(k)} bold color={col(r.who)}>{indent}{l}</Text>)}
+        </Box>
       )
     }
     const mark = (s: string) => (s === 'done' ? { ch: '✓', color: 'success' } : s === 'failed' ? { ch: '✗', color: 'error' } : { ch: '!', color: 'warning' })
     const recentRow = (r: RunRow, i: number) => {
       const m = mark(r.state)
+      const lines = wrap(r.name, WIDTH - 11 - 1 - 7 - 1 - 4)
       return (
-        <Text key={`r${i}`} dimColor>
-          <Text color={m.color}>{m.ch} </Text>
-          <Text color={col(r.who)}>{piece(r.who)} {fit(r.who, 6)} </Text>
-          {fit(r.name, WIDTH - 11 - 1 - 7 - 1 - 4)}
-          <Text color={m.color}> {r.state.padEnd(7)}</Text> {ago(r.age).padStart(4)}
-        </Text>
+        <Box key={`r${i}`} flexDirection="column">
+          <Text dimColor>
+            <Text color={m.color}>{m.ch} </Text>
+            <Text color={col(r.who)}>{piece(r.who)} {fit(r.who, 6)} </Text>
+            {(lines[0] ?? '').padEnd(WIDTH - 11 - 1 - 7 - 1 - 4)}
+            <Text color={m.color}> {r.state.padEnd(7)}</Text> {ago(r.age).padStart(4)}
+          </Text>
+          {lines.slice(1).map((l, k) => <Text key={String(k)} dimColor>{indent}{l}</Text>)}
+        </Box>
       )
     }
 
     return (
       <Box flexDirection="column">
         <Text bold color="claude">♚ Project D jobs</Text>
-        {d?.ci && (d.ci.state === 'unknown' || d.ci.num == null ? (
-          <Text dimColor>CI unknown{d.at - d.ci.at >= 60_000 ? `  ${ago(d.at - d.ci.at)}` : ''}</Text>
-        ) : (
-          <Text>
-            #{d.ci.num} CI <Text bold color={d.ci.state === 'green' ? 'success' : d.ci.state === 'red' ? 'error' : 'warning'}>{d.ci.state}</Text> · automerge {d.ci.automerge ? 'on' : 'off'}
-            <Text dimColor>  {ago(d.at - d.ci.at)}</Text>
-          </Text>
+        {d?.ci && ciLines(d.ci, d.at).map((words, i) => (
+          <Text key={`c${i}`}>{words.map((w, k) => <Text key={String(k)} dimColor={w.dim} bold={w.bold} color={w.color}>{k ? ' ' : ''}{w.t}</Text>)}</Text>
         ))}
         <Text> </Text>
         <Text>
@@ -186,11 +193,15 @@ export const register: Register = (on, options) => {
           <Box flexDirection="column">
             <Text> </Text>
             {head('Queue', 'warning')}
-            {d.queue.rows.map((q, i) => (q.mark === '>' ? (
-              <Text key={`q${i}`} bold><Text color="claude">● </Text>{fit(q.text, WIDTH - 2)}</Text>
-            ) : (
-              <Text key={`q${i}`}>{'  '}{fit(q.text, WIDTH - 2)}</Text>
-            )))}
+            {d.queue.rows.map((q, i) => (
+              <Box key={`q${i}`} flexDirection="column">
+                {wrap(q.text, WIDTH - 2).map((l, k) => (q.mark === '>' ? (
+                  <Text key={String(k)} bold>{k ? <Text>{'  '}</Text> : <Text color="claude">● </Text>}{l}</Text>
+                ) : (
+                  <Text key={String(k)}>{'  '}{l}</Text>
+                )))}
+              </Box>
+            ))}
             {d.queue.done > 0 && <Text dimColor><Text color="success">✓ </Text>{d.queue.done} done</Text>}
           </Box>
         )}

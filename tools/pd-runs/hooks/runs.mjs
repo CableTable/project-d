@@ -14,6 +14,30 @@ export const ago = (ms) => (ms < 60_000 ? '<1m' : ms < 3_600_000 ? `${Math.floor
 // Cut to n cells with an ellipsis, padded to n.
 export const fit = (s, n) => (s.length > n ? `${s.slice(0, Math.max(n - 1, 0))}…` : s.padEnd(n));
 
+// Wrap words ({ t, ...style }) into lines of at most n cells; at least one line. A word longer than n stays whole (wrap() splits those).
+/** @template {{ t: string }} W @param {W[]} words @param {number} n @returns {W[][]} */
+export function wrapWords(words, n) {
+  /** @type {typeof words[]} */
+  const lines = [[]];
+  let len = 0;
+  for (const w of words) {
+    if (len && len + 1 + w.t.length > n) { lines.push([]); len = 0; }
+    lines[lines.length - 1].push(w);
+    len += (len ? 1 : 0) + w.t.length;
+  }
+  return lines;
+}
+// A string into lines of at most n cells, at spaces; a word longer than n is cut.
+export const wrap = (s, n) =>
+  wrapWords(s.split(/\s+/).filter(Boolean).flatMap((t) => t.match(new RegExp(`.{1,${Math.max(n, 1)}}`, 'gs')) ?? []).map((t) => ({ t })), n).map((l) => l.map((w) => w.t).join(' '));
+
+// Is the session's folder one of `dirs` (';' or newline between them) or inside one? / and \ alike, case-insensitive.
+const slashed = (p) => p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+export const hiddenIn = (cwd, dirs) => {
+  const c = slashed(cwd ?? '');
+  return (dirs ?? '').split(/[;\r\n]+/).map(slashed).some((d) => d !== '' && (c === d || c.startsWith(`${d}/`)));
+};
+
 // Time of day in IST (UTC+5:30), whatever the PC's own zone.
 export const istHM = (ms) => new Date(ms + 5.5 * 3_600_000).toISOString().slice(11, 16);
 const istDay = (ms) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(ms + 5.5 * 3_600_000).getUTCDay()];
@@ -193,11 +217,15 @@ export function paneRows(jobs, rows, now) {
     if (j.state === 'running') return { who: 'Rook', name: j.desc, state: wait ? `queued ${wait[1]}` : 'running', age: now - j.startedMs };
     return { who: 'Rook', name: j.desc, state: j.state === 'completed' ? 'done' : j.state === 'failed' ? 'failed' : 'cut off', age: now - (j.endedMs ?? j.startedMs) };
   });
-  const all = [...mine, ...rows];
-  return {
+  const view = (all) => ({
     running: all.filter((r) => isLive(r.state)).sort((a, b) => b.age - a.age).slice(0, MAX_RUNNING),
     recent: all.filter((r) => !isLive(r.state) && r.age <= KEEP_MS).sort((a, b) => a.age - b.age).slice(0, MAX_RECENT),
-  };
+  });
+  // a running wrapper of go-<name>.sh is the same job as the Bishop / Knight row named <name>, while that row is live on screen;
+  // a queued / failed / cut off / done wrapper is its own news and stays
+  const onScreen = view(rows).running.filter((r) => /^(running|testing)/.test(r.state));
+  const twin = (j, m) => j.state === 'running' && m.state === 'running' && [...(j.command ?? '').matchAll(/(?<![\w.-])go-([\w.-]+)\.sh/g)].some((x) => onScreen.some((r) => r.name === x[1]));
+  return view([...mine.filter((m, i) => !twin(jobs[i], m)), ...rows]);
 }
 
 // ---- queue: runs<N>/queue.txt, lines "[x] / [>] / [ ] text", '#' lines ignored ----
@@ -238,6 +266,15 @@ export function parseCi(out, at) {
   } catch {
     return { at, num: null, state: /** @type {const} */ ('unknown'), automerge: false };
   }
+}
+
+// The CI line as wrapped lines of styled words: [[{ t, dim?, bold?, color? }]]. `at`: when the disk was read.
+/** @param {{ at: number, num: number | null, state: string, automerge: boolean }} ci @param {number} at @returns {{ t: string, dim?: boolean, bold?: boolean, color?: string }[][]} */
+export function ciLines(ci, at) {
+  const age = at - ci.at;
+  if (ci.state === 'unknown' || ci.num == null) return wrapWords([{ t: 'CI', dim: true }, { t: 'unknown', dim: true }, ...(age >= 60_000 ? [{ t: ago(age), dim: true }] : [])], WIDTH);
+  const color = ci.state === 'green' ? 'success' : ci.state === 'red' ? 'error' : 'warning';
+  return wrapWords([{ t: `#${ci.num}` }, { t: 'CI' }, { t: ci.state, bold: true, color }, { t: '·' }, { t: 'automerge' }, { t: ci.automerge ? 'on' : 'off' }, { t: ago(age), dim: true }], WIDTH);
 }
 
 // ---- toasts: what changed between two ticks ----

@@ -35,6 +35,9 @@ Bars: green under 70 %, amber 70-89, red 90+ (theme colours). Piece, name and do
 - **Cap marker** (`┃` on the week bar, "cap N%" under it): Rook 14 % x k from its Sun 15:30 IST reset, but Fri 23 Oct 83 % and Sat 24 Oct 94 %; Bishop 14 % x k from Mon 15:30 IST (k = whole days since the reset + 1); Knight none. `todayCap()` in `runs.mjs`.
 - **Queue**: `runs<N>/queue.txt` of the newest runs folder, lines `[x]` (counted in "N done"), `[>]` (bold, accent dot), `[ ]` (plain); `#` lines ignored; at most 8 rows. No file, no section.
 - **CI line**: the open PR of the branch in `<repo>/.git/HEAD`, via `gh pr view <branch> --json number,labels,statusCheckRollup`, at most every 2 min; the age is the last result's. gh missing or failing shows "CI unknown".
+- **Long text wraps** (queue, running, recent, CI line) onto the next line, starting under the text, not under the dot / piece.
+- **Rook wrappers**: a Rook background call whose command runs `go-<name>.sh` is not listed once the Bishop / Knight row `<name>` is shown (it is that job's launcher).
+- **Hide in folders** (`hideInDirs` in `/config`, default `E:/Project B/Claude/support`, `;` between several, empty = nowhere): a session whose folder is one of them or inside one registers nothing (no pane, poller, toasts, tracking). Compared case-insensitively, `/` = `\`.
 - **Toasts** (`$.ui.toast`, silent): a job going running to done / cut off / failed, CI going running to green / red. None on the first tick after a load, and none on a tick whose process listing failed.
 
 ## What says a job is running
