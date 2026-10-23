@@ -148,8 +148,11 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowan" \
   --add-dir "E:/Project B/Claude/Project D extras/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \
   -o r.txt - < brief.txt > r.log 2>&1
-# Cut off by the 5-hour limit: after the reset, `codex.cmd exec resume <session id> -` (id from r.log) with
-# "continue: check git status and the diff, rerun the tests, finish". Fresh runs stay the rule for new work and fixes.
+# Cut off by the 5-hour limit: after the reset, start a FRESH run with the brief plus "STATE: a previous run left
+# uncommitted work; read git status and the diff, finish, test, commit". Not `exec resume`: it takes no -p / -C /
+# --add-dir, so it cannot commit in a Knight clone (2026-10-24).
+# Screenshots: a clone folder made outside Codex (e.g. ProjectD-rowan's old shots/) can lack the sandbox grants and
+# refuse writes (EPERM); set SHOTS_DIR to a new folder in the clone root (shots-k*/, in the clone -git info/exclude).
 # Usage (headless): the newest ~/.codex/sessions/**/*.jsonl has "rate_limits": primary.used_percent over a
 # 5-hour window and secondary over the week, resets_at in Unix time. Two S builds = ~6% of 5h, 1% of the week.
 
