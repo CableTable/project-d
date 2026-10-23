@@ -14,6 +14,7 @@ import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxf
 import * as GR from './web/grips.js';
 import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
+import { bigDoc } from './tools/gen-big-dxf.mjs';
 
 const PORT = Number(process.env.TEST_PORT) || Number(process.argv[2]) || 5181;   // TEST_PORT or `npm run test:browser -- 5291`
 const URL_ = `http://localhost:${PORT}/`;
@@ -8857,6 +8858,42 @@ try {
     await page.keyboard.up('Shift'); await frames(); await size(150, 90);
     await undoAndPick(70, 20, 8); await size(100, 60);
     await closeTabs(/./);
+  });
+
+  await step('big file (TODO 55): 20k entities open, views cull what is off screen, pan / zoom stay smooth, the full picture returns when the view settles', async () => {
+    const N = 20000, frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const drawn = async () => Number(await t('drawing').getAttribute('data-drawn'));
+    await t('picker').setInputFiles({ name: 'big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(N))) });
+    await page.waitForFunction((n) => document.body.textContent.includes('Entities ' + n), N, { timeout: 60000 });
+    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    const all = await drawn();
+    assert.ok(all > N * 0.8, `fitted, nearly everything draws: ${all}`);
+    const box = await t('canvas').boundingBox(), cx = box.x + box.width / 2, cy = box.y + box.height / 2;      // Fit centres the drawing
+    await page.mouse.move(cx, cy);
+    const t0 = Date.now();
+    for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -200);
+    await frame();
+    assert.equal(await t('drawing').getAttribute('data-snap'), '1', 'while the view moves, the last picture is reused');
+    await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
+    for (let i = 0; i < 12; i++) await page.mouse.wheel(0, -200);
+    await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
+    const some = await drawn();
+    assert.ok(some > 0 && some < all / 10, `zoomed in on the middle: entities in view draw (${some}), the rest are skipped (of ${all})`);
+    assert.ok(Date.now() - t0 < 5000, 'a burst of wheel zooms is not slow');
+    await page.evaluate(() => { window.__frames = 0; const tick = () => { window.__frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
+    await page.locator('[data-tool=pan]').click();
+    await page.mouse.move(cx, cy); await page.mouse.down();
+    const f0 = await page.evaluate(() => window.__frames), t1 = Date.now();
+    for (let i = 0; i < 40; i++) await page.mouse.move(cx + i * 4, cy - i * 3);
+    await frame();
+    const fps = ((await page.evaluate(() => window.__frames)) - f0) / ((Date.now() - t1) / 1000);
+    await page.mouse.up();
+    assert.ok(fps > 10, `panning keeps frames coming (${fps.toFixed(1)} fps; generous bound, machine dependent)`);
+    await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
+    assert.ok(await drawn() > 0, 'after the pan, what is in view is drawn in full again');
+    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    assert.equal(await drawn(), all, 'Fit draws the same set as before');
+    await closeTabs(/big/);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
