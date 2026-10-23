@@ -6153,6 +6153,80 @@ try {
     await closeTabs(/./);
   });
 
+  await step('T50: a library card dropped on a drawing tab goes into that drawing (loose, selected, one Undo); on a layout tab it goes on the sheet; on the start screen it opens as a new drawing', async () => {
+    const file = (name, ents, layers = {}) => { const d = newDoc(4); for (const [n, aci] of Object.entries(layers)) addLayer(d, n, { aci }); addEntities(d, ents); return { name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) }; };
+    await closeTabs(/./);
+    await t('picker').setInputFiles(file('t50-source.dxf', [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true, layer: 'T50CUT' }), dxfCircle(50, 30, 10, { layer: 'T50HOLE' })], { T50CUT: 1, T50HOLE: 3 }));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 't50-source.dxf');
+    await page.keyboard.press('Control+a');
+    await t('bar-extract').click();
+    await t('name-input').fill('T50 part'); await t('name-ok').click();
+    await t('name-dialog').waitFor({ state: 'detached' });
+    await closeTabs(/./);
+    await t('panel-library').click();
+    const id = await libCard('T50 part').getAttribute('data-part-id');
+    await t('panel-main').click();
+    const fire = (type, x, y) => page.evaluate(([ty, cx, cy, pid]) => {
+      const dt = new DataTransfer(); dt.setData('application/x-pd-part', pid); dt.setData('text/plain', 'T50 part');
+      document.querySelector('[data-testid=canvas]').dispatchEvent(new DragEvent(ty, { dataTransfer: dt, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
+    }, [type, x, y, id]);
+    const mid = async () => { const r = await t('canvas').boundingBox(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+
+    // the empty start screen: the part opens as its own new drawing tab, named after it, not saved yet
+    assert.deepEqual(await tabNames(), ['Drawing 1']);
+    let m = await mid();
+    await fire('dragover', m.x, m.y);
+    assert.equal(await t('drop-hint').textContent(), 'Drop to open as a new drawing');
+    await fire('drop', m.x, m.y);
+    assert.deepEqual(await tabNames(), ['T50 part.dxf']);
+    assert.equal(await entCount(), 2);
+    assert.match(await t('cmd-prompt').textContent(), /^T50 part opened as a new drawing: 2 entities\. Not saved yet: Save asks where$/);
+    await closeTabs(/./);
+
+    // a drawing tab: the entities go in at the drop point, the app stays on the tab
+    await t('picker').setInputFiles(file('t50-target.dxf', [dxfLine(0, 0, 300, 0, { layer: 'T50CUT' }), dxfLine(0, 10, 300, 10)], { T50CUT: 5 }));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 't50-target.dxf');
+    await page.locator('[data-tool=select]').click();
+    assert.equal(await entCount(), 2);
+    const to = await mid();
+    await fire('dragover', to.x, to.y);
+    const hint = (await t('drop-hint').textContent()).match(/^Drop to add to t50-target\.dxf at X (-?[\d.]+) Y (-?[\d.]+) mm$/);
+    assert.ok(hint, await t('drop-hint').textContent());
+    await fire('drop', to.x, to.y);
+    assert.equal(await t('drop-hint').isVisible(), false);
+    assert.deepEqual(await tabNames(), ['t50-target.dxf'], 'the app stays on the drawing tab');
+    assert.equal(await entCount(), 4);
+    assert.equal(await selCount(), '2 selected', 'the new entities are the selection');
+    assert.match(await t('cmd-prompt').textContent(), /^T50 part \(100\.00 × 60\.00 mm\) added to t50-target\.dxf: 2 entities selected, new layers: T50HOLE\. Ctrl\+Z takes them away$/);
+    const doc = await savedDoc();
+    assert.deepEqual(Object.keys(doc.layers).sort(), ['0', 'T50CUT', 'T50HOLE']);
+    const newOnes = doc.entities.slice(2), x10 = (e) => Number(e.r.v[e.r.c.indexOf(10)]), y20 = (e) => Number(e.r.v[e.r.c.indexOf(20)]);
+    assert.deepEqual(newOnes.map((e) => e.layer), ['T50CUT', 'T50HOLE'], 'each on its own layer');
+    const circle = newOnes.find((e) => e.type === 'CIRCLE');
+    assert.ok(Math.abs(x10(circle) - (Number(hint[1]) + 50)) < 0.01 && Math.abs(y20(circle) - (Number(hint[2]) + 30)) < 0.01, 'the part\'s lower-left corner is where the mouse was let go, 1:1');
+    await shotBoth('t50-drawing');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2, 'one Undo takes both away');
+    assert.deepEqual(await tabNames(), ['t50-target-edited.dxf'], 'still the one tab (the Save above gave it its -edited name)');
+
+    // a layout tab: on the sheet, as before
+    await t('new-layout').click();
+    m = await mid();
+    await fire('drop', m.x, m.y);
+    assert.match(await t('cmd-prompt').textContent(), /^T50 part \(100\.00 × 60\.00 mm\) added to Layout 1/);
+    assert.deepEqual(await tabNames(), ['t50-target-edited.dxf', 'Layout 1']);
+    await page.locator('.tabs .dtab', { hasText: 't50-target' }).click();
+    assert.equal(await entCount(), 2, 'the drawing tab is untouched');
+    await closeTabs(/./);
+    await t('panel-library').click();
+    page.once('dialog', (d) => d.accept());
+    await libCard('T50 part').locator('[data-testid=lib-menu]').click();
+    await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+    await libCard('T50 part').waitFor({ state: 'detached' });
+    await t('panel-main').click();
+  });
+
   // ---- polar and object-snap tracking (track.js; mock-up R7a, Option A) ----
   const chipOn = async (id) => (await t(id).getAttribute('aria-pressed')) === 'true';
   const trkN = (cls) => page.locator('.ovl .' + cls).count();

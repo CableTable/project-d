@@ -28,6 +28,7 @@ import * as MD from './modify.js';
 import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import * as LD from './layoutdoc.js';
+import { dropPart } from './dropin.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -721,6 +722,8 @@ function sheetAt(clientX, clientY) {
   return [view.ox + (clientX - r.left) / view.scale, state.sheetH - (view.oy + (clientY - r.top) / view.scale)];
 }
 const PART_TYPE = 'application/x-pd-part';
+/** Where a library part dropped on the page goes (T50): into the drawing tab, onto the layout's sheet, or (no drawing open) as a new drawing tab. */
+const dropKind = () => { const d = curDoc(); return !d || d.cmp ? null : d.lay ? 'lay' : d.raw ? 'draw' : 'new'; };
 function attachDrop() {
   // On the Compare tab a library part dropped on the canvas or the panel joins Compare (T49); the hint follows the pointer.
   const onCmp = (e) => !!cmpDoc() && (ui.canvas.contains(e.target) || ui.cmpSec.contains(e.target));
@@ -738,10 +741,11 @@ function attachDrop() {
       e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
       const r = ui.canvas.getBoundingClientRect(), inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
       ui.canvas.classList.toggle('dropping', inside);
-      ui.dropHint.hidden = !inside || !curLay();
-      if (inside && curLay()) {
-        const [x, y] = sheetAt(e.clientX, e.clientY);
-        ui.dropHint.textContent = `Drop to place at X ${fmt(x)} Y ${fmt(y)} mm`;
+      const kind = dropKind();
+      ui.dropHint.hidden = !inside || !kind;
+      if (inside && kind) {
+        const dd = kind === 'draw' ? curDoc() : null, [x, y] = dd ? toDrawing(dd, e.clientX, e.clientY).map((v) => v * dd.factor) : sheetAt(e.clientX, e.clientY);
+        ui.dropHint.textContent = kind === 'new' ? 'Drop to open as a new drawing' : kind === 'draw' ? `Drop to add to ${dd.name} at X ${fmt(x)} Y ${fmt(y)} mm` : `Drop to place at X ${fmt(x)} Y ${fmt(y)} mm`;
         ui.dropHint.style.left = Math.min(r.width - 230, e.clientX - r.left + 14) + 'px'; ui.dropHint.style.top = Math.max(4, e.clientY - r.top - 34) + 'px';
       }
     }
@@ -758,7 +762,11 @@ function attachDrop() {
       const rec = lib.items.find((r) => r.id === id), r = ui.canvas.getBoundingClientRect();
       if (onCmp(e)) { if (rec) cmpAddPart(cmpDoc(), rec); return; }
       const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-      if (rec && inside) addLibToSheet(rec, curLay() ? sheetAt(e.clientX, e.clientY) : undefined);
+      if (!rec || !inside) return;
+      const kind = dropKind();
+      if (kind === 'draw') dropLibInDrawing(rec, e.clientX, e.clientY);
+      else if (kind === 'new') openPartAsDrawing(rec);
+      else if (kind === 'lay') addLibToSheet(rec, sheetAt(e.clientX, e.clientY));
       return;
     }
     if (!e.dataTransfer.files.length) return;
@@ -2179,6 +2187,31 @@ function addLibToSheet(rec, at) {
   showLayoutTab(t, !existing);
   update(); selectLoose(i);
   note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${t.name}, on whole mm. ${SHIFT_HINT}`);
+}
+
+/** A library part dropped on a drawing tab: loose entities at the drop point, 1:1, selected; one Undo takes them away (dropin.js is the maths). */
+function dropLibInDrawing(rec, clientX, clientY) {
+  const part = libPart(rec), d = editable();
+  if (!part || !d) { note(`${rec.name}: this part could not be read`); return; }
+  try {
+    const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
+    const r = dropPart(part, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d) }, toDrawing(d, clientX, clientY));
+    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers }, `Add ${rec.name}`);
+    if (r.made.length) d.newLayer = r.made[0];
+    setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
+    renderLayers();
+    const moved = Object.entries(r.moved);
+    note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${d.name}: ${r.count} ${r.count === 1 ? 'entity' : 'entities'} selected` + (r.made.length ? `, new layers: ${r.made.join(', ')}` : '') +
+      (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
+  } catch (err) { note(`${rec.name}: ${err && err.message ? err.message : err}`); }
+}
+/** A library part dropped with no drawing open: it opens as its own new drawing tab, named after the part, not saved yet. */
+function openPartAsDrawing(rec) {
+  const part = libPart(rec);
+  if (!part) { note(`${rec.name}: this part could not be read`); return; }
+  const raw = { ...part.raw, header: { ...part.raw.header } };
+  addTab({ name: rec.name + '.dxf', path: null, openPath: null, dirty: true, ...tabFields(raw, flatten(raw)) });
+  note(`${rec.name} opened as a new drawing: ${curDoc().entities} entities. Not saved yet: Save asks where`);
 }
 
 async function renamePart(rec) {
