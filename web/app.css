@@ -226,9 +226,11 @@ select.fld { font-family: var(--sans); }
 .lenrow { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; border-radius: var(--r); background: var(--sel); }
 
 /* command line + status */
-.status { height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--app); border-top: 1px solid var(--line); font-size: 12px; }
+.status { position: relative; height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--app); border-top: 1px solid var(--line); font-size: 12px; }
 .status .coords { min-width: 210px; }
 .status .gap { flex: 1; }
+/* Dismissing the note must not resize the canvas and refit the drawing during a pick. */
+.status .font-note { position: absolute; bottom: 100%; left: 0; max-width: 100%; box-sizing: border-box; z-index: 10; padding: 6px 10px; background: var(--app); border-top: 1px solid var(--line); overflow-wrap: anywhere; pointer-events: none; }
 .status .tool-chip { margin-left: 12px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 10px; white-space: nowrap; }
 .status .lbl + .lbl { margin-left: 14px; }
 .status .dp-sel { height: 22px; margin-left: 4px; padding: 0 4px; border: 1px solid var(--line); border-radius: var(--r); background: var(--app); color: var(--text); font: inherit; font-family: var(--mono, monospace); }

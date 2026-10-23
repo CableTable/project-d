@@ -84,6 +84,48 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 56: font note on open, once per open, literal file names, light and dark', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_);
+      const picker = p.locator('[data-testid=picker]'), prompt = p.locator('[data-testid=cmd-prompt]'), fontNote = p.locator('.status [data-testid=font-note]');
+      await picker.setInputFiles('fixtures/font-note.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Fonts: romans.shx → Arial'));
+      assert.equal((await prompt.textContent()).match(/romans\.shx/g).length, 1, 'two texts name the same font once');
+      assert.equal(await fontNote.isVisible(), true, 'the note is visible in the status bar');
+      assert.equal(await fontNote.textContent(), 'Fonts: romans.shx → Arial');
+      await p.screenshot({ path: shotDir + '/font-note-light.png' });
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/font-note-dark.png' });
+      const sheetBefore = await p.locator('rect.sheet').boundingBox();
+      await p.locator('[data-testid=new-tab]').click();
+      assert.equal(await fontNote.isVisible(), false);
+      await p.locator('.tabs .dtab', { hasText: 'font-note.dxf' }).click();
+      assert.deepEqual(await p.locator('rect.sheet').boundingBox(), sheetBefore, 'clearing the note preserves the drawing viewport');
+      await picker.setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Opened outline.dxf'));
+      for (const name of ['font-note.dxf', 'outline.dxf', 'font-note.dxf']) {
+        await p.locator('.tabs .dtab', { hasText: name }).click();
+        assert.doesNotMatch(await prompt.textContent(), /Fonts:/, 'tab switches do not repeat the note');
+        assert.equal(await fontNote.isVisible(), false);
+      }
+      await picker.setInputFiles('fixtures/font-note.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Fonts: romans.shx → Arial'));
+      const dxf = readFileSync('fixtures/font-note.dxf', 'utf8');
+      await picker.setInputFiles({ name: 'available-font.dxf', mimeType: 'text/plain', buffer: Buffer.from(dxf.replaceAll('romans.shx', 'arial.ttf')) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Opened available-font.dxf'));
+      assert.doesNotMatch(await prompt.textContent(), /Fonts:/);
+      assert.equal(await fontNote.isVisible(), false);
+      await picker.setInputFiles({ name: 'missing-font.dxf', mimeType: 'text/plain', buffer: Buffer.from(dxf.replaceAll('romans.shx', '<b>GOST</b>.ttf')) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Fonts: <b>GOST</b>.ttf → Arial'));
+      assert.equal(await prompt.locator('b').count(), 0, 'font names reach the DOM as text');
+      assert.equal(await fontNote.textContent(), 'Fonts: <b>GOST</b>.ttf → Arial');
+      assert.equal(await fontNote.locator('b').count(), 0);
+    } finally { await context.close(); }
+  });
   await step('TODO 93 / T12: Explorer startup and later launches share Open, serialize files and survive errors', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const pdf = new Page(80, 50); pdf.rect(10, 10, 60, 30); pdf.stroke();
@@ -8578,7 +8620,7 @@ try {
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     const msg = await prompt();
-    assert.match(msg, /^2 texts \+ 1 MTEXT → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
+    assert.match(msg, /^2 texts \+ 1 MTEXT → \d+ outlines\. Fonts: simplex\.shx → Arial/);
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const doc = readDxf(dl.text), polys = doc.entities.filter((e) => e.type === 'LWPOLYLINE'), cut = polys.filter((e) => e.layer === 'CUT');
     assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 0, 'MTEXT replaced too');

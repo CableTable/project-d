@@ -45,6 +45,7 @@ import { openTrace } from './tracedlg.js';
 import * as TR from './trace.js';
 import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
+import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
@@ -221,7 +222,7 @@ let placedNow = [];                 // every placed part of the open layout (lay
 const ui = {};
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-const note = (text) => { state.msg = text; renderCommand(); };
+const note = (text) => { state.msg = text; if (ui.fontNote) ui.fontNote.hidden = true; renderCommand(); };
 const fmt = (n) => Number(n).toFixed(2);
 const partHid = (p) => { const d = curDoc(); return !!(d && d.hiddenParts && d.hiddenParts.has(p.partId)); };       // hidden in the Objects tab: not drawn, not hit, not selected
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
@@ -548,6 +549,7 @@ const curDoc = () => state.docs[state.doc];
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  ui.fontNote.hidden = true;
   state.entityDrag = null;
   state.sel = -1;                         // the layout selection belongs to the tab it was made on (the setter clears the picks; clampSel picks part 0)
   state.gapSel = null; gapSig = ''; hideMenu();
@@ -610,12 +612,16 @@ async function openBytes(name, buf, path = null) {
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
   const fl = r.result;
   if (!fl.items.length) { note(name + ': this drawing is empty'); return; }
+  const subs = fontSubstitutions(r.doc.styles, fl.items);
+  const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path); return; }              // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote); return; }              // one of our saved layouts: it opens as a layout tab
   const doc = { name, path, openPath: path, dirty: false, ...tabFields(r.doc, fl) };       // openPath: the file itself, which Save never writes over
   addTab(doc);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
-    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)'));
+    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : ''));
+  ui.fontNote.textContent = fontNote;
+  ui.fontNote.hidden = !fontNote;
   await balLoad(doc, path, name);
 }
 
@@ -1104,13 +1110,15 @@ function newLayoutTab() {
   addTab(freshLayout('Layout ' + n), false);
   note('New layout: set the sheet, then add parts from the Parts library, or pick a part for step and repeat');
 }
-function openLayoutFile(lay, name, path) {
+function openLayoutFile(lay, name, path, fontNote) {
   lay.name = name;
   const doc = { name, path, openPath: path, dirty: false, lay, fromFile: true };
   state.panel = 'main';
   addTab(doc);
   const used = LD.placedAll(lay, LD.gridOf(lay)).length;
-  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved`);
+  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
+  ui.fontNote.textContent = fontNote;
+  ui.fontNote.hidden = !fontNote;
   for (const p of Object.values(lay.parts)) libKeep(p, name);          // a part the library does not have yet is added to it
 }
 const SHIFT_HINT = 'Shift-drag keeps it straight';
@@ -3030,7 +3038,7 @@ function buildStatus() {
   ui.sheetChip = h('span', { class: 'lbl tool-chip', hidden: true, 'data-testid': 'sheet-chip', title: 'The page of the PDF that is shown' });
   ui.wireframe = h('button', { class: 'tog' + (state.wireframe ? ' on' : ''), type: 'button', 'data-testid': 'wireframe', 'aria-pressed': String(state.wireframe), 'aria-label': 'Wireframe', title: 'Wireframe: outline-only view; PDF / Print and export keep fills (F9)', onclick: toggleWireframe }, 'Wire');
   ui.workArea = h('button', { class: 'tog work-area', type: 'button', 'data-testid': 'work-area', onclick: () => setWorkArea(WORK_AREAS[(WORK_AREAS.indexOf(state.workArea) + 1) % WORK_AREAS.length]) });
-  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.workArea, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
+  return h('div', { class: 'status' }, ui.fontNote = h('span', { class: 'font-note', hidden: true, 'data-testid': 'font-note' }), ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.workArea, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
     ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), h('span', { class: 'lbl' }, 'mm'),
@@ -3728,9 +3736,9 @@ async function textToOutlines() {
   if (!d) { note('Text to outlines works on a drawing tab: open a drawing first'); return; }
   const sel = new Set([...d.sel].filter((i) => isTextEnt(d.raw.entities[i])));
   if (!sel.size) { setTool('select'); state.txoWait = true; note('Text to outlines: select the texts (click or drag a box), then press Enter'); return; }
-  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)).map((it) => TO.outlineItem(it, raw[it.e])), fonts = new Map(), shx = new Set();
-  const styleFile = (name) => { const k = d.raw.styles && Object.keys(d.raw.styles).find((n) => n.toLowerCase() === name.toLowerCase()), s = k && d.raw.styles[k]; return (s && s.v[s.c.indexOf(3)]) || ''; };       // the STYLE's font file (group 3); style names are case-blind, a TEXT with no style is STANDARD
-  const fontOf = (it) => { const st = it.st || 'Standard', f = styleFile(st).trim(); if (/\.shx$/i.test(f)) { shx.add(f); return 'Arial'; } return TX.fontOfStyle(it.st); };      // SHX has no outlines: Arial stands in
+  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)).map((it) => TO.outlineItem(it, raw[it.e])), fonts = new Map();
+  const substitutions = fontSubstitutions(d.raw.styles, items);
+  const fontOf = (it) => it.font || fontForStyle(d.raw.styles, it.st);
   const keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
   try {
     for (const item of items) for (const run of item.runs || [item]) {
@@ -3752,7 +3760,7 @@ async function textToOutlines() {
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
   const mtexts = [...r.done].filter((i) => raw[i].type === 'MTEXT').length, texts = r.texts - mtexts;
   const count = [texts ? `${texts} text${texts === 1 ? '' : 's'}` : '', mtexts ? `${mtexts} MTEXT` : ''].filter(Boolean).join(' + ');
-  note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
+  note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (substitutions.length ? '. Fonts: ' + substitutions.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
 }
 
 function explodeSelected() {

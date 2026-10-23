@@ -107,7 +107,7 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
     55a. ✅ Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings. (`tools/gen-big-dxf.mjs`, `tools/perf-big.mjs`; the browser step uses 20k and a generous fps bound.)
     55b. ✅ (after 55a) If rendering lags, skip off-screen drawing items using their existing bounds, with conservative-bound unit tests and browser checks that panning and zooming reveal every object. (Bounds culling was already there; `web/perf.js` holds the cull test and the bitmap reuse, `perf.test.mjs` tests them.)
     55c. (after 55a) If picking or snapping lags, index their candidates while preserving hit order and rebuilding after edits / undo, with indexed-versus-current-result unit tests and a large-file browser check.
-56. **Font note on open** (S): name the fonts the file asked for and what is shown instead (check first whether one exists).
+56. ✅ (built, session 17) **Font note on open** (S): one status-bar note per DXF open names unavailable fonts and their substitutes; shared with Text to outlines, no repeat on tab switches.
 
 From the v0.1.30 exe test (Pip-test, 2026-10-20):
 57. ✅ (fixed, session 9: the tab strip shrinks and scrolls on its own; tabs and + New layout stay on one line) **Many tabs push the whole window sideways** (bug, S): at 1024 px with ~17 tabs, clicking the last tab shifts the menu bar ~470 px left and cuts off the toolbar; it stays shifted after widening (−169 px at 1440); at 1440 with 14 tabs "+ New layout" wraps. The tab strip should scroll on its own. Screenshots: shots/exe/91-last-tab-1024.png, 66-light1024-layout.png.
