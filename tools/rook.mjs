@@ -66,7 +66,7 @@ if (cmd === 'result') {
     files.sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     for (const f of files.slice(0, 3)) {
       const m = [...readFileSync(f, 'utf8').matchAll(/"primary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)\},"secondary":\{"used_percent":([\d.]+),"window_minutes":\d+,"resets_at":(\d+)/g)].pop();
-      if (m) return { h5: codexWindow([+m[1], +m[2]]), wk: codexWindow([+m[3], +m[4]]) };
+      if (m) return { h5: [+m[1], +m[2]], wk: [+m[3], +m[4]] };
     }
   };
   const now = Date.now(), iso = (t) => new Date(t + 19800e3).toISOString().slice(0, 19) + '+05:30';

@@ -181,6 +181,37 @@ try {
       await p.screenshot({ path: shotDir + '/explorer-open-dark.png' });
     } finally { await context.close(); }
   });
+  await step('TODO 93 fix: a launched picture PDF prompt leaves library, autosave and recovery running', async () => {
+    const context = await browser.newContext();
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_); await p.locator('[data-testid=count]').waitFor({ state: 'attached' });
+      await p.evaluate(async (dxf) => {
+        const { savePart } = await import('./partstore.js');
+        const { saveCopy } = await import('./recovery.js');
+        await savePart({ id: 'startup-part', name: 'Startup part', w: 20, h: 20, dxf, thumb: document.createElement('canvas').toDataURL(), t: Date.now() });
+        await saveCopy({ id: 'startup-copy', name: 'Unsaved plate', kind: 'drawing', dxf, t: Date.now() });
+      }, readFileSync('fixtures/outline.dxf', 'utf8'));
+      await p.addInitScript((pdf) => {
+        let pending = true;
+        window.__intervals = [];
+        const interval = window.setInterval;
+        window.setInterval = (fn, ms, ...args) => { window.__intervals.push(ms); return interval(fn, ms, ...args); };
+        window.__TAURI__ = {
+          event: { listen: async () => () => {} },
+          core: { invoke: async () => { if (!pending) return []; pending = false; return [['C:/picture.pdf', null]]; } },
+          fs: { readFile: async () => new Uint8Array(pdf) },
+          dialog: { ask: (text) => { window.__backgroundAsked = text; return new Promise(() => {}); } },
+        };
+      }, [...writePdf([new Page(80, 50)])]);
+      await p.reload();
+      await p.waitForFunction(() => /background picture/.test(window.__backgroundAsked || ''));
+      await p.locator('[data-part-id=startup-part]').waitFor({ state: 'attached' });
+      await p.locator('[data-testid=recover-dialog]').waitFor();
+      assert.ok(await p.evaluate(() => window.__intervals.includes(120000)), 'autosave starts while the PDF question is unanswered');
+    } finally { await context.close(); }
+  });
   await step('TODO 119 / T36: View theme rows match, full-row hover, separate dividers and moving theme tick', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
@@ -4184,7 +4215,14 @@ try {
     await waitSel('3 selected');
     const start = await at(22.5, 27.5), end = await at(32.5, 32.5);
     await page.mouse.move(start.x, start.y); await page.mouse.down();
-    await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
+    await page.mouse.move(end.x, end.y, { steps: 5 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const previewPoint = await at(40, 35);
+    assert.ok(await t('drawing').evaluate((canvas, p) => {
+      const b = canvas.getBoundingClientRect(), x = Math.round((p.x - b.x) * canvas.width / b.width), y = Math.round((p.y - b.y) * canvas.height / b.height);
+      return canvas.getContext('2d').getImageData(x - 2, y - 2, 5, 5).data.some((v, i) => i % 4 === 3 && v > 0);
+    }, previewPoint), 'the moving preview is painted at the offset');
+    await page.mouse.up();
     const moved = await savedDoc();
     assert.ok(Math.abs(fieldOf(moved.entities[0], 10) - fieldOf(before.entities[0], 10) - 10) < .05, 'selected A moves');
     assert.ok(Math.abs(fieldOf(moved.entities[0], 20) - fieldOf(before.entities[0], 20) - 5) < .05);
@@ -4218,6 +4256,24 @@ try {
     await menuItem('View', 'Theme: light');
     if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
     await closeTabs(/drag-letter/);
+  });
+  await step('TODO 120 fix: dragging a selection containing a locked layer reports the layer and keeps every entity', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addLayer(raw, 'Locked');
+    raw.entities = [dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Locked' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20)];
+    await t('picker').setInputFiles({ name: 'locked-drag.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'locked-drag.dxf');
+    await t('ptab-objects').click();
+    await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    await t('ptab-drawing').click();
+    await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    const before = await savedDoc(), start = await at(30, 20), end = await at(35, 25);
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
+    assert.match(await prompt(), /Layer Locked is locked/);
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+    await closeTabs(/locked-drag/);
   });
   const histLabels = async () => {
     await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
@@ -5798,6 +5854,8 @@ try {
 
   await step('Compare: run once, move, "out of date" mark, run again, mark gone (TODO 113)', async () => {
     assert.equal(await t('cmp-stale').isVisible(), false);
+    await page.locator('[data-testid^=cmp-lineup-][aria-pressed=true]').click();
+    assert.equal(await t('cmp-stale').isVisible(), false, 'clicking the current Line up choice preserves the result');
     await t('cmp-lineup-manual').click();
     await page.keyboard.press('ArrowRight');
     await t('cmp-stale').waitFor();
@@ -8905,7 +8963,18 @@ try {
     await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
     await click(30, 20); await waitSel('1 selected');
     await t('panel-size-padlock').click();
-    await t('dw').fill('40'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['40', '40']);
+    await t('sel-w').fill('40'); await t('sel-w').press('Tab');
+    assert.equal(await t('sel-h').evaluate((e) => e === document.activeElement), true);
+    assert.equal(await t('sel-h').inputValue(), '40.00', 'Tab shows the newly scaled height');
+    await t('sel-h').fill('37.25');
+    await t('panel-size-padlock').dispatchEvent('click');
+    assert.equal(await t('sel-h').inputValue(), '37.25', 'a render preserves the field being typed');
+    await t('panel-size-padlock').dispatchEvent('click');
+    await t('sel-h').fill('40'); await t('sel-h').press('Enter');
+    assert.deepEqual(await sizeNow(), ['40', '40']);
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
+    await t('dw').fill('40'); await t('dw').press('Tab');
+    assert.equal(await t('dh').inputValue(), '40', 'panel Tab also shows the updated height');
     await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
     await page.keyboard.press('Escape');
     await t('size-padlock').click();

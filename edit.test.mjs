@@ -778,8 +778,10 @@ test('TODO 104 fix: a nearly closed single polyline joins; a connected micro cha
   assert.equal(chain.gaps, 0, 'the outline stays closed');
   const wide = run([W.line(-10, 0, -.01, 0), W.line(-.002, 0, .006, 0), W.line(.016, 0, 10, 0)]);
   assert.equal(wide.r.removed, 0, 'a piece bridging ends further apart than tolerance stays');
-  const locked = run([W.line(-10, 0, 0, 0), W.line(0, 0, .008, 0), W.line(.012, 0, 10, 0)], (e) => e !== 2);
+  const lockedEntities = [W.line(-10, 0, 0, 0), W.line(0, 0, .008, 0), W.line(.008, 0, 10, 0)];
+  const locked = run(lockedEntities, (e) => e !== 2);
   assert.equal(locked.r.removed, 0, 'a locked neighbour end that would have to move keeps the piece');
+  assert.equal(run(lockedEntities).r.removed, 1, 'without the lock, the same piece is removed');
 });
 
 test('newLayerName: the first free Layer1, Layer2… (any case)', () => {

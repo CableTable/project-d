@@ -3348,7 +3348,8 @@ function paintOverlay(gesture = false) {
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
-    if (state.entityDrag?.items) paintDrawing(c, { ...base, keep: true, fl: state.entityDrag.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
+    const move = state.entityDrag;
+    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
     c.dataset.drawn = drawn || 0;
     if (heavy(performance.now() - t0, drawn || 0)) {
       snapCv = snapCv || document.createElement('canvas');
@@ -3916,14 +3917,18 @@ function setSel(d, sel) {
 }
 
 function moveSelectionTo(g, e) {
-  if (g.d !== editable() || g.raw !== g.d.raw.entities || [...g.sel].some((i) => lockedEnt(g.d, i))) { state.entityDrag = null; return false; }
+  if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }
+  const locked = [...g.sel].find((i) => lockedEnt(g.d, i));
+  if (locked != null) { state.entityDrag = null; note(`Layer ${g.raw[locked].layer} is locked: unlock it in the Objects tab to move this`); paintOverlay(); return false; }
   const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
   g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
   g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
   try {
-    const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.d.raw.entities[i]) };
-    g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), g.dx, g.dy) });
-    g.items = g.preview.items;
+    if (!g.preview) {
+      const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.raw[i]) };
+      g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), 0, 0) });
+      g.items = g.preview.items;
+    }
     view.fitted = false; paintOverlay(); return true;
   } catch (err) { state.entityDrag = null; note(err.message); paintOverlay(); return false; }
 }
@@ -5793,7 +5798,7 @@ function buildDrawingSection() {
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
     ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
     h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount),
-    ui.sizeHeading = h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
+    h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
   ui.outList = h('div', { class: 'outlist', 'data-testid': 'outlines' });
@@ -6390,15 +6395,11 @@ function renderSelection(d) {
   const noPart = !n || !selHasPart(d);
   ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
   ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
-  if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'click an outline in the drawing'; ui['sel-w'].value = '—'; ui['sel-h'].value = '—'; ui.selArea.textContent = ''; return; }
+  if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'click an outline in the drawing'; ui.selArea.textContent = ''; return; }
   const ed = edIndex(d);
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const e of d.sel) { if (d.raw.entities[e].layer === Ed.DIM_LAYER || !ed.byEnt[e]) continue; x0 = Math.min(x0, ed.box[e * 4]); y0 = Math.min(y0, ed.box[e * 4 + 1]); x1 = Math.max(x1, ed.box[e * 4 + 2]); y1 = Math.max(y1, ed.box[e * 4 + 3]); }
   const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';        // one wording with the panel's count ("1 selected")
   ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;
-  ui['sel-w'].value = x1 >= x0 ? fmt((x1 - x0) * d.factor) : '—';
-  ui['sel-h'].value = y1 >= y0 ? fmt((y1 - y0) * d.factor) : '—';
   // area and perimeter (TODO 31): for ink and cost; skipped on a huge selection, where it would be slow
   const ap = n <= 3000 ? Ed.areaPerimeter(ed, d.sel, d.factor, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
   ui.selArea.textContent = !ap ? '' : (ap.loops ? `Area ${fmt(ap.area)} mm²` + (ap.holes ? ` (${ap.holes} hole${ap.holes > 1 ? 's' : ''} off)` : '') +
@@ -6556,7 +6557,8 @@ function renderEdit() {
     button.disabled = !rb;
   }
   put(ui.dw, rb ? fmtSize(rb[2] - rb[0]) : ''); put(ui.dh, rb ? fmtSize(rb[3] - rb[1]) : '');
-  if (!n) { put(ui['sel-w'], rb ? fmtSize(rb[2] - rb[0]) : '—'); put(ui['sel-h'], rb ? fmtSize(rb[3] - rb[1]) : '—'); }
+  const sizeFmt = n ? fmt : fmtSize;
+  put(ui['sel-w'], rb ? sizeFmt(rb[2] - rb[0]) : '—'); put(ui['sel-h'], rb ? sizeFmt(rb[3] - rb[1]) : '—');
   ui.dw.disabled = ui.dh.disabled = ui['sel-w'].disabled = ui['sel-h'].disabled = !rb;
   ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
@@ -6645,6 +6647,7 @@ function buildCompareSection() {
   };
   ui.cmpModes = [['bl', 'Bottom-left'], ['centre', 'Centres'], ['manual', 'Manual']].map(([m, text]) => h('button', { class: 'seg', type: 'button', 'data-m': m, 'data-testid': 'cmp-lineup-' + m, onclick: () => {
     const d = cmpDoc(), c = d.cmp;
+    if (c.mode === m) return;
     if (m === 'manual' && c.mode !== 'manual') c.manual = [...c.off];          // by hand starts where the last Line up put it
     c.mode = m; cmpMoved(d);
   } }, text));
@@ -6830,7 +6833,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
-  await attachLaunchFiles();
+  attachLaunchFiles();
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);

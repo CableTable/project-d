@@ -245,3 +245,4 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 1. IBM Plex fonts are not bundled, so the system font is used. Bundle them locally if he wants the mock-up's look.
 2. A per-user .dxf file association, with no admin rights.
 3. A "keep settings next to the exe" switch.
+4. Drawing selection drag refuses HATCH and DIMENSION entities (`moveEntities`); add their move support.
