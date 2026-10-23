@@ -111,6 +111,19 @@ test('insert attributes become text at their drawing position with their own pro
   nearAll(numbers(pieces[1], [10, 20, 40]), [25, 35, 2]);
 });
 
+test('a hidden attribute is dropped, and an attribute\'s vertical alignment (74) becomes the TEXT one (73)', () => {
+  const doc = blockDoc([line(1, 2, 2, 2)]);
+  doc.entities[0].kids = [
+    entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Shown'], [70, 0], [73, 5], [74, 2]], { layer: 'Own' }).r,
+    entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Hidden'], [70, 1]], { layer: 'Own' }).r,
+    entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Invisible'], [60, 1]], { layer: 'Own' }).r,
+  ];
+  const pieces = result(doc).entities;
+  assert.equal(pieces.length, 2); assert.equal(pieces[1].type, 'TEXT');
+  assert.deepEqual(pieces[1].r.v[pieces[1].r.c.indexOf(1)], 'Shown');
+  assert.equal(get(pieces[1].r, 73), 2); assert.equal(get(pieces[1].r, 74), null); assert.equal(get(pieces[1].r, 70), null);
+});
+
 test('a polyline seen from below keeps the mirrored arc sweep', () => {
   const e = { ...lwpoly([[0, 0, 1], [10, 0]]), flip: true };
   nearAll(numbers(explodePolyline(e)[0], [10, 20, 40, 50, 51]), [-5, 0, 5, 180, 0]);

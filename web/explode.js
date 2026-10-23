@@ -165,7 +165,10 @@ export function explodeInsert(e, raw) {
       for (const child of block.entities) out.push(...transform(inherit ? inherited(child, e, raw.layers) : child, m, depth));
     }
     for (const r of e.kids || []) {
-      const attr = fromRecord({ ...r, type: 'TEXT' });
+      if ((get(r, 70) ?? 0) & 1) continue;                     // a hidden attribute stays hidden: drop it, as the drawing does
+      const keep = r.c.map((c, i) => i).filter((i) => r.c[i] !== 70 && r.c[i] !== 73);       // ATTRIB's flags and field length mean nothing on a TEXT
+      const attr = fromRecord({ ...r, type: 'TEXT', c: keep.map((i) => (r.c[i] === 74 ? 73 : r.c[i])), v: keep.map((i) => r.v[i]) });       // ATTRIB's vertical alignment is 74, TEXT's is 73
+      if (attr.hidden) continue;
       out.push(...transform(attr, parent, depth));
     }
     return out;
