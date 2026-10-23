@@ -134,7 +134,7 @@ export function contentStream(page, unit = 1) {
 // ---------------------------------------------------------------- the file
 
 /**
- * pages: [Page]. meta: { title }. Returns the file's bytes (Uint8Array). Objects: 1 catalog, 2 page tree, 3 font, 4 info,
+ * pages: [Page]. meta: { title, subject }. Returns the file's bytes (Uint8Array). Objects: 1 catalog, 2 page tree, 3 font, 4 info,
  * then a page and its content for each page.
  */
 export function writePdf(pages, meta = {}) {
@@ -143,7 +143,7 @@ export function writePdf(pages, meta = {}) {
   objs.push('<< /Type /Catalog /Pages 2 0 R >>');
   objs.push(`<< /Type /Pages /Kids [${kids}] /Count ${pages.length} >>`);
   objs.push('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
-  objs.push(`<< /Title ${pdfString(winAnsi(meta.title || 'Project D'))} /Producer ${pdfString('Project D')} >>`);
+  objs.push(`<< /Title ${pdfString(winAnsi(meta.title || 'Project D'))}${meta.subject ? ' /Subject ' + pdfString(winAnsi(meta.subject)) : ''} /Producer ${pdfString('Project D')} >>`);
   let v16 = false;
   pages.forEach((p, i) => {
     // PDF 1.4 pages stop at 14400 pt (200 in): above that the page is drawn in units of `unit` points

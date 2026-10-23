@@ -233,7 +233,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **All colours black**: Prints every artwork layer in black rather than its drawing colour for film output. Where: `DECISIONS.md`, PDF colour pages.
 
-**Check print**: A scaled paper proof with a title block and a warning that it is not film. Where: `DECISIONS.md`, PDF page rules. Avoid: A 1:1 film master.
+**Check print**: A scaled paper proof; its optional title block includes a warning that it is not film. Where: `DECISIONS.md`, PDF page rules. Avoid: A 1:1 film master.
 
 **Colour page**: One PDF page for each visible artwork layer when printing one page per colour, with Sheet and Marks excluded as artwork on layouts. Where: `DECISIONS.md`, PDF colour pages. Avoid: Automatic separation by every entity's colour.
 
@@ -300,3 +300,5 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **TODO sub-step**: An indented numbered line such as `66a.` under its parent item in `TODO.md`; a leading ✅ after its number marks it done. The usage page folds these lines under “N of M done” and remembers opened lists. Avoid: Inferring sub-steps from progress prose such as “(a built, b next)”.
 
 **Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.
+
+**Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).

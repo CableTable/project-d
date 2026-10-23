@@ -47,7 +47,7 @@ import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
-import { partSource } from './pdf-export.js';
+import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -582,7 +582,7 @@ async function readDrawing(bytes) {
 /** What a tab holds for a drawing: the DXF document (to save and to copy as a part), what is drawn, its layers and size. */
 function tabFields(raw, fl) {
   const factor = unitFactor(fl.units);
-  return { raw, fl, factor, off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
+  return { raw, fl, factor, titleBlock: readTitleBlock(raw), off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
 }
 
 function addTab(d, replaceEmpty = true) {
@@ -615,7 +615,7 @@ async function openBytes(name, buf, path = null) {
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path, fontNote); return; }              // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc)); return; } // one of our saved layouts: it opens as a layout tab
   const doc = { name, path, openPath: path, dirty: false, ...tabFields(r.doc, fl) };       // openPath: the file itself, which Save never writes over
   addTab(doc);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
@@ -1110,9 +1110,9 @@ function newLayoutTab() {
   addTab(freshLayout('Layout ' + n), false);
   note('New layout: set the sheet, then add parts from the Parts library, or pick a part for step and repeat');
 }
-function openLayoutFile(lay, name, path, fontNote) {
+function openLayoutFile(lay, name, path, fontNote, titleBlock) {
   lay.name = name;
-  const doc = { name, path, openPath: path, dirty: false, lay, fromFile: true };
+  const doc = { name, path, openPath: path, dirty: false, lay, titleBlock, fromFile: true };
   state.panel = 'main';
   addTab(doc);
   const used = LD.placedAll(lay, LD.gridOf(lay)).length;
@@ -2306,8 +2306,12 @@ function exportSource() {
   return null;
 }
 function exportPdf() {
-  openExport({ source: exportSource, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note });
+  const d = curDoc(), src = exportSource();
+  openExport({ source: () => src && { ...src, titleBlock: d.titleBlock }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
+    setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
+
+const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : d.raw, d.titleBlock);
 
 // ---- save ----
 const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
@@ -2340,16 +2344,16 @@ async function autosaveNow() {
     for (const d of state.docs.slice()) {
       if (!d.raw && !d.lay) continue;
       if (!d.dirty) { if (d.hasCopy) { d.hasCopy = false; await RC.removeCopy(d.rid); } continue; }
-      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers) continue;        // a drawing's state is replaced at every change: same one, same copy
+      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers && d.autoTitle === d.titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
       let dxf;
-      try { dxf = writeDxf(d.lay ? LD.layoutRaw(d.lay) : d.raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
+      try { dxf = writeDxf(rawForSave(d), { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
       if (d.lay && d.hasCopy && d.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
       if (d.lay) d.autoDxf = dxf;
       if (!d.rid) d.rid = uid();
       await RC.saveCopy({ id: d.rid, name: d.name, path: d.path || null, kind: d.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
         saved: !!d.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!d.acceptedLoss });
       d.hasCopy = true;
-      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; }
+      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; d.autoTitle = d.titleBlock; }
       if (!state.docs.includes(d) || !d.dirty) dropCopy(d);                                          // closed or saved while this was being written
     }
   } catch (err) { console.warn('Autosave failed:', err); } finally { autosaving = false; }
@@ -2380,7 +2384,7 @@ async function recoverOne(c) {
     if (!r.ok) return false;
     const lay = c.kind === 'layout' ? LD.layoutFromRaw(r.doc, c.name) : null;
     const openPath = c.saved ? null : c.path;                                  // not saved yet: its path is still the opened file's
-    const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, fromFile: c.fromFile, saved: c.saved }
+    const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
       : { name: c.name, path: c.path, openPath, dirty: true, saved: c.saved, fromPdf: c.fromPdf || undefined, acceptedLoss: c.acceptedLoss, ...tabFields(r.doc, r.result) };
     if (lay) lay.name = c.name;
     doc.rid = c.id; doc.hasCopy = true;                                       // the copy stays until the tab is saved or closed
@@ -2430,7 +2434,7 @@ async function save(forceAs) {
     if (d.balSaved === balOf(d)) { d.dirty = false; renderTabs(); }
     return;
   }
-  const raw = d.lay ? LD.layoutRaw(d.lay) : d.raw;
+  const raw = rawForSave(d);
   const bad = unwritable(raw);
   const lossy = bad.length > 0 && !d.acceptedLoss && !d.lay;       // a layout is a new file: nothing to overwrite
   if (lossy) note(`This file has things Save can't keep (${bad.map((b) => b.type + ' ' + b.count).join(', ')}), so it's saved as a copy`);
@@ -4581,7 +4585,7 @@ async function balSheet(d, n) {
       d.hist = Ed.createHistory();
     } else {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
-      Object.assign(d, tabFields(r.doc, flatten(r.doc)));
+      Object.assign(d, tabFields(r.doc, flatten(r.doc)), { titleBlock: d.titleBlock });
       d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; P.orig = r.doc.entities; P.origBlocks = r.doc.blocks; warm(d);
     }
   } catch (err) { note(`Sheet ${n}: could not read this page (${err && err.message ? err.message : err})`); return false; }

@@ -153,3 +153,5 @@ traced to a stale COMMIT_EDITMSG (see WORKFLOW). Built but not in this PR: T18 t
 library part onto Compare, for the next PR. New in TODO: 123 Shaping keep originals, 124 Break Apart.
 
 **2026-10-24 (TODO 122b browser fix).** Traced the intermittent missing download to Chromium's limit of 10 burst downloads per second: Ctrl+S reached the app and clicked its download anchor, but Chromium silently dropped download 11 while the status still said Saved. Paced browser-test exports below that limit and added 12 consecutive save snapshots to the Shaping step; no application save or Shaping change.
+
+**2026-10-23 (session 17, TODO 101 / T18).** Added the per-document Title block switch, five editable fields and Reset in PDF / Print. Switching it off removes the warnings and frees 22 mm for fitting. Automatic fields follow the page and today; typed and empty values survive Save, reopen and recovery as unused DXF metadata. PDF properties retain the actual scale. Unit and browser coverage exercise defaults, editing, empty fields, fitting, persistence and tab isolation.

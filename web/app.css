@@ -248,6 +248,8 @@ select.fld { font-family: var(--sans); }
 .pd-left { width: 400px; flex-shrink: 0; padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; border-right: 1px solid var(--line); }
 .pd-set { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .pd-set legend { padding: 0; margin-bottom: 8px; }
+.pd-set[hidden] { display: none; }
+.pd-title-fields .wide { grid-column: 1 / -1; }
 .pd-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .pd-row .fld { width: 70px; }
 .pd-right { flex: 1; min-width: 0; background: var(--canvas); padding: 18px; display: flex; flex-direction: column; gap: 12px; }
