@@ -1,6 +1,7 @@
 // dropin.js — pure: a Parts library part dropped into a drawing (T50): its entities at a point, 1:1, loose, on their own layers. dropin.test.mjs.
 import { moveEntities, scaleAbout } from './edit.js';
 import { withLayer } from './props.js';
+import { partBlocks } from './layoutdoc.js';
 
 const low = (s) => String(s).toLowerCase();
 const codeAt = (r, c) => r.c.indexOf(c);
@@ -30,6 +31,7 @@ export function dropPart(part, target, at) {
   if (Math.abs(s - 1) > 1e-9) ({ entities, blocks } = scaleAbout(part.raw, s, 0, 0, part.space || 0));
   const dx = at[0] - part.box[0] * s, dy = at[1] - part.box[1] * s;
   ({ entities, blocks } = moveEntities({ entities, blocks }, new Set(entities.map((_, i) => i)), dx, dy));
+  blocks = partBlocks(blocks);
 
   const have = new Map([...target.names].map((n) => [low(n), n])), hidden = new Set([...target.hidden].map(low)), locked = new Set([...target.locked].map(low));
   const layers = { ...target.raw.layers }, moved = {}, made = [];

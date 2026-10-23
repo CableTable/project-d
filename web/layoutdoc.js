@@ -19,6 +19,7 @@ import { stepRepeat, markGeometry } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
 import { keepOnly, DIM_LAYER } from './edit.js';
 import { cleanGuides } from './guides.js';
+import { TITLE_BLOCK } from './pdf-export.js';
 
 export const LAYOUT_BLOCK = 'PD_LAYOUT';
 const CHUNK = 200;
@@ -39,6 +40,9 @@ export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed:
 
 // ---------------------------------------------------------------- parts
 
+/** A part keeps drawing blocks, never the source file's PDF title settings. */
+export const partBlocks = (blocks) => Object.fromEntries(Object.entries(blocks).filter(([name]) => name !== TITLE_BLOCK));
+
 /** A part from a drawing's document: { id, name, raw, space, factor, box, w, h, fl, off (the layers its file has switched off) }, or null when it has no extents. */
 export function makePart(id, name, raw, factor, src = '') {
   const fl = flatten(raw), p = partFromDrawing(name, raw, fl, factor || unitFactor(fl.units));
@@ -55,7 +59,7 @@ export function extractRaw(raw, sel) {
   raw.entities.forEach((e, i) => { if ((!sel || sel.has(i)) && e.layer !== DIM_LAYER) keep.add(i); });
   if (!keep.size) return null;
   const { entities, blocks } = keepOnly(raw, keep);
-  return { header: { ...raw.header }, layers: raw.layers, ltypes: raw.ltypes, blocks, entities };
+  return { header: { ...raw.header }, layers: raw.layers, ltypes: raw.ltypes, blocks: partBlocks(blocks), entities };
 }
 
 /** A part as a DXF text (the library keeps this). */

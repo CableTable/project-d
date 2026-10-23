@@ -6,7 +6,7 @@ import { writeDxf, newDoc, addEntities, rect, line, circle, insert, addBlock } f
 import { placedMat, placedBox, placement1, buildLayoutDoc } from './web/apply.js';
 import * as LD from './web/layoutdoc.js';
 import * as P from './web/place.js';
-import { planPdf } from './web/pdf-export.js';
+import { planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 let n = 0;
@@ -33,6 +33,19 @@ test('extractRaw: a selection, without the kept dimensions, sized without them',
   assert.equal(one.entities.length, 1);
   assert.equal(LD.extractRaw(raw, new Set([2])), null);          // only a dimension: nothing to extract
   assert.equal(raw.entities.length, 3, 'the drawing is untouched');
+});
+
+test('extractRaw leaves the source PDF title block out of the part', () => {
+  const title = { enabled: true, file: 'OTHER JOB' };
+  const raw = withTitleBlock(plate(100, 60), title);
+  addBlock(raw, 'OUTLINE', [line(0, 0, 3, 3)]);
+  addEntities(raw, insert('OUTLINE', 10, 20));
+  for (const sel of [null, new Set([2])]) {
+    const extracted = LD.extractRaw(raw, sel);
+    assert.deepEqual(Object.keys(extracted.blocks), ['OUTLINE']);
+    assert.equal(readTitleBlock(readDxf(writeDxf(extracted))), undefined);
+  }
+  assert.deepEqual(readTitleBlock(raw), title, 'the source keeps its title block');
 });
 
 test('names: "<file> 1", "<file> 2" — the first free', () => {

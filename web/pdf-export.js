@@ -23,7 +23,7 @@ export const DEFAULT_OPTIONS = {
 };
 
 export const TITLE_FIELDS = ['file', 'scale', 'size', 'date', 'footnote'];
-const TITLE_BLOCK = 'PD_PDF_TITLE';
+export const TITLE_BLOCK = 'PD_PDF_TITLE';
 
 /** Only typed strings are overrides; an empty string deliberately hides that field. */
 export function cleanTitleBlock(value) {

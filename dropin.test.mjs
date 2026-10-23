@@ -1,7 +1,9 @@
 // dropin.js — a library part dropped into a drawing.   node dropin.test.mjs
 import assert from 'node:assert/strict';
 import { dropPart } from './web/dropin.js';
-import { newDoc, line, circle, insert, addLayer, addBlock, addEntities } from './web/dxf-write.js';
+import { newDoc, line, circle, insert, addLayer, addBlock, addEntities, writeDxf } from './web/dxf-write.js';
+import { readDxf } from './web/drawing.js';
+import { readTitleBlock, withTitleBlock } from './web/pdf-export.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -61,5 +63,22 @@ test('a block the drawing already has is renamed, its inserts follow', () => {
   const r = dropPart(p, t, [0, 0]);
   assert.deepEqual(Object.keys(r.blocks).sort(), ['B1_2', 'b1']);
   assert.equal(r.entities.at(-1).r.v[r.entities.at(-1).r.c.indexOf(2)], 'B1_2'); assert.equal(r.blocks.b1.entities[0].type, 'CIRCLE');
+});
+for (const ownTitle of [false, true]) test(`a dropped part leaves the target's PDF title block ${ownTitle ? 'unchanged' : 'absent'}`, () => {
+  const p = partDoc();
+  p.raw = withTitleBlock(p.raw, { enabled: true, file: 'OTHER JOB' });
+  const before = structuredClone(p.raw);
+  const t = targetOf();
+  if (ownTitle) t.raw = withTitleBlock(t.raw, { enabled: false, file: 'THIS JOB', footnote: '' });
+  const title = readTitleBlock(t.raw), blocks = structuredClone(t.raw.blocks);
+  for (const factor of [1, 25.4]) {
+    const r = dropPart({ ...p, factor }, t, [100, 200]);
+    assert.deepEqual(r.blocks, blocks);
+    const reopened = readDxf(writeDxf({ ...t.raw, ...r }));
+    assert.deepEqual(readTitleBlock(reopened), title);
+    assert.equal(reopened.blocks.PD_PDF_TITLE_2, undefined);
+  }
+  assert.deepEqual(t.raw.blocks, blocks, 'the target is untouched');
+  assert.deepEqual(p.raw, before, 'the library part is untouched');
 });
 console.log(n + ' tests');

@@ -2218,7 +2218,7 @@ function dropLibInDrawing(rec, clientX, clientY) {
 function openPartAsDrawing(rec) {
   const part = libPart(rec);
   if (!part) { note(`${rec.name}: this part could not be read`); return; }
-  const raw = { ...part.raw, header: { ...part.raw.header } };
+  const raw = { ...part.raw, header: { ...part.raw.header }, blocks: LD.partBlocks(part.raw.blocks) };
   addTab({ name: rec.name + '.dxf', path: null, openPath: null, dirty: true, ...tabFields(raw, flatten(raw)) });
   note(`${rec.name} opened as a new drawing: ${curDoc().entities} entities. Not saved yet: Save asks where`);
 }
