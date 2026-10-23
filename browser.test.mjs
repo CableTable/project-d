@@ -8507,6 +8507,91 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 124: Break Apart via Ctrl+K and BREAKAPART separates a group and a block of outlines, selects results, Undo restores selection; plain line explains no change', async () => {
+    await closeTabs(/./);
+    const open = async (raw, name) => {
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await page.keyboard.press('Control+a');
+    };
+    const run = async (key) => {
+      if (key) { await page.locator('[data-testid=cmd-input]').evaluate((e) => e.blur()); await page.keyboard.press('Control+k'); }
+      else await typeCmd('BREAKAPART');
+    };
+    const doc = newDoc();
+    addLayer(doc, 'Cut', { aci: 3 }); addLayer(doc, 'Holes', { aci: 2 });
+    addBlock(doc, 'Plate', [roundRect(0, 0, 80, 60, 8), dxfCircle(30, 30, 10, { layer: 'Holes' })]);
+    addEntities(doc, dxfInsert('Plate', 100, 100, { layer: 'Cut', rot: 90 }));
+    await open(doc, 'breakapart-block.dxf'); await waitSel('1 selected');
+    for (const th of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + th); await page.locator('[data-menu=Modify]').click();
+      const item = page.getByRole('menuitem', { name: 'Break Apart', exact: true });
+      assert.equal(await item.locator('.hint').textContent(), 'Ctrl+K');
+      assert.match(await item.getAttribute('title'), /Ctrl\+K/);
+      const labels = await page.locator('.dropdown button').evaluateAll((es) => es.map((e) => e.firstChild.textContent));
+      assert.equal(labels.indexOf('Break Apart'), labels.indexOf('Explode') + 1);
+      await page.screenshot({ path: `${shotDir}/breakapart-menu-${th}.png` });
+      await page.locator('[data-menu=Modify]').click();
+    }
+    for (const key of [true, false]) {
+      await run(key); assert.match(await prompt(), /^Break Apart: 2 outlines are separate/);
+      assert.equal(await entCount(), 2); await waitSel('2 selected');
+      assert.equal((await histLabels()).at(-1), 'Break Apart');
+      if (key) {
+        const saved = await savedDoc();
+        assert.deepEqual(saved.entities.map((e) => [e.type, e.layer]), [['LWPOLYLINE', 'Cut'], ['CIRCLE', 'Holes']]);
+        assert.equal(GR.get(saved.entities[0].r, 70) & 1, 1);
+        assert.equal(GR.get(saved.entities[1].r, 10), 70); assert.equal(GR.get(saved.entities[1].r, 20), 130);
+        for (const th of ['light', 'dark']) {
+          await menuItem('View', 'Theme: ' + th);
+          await page.screenshot({ path: `${shotDir}/breakapart-result-${th}.png` });
+        }
+      }
+      await page.keyboard.press('Control+z'); assert.equal(await entCount(), 1); await waitSel('1 selected');
+    }
+    await menuItem('Modify', 'Break Apart'); await waitSel('2 selected');
+    await page.keyboard.press('Control+z'); await waitSel('1 selected');
+    await closeTabs(/./);
+
+    const partDoc = newDoc(); addEntities(partDoc, roundRect(0, 0, 80, 60, 5, { layer: 'Cut' }));
+    addLayer(partDoc, 'Cut', { aci: 3 });
+    const lay = newLayout('Break Apart group');
+    lay.parts.plate = makePart('plate', 'Plate', partDoc);
+    lay.placed.push({ partId: 'plate', x: 100, y: 100, rot: 30, mirrorX: false, mirrorY: false, g: 'test124' },
+      { partId: 'plate', x: 250, y: 200, rot: 0, mirrorX: true, mirrorY: false, g: 'test124' });
+    await open(layoutRaw(lay), 'breakapart-group.dxf');
+    assert.equal(await t('sel-readout').textContent(), 'Group of 2');
+    for (const key of [true, false]) {
+      await run(key); assert.match(await prompt(), /^Break Apart: 2 outlines are separate/);
+      assert.equal(await page.locator('[data-group=tools] .group-tag').count(), 0);
+      assert.equal(await page.locator('[data-group=tools] .pick-badge').count(), 2, 'both outlines remain selected');
+      assert.equal((await histLabels()).at(-1), 'Break Apart');
+      if (key) {
+        const saved = layoutFromRaw(await savedDoc());
+        assert.deepEqual(saved.placed.map(({ g, ...p }) => p), lay.placed.map(({ g, ...p }) => p), 'placement is unchanged');
+        assert.ok(saved.placed.every((p) => !p.g), 'ungrouped in the saved layout');
+        assert.equal(saved.parts.plate.raw.entities[0].layer, 'Cut');
+      }
+      await page.keyboard.press('Control+z');
+      assert.equal(await t('sel-readout').textContent(), 'Group of 2');
+      assert.equal(await page.locator('[data-group=tools] .group-tag').count(), 1);
+    }
+    await menuItem('Layout', 'Lock'); await run(true);
+    assert.match(await prompt(), /group is locked/);
+    assert.equal(await t('sel-readout').textContent(), 'Group of 2');
+    await closeTabs(/./);
+
+    const plain = newDoc(); addEntities(plain, dxfLine(100, 100, 150, 100));
+    await open(plain, 'breakapart-line.dxf');
+    const before = await histLabels();
+    for (const key of [true, false]) {
+      await run(key); assert.match(await prompt(), /^Break Apart: LINE .*not a group or block/);
+      assert.equal(await entCount(), 1); await waitSel('1 selected');
+      assert.deepEqual(await histLabels(), before, 'no Undo step for a plain line');
+    }
+    await menuItem('View', 'Theme: light'); await closeTabs(/./);
+  });
+
   await step('TODO 122a: Shaping (Modify menu, WELD / SHAPETRIM / INTERSECT): two squares, each operation gives the exact area in one undo step; Trim cuts the last picked one and keeps the cutter; open outlines and too few outlines say so', async () => {
     const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
     await closeTabs(/./);
@@ -8760,7 +8845,7 @@ try {
 
   await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
-    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
     const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);

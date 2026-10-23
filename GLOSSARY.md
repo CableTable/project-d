@@ -16,6 +16,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Balloon**: A numbered inspection callout placed by hand on a drawing, PDF or picture, with its data saved in a separate balloon file. Where: `DECISIONS.md`, Inspection balloons. Avoid: Dimension.
 
+**Break Apart**: Separates one selected layout group into ungrouped outlines, or an outline-only drawing block into its members one level down, keeping their placement and layers. Results stay selected; one Undo restores the object and selection. Modify menu, Ctrl+K or `BREAKAPART`. Where: `web/breakapart.js`, `web/app.js`. Avoid: Explode, which also splits polylines into lines and arcs.
+
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.

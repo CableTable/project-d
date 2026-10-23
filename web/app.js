@@ -20,6 +20,7 @@ import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
+import { breakApart } from './breakapart.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
@@ -387,6 +388,7 @@ function buildMenus() {
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
+  menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
   const modifyItems = menus.Modify;
@@ -3026,6 +3028,7 @@ const DO = {
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
+  breakapart: () => breakApartSelected(),
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     const sp = selectedPlaced();
@@ -3817,6 +3820,24 @@ async function textToOutlines() {
   note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (substitutions.length ? '. Fonts: ' + substitutions.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
 }
 
+function breakApartSelected() {
+  if (curLay()) {
+    if (!wholeGroup()) { note('Break Apart: select one group first'); return; }
+    if (selItems().some((x) => x.p.lock)) { note('Break Apart: the group is locked; Unlock it first'); return; }
+    const r = editFlags('Break Apart', (pl) => { const { g, ...rest } = pl; return rest; });
+    note(`Break Apart: ${r.n} outlines are separate, still selected. Ctrl+Z restores the group`);
+    return;
+  }
+  const d = editable();
+  if (!d) { note('Break Apart: open a drawing or layout first'); return; }
+  const r = breakApart(d.raw, d.sel, d.locked);
+  if (r.error) { note('Break Apart: ' + r.error); return; }
+  d.hist.push({ ...snapshotOf(d), sel: [...d.sel] }, 'Break Apart');
+  restore(d, r);
+  setSel(d, r.selected);
+  note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
+}
+
 function explodeSelected() {
   const d = editable();
   if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
@@ -4064,6 +4085,7 @@ function restore(d, st) {
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   showDoc();
   warm(d);
+  if (st.sel) setSel(d, new Set(st.sel));
 }
 /** Does the selection hold anything but kept dimensions? (Keep only and Extract part need geometry.) */
 const selHasPart = (d) => [...d.sel].some((e) => d.raw.entities[e].layer !== Ed.DIM_LAYER);

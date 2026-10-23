@@ -225,6 +225,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
      lines and arcs. His ask, 2026-10-23; grill first.
 125. ✅ (built, session 17) **Drag a part from the Parts library onto Compare** (S, ask, T49): a drop on the Compare canvas or panel adds it like Add from library (five at most); a hint follows the pointer.
 126. ✅ (built, session 17) **Drag a part from the Parts library onto a drawing tab** (S, ask, T50): the part's entities go into that drawing at the drop point, 1:1, loose, on their own layers, all selected, one Undo; a layout tab still places it on the sheet; with no drawing open the part opens as its own new drawing tab.
+124. ✅ **Break Apart (Ctrl+K) (S)** (built, 2026-10-24): Modify → Break Apart and `BREAKAPART` separate a selected layout group or an outline-only drawing block into outlines, still selected and in place on their layers. One Undo restores the original object and selection. Other selections explain why nothing changed. Shaping holes are already separate closed polylines; Explode (91) is unchanged.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
