@@ -15,6 +15,7 @@ import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
+import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc } from './dxf-write.js';
 import { cutterDoc } from './dxf-cutter.js';
@@ -3256,7 +3257,7 @@ function applyHidden() {
 // ---- view: zoom, pan, fit ----
 const canvasSize = () => { const r = ui.canvas.getBoundingClientRect(); return { w: Math.max(r.width, 1), h: Math.max(r.height, 1) }; };
 
-function applyView() {
+function applyView(gesture = false) {
   const { w, h: ch } = canvasSize();
   ui.svg.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.ovl.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`); ui.ovl.setAttribute('preserveAspectRatio', 'none');
@@ -3269,7 +3270,7 @@ function applyView() {
   drawSheetSel();
   drawGuides();
   drawRulers();
-  paintOverlay();
+  paintOverlay(gesture);
 }
 
 /** The numbers of the entities hidden one by one (d.hid holds the entity objects): looked up again when the entity list changed. */
@@ -3290,7 +3291,10 @@ function hideNow(d) {
 }
 // the drawing canvas repaints once per frame, however often the view changes
 let paintQueued = 0;
-function paintOverlay() {
+// A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
+let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
+function paintOverlay(gesture = false) {
+  if (!gesture) paintFull = true;
   if (paintQueued) return;
   paintQueued = requestAnimationFrame(() => {
     paintQueued = 0;
@@ -3298,6 +3302,19 @@ function paintOverlay() {
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
+    const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh };
+    clearTimeout(snapTimer);
+    const full = paintFull; paintFull = false;
+    if (!full && snapUsable(snap, want)) {
+      const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
+      c.dataset.snap = '1';
+      snapTimer = setTimeout(() => paintOverlay(), 120);
+      return;
+    }
+    snap = null; c.dataset.snap = '';
+    const t0 = performance.now();
     const d = curDoc();
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
@@ -3319,7 +3336,7 @@ function paintOverlay() {
     }
     const L2 = state.setlen || state.meas || state.dim || state.ldr;
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
-    paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
+    const drawn = paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
       bg: d && d.bg, hl: d ? (state.entityDrag?.items ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
@@ -3327,6 +3344,13 @@ function paintOverlay() {
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
     if (state.entityDrag?.items) paintDrawing(c, { ...base, keep: true, fl: state.entityDrag.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
+    c.dataset.drawn = drawn || 0;
+    if (heavy(performance.now() - t0, drawn || 0)) {
+      snapCv = snapCv || document.createElement('canvas');
+      snapCv.width = cw; snapCv.height = chh;
+      snapCv.getContext('2d').drawImage(c, 0, 0);
+      snap = want;
+    }
   });
 }
 
@@ -3344,13 +3368,13 @@ function fit() {
   applyView();
 }
 
-function zoomAt(factor, px, py) {
+function zoomAt(factor, px, py, gesture = false) {
   const next = Math.min(1000, Math.max(0.05, view.scale * factor));
   const mx = view.ox + px / view.scale, my = view.oy + py / view.scale;
   view.scale = next;
   view.ox = mx - px / next; view.oy = my - py / next;
   view.fitted = false;
-  applyView();
+  applyView(gesture);
 }
 function zoomBy(factor) { const { w, h: ch } = canvasSize(); zoomAt(factor, w / 2, ch / 2); }
 
@@ -3361,7 +3385,7 @@ function attachCanvasEvents() {
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
     const p = local(e);
-    zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y);
+    zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y, true);
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
@@ -3408,7 +3432,7 @@ function attachCanvasEvents() {
       view.ox -= (e.clientX - pan.x) / view.scale; view.oy -= (e.clientY - pan.y) / view.scale;
       pan = { x: e.clientX, y: e.clientY };
       view.fitted = false;
-      applyView();
+      applyView(true);
     }
     const d = editable();
     if (state.draw && d && state.drawDoc === curDoc()) drawHoverAt(d, e.clientX, e.clientY, e.shiftKey);

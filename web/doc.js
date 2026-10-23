@@ -19,10 +19,14 @@ export function spaceOf(fl) {
   return fl.boxes && fl.boxes.model ? 0 : 1;
 }
 
-/** Items of the shown space. */
+const shownCache = new WeakMap();
+/** Items of the shown space (kept per drawing: a big one is not filtered again on every pan frame). */
 export function shownItems(fl) {
-  const sp = spaceOf(fl);
-  return fl.items.filter((it) => (it.ps ? 1 : 0) === sp);
+  const sp = spaceOf(fl), c = shownCache.get(fl);
+  if (c && c.items === fl.items && c.n === fl.items.length && c.sp === sp) return c.list;
+  const list = fl.items.filter((it) => (it.ps ? 1 : 0) === sp);
+  shownCache.set(fl, { items: fl.items, n: fl.items.length, sp, list });
+  return list;
 }
 
 /** An item is drawn unless one of its layers is switched off (off = a Set of layer indexes). */

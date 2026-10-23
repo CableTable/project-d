@@ -4,6 +4,7 @@ import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './d
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
+import { outsideView, subPixel } from './perf.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
 const TEXT_FONT = '100px "Segoe UI", Roboto, system-ui, sans-serif';
@@ -15,7 +16,14 @@ const darken = (css, f) => '#' + [16, 8, 0].map((s) => Math.round(((parseInt(css
 
 /** A line colour as it shows on the sheet: white goes dark on the light sheet, black goes light on the dark one. */
 export const DIM_LIGHT = '#0f766e', DIM_DARK = '#5eead4';   // the theme's dimension colour (--dim); a new Dimensions layer is DIM_LIGHT
+const inkMemo = new Map();            // a drawing has a handful of colours but 100k items: work each out once
 export function ink(css, dark) {
+  const key = (dark ? 'd' : 'l') + css;
+  let v = inkMemo.get(key);
+  if (v === undefined) { v = inkOf(css, dark); inkMemo.set(key, v); }
+  return v;
+}
+function inkOf(css, dark) {
   if (dark && css === DIM_LIGHT) return DIM_DARK;
   const l = lum(css);
   if (!dark) return l > 0.8 ? SHEETS.light.fg : l > 0.55 ? darken(css, 0.6) : css;
@@ -34,7 +42,7 @@ function trace(c, ops, origin) {
 }
 
 /**
- * Paints into `canvas` (already sized to w*dpr by h*dpr).
+ * Paints into `canvas` (already sized to w*dpr by h*dpr). Returns how many items the main drawing painted.
  * o: { keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
  *       tint (one css colour to draw everything in: a part off the sheet),
  *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
@@ -76,12 +84,13 @@ export function paintDrawing(canvas, o) {
   const xs = [ox / factor, (ox + w / scale) / factor];
   const ys = [(sheetH - oy - h / scale) / factor, (sheetH - oy) / factor];
   const vr = [Math.min(...xs), ys[0], Math.max(...xs), ys[1]];
-  paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe);
+  const drawn = paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe);
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
   if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#00ff00', o.contourDash || []);
+  return drawn;
 }
 
 /** Contour's preview: the chosen colour and style, translucent until Apply. */
@@ -113,16 +122,17 @@ function wireStroke(c, dpr) {
 /** The shown items through T (drawing units → canvas pixels), k pixels per unit; vr culls to the view (drawing units), or null. */
 function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wireframe) {
   const mats = fl.mats;
-  let cur = -1, kk = k, open = false, pc = null, pw = 0, pd = null, origin = [0, 0];
+  let cur = -1, kk = k, open = false, pc = null, pw = 0, pd = null, origin = [0, 0], drawn = 0;
   const flush = () => { if (open) { if (wireframe) wireStroke(c, dpr); else c.stroke(); } open = false; };
   for (const it of shownItems(fl)) {
     const b = it.b;
     const pad = it.k === 'p' && !it.fill ? strokeWidth(it, factor, mscale(mats[it.m])) / factor / 2 : 0;
-    if (vr && (b[2] + pad < vr[0] || b[0] - pad > vr[2] || b[3] + pad < vr[1] || b[1] - pad > vr[3])) continue;
-    if (it.k !== 'n' && (b[2] - b[0] + 2 * pad) * k < 0.4 && (b[3] - b[1] + 2 * pad) * k < 0.4) continue;       // under half a pixel
+    if (vr && outsideView(b, pad, vr)) continue;
+    if (it.k !== 'n' && subPixel(b, pad, k)) continue;       // under half a pixel
     if (!itemVisible(it, off)) continue;
     if (hide && hide.has(it.e)) continue;                                  // an entity being dragged by a grip is drawn by the overlay
     if (it.m !== cur) { flush(); cur = it.m; const M = mats[cur], V = mmul(T, M); origin = viewOrigin(V); c.setTransform(...V.slice(0, 4), ...mapply(V, ...origin)); kk = k * mscale(M) || k; }
+    drawn++;
     const mode = paintMode(it, wireframe);
     if (mode === 'stroke') {
       const lw = wireframe ? dpr / kk : Math.max(strokeWidth(it, factor, kk / k) * k / factor, 1.2 * dpr) / kk;
@@ -148,6 +158,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
     else if (mode === 'hatch') drawHatch(c, it, kk, dpr, col, origin);
   }
   flush();
+  return drawn;
 }
 
 /** The selection: a thin accent centre line over the object's true-width stroke. */
