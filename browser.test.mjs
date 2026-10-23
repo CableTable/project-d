@@ -3973,6 +3973,29 @@ try {
     await t('preflight-close').click();
   });
 
+  await step('TODO 121: Join gaps has a Method list (average point by default, remembered); each method joins in one undo step and the message names it', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/outline.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+    assert.equal(await t('gap-method').inputValue(), 'average');
+    await shotBoth('join-gaps-method');
+    for (const [method, label, pieces] of [['extend', 'Extend', 8], ['chamfer', 'Chamfer', 10], ['fillet', 'Fillet', 10], ['bezier', 'Bezier', 10]]) {
+      await t('gap-method').selectOption(method);
+      await t('gap-join').click();
+      assert.match(await t('cmd-prompt').textContent(), new RegExp(`^Joined 2 gaps \\(${label}\\)`), method);
+      await click(50, 0); await waitSel(pieces + ' selected');
+      await page.keyboard.press('Control+z');
+      await click(50, 0); await waitSel('8 selected');                          // one Undo took the lot back
+      await page.keyboard.press('Escape');
+    }
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-gapmethod')), 'bezier', 'remembered');
+    await t('gap-method').selectOption('average');
+    await t('gap-join').click();
+    assert.match(await t('cmd-prompt').textContent(), /^Joined 2 gaps\. /, 'average point says no method');
+    await page.keyboard.press('Control+z');
+  });
+
   await step('TODO 46: tiny gaps are counted (0.01 mm) and ringed; the tolerance is editable; Join gaps closes them in one undo step', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');

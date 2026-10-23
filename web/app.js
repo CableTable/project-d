@@ -179,6 +179,7 @@ const state = {
   sidecars: new Map(),             // balloon files picked or dropped in a browser, waiting for their drawing: lower-case name → text
   dimDrag: null,                   // a selected dimension being dragged: { e, name, params, dp, start, offset, moved }
   gapMm: 0.01,      // Tiny gaps (TODO 46): the tolerance in mm (remembered on this PC); each drawing opts into rings with Show
+  gapMethod: 'average',   // Join gaps (TODO 121): a key of Ed.JOIN_METHODS (remembered on this PC)
   setlen: null,                    // Set length in progress: { pts: [[x, y] drawing units], hover, measured (mm) }
   txoWait: false, mod: null, modDoc: null, offDist: 10,   // Offset / Trim / Mirror in progress (newMod), its tab, and the Offset distance in mm (remembered)
   draw: null, drawDoc: null,       // the drawing tool in progress (draw.js createTool), and the tab it works on
@@ -5735,8 +5736,15 @@ function buildDrawingSection() {
   ui.gapTol.addEventListener('change', gapTolTyped);
   ui.gapTol.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.gapTol.blur(); });
   ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
-  ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Remove touching micro pieces, then move gap ends to their average point (one undo step)', onclick: joinTinyGaps }, 'Join');
-  ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin);
+  ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Remove touching micro pieces, then close each gap by the Method (one undo step)', onclick: joinTinyGaps }, 'Join');
+  ui.gapMethod = h('select', { class: 'fld', 'data-testid': 'gap-method', 'aria-label': 'Join gaps method', title: 'How Join closes each gap; a gap the method cannot do is closed by average point' },
+    Object.entries(Ed.JOIN_METHODS).map(([v, text]) => h('option', { value: v }, text)));
+  ui.gapMethod.addEventListener('change', () => {
+    state.gapMethod = ui.gapMethod.value;
+    try { localStorage.setItem('pd-gapmethod', state.gapMethod); } catch { /* ignore */ }
+  });
+  ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin,
+    h('label', { class: 'gapmethod' }, h('span', { class: 'lbl' }, 'Method'), ui.gapMethod));
   ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
   ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', onclick: removeDuplicates }, 'Remove duplicates…');
   ui.realLen = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'real-length', 'aria-label': 'Real length in mm', placeholder: 'real length, mm' });
@@ -6388,11 +6396,14 @@ function gapTolTyped() {
 function joinTinyGaps(whole = false) {
   const d = editable(), ed = d && (whole === true ? CL.checkIndex(d.raw) : edIndex(d));
   if (!ed) return;
-  const r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e));
+  const method = state.gapMethod, r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e), method);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
   const left = gapsOf(d) || [];
-  note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
+  // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
+  const fell = Object.entries(r.by).filter(([m, n]) => m !== method && n).map(([m, n]) => `${n} by ${Ed.JOIN_METHODS[m].toLowerCase()}`);
+  note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + (method === 'average' ? '' : ` (${Ed.JOIN_METHODS[method]})`) + (fell.length ? ', ' + fell.join(', ') : '') +
+    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length && !Object.keys(r.by).some((m) => m !== 'average' && m !== 'extend') ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');   // a bridge is itself a piece within the tolerance, so its gap still counts
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
@@ -6781,6 +6792,8 @@ async function init() {
   try { const v = localStorage.getItem('pd-decimals'); if (v != null) dp = +v; } catch { /* ignore */ }
   state.dp = Math.max(0, Math.min(4, Math.round(dp) || 0)); ui.dp.value = String(state.dp);
   try { const v = PL.parseMm(localStorage.getItem('pd-gaptol') || ''); if (v != null && v > 0 && v <= 5) state.gapMm = v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem('pd-gapmethod'); if (v in Ed.JOIN_METHODS) state.gapMethod = v; } catch { /* ignore */ }
+  ui.gapMethod.value = state.gapMethod;
   try { const v = PL.parseMm(localStorage.getItem('pd-nudge') || ''); if (v != null && v > 0) state.nudge = v; } catch { /* ignore */ }
   try { if (localStorage.getItem('pd-rulers') === '0') state.rulers = false; } catch { /* ignore */ }
   try { if (localStorage.getItem(PROPS_SAVED) === '1') state.propsOn = true; } catch { /* ignore */ }
