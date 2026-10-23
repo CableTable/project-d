@@ -34,6 +34,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Duplicate**: Makes copies of a placed part along a chosen direction, with distance measured edge to edge. Where: `DECISIONS.md`, Duplicate and Duplicate both ways.
 
+**Edge grip**: A handle at the middle of a selected rectangle's side. Dragging it moves that side along its normal, keeping a rectangle; Shift keeps proportions about the opposite side's midpoint. Where: `DECISIONS.md`, Rectangle edge grips. Avoid: Gripper.
+
 **Extra gap**: Adds room after one chosen row or column of the repeat grid and drops rows or columns that no longer fit. Where: `DECISIONS.md`, Extra gap.
 
 **Extract part**: Names the selected drawing geometry and saves it in the Parts library for reuse at the drawing's prepared scale. Where: `TODO.md`, items 5, 6 and 19; `web/app.js`.
@@ -63,6 +65,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Lock**: Prevents edits to a layer's objects on a drawing or movement of locked parts on a layout. Where: `DECISIONS.md`, Objects tab; `TODO.md`, item 37. Avoid: Hide.
 
 **Measure**: Picks points or geometry to report a distance, size or angle without adding a saved callout unless it is kept. Where: `DECISIONS.md`, Measure and Dimensions; `web/drawing.js`. Avoid: Dimension.
+
+**Micro piece**: An entity whose own path length is at most the Join gaps tolerance and whose end is within that tolerance of an entity longer than the tolerance. Join gaps removes these pieces before joining, reports the count and restores them with the joins in one Undo. A lone tiny entity stays. Where: `web/edit.js`; `DECISIONS.md`, Join gaps: micro pieces.
 
 **Nest**: The packed arrangement of parts produced by Auto-nest, also the command name that opens its dialog. Where: `DECISIONS.md`, Auto-nest method and UI.
 

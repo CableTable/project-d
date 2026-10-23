@@ -206,6 +206,8 @@ select.fld { font-family: var(--sans); }
 .gaprow2 > .lbl { white-space: nowrap; }
 .gaprow2 .btn { padding: 0 8px; }
 .gaprow2 .tog { margin-left: auto; }
+.gaprow2 .gapmethod { display: flex; align-items: center; gap: 4px; flex-basis: 100%; }
+.gaprow2 .gapmethod .fld { width: auto; flex: 1; }
 .preflightpanel { position: absolute; right: 16px; top: 48px; width: min(448px, calc(100% - 32px)); max-height: calc(100% - 64px); display: flex; flex-direction: column; overflow: hidden; z-index: 6; font-size: 12px; box-shadow: 0 8px 24px var(--shadow); }
 .preflightpanel[hidden] { display: none; }
 .pfhead { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); }
@@ -307,7 +309,7 @@ select.fld { font-family: var(--sans); }
 .card .row .btn { flex: 1; justify-content: center; }
 .chip { font-size: 11px; padding: 2px 7px; border-radius: 9px; background: var(--sel); color: var(--accent); font-weight: 600; }
 .outbox .btn { align-self: flex-start; }
-.outlist { display: flex; flex-direction: column; gap: 2px; max-height: 132px; overflow-y: auto; }
+.outlist { display: flex; flex-direction: column; gap: 2px; max-height: 104px; overflow-y: auto; }          /* the Method row took 28px of the panel */
 .orow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); color: var(--text); cursor: pointer; text-align: left; }
 .orow:hover { border-color: var(--accent); }
 .orow .nm { flex: 1; }

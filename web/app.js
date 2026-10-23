@@ -15,6 +15,7 @@ import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
+import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc } from './dxf-write.js';
 import { cutterDoc } from './dxf-cutter.js';
@@ -178,6 +179,7 @@ const state = {
   sidecars: new Map(),             // balloon files picked or dropped in a browser, waiting for their drawing: lower-case name → text
   dimDrag: null,                   // a selected dimension being dragged: { e, name, params, dp, start, offset, moved }
   gapMm: 0.01,      // Tiny gaps (TODO 46): the tolerance in mm (remembered on this PC); each drawing opts into rings with Show
+  gapMethod: 'average',   // Join gaps (TODO 121): a key of Ed.JOIN_METHODS (remembered on this PC)
   setlen: null,                    // Set length in progress: { pts: [[x, y] drawing units], hover, measured (mm) }
   txoWait: false, mod: null, modDoc: null, offDist: 10,   // Offset / Trim / Mirror in progress (newMod), its tab, and the Offset distance in mm (remembered)
   draw: null, drawDoc: null,       // the drawing tool in progress (draw.js createTool), and the tab it works on
@@ -349,7 +351,7 @@ function recentItems() {
   if (!t || !t.fs || !t.fs.readFile) return [];
   const list = recentList();
   if (!list.length) return [['Recent files: none yet', () => {}, null, () => false, null, true]];
-  return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p), null, null, p, i === 0]);
+  return list.map((p, i) => [`${i + 1}  ${p.split(/[\\/]/).pop()}`, () => openPath(p, true), null, null, p, i === 0]);
 }
 
 function buildMenus() {
@@ -540,6 +542,7 @@ const curDoc = () => state.docs[state.doc];
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  state.entityDrag = null;
   state.sel = -1;                         // the layout selection belongs to the tab it was made on (the setter clears the picks; clampSel picks part 0)
   state.gapSel = null; gapSig = ''; hideMenu();
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
@@ -644,11 +647,7 @@ async function openFile() {
   try {
     const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf', 'dwg', 'pdf'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
-    if (!path) return;
-    const name = String(path).split(/[\\/]/).pop();
-    if (!/\.(dxf|pdf)$/i.test(name)) { await openBytes(name, new ArrayBuffer(0)); return; }
-    const bytes = await t.fs.readFile(path);
-    await openBytes(name, bytes, String(path));
+    if (path) await openPath(String(path));
   } catch (err) {
     note('Open failed: ' + (err && err.message ? err.message : err));
   }
@@ -664,13 +663,36 @@ function rememberRecent(path) {
 function forgetRecent(path) {
   try { localStorage.setItem('pd-recent', JSON.stringify(recentList().filter((p) => p !== path))); } catch { /* storage may be blocked */ }
 }
-/** Opens a file by its path (a Recent files entry); one that is gone comes off the list. */
-async function openPath(path) {
+/** Shared by File → Open, Explorer launches and Recent files. */
+async function openPath(path, recent = false) {
   const t = window.__TAURI__, name = path.split(/[\\/]/).pop();
   if (!t || !t.fs || !t.fs.readFile) return;
-  let bytes;
-  try { bytes = await t.fs.readFile(path); } catch { forgetRecent(path); note(name + ': not found (moved or deleted), so it is off Recent files'); return; }
-  await openBytes(name, bytes, path);
+  try {
+    if (!/\.(dxf|pdf)$/i.test(name)) { await openBytes(name, new ArrayBuffer(0)); return; }
+    await openBytes(name, await t.fs.readFile(path), path);
+  } catch (err) {
+    if (recent) { forgetRecent(path); note(name + ': not found (moved or deleted), so it is off Recent files'); }
+    else note('Open failed: ' + (err && err.message ? err.message : err));
+  }
+}
+
+async function attachLaunchFiles() {
+  const t = window.__TAURI__;
+  if (!t?.event?.listen || !t?.core?.invoke) return;
+  let pending = Promise.resolve();
+  const drain = () => {
+    pending = pending.then(async () => {
+      for (const [path, error] of await t.core.invoke('take_launch_files')) {
+        if (error) note('Open failed: ' + error);
+        else await openPath(path);
+      }
+    }).catch((err) => note('Open failed: ' + (err.message || err)));
+    return pending;
+  };
+  try {
+    await t.event.listen('open-launch-files', drain);
+    await drain();
+  } catch (err) { note('Open failed: ' + (err.message || err)); }
 }
 
 /** A file from the browser's own picker or a drop. */
@@ -811,7 +833,7 @@ function setTool(id) {
   if (id === 'contour' && !editable()) { note('Contour works on a drawing tab: open a drawing and pick a closed outline'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
-  state.text.drag = null; state.grip = null; state.txoWait = false; trackClear();
+  state.text.drag = null; state.grip = null; state.entityDrag = null; state.txoWait = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
   if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab'); return; }
@@ -3236,7 +3258,7 @@ function applyHidden() {
 // ---- view: zoom, pan, fit ----
 const canvasSize = () => { const r = ui.canvas.getBoundingClientRect(); return { w: Math.max(r.width, 1), h: Math.max(r.height, 1) }; };
 
-function applyView() {
+function applyView(gesture = false) {
   const { w, h: ch } = canvasSize();
   ui.svg.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.ovl.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`); ui.ovl.setAttribute('preserveAspectRatio', 'none');
@@ -3249,7 +3271,7 @@ function applyView() {
   drawSheetSel();
   drawGuides();
   drawRulers();
-  paintOverlay();
+  paintOverlay(gesture);
 }
 
 /** The numbers of the entities hidden one by one (d.hid holds the entity objects): looked up again when the entity list changed. */
@@ -3261,14 +3283,19 @@ function hidIdx(d) {
 /** Entities not painted: the one a grip is dragging (the overlay draws it) and the ones hidden one by one in the Objects tab. */
 function hideNow(d) {
   const drag = d && state.grip && state.grip.d === d && state.grip.next ? state.grip.e : null;
-  if (!d || (drag == null && !(d.hid && d.hid.size))) return null;
+  const move = state.entityDrag;
+  if (!d || (drag == null && !move?.items && !(d.hid && d.hid.size))) return null;
   const out = new Set(hidIdx(d) || []);
   if (drag != null) out.add(drag);
+  if (move?.d === d && move.items) for (const e of move.sel) out.add(e);
   return out;
 }
 // the drawing canvas repaints once per frame, however often the view changes
 let paintQueued = 0;
-function paintOverlay() {
+// A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
+let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
+function paintOverlay(gesture = false) {
+  if (!gesture) paintFull = true;
   if (paintQueued) return;
   paintQueued = requestAnimationFrame(() => {
     paintQueued = 0;
@@ -3276,6 +3303,19 @@ function paintOverlay() {
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
+    const want = { view: { ox: view.ox, oy: view.oy, scale: view.scale }, w: cw, h: chh };
+    clearTimeout(snapTimer);
+    const full = paintFull; paintFull = false;
+    if (!full && snapUsable(snap, want)) {
+      const { dx, dy, r } = snapPlace(snap.view, want.view), g = c.getContext('2d');
+      g.setTransform(1, 0, 0, 1, 0, 0); g.clearRect(0, 0, cw, chh);
+      g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
+      c.dataset.snap = '1';
+      snapTimer = setTimeout(() => paintOverlay(), 120);
+      return;
+    }
+    snap = null; c.dataset.snap = '';
+    const t0 = performance.now();
     const d = curDoc();
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
@@ -3297,13 +3337,21 @@ function paintOverlay() {
     }
     const L2 = state.setlen || state.meas || state.dim || state.ldr;
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
-    paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
-      bg: d && d.bg, hl: d ? (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+    const drawn = paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
+      bg: d && d.bg, hl: d ? (state.entityDrag?.items ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
+    if (state.entityDrag?.items) paintDrawing(c, { ...base, keep: true, fl: state.entityDrag.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
+    c.dataset.drawn = drawn || 0;
+    if (heavy(performance.now() - t0, drawn || 0)) {
+      snapCv = snapCv || document.createElement('canvas');
+      snapCv.width = cw; snapCv.height = chh;
+      snapCv.getContext('2d').drawImage(c, 0, 0);
+      snap = want;
+    }
   });
 }
 
@@ -3321,13 +3369,13 @@ function fit() {
   applyView();
 }
 
-function zoomAt(factor, px, py) {
+function zoomAt(factor, px, py, gesture = false) {
   const next = Math.min(1000, Math.max(0.05, view.scale * factor));
   const mx = view.ox + px / view.scale, my = view.oy + py / view.scale;
   view.scale = next;
   view.ox = mx - px / next; view.oy = my - py / next;
   view.fitted = false;
-  applyView();
+  applyView(gesture);
 }
 function zoomBy(factor) { const { w, h: ch } = canvasSize(); zoomAt(factor, w / 2, ch / 2); }
 
@@ -3338,7 +3386,7 @@ function attachCanvasEvents() {
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
     const p = local(e);
-    zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y);
+    zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y, true);
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
@@ -3364,6 +3412,9 @@ function attachCanvasEvents() {
       if (d && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
+        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p)) && !e.shiftKey) {
+          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p };
+        }
         capture(c, e);
       }
       if (curLay() && (state.tool === 'select' || state.tool === 'step')) {
@@ -3382,7 +3433,7 @@ function attachCanvasEvents() {
       view.ox -= (e.clientX - pan.x) / view.scale; view.oy -= (e.clientY - pan.y) / view.scale;
       pan = { x: e.clientX, y: e.clientY };
       view.fitted = false;
-      applyView();
+      applyView(true);
     }
     const d = editable();
     if (state.draw && d && state.drawDoc === curDoc()) drawHoverAt(d, e.clientX, e.clientY, e.shiftKey);
@@ -3393,6 +3444,9 @@ function attachCanvasEvents() {
     const picking = (modLive() && !(state.mod.kind === 'mirror' && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
     if (drag && !picking && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
     if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
+    else if (drag?.moved && drag.move) {
+      if (state.entityDrag === drag.move) moveSelectionTo(drag.move, e);
+    }
     else if (drag && drag.moved && !picking) showRubber(drag, e);
     const act = state.setlen || (state.tool === 'measure' ? state.meas : null);
     if (d && act && act.pts.length < 2) { act.hover = pickPoint(d, toDrawing(d, e.clientX, e.clientY), act.pts, e.shiftKey, true); paintOverlay(); }
@@ -3425,16 +3479,28 @@ function attachCanvasEvents() {
       else if (modLive()) modUp(d, was, p, e.shiftKey);
       else if (state.match && editable() === d) { if (!was.moved) matchClick(d, was.p); }
       else if (was.dim && was.moved) dimDragEnd(d, was.dim);
+      else if (was.move && was.moved) {
+        if (state.entityDrag === was.move) {
+          const ready = moveSelectionTo(was.move, e);
+          const g = was.move; state.entityDrag = null;
+          if (ready && g.items && (g.dx || g.dy) && g.raw === d.raw.entities) {
+            commit(d, Ed.moveEntities(d.raw, g.sel, g.dx, g.dy), 'Move selection'); setSel(d, g.sel);
+            note('Selection moved. Ctrl+Z takes it back');
+          }
+          paintOverlay();
+        }
+      }
       else if (!editable()) { /* a layout tab: its placed parts are picked by the page itself (data-i) */ }
       else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift);
       else clickSelect(d, was.p, e.shiftKey || was.shift);
     }
     end();
+    state.entityDrag = null;
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen) pickGap(gh.dataset.gap); });
   c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
-  c.addEventListener('pointercancel', () => { if (state.grip && !state.grip.hot) gripCancel(); state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
+  c.addEventListener('pointercancel', () => { if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
@@ -3465,7 +3531,7 @@ function renderCommand() {
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
-  if (state.grip && ed) { const gg = state.grip; ui.hist.textContent = `Command: ${GR.commandOf(gg.ent, gg.id)}   ${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):'; return; }
+  if (state.grip && ed) { const gg = state.grip; ui.hist.textContent = `Command: ${GR.commandOf(gg.ent, gg.id)}   ${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = gg.id.startsWith('e') ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):'; return; }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(ed)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
@@ -3820,6 +3886,19 @@ function setSel(d, sel) {
   for (const e of sel) for (const i of ed.byEnt[e] || []) d.hl.push(ed.items[i]);
   paintOverlay(); renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
+}
+
+function moveSelectionTo(g, e) {
+  if (g.d !== editable() || g.raw !== g.d.raw.entities || [...g.sel].some((i) => lockedEnt(g.d, i))) { state.entityDrag = null; return false; }
+  const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
+  g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
+  g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
+  try {
+    const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.d.raw.entities[i]) };
+    g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), g.dx, g.dy) });
+    g.items = g.preview.items;
+    view.fitted = false; paintOverlay(); return true;
+  } catch (err) { state.entityDrag = null; note(err.message); paintOverlay(); return false; }
 }
 
 /** A click: the edge under it with everything joined to it end to end; Shift adds it or, if it is in already, takes it out. */
@@ -4834,7 +4913,11 @@ function drawOvl() {
   }
   ui.ovl.replaceChildren(...out);
   ui.grips.replaceChildren(...grips);
-  if (ui.gripHint) ui.gripHint.hidden = !(d && !d.lay && gripOn(d) && gripList(d).length > 0);
+  if (ui.gripHint) {
+    const grips = d && !d.lay && gripOn(d) ? gripList(d) : [];
+    ui.gripHint.hidden = !grips.length;
+    ui.gripHint.textContent = grips.some((g) => g.kind === 'edge') ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+  }
   const t = ui.tip;
   if (!tip) { t.hidden = true; return; }
   const r = canvasSize(), px = (tip.x - view.ox) * view.scale + 16, py = (H - tip.y - view.oy) * view.scale + 16;
@@ -5419,7 +5502,7 @@ function gripAt(d, cx, cy) {
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
   let q = snapPoint(d, p, g.e);                                  // not to the shape being dragged: its old place is going away
-  const ref = GR.refPoint(g.ent, g.id), base = ref && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
+  const ref = GR.refPoint(g.ent, g.id), base = ref && !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
@@ -5427,16 +5510,16 @@ function gripPick(g, cx, cy, shift, hover) {
   return q;
 }
 /** The grip's drag is now at q: what the shape becomes. */
-function gripAim(g, q) {
+function gripAim(g, q, shift = false) {
   g.to = q;
-  const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]]);
+  const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]], shift);
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
 }
 function gripDown(e) {
   const d = editable();
   if (!d) return false;
   const g0 = state.grip;
-  if (g0 && g0.hot && g0.d === d) { gripAim(g0, gripPick(g0, e.clientX, e.clientY, e.shiftKey)); gripCommit(); return true; }       // the second click of click, then click
+  if (g0 && g0.hot && g0.d === d) { gripAim(g0, gripPick(g0, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return true; }       // the second click of click, then click
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
@@ -5449,13 +5532,13 @@ function gripMove(e) {
   if (!g || g.d !== curDoc()) return;
   if (!g.moved && !g.hot && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) < 4) return;
   g.moved = true; g.cursor = [e.clientX, e.clientY];
-  gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey, true));
+  gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey, true), e.shiftKey);
   paintOverlay();
 }
 function gripUp(e) {
   const g = state.grip;
   if (!g || g.hot) return;
-  if (g.moved) { gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey)); gripCommit(); return; }
+  if (g.moved) { gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return; }
   g.hot = true; g.cursor = [e.clientX, e.clientY];                  // a click on the grip: it is hot until the next click puts it down
   renderCommand(); paintOverlay();
 }
@@ -5479,6 +5562,7 @@ function gripTyped(raw) {
   const f = d.factor, inp = DR.parseInput(raw);
   if (inp.kind === 'enter') { if (g.next) gripCommit(); else gripCancel(); return; }
   if (inp.kind === 'word') { if (inp.w === 'x' || inp.w === 'exit' || inp.w === 'esc') { gripCancel(); note('Stretch cancelled'); } else note(`"${inp.w}" is not an option here: type x,y, @dx,dy or a length, or press Esc`); return; }
+  if (g.id.startsWith('e')) { note('Drag the edge to resize; typing a size is not available yet'); return; }
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
   const grip = GR.gripsOf(g.ent).find((x) => x.id === g.id), origMm = [grip.x * f, grip.y * f], refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
   let mm = null;
@@ -5576,6 +5660,7 @@ function editKey(e) {
     else if (curLay() && multiSel() && !state.setlen) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.match) endMatch();
+    else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.grip) { gripCancel(); note('Stretch cancelled'); }
@@ -5651,8 +5736,15 @@ function buildDrawingSection() {
   ui.gapTol.addEventListener('change', gapTolTyped);
   ui.gapTol.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.gapTol.blur(); });
   ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
-  ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Move the ends of each gap together, to the middle between them (one undo step)', onclick: joinTinyGaps }, 'Join');
-  ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin);
+  ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Remove touching micro pieces, then close each gap by the Method (one undo step)', onclick: joinTinyGaps }, 'Join');
+  ui.gapMethod = h('select', { class: 'fld', 'data-testid': 'gap-method', 'aria-label': 'Join gaps method', title: 'How Join closes each gap; a gap the method cannot do is closed by average point' },
+    Object.entries(Ed.JOIN_METHODS).map(([v, text]) => h('option', { value: v }, text)));
+  ui.gapMethod.addEventListener('change', () => {
+    state.gapMethod = ui.gapMethod.value;
+    try { localStorage.setItem('pd-gapmethod', state.gapMethod); } catch { /* ignore */ }
+  });
+  ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin,
+    h('label', { class: 'gapmethod' }, h('span', { class: 'lbl' }, 'Method'), ui.gapMethod));
   ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
   ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', onclick: removeDuplicates }, 'Remove duplicates…');
   ui.realLen = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'real-length', 'aria-label': 'Real length in mm', placeholder: 'real length, mm' });
@@ -6303,13 +6395,15 @@ function gapTolTyped() {
 }
 function joinTinyGaps(whole = false) {
   const d = editable(), ed = d && (whole === true ? CL.checkIndex(d.raw) : edIndex(d));
-  const gaps = ed && Ed.findGaps(ed, state.gapMm / d.factor).filter((g) => g.ends.every((e) => !lockedEnt(d, e.e)));
-  if (!gaps || !gaps.length) return;
-  const r = Ed.joinGaps(d.raw, ed, gaps);
+  if (!ed) return;
+  const method = state.gapMethod, r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e), method);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
   const left = gapsOf(d) || [];
-  note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
+  // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
+  const fell = Object.entries(r.by).filter(([m, n]) => m !== method && n).map(([m, n]) => `${n} by ${Ed.JOIN_METHODS[m].toLowerCase()}`);
+  note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + (method === 'average' ? '' : ` (${Ed.JOIN_METHODS[method]})`) + (fell.length ? ', ' + fell.join(', ') : '') +
+    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
@@ -6698,6 +6792,8 @@ async function init() {
   try { const v = localStorage.getItem('pd-decimals'); if (v != null) dp = +v; } catch { /* ignore */ }
   state.dp = Math.max(0, Math.min(4, Math.round(dp) || 0)); ui.dp.value = String(state.dp);
   try { const v = PL.parseMm(localStorage.getItem('pd-gaptol') || ''); if (v != null && v > 0 && v <= 5) state.gapMm = v; } catch { /* ignore */ }
+  try { const v = localStorage.getItem('pd-gapmethod'); if (v in Ed.JOIN_METHODS) state.gapMethod = v; } catch { /* ignore */ }
+  ui.gapMethod.value = state.gapMethod;
   try { const v = PL.parseMm(localStorage.getItem('pd-nudge') || ''); if (v != null && v > 0) state.nudge = v; } catch { /* ignore */ }
   try { if (localStorage.getItem('pd-rulers') === '0') state.rulers = false; } catch { /* ignore */ }
   try { if (localStorage.getItem(PROPS_SAVED) === '1') state.propsOn = true; } catch { /* ignore */ }
@@ -6706,6 +6802,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
+  await attachLaunchFiles();
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);

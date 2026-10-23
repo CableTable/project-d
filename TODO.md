@@ -103,9 +103,9 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
     - 53c ✅ (built, session 12) rotation, alignment, width factor, mirroring kept; SHX → Arial named in the message.
     - 53d ✅ (built, session 13) MTEXT paragraphs, word wrap, attachment, rotation, height and line spacing; scoped height / width / oblique and bold runs; named formatting simplifications; one undo.
 54. ✅ (built, session 12) **Wireframe (outline-only) view** (S): View → Wireframe, status-bar chip and F9; thin outlines without fills or background pictures, remembered across all tabs. PDF / Print and exports keep their fills.
-55. **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags.
-    55a. Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings.
-    55b. (after 55a) If rendering lags, skip off-screen drawing items using their existing bounds, with conservative-bound unit tests and browser checks that panning and zooming reveal every object.
+55. ✅ (built, session 17: pan / zoom / open; 55c open) **Big-file performance** (M): open a 100k-entity DXF, measure pan / zoom, add culling or an index if it lags. Headless Chromium, 100k generated entities (`node tools/perf-big.mjs`), before → after: open 1.7 s → 1.7 s; zoom 46 fps (whole drawing in view) / 20 fps (at Fit) → 60 / 60; pan 60 fps (zoomed in) / 20 fps (all 100k in view) → 60 / 60 (60 = the screen's refresh rate). Full repaint at Fit is still about 100 ms, done once when the view settles.
+    55a. ✅ Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings. (`tools/gen-big-dxf.mjs`, `tools/perf-big.mjs`; the browser step uses 20k and a generous fps bound.)
+    55b. ✅ (after 55a) If rendering lags, skip off-screen drawing items using their existing bounds, with conservative-bound unit tests and browser checks that panning and zooming reveal every object. (Bounds culling was already there; `web/perf.js` holds the cull test and the bitmap reuse, `perf.test.mjs` tests them.)
     55c. (after 55a) If picking or snapping lags, index their candidates while preserving hit order and rebuilding after edits / undo, with indexed-versus-current-result unit tests and a large-file browser check.
 56. **Font note on open** (S): name the fonts the file asked for and what is shown instead (check first whether one exists).
 
@@ -166,6 +166,7 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
     76a. Associate a newly placed linear dimension with one picked LINE and let double-clicking its value stretch that line's second end, with positive-value validation, undo and unit / browser tests.
     76b. (after 76a) Support horizontal and vertical driving dimensions on a LINE while preserving its other coordinate, with unit and browser checks for unchanged unrelated geometry and layer locks.
     76c. (after 76b) Keep driving-dimension associations through Save / reopen and recovery using stable references, disabling the edit with a clear message if the source was deleted or detached, with round-trip unit and browser tests.
+    76d. (after 76c, T22) A dimension across a rectangle's two sides drives its size: the right or top side moves, the left and bottom stay fixed. Moved after the session 17 features: needs 76a–c, and T22 is covered by 105a / 105b meanwhile.
 
 From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/Sp3eoq15FKgsVFQpxmpPd7; his picks):
 77. **Layer search box** (S): a small search box above the Layers list and the Objects tree; matches show, the rest hide (QCAD forum, 7 Oct 2026).
@@ -187,7 +188,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 91. **Explode (X)** (S–M, his ask 2026-10-21): an outline and a square inside it select as one object (one polyline or a block) and there is no way to split them. AutoCAD way: Explode turns a polyline into lines / arcs and a block into its members (layer kept), one undo step; Modify menu + X / EXPLODE.
 92. ✅ (built, session 15) **Tiny gaps rings clutter imported drawings** (S, his report 2026-10-21): an imported drawing shows hundreds of orange Tiny-gaps rings on letters, scale marks and arrows. Check whether they show without pressing Show; skip text, dimensions and annotation layers; consider a cap or a count-only summary when there are many.
 90. ✅ (built, session 14) **Pure black drawing area in dark theme** (S, his ask 2026-10-21): the canvas background in the dark theme is #000; selection / highlight colours still read clearly on it.
-93. **Open a .dxf from Explorer** (S–M, bug, T12): with Project D as the default app, double-clicking a .dxf starts the app with no file. Read the launch path and open it in its own tab (as File → Open, fs scope granted as in 82); decide the already-running case (single-instance → new tab).
+93. ✅ (built, session 17) **Open a .dxf from Explorer** (S–M, bug, T12): with Project D as the default app, double-clicking a .dxf starts the app with no file. Read the launch path and open it in its own tab (as File → Open, fs scope granted as in 82); decide the already-running case (single-instance → new tab).
 94. **Tidy the layout Drawing tab, CorelDRAW way** (M, ask, T13): the right panel is one long scroll; Parts on this layout and Step and repeat sit below the fold. First Knight researches how CorelDRAW really does page setup, rulers, guidelines and docker sections (official docs); then Rook picks the split (sheet setup in a bar or folded section, rulers / guides as View toggles, panel keeps parts + step and repeat). As-built board update.
 95. ✅ (built, session 15) **Usage page: Usage | TODO | Tickets tabs, new look** (M, ask, T14): Project R look (his call 2026-10-21, no mock-up), phone bottom tabs / desktop segmented tabs, remembered last tab; whole TODO; Tickets from support/tickets.md with status chips, tag filters and expandable notes. Usage keeps its existing content and adds the three-agent daily token chart (14 days, IST; cache reads excluded).
 96. ✅ (built, session 15) **Work area light / dark toggle** (S, ask, T15): canvas background light or dark independent of the app theme (plus "follow app theme"), remembered; selection / layer colours still read on both. As-built board update.
@@ -198,8 +199,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 101. **Edit the footnote / title block text that prints on the PDF** (S–M, ask, T18): see T18 in support/tickets.md. Grill first.
 102. ✅ (built, session 16) **PDF save: start in the drawing's own folder, like Save As** (S, ask, T19): see T19 in support/tickets.md. Grill first.
 103. ✅ (built, session 16) **Allow much more zoom (now max 40 px per mm)** (S, ask, T20): see T20 in support/tickets.md. Grill first.
-104. **Join gaps leaves ~half the gaps: micro-arcs shorter than the tolerance block it** (M, bug, T21): see T21 in support/tickets.md. Grill first.
-105. (a built, session 16: W / H padlock; b = edge drag, 76d next) **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md. Grill first.
+104. ✅ (built, session 17) **Join gaps leaves ~half the gaps: micro-arcs shorter than the tolerance block it** (M, bug, T21): guarded micro-piece removal before the existing average-point join; count reported, one Undo restores everything. Synthetic fixture checks closure and <= 0.1% total length change.
+105. (a built, session 16: W / H padlock; b built, session 17: rectangle edge drag; 76d later, see 76) **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md.
+105c. Circle radius grip and ellipse axis grips resize them (later, T22).
 106. **Build dynamic input (TODO 69) now, for every drawing tool** (L, ask, T23): see T23 in support/tickets.md. Grill first.
 107. **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): see T24 in support/tickets.md. Grill first.
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
@@ -209,13 +211,13 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 112. ✅ (built, session 16) **Compare, manual mode: no snapping** (S, bug, T29): see T29 in support/tickets.md. Grill first.
 113. ✅ (built, session 16) **Compare runs constantly: make it a toggle or a run-once button** (S, bug, T30): see T30 in support/tickets.md. Grill first.
 114. **Compare: choose which drawings, more than two, from Parts library or drawing tabs** (M, ask, T31): see T31 in support/tickets.md. Grill first.
-115. **Text in the YEB Sport drawing is converted to both curves and text** (M, bug, T32): see T32 in support/tickets.md. Grill first.
+115. ✅ (built, session 17) **Text in the YEB Sport drawing is converted to both curves and text** (M, bug, T32): PDF import excludes invisible searchable text (rendering modes 3 / 7), keeping the already drawn curves once. Visible text still becomes outlines in one Undo step.
 116. **Open a Parts library part in a drawing tab** (S, ask, T33): see T33 in support/tickets.md. Grill first.
 117. **Delete sheets, and why a sheet change warns that edits will be gone** (S, ask, T34): see T34 in support/tickets.md. Grill first.
 118. **Alt+W closes the tab, Ctrl+Tab cycles tabs** (S, ask, T35): see T35 in support/tickets.md. Grill first.
 119. ✅ (built, session 16) **View menu: Theme items uneven spacing, corner-only highlight, no tick** (S, bug, T36): see T36 in support/tickets.md. Grilled by support.
-120. **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): see T37 in support/tickets.md. Grill first.
-121. **Join gaps: CorelDRAW-style join methods (Extend, Chamfer, Fillet)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
+120. ✅ (built, session 17) **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): selected drawing entities now drag together, with preview, one Undo and Escape / pointer-cancel. PDF drawing imports open unlocked, without a background picture.
+121. ✅ (built, session 17) **Join gaps: CorelDRAW-style join methods (Average point, Extend, Chamfer, Fillet, Bezier)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
 122. **Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary** (L, ask, his screenshot 2026-10-23): boolean operations on closed outlines. After the bugs. Grill first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)

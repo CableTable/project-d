@@ -14,6 +14,7 @@ import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxf
 import * as GR from './web/grips.js';
 import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
+import { bigDoc } from './tools/gen-big-dxf.mjs';
 
 const PORT = Number(process.env.TEST_PORT) || Number(process.argv[2]) || 5181;   // TEST_PORT or `npm run test:browser -- 5291`
 const URL_ = `http://localhost:${PORT}/`;
@@ -83,6 +84,103 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 93 / T12: Explorer startup and later launches share Open, serialize files and survive errors', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const pdf = new Page(80, 50); pdf.rect(10, 10, 60, 30); pdf.stroke();
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.addInitScript(({ dxf, pdf }) => {
+        const log = window.__launchLog = { reads: [], grants: [], active: 0, maxActive: 0, saves: [] };
+        const allowed = new Set();
+        const queue = [['C:/jobs/first plate.dxf', null], ['D:/jobs/second.dxf', null]];
+        window.__launchQueue = queue;
+        window.__TAURI__ = {
+          event: { listen: async (name, fn) => {
+            if (name !== 'open-launch-files') throw new Error('unexpected event: ' + name);
+            window.__launch = fn;
+            queue.push(['C:/jobs/before-ready.dxf', null]);
+            fn(); // A second launch arrives while the listener is registering.
+            return () => {};
+          } },
+          core: { invoke: async (command, args) => {
+            if (command === 'take_launch_files') {
+              return queue.splice(0).map(([path, error]) => {
+                if (!error) { allowed.add(path); log.grants.push(path); }
+                return [path, error];
+              });
+            }
+            if (command !== 'grant_balloon_sidecar' || !allowed.has(args.path)) throw new Error('unexpected grant');
+          } },
+          fs: {
+            readFile: async (path) => {
+              if (!allowed.has(path)) throw new Error('forbidden path: ' + path);
+              log.reads.push(path);
+              if (/missing/.test(path)) throw new Error('file not found');
+              log.maxActive = Math.max(log.maxActive, ++log.active);
+              await new Promise((resolve) => setTimeout(resolve, 30));
+              log.active--;
+              return new Uint8Array(/\.pdf$/i.test(path) ? pdf : dxf);
+            },
+            exists: async () => false,
+            writeTextFile: async () => { throw new Error('launch sources must never be overwritten'); },
+          },
+          dialog: {
+            open: async () => window.__launchPick,
+            save: async (options) => { log.saves.push(options.defaultPath); return null; },
+          },
+        };
+      }, { dxf: [...readFileSync('fixtures/outline.dxf')], pdf: [...writePdf([pdf])] });
+      await p.goto(URL_);
+      const names = () => p.locator('.tabs .dtab .tname').allTextContents();
+      const prompt = () => p.locator('[data-testid=cmd-prompt]').textContent();
+      await p.waitForFunction(() => document.querySelectorAll('.tabs .dtab .tname').length === 3);
+      assert.deepEqual(await names(), ['first plate.dxf', 'second.dxf', 'before-ready.dxf']);
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/vector.pdf', null]);
+        const first = window.__launch();
+        window.__launchQueue.push(['C:/jobs/later.dxf', null]);
+        await Promise.all([first, window.__launch()]);
+      });
+      assert.deepEqual(await names(), ['first plate.dxf', 'second.dxf', 'before-ready.dxf', 'vector.dxf', 'later.dxf']);
+      assert.equal(await p.evaluate(() => window.__launchLog.maxActive), 1, 'launch batches open sequentially');
+      for (const [path, expected] of [
+        ['C:/jobs/missing.dxf', /Open failed: file not found/],
+        ['C:/jobs/unsupported.xyz', /Opens DXF or PDF/],
+        ['C:/jobs/unbuilt.dwg', /DWG: not built yet/],
+      ]) {
+        await p.evaluate(async (path) => { window.__launchQueue.push([path, null]); await window.__launch(); }, path);
+        const message = await prompt();
+        assert.match(message, expected);
+        await p.evaluate((path) => { window.__launchPick = path; }, path);
+        await p.locator('[data-menu=File]').click();
+        await p.getByRole('menuitem', { name: 'Open…', exact: true }).click();
+        await p.waitForFunction((message) => document.querySelector('[data-testid=cmd-prompt]').textContent === message, message);
+        assert.equal(await prompt(), message, 'Explorer uses the same errors as File → Open');
+      }
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/denied.dxf', 'scope grant failed']); await window.__launch();
+      });
+      assert.equal(await prompt(), 'Open failed: scope grant failed');
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/missing.dxf', null], ['C:/jobs/last.dxf', null]);
+        await window.__launch();
+      });
+      assert.equal((await names()).at(-1), 'last.dxf', 'one bad file does not stop the batch');
+      await p.evaluate(async () => {
+        window.__launchQueue.push(['C:/jobs/first plate.dxf', null]); await window.__launch();
+      });
+      assert.equal((await names()).length, 6, 'reopening an existing file follows Open and selects its tab');
+      assert.match(await prompt(), /already open/);
+      await p.keyboard.press('Control+s');
+      await p.waitForFunction(() => window.__launchLog.saves.length === 1);
+      assert.deepEqual(await p.evaluate(() => window.__launchLog.saves), ['C:/jobs/first plate-edited.dxf']);
+      await p.screenshot({ path: shotDir + '/explorer-open-light.png' });
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/explorer-open-dark.png' });
+    } finally { await context.close(); }
+  });
   await step('TODO 119 / T36: View theme rows match, full-row hover, separate dividers and moving theme tick', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
@@ -3846,6 +3944,58 @@ try {
     if (await t('props-panel').isVisible()) await page.keyboard.press('Control+1');
   });
 
+  await step('TODO 104 / T21: Join removes micro pieces, reports the count, and one Undo restores pieces and gaps', async () => {
+    const original = readDxf(decodeDxf(readFileSync('fixtures/micro-gaps.dxf')));
+    // Save regenerates DXF handles and owners; compare the entity geometry and properties.
+    const geometry = (raw) => raw.entities.map((e) => [e.type, e.layer, e.r.c.flatMap((c, i) => c === 5 || c === 330 ? [] : [[c, e.r.v[i]]])]);
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/micro-gaps.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'micro-gaps.dxf');
+    await t('gap-tol').fill('0.01'); await t('gap-tol').press('Enter');
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+    await t('gap-join').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
+    assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps; 2 micro pieces removed/);
+    await t('cmd-fade').getByText(/Joined 2 gaps; 2 micro pieces removed/).waitFor({ state: 'visible' });
+    await shotBoth('104-micro-gaps');
+    const saved = await downloaded(() => page.keyboard.press('Control+s'));
+    const joined = readDxf(saved.text);
+    assert.equal(joined.entities.length, 11);
+    assert.deepEqual(geometry(joined).at(-1), geometry(original).at(-1), 'lone tiny piece stays');
+    await page.keyboard.press('Control+z');
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+    const undone = await downloaded(() => page.keyboard.press('Control+s'));
+    assert.deepEqual(geometry(readDxf(undone.text)), geometry(original), 'one Undo restores every original entity and endpoint');
+    // Preflight uses the same repair pipeline.
+    await menuItem('Tools', 'Preflight…');
+    await t('preflight-gaps-fix').click();
+    assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps; 2 micro pieces removed/);
+    await t('preflight-close').click();
+  });
+
+  await step('TODO 121: Join gaps has a Method list (average point by default, remembered); each method joins in one undo step and the message names it', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/outline.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+    assert.equal(await t('gap-method').inputValue(), 'average');
+    await shotBoth('join-gaps-method');
+    for (const [method, label, pieces] of [['extend', 'Extend', 8], ['chamfer', 'Chamfer', 10], ['fillet', 'Fillet', 10], ['bezier', 'Bezier', 10]]) {
+      await t('gap-method').selectOption(method);
+      await t('gap-join').click();
+      assert.match(await t('cmd-prompt').textContent(), new RegExp(`^Joined 2 gaps \\(${label}\\)`), method);
+      await click(50, 0); await waitSel(pieces + ' selected');
+      await page.keyboard.press('Control+z');
+      await click(50, 0); await waitSel('8 selected');                          // one Undo took the lot back
+      await page.keyboard.press('Escape');
+    }
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-gapmethod')), 'bezier', 'remembered');
+    await t('gap-method').selectOption('average');
+    await t('gap-join').click();
+    assert.match(await t('cmd-prompt').textContent(), /^Joined 2 gaps\. /, 'average point says no method');
+    await page.keyboard.press('Control+z');
+  });
+
   await step('TODO 46: tiny gaps are counted (0.01 mm) and ringed; the tolerance is editable; Join gaps closes them in one undo step', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
@@ -3862,6 +4012,7 @@ try {
     await t('gap-join').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
     assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps/);
+    assert.doesNotMatch(await t('cmd-prompt').textContent(), /micro pieces removed/, 'no removal message when none were removed');
     assert.equal(await t('gap-join').isDisabled(), true);
     await click(50, 0); await waitSel('8 selected');
     assert.equal(await t('sel-area').textContent(), 'Area 5914.16 mm² · Perimeter 302.83 mm', 'the perimeter now includes the 0.01 mm the gaps hid');
@@ -3983,6 +4134,91 @@ try {
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+  await step('TODO 115 / T32: PDF invisible search text stays out; visible text becomes outlines once, with one Undo', async () => {
+    await closeTabs(/./);
+    await menuItem('File', 'Open…');
+    await t('picker').setInputFiles({ name: 'search-text.pdf', mimeType: 'application/pdf', buffer: readFileSync('fixtures/pdf-search-text.pdf') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'search-text.dxf');
+    const before = await savedDoc();
+    assert.deepEqual(before.entities.map((e) => e.type), ['LINE', 'LINE', 'LINE', 'TEXT']);
+    assert.equal(before.entities[3].r.v[before.entities[3].r.c.indexOf(1)], 'C', 'invisible searchable A is not imported over its strokes');
+    await page.keyboard.press('Control+a');
+    await menuItem('Modify', 'Text to outlines');
+    await page.waitForFunction(() => /1 text →/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    const outlined = await savedDoc();
+    assert.deepEqual(outlined.entities.slice(0, 3), before.entities.slice(0, 3), 'original letter strokes stay once');
+    assert.ok(outlined.entities.slice(3).length > 0 && outlined.entities.slice(3).every((e) => e.type === 'LWPOLYLINE'), 'visible text is replaced by curves');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/s17-115-outlines-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    await menuItem('Modify', 'Text to outlines');
+    assert.deepEqual((await savedDoc()).entities, outlined.entities, 'running again adds no second copy');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the visible text and the original strokes');
+    await closeTabs(/search-text/);
+  });
+  await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
+    await closeTabs(/./);
+    const empty = await t('canvas').boundingBox(), errorCount = errors.length;
+    await page.mouse.move(empty.x + 100, empty.y + 100); await page.mouse.down();
+    await page.mouse.move(empty.x + 140, empty.y + 140, { steps: 5 }); await page.mouse.up();
+    assert.equal(errors.length, errorCount, 'an untouched empty drawing has no selection set to drag');
+    const pdf = new Page(100, 80);
+    pdf.moveTo(20, 20); pdf.lineTo(30, 50); pdf.lineTo(40, 20); pdf.stroke();
+    pdf.moveTo(25, 30); pdf.lineTo(35, 30); pdf.stroke();
+    pdf.text([8, 0, 0, 8, 60, 30], 'A');
+    await menuItem('File', 'Open…');
+    await t('picker').setInputFiles({ name: 'drag-letter.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([pdf])) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'drag-letter.dxf');
+    await page.getByRole('tab', { name: 'Objects', exact: true }).click();
+    assert.match(await t('obj-filter-locked').textContent(), /Locked 0/, 'PDF imports open unlocked');
+    assert.equal(await t('bg-name').textContent(), '', 'File Open creates drawing entities without a background picture');
+    await page.getByRole('tab', { name: 'Drawing', exact: true }).click();
+    if (await t('tog-snap').getAttribute('aria-pressed') === 'true') await t('tog-snap').click();
+    const before = await savedDoc();
+    const boxA = await at(18, 18), boxB = await at(42, 52);
+    await page.mouse.move(boxA.x, boxA.y); await page.mouse.down();
+    await page.mouse.move(boxB.x, boxB.y, { steps: 5 }); await page.mouse.up();
+    await waitSel('3 selected');
+    const start = await at(22.5, 27.5), end = await at(32.5, 32.5);
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
+    const moved = await savedDoc();
+    assert.ok(Math.abs(fieldOf(moved.entities[0], 10) - fieldOf(before.entities[0], 10) - 10) < .05, 'selected A moves');
+    assert.ok(Math.abs(fieldOf(moved.entities[0], 20) - fieldOf(before.entities[0], 20) - 5) < .05);
+    assert.deepEqual(moved.entities[3], before.entities[3], 'unselected text stays');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one undo restores the whole A');
+    // A single imported TEXT also moves by its body, away from its resize handles.
+    await click(63, 32); await waitSel('1 selected');
+    const textStart = await at(63, 32), textEnd = await at(73, 37);
+    await page.mouse.move(textStart.x, textStart.y); await page.mouse.down();
+    await page.mouse.move(textEnd.x, textEnd.y, { steps: 5 }); await page.mouse.up();
+    const textMoved = await savedDoc();
+    assert.ok(Math.abs(fieldOf(textMoved.entities[3], 10) - fieldOf(before.entities[3], 10) - 10) < .05);
+    const cancelStart = await at(73, 37), cancelEnd = await at(83, 42);
+    await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
+    await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 }); await page.keyboard.press('Escape'); await page.mouse.up();
+    assert.deepEqual((await savedDoc()).entities, textMoved.entities, 'Escape cancels');
+    await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
+    await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 });
+    await page.locator('.canvas').dispatchEvent('pointercancel'); await page.mouse.up();
+    assert.deepEqual((await savedDoc()).entities, textMoved.entities, 'pointer cancellation keeps the drawing');
+    await page.mouse.move(cancelStart.x, cancelStart.y); await page.mouse.down();
+    await page.keyboard.down('Shift'); await page.mouse.move(cancelEnd.x, cancelEnd.y, { steps: 5 }); await page.mouse.up(); await page.keyboard.up('Shift');
+    const straight = await savedDoc();
+    assert.ok(Math.abs(fieldOf(straight.entities[3], 10) - fieldOf(textMoved.entities[3], 10) - 10) < .05);
+    assert.equal(fieldOf(straight.entities[3], 20), fieldOf(textMoved.entities[3], 20), 'Shift constrains the move');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await page.screenshot({ path: `${shotDir}/s17-120-moved-A-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
+    await closeTabs(/drag-letter/);
+  });
   const histLabels = async () => {
     await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
     const rows = await page.locator('[data-testid=hist-row] > span:last-child').allTextContents();
@@ -8609,6 +8845,78 @@ try {
     await t('dw').fill('26.5'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['26.5', '20']);
     await t('size-padlock').click();
     await closeTabs(/./);
+  });
+
+  await step('T22b: rectangle edge drag snaps, updates selection and panel W / H, Shift keeps proportions, one Undo', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfPoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), dxfLine(150, 50, 170, 50));
+    await openGrips(writeDxf(doc), 'rectangle-edges.dxf');
+    await click(70, 20); await gripWhen(8);
+    const size = async (w, h) => {
+      assert.deepEqual([await t('sel-w').inputValue(), await t('sel-h').inputValue()], [w.toFixed(2), h.toFixed(2)]);
+      assert.deepEqual(await sizeNow(), [String(w), String(h)]);
+    };
+    if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
+    await dragGripTo('0:e1', 149.8, 50.2); await frames();
+    await size(130, 60);
+    const changed = await savedDoc();
+    assert.deepEqual(GR.lwVertices(changed.entities[0].r).map((v) => [v.x, v.y]), [[20, 20], [150, 20], [150, 80], [20, 80]], 'only the right side moves');
+    assert.deepEqual(GR.shapeOf(changed.entities[1]), GR.shapeOf(doc.entities[1]), 'the snap target stays put');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: shotDir + '/t22b-edge-' + theme + '.png' });
+    }
+    await menuItem('View', 'Theme: light');
+    await undoAndPick(70, 20, 8); await size(100, 60);
+    await gripWhen(8);
+    await t('tog-snap').click();
+    await dragGripTo('0:e1', 149.8, 50.2); await frames();
+    const freeW = Number(await t('sel-w').inputValue());
+    assert.ok(Math.abs(freeW - 129.8) < .8 && freeW !== 130, 'SNAP off leaves the pick on the free grid, within one screen pixel');
+    await size(freeW, 60);
+    await undoAndPick(70, 20, 8); await size(100, 60);
+    await t('tog-snap').click();
+    await page.keyboard.down('Shift');
+    await dragGripTo('0:e1', 170, 50);
+    await page.keyboard.up('Shift'); await frames(); await size(150, 90);
+    await undoAndPick(70, 20, 8); await size(100, 60);
+    await closeTabs(/./);
+  });
+
+  await step('big file (TODO 55): 20k entities open, views cull what is off screen, pan / zoom stay smooth, the full picture returns when the view settles', async () => {
+    const N = 20000, frame = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const drawn = async () => Number(await t('drawing').getAttribute('data-drawn'));
+    await t('picker').setInputFiles({ name: 'big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(N))) });
+    await page.waitForFunction((n) => document.body.textContent.includes('Entities ' + n), N, { timeout: 60000 });
+    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    const all = await drawn();
+    assert.ok(all > N * 0.8, `fitted, nearly everything draws: ${all}`);
+    const box = await t('canvas').boundingBox(), cx = box.x + box.width / 2, cy = box.y + box.height / 2;      // Fit centres the drawing
+    await page.mouse.move(cx, cy);
+    const t0 = Date.now();
+    for (let i = 0; i < 4; i++) await page.mouse.wheel(0, -200);
+    await frame();
+    assert.equal(await t('drawing').getAttribute('data-snap'), '1', 'while the view moves, the last picture is reused');
+    await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
+    for (let i = 0; i < 12; i++) await page.mouse.wheel(0, -200);
+    await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
+    const some = await drawn();
+    assert.ok(some > 0 && some < all / 10, `zoomed in on the middle: entities in view draw (${some}), the rest are skipped (of ${all})`);
+    assert.ok(Date.now() - t0 < 5000, 'a burst of wheel zooms is not slow');
+    await page.evaluate(() => { window.__frames = 0; const tick = () => { window.__frames++; requestAnimationFrame(tick); }; requestAnimationFrame(tick); });
+    await page.locator('[data-tool=pan]').click();
+    await page.mouse.move(cx, cy); await page.mouse.down();
+    const f0 = await page.evaluate(() => window.__frames), t1 = Date.now();
+    for (let i = 0; i < 40; i++) await page.mouse.move(cx + i * 4, cy - i * 3);
+    await frame();
+    const fps = ((await page.evaluate(() => window.__frames)) - f0) / ((Date.now() - t1) / 1000);
+    await page.mouse.up();
+    assert.ok(fps > 10, `panning keeps frames coming (${fps.toFixed(1)} fps; generous bound, machine dependent)`);
+    await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
+    assert.ok(await drawn() > 0, 'after the pan, what is in view is drawn in full again');
+    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    assert.equal(await drawn(), all, 'Fit draws the same set as before');
+    await closeTabs(/big/);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

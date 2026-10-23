@@ -11,6 +11,43 @@ import { newDoc, addEntities, line, arc, lwpoly, text } from './dxf-write.js';
 export const PT = 25.4 / 72;
 const CAP = 0.7;                                      // a text's capitals are about 0.7 of its font size
 
+const textKey = (s) => s.normalize('NFKC').replace(/\s/g, '');
+
+/** pdf.js extracts searchable text even when Tr is 3 (invisible) or 7 (clip only). */
+function paintedText(items, glyphs) {
+  if (!glyphs.length || glyphs.every((g) => g.paint)) return items;
+  if (glyphs.every((g) => !g.paint)) return [];
+  const source = glyphs.map((g) => g.char).join('');
+  let cursor = 0;
+  return items.flatMap((it) => {
+    const key = textKey(it.str || ''), at = source.indexOf(key, cursor);
+    // shortcut: uncorrelated bidi text stays intact; use positioned glyph matching when a mixed-mode bidi PDF needs it.
+    if (!key || at < 0) return [it];
+    cursor = at + key.length;
+    const part = glyphs.slice(at, cursor);
+    if (part.every((g) => g.paint)) return [it];
+    if (part.every((g) => !g.paint)) return [];
+    // A single extracted item can span Tr changes: split it at the original glyph advances.
+    const chars = it.str.normalize('NFKC').split(''), runs = [], widths = [0];
+    for (const g of part) widths.push(widths.at(-1) + g.width);
+    const total = widths.at(-1), fraction = (n) => total > 0 ? widths[n] / total : n / part.length;
+    let n = 0, start = 0, first = 0, paint = part[0].paint;
+    const emit = (end) => {
+      if (!paint) return;
+      const transform = it.transform.slice(), shift = (it.width || 0) * fraction(first), norm = Math.hypot(transform[0], transform[1]) || 1;
+      transform[4] += shift * transform[0] / norm; transform[5] += shift * transform[1] / norm;
+      runs.push({ ...it, str: chars.slice(start, end).join(''), transform, width: (it.width || 0) * (fraction(n) - fraction(first)) });
+    };
+    for (let i = 0; i < chars.length; i++) {
+      if (!textKey(chars[i])) continue;
+      if (part[n].paint !== paint) { emit(i); start = i; first = n; paint = part[n].paint; }
+      n++;
+    }
+    emit(chars.length);
+    return runs;
+  });
+}
+
 const mul = (m, n) => [m[0] * n[0] + m[1] * n[2], m[0] * n[1] + m[1] * n[3], m[2] * n[0] + m[3] * n[2], m[2] * n[1] + m[3] * n[3],
   m[4] * n[0] + m[5] * n[2] + n[4], m[4] * n[1] + m[5] * n[3] + n[5]];
 
@@ -53,7 +90,8 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
     return rot90 === 0 ? [px, py] : rot90 === 1 ? [py, W - px] : rot90 === 2 ? [W - px, H - py] : [H - py, px];
   };
   let ctm = [1, 0, 0, 1, 0, 0];
-  const stack = [];
+  const stack = [], glyphs = [];
+  let textMode = 0;
   let path = [];                                       // pieces of the path being built, already in mm
   let last = null, sub = null;                         // the current point and the sub-path's start, mm (kept across ops)
   let paths = 0;
@@ -84,11 +122,20 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
   const { fnArray, argsArray } = ops;
   for (let i = 0; i < fnArray.length; i++) {
     const fn = fnArray[i], a = argsArray[i];
-    if (fn === OPS.save) stack.push(ctm);
-    else if (fn === OPS.restore) { if (stack.length) ctm = stack.pop(); }
+    if (fn === OPS.save) stack.push([ctm, textMode]);
+    else if (fn === OPS.restore) { if (stack.length) [ctm, textMode] = stack.pop(); }
     else if (fn === OPS.transform) ctm = mul(a, ctm);
-    else if (fn === OPS.paintFormXObjectBegin) { stack.push(ctm); if (a && a[0]) ctm = mul(a[0], ctm); }
-    else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) ctm = stack.pop(); }
+    else if (fn === OPS.paintFormXObjectBegin) { stack.push([ctm, textMode]); if (a && a[0]) ctm = mul(a[0], ctm); }
+    else if (fn === OPS.paintFormXObjectEnd) { if (stack.length) [ctm, textMode] = stack.pop(); }
+    else if (fn === OPS.setTextRenderingMode) textMode = a[0];
+    else if (fn === OPS.showText) {
+      for (const g of a[0]) {
+        if (typeof g === 'number') { if (glyphs.length) glyphs.at(-1).width -= g; continue; }
+        const s = textKey(g.unicode || '');
+        if (!s) { if (glyphs.length) glyphs.at(-1).width += g.width || 0; continue; }
+        for (let j = 0; j < s.length; j++) glyphs.push({ char: s[j], paint: (textMode & 3) !== 3, width: (g.width || 0) / s.length });
+      }
+    }
     else if (fn === OPS.constructPath) {
       const [codes, c] = a;
       let k = 0;
@@ -111,7 +158,7 @@ export function pdfToDoc({ ops, text: items = [], view = [0, 0, 0, 0], rotate = 
     } else if (fn === OPS.endPath) { path = []; last = sub = null; }            // a clip, or nothing
   }
   let texts = 0;
-  for (const it of items) {
+  for (const it of paintedText(items, glyphs)) {
     const s = String(it.str || '').replace(/\s+$/, '');
     if (!s.trim() || !it.transform) continue;
     const t = it.transform, size = Math.hypot(t[2], t[3]) || it.height || 0;

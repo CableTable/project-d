@@ -13,6 +13,26 @@ const near = (a, b, m, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * (1 + Ma
 const types = (raw, list) => list.map((i) => raw.entities[i].type);
 const asc = (a) => [...a].sort((x, y) => x - y);
 
+test('move selection translates PDF geometry and text without changing sizes, vectors or other entities', () => {
+  const raw = W.newDoc(4);
+  W.addEntities(raw, [W.line(1, 2, 3, 4), W.arc(5, 6, 2, 10, 80), W.lwpoly([[1, 2], [3, 4]], { closed: true }),
+    W.text(10, 20, 5, 'A'), W.ellipse(5, 6, 3, 4, .5), W.circle(30, 40, 10)]);
+  const before = structuredClone(raw), selected = new Set([0, 1, 2, 3, 4]);
+  const next = E.moveEntities(raw, selected, 7, -3), f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  for (const i of selected) {
+    near(f(next.entities[i], 10), f(raw.entities[i], 10) + 7);
+    near(f(next.entities[i], 20), f(raw.entities[i], 20) - 3);
+  }
+  near(f(next.entities[0], 11), 10); near(f(next.entities[0], 21), 1);
+  near(f(next.entities[1], 40), 2); near(f(next.entities[1], 50), 10);
+  near(f(next.entities[3], 40), 5);
+  near(f(next.entities[4], 11), 3); near(f(next.entities[4], 21), 4, 'ellipse axis stays a vector');
+  assert.equal(next.entities[5], raw.entities[5]); assert.equal(next.blocks, raw.blocks);
+  assert.deepEqual(raw, before, 'the undo snapshot is unchanged');
+  assert.throws(() => E.moveEntities(raw, selected, NaN, 0), /finite/);
+  assert.throws(() => E.moveEntities({ ...raw, entities: [W.entity('HATCH', [])] }, new Set([0]), 1, 2), /Cannot move/);
+});
+
 test('flatten tells each item its entity (a block\'s contents: the INSERT)', () => {
   const { raw, fl } = load('outline.dxf');
   const ins = raw.entities.findIndex((e) => e.type === 'INSERT');
@@ -600,6 +620,168 @@ test('joinGaps: lines, polylines and a polyline', () => {
   assert.equal(E.chainAt(ed2, 0, 1e-9).length, 3);
 });
 
+// ---- TODO 121: join methods
+const joinFix = (() => {
+  const dxf = (body) => '0\nSECTION\n2\nENTITIES\n' + body + '0\nENDSEC\n0\nEOF\n';
+  const L = (x1, y1, x2, y2) => `0\nLINE\n8\nCut\n10\n${x1}\n20\n${y1}\n30\n0\n11\n${x2}\n21\n${y2}\n31\n0\n`;
+  const A = (cx, cy, r, a0, a1) => `0\nARC\n8\nCut\n10\n${cx}\n20\n${cy}\n30\n0\n40\n${r}\n50\n${a0}\n51\n${a1}\n`;
+  const PL = (pts, flag = 0) => `0\nLWPOLYLINE\n8\nCut\n90\n${pts.length}\n70\n${flag}\n` + pts.map((p) => `10\n${p[0]}\n20\n${p[1]}\n`).join('');
+  const run = (body, method, tol = 0.01) => {
+    const raw = D.readDxf(dxf(body)), ed = E.makeIndex(raw, D.flatten(raw)), r = E.joinGaps(raw, ed, E.findGaps(ed, tol), method);
+    const raw2 = { ...raw, entities: r.entities, blocks: r.blocks }, ed2 = E.makeIndex(raw2, D.flatten(raw2));
+    return { raw, r, raw2, ed2, left: E.findGaps(ed2, tol).length };
+  };
+  return { L, A, PL, run };
+})();
+
+test('join methods: a 90 degree corner gap (0.01 each way)', () => {
+  const { L } = joinFix, run = (b, m) => joinFix.run(b, m, 0.02), body = L(0, 0, 9.99, 0) + L(10, 0.01, 10, 10);   // the gap is 0.0141
+  const ext = run(body, 'extend');
+  assert.deepEqual([ext.r.joined, ext.r.by, ext.left, ext.r.entities.length], [1, { extend: 1 }, 0, 2]);
+  assert.deepEqual(ext.raw2.entities[0].r.v.slice(-3), ['10', '0', '0'], 'the first line now ends at the corner');
+  const cha = run(body, 'chamfer');
+  assert.deepEqual([cha.r.by, cha.r.entities.length, cha.r.changed], [{ chamfer: 1 }, 3, 1]);
+  assert.deepEqual(cha.r.entities.slice(0, 2), cha.raw.entities, 'both ends stay where they were');
+  assert.equal(cha.r.entities[2].layer, 'Cut');
+  assert.equal(E.chainAt(cha.ed2, 0, 2e-6).length, 3);
+  const fil = run(body, 'fillet'), arc = fil.r.entities[2];
+  assert.deepEqual([fil.r.by, arc.type], [{ fillet: 1 }, 'ARC']);
+  const v = (c) => +arc.r.v[arc.r.c.indexOf(c)];
+  near(v(10), 9.99, 'cx'); near(v(20), 0.01, 'cy'); near(v(40), 0.01, 'r'); near(v(50), 270, 'from'); near(v(51), 0, 'to', 1e-9);
+  assert.equal(E.chainAt(fil.ed2, 0, 2e-6).length, 3);
+  const bez = run(body, 'bezier'), pl = bez.r.entities[2];
+  assert.deepEqual([bez.r.by, pl.type, pl.r.v[pl.r.c.indexOf(90)]], [{ bezier: 1 }, 'LWPOLYLINE', '13']);
+  assert.equal(E.chainAt(bez.ed2, 0, 2e-6).length, 3);
+});
+
+test('join methods: a second Join leaves a bridged corner alone (bridge longer than the tolerance)', () => {
+  const { L } = joinFix, body = L(0, 0, 9.99, 0) + L(10, 0.01, 10, 10);              // the gap is 0.0141, tolerance 0.015: the fillet arc (0.0157) is longer
+  for (const method of ['average', 'extend', 'chamfer', 'fillet', 'bezier']) {
+    const one = joinFix.run(body, method, 0.015), two = E.joinTinyGaps(one.raw2, one.ed2, 0.015, () => true, method);
+    assert.equal(one.left, 0, method + ': no gap left after the first Join');
+    if (method !== 'chamfer') assert.deepEqual([two.changed, two.joined, two.skipped], [0, 0, {}], method + ': the second Join does nothing');   // a chamfer line within the tolerance is a micro piece: dropped and drawn again
+    assert.deepEqual(two.entities, one.raw2.entities, method + ': outline unchanged');
+  }
+});
+
+test('join methods: a collinear gap and a parallel-offset gap fall back (extend → average point, fillet → chamfer)', () => {
+  const { L, run } = joinFix;
+  for (const body of [L(0, 0, 9.995, 0) + L(10, 0, 20, 0), L(0, 0, 10, 0) + L(10.004, 0.003, 20, 0.003)]) {
+    const ext = run(body, 'extend');
+    assert.deepEqual([ext.r.by, ext.left, ext.r.entities.length], [{ average: 1 }, 0, 2], 'average point, counted');
+    const fil = run(body, 'fillet');
+    assert.deepEqual([fil.r.by, fil.r.entities.length, fil.r.entities[2].type], [{ chamfer: 1 }, 3, 'LINE']);
+    assert.deepEqual(run(body, 'bezier').r.by, { bezier: 1 });
+    assert.equal(run(body, 'average').r.by.average, 1);
+  }
+});
+
+test('join methods: a LINE to ARC gap (extend along the circle; fillet falls back to chamfer)', () => {
+  const { L, A, run } = joinFix, body = A(0, 0, 10, 0, 90) + L(-0.004, 10.003, -0.004, 20);
+  const ext = run(body, 'extend');
+  assert.deepEqual([ext.r.by, ext.left], [{ extend: 1 }, 0]);
+  const [x, y] = [ext.ed2.ends[2], ext.ed2.ends[3]];                                 // the arc's end
+  near(x, -0.004, 'x', 1e-9); near(y, Math.sqrt(100 - 1.6e-5), 'on the circle', 1e-9);
+  assert.deepEqual(run(body, 'fillet').r.by, { chamfer: 1 });
+  assert.deepEqual(run(body, 'bezier').r.by, { bezier: 1 });
+});
+
+test('join methods: a ring stays closed, and through Save and reopen', () => {
+  const { L, PL, run } = joinFix, d = 0.004;
+  const ring = L(0, 0, 10 - d, 0) + L(10, d, 10, 10 - d) + L(10 - d, 10, 0 + d, 10) + L(0, 10 - d, 0, d);
+  for (const method of ['average', 'extend', 'chamfer', 'fillet', 'bezier']) {
+    const x = run(ring, method), n = 4 + (method === 'average' || method === 'extend' ? 0 : 4);
+    assert.equal(x.r.joined, 4, method);
+    const text = W.writeDxf({ ...x.raw, entities: x.r.entities, blocks: x.r.blocks }, { escapeUnicode: true });
+    const raw3 = D.readDxf(D.decodeDxf(new TextEncoder().encode(text))), ed3 = E.makeIndex(raw3, D.flatten(raw3));
+    assert.equal(raw3.entities.length, n, method);
+    assert.equal(E.chainAt(ed3, 0, 2e-6).length, n, method + ': one closed chain after reopen');
+    const ap = E.areaPerimeter(ed3, ed3.shown, 1, 2e-6);
+    assert.deepEqual([ap.loops, ap.open], [1, 0], method);
+  }
+  // an open polyline whose own ends meet: chamfer closes it instead of adding a line
+  const pl = run(PL([[0, 0], [10, 0], [10, 10], [0, 10], [0, 0.005]]), 'chamfer');
+  assert.deepEqual([pl.r.entities.length, pl.r.by, pl.r.entities[0].r.v[pl.r.entities[0].r.c.indexOf(70)]], [1, { chamfer: 1 }, '1']);
+  assert.equal(pl.left, 0, 'a closed polyline has no free ends');
+});
+
+test('join methods: more than two ends in a cluster go to the average point; micro-piece step passes the method through', () => {
+  const { L, run } = joinFix;
+  assert.deepEqual(run(L(0, 0, 9.995, 0) + L(10, 0.003, 10, 10) + L(10.002, -0.002, 20, -5), 'fillet').r.by, { average: 1 });
+  const { raw, fl } = load('micro-gaps.dxf'), ed = E.makeIndex(raw, fl), r = E.joinTinyGaps(raw, ed, .01, () => true, 'chamfer');
+  assert.equal(r.removed, 2);
+  assert.ok(r.by.chamfer >= 1 && r.entities.length > raw.entities.length - 2);
+});
+
+test('TODO 104: remove micro arcs / lines, close both outlines, keep a lone piece and change total length by at most 0.1%', () => {
+  const { raw, fl } = load('micro-gaps.dxf'), ed = E.makeIndex(raw, fl), before = structuredClone(raw);
+  const oldJoin = E.joinGaps(raw, ed, E.findGaps(ed, .01));
+  const oldRaw = { ...raw, ...oldJoin };
+  assert.ok(E.findGaps(E.makeIndex(oldRaw, D.flatten(oldRaw)), .01).length > 0, 'fixture reproduces the blocked join');
+  const r = E.joinTinyGaps(raw, ed, .01), next = { ...raw, entities: r.entities, blocks: r.blocks };
+  const ed2 = E.makeIndex(next, D.flatten(next));
+  assert.deepEqual(raw, before, 'the original geometry is intact for Undo');
+  assert.equal(r.removed, 2);
+  assert.equal(r.joined, 2);
+  assert.deepEqual(r.skipped, {});
+  assert.equal(E.findGaps(ed2, .01).length, 0);
+  assert.deepEqual(next.entities.find((e) => e.layer === 'Lone'), raw.entities.at(-1), 'lone tiny line stays unchanged');
+  const outline = E.areaPerimeter(ed2, ed2.shown, 1, 2e-6);
+  assert.equal(outline.loops, 2);
+  assert.equal(outline.gaps, 0);
+  assert.equal(E.chainAt(ed2, 0, 2e-6).length, 5);
+  assert.equal(E.chainAt(ed2, 5, 2e-6).length, 5);
+  const length = E.areaPerimeter(ed, ed.shown).perimeter;
+  assert.ok(Math.abs(outline.perimeter - length) / length <= .001, 'total drawing length changes by <= 0.1%');
+  const reopened = D.readDxf(W.writeDxf(next));
+  assert.equal(E.findGaps(E.makeIndex(reopened, D.flatten(reopened)), .01).length, 0, 'saved joins stay closed');
+  assert.equal(E.joinTinyGaps(next, ed2, .01).changed, 0, 'a second Join does nothing');
+});
+
+test('TODO 104 guards: inclusive own length, true arc / polyline length, direct contact, locks and micro-only chains', () => {
+  const repair = (entities, eligible) => {
+    const raw = W.newDoc(); raw.entities = entities;
+    return E.joinTinyGaps(raw, E.makeIndex(raw, D.flatten(raw)), .01, eligible);
+  };
+  const tiny = W.line(0, 0, .01, 0), long = W.line(.01, 0, 10, 0);
+  assert.equal(repair([tiny, long]).removed, 1, 'length exactly at tolerance is removed');
+  assert.equal(repair([W.line(0, 0, 0, 0), W.line(0, 0, 10, 0)]).removed, 1, 'zero-length line touching a longer entity is removed');
+  assert.equal(repair([W.line(0, 0, 0, 0)]).changed, 0, 'lone zero-length line stays');
+  assert.equal(repair([W.line(0, 0, .010001, 0), long]).removed, 0, 'just above tolerance stays');
+  assert.equal(repair([W.arc(0, 0, .004, 0, 180), W.line(.004, 0, 10, 0)]).removed, 0, 'arc sweep, not chord');
+  assert.equal(repair([W.lwpoly([[0, 0], [.008, 0], [.004, 0]]), long]).removed, 0, 'whole polyline, not end distance');
+  assert.equal(repair([tiny, long], (e) => e !== 0).removed, 0, 'locked micro piece stays');
+  assert.equal(repair([tiny, long], (e) => e !== 1).removed, 1, 'a locked longer neighbour need not move');
+  const lone = W.arc(40, 0, .002, 0, 180);
+  const alone = repair([lone]);
+  assert.equal(alone.removed, 0); assert.deepEqual(alone.entities, [lone]);
+  assert.equal(repair([W.line(0, 0, .004, 0), W.line(.004, 0, .008, 0)]).removed, 0, 'micro-only chain is kept');
+  const indirect = W.line(.02, 0, .024, 0);
+  const contact = repair([W.line(-10, 0, 0, 0), W.line(.009, 0, .013, 0), indirect]);
+  assert.equal(contact.removed, 1, 'no deletion through a chain of micro pieces');
+  assert.deepEqual(contact.entities.at(-1), indirect);
+});
+
+test('TODO 104 fix: a nearly closed single polyline joins; a connected micro chain and locked neighbours keep their pieces', () => {
+  const run = (entities, eligible) => {
+    const raw = W.newDoc(); raw.entities = entities;
+    const r = E.joinTinyGaps(raw, E.makeIndex(raw, D.flatten(raw)), .01, eligible), next = { ...raw, entities: r.entities };
+    return { r, gaps: E.findGaps(E.makeIndex(next, D.flatten(next)), .01).length };
+  };
+  const open = run([W.lwpoly([[0, 0], [10, 0], [10, 10], [0, .005]])]);
+  assert.equal(open.r.joined, 1, 'a polyline whose ends are 0.005 apart is a gap again');
+  assert.equal(open.gaps, 0);
+  assert.equal(E.findGaps(...(() => { const raw = W.newDoc(); raw.entities = [W.line(0, 0, .005, 0)]; return [E.makeIndex(raw, D.flatten(raw)), .01]; })()).length, 0, 'a lone micro piece is still not a gap');
+  const chain = run([W.line(-10, 0, 0, 0), W.line(0, 0, .008, 0), W.line(.008, 0, .016, 0), W.line(.016, 0, 10, 0)]);
+  assert.equal(chain.r.removed, 0, 'micro pieces that connect the long lines stay');
+  assert.equal(chain.r.entities.length, 4);
+  assert.equal(chain.gaps, 0, 'the outline stays closed');
+  const wide = run([W.line(-10, 0, -.01, 0), W.line(-.002, 0, .006, 0), W.line(.016, 0, 10, 0)]);
+  assert.equal(wide.r.removed, 0, 'a piece bridging ends further apart than tolerance stays');
+  const locked = run([W.line(-10, 0, 0, 0), W.line(0, 0, .008, 0), W.line(.012, 0, 10, 0)], (e) => e !== 2);
+  assert.equal(locked.r.removed, 0, 'a locked neighbour end that would have to move keeps the piece');
+});
+
 test('newLayerName: the first free Layer1, Layer2… (any case)', () => {
   assert.equal(E.newLayerName(['0']), 'Layer1');
   assert.equal(E.newLayerName(['0', 'Layer1', 'layer2', 'Layer4']), 'Layer3');
@@ -619,11 +801,14 @@ test('layerNameProblem: empty, bad characters, too long, taken', () => {
 test('findGaps skips annotation entity types but not lines on layers named Text, DIM and the like (TODO 99)', () => {
   const annotations = ['TEXT', 'MTEXT', 'ATTRIB', 'ATTDEF', 'DIMENSION', 'HATCH', 'LEADER', 'MLEADER', 'MULTILEADER'];
   const layers = ['Text-cut', 'DIM-OUTLINE', 'Dimensions', 'A-ANNO-DIMS', 'hatches', 'Arrows', 'Cut', 'outline'];
-  const entities = [...annotations.map(type => ({ type, layer: '0' })), ...layers.map(layer => ({ type: 'LINE', layer }))];
+  const entities = [...annotations.map(type => ({ type, layer: '0' })), ...layers.flatMap(layer => [{ type: 'LINE', layer }, { type: 'LINE', layer }])];
   // Supply close ends even for types normally excluded by makeIndex, so this exercises the filter itself.
-  const ends = new Float64Array(entities.flatMap((_, i) => [i * 10, 0, i * 10 + 0.004, 0]));
+  const ends = new Float64Array(entities.flatMap((_, i) => {
+    const pair = i - annotations.length, x = Math.floor(pair / 2) * 10;
+    return pair % 2 ? [x + 1.004, 0, x + 2, 0] : [x, 0, x + 1, 0];
+  }));
   const ed = { raw: { entities }, shown: entities.map((_, i) => i), ends };
-  assert.deepEqual(E.findGaps(ed, 0.01).map(g => g.ends[0].e), layers.map((_, i) => annotations.length + i));
+  assert.deepEqual(E.findGaps(ed, 0.01).map(g => g.ends[0].e), layers.map((_, i) => annotations.length + i * 2));
 });
 
 test('gapMarks requires Show; 50 rings are allowed, 51 keeps the count and draws none', () => {

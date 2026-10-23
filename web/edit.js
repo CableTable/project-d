@@ -12,9 +12,9 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, pickIndex, pickAt } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt } from './drawing.js';
 import { spaceOf, itemVisible } from './doc.js';
-import { line, insert, entity, addLayer, arc } from './dxf-write.js';
+import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -158,7 +158,7 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
     if (!first || !last) continue;
     const a = mapply(fl.mats[items[list[0]].m], first[0], first[1]), b = mapply(fl.mats[items[list[list.length - 1]].m], last[2], last[3]);
     const size = Math.max(Math.abs(box[e * 4 + 2] - box[e * 4]), Math.abs(box[e * 4 + 3] - box[e * 4 + 1]), 1e-9);
-    if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end
+    if (type !== 'LINE' && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end; zero-length lines can be micro pieces
     ends[e * 4] = a[0]; ends[e * 4 + 1] = a[1]; ends[e * 4 + 2] = b[0]; ends[e * 4 + 3] = b[1];
   }
   return { raw, fl, space, n, vis, byEnt, box, shown, areas, ends, items, ix: pickIndex(fl, space === 1), graph: null };
@@ -279,6 +279,18 @@ export function inBox(ed, b) {
 
 /** Ends closer than this (drawing units) count as joined: a DXF is written with 6 decimals, so ends joined exactly come back up to ~1.4e-6 apart. */
 const JOINED = 2e-6;
+const GAP_SKIP = /^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/;
+/** True when the ends of a cluster all pair up with another end within JOINED (already joined, as after a bridging Join gaps). */
+function pairedUp(g, px, py) {
+  if (g.length % 2) return false;
+  const left = g.slice();
+  while (left.length) {
+    const a = left.pop(), k = left.findIndex((b) => Math.hypot(px(a) - px(b), py(a) - py(b)) <= JOINED);
+    if (k < 0) return false;
+    left.splice(k, 1);
+  }
+  return true;
+}
 /**
  * Ends that almost meet (TODO 46): every free end (ed.ends) within `tol` of another is one cluster (single linkage); a
  * cluster whose ends are all within 2e-6 of each other (joined, up to the file's 6 decimals) is not a gap. Ends that already meet exactly are not gaps.
@@ -288,7 +300,7 @@ export function findGaps(ed, tol) {
   const ids = [];
   for (const e of ed.shown) {
     const ent = ed.raw.entities[e];
-    if (/^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/.test(ent.type)) continue;
+    if (GAP_SKIP.test(ent.type)) continue;
     if (!Number.isNaN(ed.ends[e * 4])) ids.push(e * 2, e * 2 + 1);
   }
   const px = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2], py = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2 + 1];
@@ -312,12 +324,14 @@ export function findGaps(ed, tol) {
   const out = [];
   for (const g of groups.values()) {
     if (g.length < 2) continue;
+    if (g.every((id) => (id >> 1) === (g[0] >> 1)) && entityLength(ed, g[0] >> 1) <= tol) continue;   // a micro piece alone, not a nearly closed outline
     let x = 0, y = 0;
     for (const id of g) { x += px(id); y += py(id); }
     x /= g.length; y /= g.length;
     let spread = 0;
     for (const a of g) for (const b of g) spread = Math.max(spread, Math.hypot(px(a) - px(b), py(a) - py(b)));
     if (spread <= JOINED) continue;
+    if (pairedUp(g, px, py)) continue;                                          // a bridge piece already joins each side: two exact pairs
     out.push({ x, y, spread, ends: g.map((id) => ({ e: id >> 1, k: id & 1 })).sort((a, b) => a.e - b.e || a.k - b.k) });
   }
   return out.sort((a, b) => a.ends[0].e - b.ends[0].e);
@@ -400,17 +414,227 @@ function moveEnds(e, to) {
   }
 }
 
+/** Length along an entity's drawn paths, including arc sweeps rather than their chords (drawing units). */
+function entityLength(ed, e) {
+  let length = 0;
+  for (const i of ed.byEnt[e]) {
+    const it = ed.items[i], ops = it.ops, m = ed.fl.mats[it.m];
+    let p;
+    for (let k = 0; k < ops.length;) {
+      const op = ops[k];
+      if (op === 0 || op === 1) {
+        const q = mapply(m, ops[k + 1], ops[k + 2]);
+        if (op === 1) length += Math.hypot(q[0] - p[0], q[1] - p[1]);
+        p = q; k += 3;
+      } else if (op === 2) {
+        length += Math.abs(ops[k + 3] * arcSweepOp(ops[k + 4], ops[k + 5], ops[k + 6] === 1)) * mscale(m);
+        p = mapply(m, ops[k + 1] + ops[k + 3] * Math.cos(ops[k + 5]), ops[k + 2] + ops[k + 3] * Math.sin(ops[k + 5]));
+        k += 7;
+      } else k++;
+    }
+  }
+  return length;
+}
+
+/**
+ * Removes micro pieces (TODO 104): own length <= tol and an end within tol of a longer entity's end.
+ * Then joins the remaining gaps with joinGaps.
+ * eligible protects locked entities; indexes refer to the input document throughout. One result is one undo state.
+ * → { entities, blocks, removed, joined (gaps closed), skipped: { TYPE: ends left }, changed (entities edited or removed) }.
+ */
+export function joinTinyGaps(raw, ed, tol, eligible = () => true, method = 'average') {
+  const lengths = new Map(ed.shown.filter((e) => !GAP_SKIP.test(raw.entities[e].type) && !Number.isNaN(ed.ends[e * 4])).map((e) => [e, entityLength(ed, e)]));
+  const graph = buildGraph(ed, tol), drop = new Set(), touch = new Map(), link = new Map();
+  const px = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2], py = (id) => ed.ends[(id >> 1) * 4 + (id & 1) * 2 + 1];
+  const near = (e, fn) => {
+    for (const k of [0, 1]) {
+      const x = px(e * 2 + k), y = py(e * 2 + k), cx = Math.floor(x / graph.cell), cy = Math.floor(y / graph.cell);
+      for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+        for (const id of graph.map.get(graph.key(cx + i, cy + j)) || []) if (Math.hypot(px(id) - x, py(id) - y) <= tol) fn(id);
+      }
+    }
+  };
+  // a micro piece that touches a longer entity's end, and which other such pieces and long ends it meets
+  for (const [e, length] of lengths) {
+    if (!(length <= tol) || !eligible(e)) continue;
+    const longs = new Set();
+    near(e, (id) => { if (lengths.get(id >> 1) > tol) longs.add(id); });
+    if (longs.size) touch.set(e, longs);
+  }
+  for (const e of touch.keys()) { const l = new Set(); near(e, (id) => { if (touch.has(id >> 1) && id >> 1 !== e) l.add(id >> 1); }); link.set(e, l); }
+  // dropping a connected group must leave only gaps that join: its long ends are within tol of each other and free to move
+  const seen = new Set();
+  for (const first of touch.keys()) {
+    if (seen.has(first)) continue;
+    const group = [first], longs = new Set();
+    seen.add(first);
+    for (let n = 0; n < group.length; n++) {
+      for (const id of touch.get(group[n])) longs.add(id);
+      for (const o of link.get(group[n])) if (!seen.has(o)) { seen.add(o); group.push(o); }
+    }
+    const ids = [...longs];
+    const ok = ids.every((a) => ids.every((b) => {
+      const d = Math.hypot(px(a) - px(b), py(a) - py(b));
+      return d <= JOINED || (d <= tol && eligible(a >> 1) && eligible(b >> 1));
+    }));
+    if (ok) for (const e of group) drop.add(e);
+  }
+  const gaps = findGaps({ ...ed, shown: ed.shown.filter((e) => !drop.has(e)) }, tol).filter((g) => g.ends.every((x) => eligible(x.e)));
+  const result = joinGaps(raw, ed, gaps, method);
+  return { ...result, entities: result.entities.filter((_, e) => !drop.has(e)), removed: drop.size, changed: result.changed + drop.size };
+}
+
+// ---------------------------------------------------------------- join methods (TODO 121)
+
+/** How a gap is closed: the Join gaps box's Method list (average point is the original behaviour). */
+export const JOIN_METHODS = { average: 'Average point', extend: 'Extend', chamfer: 'Chamfer', fillet: 'Fillet', bezier: 'Bezier' };
+const unit = (x, y) => { const l = Math.hypot(x, y); return l > 1e-12 ? [x / l, y / l] : null; };
+const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
+const turn = (v, a) => [v[0] * Math.cos(a) - v[1] * Math.sin(a), v[0] * Math.sin(a) + v[1] * Math.cos(a)];
+
+/** A polyline's vertices as [x, y, bulge], or null. */
+function polyVerts(ent) {
+  const out = [];
+  if (ent.type === 'LWPOLYLINE') {
+    const r = ent.r;
+    for (let k = 0; k < r.c.length; k++) {
+      if (r.c[k] === 10) out.push([+r.v[k], 0, 0]); else if (!out.length) continue;
+      else if (r.c[k] === 20) out[out.length - 1][1] = +r.v[k]; else if (r.c[k] === 42) out[out.length - 1][2] = +r.v[k];
+    }
+  } else if (ent.type === 'POLYLINE') {
+    for (const v of (ent.kids || []).filter((k) => k.type === 'VERTEX')) {
+      const x = nth(v, 10, 0), y = nth(v, 20, 0), b = nth(v, 42, 0);
+      if (x < 0 || y < 0) return null;
+      out.push([+v.v[x], +v.v[y], b < 0 ? 0 : +v.v[b]]);
+    }
+  }
+  return out.length >= 2 && out.every((p) => p.every(Number.isFinite)) ? out : null;
+}
+
+/**
+ * Which way an entity's end points and how long its end piece is: { d: unit tangent leaving the end, len, line: a straight
+ * piece, arc: { c, R } for an ARC } or null (a mirrored entity, a spline, an ellipse, ...).
+ */
+function endInfo(ent, k) {
+  if (ent.flip) return null;
+  const r = ent.r, f = (code) => { const i = nth(r, code, 0); return i < 0 ? NaN : +r.v[i]; };
+  let a, b, bulge = 0;
+  if (ent.type === 'LINE') { a = [f(10), f(20)]; b = [f(11), f(21)]; }
+  else if (ent.type === 'ARC') {
+    const c = [f(10), f(20)], R = f(40), a0 = f(50) * Math.PI / 180, a1 = f(51) * Math.PI / 180, t = k ? a1 : a0;
+    if (![...c, R, a0, a1].every(Number.isFinite)) return null;
+    return { d: k ? [-Math.sin(t), Math.cos(t)] : [Math.sin(t), -Math.cos(t)], len: R * arcSweepOp(a0, a1, false), arc: { c, R } };
+  } else if (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') {
+    const vs = polyVerts(ent);
+    if (!vs) return null;
+    const n = vs.length;
+    a = k ? vs[n - 2] : vs[0]; b = k ? vs[n - 1] : vs[1]; bulge = a[2];
+  } else return null;
+  if (![...a, ...b].every(Number.isFinite)) return null;
+  const chord = [b[0] - a[0], b[1] - a[1]], u = unit(chord[0], chord[1]);
+  if (!u) return null;
+  const half = 2 * Math.atan(bulge);                                          // half the arc's included angle, signed
+  return { d: k ? turn(u, half) : turn(u, -half).map((v) => -v), len: Math.hypot(chord[0], chord[1]), line: !bulge };
+}
+
+/** Where two end pieces meet when extended (or trimmed) along their own line / circle, nearest the gap and no further than `far`; or null. */
+function meetPoint(Pa, A, Pb, B, far) {
+  const cands = [];
+  if (!A.arc && !B.arc) {
+    const cr = cross(A.d, B.d);
+    if (Math.abs(cr) < 1e-9) return null;
+    const w = [Pb[0] - Pa[0], Pb[1] - Pa[1]], s = cross(w, B.d) / cr;
+    cands.push([Pa[0] + s * A.d[0], Pa[1] + s * A.d[1]]);
+  } else if (!A.arc || !B.arc) {
+    const [P, D, C] = A.arc ? [Pb, B.d, A.arc] : [Pa, A.d, B.arc], q = [P[0] - C.c[0], P[1] - C.c[1]];
+    const bq = dot(D, q), disc = bq * bq - (dot(q, q) - C.R * C.R);
+    if (disc >= 0) for (const s of [-bq + Math.sqrt(disc), -bq - Math.sqrt(disc)]) cands.push([P[0] + s * D[0], P[1] + s * D[1]]);
+  } else {
+    const c1 = A.arc.c, c2 = B.arc.c, dx = c2[0] - c1[0], dy = c2[1] - c1[1], L = Math.hypot(dx, dy), r1 = A.arc.R, r2 = B.arc.R;
+    if (L > 1e-12 && L <= r1 + r2 && L >= Math.abs(r1 - r2)) {
+      const a = (r1 * r1 - r2 * r2 + L * L) / (2 * L), hh = Math.sqrt(Math.max(0, r1 * r1 - a * a)), mx = c1[0] + a * dx / L, my = c1[1] + a * dy / L;
+      cands.push([mx + hh * dy / L, my - hh * dx / L], [mx - hh * dy / L, my + hh * dx / L]);
+    }
+  }
+  let best = null, bestSum = Infinity;
+  for (const X of cands) {
+    const ok = (P, I) => { const dist = Math.hypot(X[0] - P[0], X[1] - P[1]); return dist <= far && (dot([X[0] - P[0], X[1] - P[1]], I.d) >= 0 || dist < 0.9 * I.len); };
+    const sum = Math.hypot(X[0] - Pa[0], X[1] - Pa[1]) + Math.hypot(X[0] - Pb[0], X[1] - Pb[1]);
+    if (ok(Pa, A) && ok(Pb, B) && sum < bestSum) { best = X; bestSum = sum; }
+  }
+  return best;
+}
+
+const deg360 = (a) => { let v = a * 180 / Math.PI % 360; if (v < 0) v += 360; return v; };
+/** The properties a new piece takes from `src` (layer, colour, line type). */
+const like = (s) => ({ layer: s.layer, lt: s.lt, aci: s.aci, tc: s.tc, lw: s.lw, lts: s.lts, ps: s.ps });
+const lineEntity = (src, p, q) => line(p[0], p[1], q[0], q[1], like(src));
+const arcEntity = (src, c, R, a0, a1) => arc(c[0], c[1], R, deg360(a0), deg360(a1), like(src));
+const BEZIER_PIECES = 12;
+const bezierEntity = (src, p, q, dp, dq, h) => {
+  const c1 = [p[0] + dp[0] * h, p[1] + dp[1] * h], c2 = [q[0] + dq[0] * h, q[1] + dq[1] * h], pts = [];
+  for (let i = 0; i <= BEZIER_PIECES; i++) {
+    const t = i / BEZIER_PIECES, u = 1 - t, w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
+    pts.push(i === 0 ? p : i === BEZIER_PIECES ? q : [w[0] * p[0] + w[1] * c1[0] + w[2] * c2[0] + w[3] * q[0], w[0] * p[1] + w[1] * c1[1] + w[2] * c2[1] + w[3] * q[1]]);
+  }
+  return lwpoly(pts, like(src));
+};
+/** The polyline `ent` with its closed flag set (70 bit 1). */
+function closedPoly(ent) {
+  const r = ent.r, k = nth(r, 70, 0);
+  if (k >= 0) return { ...ent, r: setv(r, [[k, (+r.v[k] || 0) | 1]]) };
+  const at = nth(r, 90, 0) + 1;                                               // 70 follows the vertex count
+  return { ...ent, r: { ...r, c: [...r.c.slice(0, at), 70, ...r.c.slice(at)], v: [...r.v.slice(0, at), '1', ...r.v.slice(at)] } };
+}
+
 /**
  * Moves the ends of each gap together (TODO 46): to the mean of the cluster, i.e. the midpoint of a pair. A cluster holding an
  * end that cannot be moved (an ellipse, a mirrored arc, ...) is moved to that end instead; if two such ends differ it is skipped.
- * → { entities, blocks, joined (gaps closed), skipped: { TYPE: ends left }, changed (entities edited) }.
+ * method (TODO 121) works on pairs of ends and leaves the rest, and any pair it cannot do, to the average point:
+ * extend (both pieces to where they meet), chamfer (a straight bridge, a polyline's own ends closed), fillet (a tangent arc
+ * at the corner, else chamfer), bezier (a tangent curve of short pieces).
+ * → { entities, blocks, joined (gaps closed), by: { method: gaps closed that way }, skipped: { TYPE: ends left }, changed (entities edited or added) }.
  */
-export function joinGaps(raw, ed, gaps) {
-  const to = new Map(), skipped = {};
+export function joinGaps(raw, ed, gaps, method = 'average') {
+  const to = new Map(), skipped = {}, added = [], closed = new Set(), by = {};
   let joined = 0;
   const movable = (e) => { const ent = raw.entities[e]; return JOINABLE.has(ent.type) && !ent.flip; };
   const pos = (x) => [ed.ends[x.e * 4 + x.k * 2], ed.ends[x.e * 4 + x.k * 2 + 1]];
+  const move = (x, p) => { const cur = to.get(x.e) || [null, null]; cur[x.k] = p; to.set(x.e, cur); };
+  /** One pair by `how`: moves ends, adds pieces. false when the method cannot do it. */
+  const bridge = (xa, xb, how) => {
+    const pa = pos(xa), pb = pos(xb), gap = Math.hypot(pb[0] - pa[0], pb[1] - pa[1]), A = endInfo(raw.entities[xa.e], xa.k), B = endInfo(raw.entities[xb.e], xb.k);
+    const src = raw.entities[xa.e];
+    if (how === 'extend') {
+      const X = A && B && movable(xa.e) && movable(xb.e) && meetPoint(pa, A, pb, B, 10 * gap);
+      if (!X) return false;
+      move(xa, X); move(xb, X);
+    } else if (how === 'fillet') {
+      const cr = A && B && A.line && B.line && movable(xa.e) && movable(xb.e) ? cross(A.d, B.d) : 0;
+      if (Math.abs(cr) < 1e-9) return false;
+      const w = [pb[0] - pa[0], pb[1] - pa[1]], s = cross(w, B.d) / cr, t = cross(w, A.d) / cr, T = Math.max(s, t);
+      if (T <= 1e-9 || Math.abs(s) > 10 * gap || Math.abs(t) > 10 * gap || T - s >= 0.9 * A.len || T - t >= 0.9 * B.len) return false;
+      const X = [pa[0] + s * A.d[0], pa[1] + s * A.d[1]], ua = [-A.d[0], -A.d[1]], ub = [-B.d[0], -B.d[1]], half = Math.acos(Math.max(-1, Math.min(1, dot(ua, ub)))) / 2;
+      const bis = unit(ua[0] + ub[0], ua[1] + ub[1]);
+      if (!bis || half < 1e-6 || half > Math.PI / 2 - 1e-6) return false;
+      const ta = [X[0] + ua[0] * T, X[1] + ua[1] * T], tb = [X[0] + ub[0] * T, X[1] + ub[1] * T], R = T * Math.tan(half), dc = T / Math.cos(half);
+      const C = [X[0] + bis[0] * dc, X[1] + bis[1] * dc], va = [ta[0] - C[0], ta[1] - C[1]], vb = [tb[0] - C[0], tb[1] - C[1]];
+      move(xa, ta); move(xb, tb);
+      added.push(cross(va, vb) > 0 ? arcEntity(src, C, R, Math.atan2(va[1], va[0]), Math.atan2(vb[1], vb[0])) : arcEntity(src, C, R, Math.atan2(vb[1], vb[0]), Math.atan2(va[1], va[0])));
+    } else if (how === 'chamfer') {
+      const ent = raw.entities[xa.e], vs = xa.e === xb.e && ent.type === 'LWPOLYLINE' && polyVerts(ent);
+      if (vs && vs[vs.length - 1][2] === 0) closed.add(xa.e); else added.push(lineEntity(src, pa, pb));
+    } else {
+      const chord = unit(pb[0] - pa[0], pb[1] - pa[1]);
+      if (!chord) return false;
+      added.push(bezierEntity(src, pa, pb, A ? A.d : chord, B ? B.d : [-chord[0], -chord[1]], 0.4 * gap));
+    }
+    by[how] = (by[how] || 0) + 1;
+    return true;
+  };
   for (const g of gaps) {
+    if (method !== 'average' && g.ends.length === 2 && (bridge(g.ends[0], g.ends[1], method) || method === 'fillet' && bridge(g.ends[0], g.ends[1], 'chamfer'))) { joined++; continue; }
     const fixed = g.ends.filter((x) => !movable(x.e));
     let target = [g.x, g.y];
     if (fixed.length) {
@@ -423,7 +647,7 @@ export function joinGaps(raw, ed, gaps) {
       const cur = to.get(x.e) || [null, null];
       cur[x.k] = target; to.set(x.e, cur);
     }
-    joined++;
+    joined++; by.average = (by.average || 0) + 1;
   }
   const entities = raw.entities.slice();
   let changed = 0;
@@ -431,7 +655,9 @@ export function joinGaps(raw, ed, gaps) {
     const ne = moveEnds(raw.entities[e], ends);
     if (ne) { entities[e] = ne; changed++; } else { const t = raw.entities[e].type; skipped[t] = (skipped[t] || 0) + 1; }
   }
-  return { entities, blocks: raw.blocks, joined, skipped, changed };
+  for (const e of closed) { entities[e] = closedPoly(entities[e]); if (!to.has(e)) changed++; }
+  entities.push(...added);                                                   // after the old ones, so indexes into `raw` still hold
+  return { entities, blocks: raw.blocks, joined, by, skipped, changed: changed + added.length };
 }
 
 // ---------------------------------------------------------------- deleting
@@ -631,6 +857,21 @@ export function resizeAbout(raw, sx, sy, ax, ay, space = 0, selection = null) {
     return { ...e, r: scaled(e.r), kids: e.kids?.map(scaled) };
   });
   return { entities, blocks: raw.blocks, skipped: {} };
+}
+
+/** Translate selected records; sizes, direction vectors and shared block definitions stay unchanged. */
+export function moveEntities(raw, selection, dx, dy) {
+  if (![dx, dy].every(Number.isFinite)) throw new Error('Move needs finite distances');
+  const record = (type, r, x) => {
+    const pts = SPEC[type]?.pts;
+    if (!pts || type === 'DIMENSION') throw new Error('Cannot move ' + type);
+    return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
+  };
+  return { entities: raw.entities.map((e, i) => {
+    if (!selection.has(i)) return e;
+    const x = e.flip && OCS.has(e.type) ? -dx : dx;
+    return { ...e, r: record(e.type, e.r, x), kids: e.kids?.map((kid) => record(kid.type, kid, x)) };
+  }), blocks: raw.blocks };
 }
 
 // ---------------------------------------------------------------- undo

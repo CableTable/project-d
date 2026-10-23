@@ -96,6 +96,7 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   swapped if the app is ever given away (scope §4).
 - Times for Rakshith are in **IST** (UTC+5:30).
 - Say when a Windows menu path is a guess. Keep answers short, because he often reads from his phone.
+- **Backticks in every reply** (his rule, 2026-10-23): every file path, folder, branch name, commit id, PR number, ticket or TODO id, and command goes in backticks, e.g. `claude/session17`, `0172ae1`, `#11`, `T22b`, `npm test`, including short status lines.
 - Windows: PowerShell 5.1 has no `<` redirect and blocks `.ps1` shims, so use `npm.cmd` there.
 - **How a session runs: WORKFLOW.md** (the roles, the exact commands, the loop, the budgets). In short:
   **Rook** is the lead (Opus, main account, this session): plans, writes briefs, reads short reports,
