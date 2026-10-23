@@ -218,7 +218,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 119. ✅ (built, session 16) **View menu: Theme items uneven spacing, corner-only highlight, no tick** (S, bug, T36): see T36 in support/tickets.md. Grilled by support.
 120. ✅ (built, session 17) **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): selected drawing entities now drag together, with preview, one Undo and Escape / pointer-cancel. PDF drawing imports open unlocked, without a background picture.
 121. ✅ (built, session 17) **Join gaps: CorelDRAW-style join methods (Average point, Extend, Chamfer, Fillet, Bezier)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
-122. **Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary** (L, ask, his screenshot 2026-10-23): boolean operations on closed outlines. After the bugs. Grill first.
+122. **Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary** (L, ask, his screenshot 2026-10-23): boolean operations on closed outlines. After the bugs. Grill first. (a built, session 17: Weld / Trim / Intersect; b next)
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

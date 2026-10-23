@@ -8063,6 +8063,73 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 122a: Shaping (Modify menu, WELD / SHAPETRIM / INTERSECT): two squares, each operation gives the exact area in one undo step; Trim cuts the last picked one and keeps the cutter; open outlines and too few outlines say so', async () => {
+    const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
+    await closeTabs(/./);
+    const doc = newDoc();
+    addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
+    await t('picker').setInputFiles({ name: 'shaping.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping.dxf');
+    assert.equal(await entCount(), 3);
+    // the Modify menu lists the three after the existing items
+    await page.locator('[data-menu=Modify]').click();
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents().then((a) => a.filter((x) => /^Shaping/.test(x)).map((x) => x.trim())), ['Shaping: Weld', 'Shaping: Trim', 'Shaping: Intersect']);
+    await page.screenshot({ path: shotDir + '/shaping-menu-light.png' });
+    await theme('dark'); await page.locator('[data-menu=Modify]').click(); await page.screenshot({ path: shotDir + '/shaping-menu-dark.png' }); await page.keyboard.press('Escape'); await theme('light');
+    // one outline picked: too few
+    await click(100, 130); await waitSel('1 selected');
+    await menuItem('Modify', 'Shaping: Weld');
+    assert.match(await prompt(), /^Weld: select at least 2 closed outlines/);
+    assert.equal(await entCount(), 3);
+    // two clicked squares (the second one last), and the open polyline picked too
+    await click(190, 160, { shift: true }); await click(300, 100, { shift: true });
+    await menuItem('Modify', 'Shaping: Weld');
+    assert.equal(await prompt(), 'Weld: 2 outlines → 1 outline, area 6300.00 mm²; 1 open outline skipped. Ctrl+Z puts the originals back');
+    assert.equal(await entCount(), 2, 'both squares are gone, one outline and the open polyline are there');
+    await page.screenshot({ path: shotDir + '/shaping-weld-light.png' });
+    await theme('dark'); await page.screenshot({ path: shotDir + '/shaping-weld-dark.png' }); await theme('light');
+    let saved = await savedDoc();
+    const lw = saved.entities.filter((e) => e.type === 'LWPOLYLINE' && e.r.v[e.r.c.indexOf(70)] === '1');
+    assert.equal(lw.length, 1); assert.equal(lw[0].layer, '0'); assert.equal(lw[0].r.c.filter((c) => c === 10).length, 8, 'an L-shaped union: eight corners');
+    assert.deepEqual((await histLabels()).slice(-1), ['Weld']);
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 3, 'one undo brings both squares back');
+    // Intersect from the command bar
+    await click(100, 130); await click(190, 160, { shift: true }); await waitSel('2 selected');
+    await typeCmd('intersect');
+    assert.equal(await prompt(), 'Intersect: 2 outlines → 1 outline, area 900.00 mm². Ctrl+Z puts the originals back');
+    assert.equal(await entCount(), 2);
+    await page.keyboard.press('Control+z');
+    // Trim from the command bar: the square clicked last is the target, the other stays
+    await click(100, 130); await click(190, 160, { shift: true });
+    await typeCmd('shapetrim');
+    assert.equal(await prompt(), 'Trim: 2 outlines → 1 outline, area 2700.00 mm². The cutters stay. Ctrl+Z puts the originals back');
+    saved = await savedDoc();
+    assert.equal(saved.entities.length, 3); assert.equal(saved.entities.filter((e) => e.type === 'LWPOLYLINE' && e.r.v[e.r.c.indexOf(70)] === '1').length, 2, 'the first square stays whole beside the trimmed second');
+    await page.keyboard.press('Control+z');
+    // the other way round: the first square is the target now
+    await click(190, 160); await click(100, 130, { shift: true });
+    await typeCmd('shapetrim');
+    assert.match(await prompt(), /^Trim: 2 outlines → 1 outline, area 2700\.00 mm²/);
+    await page.keyboard.press('Control+z');
+    // Ctrl+A has no last pick, so the largest outline is the target
+    await page.keyboard.press('Control+a');
+    await typeCmd('weld');
+    assert.match(await prompt(), /^Weld: 2 outlines → 1 outline, area 6300\.00 mm²; 1 open outline skipped/);
+    await page.keyboard.press('Control+z');
+    // squares that do not overlap: Intersect changes nothing and says so
+    await closeTabs(/./);
+    const far = newDoc();
+    addEntities(far, dxfPoly([[100, 100], [140, 100], [140, 140], [100, 140]], { closed: true }), dxfPoly([[200, 100], [240, 100], [240, 140], [200, 140]], { closed: true }));
+    await t('picker').setInputFiles({ name: 'shaping-far.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(far)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-far.dxf');
+    await page.keyboard.press('Control+a');
+    await typeCmd('intersect');
+    assert.equal(await prompt(), 'Intersect: the outlines do not overlap, nothing changed');
+    assert.equal(await entCount(), 2);
+    await closeTabs(/./);
+  });
+
   await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
     const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
