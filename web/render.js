@@ -7,10 +7,9 @@ import { viewOrigin } from './view-origin.js';
 import { outsideView, subPixel } from './perf.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
-const TEXT_FONT = '100px "Segoe UI", Roboto, system-ui, sans-serif';
 /** The canvas font of a text item: its style's font (Standard, Arial-like or Mono), bold when its MTEXT font code says so. */
 export const FONT_FAMILY = { Standard: '"Segoe UI", Roboto, system-ui, sans-serif', Arial: 'Arial, "Liberation Sans", Helvetica, sans-serif', Mono: '"Cascadia Mono", Consolas, "Liberation Mono", "DejaVu Sans Mono", monospace' };
-export const fontOf = (it) => (it.bold ? 'bold ' : '') + '100px ' + FONT_FAMILY[fontOfStyle(it.st)];
+export const fontOf = (it) => (it.bold ? 'bold ' : '') + '100px ' + FONT_FAMILY[it.font || fontOfStyle(it.st)];
 const lum = (css) => { const n = parseInt(css.slice(1), 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255; };
 const darken = (css, f) => '#' + [16, 8, 0].map((s) => Math.round(((parseInt(css.slice(1), 16) >> s) & 255) * f).toString(16).padStart(2, '0')).join('');
 
@@ -226,7 +225,7 @@ function drawText(c, it, kk, dpr, col, wireframe, origin) {
   const U = 100 * CAP / it.h;
   c.save();
   c.translate(it.x - origin[0], it.y - origin[1]); c.rotate(it.rot); c.scale(it.wf * it.mx / U, -it.my / U);
-  c.fillStyle = col(it.css); c.font = it.st || it.bold ? fontOf(it) : TEXT_FONT;
+  c.fillStyle = col(it.css); c.font = fontOf(it);
   if (wireframe) { c.strokeStyle = col(it.css); c.lineWidth = dpr * U / kk; c.setLineDash([]); }
   const text = (str, x, y) => wireframe ? c.strokeText(str, x, y) : c.fillText(str, x, y);
   c.textAlign = ['left', 'center', 'right'][it.ha] || 'left'; c.textBaseline = 'alphabetic';

@@ -14,6 +14,30 @@ export const ago = (ms) => (ms < 60_000 ? '<1m' : ms < 3_600_000 ? `${Math.floor
 // Cut to n cells with an ellipsis, padded to n.
 export const fit = (s, n) => (s.length > n ? `${s.slice(0, Math.max(n - 1, 0))}…` : s.padEnd(n));
 
+// Wrap words ({ t, ...style }) into lines of at most n cells; at least one line. A word longer than n stays whole (wrap() splits those).
+/** @template {{ t: string }} W @param {W[]} words @param {number} n @returns {W[][]} */
+export function wrapWords(words, n) {
+  /** @type {typeof words[]} */
+  const lines = [[]];
+  let len = 0;
+  for (const w of words) {
+    if (len && len + 1 + w.t.length > n) { lines.push([]); len = 0; }
+    lines[lines.length - 1].push(w);
+    len += (len ? 1 : 0) + w.t.length;
+  }
+  return lines;
+}
+// A string into lines of at most n cells, at spaces; a word longer than n is cut.
+export const wrap = (s, n) =>
+  wrapWords(s.split(/\s+/).filter(Boolean).flatMap((t) => t.match(new RegExp(`.{1,${Math.max(n, 1)}}`, 'gs')) ?? []).map((t) => ({ t })), n).map((l) => l.map((w) => w.t).join(' '));
+
+// Is the session's folder one of `dirs` (';' or newline between them) or inside one? / and \ alike, case-insensitive.
+const slashed = (p) => p.trim().replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+export const hiddenIn = (cwd, dirs) => {
+  const c = slashed(cwd ?? '');
+  return (dirs ?? '').split(/[;\r\n]+/).map(slashed).some((d) => d !== '' && (c === d || c.startsWith(`${d}/`)));
+};
+
 // Time of day in IST (UTC+5:30), whatever the PC's own zone.
 export const istHM = (ms) => new Date(ms + 5.5 * 3_600_000).toISOString().slice(11, 16);
 const istDay = (ms) => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(ms + 5.5 * 3_600_000).getUTCDay()];
@@ -79,7 +103,7 @@ function lastResult(text) {
 }
 
 // files: [{ name, mtimeMs, size? }]. texts: { '<x>.jsonl': content } for jsonlToRead(). procs: parseProcs() or null (listing failed).
-// Row: { who, name, state: 'running' | 'testing' | 'done' | 'cut off' | 'failed', age }; age = running time of a live row, else time since it ended.
+// Row: { who, name, state: 'running' | 'testing' | 'done' | 'cut off' | 'failed', age, files (the run files it owns) }; age = running time of a live row, else time since it ended.
 // A live process decides: result line + process = running. No process match: result = done, else running only while the file moves.
 export function findRuns(files, now, texts, procs = null) {
   const inWindow = files.filter((f) => now - f.mtimeMs <= KEEP_MS && now - f.mtimeMs >= 0);
@@ -111,8 +135,9 @@ export function findRuns(files, now, texts, procs = null) {
       const doneBig = (f.size ?? 0) > BIG && !fresh;
       const p = probes.get(f.name) ?? (!result && !doneBig ? spare.shift() : null);
       const name = jsonlName(f.name);
-      if (p) rows.push({ who: 'Bishop', name, state: p?.testing ? 'testing' : 'running', age: p ? now - p.startMs : age });
-      else rows.push({ who: 'Bishop', name, state: result ? (result.error ? 'failed' : 'done') : doneBig ? 'done' : fresh ? 'running' : 'cut off', age });
+      const owns = [f.name];
+      if (p) rows.push({ who: 'Bishop', name, state: p?.testing ? 'testing' : 'running', age: p ? now - p.startMs : age, files: owns });
+      else rows.push({ who: 'Bishop', name, state: result ? (result.error ? 'failed' : 'done') : doneBig ? 'done' : fresh ? 'running' : 'cut off', age, files: owns });
       continue;
     }
     const m = /^(?:rowan-|r)(.+)\.log$/.exec(f.name);
@@ -123,8 +148,9 @@ export function findRuns(files, now, texts, procs = null) {
     const p = procs && probe(procs, [f.name, ...answerNames, `go-${m[1].replace(/^-/, '')}.sh`]);
     const done = !!answer && answer.mtimeMs >= f.mtimeMs - 2000;
     const name = m[1].replace(/^-/, '');
-    if (p) rows.push({ who: 'Knight', name, state: p.testing ? 'testing' : 'running', age: now - p.startMs });
-    else rows.push({ who: 'Knight', name, state: done ? 'done' : fresh ? 'running' : 'cut off', age });
+    const owns = [f.name, ...answerNames];
+    if (p) rows.push({ who: 'Knight', name, state: p.testing ? 'testing' : 'running', age: now - p.startMs, files: owns });
+    else rows.push({ who: 'Knight', name, state: done ? 'done' : fresh ? 'running' : 'cut off', age, files: owns });
   }
   return rows;
 }
@@ -181,6 +207,39 @@ export function endState(status) {
   return /fail|error/.test(s) ? 'failed' : /kill|stop|cancel/.test(s) ? 'killed' : 'completed';
 }
 
+// The go-<name>.sh scripts a command runs: [{ name, path }]; path is where to read it (an absolute one as typed, else in `dir`).
+export function goScripts(command, dir) {
+  return [...(command ?? '').matchAll(/([^\s'"]*?)(go-[\w.-]+\.sh)(?![\w.-])/g)].map((m) => ({ name: m[2], path: /^([A-Za-z]:|\/)/.test(m[1]) ? `${m[1]}${m[2]}` : `${dir}/${m[2]}` }));
+}
+// The run files (*.jsonl / *.txt / *.log, base names) a script writes or reads: how a wrapper is matched to the Bishop / Knight row it launches.
+export const scriptFiles = (text) => [...new Set([...(text ?? '').matchAll(/([\w.-]+\.(?:jsonl|txt|log))(?![\w.-])/gi)].map((m) => m[1]))];
+
+// Is the process of a Rook background call still in the listing? true when it cannot be told (no go script, no long plain word).
+// shortcut: a command with no go script is found by its two longest plain words, which a quoted command may not keep; then it reads as ended after 2 misses, upgrade by reading the task's pid.
+function jobAlive(procs, command) {
+  const scripts = [...(command ?? '').matchAll(/(?<![\w.-])go-[\w.-]+\.sh(?![\w.-])/g)].map((m) => m[0]);
+  if (scripts.length) return procs.some((p) => scripts.some((t) => mentions(p.cmd, t)));
+  const words = [...new Set((command ?? '').match(/(?<![\w.-])[A-Za-z][\w.-]{5,}/g) ?? [])].sort((a, b) => b.length - a.length).slice(0, 2).map((w) => w.toLowerCase());
+  return !words.length || procs.some((p) => words.every((w) => p.cmd.toLowerCase().includes(w)));
+}
+// Fallback for a task notice that never came: a running job whose process has left the listing is done. Seen alive once, one miss ends it;
+// never seen (it started and ended between two ticks), two misses. null procs (listing failed) changes nothing. Returns the same array when nothing changed.
+export function reapJobs(jobs, procs, now) {
+  if (!procs) return jobs;
+  let changed = false;
+  const out = jobs.map((j) => {
+    if (j.state !== 'running') return j;
+    const alive = jobAlive(procs, j.command);
+    const seen = !!j.seen || alive;
+    const miss = alive ? 0 : (j.miss ?? 0) + 1;
+    if (!alive && (seen || miss >= 2)) { changed = true; return { ...j, state: 'completed', endedMs: now, seen, miss }; }
+    if (seen === !!j.seen && miss === (j.miss ?? 0)) return j;
+    changed = true;
+    return { ...j, seen, miss };
+  });
+  return changed ? out : jobs;
+}
+
 // ---- the pane ----
 
 export const isLive = (state) => /^(running|testing|queued)/.test(state);
@@ -193,11 +252,16 @@ export function paneRows(jobs, rows, now) {
     if (j.state === 'running') return { who: 'Rook', name: j.desc, state: wait ? `queued ${wait[1]}` : 'running', age: now - j.startedMs };
     return { who: 'Rook', name: j.desc, state: j.state === 'completed' ? 'done' : j.state === 'failed' ? 'failed' : 'cut off', age: now - (j.endedMs ?? j.startedMs) };
   });
-  const all = [...mine, ...rows];
-  return {
+  const view = (all) => ({
     running: all.filter((r) => isLive(r.state)).sort((a, b) => b.age - a.age).slice(0, MAX_RUNNING),
     recent: all.filter((r) => !isLive(r.state) && r.age <= KEEP_MS).sort((a, b) => a.age - b.age).slice(0, MAX_RECENT),
-  };
+  });
+  // a running wrapper of go-<name>.sh is the same job as the Bishop / Knight row named <name> or owning a run file its script writes
+  // (job.files), while that row is live on screen; a queued / failed / cut off / done wrapper is its own news and stays
+  const onScreen = view(rows).running.filter((r) => /^(running|testing)/.test(r.state));
+  const twin = (j, m) => j.state === 'running' && m.state === 'running' && [...(j.command ?? '').matchAll(/(?<![\w.-])go-([\w.-]+)\.sh/g)].some((x) => onScreen.some((r) => r.name === x[1])) ||
+    onScreen.some((r) => (r.files ?? []).some((f) => (j.files ?? []).includes(f)));
+  return view([...mine.filter((m, i) => !twin(jobs[i], m)), ...rows]);
 }
 
 // ---- queue: runs<N>/queue.txt, lines "[x] / [>] / [ ] text", '#' lines ignored ----
@@ -238,6 +302,15 @@ export function parseCi(out, at) {
   } catch {
     return { at, num: null, state: /** @type {const} */ ('unknown'), automerge: false };
   }
+}
+
+// The CI line as wrapped lines of styled words: [[{ t, dim?, bold?, color? }]]. `at`: when the disk was read.
+/** @param {{ at: number, num: number | null, state: string, automerge: boolean }} ci @param {number} at @returns {{ t: string, dim?: boolean, bold?: boolean, color?: string }[][]} */
+export function ciLines(ci, at) {
+  const age = at - ci.at;
+  if (ci.state === 'unknown' || ci.num == null) return wrapWords([{ t: 'CI', dim: true }, { t: 'unknown', dim: true }, ...(age >= 60_000 ? [{ t: ago(age), dim: true }] : [])], WIDTH);
+  const color = ci.state === 'green' ? 'success' : ci.state === 'red' ? 'error' : 'warning';
+  return wrapWords([{ t: `#${ci.num}` }, { t: 'CI' }, { t: ci.state, bold: true, color }, { t: '·' }, { t: 'automerge' }, { t: ci.automerge ? 'on' : 'off' }, { t: ago(age), dim: true }], WIDTH);
 }
 
 // ---- toasts: what changed between two ticks ----

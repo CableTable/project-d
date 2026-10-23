@@ -17,7 +17,9 @@ import * as BAL from './balloons.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
-import { writeDxf, unwritable, addLayer, newDoc } from './dxf-write.js';
+import { writeDxf, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
+import * as SH from './shaping.js';
+import { explodeSelection } from './explode.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
@@ -32,6 +34,7 @@ import * as G from './guides.js';
 import * as CT from './contour.js';
 import * as OB from './objects.js';
 import * as C from './compare.js';
+import * as CMP from './compare-list.js';
 import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
 import { saveDefault, withExt } from './savepath.js';
@@ -42,6 +45,7 @@ import { openTrace } from './tracedlg.js';
 import * as TR from './trace.js';
 import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
+import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
@@ -218,7 +222,7 @@ let placedNow = [];                 // every placed part of the open layout (lay
 const ui = {};
 const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
-const note = (text) => { state.msg = text; renderCommand(); };
+const note = (text) => { state.msg = text; if (ui.fontNote) ui.fontNote.hidden = true; renderCommand(); };
 const fmt = (n) => Number(n).toFixed(2);
 const partHid = (p) => { const d = curDoc(); return !!(d && d.hiddenParts && d.hiddenParts.has(p.partId)); };       // hidden in the Objects tab: not drawn, not hit, not selected
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
@@ -357,7 +361,7 @@ function recentItems() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
@@ -379,6 +383,9 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
+  menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
+  // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
+  menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
@@ -542,6 +549,7 @@ const curDoc = () => state.docs[state.doc];
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  ui.fontNote.hidden = true;
   state.entityDrag = null;
   state.sel = -1;                         // the layout selection belongs to the tab it was made on (the setter clears the picks; clampSel picks part 0)
   state.gapSel = null; gapSig = ''; hideMenu();
@@ -604,12 +612,16 @@ async function openBytes(name, buf, path = null) {
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
   const fl = r.result;
   if (!fl.items.length) { note(name + ': this drawing is empty'); return; }
+  const subs = fontSubstitutions(r.doc.styles, fl.items);
+  const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path); return; }              // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote); return; }              // one of our saved layouts: it opens as a layout tab
   const doc = { name, path, openPath: path, dirty: false, ...tabFields(r.doc, fl) };       // openPath: the file itself, which Save never writes over
   addTab(doc);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
-    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)'));
+    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : ''));
+  ui.fontNote.textContent = fontNote;
+  ui.fontNote.hidden = !fontNote;
   await balLoad(doc, path, name);
 }
 
@@ -1098,13 +1110,15 @@ function newLayoutTab() {
   addTab(freshLayout('Layout ' + n), false);
   note('New layout: set the sheet, then add parts from the Parts library, or pick a part for step and repeat');
 }
-function openLayoutFile(lay, name, path) {
+function openLayoutFile(lay, name, path, fontNote) {
   lay.name = name;
   const doc = { name, path, openPath: path, dirty: false, lay, fromFile: true };
   state.panel = 'main';
   addTab(doc);
   const used = LD.placedAll(lay, LD.gridOf(lay)).length;
-  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved`);
+  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
+  ui.fontNote.textContent = fontNote;
+  ui.fontNote.hidden = !fontNote;
   for (const p of Object.values(lay.parts)) libKeep(p, name);          // a part the library does not have yet is added to it
 }
 const SHIFT_HINT = 'Shift-drag keeps it straight';
@@ -2956,6 +2970,9 @@ const DO = {
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
+  weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
+  explode: () => explodeSelected(),
+  simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
@@ -3021,7 +3038,7 @@ function buildStatus() {
   ui.sheetChip = h('span', { class: 'lbl tool-chip', hidden: true, 'data-testid': 'sheet-chip', title: 'The page of the PDF that is shown' });
   ui.wireframe = h('button', { class: 'tog' + (state.wireframe ? ' on' : ''), type: 'button', 'data-testid': 'wireframe', 'aria-pressed': String(state.wireframe), 'aria-label': 'Wireframe', title: 'Wireframe: outline-only view; PDF / Print and export keep fills (F9)', onclick: toggleWireframe }, 'Wire');
   ui.workArea = h('button', { class: 'tog work-area', type: 'button', 'data-testid': 'work-area', onclick: () => setWorkArea(WORK_AREAS[(WORK_AREAS.indexOf(state.workArea) + 1) % WORK_AREAS.length]) });
-  return h('div', { class: 'status' }, ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.workArea, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
+  return h('div', { class: 'status' }, ui.fontNote = h('span', { class: 'font-note', hidden: true, 'data-testid': 'font-note' }), ui.cmdUI.echo, ui.cmdUI.hint, ui.coords, toggles, ui.wireframe, ui.workArea, ui.toolChip, ui.sheetChip, h('span', { class: 'gap' }),
     ui.entities = h('span', { class: 'lbl', 'data-testid': 'entities' }),
     ui.units = h('span', { class: 'lbl', 'data-testid': 'units' }),
     ui.layerInfo = h('span', { class: 'lbl', 'data-testid': 'layer-info' }), h('span', { class: 'lbl' }, 'mm'),
@@ -3344,7 +3361,8 @@ function paintOverlay(gesture = false) {
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
-    if (state.entityDrag?.items) paintDrawing(c, { ...base, keep: true, fl: state.entityDrag.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
+    const move = state.entityDrag;
+    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
     c.dataset.drawn = drawn || 0;
     if (heavy(performance.now() - t0, drawn || 0)) {
       snapCv = snapCv || document.createElement('canvas');
@@ -3718,9 +3736,9 @@ async function textToOutlines() {
   if (!d) { note('Text to outlines works on a drawing tab: open a drawing first'); return; }
   const sel = new Set([...d.sel].filter((i) => isTextEnt(d.raw.entities[i])));
   if (!sel.size) { setTool('select'); state.txoWait = true; note('Text to outlines: select the texts (click or drag a box), then press Enter'); return; }
-  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)).map((it) => TO.outlineItem(it, raw[it.e])), fonts = new Map(), shx = new Set();
-  const styleFile = (name) => { const k = d.raw.styles && Object.keys(d.raw.styles).find((n) => n.toLowerCase() === name.toLowerCase()), s = k && d.raw.styles[k]; return (s && s.v[s.c.indexOf(3)]) || ''; };       // the STYLE's font file (group 3); style names are case-blind, a TEXT with no style is STANDARD
-  const fontOf = (it) => { const st = it.st || 'Standard', f = styleFile(st).trim(); if (/\.shx$/i.test(f)) { shx.add(f); return 'Arial'; } return TX.fontOfStyle(it.st); };      // SHX has no outlines: Arial stands in
+  const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)).map((it) => TO.outlineItem(it, raw[it.e])), fonts = new Map();
+  const substitutions = fontSubstitutions(d.raw.styles, items);
+  const fontOf = (it) => it.font || fontForStyle(d.raw.styles, it.st);
   const keyOf = (it) => fontOf(it) + (it.bold ? ':b' : '');
   try {
     for (const item of items) for (const run of item.runs || [item]) {
@@ -3742,7 +3760,46 @@ async function textToOutlines() {
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
   const mtexts = [...r.done].filter((i) => raw[i].type === 'MTEXT').length, texts = r.texts - mtexts;
   const count = [texts ? `${texts} text${texts === 1 ? '' : 's'}` : '', mtexts ? `${mtexts} MTEXT` : ''].filter(Boolean).join(' + ');
-  note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
+  note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (substitutions.length ? '. Fonts: ' + substitutions.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
+}
+
+function explodeSelected() {
+  const d = editable();
+  if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
+  const r = explodeSelection(d.raw, d.sel, d.locked);
+  const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
+  if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }
+  commit(d, { entities: r.entities, blocks: r.blocks }, 'Explode');
+  setSel(d, r.selected);
+  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. Ctrl+Z puts the originals back');
+}
+
+// ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----
+const SHAPING_TITLE = { weld: 'Join the selected outlines into one outline (union)', intersect: 'Keep only the area all the selected outlines share', trim: 'Cut the others out of the last picked outline (or the largest after a box); the others stay',
+  simplify: 'Keep each outline minus the outlines in front of it (later in the drawing)', frontminus: 'Keep the frontmost outline minus all the others', backminus: 'Keep the backmost outline minus all the others', boundary: 'Add the union on the current layer; the originals stay' };
+/** Results use their source's layer; Boundary adds on the current layer. Trim keeps cutters; Boundary keeps all originals. */
+function shapeSelection(op) {
+  const name = SH.OPS[op].label, d = editable();
+  if (!d) { note(`${name} works on a drawing tab: open a drawing first`); return; }
+  const lock = [...d.sel].find((e) => lockedEnt(d, e));
+  if (lock != null) { note(`Layer ${d.raw.entities[lock].layer} is locked: unlock it in the Objects tab to ${name.toLowerCase()} this`); return; }
+  const plain = [...d.sel].filter((e) => d.raw.entities[e].type !== 'INSERT'), blocks = d.sel.size - plain.length;   // a block's outlines can't be replaced one by one
+  const found = plain.length ? Ed.outlineLoops(edIndex(d), plain, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
+  const skipped = (found && found.open ? `; ${found.open} open outline${found.open === 1 ? '' : 's'} skipped` : '') + (blocks ? `; ${blocks} block${blocks === 1 ? '' : 's'} skipped: explode ${blocks === 1 ? 'it' : 'them'} first` : '');
+  if (!found || found.loops.length < 2) { note(`${name}: select at least 2 closed outlines (click one, Shift+click the others, or drag a box)` + skipped); return; }
+  const r = SH.shape(op, found.loops, d.sel.has(d.lastPick) ? found.loops.findIndex((l) => l.ents.has(d.lastPick)) : -1);
+  if (r.error) { note(r.error + skipped); return; }
+  if (r.untouched.length === r.operands.length) { note(`${name}: no outline is overlapped by one in front, nothing changed` + skipped); return; }
+  if (!r.rings.length && !r.untouched.length && op !== 'frontminus' && op !== 'backminus') { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
+  const gone = SH.goneEntities(found.loops, found.openEnts, (op === 'boundary' ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
+  const kept = Ed.removeEntities(d.raw, gone);
+  const made = r.rings.map((ring, i) => {
+    const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
+    return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps });
+  }), at = kept.entities.length;
+  commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);
+  setSel(d, new Set(made.map((_, i) => at + i)));
+  note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back'));
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
@@ -3879,7 +3936,7 @@ function pickPoint(d, p, pts, shift, hover = false) {
 }
 
 function setSel(d, sel) {
-  d.sel = sel;
+  d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
   const ed = edIndex(d);
   d.hl = [];
@@ -3889,14 +3946,18 @@ function setSel(d, sel) {
 }
 
 function moveSelectionTo(g, e) {
-  if (g.d !== editable() || g.raw !== g.d.raw.entities || [...g.sel].some((i) => lockedEnt(g.d, i))) { state.entityDrag = null; return false; }
+  if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }
+  const locked = [...g.sel].find((i) => lockedEnt(g.d, i));
+  if (locked != null) { state.entityDrag = null; note(`Layer ${g.raw[locked].layer} is locked: unlock it in the Objects tab to move this`); paintOverlay(); return false; }
   const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
   g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
   g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
   try {
-    const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.d.raw.entities[i]) };
-    g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), g.dx, g.dy) });
-    g.items = g.preview.items;
+    if (!g.preview) {
+      const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.raw[i]) };
+      g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), 0, 0) });
+      g.items = g.preview.items;
+    }
     view.fitted = false; paintOverlay(); return true;
   } catch (err) { state.entityDrag = null; note(err.message); paintOverlay(); return false; }
 }
@@ -3909,6 +3970,7 @@ function clickSelect(d, p, shift) {
   const chain = Ed.chainAt(ed, e, Ed.chainTol(drawBox(d.fl), d.factor)).filter((c) => !lockedEnt(d, c)), next = new Set(shift ? d.sel : []);
   if (shift && d.sel.has(e)) for (const c of chain) next.delete(c); else for (const c of chain) next.add(c);
   setSel(d, next);
+  if (next.has(e)) d.lastPick = e;
   note(chain.length > 1 ? `${chain.length} entities joined end to end` + (shift ? '' : ' selected') : '1 entity selected');
 }
 /** A dragged box: what lies fully inside it. */
@@ -5765,7 +5827,7 @@ function buildDrawingSection() {
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
     ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
     h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount),
-    ui.sizeHeading = h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
+    h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
   ui.outList = h('div', { class: 'outlist', 'data-testid': 'outlines' });
@@ -6362,15 +6424,11 @@ function renderSelection(d) {
   const noPart = !n || !selHasPart(d);
   ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
   ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
-  if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'click an outline in the drawing'; ui['sel-w'].value = '—'; ui['sel-h'].value = '—'; ui.selArea.textContent = ''; return; }
+  if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'click an outline in the drawing'; ui.selArea.textContent = ''; return; }
   const ed = edIndex(d);
-  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-  for (const e of d.sel) { if (d.raw.entities[e].layer === Ed.DIM_LAYER || !ed.byEnt[e]) continue; x0 = Math.min(x0, ed.box[e * 4]); y0 = Math.min(y0, ed.box[e * 4 + 1]); x1 = Math.max(x1, ed.box[e * 4 + 2]); y1 = Math.max(y1, ed.box[e * 4 + 3]); }
   const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';        // one wording with the panel's count ("1 selected")
   ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;
-  ui['sel-w'].value = x1 >= x0 ? fmt((x1 - x0) * d.factor) : '—';
-  ui['sel-h'].value = y1 >= y0 ? fmt((y1 - y0) * d.factor) : '—';
   // area and perimeter (TODO 31): for ink and cost; skipped on a huge selection, where it would be slow
   const ap = n <= 3000 ? Ed.areaPerimeter(ed, d.sel, d.factor, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
   ui.selArea.textContent = !ap ? '' : (ap.loops ? `Area ${fmt(ap.area)} mm²` + (ap.holes ? ` (${ap.holes} hole${ap.holes > 1 ? 's' : ''} off)` : '') +
@@ -6528,7 +6586,8 @@ function renderEdit() {
     button.disabled = !rb;
   }
   put(ui.dw, rb ? fmtSize(rb[2] - rb[0]) : ''); put(ui.dh, rb ? fmtSize(rb[3] - rb[1]) : '');
-  if (!n) { put(ui['sel-w'], rb ? fmtSize(rb[2] - rb[0]) : '—'); put(ui['sel-h'], rb ? fmtSize(rb[3] - rb[1]) : '—'); }
+  const sizeFmt = n ? fmt : fmtSize;
+  put(ui['sel-w'], rb ? sizeFmt(rb[2] - rb[0]) : '—'); put(ui['sel-h'], rb ? sizeFmt(rb[3] - rb[1]) : '—');
   ui.dw.disabled = ui.dh.disabled = ui['sel-w'].disabled = ui['sel-h'].disabled = !rb;
   ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
@@ -6549,75 +6608,88 @@ function renderEdit() {
   if (L && L.measured) ui.measured.textContent = fmtSize(L.measured) + ' mm measured';
 }
 
-// ---- Compare two drawings (TODO 41; mock-up R5d, Option B; compare.js is the logic): its own tab, the controls in the right-hand panel ----
-// A Compare tab (d.cmp) holds two sides { name, fl, factor, off, polys, box }; the second is moved by c.off (Line up) and every place where
-// the outlines differ by more than the tolerance is a difference (c.res), drawn as a glow in the overlay and listed in the panel.
+// ---- Compare: session-only snapshots, with controls in the right-hand panel ----
 const cmpDoc = () => { const d = curDoc(); return d && d.cmp ? d : null; };
 const cmpCss = (id) => { const k = C.COLOURS.find((x) => x.id === id) || C.COLOURS[0]; return workDark() ? k.dark : k.css; };
-const cmpOff = (c) => C.lineUp(c.a && c.a.box, c.b && c.b.box, c.mode, c.manual);
-const cmpSide = (name, fl, factor, off) => ({ name, fl, factor, off, ...C.polylines(fl, factor, off) });
-/** What the Compare tab covers (mm, y up): both drawings, the second where it is moved to. */
+const cmpSelected = (c) => c.items.find((x) => x.id === c.selected);
+/** Visible snapshots at their current offsets (mm, y up). */
 function cmpBox(d) {
   const c = d && d.cmp;
-  return c ? unionBox(c.a && c.a.box, c.b && c.b.box && [c.b.box[0] + c.off[0], c.b.box[1] + c.off[1], c.b.box[2] + c.off[0], c.b.box[3] + c.off[1]]) : null;
+  return c ? c.items.filter((x) => x.visible).reduce((b, x) => unionBox(b, x.box.map((v, i) => v + x.offset[i % 2])), null) : null;
 }
 function cmpCalc(c) {
-  c.off = cmpOff(c); c.sel = 0; c.stale = false;
-  c.res = c.a && c.b ? C.compare(c.a.polys, c.b.polys, c.tol, { offsetB: c.off }) : null;
+  c.items = CMP.lineUpItems(c.items, c.mode); c.sel = 0; c.stale = false;
+  c.res = CMP.compareItems(c.items, c.tol);
 }
 /** The Compare button (TODO 113): the only place the comparison is worked out. */
 function cmpRun(d) { cmpCalc(d.cmp); update(); }
-/** Drawing 2 moved, or the tolerance changed: the result on show is out of date until the button is pressed again. */
-function cmpMoved(d, refit = false) { const c = d.cmp; c.off = cmpOff(c); if (c.res) c.stale = true; update(refit && view.fitted); }
+/** A move or setting change marks the last result out of date, without calculating. */
+function cmpMoved(d, refit = false) { const c = d.cmp; c.items = CMP.lineUpItems(c.items, c.mode); if (c.res) c.stale = true; update(refit && view.fitted); }
 
-/** File → Compare two drawings…: the Compare tab (the one already open, else a new one with the open drawing tabs as drawing 1 and 2). */
+function cmpAdd(d, source) {
+  try {
+    const c = d.cmp;
+    c.items = CMP.addItem(c.items, source); c.selected = c.items.at(-1).id; c.res = null; c.stale = false;
+    cmpMoved(d, true); note('Added snapshot: ' + source.name);
+  } catch (err) { note(err.message); }
+}
+
+/** Reuse the app's picker menu: the chosen source is copied only when added. */
+function cmpChoose(e, library = false) {
+  const d = cmpDoc(), r = e.currentTarget.getBoundingClientRect();
+  const sources = library ? lib.items : state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box);
+  popMenu(r.left, r.bottom + 2, sources.length ? sources.map((x) => [x.name, () => {
+    const source = library ? libPart(x) : x;
+    if (source) cmpAdd(d, source); else note(x.name + ': this part could not be read');
+  }]) : [[library ? 'No parts in the Parts library' : 'No open drawing tabs', () => {}, null, false]]);
+  ui.ctx.classList.add('cmp-source-menu');
+}
+
+/** File → Compare drawings…: the Compare tab (the one already open, else a new one with the open drawing tabs as drawing 1 and 2). */
 function cmpStart() {
   const have = state.docs.findIndex((x) => x.cmp);
   if (have >= 0) { state.doc = have; showDoc(); return; }
   const tabs = state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box), cur = curDoc(), first = tabs.includes(cur) ? cur : tabs[0], second = tabs.find((x) => x !== first);
-  const side = (x) => (x ? cmpSide(x.name, x.fl, x.factor, x.off) : null);
-  const c = { a: side(first), b: side(second), ca: 'red', cb: 'blue', mode: 'bl', manual: [0, 0], tol: C.DEFAULT_TOL, show: true, res: null, stale: false, off: [0, 0], sel: 0 };
-  c.off = cmpOff(c);
+  const c = { items: [], selected: null, mode: 'bl', tol: C.DEFAULT_TOL, show: true, res: null, stale: false, sel: 0 };
+  for (const x of [first, second].filter(Boolean)) {
+    try { c.items = CMP.addItem(c.items, x); } catch (err) { note(err.message); }
+  }
+  c.items = CMP.lineUpItems(c.items, c.mode); c.selected = c.items.at(-1)?.id;
   addTab({ name: 'Compare', path: null, dirty: false, cmp: c });
-  note(c.b ? 'Compare: the first two open drawings. Open… picks others' : 'Compare: open two drawings with Open…');
+  note('Compare: add up to 5 snapshots. The first ticked drawing is the reference');
 }
 
-async function cmpPick(i) {
+async function cmpPick() {
+  const d = cmpDoc();
   const t = window.__TAURI__;
-  if (!t || !t.dialog || !t.dialog.open) { ui.cmpPicker.value = ''; ui.cmpPicker.dataset.side = i; ui.cmpPicker.click(); return; }
+  if (!t || !t.dialog || !t.dialog.open) { ui.cmpPicker.value = ''; ui.cmpPicker.doc = d; ui.cmpPicker.click(); return; }
   try {
     const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
-    if (path) await cmpLoad(i, String(path).split(/[\\/]/).pop(), await t.fs.readFile(path));
+    if (path) await cmpLoad(d, String(path).split(/[\\/]/).pop(), await t.fs.readFile(path));
   } catch (err) { note('Open failed: ' + (err && err.message ? err.message : err)); }
 }
-async function cmpLoad(i, name, buf) {
-  const d = cmpDoc();
-  if (!d) return;
+async function cmpLoad(d, name, buf) {
+  if (!d || !state.docs.includes(d)) return;
   if (!/\.dxf$/i.test(name)) { note(name + ': Compare opens DXF drawings'); return; }
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
-  const side = cmpSide(name, r.result, unitFactor(r.result.units), startHidden(r.result));
-  if (!side.polys.length) { note(name + ': no outlines to compare (lines, arcs, circles and polylines)'); return; }
-  d.cmp[i] = side; d.cmp.res = null;
-  cmpMoved(d, true);
-  note(`Drawing ${i === 'a' ? 1 : 2}: ${name}`);
+  if (state.docs.includes(d)) cmpAdd(d, { name, raw: r.doc, fl: r.result, factor: unitFactor(r.result.units), off: startHidden(r.result) });
 }
 
 function buildCompareSection() {
-  ui.cmp = {};
   ui.cmpPicker = h('input', { type: 'file', accept: '.dxf', hidden: true, 'data-testid': 'cmp-picker' });
-  ui.cmpPicker.addEventListener('change', async () => { const f = ui.cmpPicker.files[0], i = ui.cmpPicker.dataset.side; ui.cmpPicker.value = ''; if (f) await cmpLoad(i, f.name, await f.arrayBuffer()); });
-  const side = (i, key) => {
-    const u = ui.cmp[key] = { nm: h('strong', { class: 'cmpname', 'data-testid': 'cmp-name-' + i }),
-      sel: h('div', { class: 'cswatches', role: 'group', 'aria-label': `Drawing ${i} colour`, 'data-testid': 'cmp-colour-' + i }, C.COLOURS.map((k) =>
-        h('button', { class: 'cs', type: 'button', 'aria-label': k.label, 'aria-pressed': 'false', 'data-colour': k.id, 'data-testid': `cmp-colour-${i}-${k.id}`, onclick: () => { cmpDoc().cmp['c' + key] = k.id; update(); } }))) };
-    return [h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, `Drawing ${i}`), u.nm, h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-open-' + i, onclick: () => cmpPick(key) }, 'Open…')),
-      h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Colour'), u.sel)];
-  };
+  ui.cmpPicker.addEventListener('change', async () => {
+    const f = ui.cmpPicker.files[0], d = ui.cmpPicker.doc; ui.cmpPicker.value = '';
+    try { if (f) await cmpLoad(d, f.name, await f.arrayBuffer()); } catch (err) { note('Open failed: ' + err.message); }
+  });
+  ui.cmpItems = h('div', { class: 'cmpitems', 'data-testid': 'cmp-items' });
+  ui.cmpAdd = [h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-tab', onclick: (e) => cmpChoose(e) }, 'Add tab'),
+    h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-library', onclick: (e) => cmpChoose(e, true) }, 'Add from library'),
+    h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-file', onclick: cmpPick }, 'Add file…')];
   ui.cmpModes = [['bl', 'Bottom-left'], ['centre', 'Centres'], ['manual', 'Manual']].map(([m, text]) => h('button', { class: 'seg', type: 'button', 'data-m': m, 'data-testid': 'cmp-lineup-' + m, onclick: () => {
     const d = cmpDoc(), c = d.cmp;
-    if (m === 'manual' && c.mode !== 'manual') c.manual = [...c.off];          // by hand starts where the last Line up put it
+    if (c.mode === m) return;
     c.mode = m; cmpMoved(d);
   } }, text));
   ui.cmpHint = h('div', { class: 'lbl', 'data-testid': 'cmp-hint' });
@@ -6633,12 +6705,16 @@ function buildCompareSection() {
   ui.cmpRunBtn = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'cmp-run', onclick: () => cmpRun(cmpDoc()) }, 'Compare');
   ui.cmpStale = h('div', { class: 'lbl cmpstale', role: 'status', 'data-testid': 'cmp-stale', hidden: true }, 'Out of date - press Compare again');
   ui.cmpList = h('div', { class: 'gaplist', 'data-testid': 'cmp-list' });
+  ui.cmpTable = h('tbody');
+  ui.cmpTableWrap = h('div', { class: 'cmptablewrap' }, h('table', { class: 'cmptable', 'data-testid': 'cmp-table', 'aria-label': 'Differences from reference' },
+    h('thead', null, h('tr', null, ['Drawing', 'Δ area (mm²)', 'Δ perimeter (mm)', 'Δ W × H (mm)'].map((text) => h('th', { scope: 'col' }, text)))), ui.cmpTable));
   ui.cmpSec = h('section', { class: 'propbox cmpbox', hidden: true, 'data-testid': 'compare-panel' },
-    h('h2', { class: 'sec' }, 'Compare'), ...side(1, 'a'), ...side(2, 'b'),
+    h('h2', { class: 'sec' }, 'Compare'), ui.cmpItems, h('div', { class: 'cmpadd' }, ui.cmpAdd),
+    h('div', { class: 'lbl' }, 'Snapshots · max 5 · first ticked = reference'),
     h('div', { class: 'lbl' }, 'Line up'), h('div', { class: 'mode', role: 'group', 'aria-label': 'Line up' }, ui.cmpModes), ui.cmpHint,
     h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Tolerance'), ui.cmpTol, h('span', { class: 'lbl' }, 'mm')),
     h('label', { class: 'row swrow' }, h('span', null, 'Show differences'), ui.cmpShow),
-    ui.cmpRunBtn, ui.cmpStale,
+    ui.cmpRunBtn, ui.cmpStale, ui.cmpTableWrap,
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Differences'), ui.cmpCount), ui.cmpList, ui.cmpPicker);
   return ui.cmpSec;
 }
@@ -6648,21 +6724,36 @@ function renderCompare() {
   ui.cmpSec.hidden = !d || state.panel === 'library';
   if (ui.cmpSec.hidden) return;
   const c = d.cmp;
-  for (const k of ['a', 'b']) {
-    const u = ui.cmp[k], sd = c[k];
-    u.nm.textContent = sd ? sd.name : 'Not chosen yet'; u.nm.title = u.nm.textContent;
-    for (const b of u.sel.children) { b.style.background = cmpCss(b.dataset.colour); b.setAttribute('aria-pressed', String(b.dataset.colour === c['c' + k])); }
-  }
+  const ref = CMP.reference(c.items), selected = cmpSelected(c);
+  ui.cmpItems.replaceChildren(...c.items.map((x, i) => h('div', { class: 'cmpitem' + (x === selected ? ' on' : ''), 'data-testid': 'cmp-item', 'data-colour': x.colour },
+    h('span', { class: 'cswatch', style: `background:${cmpCss(x.colour)}`, title: C.COLOURS.find((k) => k.id === x.colour).label }),
+    h('button', { class: 'cmpname', type: 'button', title: x.name + (x === ref ? ' · Reference' : ''), 'aria-pressed': String(x === selected), onclick: () => { c.selected = x.id; update(); } }, h('span', { 'data-testid': 'cmp-name-' + (i + 1) }, x.name), x === ref ? h('small', { class: 'lbl' }, 'Reference') : null),
+    h('input', { type: 'checkbox', checked: x.checked, 'aria-label': 'Compare ' + x.name, 'data-testid': 'cmp-check', onchange: (e) => { c.items = CMP.setItem(c.items, x.id, { checked: e.target.checked }); cmpMoved(d, true); } }),
+    h('button', { class: 'tog', type: 'button', 'aria-label': 'Show ' + x.name, 'aria-pressed': String(x.visible), title: 'Show ' + x.name, 'data-testid': 'cmp-eye', onclick: () => { c.items = CMP.setItem(c.items, x.id, { visible: !x.visible }); update(); } }, icon(x.visible ? EYE : EYE_OFF, { size: 16 })),
+    h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove ' + x.name, 'data-testid': 'cmp-remove', onclick: () => {
+      c.items = CMP.removeItem(c.items, x.id); if (c.selected === x.id) c.selected = c.items.at(-1)?.id;
+      c.res = null; c.stale = false; cmpMoved(d, true);
+    } }, '×'))));
+  for (const b of ui.cmpAdd) b.disabled = c.items.length >= CMP.MAX_ITEMS;
   for (const b of ui.cmpModes) { const on = b.dataset.m === c.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
-  ui.cmpHint.textContent = (c.mode === 'manual' ? `Drag drawing 2 on the canvas (it snaps to drawing 1 while SNAP is on), or use the arrow keys (${state.nudge} mm). ` : '') + `Drawing 2 moved X ${fmt(c.off[0])}, Y ${fmt(c.off[1])} mm`;
+  ui.cmpHint.textContent = (c.mode === 'manual' ? `Drag the selected drawing (SNAP follows the status bar), or use the arrow keys (${state.nudge} mm). ` : '') +
+    (selected ? `Selected: ${selected.name} · moved X ${fmt(selected.offset[0])}, Y ${fmt(selected.offset[1])} mm` : 'Add drawings to compare');
   if (document.activeElement !== ui.cmpTol) ui.cmpTol.value = String(c.tol);
   ui.cmpShow.checked = c.show;
   const diffs = c.res ? c.res.diffs : [];
-  ui.cmpRunBtn.disabled = !(c.a && c.b); ui.cmpStale.hidden = !c.stale; ui.cmpList.classList.toggle('stale', !!c.stale);
-  ui.cmpCount.textContent = !c.res ? (c.a && c.b ? 'Press Compare' : 'Choose two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
-  if (ui.cmpListRes !== c.res) {
-    ui.cmpListRes = c.res;
+  ui.cmpRunBtn.disabled = c.items.filter((x) => x.checked).length < 2; ui.cmpStale.hidden = !c.stale; ui.cmpList.classList.toggle('stale', !!c.stale);
+  ui.cmpTableWrap.hidden = !c.res; ui.cmpTableWrap.classList.toggle('stale', !!c.stale);
+  ui.cmpTable.replaceChildren(...(c.res?.rows || []).map((r) => {
+    const x = c.items.find((item) => item.id === r.id);
+    const delta = (v) => (+v.toFixed(state.dp) || 0).toFixed(state.dp);
+    return h('tr', { 'data-testid': 'cmp-result', 'data-colour': x.colour }, h('th', { scope: 'row', style: `color:${cmpCss(x.colour)}`, title: x.name }, x.name),
+      h('td', null, delta(r.area)), h('td', null, delta(r.perimeter)), h('td', null, `${delta(r.w)} × ${delta(r.h)}`));
+  }));
+  ui.cmpCount.textContent = !c.res ? (!ui.cmpRunBtn.disabled ? 'Press Compare' : 'Tick at least two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
+  if (ui.cmpListRes !== c.res || ui.cmpListDark !== workDark()) {
+    ui.cmpListRes = c.res; ui.cmpListDark = workDark();
     ui.cmpList.replaceChildren(...diffs.map((x) => h('button', { class: 'gaprow cmprow', type: 'button', 'data-n': x.n, 'data-testid': 'cmp-diff', title: 'Zoom to this difference', onclick: () => cmpZoom(d, x) },
+      h('span', { class: 'cswatch', style: `background:${cmpCss(c.items.find((item) => item.id === x.itemId).colour)}` }),
       h('span', { class: 'lbl' }, String(x.n)), h('span', { class: 'lbl mono' }, x.mm.toFixed(2) + ' mm'), h('span', { class: 'lbl mono' }, `X ${Math.round(x.x)} Y ${Math.round(x.y)}`))));
   }
   for (const r of ui.cmpList.children) r.classList.toggle('on', Number(r.dataset.n) === c.sel);
@@ -6687,8 +6778,8 @@ function cmpZoom(d, x) {
 
 function cmpPaint(canvas, c, base) {
   paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
-  for (const [sd, col, o] of [[c.a, c.ca, [0, 0]], [c.b, c.cb, c.off]]) {
-    if (sd) paintDrawing(canvas, { ...base, keep: true, fl: sd.fl, off: sd.off, factor: sd.factor, slots: [[sd.factor, 0, 0, -sd.factor, o[0], state.sheetH - o[1]]], tint: cmpCss(col) });
+  for (const sd of c.items) {
+    if (sd.visible) paintDrawing(canvas, { ...base, keep: true, fl: sd.fl, off: sd.off, factor: sd.factor, slots: [[sd.factor, 0, 0, -sd.factor, sd.offset[0], state.sheetH - sd.offset[1]]], tint: cmpCss(sd.colour) });
   }
   if (c.moving && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
     const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
@@ -6700,11 +6791,13 @@ function cmpPaint(canvas, c, base) {
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
 function cmpGlow(c, out) {
   const k = 1 / view.scale, H = state.sheetH;
-  out.push(s('defs', null, s('radialGradient', { id: 'cmp-glow' }, s('stop', { offset: 0, class: 'cmp-g0' }), s('stop', { offset: 1, class: 'cmp-g1' }))));
+  out.push(s('defs', null, c.items.map((x) => s('radialGradient', { id: 'cmp-glow-' + x.id }, s('stop', { offset: 0, 'stop-color': cmpCss(x.colour), 'stop-opacity': .8 }), s('stop', { offset: 1, 'stop-color': cmpCss(x.colour), 'stop-opacity': 0 })))));
   for (const x of c.res.diffs) {
+    const item = c.items.find((it) => it.id === x.itemId);
+    if (!item.visible) continue;
     const cx = (x.box[0] + x.box[2]) / 2, cy = H - (x.box[1] + x.box[3]) / 2, r = Math.max(16 * k, Math.hypot(x.box[2] - x.box[0], x.box[3] - x.box[1]) / 2 + 10 * k);
-    out.push(s('circle', { class: 'cmp-glow' + (c.sel === x.n ? ' on' : ''), cx, cy, r, fill: 'url(#cmp-glow)', 'data-testid': 'cmp-glow' }),
-      s('g', { class: 'pick-badge' }, s('circle', { cx, cy: cy - r, r: 11 * k }), s('text', { x: cx, y: cy - r + 4.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, String(x.n))));
+    out.push(s('circle', { class: 'cmp-glow' + (c.sel === x.n ? ' on' : ''), cx, cy, r, fill: `url(#cmp-glow-${item.id})`, 'data-colour': item.colour, 'data-testid': 'cmp-glow' }),
+      s('g', { class: 'pick-badge' }, s('circle', { cx, cy: cy - r, r: 11 * k, style: `fill:${cmpCss(item.colour)}` }), s('text', { x: cx, y: cy - r + 4.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k, style: `fill:${workDark() ? '#000' : '#fff'}` }, String(x.n))));
   }
 }
 
@@ -6715,39 +6808,40 @@ function cmpSnap(sd, o, p) {
   const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap);
   return sn && { x: sn.x * f + o[0], y: sn.y * f + o[1], kind: sn.kind };
 }
-/** Manual line up: dragging on the canvas moves drawing 2, its grabbed point snapping to drawing 1 (the differences wait for the Compare button). */
+/** Move the selected snapshot with the editor's snaps, without calculating differences. */
 function cmpDown(e) {
-  const d = cmpDoc(), c = d && d.cmp;
-  if (!c || c.mode !== 'manual' || !c.b) return false;
-  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...c.off];
-  const grab = cmpSnap(c.b, m0, p0), g = grab ? [grab.x, grab.y] : p0;      // the point of drawing 2 taken hold of: a snap of it, else the pointer
+  const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), ref = c && CMP.reference(c.items);
+  if (!c || c.mode !== 'manual' || !item?.visible) return false;
+  const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
+  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset];
+  const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
   c.moving = true;
   let moved = false;
   const move = (ev) => {
     const p = sheetAt(ev.clientX, ev.clientY);
     let o = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]];
-    const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = c.a && cmpSnap(c.a, [0, 0], q);     // where the grabbed point is now, and what of drawing 1 it snaps to
+    const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = target && cmpSnap(target, target.offset, q);
     c.snap = drop || (grab ? { x: q[0], y: q[1], kind: grab.kind } : null);
     if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
-    moved = true; c.manual = o; c.off = cmpOff(c); paintOverlay();
+    moved = true; item.offset = o; paintOverlay();
   };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) cmpMoved(d); else update(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   return true;
 }
-/** Manual line up: the arrow keys nudge drawing 2 by the toolbar's step. */
+/** Manual line up: arrow keys nudge the selected snapshot by the toolbar's step. */
 function cmpKey(e, mod) {
-  const d = cmpDoc(), c = d && d.cmp, dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
-  if (!c || c.mode !== 'manual' || !c.b || !dir || mod || e.altKey) return false;
+  const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
+  if (!c || c.mode !== 'manual' || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
-  c.manual = [PL.r6(c.off[0] + dir[0] * state.nudge), PL.r6(c.off[1] + dir[1] * state.nudge)];
+  item.offset = [PL.r6(item.offset[0] + dir[0] * state.nudge), PL.r6(item.offset[1] + dir[1] * state.nudge)];
   cmpMoved(d);
-  note(`Drawing 2 nudged ${state.nudge} mm`);
+  note(`${item.name} nudged ${state.nudge} mm`);
   return true;
 }
 function cmpCommand(c) {
-  const n = c.res ? c.res.diffs.length : 0, nm = (sd, col) => (sd ? sd.name : '(none)') + ` (${C.COLOURS.find((k) => k.id === col).label.toLowerCase()})`;
-  ui.hist.textContent = `Command: COMPARE   ${nm(c.a, c.ca)} vs ${nm(c.b, c.cb)} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : c.a && c.b ? 'press Compare' : 'choose two drawings');
+  const n = c.res ? c.res.diffs.length : 0, chosen = c.items.filter((x) => x.checked);
+  ui.hist.textContent = `Command: COMPARE   ${chosen.map((x) => x.name + ` (${x.colour})`).join(' vs ')} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : chosen.length >= 2 ? 'press Compare' : 'tick at least two drawings');
   ui.prompt.textContent = state.msg ? state.msg : c.stale ? 'Out of date - press Compare again:' : n ? `Zoom to a difference: click it in the panel (1-${n}):` : 'Line up, Tolerance and Show differences are in the panel:';
 }
 
@@ -6802,7 +6896,7 @@ async function init() {
   update(true);
   setTool('select');
   if (shortcutError) note(shortcutError);
-  await attachLaunchFiles();
+  attachLaunchFiles();
   libInit();
   const every = Number(new URLSearchParams(location.search).get('autosave'));
   setInterval(autosaveNow, every >= 100 ? every : 120000);

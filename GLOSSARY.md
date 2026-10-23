@@ -20,7 +20,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 
-**Compare**: Overlays parts in different colours and can highlight outline differences beyond a chosen tolerance, worked out once when the Compare button is pressed (a move afterwards marks the result "out of date"). Where: `TODO.md`, item 41; `web/compare.js`.
+**Compare**: Overlays up to five drawing snapshots in different colours and highlights each ticked item's outline differences from the reference beyond a chosen tolerance. The Compare button calculates the differences and a table of signed area, perimeter and width × height changes; a move afterwards marks the result "out of date". Where: `TODO.md`, items 41 and 114; `web/compare.js`, `web/compare-list.js`.
+
+**Compare reference**: The first ticked snapshot in the Compare list. All other ticked snapshots line up to it; its measurement changes are zero. Hiding a snapshot with its eye keeps it in the comparison and table; unticking leaves it out. Where: `web/compare-list.js`.
+
+**Compare snapshot**: A copy of a drawing tab, Parts library part or disk file taken when added to Compare. Later edits to the source do not change it; remove and re-add to refresh it. The list lasts only for that Compare tab and is not saved with a drawing. Where: `web/compare-list.js`.
 
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
 
@@ -94,6 +98,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Set length**: Makes a drawing or background true size by picking two points and entering their real distance in mm. Where: `DECISIONS.md`, 1:1 scale and Background.
 
+**Shaping**: CorelDRAW-style boolean operations on the selected closed outlines (Weld = union, Intersect = the shared area, Trim = the last picked outline minus the others), giving closed polylines; outlines inside another count as its holes. Simplify keeps each outline's visible part after subtracting outlines in front. Front minus back / Back minus front keep the frontmost / backmost outline minus all others; later in the drawing means in front. Create boundary adds the union on the current layer and keeps the originals. Where: Modify menu, `WELD` / `SHAPETRIM` / `INTERSECT` / `SIMPLIFY` / `FRONTMINUS` / `BACKMINUS` / `BOUNDARY`; `web/shaping.js`. Avoid: Trim (the tool that cuts lines back to cutting edges).
+
 **Sheet**: The physical output rectangle with a custom or preset width and height in mm, whose bottom-left is the layout origin. Where: `DECISIONS.md`, Sheets and Open DXF. Avoid: Drawing extents; the whole canvas.
 
 **Step and repeat**: Fills a layout with a regular grid of one part using rows, columns, rotation and gaps. Where: `TODO.md`, items 7 and 8; `web/layout.js`. Avoid: Auto-nest of mixed parts.
@@ -157,6 +163,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **ELLIPSE**: A DXF ellipse or elliptical arc that cutter export approximates with a polyline. Where: `web/drawing.js`, `web/dxf-cutter.js`.
 
 **Entity**: One top-level DXF object in the shown drawing space, with an INSERT counted once even if it draws many block members. Where: `DECISIONS.md`, Kept dimensions and sizes and Layer and entity counts. Avoid: One rendered line segment.
+
+**Explode**: Replaces selected polylines with separate LINEs / ARCs or selected INSERTs with their transformed members, one block level at a time. The pieces are selected; one Undo restores the originals. Where: Modify menu, `X` / `EXPLODE`; `web/explode.js`. Avoid: Ungroup (layout parts).
 
 **Hairline**: The project's 0.05 mm outline-width preset and minimum physical stroke for PDF / Print. Where: `DECISIONS.md`, Line width and Preflight Hairline. Avoid: Zero width; a fixed screen-pixel width.
 
@@ -288,5 +296,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Castle mode**: The fallback when Rook runs short of usage: Bishop-lead leads and reviews, Knight builds, only S items are taken. Where: `WORKFLOW.md`, Castle mode.
 
 **Ticket tag**: A comma-separated label in support/tickets.md, uploaded as a Tags array and used by the Tickets tab's filter chips (for example bug, feature or mod). Where: usage page, Tickets. Avoid: A separate Bugs / Features tab.
+
+**TODO sub-step**: An indented numbered line such as `66a.` under its parent item in `TODO.md`; a leading ✅ after its number marks it done. The usage page folds these lines under “N of M done” and remembers opened lists. Avoid: Inferring sub-steps from progress prose such as “(a built, b next)”.
 
 **Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.

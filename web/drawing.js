@@ -10,6 +10,9 @@
 //     dash a line type in its own units (on, off, on, off …) · dpx one in screen pixels · b its box [x0, y0, x1, y1]
 //   a path's ops: 0 x y (move) · 1 x y (line) · 2 cx cy r a0 a1 cw (arc; cw 1 = clockwise) · 9 (close)
 
+import { fontForStyle } from './fontsub.js';
+export { fontOfStyle } from './fontsub.js';
+
 export class DrawingError extends Error {}
 
 const TAU = Math.PI * 2, DEG = Math.PI / 180;
@@ -320,11 +323,6 @@ export function plainText(s, multi) {
 
 // Text sizes: a DXF height is the capitals' height; a font's capitals are about 0.7 of its size
 export const CAP = 0.7;
-/** Which of the three fonts a DXF text style name stands for: 'Mono', 'Arial' (Arial-like) or 'Standard'. */
-export function fontOfStyle(name) {
-  const n = String(name == null ? '' : name);
-  return /mono|cour|consol|romanm/i.test(n) ? 'Mono' : /arial|helv|sans|calibri|verdana|tahoma/i.test(n) ? 'Arial' : 'Standard';
-}
 const charW = 0.8;                        // a guess at a character's width, in heights (fonts differ)
 
 // ---------------------------------------------------------------- flatten: what to draw
@@ -376,6 +374,7 @@ export function flatten(doc) {
       const put = (it) => {
         if (items.length >= MAX_ITEMS) { truncated = true; return; }
         if (!it.b) return;
+        if (it.k === 't') it.font = fontForStyle(doc.styles, it.st);
         it.b = worldBox(mats[it.m], it.b);
         items.push(it);
       };

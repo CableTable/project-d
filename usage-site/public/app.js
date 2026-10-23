@@ -2,7 +2,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
-import { codexWindow, resetLabel } from './usage-window.js';
+import { codexWindow, resetLabel, weeklyForecast } from './usage-window.js';
 import { firebaseConfig } from './firebase-config.js';
 import { cumulativeTokens, resetTimes, tokenEndLabels } from './token-chart.js';
 
@@ -20,13 +20,6 @@ let data = { limits: [], history: [], runs: [], analysis: [], tickets: [], token
 function paceRows() {
   return data.limits.map((r) => ({ agent: r.agent, window: r.window,
     pace_pct: Math.round(Math.max(0, Math.min(1, (Date.parse(r.as_of) - Date.parse(r.starts)) / (Date.parse(r.resets) - Date.parse(r.starts)))) * 100) }));
-}
-function forecasts() {
-  return data.limits.filter((r) => r.window === 'week').map((r) => {
-    const s = Date.parse(r.starts), e = Date.parse(r.resets), a = Date.parse(r.as_of), used = Number(r.used_pct);
-    const at_reset_pct = a - s < 12 * 3600e3 || used <= 0 ? null : Math.round(used * (e - s) / (a - s));
-    return { agent: r.agent, at_reset_pct, hit_at: at_reset_pct >= 100 ? new Date(s + (a - s) * 100 / used).toISOString() : null };
-  });
 }
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = label(text); return e; };
 const mark = (e, src, field, where) => { e.dataset.source = src; e.dataset.field = field; if (where) e.dataset.where = where; return e; };
@@ -63,14 +56,14 @@ function drawAgents(limits, pace) {
   const box = document.getElementById('agents');
   box.replaceChildren();
   const pk = new Map(pace.map((p) => [p.agent + '|' + p.window, p.pace_pct]));
-  const fk = new Map(forecasts().map((f) => [f.agent, f]));
+  const fk = new Map(data.limits.filter((r) => r.window === 'week').map((r) => [r.agent, weeklyForecast(r)]));
   ORDER.forEach((a) => {
     const rows = limits.filter((r) => r.agent === a);
     if (!rows.length) return;
     const card = el('div', 'ud-card');
     const head = el('div', 'ud-agent');
-    const t = el('div'); t.append(el('h3', null, a)); t.append(mark(el('p', 'ud-muted', rows[0].role + ' · ' + rows[0].model), 'limits', 'role', 'agent=' + a + '&window=' + rows[0].window));
-    t.lastChild.textContent = a === 'Rowan' ? 'Builder and web research (Codex)' : label(rows[0].role); head.append(t);
+    const t = el('div'); t.append(el('h3', null, a)); t.append(mark(el('p', 'ud-muted', rows[0].role), 'limits', 'role', 'agent=' + a + '&window=' + rows[0].window));
+    head.append(t);
     head.append(mark(el('span', 'ud-muted', rows[0].model), 'limits', 'model', wh(a, rows[0].window)));
     card.append(head);
     ['5h', 'week'].forEach((w) => {
@@ -99,7 +92,7 @@ function drawAgents(limits, pace) {
       const rs = mark(el('span', null, resetLabel(resets, (s) => (w === '5h' ? HM : IST).format(new Date(s * 1000)))), 'limits', 'resets', wh(a, w));
       foot.append(rs);
       m.append(foot);
-      const fc = resets != null && w === 'week' && fk.get(a);
+      const fc = w === 'week' && fk.get(a);
       if (fc) {
         const fp = el('div', 'ud-mrow');
         const s = el('span');
@@ -107,7 +100,7 @@ function drawAgents(limits, pace) {
           s.append(document.createTextNode('At this pace: hits 100% '), mark(el('b', 'ud-hit', IST.format(new Date(fc.hit_at))), 'forecast', 'hit_at', 'agent=' + encodeURIComponent(a)), document.createTextNode(', before the reset'));
         } else if (fc.at_reset_pct != null) {
           s.append(document.createTextNode('At this pace: about '), mark(el('b', null, String(fc.at_reset_pct)), 'forecast', 'at_reset_pct', 'agent=' + encodeURIComponent(a)), document.createTextNode('% at the reset'));
-        } else s.append(el('span', 'ud-muted', 'At this pace: too early in the week to tell'));
+        } else s.append(el('span', 'ud-muted', a === 'Rowan' ? 'At this pace: no data yet' : 'At this pace: too early in the week to tell'));
         fp.append(s);
         m.append(fp);
       }
@@ -208,6 +201,12 @@ function drawNotes(notes) {
   });
 }
 
+let openSubsteps = new Set();
+try {
+  const saved = JSON.parse(localStorage.getItem('usage-todo-open'));
+  if (Array.isArray(saved)) openSubsteps = new Set(saved);
+} catch { /* Start closed when storage is unavailable. */ }
+
 function drawTodo(sections) {
   const box = document.getElementById('todo-sections'); box.replaceChildren();
   if (!sections.length) box.append(el('p', 'ud-muted', 'No TODO uploaded yet.'));
@@ -222,6 +221,24 @@ function drawTodo(sections) {
       if (item.size) head.append(el('span', 'ud-chip', item.size));
       row.append(head);
       if (item.text) row.append(el('p', 'ud-muted', item.text));
+      if (item.substeps?.length) {
+        const details = el('details', 'ud-substeps'), list = el('ul', 'ud-todo-list');
+        const key = JSON.stringify([section.title, item.num]);
+        details.open = openSubsteps.has(key);
+        details.append(el('summary', null, item.substeps.filter((step) => step.done).length + ' of ' + item.substeps.length + ' done'), list);
+        for (const step of item.substeps) {
+          const tick = el('span', step.done ? 'ud-done' : 'ud-muted', step.done ? '✓' : '○');
+          tick.setAttribute('role', 'img');
+          tick.setAttribute('aria-label', step.done ? 'Done' : 'Not done');
+          const li = el('li', 'ud-substep');
+          li.append(tick, el('span', 'ud-muted', step.num + '.'), el('span', null, step.text)); list.append(li);
+        }
+        details.addEventListener('toggle', () => {
+          if (details.open) openSubsteps.add(key); else openSubsteps.delete(key);
+          try { localStorage.setItem('usage-todo-open', JSON.stringify([...openSubsteps])); } catch { /* Keep working without storage. */ }
+        });
+        row.append(details);
+      }
       (item.done ? completed : open).append(row);
     }
     if (open.childElementCount) card.append(open);

@@ -10,7 +10,7 @@ import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
 import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
@@ -42,7 +42,8 @@ const N0 = stepRepeat(base).count;                // the default sheet, 120 × 8
 let failed = 0;
 let afterStep = async () => {};
 async function step(name, fn) {
-  if (process.env.ONLY && !new RegExp(process.env.ONLY).test(name)) return;      // ONLY=regex runs just the steps whose name matches (to work on one flow quickly)
+  const only = process.env.ONLY || process.argv[3];
+  if (only && !new RegExp(only).test(name)) return;      // ONLY=regex (or a 2nd argument: node browser.test.mjs 5297 regex) runs just the steps whose name matches (to work on one flow quickly)
   try { await fn(); console.log('ok', name); } catch (e) { failed++; console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim()); try { await afterStep(); } catch { /* best effort */ } }
 }
 
@@ -84,6 +85,48 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 56: font note on open, once per open, literal file names, light and dark', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_);
+      const picker = p.locator('[data-testid=picker]'), prompt = p.locator('[data-testid=cmd-prompt]'), fontNote = p.locator('.status [data-testid=font-note]');
+      await picker.setInputFiles('fixtures/font-note.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Fonts: romans.shx → Arial'));
+      assert.equal((await prompt.textContent()).match(/romans\.shx/g).length, 1, 'two texts name the same font once');
+      assert.equal(await fontNote.isVisible(), true, 'the note is visible in the status bar');
+      assert.equal(await fontNote.textContent(), 'Fonts: romans.shx → Arial');
+      await p.screenshot({ path: shotDir + '/font-note-light.png' });
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
+      await p.screenshot({ path: shotDir + '/font-note-dark.png' });
+      const sheetBefore = await p.locator('rect.sheet').boundingBox();
+      await p.locator('[data-testid=new-tab]').click();
+      assert.equal(await fontNote.isVisible(), false);
+      await p.locator('.tabs .dtab', { hasText: 'font-note.dxf' }).click();
+      assert.deepEqual(await p.locator('rect.sheet').boundingBox(), sheetBefore, 'clearing the note preserves the drawing viewport');
+      await picker.setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Opened outline.dxf'));
+      for (const name of ['font-note.dxf', 'outline.dxf', 'font-note.dxf']) {
+        await p.locator('.tabs .dtab', { hasText: name }).click();
+        assert.doesNotMatch(await prompt.textContent(), /Fonts:/, 'tab switches do not repeat the note');
+        assert.equal(await fontNote.isVisible(), false);
+      }
+      await picker.setInputFiles('fixtures/font-note.dxf');
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Fonts: romans.shx → Arial'));
+      const dxf = readFileSync('fixtures/font-note.dxf', 'utf8');
+      await picker.setInputFiles({ name: 'available-font.dxf', mimeType: 'text/plain', buffer: Buffer.from(dxf.replaceAll('romans.shx', 'arial.ttf')) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Opened available-font.dxf'));
+      assert.doesNotMatch(await prompt.textContent(), /Fonts:/);
+      assert.equal(await fontNote.isVisible(), false);
+      await picker.setInputFiles({ name: 'missing-font.dxf', mimeType: 'text/plain', buffer: Buffer.from(dxf.replaceAll('romans.shx', '<b>GOST</b>.ttf')) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Fonts: <b>GOST</b>.ttf → Arial'));
+      assert.equal(await prompt.locator('b').count(), 0, 'font names reach the DOM as text');
+      assert.equal(await fontNote.textContent(), 'Fonts: <b>GOST</b>.ttf → Arial');
+      assert.equal(await fontNote.locator('b').count(), 0);
+    } finally { await context.close(); }
+  });
   await step('TODO 93 / T12: Explorer startup and later launches share Open, serialize files and survive errors', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const pdf = new Page(80, 50); pdf.rect(10, 10, 60, 30); pdf.stroke();
@@ -179,6 +222,37 @@ try {
       await p.locator('[data-menu=View]').click();
       await p.getByRole('menuitemcheckbox', { name: /Theme: dark/ }).click();
       await p.screenshot({ path: shotDir + '/explorer-open-dark.png' });
+    } finally { await context.close(); }
+  });
+  await step('TODO 93 fix: a launched picture PDF prompt leaves library, autosave and recovery running', async () => {
+    const context = await browser.newContext();
+    try {
+      const p = await context.newPage();
+      p.on('pageerror', (e) => errors.push(String(e)));
+      await p.goto(URL_); await p.locator('[data-testid=count]').waitFor({ state: 'attached' });
+      await p.evaluate(async (dxf) => {
+        const { savePart } = await import('./partstore.js');
+        const { saveCopy } = await import('./recovery.js');
+        await savePart({ id: 'startup-part', name: 'Startup part', w: 20, h: 20, dxf, thumb: document.createElement('canvas').toDataURL(), t: Date.now() });
+        await saveCopy({ id: 'startup-copy', name: 'Unsaved plate', kind: 'drawing', dxf, t: Date.now() });
+      }, readFileSync('fixtures/outline.dxf', 'utf8'));
+      await p.addInitScript((pdf) => {
+        let pending = true;
+        window.__intervals = [];
+        const interval = window.setInterval;
+        window.setInterval = (fn, ms, ...args) => { window.__intervals.push(ms); return interval(fn, ms, ...args); };
+        window.__TAURI__ = {
+          event: { listen: async () => () => {} },
+          core: { invoke: async () => { if (!pending) return []; pending = false; return [['C:/picture.pdf', null]]; } },
+          fs: { readFile: async () => new Uint8Array(pdf) },
+          dialog: { ask: (text) => { window.__backgroundAsked = text; return new Promise(() => {}); } },
+        };
+      }, [...writePdf([new Page(80, 50)])]);
+      await p.reload();
+      await p.waitForFunction(() => /background picture/.test(window.__backgroundAsked || ''));
+      await p.locator('[data-part-id=startup-part]').waitFor({ state: 'attached' });
+      await p.locator('[data-testid=recover-dialog]').waitFor();
+      assert.ok(await p.evaluate(() => window.__intervals.includes(120000)), 'autosave starts while the PDF question is unanswered');
     } finally { await context.close(); }
   });
   await step('TODO 119 / T36: View theme rows match, full-row hover, separate dividers and moving theme tick', async () => {
@@ -361,7 +435,13 @@ try {
 
   // a download the page makes: { name, text }
   const downloaded = async (action) => {
-    const [dl] = await Promise.all([page.waitForEvent('download'), action()]);
+    // Chromium silently drops burst downloads after 10/s; keep test exports below that limit.
+    await page.waitForTimeout(110);
+    const [dl] = await Promise.all([page.waitForEvent('download'), action()]).catch(async (e) => {
+      // No download in 30 s: say what the page was doing (a dialog open swallows Ctrl+S; the status line shows a refused save)
+      const seen = await page.evaluate(() => ({ dialog: !!document.querySelector('.pop-back, .pdlg-back'), prompt: document.querySelector('[data-testid=cmd-prompt]')?.textContent, focus: document.activeElement?.tagName })).catch(() => ({}));
+      throw new Error(e.message + ' | page: ' + JSON.stringify(seen));
+    });
     return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'latin1') };
   };
   const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); };
@@ -4184,7 +4264,14 @@ try {
     await waitSel('3 selected');
     const start = await at(22.5, 27.5), end = await at(32.5, 32.5);
     await page.mouse.move(start.x, start.y); await page.mouse.down();
-    await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
+    await page.mouse.move(end.x, end.y, { steps: 5 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const previewPoint = await at(40, 35);
+    assert.ok(await t('drawing').evaluate((canvas, p) => {
+      const b = canvas.getBoundingClientRect(), x = Math.round((p.x - b.x) * canvas.width / b.width), y = Math.round((p.y - b.y) * canvas.height / b.height);
+      return canvas.getContext('2d').getImageData(x - 2, y - 2, 5, 5).data.some((v, i) => i % 4 === 3 && v > 0);
+    }, previewPoint), 'the moving preview is painted at the offset');
+    await page.mouse.up();
     const moved = await savedDoc();
     assert.ok(Math.abs(fieldOf(moved.entities[0], 10) - fieldOf(before.entities[0], 10) - 10) < .05, 'selected A moves');
     assert.ok(Math.abs(fieldOf(moved.entities[0], 20) - fieldOf(before.entities[0], 20) - 5) < .05);
@@ -4218,6 +4305,24 @@ try {
     await menuItem('View', 'Theme: light');
     if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
     await closeTabs(/drag-letter/);
+  });
+  await step('TODO 120 fix: dragging a selection containing a locked layer reports the layer and keeps every entity', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addLayer(raw, 'Locked');
+    raw.entities = [dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Locked' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20)];
+    await t('picker').setInputFiles({ name: 'locked-drag.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'locked-drag.dxf');
+    await t('ptab-objects').click();
+    await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    await t('ptab-drawing').click();
+    await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    const before = await savedDoc(), start = await at(30, 20), end = await at(35, 25);
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
+    assert.match(await prompt(), /Layer Locked is locked/);
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+    await closeTabs(/locked-drag/);
   });
   const histLabels = async () => {
     await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
@@ -5711,7 +5816,7 @@ try {
     await closeTabs(/./);
   });
 
-  // ---- Compare two drawings (TODO 41; mock-up R5d, Option B) ----
+  // ---- Compare drawings (TODO 41; mock-up R5d, Option B) ----
   const plateDxf = (name, r2) => {
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [300, 0], [300, 180], [0, 180]], { closed: true }), dxfCircle(80, 90, 30), dxfCircle(220, 90, r2)]);
     return { name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) };
@@ -5720,14 +5825,14 @@ try {
   const cmpCount = () => t('cmp-count').textContent();
   const cmpOffX = async () => Number(/X (-?[\d.]+),/.exec(await cmpHint())[1]);
 
-  await step('Compare: File → Compare two drawings… opens a Compare tab with the open drawings as 1 and 2, differences listed and glowing', async () => {
+  await step('Compare: File → Compare drawings… opens a Compare tab with the open drawings as 1 and 2, differences listed and glowing', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles(plateDxf('plate-b.dxf', 30));
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-b.dxf');
     await t('picker').setInputFiles(plateDxf('plate-c.dxf', 30.6));
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-c.dxf');
     await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click();
-    await menuItem('File', 'Compare two drawings…');
+    await menuItem('File', 'Compare drawings…');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
     assert.equal(await t('cmp-name-1').textContent(), 'plate-b.dxf');
     assert.equal(await t('cmp-name-2').textContent(), 'plate-c.dxf');
@@ -5739,7 +5844,7 @@ try {
     assert.equal(await t('cmp-glow').count(), 1);
     assert.match(await t('cmp-diff').textContent(), /0\.[56]\d mm/);
     assert.match(await t('cmd-hist').textContent(), /COMPARE.*plate-b\.dxf \(red\) vs plate-c\.dxf \(blue\).*tolerance 0\.1 mm.*1 difference/);
-    await menuItem('File', 'Compare two drawings…');
+    await menuItem('File', 'Compare drawings…');
     assert.deepEqual((await tabNames()).filter((n) => n === 'Compare').length, 1, 'one Compare tab');
   });
 
@@ -5763,10 +5868,9 @@ try {
     assert.match(await prompt(), /Difference 1: 0\.[56]\d mm/);
   });
 
-  await step('Compare: colours change, Line up Centres and Manual (arrow keys nudge by the step, a drag moves drawing 2), Open… picks another drawing', async () => {
-    await t('cmp-colour-1-green').click();
-    assert.equal(await t('cmp-colour-1-green').getAttribute('aria-pressed'), 'true');
-    assert.match(await t('cmd-hist').textContent(), /plate-b\.dxf \(green\)/);
+  await step('Compare: distinct colours, Line up Centres and Manual (arrow keys nudge by the step, a drag moves drawing 2), Add file… picks another drawing', async () => {
+    assert.deepEqual(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour)), ['red', 'blue']);
+    assert.match(await t('cmd-hist').textContent(), /plate-b\.dxf \(red\)/);
     await t('cmp-lineup-centre').click();
     assert.equal(await cmpOffX(), 0);
     await t('cmp-lineup-manual').click();
@@ -5788,9 +5892,10 @@ try {
     assert.equal(await t('cmp-stale').isVisible(), true, 'a drag marks the result out of date');
     await t('cmp-lineup-bl').click();
     assert.equal(await cmpOffX(), 0);
-    const [fc] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-open-2').click()]);
+    await t('cmp-remove').nth(1).click();
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-add-file').click()]);
     await fc.setFiles(plateDxf('plate-d.dxf', 31));
-    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-name-2]').textContent === 'plate-d.dxf');
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-name-2]')?.textContent === 'plate-d.dxf');
     assert.equal(await cmpCount(), 'Press Compare', 'a new drawing has no result yet');
     await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
@@ -5798,6 +5903,8 @@ try {
 
   await step('Compare: run once, move, "out of date" mark, run again, mark gone (TODO 113)', async () => {
     assert.equal(await t('cmp-stale').isVisible(), false);
+    await page.locator('[data-testid^=cmp-lineup-][aria-pressed=true]').click();
+    assert.equal(await t('cmp-stale').isVisible(), false, 'clicking the current Line up choice preserves the result');
     await t('cmp-lineup-manual').click();
     await page.keyboard.press('ArrowRight');
     await t('cmp-stale').waitFor();
@@ -5829,6 +5936,89 @@ try {
     assert.ok(x !== 300 && Math.abs(x - 300) < 2 && y !== 0, `SNAP off: the exact released point, not the corner (${x}, ${y})`);
     await t('tog-snap').click();
     await t('cmp-lineup-bl').click();
+  });
+
+  await step('Compare: five snapshots from tabs, library and disk; tick, eye, reference, selection, removal and coloured table (TODO 114)', async () => {
+    // Make a real library part through Extract, so the source picker has no fixture-only path.
+    await t('picker').setInputFiles(plateDxf('compare-library-source.dxf', 30.9));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'compare-library-source.dxf');
+    await page.keyboard.press('Control+a');
+    await t('bar-extract').click();
+    const partName = '<b>Compare part</b>';
+    await t('name-input').fill(partName); await t('name-ok').click();
+    await t('name-dialog').waitFor({ state: 'detached' });
+    await closeTabs(/^compare-library-source/);
+    await menuItem('File', 'Compare drawings…');
+    while (await t('cmp-remove').count()) await t('cmp-remove').first().click();
+    assert.equal(await t('cmp-run').isDisabled(), true);
+    const addTab = async (name) => {
+      await t('cmp-add-tab').click(); await page.getByRole('menuitem', { name, exact: true }).click();
+    };
+    const addLibrary = async () => {
+      await t('cmp-add-library').click(); await page.getByRole('menuitem', { name: partName, exact: true }).click();
+    };
+    await addTab('plate-b.dxf'); await addTab('plate-c.dxf'); await addLibrary();
+    assert.equal(await t('cmp-name-3').textContent(), partName);
+    assert.equal(await t('cmp-items').locator('b').count(), 0, 'file and library names stay text');
+    assert.deepEqual(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour)), ['red', 'blue', 'green']);
+    await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 3);
+    assert.deepEqual(await t('cmp-result').first().locator('td').allTextContents(), ['0.00', '0.00', '0.00 × 0.00']);
+    assert.deepEqual(await t('cmp-glow').evaluateAll((rs) => rs.map((r) => r.dataset.colour).sort()), ['blue', 'green']);
+    const resultText = await t('cmp-table').textContent();
+    await t('cmp-eye').nth(2).click();
+    assert.equal(await t('cmp-eye').nth(2).getAttribute('aria-pressed'), 'false');
+    assert.equal(await t('cmp-stale').isVisible(), false, 'the eye changes only visibility');
+    await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 3, 'eye-hidden snapshot remains in the table');
+    assert.equal(await t('cmp-table').textContent(), resultText);
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=cmp-glow]')].every((r) => r.dataset.colour !== 'green'));
+    await t('cmp-check').first().uncheck();
+    await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 2, 'unticked snapshot is left out');
+    assert.equal(await t('cmp-result').first().locator('th').textContent(), 'plate-c.dxf');
+    assert.deepEqual(await t('cmp-result').first().locator('td').allTextContents(), ['0.00', '0.00', '0.00 × 0.00'], 'first ticked is the reference');
+    await t('cmp-eye').nth(1).click();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.ok(await t('drawing').evaluate((el) => {
+      const d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let red = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 150 && d[i] - d[i + 1] > 60 && Math.abs(d[i + 1] - d[i + 2]) < 20) red++;
+      return red > 100;
+    }), 'the eye controls visibility independently of the compare tick');
+    await t('cmp-eye').nth(1).click();
+    await t('cmp-check').nth(1).uncheck();
+    assert.equal(await t('cmp-run').isDisabled(), true, 'one ticked snapshot cannot compare');
+    await t('cmp-check').first().check(); await t('cmp-check').nth(1).check();
+    await t('cmp-eye').nth(2).click();
+    await t('cmp-lineup-manual').click();
+    await t('cmp-name-3').click(); await page.keyboard.press('ArrowRight');
+    assert.equal(await cmpOffX(), 1, 'selected third snapshot moves');
+    await t('cmp-name-2').click(); assert.equal(await cmpOffX(), 0, 'second snapshot stays put');
+    await t('cmp-name-1').click(); assert.equal(await cmpOffX(), 0, 'reference stays put');
+    await t('cmp-lineup-bl').click();
+    await t('cmp-remove').nth(2).click(); await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 2);
+    assert.equal(await cmpCount(), '1 difference', 'two-item result is unchanged after removal');
+    await addLibrary(); await addTab('plate-b.dxf'); await addTab('plate-c.dxf');
+    assert.equal(await t('cmp-item').count(), 5);
+    assert.equal(new Set(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour))).size, 5);
+    for (const id of ['cmp-add-tab', 'cmp-add-library', 'cmp-add-file']) assert.equal(await t(id).isDisabled(), true);
+    await t('cmp-remove').nth(4).click(); await t('cmp-remove').nth(3).click();
+    await t('cmp-run').click();
+    await t('decimals').selectOption('1');
+    assert.deepEqual(await t('cmp-result').first().locator('td').allTextContents(), ['0.0', '0.0', '0.0 × 0.0']);
+    await t('decimals').selectOption('2');
+    assert.equal(await t('cmp-result').count(), 3);
+    await shotBoth('compare-three');
+    assert.equal(await t('cmp-result').nth(2).locator('th').textContent(), partName);
+    const colours = await t('cmp-item').locator('.cswatch').evaluateAll((rs) => rs.map((r) => getComputedStyle(r).backgroundColor));
+    assert.equal(new Set(colours).size, 3);
+    // Editing an open source after adding it cannot change the Compare snapshot.
+    await page.locator('.tabs .dtab', { hasText: 'plate-b.dxf' }).click();
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-run').click();
+    assert.equal(await t('cmp-table').textContent(), resultText, 'source edits leave snapshot measurements intact');
+    assert.equal(await cmpCount(), '2 differences');
   });
 
   await step('Compare: screenshots, light and dark; the top bar still fits at 1024', async () => {
@@ -7959,7 +8149,7 @@ try {
       await q('bar-extract').click();
       await q('name-input').fill('Plate A'); await p.keyboard.press('Enter');
       await q('name-dialog').waitFor({ state: 'detached' });
-      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare two drawings…', exact: true }).click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
       // hue tests in the dark theme (red #ff7b7b, blue #6db0ff, mark #fb923c); light has its own shades
@@ -8060,6 +8250,226 @@ try {
     assert.match(await prompt(), /^2 texts → 13 outlines/);
     await page.keyboard.press('Control+z');
     assert.equal(await entCount(), 2);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 91 / T10: Explode menu, X / EXPLODE, new pieces selected and one Undo restores the polyline', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addEntities(doc, roundRect(100, 100, 100, 70, 15), dxfLine(250, 100, 300, 100));
+    await t('picker').setInputFiles({ name: 'explode.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode.dxf');
+    const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
+    const historyBefore = await histLabels();
+    await typeCmd('x');
+    assert.match(await prompt(), /^Explode: nothing explodable \(0 exploded\)/);
+    assert.deepEqual(await histLabels(), historyBefore, 'empty selection adds no Undo step');
+    await click(140, 100); await waitSel('1 selected');
+    for (const name of ['light', 'dark']) {
+      await theme(name); await page.locator('[data-menu=Modify]').click();
+      const item = page.getByRole('menuitem', { name: /^Explode/ });
+      await item.waitFor(); assert.equal(await item.getAttribute('aria-disabled'), null);
+      await page.screenshot({ path: shotDir + '/knight-91-menu-' + name + '.png' });
+      await page.locator('[data-menu=Modify]').click();
+    }
+    await theme('light'); await typeCmd('X');
+    assert.equal(await entCount(), 9, 'one polyline became four lines and four arcs; the other line stays');
+    await waitSel('8 selected');
+    assert.match(await prompt(), /^Explode: 1 exploded → 8 pieces/);
+    const saved = await savedDoc();
+    assert.deepEqual(saved.entities.map((e) => e.type), ['LINE', 'ARC', 'LINE', 'ARC', 'LINE', 'ARC', 'LINE', 'ARC', 'LINE']);
+    assert.deepEqual((await histLabels()).slice(-1), ['Explode']);
+    for (const name of ['light', 'dark']) {
+      await theme(name);
+      await page.screenshot({ path: shotDir + '/knight-91-result-' + name + '.png' });
+    }
+    await theme('light'); await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2, 'one Undo restores the polyline and leaves the other line');
+    assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LWPOLYLINE', 'LINE']);
+    await click(140, 100); await menuItem('Modify', 'Explode');
+    assert.equal(await entCount(), 9, 'the menu action also explodes');
+    await page.keyboard.press('Control+z');
+    await click(250, 100); await waitSel('1 selected');
+    const beforeLine = await histLabels();
+    await typeCmd('EXPLODE');
+    assert.match(await prompt(), /^Explode: nothing explodable/);
+    assert.equal(await entCount(), 2); assert.deepEqual(await histLabels(), beforeLine, 'a LINE adds no Undo step');
+    await closeTabs(/./);
+    const block = newDoc();
+    addLayer(block, 'Cut', { aci: 3 });
+    addBlock(block, 'Inner', [dxfLine(0, 0, 20, 0, { aci: 0 })]);
+    addBlock(block, 'Outer', [dxfInsert('Inner', 20, 20, { aci: 0 }), dxfLine(0, 0, 0, 30)]);
+    addEntities(block, dxfInsert('Outer', 100, 100, { layer: 'Cut', rot: 90, sx: -2, sy: 3, aci: 1 }));
+    await t('picker').setInputFiles({ name: 'explode-block.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(block)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-block.dxf');
+    await page.keyboard.press('Control+a'); await typeCmd('EXPLODE');
+    assert.equal(await entCount(), 2); await waitSel('2 selected');
+    const oneLevel = await savedDoc();
+    assert.deepEqual(oneLevel.entities.map((e) => e.type), ['INSERT', 'LINE']);
+    assert.equal(oneLevel.entities[0].layer, 'Cut'); assert.equal(oneLevel.entities[0].aci, 1);
+    await typeCmd('x');
+    assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'LINE']);
+    await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT', 'LINE']);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 122a: Shaping (Modify menu, WELD / SHAPETRIM / INTERSECT): two squares, each operation gives the exact area in one undo step; Trim cuts the last picked one and keeps the cutter; open outlines and too few outlines say so', async () => {
+    const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
+    await closeTabs(/./);
+    const doc = newDoc();
+    addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
+    await t('picker').setInputFiles({ name: 'shaping.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping.dxf');
+    assert.equal(await entCount(), 3);
+    // the Modify menu lists all seven after the existing items
+    await page.locator('[data-menu=Modify]').click();
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents().then((a) => a.filter((x) => /^Shaping/.test(x)).map((x) => x.trim())), ['Shaping: Weld', 'Shaping: Trim', 'Shaping: Intersect', 'Shaping: Simplify', 'Shaping: Front minus back', 'Shaping: Back minus front', 'Shaping: Create boundary']);
+    await page.screenshot({ path: shotDir + '/shaping-menu-light.png' });
+    await theme('dark'); await page.locator('[data-menu=Modify]').click(); await page.screenshot({ path: shotDir + '/shaping-menu-dark.png' }); await page.keyboard.press('Escape'); await theme('light');
+    // one outline picked: too few
+    await click(100, 130); await waitSel('1 selected');
+    await menuItem('Modify', 'Shaping: Weld');
+    assert.match(await prompt(), /^Weld: select at least 2 closed outlines/);
+    assert.equal(await entCount(), 3);
+    // two clicked squares (the second one last), and the open polyline picked too
+    await click(190, 160, { shift: true }); await click(300, 100, { shift: true });
+    await menuItem('Modify', 'Shaping: Weld');
+    assert.equal(await prompt(), 'Weld: 2 outlines → 1 outline, area 6300.00 mm²; 1 open outline skipped. Ctrl+Z puts the originals back');
+    assert.equal(await entCount(), 2, 'both squares are gone, one outline and the open polyline are there');
+    await page.screenshot({ path: shotDir + '/shaping-weld-light.png' });
+    await theme('dark'); await page.screenshot({ path: shotDir + '/shaping-weld-dark.png' }); await theme('light');
+    let saved = await savedDoc();
+    const lw = saved.entities.filter((e) => e.type === 'LWPOLYLINE' && e.r.v[e.r.c.indexOf(70)] === '1');
+    assert.equal(lw.length, 1); assert.equal(lw[0].layer, '0'); assert.equal(lw[0].r.c.filter((c) => c === 10).length, 8, 'an L-shaped union: eight corners');
+    assert.deepEqual((await histLabels()).slice(-1), ['Weld']);
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 3, 'one undo brings both squares back');
+    // Intersect from the command bar
+    await click(100, 130); await click(190, 160, { shift: true }); await waitSel('2 selected');
+    await typeCmd('intersect');
+    assert.equal(await prompt(), 'Intersect: 2 outlines → 1 outline, area 900.00 mm². Ctrl+Z puts the originals back');
+    assert.equal(await entCount(), 2);
+    await page.keyboard.press('Control+z');
+    // Trim from the command bar: the square clicked last is the target, the other stays
+    await click(100, 130); await click(190, 160, { shift: true });
+    await typeCmd('shapetrim');
+    assert.equal(await prompt(), 'Trim: 2 outlines → 1 outline, area 2700.00 mm². The cutters stay. Ctrl+Z puts the originals back');
+    saved = await savedDoc();
+    assert.equal(saved.entities.length, 3); assert.equal(saved.entities.filter((e) => e.type === 'LWPOLYLINE' && e.r.v[e.r.c.indexOf(70)] === '1').length, 2, 'the first square stays whole beside the trimmed second');
+    await page.keyboard.press('Control+z');
+    // the other way round: the first square is the target now
+    await click(190, 160); await click(100, 130, { shift: true });
+    await typeCmd('shapetrim');
+    assert.match(await prompt(), /^Trim: 2 outlines → 1 outline, area 2700\.00 mm²/);
+    await page.keyboard.press('Control+z');
+    // Ctrl+A has no last pick, so the largest outline is the target
+    await page.keyboard.press('Control+a');
+    await typeCmd('weld');
+    assert.match(await prompt(), /^Weld: 2 outlines → 1 outline, area 6300\.00 mm²; 1 open outline skipped/);
+    await page.keyboard.press('Control+z');
+    // squares that do not overlap: Intersect changes nothing and says so
+    await closeTabs(/./);
+    const far = newDoc();
+    addEntities(far, dxfPoly([[100, 100], [140, 100], [140, 140], [100, 140]], { closed: true }), dxfPoly([[200, 100], [240, 100], [240, 140], [200, 140]], { closed: true }));
+    await t('picker').setInputFiles({ name: 'shaping-far.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(far)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-far.dxf');
+    await page.keyboard.press('Control+a');
+    await typeCmd('intersect');
+    assert.equal(await prompt(), 'Intersect: the outlines do not overlap, nothing changed');
+    assert.equal(await entCount(), 2);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 122b: all four operations from Modify and command bar, drawing order, source layers, boundary keeps originals, area/count and one Undo', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addLayer(doc, 'Back'); addLayer(doc, 'Front');
+    addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true, layer: 'Back', aci: 1 }),
+      dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Front', aci: 3 }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
+    await t('picker').setInputFiles({ name: 'shaping-122b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-122b.dxf');
+    // Saving renumbers DXF handles when entities are removed; compare all geometry and attributes without those handles.
+    const withoutHandles = (ents) => ents.map((e) => ({ ...e, r: { c: e.r.c.filter((c) => c !== 5), v: e.r.v.filter((_, i) => e.r.c[i] !== 5) } }));
+    const original = withoutHandles((await savedDoc()).entities);
+    for (let i = 0; i < 12; i++) assert.deepEqual(withoutHandles((await savedDoc()).entities), original, 'rapid save snapshots all download');
+    for (const [cmd, label, count, area, layers] of [
+      ['simplify', 'Simplify', 2, '6300.00', ['Back', 'Front']],
+      ['frontminus', 'Front minus back', 1, '2700.00', ['Front']],
+      ['backminus', 'Back minus front', 1, '2700.00', ['Back']],
+      ['boundary', 'Create boundary', 1, '6300.00', ['0']],
+    ]) for (const via of ['menu', 'command']) {
+      // Pick the front first for the menu, back first for the command: last pick must not determine stacking.
+      const picks = via === 'menu' ? [[190, 160], [100, 130]] : [[100, 130], [190, 160]];
+      await click(...picks[0]); await click(...picks[1], { shift: true }); await click(300, 100, { shift: true });
+      await waitSel('3 selected');
+      if (via === 'menu') await menuItem('Modify', 'Shaping: ' + label); else await typeCmd(cmd);
+      const tail = cmd === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back';
+      assert.equal(await prompt(), `${label}: 2 outlines → ${count} outline${count === 1 ? '' : 's'}, area ${area} mm²; 1 open outline skipped` + tail);
+      assert.equal(await entCount(), cmd === 'boundary' ? 4 : count + 1);
+      const saved = withoutHandles((await savedDoc()).entities);
+      if (cmd === 'simplify') assert.deepEqual(saved.map((e) => e.layer), ['Front', '0', 'Back']);      // the front outline nothing overlaps keeps its entity; the back one is replaced by its trimmed copy
+      else assert.deepEqual(saved.slice(-count).map((e) => e.layer), layers);
+      if (cmd === 'boundary') assert.deepEqual(saved.slice(0, 3), original, 'boundary leaves every original whole');
+      else assert.deepEqual(saved[cmd === 'simplify' ? 1 : 0], original[2], 'the open outline stays whole');
+      if (cmd === 'simplify') { assert.deepEqual(saved[0], original[1], 'the front outline stays whole'); assert.equal(saved.at(-1).aci, 1, 'the trimmed back keeps its colour'); }
+      if (cmd === 'frontminus' || cmd === 'backminus') {
+        assert.equal(Math.min(...saved.at(-1).r.v.filter((_, i) => saved.at(-1).r.c[i] === 10).map(Number)), cmd === 'frontminus' ? 130 : 100);
+      }
+      assert.equal((await histLabels()).at(-1), label);
+      await page.keyboard.press('Control+z');
+      assert.equal(await entCount(), 3);
+      assert.deepEqual(withoutHandles((await savedDoc()).entities), original, 'one Undo restores the entire drawing');
+    }
+    await closeTabs(/./);
+    const same = newDoc();
+    const square = dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true });
+    addEntities(same, square, square);
+    await t('picker').setInputFiles({ name: 'shaping-covered.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(same)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-covered.dxf');
+    for (const [cmd, label, count, area] of [['simplify', 'Simplify', 1, '3600.00'], ['frontminus', 'Front minus back', 0, '0.00'], ['backminus', 'Back minus front', 0, '0.00']]) {
+      await page.keyboard.press('Control+a'); await typeCmd(cmd);
+      assert.equal(await prompt(), `${label}: 2 outlines → ${count} outline${count === 1 ? '' : 's'}, area ${area} mm². Ctrl+Z puts the originals back`);
+      assert.equal(await entCount(), count);
+      await page.keyboard.press('Control+z'); assert.equal(await entCount(), 2);
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 122a fix: Shaping leaves a block (INSERT) alone and says so, keeps open lines, and a locked layer is not welded', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addLayer(doc, 'Cut');
+    addBlock(doc, 'B', [dxfPoly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed: true }), dxfPoly([[30, 0], [50, 0], [50, 20]])]);
+    addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true }), dxfInsert('B', 300, 100));
+    await t('picker').setInputFiles({ name: 'shaping-block.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-block.dxf');
+    await page.keyboard.press('Control+a');
+    await typeCmd('weld');
+    assert.equal(await prompt(), 'Weld: 2 outlines → 1 outline, area 6300.00 mm²; 1 block skipped: explode it first. Ctrl+Z puts the originals back');
+    assert.equal(await entCount(), 2, 'the welded outline and the block, whole');
+    await page.keyboard.press('Control+z');
+    await closeTabs(/./);
+    // two overlapping squares, one on a layer that is locked: Ctrl+A skips it, so there is nothing to weld
+    const lk = newDoc();
+    addLayer(lk, 'Cut');
+    addEntities(lk, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Cut' }));
+    await t('picker').setInputFiles({ name: 'shaping-lock.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(lk)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-lock.dxf');
+    await t('ptab-objects').click(); await t('objects-panel').waitFor();
+    await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Cut"] [data-act=lock]').click();
+    await page.keyboard.press('Control+a');
+    await typeCmd('weld');
+    assert.match(await prompt(), /^Weld: select at least 2 closed outlines/);
+    assert.equal(await entCount(), 2, 'nothing was welded');
+    await t('ptab-drawing').click();
+    // clicking the locked outline does not pick it (so Weld never gets it), and says why
+    await click(190, 170);
+    assert.equal(await prompt(), 'Layer Cut is locked: unlock it in the Objects tab to pick this');
+    await click(110, 100);
+    await waitSel('1 selected');
+    await typeCmd('weld');
+    assert.match(await prompt(), /^Weld: select at least 2 closed outlines/);
+    assert.equal(await entCount(), 2, 'nothing was welded');
     await closeTabs(/./);
   });
 
@@ -8227,7 +8637,7 @@ try {
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     const msg = await prompt();
-    assert.match(msg, /^2 texts \+ 1 MTEXT → \d+ outlines\. SHX font \(simplex\.shx\) → Arial\./);
+    assert.match(msg, /^2 texts \+ 1 MTEXT → \d+ outlines\. Fonts: simplex\.shx → Arial/);
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const doc = readDxf(dl.text), polys = doc.entities.filter((e) => e.type === 'LWPOLYLINE'), cut = polys.filter((e) => e.layer === 'CUT');
     assert.deepEqual(doc.entities.filter((e) => e.type === 'MTEXT').length, 0, 'MTEXT replaced too');
@@ -8811,7 +9221,7 @@ try {
     } finally { await isolated.close(); }
   });
 
-  await step('Usage site: remembered tabs, tag filters, notes, token chart, safe refresh errors; phone and desktop, light and dark', async () => {
+  await step('Usage site: remembered TODO sub-steps, counts and ticks, role data, fresh Knight forecast, tabs, tag filters, token chart, safe refresh errors; phone and desktop, light and dark', async () => {
     const result = spawnSync(process.execPath, ['--test', 'tools/usage-site.browser.test.mjs'], { encoding: 'utf8', windowsHide: true, timeout: 60_000 });
     assert.equal(result.status, 0, result.stdout + result.stderr);
   });
@@ -8838,7 +9248,18 @@ try {
     await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
     await click(30, 20); await waitSel('1 selected');
     await t('panel-size-padlock').click();
-    await t('dw').fill('40'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['40', '40']);
+    await t('sel-w').fill('40'); await t('sel-w').press('Tab');
+    assert.equal(await t('sel-h').evaluate((e) => e === document.activeElement), true);
+    assert.equal(await t('sel-h').inputValue(), '40.00', 'Tab shows the newly scaled height');
+    await t('sel-h').fill('37.25');
+    await t('panel-size-padlock').dispatchEvent('click');
+    assert.equal(await t('sel-h').inputValue(), '37.25', 'a render preserves the field being typed');
+    await t('panel-size-padlock').dispatchEvent('click');
+    await t('sel-h').fill('40'); await t('sel-h').press('Enter');
+    assert.deepEqual(await sizeNow(), ['40', '40']);
+    await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
+    await t('dw').fill('40'); await t('dw').press('Tab');
+    assert.equal(await t('dh').inputValue(), '40', 'panel Tab also shows the updated height');
     await t('undo').click(); assert.deepEqual(await sizeNow(), ['20', '20']);
     await page.keyboard.press('Escape');
     await t('size-padlock').click();

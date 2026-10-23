@@ -6,11 +6,14 @@ export type Job = {
   startedMs: number
   state: 'running' | 'completed' | 'failed' | 'killed'
   endedMs?: number
+  files?: string[] // run files its go-*.sh names; set once the script is read
+  seen?: boolean // its process was in the listing at some tick
+  miss?: number // ticks in a row it was not
 }
 
 export type UsageCell = { pct: number | null; reset: string }
 export type UsageRow = { who: string; w5: UsageCell; wk: UsageCell; cap: number | null }
-export type RunRow = { who: string; name: string; state: string; age: number }
+export type RunRow = { who: string; name: string; state: string; age: number; files?: string[] }
 export type QueueView = { rows: { mark: '>' | ' '; text: string }[]; done: number }
 export type Ci = { at: number; num: number | null; state: 'running' | 'green' | 'red' | 'unknown'; automerge: boolean }
 

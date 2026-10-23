@@ -3,6 +3,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
+import { parseTodo } from './usage-agent.mjs';
+
+const todoFixture = parseTodo(`## Whole TODO
+66. **More Modify tools** (L): Move, copy and rotate.
+    66a. ✅ Move objects with one undo.
+    66b. Copy objects; <img src=x onerror=alert(1)> is plain text.
+    66c. Rotate about a chosen pivot.
+95. **<img src=x>** (M): Open item (a built, b next).
+98. ✅ **Finished** (S): Built.
+    98a. ✅ First fix.
+    98b. ✅ Second fix.
+`);
 
 const authModule = `
 export const getAuth = () => ({currentUser: {uid: 'owner'}});
@@ -35,7 +47,7 @@ export async function setDoc() {
 export const getDocFromServer = async () => ({data: () => ({requestedAt: stamp(window.__requestedAt)})});
 `;
 
-test('Usage site: tabs, tickets, token chart and safe refresh failures on phone and desktop', async (t) => {
+test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe refresh failures on phone and desktop', async (t) => {
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
   const local = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
@@ -45,7 +57,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
   for (const colorScheme of ['light', 'dark']) await t.test(colorScheme, async () => {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
     try {
-      await context.addInitScript(() => {
+      await context.addInitScript((todo) => {
         const when = new Date().toISOString();
         window.__failure = 'Rook usage probe failed, exit 1';
         window.__docs = {
@@ -57,7 +69,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
             { id: 'a2', topic: '2026-10-21T18:45:00Z', note: 'Timestamp topic' },
             { id: 'a3', topic: 'Invalid date', note: 'Still renders', as_of: '2026-99-99T00:00:00Z' },
           ] },
-          todo: { sections: [{ title: 'Whole TODO', items: [{ num: 95, title: '<img src=x>', size: 'M', done: false, text: 'Open item' }, { num: 98, title: 'Finished', done: true, text: 'Built' }] }] },
+          todo,
           // 14 IST days of hourly buckets, Oct 8 00:00 IST to Oct 21 23:00 IST. Every agent's weekly resetsAt is 2027-01-01T00:00Z, so its week resets Fridays 00:00Z (Oct 9 and Oct 16 here).
           tokens: { rows: Array.from({ length: 336 }, (_, i) => ({ t: Date.UTC(2026, 9, 7, 18, 30) + i * 3600e3, Rook: 1000, Bishop: 1010, Knight: 1020 })) },
           tickets: { rows: [
@@ -66,7 +78,7 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
           ] },
           status: { lastUpdate: Date.now() - 60_000, lastError: '', lastErrorAt: 0 },
         };
-      });
+      }, todoFixture);
       await context.route('**/*', async (route) => {
         const url = new URL(route.request().url());
         if (url.hostname === 'usage.test') {
@@ -85,11 +97,22 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       await page.locator('#agents h3').last().waitFor();
       assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'Knight']);
       const knight = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'Knight', exact: true})});
-      assert.equal(await knight.locator('.ud-agent p').textContent(), 'Builder and web research (Codex)');
+      assert.equal(await knight.locator('.ud-agent p').textContent(), 'Builder');
+      await page.evaluate(() => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, role: 'Web research from role data'} : r)}));
+      assert.equal(await knight.locator('.ud-agent p').textContent(), 'Web research from role data');
       for (const resets of ['2020-01-01T00:00:00Z', '']) {
         await page.evaluate((resets) => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, used_pct: '100', resets} : r)}), resets);
         assert.deepEqual(await knight.locator('[data-field=used_pct]').allTextContents(), ['0', '0']);
         assert.deepEqual(await knight.locator('[data-field=resets]').allTextContents(), ['Reset', 'Reset']);
+        assert.match(await knight.textContent(), /At this pace: no data yet/);
+      }
+      for (const [used, hours] of [['3', 4], ['3', 1], ['0', 4], ['', 4]]) {      // no forecast until the week has 3 h of data and some use
+        await page.evaluate(([used_pct, hours]) => {
+          const now = Date.now();
+          window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, used_pct, starts: new Date(now - hours * 3600e3).toISOString(), resets: new Date(now + (168 - hours) * 3600e3).toISOString(), as_of: new Date(now).toISOString()} : r)});
+        }, [used, hours]);
+        if (used === '3' && hours === 4) assert.equal(await knight.locator('[data-field=hit_at]').count(), 1);
+        else assert.match(await knight.textContent(), /At this pace: no data yet/);
       }
       await page.evaluate(() => window.__emit('limits', window.__docs.limits));
       assert.equal(await page.locator('#token-chart rect').count(), 0);
@@ -203,12 +226,42 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       assert.equal(await page.locator('.page-tabs').evaluate((node) => getComputedStyle(node).position), 'fixed');
       await page.screenshot({ path: `${shotDir}/s15-usage-fix-phone-${colorScheme}.png`, fullPage: true });
 
-      // TODO is complete, and completed entries still expand.
+      // TODO sub-steps have counts and ticks, remember open and closed, and survive a live update.
       await page.locator('[data-tab=todo]').click();
       assert.equal(await page.locator('#usage').isVisible(), false);
-      await page.locator('#todo details summary').click();
-      assert.equal(await page.locator('#todo li').count(), 2);
-      await noOverflow();
+      const substeps = page.locator('#todo .ud-substeps').first();
+      const checkSubsteps = async (device) => {
+        assert.equal(await substeps.locator('summary').textContent(), '1 of 3 done');
+        assert.equal(await substeps.evaluate((e) => e.open), false);
+        assert.equal(await substeps.locator('li').first().isVisible(), false);
+        await substeps.locator('summary').click();
+        assert.equal(await substeps.locator('[aria-label=Done]').count(), 1);
+        assert.equal(await substeps.locator('[aria-label="Not done"]').count(), 2);
+        assert.match(await substeps.locator('li').nth(1).textContent(), /66b\..*<img src=x/);
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 1);
+        await page.reload(); await substeps.waitFor();
+        assert.equal(await page.locator('[data-tab=todo]').getAttribute('aria-pressed'), 'true');
+        assert.equal(await substeps.evaluate((e) => e.open), true);
+        await page.evaluate(() => window.__emit('todo', window.__docs.todo));
+        assert.equal(await substeps.evaluate((e) => e.open), true);
+        await noOverflow();
+        assert.equal(await page.locator('#todo img').count(), 0);
+        await page.screenshot({ path: `${shotDir}/todo107-${device}-${colorScheme}.png`, fullPage: true });
+        await substeps.locator('summary').click();
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 0);
+        await page.reload(); await substeps.waitFor();
+        assert.equal(await substeps.evaluate((e) => e.open), false);
+        const completed = page.locator('#todo-sections > .ud-card > details');
+        await completed.locator(':scope > summary').click();
+        assert.equal(await completed.locator(':scope > ul > li').count(), 1);
+        assert.equal(await completed.locator('.ud-substeps summary').textContent(), '2 of 2 done');
+        await completed.locator('.ud-substeps summary').click();
+        assert.equal(await completed.locator('.ud-substeps li').first().isVisible(), true);
+        await completed.locator('.ud-substeps summary').click();
+        await page.waitForFunction(() => JSON.parse(localStorage.getItem('usage-todo-open'))?.length === 0);
+        assert.equal(await page.locator('#todo-sections > .ud-card > ul > li').nth(1).locator('details').count(), 0);
+      };
+      await checkSubsteps('phone');
 
       // Ticket tags filter, All restores, tapping a ticket opens its plain-text note.
       await page.locator('[data-tab=tickets]').click();
@@ -247,12 +300,18 @@ test('Usage site: tabs, tickets, token chart and safe refresh failures on phone 
       await readableDates();
       await runningChart();
       await page.screenshot({ path: `${shotDir}/s15-usage-fix-desktop-${colorScheme}.png`, fullPage: true });
+      await page.locator('[data-tab=todo]').click();
+      await checkSubsteps('desktop');
       for (const tab of ['usage', 'todo', 'tickets']) { await page.locator(`[data-tab=${tab}]`).click(); await noOverflow(); }
 
       // Denied storage still permits all tabs, and signing out clears private ticket DOM.
       await context.addInitScript(() => { Storage.prototype.getItem = Storage.prototype.setItem = () => { throw new Error('Storage blocked'); }; });
       await page.reload(); await page.locator('#agents h3').last().waitFor();
       assert.equal(await page.locator('[data-tab=usage]').getAttribute('aria-pressed'), 'true');
+      await page.locator('[data-tab=todo]').click();
+      assert.equal(await substeps.evaluate((e) => e.open), false);
+      await substeps.locator('summary').click();
+      assert.equal(await substeps.locator('li').first().isVisible(), true);
       await page.locator('[data-tab=tickets]').click();
       await page.locator('#signout').click();
       assert.equal(await page.locator('#dashboard').isVisible(), false);

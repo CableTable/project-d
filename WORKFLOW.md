@@ -133,10 +133,14 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
 # If package-lock.json changed since its last build, Rook runs `npm.cmd ci` in ProjectD-rowan first (its sandbox cannot
 # install: EPERM on the npm cache; session 12 lost a Knight round to a missing imagetracerjs).
-# If Codex blocks Knight's commit, Rook commits in ProjectD-rowan itself. Knight's TODO / DECISIONS / HISTORY edits
+# If Codex blocks Knight's commit ("COMMIT_EDITMSG: Permission denied"), the cause is a stale COMMIT_EDITMSG in the
+# clone's -git folder with a lost sandbox grant (2026-10-23): Rook commits once, then deletes that file; Knight commits
+# again from then on. Knight's TODO / DECISIONS / HISTORY edits
 # conflict on cherry-pick into the repo: keep both sides.
 # Side folders (2026-10-22): Knight's clones, their -git folders and the runs<N> log folders live in
 # "E:/Project B/Claude/Project D extras/". Moving a clone: rewrite its hidden .git file and `core.worktree` in its -git.
+# Bishop-build in a Knight clone (2026-10-23): claude2 blocks every node / git call until that folder is trusted
+# once on account 2, so Bishop builds stay in ProjectD-s15fix unless he has trusted the clone.
 # Parallel Knight builds (2026-10-21): extra clones ProjectD-knight2 (+ -git) and ProjectD-knight3 (+ -git), set up the
 # same way. One branch per clone; cherry-pick each into the repo; TODO / DECISIONS conflicts: keep both sides, then drop
 # duplicate TODO rows. Knight runs ponytail "full" too (%APPDATA%\ponytail\config.json), like every builder.

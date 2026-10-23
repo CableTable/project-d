@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { codexWindow, resetLabel } from './usage-site/public/usage-window.js';
+import { codexWindow, resetLabel, weeklyForecast } from './usage-site/public/usage-window.js';
 test('expired five-hour and weekly Codex readings show zero and Reset without guessing the next reset', () => {
   for (const reading of [[100, 10], [61, 15], [0, null], [100, 20]]) {
     const [used, resets] = codexWindow(reading, 20_000);
@@ -9,4 +9,21 @@ test('expired five-hour and weekly Codex readings show zero and Reset without gu
   }
   assert.deepEqual(codexWindow([61, 30], 20_000), [61, 30]);
   assert.equal(resetLabel(30, String), 'Resets 30');
+});
+
+test('Knight forecasts once the new window has 3 h of data and some use', () => {
+  const starts = '2026-10-23T00:00:00Z', resets = '2026-10-30T00:00:00Z', as_of = '2026-10-23T03:00:00Z';
+  const now = Date.parse(as_of), row = { agent: 'Rowan', starts, resets, as_of, used_pct: '3' };
+  assert.deepEqual(weeklyForecast(row, now), { agent: 'Rowan', at_reset_pct: 168, hit_at: '2026-10-27T04:00:00.000Z' });
+  assert.equal(weeklyForecast({ ...row, used_pct: '0' }, now).at_reset_pct, null);
+  assert.equal(weeklyForecast({ ...row, as_of: '2026-10-23T00:10:00Z', used_pct: '1' }, now).at_reset_pct, null);      // 1% ten minutes after the reset is not a pace
+  assert.equal(weeklyForecast({ ...row, as_of: '2026-10-23T02:59:00Z' }, now).at_reset_pct, null);
+  assert.equal(weeklyForecast({ ...row, agent: 'Knight' }, now).at_reset_pct, 168);
+  assert.equal(weeklyForecast({ ...row, as_of: '2026-10-23T06:00:00Z' }, now).at_reset_pct, 84);
+  for (const patch of [{ starts: '' }, { resets: '' }, { as_of: '' }, { as_of: starts }, { as_of: '2026-10-22T23:00:00Z' }, { used_pct: '' }, { used_pct: 'bad' }]) {
+    assert.equal(weeklyForecast({ ...row, ...patch }, now).at_reset_pct, null);
+  }
+  assert.equal(weeklyForecast(row, Date.parse(resets)).at_reset_pct, null);
+  assert.equal(weeklyForecast({ ...row, agent: 'Rook' }, now).at_reset_pct, null);
+  assert.equal(weeklyForecast({ ...row, agent: 'Pip' }, now).at_reset_pct, null);
 });

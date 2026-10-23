@@ -110,22 +110,27 @@ export function refreshFailure(error) {
 
 export function parseTodo(text) {
   const sections = [];
-  let section, item;
+  let section, item, substep;
   for (const line of text.replace(/^\uFEFF/, '').split(/\r?\n/)) {
     const heading = line.match(/^#{2,6}\s+(.+)$/);
     const numbered = line.match(/^(\d+)\.\s+(.*)$/);
+    const step = line.match(/^\s+(\d+)([a-z]+)\.\s+(.*)$/);
     if (heading) {
       section = { title: heading[1], items: [] };
-      sections.push(section); item = null;
+      sections.push(section); item = substep = null;
     } else if (section && numbered) {
       item = { num: Number(numbered[1]), body: numbered[2] };
+      substep = null;
       section.items.push(item);
-    } else if (item && /^\s+\S/.test(line)) item.body += ' ' + line.trim();
-    else if (line.trim()) item = null;
+    } else if (item && step && Number(step[1]) === item.num) {
+      substep = { num: step[1] + step[2], body: step[3] };
+      (item.substeps ||= []).push(substep);
+    } else if (item && /^\s+\S/.test(line)) (substep || item).body += ' ' + line.trim();
+    else if (line.trim()) item = substep = null;
   }
   for (const section of sections) {
     const unique = new Map();
-    section.items = section.items.map(({ num, body }) => {
+    section.items = section.items.map(({ num, body, substeps }) => {
       const done = /^✅\s*/u.test(body);
       body = body.replace(/^✅\s*/u, '');
       const bold = body.match(/\*\*(.+?)\*\*/);
@@ -133,6 +138,7 @@ export function parseTodo(text) {
       const size = body.match(/\((?:[^()]*,\s*)?(S(?:[–-]M)?|M|L)\)/)?.[1] || '';
       const text = body.replace(bold ? bold[0] : title, '').replace(/\*\*/g, '').replace(/^\s*:\s*/, '').replace(/\s{2,}/g, ' ').trim();
       const item = { num, title, size, done, text };
+      if (substeps) item.substeps = substeps.map(({ num, body }) => ({ num, done: /^✅\s*/u.test(body), text: body.replace(/^✅\s*/u, '') }));
       if (!unique.get(num)?.done) unique.set(num, item);
       return item;
     }).filter((item) => unique.get(item.num) === item);

@@ -196,6 +196,34 @@ More ideas:
   assert.deepEqual(parseTodo(''), { sections: [] });
 });
 
+test('TODO finds indented sub-steps and their done ticks without changing items that only mention progress', () => {
+  const { sections } = parseTodo(`## First
+66. **Modify tools** (L): Parent detail.
+    66a. ✅ Move objects.
+        Keep layer locks.
+    66b. Copy objects; ✅ here is not a done tick.
+    66c. Rotate objects.
+67. **Guides** (M): (a built, b next)
+## Next
+66. ✅ **Finished parent** (S)
+    66a. ✅ Finished sub-step.
+76. **Dimensions** (L)
+    76a. First dimension.
+    76b. ✅ Second dimension.
+`);
+  const [modify, guides] = sections[0].items;
+  assert.equal(modify.text, '(L): Parent detail.');
+  assert.deepEqual(modify.substeps, [
+    { num: '66a', done: true, text: 'Move objects. Keep layer locks.' },
+    { num: '66b', done: false, text: 'Copy objects; ✅ here is not a done tick.' },
+    { num: '66c', done: false, text: 'Rotate objects.' },
+  ]);
+  assert.equal(modify.substeps.filter((step) => step.done).length, 1);
+  assert.deepEqual(guides, { num: 67, title: 'Guides', size: 'M', done: false, text: '(M): (a built, b next)' });
+  assert.deepEqual(sections[1].items[0].substeps, [{ num: '66a', done: true, text: 'Finished sub-step.' }]);
+  assert.deepEqual(sections[1].items[1].substeps.map((step) => [step.num, step.done]), [['76a', false], ['76b', true]]);
+});
+
 test('CSV preserves empty cells, CRLF, BOM, quoted commas, escaped quotes and newlines', () => {
   assert.deepEqual(parseCsv('\uFEFFid,task,new_tokens\r\n1,"Fix, then ""test""\nagain",\r\n\r\n2,Done,0'), [
     { id: '1', task: 'Fix, then "test"\nagain', new_tokens: '' },

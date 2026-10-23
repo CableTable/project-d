@@ -107,7 +107,7 @@ From the AutoCAD / CorelDRAW pain-point research (his ask, 2026-10-19: "add all"
     55a. ✅ Open a reproducible generated 100k-entity DXF and record open, pan and zoom timings in a browser performance check, keeping correctness assertions separate from machine-dependent timings. (`tools/gen-big-dxf.mjs`, `tools/perf-big.mjs`; the browser step uses 20k and a generous fps bound.)
     55b. ✅ (after 55a) If rendering lags, skip off-screen drawing items using their existing bounds, with conservative-bound unit tests and browser checks that panning and zooming reveal every object. (Bounds culling was already there; `web/perf.js` holds the cull test and the bitmap reuse, `perf.test.mjs` tests them.)
     55c. (after 55a) If picking or snapping lags, index their candidates while preserving hit order and rebuilding after edits / undo, with indexed-versus-current-result unit tests and a large-file browser check.
-56. **Font note on open** (S): name the fonts the file asked for and what is shown instead (check first whether one exists).
+56. ✅ (built, session 17) **Font note on open** (S): one status-bar note per DXF open names unavailable fonts and their substitutes; shared with Text to outlines, no repeat on tab switches.
 
 From the v0.1.30 exe test (Pip-test, 2026-10-20):
 57. ✅ (fixed, session 9: the tab strip shrinks and scrolls on its own; tabs and + New layout stay on one line) **Many tabs push the whole window sideways** (bug, S): at 1024 px with ~17 tabs, clicking the last tab shifts the menu bar ~470 px left and cuts off the toolbar; it stays shifted after widening (−169 px at 1440); at 1440 with 14 tabs "+ New layout" wraps. The tab strip should scroll on its own. Screenshots: shots/exe/91-last-tab-1024.png, 66-light1024-layout.png.
@@ -185,7 +185,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 85. ✅ (built, session 15) **Preflight panel: Esc and tabs** (S, PC test): Esc closes it; it belongs to its tab (not floating over every tab); its Close button stays reachable when the Balloons dock is open.
 88. ✅ (built, session 15) **1024×768: Balloons dock and toasts eat the canvas** (S, PC test): smaller default dock height, toasts fade sooner. Also uia.ps1 should match SplitButton (local helper). Seen once, not reproduced: a dirty tab closed by × without a prompt.
 89. ✅ (built, session 14) **Nearest snap; a snap beats ORTHO in Dimension** (S–M, his ask 2026-10-21): with ORTHO on, the Dimension tool forces the 2nd point onto the X/Y line from the 1st, so it can't land on a curve elsewhere (there is no Nearest snap, only ends / middles / centres). AutoCAD way: add a Nearest snap (closest point on the curve under the pointer); a snap wins over ORTHO; with ORTHO on the dimension is linear (horizontal or vertical, measuring only that distance), picked by where the dimension line is dragged.
-91. **Explode (X)** (S–M, his ask 2026-10-21): an outline and a square inside it select as one object (one polyline or a block) and there is no way to split them. AutoCAD way: Explode turns a polyline into lines / arcs and a block into its members (layer kept), one undo step; Modify menu + X / EXPLODE.
+91. **Explode (X)** ✅ (built, session 17) (S–M, his ask 2026-10-21): an outline and a square inside it select as one object (one polyline or a block) and there is no way to split them. AutoCAD way: Explode turns a polyline into lines / arcs and a block into its members (layer kept), one undo step; Modify menu + X / EXPLODE.
 92. ✅ (built, session 15) **Tiny gaps rings clutter imported drawings** (S, his report 2026-10-21): an imported drawing shows hundreds of orange Tiny-gaps rings on letters, scale marks and arrows. Check whether they show without pressing Show; skip text, dimensions and annotation layers; consider a cap or a count-only summary when there are many.
 90. ✅ (built, session 14) **Pure black drawing area in dark theme** (S, his ask 2026-10-21): the canvas background in the dark theme is #000; selection / highlight colours still read clearly on it.
 93. ✅ (built, session 17) **Open a .dxf from Explorer** (S–M, bug, T12): with Project D as the default app, double-clicking a .dxf starts the app with no file. Read the launch path and open it in its own tab (as File → Open, fs scope granted as in 82); decide the already-running case (single-instance → new tab).
@@ -203,14 +203,14 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 105. (a built, session 16: W / H padlock; b built, session 17: rectangle edge drag; 76d later, see 76) **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md.
 105c. Circle radius grip and ellipse axis grips resize them (later, T22).
 106. **Build dynamic input (TODO 69) now, for every drawing tool** (L, ask, T23): see T23 in support/tickets.md. Grill first.
-107. **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): see T24 in support/tickets.md. Grill first.
+107. ✅ (built, session 17) **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): “N of M done”, folded sub-step lists with done ticks, remembered on this browser. Knight role comes from the usage data; its forecast uses fresh window data immediately, or says “no data yet”.
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
 112. ✅ (built, session 16) **Compare, manual mode: no snapping** (S, bug, T29): see T29 in support/tickets.md. Grill first.
 113. ✅ (built, session 16) **Compare runs constantly: make it a toggle or a run-once button** (S, bug, T30): see T30 in support/tickets.md. Grill first.
-114. **Compare: choose which drawings, more than two, from Parts library or drawing tabs** (M, ask, T31): see T31 in support/tickets.md. Grill first.
+114. ✅ (built, session 17) **Compare: choose which drawings, more than two, from Parts library or drawing tabs** (M, ask, T31): up to five snapshots from tabs, the Parts library or disk; first ticked reference, visibility, per-item differences and measurement table.
 115. ✅ (built, session 17) **Text in the YEB Sport drawing is converted to both curves and text** (M, bug, T32): PDF import excludes invisible searchable text (rendering modes 3 / 7), keeping the already drawn curves once. Visible text still becomes outlines in one Undo step.
 116. **Open a Parts library part in a drawing tab** (S, ask, T33): see T33 in support/tickets.md. Grill first.
 117. **Delete sheets, and why a sheet change warns that edits will be gone** (S, ask, T34): see T34 in support/tickets.md. Grill first.
@@ -218,7 +218,12 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 119. ✅ (built, session 16) **View menu: Theme items uneven spacing, corner-only highlight, no tick** (S, bug, T36): see T36 in support/tickets.md. Grilled by support.
 120. ✅ (built, session 17) **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): selected drawing entities now drag together, with preview, one Undo and Escape / pointer-cancel. PDF drawing imports open unlocked, without a background picture.
 121. ✅ (built, session 17) **Join gaps: CorelDRAW-style join methods (Average point, Extend, Chamfer, Fillet, Bezier)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
-122. **Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary** (L, ask, his screenshot 2026-10-23): boolean operations on closed outlines. After the bugs. Grill first.
+122. ~~**Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary**~~ (built, session 17: a = Weld / Trim / Intersect; b = Simplify / Front minus back / Back minus front / Create boundary). Boolean operations on closed outlines; Modify menu and command bar, one Undo.
+123. **Shaping: keep originals (S)**: a switch (like CorelDRAW's "Leave original source / target object") so Weld,
+     Trim, Intersect and the other Shaping tools can keep the shapes they started from. His ask, 2026-10-23; grill first.
+124. **Break Apart (Ctrl+K) (S)**: split one outline that has several closed paths (e.g. a Weld result with holes)
+     into separate outlines, one per path, the CorelDRAW way. Not the same as Explode (91), which splits into single
+     lines and arcs. His ask, 2026-10-23; grill first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
@@ -245,3 +250,4 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 1. IBM Plex fonts are not bundled, so the system font is used. Bundle them locally if he wants the mock-up's look.
 2. A per-user .dxf file association, with no admin rights.
 3. A "keep settings next to the exe" switch.
+4. Drawing selection drag refuses HATCH and DIMENSION entities (`moveEntities`); add their move support.

@@ -15,13 +15,7 @@
 import { CAP, plainText } from './drawing.js';
 import { lwpoly } from './dxf-write.js';
 
-/** Windows font files for each of the app's three fonts (render.js's FONT_FAMILY: Segoe UI, Arial, Cascadia Mono / Consolas), regular then bold. */
-const FILES = {
-  Standard: [['segoeui.ttf'], ['segoeuib.ttf']],
-  Arial: [['arial.ttf'], ['arialbd.ttf']],
-  Mono: [['CascadiaMono.ttf', 'consola.ttf', 'cour.ttf'], ['CascadiaMonoBold.ttf', 'consolab.ttf', 'courbd.ttf']],
-};
-export const fontFiles = (font, bold) => (FILES[font] || FILES.Standard)[bold ? 1 : 0];
+export { fontFiles } from './fontsub.js';
 
 /** Missing characters with Unicode labels, capped for the result message. */
 export function missingGlyphsLabel(chars) {
