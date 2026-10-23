@@ -14,7 +14,7 @@
 //   createHistory()              → undo / redo of { entities, blocks } states
 import { mapply, mscale, pickIndex, pickAt } from './drawing.js';
 import { spaceOf, itemVisible } from './doc.js';
-import { line, insert, entity, addLayer, arc } from './dxf-write.js';
+import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -292,6 +292,17 @@ export function inBox(ed, b) {
 /** Ends closer than this (drawing units) count as joined: a DXF is written with 6 decimals, so ends joined exactly come back up to ~1.4e-6 apart. */
 const JOINED = 2e-6;
 const GAP_SKIP = /^(TEXT|MTEXT|ATTRIB|ATTDEF|DIMENSION|HATCH|LEADER|MLEADER|MULTILEADER)$/;
+/** True when the ends of a cluster all pair up with another end within JOINED (already joined, as after a bridging Join gaps). */
+function pairedUp(g, px, py) {
+  if (g.length % 2) return false;
+  const left = g.slice();
+  while (left.length) {
+    const a = left.pop(), k = left.findIndex((b) => Math.hypot(px(a) - px(b), py(a) - py(b)) <= JOINED);
+    if (k < 0) return false;
+    left.splice(k, 1);
+  }
+  return true;
+}
 /**
  * Ends that almost meet (TODO 46): every free end (ed.ends) within `tol` of another is one cluster (single linkage); a
  * cluster whose ends are all within 2e-6 of each other (joined, up to the file's 6 decimals) is not a gap. Ends that already meet exactly are not gaps.
@@ -332,6 +343,7 @@ export function findGaps(ed, tol) {
     let spread = 0;
     for (const a of g) for (const b of g) spread = Math.max(spread, Math.hypot(px(a) - px(b), py(a) - py(b)));
     if (spread <= JOINED) continue;
+    if (pairedUp(g, px, py)) continue;                                          // a bridge piece already joins each side: two exact pairs
     out.push({ x, y, spread, ends: g.map((id) => ({ e: id >> 1, k: id & 1 })).sort((a, b) => a.e - b.e || a.k - b.k) });
   }
   return out.sort((a, b) => a.ends[0].e - b.ends[0].e);
@@ -567,20 +579,18 @@ function meetPoint(Pa, A, Pb, B, far) {
 }
 
 const deg360 = (a) => { let v = a * 180 / Math.PI % 360; if (v < 0) v += 360; return v; };
-/** A new entity shaped like `src` (layer, colour, line type) with its own record. */
-const newEntity = (src, type, pairs) => ({ type, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: false, ps: src.ps, flip: false,
-  r: { type, c: [8, ...pairs.map((p) => p[0])], v: [src.layer, ...pairs.map((p) => text(p[1]))] } });
-const lineEntity = (src, p, q) => newEntity(src, 'LINE', [[10, p[0]], [20, p[1]], [30, 0], [11, q[0]], [21, q[1]], [31, 0]]);
-const arcEntity = (src, c, R, a0, a1) => newEntity(src, 'ARC', [[10, c[0]], [20, c[1]], [30, 0], [40, R], [50, deg360(a0)], [51, deg360(a1)]]);
+/** The properties a new piece takes from `src` (layer, colour, line type). */
+const like = (s) => ({ layer: s.layer, lt: s.lt, aci: s.aci, tc: s.tc, lw: s.lw, lts: s.lts, ps: s.ps });
+const lineEntity = (src, p, q) => line(p[0], p[1], q[0], q[1], like(src));
+const arcEntity = (src, c, R, a0, a1) => arc(c[0], c[1], R, deg360(a0), deg360(a1), like(src));
 const BEZIER_PIECES = 12;
 const bezierEntity = (src, p, q, dp, dq, h) => {
-  const c1 = [p[0] + dp[0] * h, p[1] + dp[1] * h], c2 = [q[0] + dq[0] * h, q[1] + dq[1] * h], pairs = [[90, BEZIER_PIECES + 1], [70, 0]];
+  const c1 = [p[0] + dp[0] * h, p[1] + dp[1] * h], c2 = [q[0] + dq[0] * h, q[1] + dq[1] * h], pts = [];
   for (let i = 0; i <= BEZIER_PIECES; i++) {
     const t = i / BEZIER_PIECES, u = 1 - t, w = [u * u * u, 3 * u * u * t, 3 * u * t * t, t * t * t];
-    pairs.push([10, i === 0 ? p[0] : i === BEZIER_PIECES ? q[0] : w[0] * p[0] + w[1] * c1[0] + w[2] * c2[0] + w[3] * q[0]],
-      [20, i === 0 ? p[1] : i === BEZIER_PIECES ? q[1] : w[0] * p[1] + w[1] * c1[1] + w[2] * c2[1] + w[3] * q[1]]);
+    pts.push(i === 0 ? p : i === BEZIER_PIECES ? q : [w[0] * p[0] + w[1] * c1[0] + w[2] * c2[0] + w[3] * q[0], w[0] * p[1] + w[1] * c1[1] + w[2] * c2[1] + w[3] * q[1]]);
   }
-  return newEntity(src, 'LWPOLYLINE', pairs);
+  return lwpoly(pts, like(src));
 };
 /** The polyline `ent` with its closed flag set (70 bit 1). */
 function closedPoly(ent) {
