@@ -203,7 +203,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 105. (a built, session 16: W / H padlock; b built, session 17: rectangle edge drag; 76d later, see 76) **Can't set a rectangle to an exact W × H: Width / Height always scale in proportion** (M, bug, T22): see T22 in support/tickets.md.
 105c. Circle radius grip and ellipse axis grips resize them (later, T22).
 106. **Build dynamic input (TODO 69) now, for every drawing tool** (L, ask, T23): see T23 in support/tickets.md. Grill first.
-107. **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): see T24 in support/tickets.md. Grill first.
+107. ✅ (built, session 17) **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): “N of M done”, folded sub-step lists with done ticks, remembered on this browser. Knight role comes from the usage data; its forecast uses fresh window data immediately, or says “no data yet”.
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
