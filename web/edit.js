@@ -49,7 +49,7 @@ function arcSweepOp(a0, a1, acw) {
 /**
  * The closed loops of some entities, in drawing units (areaPerimeter and Shaping share it): the pieces are joined end to end (within tol)
  * and a loop whose last gap is tiny (≤ 10 × tol) is closed across it and counted in `gaps`. Text, fills and kept dimensions are left out.
- * Returns { loops: [{ pts, ents }] (ents: the entity indexes the loop is made of), len (all lines and arcs), gaps, open (pieces that do not close) }, or null if there are no lines.
+ * Returns { loops: [{ pts, ents }] (ents: the entity indexes the loop is made of), len (all lines and arcs), gaps, open (pieces that do not close), openEnts (the entities that have such a piece) }, or null if there are no lines.
  */
 export function outlineLoops(ed, ents, tol = 1e-6) {
   const { fl, items, raw } = ed, pieces = [];
@@ -110,7 +110,8 @@ export function outlineLoops(ed, ents, tol = 1e-6) {
     if (!closed && path.length > 2 && Math.hypot(path[0][0] - path[path.length - 1][0], path[0][1] - path[path.length - 1][1]) <= gapTol) { closed = true; gaps++; }
     if (closed) loops.push({ pts: path, ents: es }); else start.open = true;
   }
-  return { loops, len, gaps, open: open.filter((p) => p.open).length };
+  const openPieces = open.filter((p) => p.open);
+  return { loops, len, gaps, open: openPieces.length, openEnts: new Set(openPieces.flatMap((p) => [...p.ents])) };
 }
 
 /**

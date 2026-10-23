@@ -10,7 +10,7 @@ import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
 import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
@@ -8185,6 +8185,36 @@ try {
     await typeCmd('intersect');
     assert.equal(await prompt(), 'Intersect: the outlines do not overlap, nothing changed');
     assert.equal(await entCount(), 2);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 122a fix: Shaping leaves a block (INSERT) alone and says so, keeps open lines, and a locked layer is not welded', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addLayer(doc, 'Cut');
+    addBlock(doc, 'B', [dxfPoly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed: true }), dxfPoly([[30, 0], [50, 0], [50, 20]])]);
+    addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true }), dxfInsert('B', 300, 100));
+    await t('picker').setInputFiles({ name: 'shaping-block.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-block.dxf');
+    await page.keyboard.press('Control+a');
+    await typeCmd('weld');
+    assert.equal(await prompt(), 'Weld: 2 outlines → 1 outline, area 6300.00 mm²; 1 block skipped: explode it first. Ctrl+Z puts the originals back');
+    assert.equal(await entCount(), 2, 'the welded outline and the block, whole');
+    await page.keyboard.press('Control+z');
+    await closeTabs(/./);
+    // two overlapping squares, one on a layer that is locked: Ctrl+A skips it, so there is nothing to weld
+    const lk = newDoc();
+    addLayer(lk, 'Cut');
+    addEntities(lk, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }), dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Cut' }));
+    await t('picker').setInputFiles({ name: 'shaping-lock.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(lk)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-lock.dxf');
+    await t('ptab-objects').click(); await t('objects-panel').waitFor();
+    await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Cut"] [data-act=lock]').click();
+    await page.keyboard.press('Control+a');
+    await typeCmd('weld');
+    assert.match(await prompt(), /^Weld: select at least 2 closed outlines/);
+    assert.equal(await entCount(), 2, 'nothing was welded');
+    await t('ptab-drawing').click();
     await closeTabs(/./);
   });
 

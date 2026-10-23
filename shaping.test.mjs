@@ -46,6 +46,20 @@ test('a smaller square crossing a bigger one is not taken for a hole', () => {
   near(S.shape('weld', [sq(0, 0, 10), sq(8, 8, 4)]).area, 100 + 16 - 4);
 });
 
+test('a bar whose corners are all inside the U\'s outline but which crosses the gap is two outlines, not a hole', () => {
+  const u = { pts: [[0, 0], [30, 0], [30, 30], [20, 30], [20, 10], [10, 10], [10, 30], [0, 30]] };
+  const bar = sq(5, 20, 20, 5);                                                                        // corners (5,20) (25,20) (25,25) (5,25): all inside the arms
+  assert.equal(S.operandsOf([u, bar]).length, 2);
+  assert.equal(S.shape('weld', [u, bar]).error, undefined);
+  near(S.shape('weld', [u, bar]).area, 700 + 5 * 10);                                                  // the gap between the arms (10 wide, 5 high) fills
+  near(S.shape('weld', [u, bar, sq(40, 0, 5)]).area, 700 + 50 + 25);
+});
+
+test('degenerate input is an error, not a throw', () => {
+  assert.match(S.shape('weld', [sq(0, 0, 10), { pts: [[NaN, 0], [1, 1], [2, 0]] }]).error, /Shaping failed/);
+  assert.match(S.shape('trim', [sq(0, 0, 10), { pts: [] }]).error, /Shaping failed/);
+});
+
 test('touching squares weld into one rectangle; a shared corner stays two pieces; a shared edge intersects to nothing', () => {
   const w = S.shape('weld', [sq(0, 0, 10), sq(10, 0, 10)]);
   near(w.area, 200); assert.equal(w.rings.length, 1); assert.equal(w.rings[0].length, 4);

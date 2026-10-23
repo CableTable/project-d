@@ -3758,14 +3758,17 @@ function shapeSelection(op) {
   if (!d) { note(`${name} works on a drawing tab: open a drawing first`); return; }
   const lock = [...d.sel].find((e) => lockedEnt(d, e));
   if (lock != null) { note(`Layer ${d.raw.entities[lock].layer} is locked: unlock it in the Objects tab to ${name.toLowerCase()} this`); return; }
-  const found = d.sel.size ? Ed.outlineLoops(edIndex(d), d.sel, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
-  const skipped = found && found.open ? `; ${found.open} open outline${found.open === 1 ? '' : 's'} skipped` : '';
+  const plain = [...d.sel].filter((e) => d.raw.entities[e].type !== 'INSERT'), blocks = d.sel.size - plain.length;   // a block's outlines can't be replaced one by one
+  const found = plain.length ? Ed.outlineLoops(edIndex(d), plain, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
+  const skipped = (found && found.open ? `; ${found.open} open outline${found.open === 1 ? '' : 's'} skipped` : '') + (blocks ? `; ${blocks} block${blocks === 1 ? '' : 's'} skipped: explode ${blocks === 1 ? 'it' : 'them'} first` : '');
   if (!found || found.loops.length < 2) { note(`${name}: select at least 2 closed outlines (click one, Shift+click the others, or drag a box)` + skipped); return; }
   const r = SH.shape(op, found.loops, d.sel.has(d.lastPick) ? found.loops.findIndex((l) => l.ents.has(d.lastPick)) : -1);
   if (r.error) { note(r.error + skipped); return; }
   if (!r.rings.length) { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
-  const gone = new Set(), mine = (o) => o.loops.forEach((i) => found.loops[i].ents.forEach((e) => gone.add(e)));
-  if (op === 'trim') mine(r.operands[r.target]); else r.operands.forEach(mine);
+  const used = new Set((op === 'trim' ? [r.operands[r.target]] : r.operands).flatMap((o) => o.loops)), gone = new Set();
+  found.loops.forEach((l, i) => { if (used.has(i)) l.ents.forEach((e) => gone.add(e)); });
+  found.loops.forEach((l, i) => { if (!used.has(i)) l.ents.forEach((e) => gone.delete(e)); });   // an entity that also makes an unused loop or open line stays whole
+  found.openEnts.forEach((e) => gone.delete(e));
   const src = d.raw.entities[Math.min(...found.loops[r.operands[r.target].loops[0]].ents)], kept = Ed.removeEntities(d.raw, gone);
   const made = r.rings.map((ring) => lwpoly(ring, { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps })), at = kept.entities.length;
   commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);

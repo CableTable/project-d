@@ -10,24 +10,8 @@
 import pc from './vendor/polygon-clipping/polygon-clipping.js';
 
 const ringArea = (r) => { let s = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) s += r[j][0] * r[i][1] - r[i][0] * r[j][1]; return Math.abs(s) / 2; };
-const inRing = (p, r) => {
-  let c = false;
-  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-    const [xi, yi] = r[i], [xj, yj] = r[j];
-    if ((yi > p[1]) !== (yj > p[1]) && p[0] < (xj - xi) * (p[1] - yi) / (yj - yi) + xi) c = !c;
-  }
-  return c;
-};
-const onRing = (p, r) => {
-  for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-    const [x, y] = r[j], dx = r[i][0] - x, dy = r[i][1] - y, l2 = dx * dx + dy * dy;
-    const t = l2 ? Math.max(0, Math.min(1, ((p[0] - x) * dx + (p[1] - y) * dy) / l2)) : 0;
-    if (Math.hypot(p[0] - x - t * dx, p[1] - y - t * dy) <= 1e-6) return true;
-  }
-  return false;
-};
-// shortcut: a loop counts as inside another when all its points are inside or on its edge, so a crossing pair of a non-convex loop can be misread; upgrade with an exact difference test
-const within = (a, b) => a.every((p) => inRing(p, b) || onRing(p, b));
+// a loop is inside another only when nothing of it sticks out (shared edges count as inside), so a bar across a U's top is not the U's hole
+const within = (a, b) => pc.difference([a], [b]).length === 0;
 
 export function operandsOf(loops) {
   const pts = loops.map((l) => l.pts || l), a = pts.map(ringArea);
@@ -48,8 +32,13 @@ export const OPS = {
 };
 
 export function shape(op, loops, target = -1) {
-  const o = OPS[op], operands = operandsOf(loops);
+  const o = OPS[op];
   if (!o) return { error: 'Unknown shaping operation: ' + op };
+  try { return run(o, loops, target); } catch { return { error: 'Shaping failed on these outlines, nothing changed' }; }   // polygon-clipping can throw on degenerate input
+}
+
+function run(o, loops, target) {
+  const operands = operandsOf(loops);
   if (operands.length < 2) return { error: `${o.label} needs at least 2 closed outlines` + (loops.length > 1 ? ' (outlines inside another one count as its holes)' : ''), operands };
   let t = operands.findIndex((x) => x.loops.includes(target));
   if (t < 0) t = operands.reduce((best, x, i) => (x.area > operands[best].area ? i : best), 0);
