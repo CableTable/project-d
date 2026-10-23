@@ -17,7 +17,8 @@ import * as BAL from './balloons.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
-import { writeDxf, unwritable, addLayer, newDoc } from './dxf-write.js';
+import { writeDxf, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
+import * as SH from './shaping.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
@@ -379,6 +380,8 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
+  // Shaping (TODO 122): the dropdown has no sub-menus, so its three items sit together after a separator, each named Shaping: …
+  menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
@@ -2956,6 +2959,7 @@ const DO = {
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
+  weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   rotate: () => {
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
@@ -3745,6 +3749,29 @@ async function textToOutlines() {
   note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
 }
 
+// ---- Shaping (TODO 122a): Weld / Trim / Intersect of the selected closed outlines, one undo step (shaping.js is the maths) ----
+const SHAPING_TITLE = { weld: 'Join the selected outlines into one outline (union)', intersect: 'Keep only the area all the selected outlines share', trim: 'Cut the others out of the last picked outline (or the largest after a box); the others stay' };
+/** The selected closed outlines are combined; the result is closed polylines on the target's layer. The originals go (Trim: only the target; the cutters stay). */
+function shapeSelection(op) {
+  const name = SH.OPS[op].label, d = editable();
+  if (!d) { note(`${name} works on a drawing tab: open a drawing first`); return; }
+  const lock = [...d.sel].find((e) => lockedEnt(d, e));
+  if (lock != null) { note(`Layer ${d.raw.entities[lock].layer} is locked: unlock it in the Objects tab to ${name.toLowerCase()} this`); return; }
+  const found = d.sel.size ? Ed.outlineLoops(edIndex(d), d.sel, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
+  const skipped = found && found.open ? `; ${found.open} open outline${found.open === 1 ? '' : 's'} skipped` : '';
+  if (!found || found.loops.length < 2) { note(`${name}: select at least 2 closed outlines (click one, Shift+click the others, or drag a box)` + skipped); return; }
+  const r = SH.shape(op, found.loops, d.sel.has(d.lastPick) ? found.loops.findIndex((l) => l.ents.has(d.lastPick)) : -1);
+  if (r.error) { note(r.error + skipped); return; }
+  if (!r.rings.length) { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
+  const gone = new Set(), mine = (o) => o.loops.forEach((i) => found.loops[i].ents.forEach((e) => gone.add(e)));
+  if (op === 'trim') mine(r.operands[r.target]); else r.operands.forEach(mine);
+  const src = d.raw.entities[Math.min(...found.loops[r.operands[r.target].loops[0]].ents)], kept = Ed.removeEntities(d.raw, gone);
+  const made = r.rings.map((ring) => lwpoly(ring, { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps })), at = kept.entities.length;
+  commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);
+  setSel(d, new Set(made.map((_, i) => at + i)));
+  note(`${name}: ${r.operands.length} outlines → ${made.length} outline${made.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + '. Ctrl+Z puts the originals back');
+}
+
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
 /** Invisible strips (10 px wide on screen, whatever the zoom) over each gap, and the picked gap's shading. */
 function gapShapes(L) {
@@ -3879,7 +3906,7 @@ function pickPoint(d, p, pts, shift, hover = false) {
 }
 
 function setSel(d, sel) {
-  d.sel = sel;
+  d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
   const ed = edIndex(d);
   d.hl = [];
@@ -3909,6 +3936,7 @@ function clickSelect(d, p, shift) {
   const chain = Ed.chainAt(ed, e, Ed.chainTol(drawBox(d.fl), d.factor)).filter((c) => !lockedEnt(d, c)), next = new Set(shift ? d.sel : []);
   if (shift && d.sel.has(e)) for (const c of chain) next.delete(c); else for (const c of chain) next.add(c);
   setSel(d, next);
+  if (next.has(e)) d.lastPick = e;
   note(chain.length > 1 ? `${chain.length} entities joined end to end` + (shift ? '' : ' selected') : '1 entity selected');
 }
 /** A dragged box: what lies fully inside it. */

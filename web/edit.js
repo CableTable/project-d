@@ -47,13 +47,11 @@ function arcSweepOp(a0, a1, acw) {
 }
 
 /**
- * Area and perimeter of some entities (TODO 31), in mm² and mm. Every line and arc counts toward the perimeter. The
- * pieces are joined end to end (within tol, drawing units) into closed loops; a loop inside an odd number of others is
- * a hole and is taken off. Text, fills and kept dimensions are left out.
- * A loop whose last gap is tiny (≤ 10 × tol) is closed across it and counted in `gaps`.
- * Returns { area, perimeter, loops, holes, gaps, open } (open: pieces that do not close), or null if there are no lines.
+ * The closed loops of some entities, in drawing units (areaPerimeter and Shaping share it): the pieces are joined end to end (within tol)
+ * and a loop whose last gap is tiny (≤ 10 × tol) is closed across it and counted in `gaps`. Text, fills and kept dimensions are left out.
+ * Returns { loops: [{ pts, ents }] (ents: the entity indexes the loop is made of), len (all lines and arcs), gaps, open (pieces that do not close) }, or null if there are no lines.
  */
-export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
+export function outlineLoops(ed, ents, tol = 1e-6) {
   const { fl, items, raw } = ed, pieces = [];
   let len = 0;
   for (const e of ents) {
@@ -66,7 +64,7 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
       const add = (x, y) => { const p = mapply(m, x, y); if (cur.length) { const q = cur[cur.length - 1]; len += Math.hypot(p[0] - q[0], p[1] - q[1]); } cur.push(p); };
       for (let k = 0; k < ops.length;) {
         const op = ops[k];
-        if (op === 0) { if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false }); cur = []; add(ops[k + 1], ops[k + 2]); k += 3; }
+        if (op === 0) { if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false, ents: new Set([e]) }); cur = []; add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 1) { add(ops[k + 1], ops[k + 2]); k += 3; }
         else if (op === 2) {
           const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweepOp(a0, a1, ops[k + 6] === 1);
@@ -74,16 +72,16 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
           if (!cur) cur = [];
           for (let s = cur.length ? 1 : 0; s <= n; s++) add(cx + r * Math.cos(a0 + sw * s / n), cy + r * Math.sin(a0 + sw * s / n));
           k += 7;
-        } else { if (cur && cur.length > 1) { add(cur[0][0], cur[0][1]); pieces.push({ pts: cur, closed: true }); cur = null; } k++; }
+        } else { if (cur && cur.length > 1) { add(cur[0][0], cur[0][1]); pieces.push({ pts: cur, closed: true, ents: new Set([e]) }); cur = null; } k++; }
       }
-      if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false });
+      if (cur && cur.length > 1) pieces.push({ pts: cur, closed: false, ents: new Set([e]) });
     }
   }
   if (!pieces.length) return null;
   const near = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]) <= tol;
   const loops = [];
   for (const p of pieces) {                                    // one piece that ends where it starts (a circle, a closed polyline)
-    if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push(p.pts); p.used = true; }
+    if (p.closed || (p.pts.length > 2 && near(p.pts[0], p.pts[p.pts.length - 1]))) { loops.push({ pts: p.pts, ents: p.ents }); p.used = true; }
   }
   const open = pieces.filter((p) => !p.used), gapTol = tol * 10;
   let gaps = 0;
@@ -91,26 +89,40 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
     if (start.used) continue;
     start.used = true;
     let path = start.pts.slice(), closed = false;
+    const es = new Set(start.ents);
     for (;;) {
       if (path.length > 2 && near(path[0], path[path.length - 1])) { closed = true; break; }
       const end = path[path.length - 1];
       const next = open.find((q) => !q.used && (near(q.pts[0], end) || near(q.pts[q.pts.length - 1], end)));
       if (!next) break;
-      next.used = true;
+      next.used = true; for (const x of next.ents) es.add(x);
       path = path.concat((near(next.pts[0], end) ? next.pts : next.pts.slice().reverse()).slice(1));
     }
     while (!closed) {                                          // stuck: grow it from its other end too
       const head = path[0];
       const prev = open.find((q) => !q.used && (near(q.pts[0], head) || near(q.pts[q.pts.length - 1], head)));
       if (!prev) break;
-      prev.used = true;
+      prev.used = true; for (const x of prev.ents) es.add(x);
       path = (near(prev.pts[prev.pts.length - 1], head) ? prev.pts : prev.pts.slice().reverse()).slice(0, -1).concat(path);
       if (near(path[0], path[path.length - 1])) closed = true;
     }
     // a tiny gap left between its two ends (up to 10 × tol): closed across it for the area, and counted (TODO 46 fixes them)
     if (!closed && path.length > 2 && Math.hypot(path[0][0] - path[path.length - 1][0], path[0][1] - path[path.length - 1][1]) <= gapTol) { closed = true; gaps++; }
-    if (closed) loops.push(path); else start.open = true;
+    if (closed) loops.push({ pts: path, ents: es }); else start.open = true;
   }
+  return { loops, len, gaps, open: open.filter((p) => p.open).length };
+}
+
+/**
+ * Area and perimeter of some entities (TODO 31), in mm² and mm. Every line and arc counts toward the perimeter. The
+ * pieces are joined end to end (within tol, drawing units) into closed loops (outlineLoops); a loop inside an odd number of others is
+ * a hole and is taken off.
+ * Returns { area, perimeter, loops, holes, gaps, open } (open: pieces that do not close), or null if there are no lines.
+ */
+export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
+  const r = outlineLoops(ed, ents, tol);
+  if (!r) return null;
+  const { len, gaps, open } = r, loops = r.loops.map((l) => l.pts);
   const shoelace = (pts) => { let s = 0; for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) s += pts[j][0] * pts[i][1] - pts[i][0] * pts[j][1]; return Math.abs(s) / 2; };
   const inside = (pt, poly) => {
     let c = false;
@@ -126,7 +138,7 @@ export function areaPerimeter(ed, ents, factor = 1, tol = 1e-6) {
     const depth = loops.reduce((n, M, j) => n + (j !== i && a[j] > a[i] && inside(L[0], M) ? 1 : 0), 0);
     if (depth % 2) { area -= a[i]; holes++; } else area += a[i];
   });
-  return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open: open.filter((p) => p.open).length };
+  return { area: area * factor * factor, perimeter: len * factor, loops: loops.length, holes, gaps, open };
 }
 
 /**

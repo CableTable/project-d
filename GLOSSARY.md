@@ -94,6 +94,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Set length**: Makes a drawing or background true size by picking two points and entering their real distance in mm. Where: `DECISIONS.md`, 1:1 scale and Background.
 
+**Shaping**: CorelDRAW-style boolean operations on the selected closed outlines (Weld = union, Intersect = the shared area, Trim = the last picked outline minus the others), giving closed polylines; outlines inside another count as its holes. Where: Modify menu, `WELD` / `SHAPETRIM` / `INTERSECT`; `web/shaping.js`. Avoid: Trim (the tool that cuts lines back to cutting edges).
+
 **Sheet**: The physical output rectangle with a custom or preset width and height in mm, whose bottom-left is the layout origin. Where: `DECISIONS.md`, Sheets and Open DXF. Avoid: Drawing extents; the whole canvas.
 
 **Step and repeat**: Fills a layout with a regular grid of one part using rows, columns, rotation and gaps. Where: `TODO.md`, items 7 and 8; `web/layout.js`. Avoid: Auto-nest of mixed parts.
