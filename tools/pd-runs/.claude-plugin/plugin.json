@@ -1,6 +1,6 @@
 {
   "name": "pd-runs",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "author": { "name": "Rakshith" },
   "description": "A side pane of running jobs: Rook background calls, Bishop and Knight runs from the newest runs folder, with usage on top. Reads files and one process list, 0 tokens.",
   "types": "./types/index.d.ts",

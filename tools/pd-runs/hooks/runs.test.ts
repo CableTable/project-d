@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { findRuns, newestRunsDir, usageRows, barCells, barColor, barParts, todayCap, queueRows, branchOf, parseCi, snapshot, toastsFor, istHM, paneRows, endState, parseProcs, fit, wrap, ciLines, hiddenIn } from './runs.mjs'
+import { findRuns, newestRunsDir, usageRows, barCells, barColor, barParts, todayCap, queueRows, branchOf, parseCi, snapshot, toastsFor, istHM, paneRows, endState, parseProcs, fit, wrap, ciLines, hiddenIn, reapJobs, goScripts, scriptFiles } from './runs.mjs'
 
 const NOW = Date.UTC(2026, 9, 22, 21, 30) // 03:00 IST
 const min = (m: number) => NOW - m * 60_000
@@ -191,4 +191,31 @@ test('Rook wrapper of go-<name>.sh is dropped only while it runs and the Bishop 
   const v = paneRows([wrapper('104fix-2'), wrapper('105'), wrapper('x', 'failed'), wrapper('x', 'running', 'bash -c "waiting for 04:17; bash go-x.sh"'), other], rows, NOW)
   expect(brief(v.running)).toEqual(['Rook Resume 105 running', 'Rook Resume x queued 04:17', 'Rook tests running', 'Bishop 104fix-2 running']) // 105 has no run yet, x's row is finished: kept
   expect(brief(v.recent)).toEqual(['Knight 104 done', 'Bishop x done', 'Rook Resume x failed'])
+})
+
+test('a Rook job whose process left the listing is done (seen alive: 1 miss; never seen: 2 misses); a failed listing changes nothing', async () => {
+  const job = (id: string, command: string) => ({ id, desc: id, command, startedMs: min(5), state: 'running' as const })
+  const live = [proc(1, 0, 4, 'bash -c "bash /e/x/runs3/go-fix-0920.sh"')]
+  let jobs = [job('a', 'bash /e/x/runs3/go-fix-0920.sh'), job('b', 'bash /e/x/runs3/go-gone.sh')]
+  jobs = reapJobs(jobs, live, NOW) // a is alive: seen; b not there yet: 1 miss
+  expect(jobs.map(j => j.state)).toEqual(['running', 'running'])
+  expect(reapJobs(jobs, null, NOW)).toBe(jobs)
+  expect(reapJobs(jobs, live, NOW)[1]!.state).toBe('completed') // second miss
+  const ended = reapJobs(jobs, [], NOW) // a seen alive then gone: one miss ends it
+  expect(ended.map(j => j.state)).toEqual(['completed', 'completed'])
+  expect(ended[0]!.endedMs).toBe(NOW)
+  expect(reapJobs(ended, [], NOW)).toBe(ended) // ended jobs stay
+  expect(reapJobs([job('c', 'x')], [], NOW)[0]!.state).toBe('running') // nothing to look for: cannot tell
+  const generic = [job('d', 'node tools/rook.mjs usage-refresh --force')]
+  expect(reapJobs(generic, [proc(2, 0, 1, 'node tools/rook.mjs usage-refresh --force')], NOW)).toEqual([{ ...generic[0]!, seen: true, miss: 0 }])
+})
+
+test('script run files match a Rook wrapper to the Bishop / Knight row it launches, whatever the go-<name>.sh is called', async () => {
+  const script = 'claude2 -p "$(cat brief.txt)" --output-format stream-json > b122afix2.jsonl\ncodex exec -o rfix2.txt > rfix2.log'
+  expect(scriptFiles(script)).toEqual(['brief.txt', 'b122afix2.jsonl', 'rfix2.txt', 'rfix2.log'])
+  expect(goScripts('bash runs3/go-fix-0920.sh; bash /e/x/go-b.sh', 'D')).toEqual([{ name: 'go-fix-0920.sh', path: 'D/go-fix-0920.sh' }, { name: 'go-b.sh', path: '/e/x/go-b.sh' }])
+  const wrapper = { desc: "Resume Knight's bug fix round now", command: 'bash go-fix-0920.sh', startedMs: min(5), state: 'running' as const, files: scriptFiles(script) }
+  const rows = [{ who: 'Knight', name: 'fix2', state: 'running', age: 60_000, files: ['rfix2.log', 'rfix2.txt', 'rowan-fix2-r.txt'] }]
+  expect(brief(paneRows([wrapper], rows, NOW).running)).toEqual(['Knight fix2 running'])
+  expect(brief(paneRows([{ ...wrapper, files: undefined }], rows, NOW).running)).toEqual(["Rook Resume Knight's bug fix round now running", 'Knight fix2 running'])
 })

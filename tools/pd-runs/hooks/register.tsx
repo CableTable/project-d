@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 import type { Ci, Disk, Job, RunRow, UsageCell } from '../types'
-import { findRuns, paneRows, jsonlToRead, newestRunsDir, parseProcs, usageRows, barParts, barColor, endState, fit, ago, queueRows, branchOf, parseCi, snapshot, toastsFor, CI_EVERY_MS, PIECE, WHO_COLOR, PS_ARGV, WIDTH, wrap, ciLines, hiddenIn } from './runs.mjs'
+import { findRuns, paneRows, jsonlToRead, newestRunsDir, parseProcs, usageRows, barParts, barColor, endState, fit, ago, queueRows, branchOf, parseCi, snapshot, toastsFor, CI_EVERY_MS, PIECE, WHO_COLOR, PS_ARGV, WIDTH, wrap, ciLines, hiddenIn, goScripts, scriptFiles, reapJobs } from './runs.mjs'
 
 const PANE = 'pd-runs'
 const jobs = atom({ plugin: 'pd-runs', key: 'jobs' } as const, [])
@@ -55,6 +55,19 @@ async function refresh($: any, extrasDir: string, usageFile: string, repoDir: st
     if (dir) try { queue = queueRows(await $.fs.read(`${extrasDir}/${dir}/queue.txt`)) } catch {}
     if (!ci || now - ci.at >= CI_EVERY_MS) ci = await pollCi($, repoDir, now)
     const rows = findRuns(files, now, texts, procs)
+    // Rook rows: learn the run files each go-*.sh writes (to match its row), and end the jobs whose process is gone (a notice may never come).
+    const base = dir ? `${extrasDir}/${dir}` : extrasDir
+    const pending = (await read($, jobs)).filter(j => j.state === 'running' && !j.files && goScripts(j.command, base).length)
+    const found: Record<string, string[]> = {}
+    for (const j of pending) {
+      const names: string[] = []
+      let ok = false
+      for (const s of goScripts(j.command, base)) {
+        try { names.push(...scriptFiles(await $.fs.read(s.path))); ok = true } catch {}
+      }
+      if (ok) found[j.id] = names
+    }
+    await update($, jobs, l => reapJobs(l.map(j => (found[j.id] ? { ...j, files: found[j.id] } : j)), procs, now))
     const next: Disk = { at: now, usage: usageRows(csv, now), cacheAge, dir, rows, queue, ci }
     await update($, disk, () => next)
     // A failed process listing makes every live row look finished for a tick: no toasts, and keep the last states.
