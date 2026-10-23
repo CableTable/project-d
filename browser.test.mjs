@@ -8629,6 +8629,97 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 123: Shaping Keep originals is remembered; all six operations append selected results, preserve original DXF bytes and Undo once; off restores replacement', async () => {
+    await closeTabs(/./);
+    const tick = () => page.getByRole('menuitemcheckbox', { name: /Shaping: Keep originals$/ });
+    const remembered = async (on) => {
+      await page.waitForFunction(async (want) => {
+        const { idbStore } = await import('./idbstore.js');
+        return (await idbStore('project-d-shaping', 'settings', 'Shaping settings').all()).some((r) => r.id === 'keepOriginals' && r.on === want);
+      }, on);
+    };
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await tick().getAttribute('aria-checked'), 'false', 'off by default');
+    await tick().click(); await remembered(true);
+    await page.reload(); await t('new-tab').waitFor();
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await tick().getAttribute('aria-checked'), 'true', 'remembered after reload');
+    await page.screenshot({ path: shotDir + '/shaping-keep-light.png' });
+    await page.keyboard.press('Escape'); await menuItem('View', 'Theme: dark');
+    await page.locator('[data-menu=Modify]').click();
+    await page.screenshot({ path: shotDir + '/shaping-keep-dark.png' });
+    await page.keyboard.press('Escape'); await menuItem('View', 'Theme: light');
+    // Exercise the real Save serializer in memory: no downloads or disk saves in this step.
+    await page.evaluate(() => {
+      window.__shapeSave = { text: '', writes: 0 };
+      window.__TAURI__ = { dialog: { save: async () => 'C:\\out\\shaping-123-saved.dxf' },
+        fs: { exists: async () => false, writeTextFile: async (_, text) => { window.__shapeSave.text = text; window.__shapeSave.writes++; } } };
+    });
+    const save = async () => {
+      const before = await page.evaluate(() => window.__shapeSave.writes);
+      await page.keyboard.press('Control+s');
+      await page.waitForFunction((n) => window.__shapeSave.writes > n && document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Saved '), before);
+      return page.evaluate(() => window.__shapeSave.text);
+    };
+    const entityBytes = (text) => text.match(/  2\r\nENTITIES\r\n([\s\S]*?)  0\r\nENDSEC/)[1];
+    try {
+      const doc = newDoc();
+      addLayer(doc, 'Back'); addLayer(doc, 'Front');
+      addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true, layer: 'Back', aci: 1 }),
+        dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Front', aci: 3 }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
+      await t('picker').setInputFiles({ name: 'shaping-123.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-123.dxf');
+      const original = await save(), bytes = entityBytes(original);
+      await t('ptab-objects').click();
+      for (const [cmd, label, area, layer] of [
+        ['weld', 'Weld', '6300.00', 'Back'], ['shapetrim', 'Trim', '2700.00', 'Back'],
+        ['intersect', 'Intersect', '900.00', 'Back'], ['simplify', 'Simplify', '6300.00', 'Back'],
+        ['frontminus', 'Front minus back', '2700.00', 'Front'], ['backminus', 'Back minus front', '2700.00', 'Back'],
+        ['boundary', 'Create boundary', '6300.00', '0'],
+      ]) for (const via of ['menu', 'command']) {
+        await page.keyboard.press('Control+a');
+        if (via === 'menu') await menuItem('Modify', 'Shaping: ' + label); else await typeCmd(cmd);
+        assert.match(await prompt(), new RegExp('area ' + area.replace('.', '\\.') + ' mm²'));
+        assert.match(await prompt(), /The originals stay\. Ctrl\+Z removes/);
+        await waitSel('1 selected');
+        assert.deepEqual(await page.locator('.or.obj.sel').evaluateAll((rows) => rows.map((r) => Number(r.dataset.e))), [3], 'only the appended result is selected');
+        const saved = await save(), ents = readDxf(saved).entities;
+        assert.equal(ents.length, 4, cmd + ' appends one result');
+        assert.equal(entityBytes(saved).slice(0, bytes.length), bytes, cmd + ' keeps every original byte, including handles');
+        assert.equal(ents.at(-1).layer, layer);
+        assert.equal(ents.at(-1).type, 'LWPOLYLINE');
+        await page.keyboard.press('Control+z');
+        assert.equal(await save(), original, cmd + ': one Undo restores the entire saved drawing byte-for-byte');
+      }
+      await page.locator('[data-menu=Modify]').click(); await tick().click(); await remembered(false);
+      await page.keyboard.press('Control+a'); await typeCmd('weld');
+      assert.equal(await entCount(), 2, 'off again replaces the closed originals and leaves the open outline');
+      assert.match(await prompt(), /Ctrl\+Z puts the originals back$/);
+      await page.keyboard.press('Control+z'); assert.equal(await save(), original);
+      await closeTabs(/./);
+      // Empty differences with Keep originals must leave the drawing and Undo history alone.
+      const same = newDoc(), square = dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true });
+      addEntities(same, square, square);
+      await t('picker').setInputFiles({ name: 'shaping-123-empty.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(same)) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-123-empty.dxf');
+      await page.locator('[data-menu=Modify]').click(); await tick().click(); await remembered(true);
+      for (const cmd of ['frontminus', 'backminus']) {
+        await page.keyboard.press('Control+a'); await typeCmd(cmd);
+        assert.match(await prompt(), /nothing is left, nothing changed/);
+        assert.equal(await entCount(), 2);
+        assert.deepEqual(await histLabels(), ['Start']);
+      }
+      await page.locator('[data-menu=Modify]').click(); await tick().click(); await remembered(false);
+      await closeTabs(/./);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__shapeSave; localStorage.removeItem('pd-recent'); });
+    }
+    await page.reload(); await t('new-tab').waitFor();
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await tick().getAttribute('aria-checked'), 'false', 'off is remembered too');
+    await page.keyboard.press('Escape'); await t('ptab-drawing').click();
+  });
+
   await step('TODO 122a fix: Shaping leaves a block (INSERT) alone and says so, keeps open lines, and a locked layer is not welded', async () => {
     await closeTabs(/./);
     const doc = newDoc();

@@ -54,6 +54,7 @@ import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 const SVGNS = 'http://www.w3.org/2000/svg';
 const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
 const viewStore = idbStore('project-d-view', 'settings', 'view settings');
+const shapingStore = idbStore('project-d-shaping', 'settings', 'Shaping settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 function showShortcuts() {
   ui.cmdUI.close();
@@ -171,6 +172,7 @@ const state = {
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
   wireframe: false,
+  shapingKeepOriginals: false,
   workArea: 'Follow app',
   dp: 2,                           // decimal places in dimensions (status bar), remembered on this PC
   meas: null,                      // Measure in progress: { pts: [[x, y] drawing units], hover }
@@ -387,6 +389,11 @@ function buildMenus() {
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
+  const modifyItems = menus.Modify;
+  menus.Modify = () => [...modifyItems, [(state.shapingKeepOriginals ? '✓ ' : '  ') + 'Shaping: Keep originals', () => {
+    state.shapingKeepOriginals = !state.shapingKeepOriginals;
+    shapingStore.put({ id: 'keepOriginals', on: state.shapingKeepOriginals }).catch(() => note('Could not remember Keep originals; it still applies until the app closes'));
+  }, null, null, 'Keep the originals and add selected results on top; Create boundary always keeps originals', false, state.shapingKeepOriginals]];
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
@@ -3824,7 +3831,7 @@ function explodeSelected() {
 // ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----
 const SHAPING_TITLE = { weld: 'Join the selected outlines into one outline (union)', intersect: 'Keep only the area all the selected outlines share', trim: 'Cut the others out of the last picked outline (or the largest after a box); the others stay',
   simplify: 'Keep each outline minus the outlines in front of it (later in the drawing)', frontminus: 'Keep the frontmost outline minus all the others', backminus: 'Keep the backmost outline minus all the others', boundary: 'Add the union on the current layer; the originals stay' };
-/** Results use their source's layer; Boundary adds on the current layer. Trim keeps cutters; Boundary keeps all originals. */
+/** Results use their source's layer; Boundary adds on the current layer and always keeps originals. */
 function shapeSelection(op) {
   const name = SH.OPS[op].label, d = editable();
   if (!d) { note(`${name} works on a drawing tab: open a drawing first`); return; }
@@ -3838,7 +3845,9 @@ function shapeSelection(op) {
   if (r.error) { note(r.error + skipped); return; }
   if (r.untouched.length === r.operands.length) { note(`${name}: no outline is overlapped by one in front, nothing changed` + skipped); return; }
   if (!r.rings.length && !r.untouched.length && op !== 'frontminus' && op !== 'backminus') { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
-  const gone = SH.goneEntities(found.loops, found.openEnts, (op === 'boundary' ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
+  const keep = op === 'boundary' || state.shapingKeepOriginals;
+  if (keep && !r.rings.length) { note(`${name}: nothing is left, nothing changed` + skipped); return; }
+  const gone = SH.goneEntities(found.loops, found.openEnts, (keep ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
   const kept = Ed.removeEntities(d.raw, gone);
   const made = r.rings.map((ring, i) => {
     const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
@@ -3846,7 +3855,7 @@ function shapeSelection(op) {
   }), at = kept.entities.length;
   commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);
   setSel(d, new Set(made.map((_, i) => at + i)));
-  note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back'));
+  note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' && !keep ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : keep ? '. The originals stay. Ctrl+Z removes the result' : '. Ctrl+Z puts the originals back'));
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
@@ -6913,6 +6922,7 @@ async function init() {
     const mode = saved.find((r) => r.id === 'workArea')?.mode;
     if (WORK_AREAS.includes(mode)) state.workArea = mode;
   } catch { /* storage may be blocked */ }
+  try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();
