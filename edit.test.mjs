@@ -620,6 +620,89 @@ test('joinGaps: lines, polylines and a polyline', () => {
   assert.equal(E.chainAt(ed2, 0, 1e-9).length, 3);
 });
 
+// ---- TODO 121: join methods
+const joinFix = (() => {
+  const dxf = (body) => '0\nSECTION\n2\nENTITIES\n' + body + '0\nENDSEC\n0\nEOF\n';
+  const L = (x1, y1, x2, y2) => `0\nLINE\n8\nCut\n10\n${x1}\n20\n${y1}\n30\n0\n11\n${x2}\n21\n${y2}\n31\n0\n`;
+  const A = (cx, cy, r, a0, a1) => `0\nARC\n8\nCut\n10\n${cx}\n20\n${cy}\n30\n0\n40\n${r}\n50\n${a0}\n51\n${a1}\n`;
+  const PL = (pts, flag = 0) => `0\nLWPOLYLINE\n8\nCut\n90\n${pts.length}\n70\n${flag}\n` + pts.map((p) => `10\n${p[0]}\n20\n${p[1]}\n`).join('');
+  const run = (body, method, tol = 0.01) => {
+    const raw = D.readDxf(dxf(body)), ed = E.makeIndex(raw, D.flatten(raw)), r = E.joinGaps(raw, ed, E.findGaps(ed, tol), method);
+    const raw2 = { ...raw, entities: r.entities, blocks: r.blocks }, ed2 = E.makeIndex(raw2, D.flatten(raw2));
+    return { raw, r, raw2, ed2, left: E.findGaps(ed2, tol).length };
+  };
+  return { L, A, PL, run };
+})();
+
+test('join methods: a 90 degree corner gap (0.01 each way)', () => {
+  const { L } = joinFix, run = (b, m) => joinFix.run(b, m, 0.02), body = L(0, 0, 9.99, 0) + L(10, 0.01, 10, 10);   // the gap is 0.0141
+  const ext = run(body, 'extend');
+  assert.deepEqual([ext.r.joined, ext.r.by, ext.left, ext.r.entities.length], [1, { extend: 1 }, 0, 2]);
+  assert.deepEqual(ext.raw2.entities[0].r.v.slice(-3), ['10', '0', '0'], 'the first line now ends at the corner');
+  const cha = run(body, 'chamfer');
+  assert.deepEqual([cha.r.by, cha.r.entities.length, cha.r.changed], [{ chamfer: 1 }, 3, 1]);
+  assert.deepEqual(cha.r.entities.slice(0, 2), cha.raw.entities, 'both ends stay where they were');
+  assert.equal(cha.r.entities[2].layer, 'Cut');
+  assert.equal(E.chainAt(cha.ed2, 0, 2e-6).length, 3);
+  const fil = run(body, 'fillet'), arc = fil.r.entities[2];
+  assert.deepEqual([fil.r.by, arc.type], [{ fillet: 1 }, 'ARC']);
+  const v = (c) => +arc.r.v[arc.r.c.indexOf(c)];
+  near(v(10), 9.99, 'cx'); near(v(20), 0.01, 'cy'); near(v(40), 0.01, 'r'); near(v(50), 270, 'from'); near(v(51), 0, 'to', 1e-9);
+  assert.equal(E.chainAt(fil.ed2, 0, 2e-6).length, 3);
+  const bez = run(body, 'bezier'), pl = bez.r.entities[2];
+  assert.deepEqual([bez.r.by, pl.type, pl.r.v[pl.r.c.indexOf(90)]], [{ bezier: 1 }, 'LWPOLYLINE', '13']);
+  assert.equal(E.chainAt(bez.ed2, 0, 2e-6).length, 3);
+});
+
+test('join methods: a collinear gap and a parallel-offset gap fall back (extend → average point, fillet → chamfer)', () => {
+  const { L, run } = joinFix;
+  for (const body of [L(0, 0, 9.995, 0) + L(10, 0, 20, 0), L(0, 0, 10, 0) + L(10.004, 0.003, 20, 0.003)]) {
+    const ext = run(body, 'extend');
+    assert.deepEqual([ext.r.by, ext.left, ext.r.entities.length], [{ average: 1 }, 0, 2], 'average point, counted');
+    const fil = run(body, 'fillet');
+    assert.deepEqual([fil.r.by, fil.r.entities.length, fil.r.entities[2].type], [{ chamfer: 1 }, 3, 'LINE']);
+    assert.deepEqual(run(body, 'bezier').r.by, { bezier: 1 });
+    assert.equal(run(body, 'average').r.by.average, 1);
+  }
+});
+
+test('join methods: a LINE to ARC gap (extend along the circle; fillet falls back to chamfer)', () => {
+  const { L, A, run } = joinFix, body = A(0, 0, 10, 0, 90) + L(-0.004, 10.003, -0.004, 20);
+  const ext = run(body, 'extend');
+  assert.deepEqual([ext.r.by, ext.left], [{ extend: 1 }, 0]);
+  const [x, y] = [ext.ed2.ends[2], ext.ed2.ends[3]];                                 // the arc's end
+  near(x, -0.004, 'x', 1e-9); near(y, Math.sqrt(100 - 1.6e-5), 'on the circle', 1e-9);
+  assert.deepEqual(run(body, 'fillet').r.by, { chamfer: 1 });
+  assert.deepEqual(run(body, 'bezier').r.by, { bezier: 1 });
+});
+
+test('join methods: a ring stays closed, and through Save and reopen', () => {
+  const { L, PL, run } = joinFix, d = 0.004;
+  const ring = L(0, 0, 10 - d, 0) + L(10, d, 10, 10 - d) + L(10 - d, 10, 0 + d, 10) + L(0, 10 - d, 0, d);
+  for (const method of ['average', 'extend', 'chamfer', 'fillet', 'bezier']) {
+    const x = run(ring, method), n = 4 + (method === 'average' || method === 'extend' ? 0 : 4);
+    assert.equal(x.r.joined, 4, method);
+    const text = W.writeDxf({ ...x.raw, entities: x.r.entities, blocks: x.r.blocks }, { escapeUnicode: true });
+    const raw3 = D.readDxf(D.decodeDxf(new TextEncoder().encode(text))), ed3 = E.makeIndex(raw3, D.flatten(raw3));
+    assert.equal(raw3.entities.length, n, method);
+    assert.equal(E.chainAt(ed3, 0, 2e-6).length, n, method + ': one closed chain after reopen');
+    const ap = E.areaPerimeter(ed3, ed3.shown, 1, 2e-6);
+    assert.deepEqual([ap.loops, ap.open], [1, 0], method);
+  }
+  // an open polyline whose own ends meet: chamfer closes it instead of adding a line
+  const pl = run(PL([[0, 0], [10, 0], [10, 10], [0, 10], [0, 0.005]]), 'chamfer');
+  assert.deepEqual([pl.r.entities.length, pl.r.by, pl.r.entities[0].r.v[pl.r.entities[0].r.c.indexOf(70)]], [1, { chamfer: 1 }, '1']);
+  assert.equal(pl.left, 0, 'a closed polyline has no free ends');
+});
+
+test('join methods: more than two ends in a cluster go to the average point; micro-piece step passes the method through', () => {
+  const { L, run } = joinFix;
+  assert.deepEqual(run(L(0, 0, 9.995, 0) + L(10, 0.003, 10, 10) + L(10.002, -0.002, 20, -5), 'fillet').r.by, { average: 1 });
+  const { raw, fl } = load('micro-gaps.dxf'), ed = E.makeIndex(raw, fl), r = E.joinTinyGaps(raw, ed, .01, () => true, 'chamfer');
+  assert.equal(r.removed, 2);
+  assert.ok(r.by.chamfer >= 1 && r.entities.length > raw.entities.length - 2);
+});
+
 test('TODO 104: remove micro arcs / lines, close both outlines, keep a lone piece and change total length by at most 0.1%', () => {
   const { raw, fl } = load('micro-gaps.dxf'), ed = E.makeIndex(raw, fl), before = structuredClone(raw);
   const oldJoin = E.joinGaps(raw, ed, E.findGaps(ed, .01));
