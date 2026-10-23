@@ -3789,11 +3789,9 @@ function shapeSelection(op) {
   if (!found || found.loops.length < 2) { note(`${name}: select at least 2 closed outlines (click one, Shift+click the others, or drag a box)` + skipped); return; }
   const r = SH.shape(op, found.loops, d.sel.has(d.lastPick) ? found.loops.findIndex((l) => l.ents.has(d.lastPick)) : -1);
   if (r.error) { note(r.error + skipped); return; }
-  if (!r.rings.length && op !== 'frontminus' && op !== 'backminus') { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
-  const used = new Set((op === 'boundary' ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands).flatMap((o) => o.loops)), gone = new Set();
-  found.loops.forEach((l, i) => { if (used.has(i)) l.ents.forEach((e) => gone.add(e)); });
-  found.loops.forEach((l, i) => { if (!used.has(i)) l.ents.forEach((e) => gone.delete(e)); });   // an entity that also makes an unused loop or open line stays whole
-  found.openEnts.forEach((e) => gone.delete(e));
+  if (r.untouched.length === r.operands.length) { note(`${name}: no outline is overlapped by one in front, nothing changed` + skipped); return; }
+  if (!r.rings.length && !r.untouched.length && op !== 'frontminus' && op !== 'backminus') { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
+  const gone = SH.goneEntities(found.loops, found.openEnts, (op === 'boundary' ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
   const kept = Ed.removeEntities(d.raw, gone);
   const made = r.rings.map((ring, i) => {
     const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
@@ -3801,7 +3799,7 @@ function shapeSelection(op) {
   }), at = kept.entities.length;
   commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);
   setSel(d, new Set(made.map((_, i) => at + i)));
-  note(`${name}: ${r.operands.length} outlines → ${made.length} outline${made.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back'));
+  note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back'));
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----

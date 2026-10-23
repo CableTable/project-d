@@ -111,24 +111,30 @@ test('outlineLoops: closed outlines come out, an open polyline is counted open, 
   near(s.area, 100 + 100 - 25 + Math.PI * 25 + 100, 1e-3);
 });
 
-test('Simplify: overlapping squares in either order retain each visible part on its source', () => {
+test('Simplify: overlapping squares in either order trim the back one; the front one is left as it is', () => {
   const a = sq(0, 0, 10), b = sq(5, 5, 10);
   for (const loops of [[a, b], [b, a]]) {
     const r = S.shape('simplify', loops);
-    near(r.area, 175); assert.equal(r.rings.length, 2);
-    assert.deepEqual(r.sources, [0, 1]);
+    near(r.area, 175); assert.equal(r.rings.length, 1);
+    assert.deepEqual(r.sources, [0]); assert.deepEqual(r.untouched, [1]);
     near(S.operandsOf([r.rings[0]])[0].area, 75);
-    near(S.operandsOf([r.rings[1]])[0].area, 100);
-    near(S.shape('intersect', r.rings).area, 0);
-    near(S.shape('intersect', [r.rings[1], loops[1]]).area, 100);
+    near(S.shape('intersect', [r.rings[0], loops[1]]).area, 0);
   }
+});
+
+test('Simplify: an outline nothing in front overlaps is untouched (a circle and a far square give no new rings)', () => {
+  const r = S.shape('simplify', [circle(0, 0, 5), sq(100, 100, 10)]);
+  assert.equal(r.rings.length, 0); assert.deepEqual(r.untouched, [0, 1]);
+  near(r.area, r.operands[0].area + 100);
+  const o = S.shape('simplify', [circle(0, 0, 5), sq(100, 100, 10), sq(3, 0, 10)]);   // the square at 3 covers part of the circle only
+  assert.deepEqual(o.untouched, [1, 2]); assert.equal(o.rings.length, 1); assert.deepEqual(o.sources, [0]);
 });
 
 test('Simplify drops a fully covered outline and subtracts all outlines in front', () => {
   const a = sq(0, 0, 10);
   const r = S.shape('simplify', [a, a, sq(5, 0, 10)]);
-  near(r.area, 150); assert.equal(r.rings.length, 2);
-  assert.deepEqual(r.sources, [1, 2]);
+  near(r.area, 150); assert.equal(r.rings.length, 1);
+  assert.deepEqual(r.sources, [1]); assert.deepEqual(r.untouched, [2]);
   near(S.operandsOf([r.rings[0]])[0].area, 50);
 });
 
@@ -172,7 +178,7 @@ test('new operations keep the even-odd hole rule and shared failure note', () =>
     assert.match(S.shape(op, [sq(0, 0, 10), { pts: [] }]).error, /Shaping failed/);
     const r = S.shape(op, [sq(0, 0, 20), sq(5, 5, 10), sq(18, 0, 10)]);
     near(r.area, { simplify: 380, frontminus: 80, backminus: 280, boundary: 380 }[op]);
-    if (op === 'simplify' || op === 'boundary') assert.equal(r.rings.length, 3 - (op === 'boundary' ? 1 : 0));
+    if (op === 'simplify' || op === 'boundary') assert.equal(r.rings.length, 2);   // the big one with its hole; the far square is untouched by Simplify
   }
 });
 
@@ -183,6 +189,12 @@ test('drawing entity order wins over selection order and loop discovery order', 
   assert.deepEqual(r.rings, S.shape('trim', [front, back], 0).rings);
   const s = S.shape('simplify', [front, back]);
   assert.deepEqual(s.operands.map((o) => o.loops[0]), [1, 0]);
+});
+
+test('goneEntities: an entity shared by a used and an unused loop, or an open line, is kept', () => {
+  const loops = [{ ents: new Set([0, 1, 2, 3]) }, { ents: new Set([3, 4, 5]) }, { ents: new Set([6, 7]) }];
+  assert.deepEqual([...S.goneEntities(loops, new Set([7]), [0, 2])].sort(), [0, 1, 2, 6]);   // 3 also makes unused loop 1; 7 is also an open line
+  assert.deepEqual([...S.goneEntities(loops, new Set(), [])], []);
 });
 
 console.log(n + ' passed');

@@ -42,7 +42,8 @@ const N0 = stepRepeat(base).count;                // the default sheet, 120 × 8
 let failed = 0;
 let afterStep = async () => {};
 async function step(name, fn) {
-  if (process.env.ONLY && !new RegExp(process.env.ONLY).test(name)) return;      // ONLY=regex runs just the steps whose name matches (to work on one flow quickly)
+  const only = process.env.ONLY || process.argv[3];
+  if (only && !new RegExp(only).test(name)) return;      // ONLY=regex (or a 2nd argument: node browser.test.mjs 5297 regex) runs just the steps whose name matches (to work on one flow quickly)
   try { await fn(); console.log('ok', name); } catch (e) { failed++; console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim()); try { await afterStep(); } catch { /* best effort */ } }
 }
 
@@ -8399,10 +8400,11 @@ try {
       assert.equal(await prompt(), `${label}: 2 outlines → ${count} outline${count === 1 ? '' : 's'}, area ${area} mm²; 1 open outline skipped` + tail);
       assert.equal(await entCount(), cmd === 'boundary' ? 4 : count + 1);
       const saved = withoutHandles((await savedDoc()).entities);
-      assert.deepEqual(saved.slice(-count).map((e) => e.layer), layers);
+      if (cmd === 'simplify') assert.deepEqual(saved.map((e) => e.layer), ['Front', '0', 'Back']);      // the front outline nothing overlaps keeps its entity; the back one is replaced by its trimmed copy
+      else assert.deepEqual(saved.slice(-count).map((e) => e.layer), layers);
       if (cmd === 'boundary') assert.deepEqual(saved.slice(0, 3), original, 'boundary leaves every original whole');
-      else assert.deepEqual(saved[0], original[2], 'the open outline stays whole');
-      if (cmd === 'simplify') assert.deepEqual(saved.slice(-count).map((e) => e.aci), [1, 3], 'each source keeps its colour');
+      else assert.deepEqual(saved[cmd === 'simplify' ? 1 : 0], original[2], 'the open outline stays whole');
+      if (cmd === 'simplify') { assert.deepEqual(saved[0], original[1], 'the front outline stays whole'); assert.equal(saved.at(-1).aci, 1, 'the trimmed back keeps its colour'); }
       if (cmd === 'frontminus' || cmd === 'backminus') {
         assert.equal(Math.min(...saved.at(-1).r.v.filter((_, i) => saved.at(-1).r.c[i] === 10).map(Number)), cmd === 'frontminus' ? 130 : 100);
       }
@@ -8453,6 +8455,14 @@ try {
     assert.match(await prompt(), /^Weld: select at least 2 closed outlines/);
     assert.equal(await entCount(), 2, 'nothing was welded');
     await t('ptab-drawing').click();
+    // clicking the locked outline does not pick it (so Weld never gets it), and says why
+    await click(190, 170);
+    assert.equal(await prompt(), 'Layer Cut is locked: unlock it in the Objects tab to pick this');
+    await click(110, 100);
+    await waitSel('1 selected');
+    await typeCmd('weld');
+    assert.match(await prompt(), /^Weld: select at least 2 closed outlines/);
+    assert.equal(await entCount(), 2, 'nothing was welded');
     await closeTabs(/./);
   });
 
