@@ -5767,7 +5767,7 @@ try {
     await closeTabs(/./);
   });
 
-  // ---- Compare two drawings (TODO 41; mock-up R5d, Option B) ----
+  // ---- Compare drawings (TODO 41; mock-up R5d, Option B) ----
   const plateDxf = (name, r2) => {
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [300, 0], [300, 180], [0, 180]], { closed: true }), dxfCircle(80, 90, 30), dxfCircle(220, 90, r2)]);
     return { name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) };
@@ -5776,14 +5776,14 @@ try {
   const cmpCount = () => t('cmp-count').textContent();
   const cmpOffX = async () => Number(/X (-?[\d.]+),/.exec(await cmpHint())[1]);
 
-  await step('Compare: File → Compare two drawings… opens a Compare tab with the open drawings as 1 and 2, differences listed and glowing', async () => {
+  await step('Compare: File → Compare drawings… opens a Compare tab with the open drawings as 1 and 2, differences listed and glowing', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles(plateDxf('plate-b.dxf', 30));
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-b.dxf');
     await t('picker').setInputFiles(plateDxf('plate-c.dxf', 30.6));
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'plate-c.dxf');
     await page.locator('.tabs .dtab', { hasText: 'plate-b' }).click();
-    await menuItem('File', 'Compare two drawings…');
+    await menuItem('File', 'Compare drawings…');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
     assert.equal(await t('cmp-name-1').textContent(), 'plate-b.dxf');
     assert.equal(await t('cmp-name-2').textContent(), 'plate-c.dxf');
@@ -5795,7 +5795,7 @@ try {
     assert.equal(await t('cmp-glow').count(), 1);
     assert.match(await t('cmp-diff').textContent(), /0\.[56]\d mm/);
     assert.match(await t('cmd-hist').textContent(), /COMPARE.*plate-b\.dxf \(red\) vs plate-c\.dxf \(blue\).*tolerance 0\.1 mm.*1 difference/);
-    await menuItem('File', 'Compare two drawings…');
+    await menuItem('File', 'Compare drawings…');
     assert.deepEqual((await tabNames()).filter((n) => n === 'Compare').length, 1, 'one Compare tab');
   });
 
@@ -5819,10 +5819,9 @@ try {
     assert.match(await prompt(), /Difference 1: 0\.[56]\d mm/);
   });
 
-  await step('Compare: colours change, Line up Centres and Manual (arrow keys nudge by the step, a drag moves drawing 2), Open… picks another drawing', async () => {
-    await t('cmp-colour-1-green').click();
-    assert.equal(await t('cmp-colour-1-green').getAttribute('aria-pressed'), 'true');
-    assert.match(await t('cmd-hist').textContent(), /plate-b\.dxf \(green\)/);
+  await step('Compare: distinct colours, Line up Centres and Manual (arrow keys nudge by the step, a drag moves drawing 2), Add file… picks another drawing', async () => {
+    assert.deepEqual(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour)), ['red', 'blue']);
+    assert.match(await t('cmd-hist').textContent(), /plate-b\.dxf \(red\)/);
     await t('cmp-lineup-centre').click();
     assert.equal(await cmpOffX(), 0);
     await t('cmp-lineup-manual').click();
@@ -5844,9 +5843,10 @@ try {
     assert.equal(await t('cmp-stale').isVisible(), true, 'a drag marks the result out of date');
     await t('cmp-lineup-bl').click();
     assert.equal(await cmpOffX(), 0);
-    const [fc] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-open-2').click()]);
+    await t('cmp-remove').nth(1).click();
+    const [fc] = await Promise.all([page.waitForEvent('filechooser'), t('cmp-add-file').click()]);
     await fc.setFiles(plateDxf('plate-d.dxf', 31));
-    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-name-2]').textContent === 'plate-d.dxf');
+    await page.waitForFunction(() => document.querySelector('[data-testid=cmp-name-2]')?.textContent === 'plate-d.dxf');
     assert.equal(await cmpCount(), 'Press Compare', 'a new drawing has no result yet');
     await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
@@ -5887,6 +5887,89 @@ try {
     assert.ok(x !== 300 && Math.abs(x - 300) < 2 && y !== 0, `SNAP off: the exact released point, not the corner (${x}, ${y})`);
     await t('tog-snap').click();
     await t('cmp-lineup-bl').click();
+  });
+
+  await step('Compare: five snapshots from tabs, library and disk; tick, eye, reference, selection, removal and coloured table (TODO 114)', async () => {
+    // Make a real library part through Extract, so the source picker has no fixture-only path.
+    await t('picker').setInputFiles(plateDxf('compare-library-source.dxf', 30.9));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'compare-library-source.dxf');
+    await page.keyboard.press('Control+a');
+    await t('bar-extract').click();
+    const partName = '<b>Compare part</b>';
+    await t('name-input').fill(partName); await t('name-ok').click();
+    await t('name-dialog').waitFor({ state: 'detached' });
+    await closeTabs(/^compare-library-source/);
+    await menuItem('File', 'Compare drawings…');
+    while (await t('cmp-remove').count()) await t('cmp-remove').first().click();
+    assert.equal(await t('cmp-run').isDisabled(), true);
+    const addTab = async (name) => {
+      await t('cmp-add-tab').click(); await page.getByRole('menuitem', { name, exact: true }).click();
+    };
+    const addLibrary = async () => {
+      await t('cmp-add-library').click(); await page.getByRole('menuitem', { name: partName, exact: true }).click();
+    };
+    await addTab('plate-b.dxf'); await addTab('plate-c.dxf'); await addLibrary();
+    assert.equal(await t('cmp-name-3').textContent(), partName);
+    assert.equal(await t('cmp-items').locator('b').count(), 0, 'file and library names stay text');
+    assert.deepEqual(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour)), ['red', 'blue', 'green']);
+    await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 3);
+    assert.deepEqual(await t('cmp-result').first().locator('td').allTextContents(), ['0.00', '0.00', '0.00 × 0.00']);
+    assert.deepEqual(await t('cmp-glow').evaluateAll((rs) => rs.map((r) => r.dataset.colour).sort()), ['blue', 'green']);
+    const resultText = await t('cmp-table').textContent();
+    await t('cmp-eye').nth(2).click();
+    assert.equal(await t('cmp-eye').nth(2).getAttribute('aria-pressed'), 'false');
+    assert.equal(await t('cmp-stale').isVisible(), false, 'the eye changes only visibility');
+    await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 3, 'eye-hidden snapshot remains in the table');
+    assert.equal(await t('cmp-table').textContent(), resultText);
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-testid=cmp-glow]')].every((r) => r.dataset.colour !== 'green'));
+    await t('cmp-check').first().uncheck();
+    await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 2, 'unticked snapshot is left out');
+    assert.equal(await t('cmp-result').first().locator('th').textContent(), 'plate-c.dxf');
+    assert.deepEqual(await t('cmp-result').first().locator('td').allTextContents(), ['0.00', '0.00', '0.00 × 0.00'], 'first ticked is the reference');
+    await t('cmp-eye').nth(1).click();
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.ok(await t('drawing').evaluate((el) => {
+      const d = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+      let red = 0; for (let i = 0; i < d.length; i += 4) if (d[i] > 150 && d[i] - d[i + 1] > 60 && Math.abs(d[i + 1] - d[i + 2]) < 20) red++;
+      return red > 100;
+    }), 'the eye controls visibility independently of the compare tick');
+    await t('cmp-eye').nth(1).click();
+    await t('cmp-check').nth(1).uncheck();
+    assert.equal(await t('cmp-run').isDisabled(), true, 'one ticked snapshot cannot compare');
+    await t('cmp-check').first().check(); await t('cmp-check').nth(1).check();
+    await t('cmp-eye').nth(2).click();
+    await t('cmp-lineup-manual').click();
+    await t('cmp-name-3').click(); await page.keyboard.press('ArrowRight');
+    assert.equal(await cmpOffX(), 1, 'selected third snapshot moves');
+    await t('cmp-name-2').click(); assert.equal(await cmpOffX(), 0, 'second snapshot stays put');
+    await t('cmp-name-1').click(); assert.equal(await cmpOffX(), 0, 'reference stays put');
+    await t('cmp-lineup-bl').click();
+    await t('cmp-remove').nth(2).click(); await t('cmp-run').click();
+    assert.equal(await t('cmp-result').count(), 2);
+    assert.equal(await cmpCount(), '1 difference', 'two-item result is unchanged after removal');
+    await addLibrary(); await addTab('plate-b.dxf'); await addTab('plate-c.dxf');
+    assert.equal(await t('cmp-item').count(), 5);
+    assert.equal(new Set(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour))).size, 5);
+    for (const id of ['cmp-add-tab', 'cmp-add-library', 'cmp-add-file']) assert.equal(await t(id).isDisabled(), true);
+    await t('cmp-remove').nth(4).click(); await t('cmp-remove').nth(3).click();
+    await t('cmp-run').click();
+    await t('decimals').selectOption('1');
+    assert.deepEqual(await t('cmp-result').first().locator('td').allTextContents(), ['0.0', '0.0', '0.0 × 0.0']);
+    await t('decimals').selectOption('2');
+    assert.equal(await t('cmp-result').count(), 3);
+    await shotBoth('compare-three');
+    assert.equal(await t('cmp-result').nth(2).locator('th').textContent(), partName);
+    const colours = await t('cmp-item').locator('.cswatch').evaluateAll((rs) => rs.map((r) => getComputedStyle(r).backgroundColor));
+    assert.equal(new Set(colours).size, 3);
+    // Editing an open source after adding it cannot change the Compare snapshot.
+    await page.locator('.tabs .dtab', { hasText: 'plate-b.dxf' }).click();
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-run').click();
+    assert.equal(await t('cmp-table').textContent(), resultText, 'source edits leave snapshot measurements intact');
+    assert.equal(await cmpCount(), '2 differences');
   });
 
   await step('Compare: screenshots, light and dark; the top bar still fits at 1024', async () => {
@@ -8017,7 +8100,7 @@ try {
       await q('bar-extract').click();
       await q('name-input').fill('Plate A'); await p.keyboard.press('Enter');
       await q('name-dialog').waitFor({ state: 'detached' });
-      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare two drawings…', exact: true }).click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
       assert.equal(await q('wireframe').getAttribute('aria-pressed'), 'true');
       // hue tests in the dark theme (red #ff7b7b, blue #6db0ff, mark #fb923c); light has its own shades

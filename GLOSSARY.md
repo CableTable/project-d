@@ -20,7 +20,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 
-**Compare**: Overlays parts in different colours and can highlight outline differences beyond a chosen tolerance, worked out once when the Compare button is pressed (a move afterwards marks the result "out of date"). Where: `TODO.md`, item 41; `web/compare.js`.
+**Compare**: Overlays up to five drawing snapshots in different colours and highlights each ticked item's outline differences from the reference beyond a chosen tolerance. The Compare button calculates the differences and a table of signed area, perimeter and width × height changes; a move afterwards marks the result "out of date". Where: `TODO.md`, items 41 and 114; `web/compare.js`, `web/compare-list.js`.
+
+**Compare reference**: The first ticked snapshot in the Compare list. All other ticked snapshots line up to it; its measurement changes are zero. Hiding a snapshot with its eye keeps it in the comparison and table; unticking leaves it out. Where: `web/compare-list.js`.
+
+**Compare snapshot**: A copy of a drawing tab, Parts library part or disk file taken when added to Compare. Later edits to the source do not change it; remove and re-add to refresh it. The list lasts only for that Compare tab and is not saved with a drawing. Where: `web/compare-list.js`.
 
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
 

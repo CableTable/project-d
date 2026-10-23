@@ -53,7 +53,7 @@ const TABLE = [
   ['save', 'File', 'Save the open tab', [], '', 'Ctrl+S'],
   ['saveas', 'File', 'Save under another name', [], '', 'Ctrl+Shift+S'],
   ['pdf', 'File', 'PDF / Print', ['print'], ''],
-  ['compare', 'File', 'Compare two drawings', ['cmp'], ''],
+  ['compare', 'File', 'Compare drawings', ['cmp'], ''],
   ['undo', 'Edit', 'Take back the last step', [], '', 'Ctrl+Z'],
   ['redo', 'Edit', 'Bring back the step taken back', [], '', 'Ctrl+Y / Ctrl+Shift+Z'],
   ['history', 'Edit', 'Undo history: go back to any step', ['uh'], ''],

@@ -34,6 +34,7 @@ import * as G from './guides.js';
 import * as CT from './contour.js';
 import * as OB from './objects.js';
 import * as C from './compare.js';
+import * as CMP from './compare-list.js';
 import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
 import { saveDefault, withExt } from './savepath.js';
@@ -359,7 +360,7 @@ function recentItems() {
 function buildMenus() {
   // an item: [text, action, shortcut hint (shown, and only a hint for a key that is really bound), enabled? (a function, asked when the menu opens)]
   const menus = {
-    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare two drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
+    File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
@@ -6601,76 +6602,88 @@ function renderEdit() {
   if (L && L.measured) ui.measured.textContent = fmtSize(L.measured) + ' mm measured';
 }
 
-// ---- Compare two drawings (TODO 41; mock-up R5d, Option B; compare.js is the logic): its own tab, the controls in the right-hand panel ----
-// A Compare tab (d.cmp) holds two sides { name, fl, factor, off, polys, box }; the second is moved by c.off (Line up) and every place where
-// the outlines differ by more than the tolerance is a difference (c.res), drawn as a glow in the overlay and listed in the panel.
+// ---- Compare: session-only snapshots, with controls in the right-hand panel ----
 const cmpDoc = () => { const d = curDoc(); return d && d.cmp ? d : null; };
 const cmpCss = (id) => { const k = C.COLOURS.find((x) => x.id === id) || C.COLOURS[0]; return workDark() ? k.dark : k.css; };
-const cmpOff = (c) => C.lineUp(c.a && c.a.box, c.b && c.b.box, c.mode, c.manual);
-const cmpSide = (name, fl, factor, off) => ({ name, fl, factor, off, ...C.polylines(fl, factor, off) });
-/** What the Compare tab covers (mm, y up): both drawings, the second where it is moved to. */
+const cmpSelected = (c) => c.items.find((x) => x.id === c.selected);
+/** Visible snapshots at their current offsets (mm, y up). */
 function cmpBox(d) {
   const c = d && d.cmp;
-  return c ? unionBox(c.a && c.a.box, c.b && c.b.box && [c.b.box[0] + c.off[0], c.b.box[1] + c.off[1], c.b.box[2] + c.off[0], c.b.box[3] + c.off[1]]) : null;
+  return c ? c.items.filter((x) => x.visible).reduce((b, x) => unionBox(b, x.box.map((v, i) => v + x.offset[i % 2])), null) : null;
 }
 function cmpCalc(c) {
-  c.off = cmpOff(c); c.sel = 0; c.stale = false;
-  c.res = c.a && c.b ? C.compare(c.a.polys, c.b.polys, c.tol, { offsetB: c.off }) : null;
+  c.items = CMP.lineUpItems(c.items, c.mode); c.sel = 0; c.stale = false;
+  c.res = CMP.compareItems(c.items, c.tol);
 }
 /** The Compare button (TODO 113): the only place the comparison is worked out. */
 function cmpRun(d) { cmpCalc(d.cmp); update(); }
-/** Drawing 2 moved, or the tolerance changed: the result on show is out of date until the button is pressed again. */
-function cmpMoved(d, refit = false) { const c = d.cmp; c.off = cmpOff(c); if (c.res) c.stale = true; update(refit && view.fitted); }
+/** A move or setting change marks the last result out of date, without calculating. */
+function cmpMoved(d, refit = false) { const c = d.cmp; c.items = CMP.lineUpItems(c.items, c.mode); if (c.res) c.stale = true; update(refit && view.fitted); }
 
-/** File → Compare two drawings…: the Compare tab (the one already open, else a new one with the open drawing tabs as drawing 1 and 2). */
+function cmpAdd(d, source) {
+  try {
+    const c = d.cmp;
+    c.items = CMP.addItem(c.items, source); c.selected = c.items.at(-1).id; c.res = null; c.stale = false;
+    cmpMoved(d, true); note('Added snapshot: ' + source.name);
+  } catch (err) { note(err.message); }
+}
+
+/** Reuse the app's picker menu: the chosen source is copied only when added. */
+function cmpChoose(e, library = false) {
+  const d = cmpDoc(), r = e.currentTarget.getBoundingClientRect();
+  const sources = library ? lib.items : state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box);
+  popMenu(r.left, r.bottom + 2, sources.length ? sources.map((x) => [x.name, () => {
+    const source = library ? libPart(x) : x;
+    if (source) cmpAdd(d, source); else note(x.name + ': this part could not be read');
+  }]) : [[library ? 'No parts in the Parts library' : 'No open drawing tabs', () => {}, null, false]]);
+  ui.ctx.classList.add('cmp-source-menu');
+}
+
+/** File → Compare drawings…: the Compare tab (the one already open, else a new one with the open drawing tabs as drawing 1 and 2). */
 function cmpStart() {
   const have = state.docs.findIndex((x) => x.cmp);
   if (have >= 0) { state.doc = have; showDoc(); return; }
   const tabs = state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box), cur = curDoc(), first = tabs.includes(cur) ? cur : tabs[0], second = tabs.find((x) => x !== first);
-  const side = (x) => (x ? cmpSide(x.name, x.fl, x.factor, x.off) : null);
-  const c = { a: side(first), b: side(second), ca: 'red', cb: 'blue', mode: 'bl', manual: [0, 0], tol: C.DEFAULT_TOL, show: true, res: null, stale: false, off: [0, 0], sel: 0 };
-  c.off = cmpOff(c);
+  const c = { items: [], selected: null, mode: 'bl', tol: C.DEFAULT_TOL, show: true, res: null, stale: false, sel: 0 };
+  for (const x of [first, second].filter(Boolean)) {
+    try { c.items = CMP.addItem(c.items, x); } catch (err) { note(err.message); }
+  }
+  c.items = CMP.lineUpItems(c.items, c.mode); c.selected = c.items.at(-1)?.id;
   addTab({ name: 'Compare', path: null, dirty: false, cmp: c });
-  note(c.b ? 'Compare: the first two open drawings. Open… picks others' : 'Compare: open two drawings with Open…');
+  note('Compare: add up to 5 snapshots. The first ticked drawing is the reference');
 }
 
-async function cmpPick(i) {
+async function cmpPick() {
+  const d = cmpDoc();
   const t = window.__TAURI__;
-  if (!t || !t.dialog || !t.dialog.open) { ui.cmpPicker.value = ''; ui.cmpPicker.dataset.side = i; ui.cmpPicker.click(); return; }
+  if (!t || !t.dialog || !t.dialog.open) { ui.cmpPicker.value = ''; ui.cmpPicker.doc = d; ui.cmpPicker.click(); return; }
   try {
     const picked = await t.dialog.open({ multiple: false, filters: [{ name: 'Drawings', extensions: ['dxf'] }] });
     const path = Array.isArray(picked) ? picked[0] : picked;
-    if (path) await cmpLoad(i, String(path).split(/[\\/]/).pop(), await t.fs.readFile(path));
+    if (path) await cmpLoad(d, String(path).split(/[\\/]/).pop(), await t.fs.readFile(path));
   } catch (err) { note('Open failed: ' + (err && err.message ? err.message : err)); }
 }
-async function cmpLoad(i, name, buf) {
-  const d = cmpDoc();
-  if (!d) return;
+async function cmpLoad(d, name, buf) {
+  if (!d || !state.docs.includes(d)) return;
   if (!/\.dxf$/i.test(name)) { note(name + ': Compare opens DXF drawings'); return; }
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
-  const side = cmpSide(name, r.result, unitFactor(r.result.units), startHidden(r.result));
-  if (!side.polys.length) { note(name + ': no outlines to compare (lines, arcs, circles and polylines)'); return; }
-  d.cmp[i] = side; d.cmp.res = null;
-  cmpMoved(d, true);
-  note(`Drawing ${i === 'a' ? 1 : 2}: ${name}`);
+  if (state.docs.includes(d)) cmpAdd(d, { name, raw: r.doc, fl: r.result, factor: unitFactor(r.result.units), off: startHidden(r.result) });
 }
 
 function buildCompareSection() {
-  ui.cmp = {};
   ui.cmpPicker = h('input', { type: 'file', accept: '.dxf', hidden: true, 'data-testid': 'cmp-picker' });
-  ui.cmpPicker.addEventListener('change', async () => { const f = ui.cmpPicker.files[0], i = ui.cmpPicker.dataset.side; ui.cmpPicker.value = ''; if (f) await cmpLoad(i, f.name, await f.arrayBuffer()); });
-  const side = (i, key) => {
-    const u = ui.cmp[key] = { nm: h('strong', { class: 'cmpname', 'data-testid': 'cmp-name-' + i }),
-      sel: h('div', { class: 'cswatches', role: 'group', 'aria-label': `Drawing ${i} colour`, 'data-testid': 'cmp-colour-' + i }, C.COLOURS.map((k) =>
-        h('button', { class: 'cs', type: 'button', 'aria-label': k.label, 'aria-pressed': 'false', 'data-colour': k.id, 'data-testid': `cmp-colour-${i}-${k.id}`, onclick: () => { cmpDoc().cmp['c' + key] = k.id; update(); } }))) };
-    return [h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, `Drawing ${i}`), u.nm, h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-open-' + i, onclick: () => cmpPick(key) }, 'Open…')),
-      h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Colour'), u.sel)];
-  };
+  ui.cmpPicker.addEventListener('change', async () => {
+    const f = ui.cmpPicker.files[0], d = ui.cmpPicker.doc; ui.cmpPicker.value = '';
+    try { if (f) await cmpLoad(d, f.name, await f.arrayBuffer()); } catch (err) { note('Open failed: ' + err.message); }
+  });
+  ui.cmpItems = h('div', { class: 'cmpitems', 'data-testid': 'cmp-items' });
+  ui.cmpAdd = [h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-tab', onclick: (e) => cmpChoose(e) }, 'Add tab'),
+    h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-library', onclick: (e) => cmpChoose(e, true) }, 'Add from library'),
+    h('button', { class: 'btn', type: 'button', 'data-testid': 'cmp-add-file', onclick: cmpPick }, 'Add file…')];
   ui.cmpModes = [['bl', 'Bottom-left'], ['centre', 'Centres'], ['manual', 'Manual']].map(([m, text]) => h('button', { class: 'seg', type: 'button', 'data-m': m, 'data-testid': 'cmp-lineup-' + m, onclick: () => {
     const d = cmpDoc(), c = d.cmp;
     if (c.mode === m) return;
-    if (m === 'manual' && c.mode !== 'manual') c.manual = [...c.off];          // by hand starts where the last Line up put it
     c.mode = m; cmpMoved(d);
   } }, text));
   ui.cmpHint = h('div', { class: 'lbl', 'data-testid': 'cmp-hint' });
@@ -6686,12 +6699,16 @@ function buildCompareSection() {
   ui.cmpRunBtn = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'cmp-run', onclick: () => cmpRun(cmpDoc()) }, 'Compare');
   ui.cmpStale = h('div', { class: 'lbl cmpstale', role: 'status', 'data-testid': 'cmp-stale', hidden: true }, 'Out of date - press Compare again');
   ui.cmpList = h('div', { class: 'gaplist', 'data-testid': 'cmp-list' });
+  ui.cmpTable = h('tbody');
+  ui.cmpTableWrap = h('div', { class: 'cmptablewrap' }, h('table', { class: 'cmptable', 'data-testid': 'cmp-table', 'aria-label': 'Differences from reference' },
+    h('thead', null, h('tr', null, ['Drawing', 'Δ area (mm²)', 'Δ perimeter (mm)', 'Δ W × H (mm)'].map((text) => h('th', { scope: 'col' }, text)))), ui.cmpTable));
   ui.cmpSec = h('section', { class: 'propbox cmpbox', hidden: true, 'data-testid': 'compare-panel' },
-    h('h2', { class: 'sec' }, 'Compare'), ...side(1, 'a'), ...side(2, 'b'),
+    h('h2', { class: 'sec' }, 'Compare'), ui.cmpItems, h('div', { class: 'cmpadd' }, ui.cmpAdd),
+    h('div', { class: 'lbl' }, 'Snapshots · max 5 · first ticked = reference'),
     h('div', { class: 'lbl' }, 'Line up'), h('div', { class: 'mode', role: 'group', 'aria-label': 'Line up' }, ui.cmpModes), ui.cmpHint,
     h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Tolerance'), ui.cmpTol, h('span', { class: 'lbl' }, 'mm')),
     h('label', { class: 'row swrow' }, h('span', null, 'Show differences'), ui.cmpShow),
-    ui.cmpRunBtn, ui.cmpStale,
+    ui.cmpRunBtn, ui.cmpStale, ui.cmpTableWrap,
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Differences'), ui.cmpCount), ui.cmpList, ui.cmpPicker);
   return ui.cmpSec;
 }
@@ -6701,21 +6718,36 @@ function renderCompare() {
   ui.cmpSec.hidden = !d || state.panel === 'library';
   if (ui.cmpSec.hidden) return;
   const c = d.cmp;
-  for (const k of ['a', 'b']) {
-    const u = ui.cmp[k], sd = c[k];
-    u.nm.textContent = sd ? sd.name : 'Not chosen yet'; u.nm.title = u.nm.textContent;
-    for (const b of u.sel.children) { b.style.background = cmpCss(b.dataset.colour); b.setAttribute('aria-pressed', String(b.dataset.colour === c['c' + k])); }
-  }
+  const ref = CMP.reference(c.items), selected = cmpSelected(c);
+  ui.cmpItems.replaceChildren(...c.items.map((x, i) => h('div', { class: 'cmpitem' + (x === selected ? ' on' : ''), 'data-testid': 'cmp-item', 'data-colour': x.colour },
+    h('span', { class: 'cswatch', style: `background:${cmpCss(x.colour)}`, title: C.COLOURS.find((k) => k.id === x.colour).label }),
+    h('button', { class: 'cmpname', type: 'button', title: x.name + (x === ref ? ' · Reference' : ''), 'aria-pressed': String(x === selected), onclick: () => { c.selected = x.id; update(); } }, h('span', { 'data-testid': 'cmp-name-' + (i + 1) }, x.name), x === ref ? h('small', { class: 'lbl' }, 'Reference') : null),
+    h('input', { type: 'checkbox', checked: x.checked, 'aria-label': 'Compare ' + x.name, 'data-testid': 'cmp-check', onchange: (e) => { c.items = CMP.setItem(c.items, x.id, { checked: e.target.checked }); cmpMoved(d, true); } }),
+    h('button', { class: 'tog', type: 'button', 'aria-label': 'Show ' + x.name, 'aria-pressed': String(x.visible), title: 'Show ' + x.name, 'data-testid': 'cmp-eye', onclick: () => { c.items = CMP.setItem(c.items, x.id, { visible: !x.visible }); update(); } }, icon(x.visible ? EYE : EYE_OFF, { size: 16 })),
+    h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove ' + x.name, 'data-testid': 'cmp-remove', onclick: () => {
+      c.items = CMP.removeItem(c.items, x.id); if (c.selected === x.id) c.selected = c.items.at(-1)?.id;
+      c.res = null; c.stale = false; cmpMoved(d, true);
+    } }, '×'))));
+  for (const b of ui.cmpAdd) b.disabled = c.items.length >= CMP.MAX_ITEMS;
   for (const b of ui.cmpModes) { const on = b.dataset.m === c.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
-  ui.cmpHint.textContent = (c.mode === 'manual' ? `Drag drawing 2 on the canvas (it snaps to drawing 1 while SNAP is on), or use the arrow keys (${state.nudge} mm). ` : '') + `Drawing 2 moved X ${fmt(c.off[0])}, Y ${fmt(c.off[1])} mm`;
+  ui.cmpHint.textContent = (c.mode === 'manual' ? `Drag the selected drawing (SNAP follows the status bar), or use the arrow keys (${state.nudge} mm). ` : '') +
+    (selected ? `Selected: ${selected.name} · moved X ${fmt(selected.offset[0])}, Y ${fmt(selected.offset[1])} mm` : 'Add drawings to compare');
   if (document.activeElement !== ui.cmpTol) ui.cmpTol.value = String(c.tol);
   ui.cmpShow.checked = c.show;
   const diffs = c.res ? c.res.diffs : [];
-  ui.cmpRunBtn.disabled = !(c.a && c.b); ui.cmpStale.hidden = !c.stale; ui.cmpList.classList.toggle('stale', !!c.stale);
-  ui.cmpCount.textContent = !c.res ? (c.a && c.b ? 'Press Compare' : 'Choose two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
-  if (ui.cmpListRes !== c.res) {
-    ui.cmpListRes = c.res;
+  ui.cmpRunBtn.disabled = c.items.filter((x) => x.checked).length < 2; ui.cmpStale.hidden = !c.stale; ui.cmpList.classList.toggle('stale', !!c.stale);
+  ui.cmpTableWrap.hidden = !c.res; ui.cmpTableWrap.classList.toggle('stale', !!c.stale);
+  ui.cmpTable.replaceChildren(...(c.res?.rows || []).map((r) => {
+    const x = c.items.find((item) => item.id === r.id);
+    const delta = (v) => (+v.toFixed(state.dp) || 0).toFixed(state.dp);
+    return h('tr', { 'data-testid': 'cmp-result', 'data-colour': x.colour }, h('th', { scope: 'row', style: `color:${cmpCss(x.colour)}`, title: x.name }, x.name),
+      h('td', null, delta(r.area)), h('td', null, delta(r.perimeter)), h('td', null, `${delta(r.w)} × ${delta(r.h)}`));
+  }));
+  ui.cmpCount.textContent = !c.res ? (!ui.cmpRunBtn.disabled ? 'Press Compare' : 'Tick at least two drawings') : diffs.length ? `${diffs.length} difference${diffs.length === 1 ? '' : 's'}${c.res.truncated ? ' or more' : ''}` : 'No differences';
+  if (ui.cmpListRes !== c.res || ui.cmpListDark !== workDark()) {
+    ui.cmpListRes = c.res; ui.cmpListDark = workDark();
     ui.cmpList.replaceChildren(...diffs.map((x) => h('button', { class: 'gaprow cmprow', type: 'button', 'data-n': x.n, 'data-testid': 'cmp-diff', title: 'Zoom to this difference', onclick: () => cmpZoom(d, x) },
+      h('span', { class: 'cswatch', style: `background:${cmpCss(c.items.find((item) => item.id === x.itemId).colour)}` }),
       h('span', { class: 'lbl' }, String(x.n)), h('span', { class: 'lbl mono' }, x.mm.toFixed(2) + ' mm'), h('span', { class: 'lbl mono' }, `X ${Math.round(x.x)} Y ${Math.round(x.y)}`))));
   }
   for (const r of ui.cmpList.children) r.classList.toggle('on', Number(r.dataset.n) === c.sel);
@@ -6740,8 +6772,8 @@ function cmpZoom(d, x) {
 
 function cmpPaint(canvas, c, base) {
   paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
-  for (const [sd, col, o] of [[c.a, c.ca, [0, 0]], [c.b, c.cb, c.off]]) {
-    if (sd) paintDrawing(canvas, { ...base, keep: true, fl: sd.fl, off: sd.off, factor: sd.factor, slots: [[sd.factor, 0, 0, -sd.factor, o[0], state.sheetH - o[1]]], tint: cmpCss(col) });
+  for (const sd of c.items) {
+    if (sd.visible) paintDrawing(canvas, { ...base, keep: true, fl: sd.fl, off: sd.off, factor: sd.factor, slots: [[sd.factor, 0, 0, -sd.factor, sd.offset[0], state.sheetH - sd.offset[1]]], tint: cmpCss(sd.colour) });
   }
   if (c.moving && c.snap) {                                                                    // the snap: a thin dotted guide through it and the usual marker with its name
     const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
@@ -6753,11 +6785,13 @@ function cmpPaint(canvas, c, base) {
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
 function cmpGlow(c, out) {
   const k = 1 / view.scale, H = state.sheetH;
-  out.push(s('defs', null, s('radialGradient', { id: 'cmp-glow' }, s('stop', { offset: 0, class: 'cmp-g0' }), s('stop', { offset: 1, class: 'cmp-g1' }))));
+  out.push(s('defs', null, c.items.map((x) => s('radialGradient', { id: 'cmp-glow-' + x.id }, s('stop', { offset: 0, 'stop-color': cmpCss(x.colour), 'stop-opacity': .8 }), s('stop', { offset: 1, 'stop-color': cmpCss(x.colour), 'stop-opacity': 0 })))));
   for (const x of c.res.diffs) {
+    const item = c.items.find((it) => it.id === x.itemId);
+    if (!item.visible) continue;
     const cx = (x.box[0] + x.box[2]) / 2, cy = H - (x.box[1] + x.box[3]) / 2, r = Math.max(16 * k, Math.hypot(x.box[2] - x.box[0], x.box[3] - x.box[1]) / 2 + 10 * k);
-    out.push(s('circle', { class: 'cmp-glow' + (c.sel === x.n ? ' on' : ''), cx, cy, r, fill: 'url(#cmp-glow)', 'data-testid': 'cmp-glow' }),
-      s('g', { class: 'pick-badge' }, s('circle', { cx, cy: cy - r, r: 11 * k }), s('text', { x: cx, y: cy - r + 4.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k }, String(x.n))));
+    out.push(s('circle', { class: 'cmp-glow' + (c.sel === x.n ? ' on' : ''), cx, cy, r, fill: `url(#cmp-glow-${item.id})`, 'data-colour': item.colour, 'data-testid': 'cmp-glow' }),
+      s('g', { class: 'pick-badge' }, s('circle', { cx, cy: cy - r, r: 11 * k, style: `fill:${cmpCss(item.colour)}` }), s('text', { x: cx, y: cy - r + 4.5 * k, 'text-anchor': 'middle', 'font-size': 13 * k, style: `fill:${workDark() ? '#000' : '#fff'}` }, String(x.n))));
   }
 }
 
@@ -6768,39 +6802,40 @@ function cmpSnap(sd, o, p) {
   const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap);
   return sn && { x: sn.x * f + o[0], y: sn.y * f + o[1], kind: sn.kind };
 }
-/** Manual line up: dragging on the canvas moves drawing 2, its grabbed point snapping to drawing 1 (the differences wait for the Compare button). */
+/** Move the selected snapshot with the editor's snaps, without calculating differences. */
 function cmpDown(e) {
-  const d = cmpDoc(), c = d && d.cmp;
-  if (!c || c.mode !== 'manual' || !c.b) return false;
-  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...c.off];
-  const grab = cmpSnap(c.b, m0, p0), g = grab ? [grab.x, grab.y] : p0;      // the point of drawing 2 taken hold of: a snap of it, else the pointer
+  const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), ref = c && CMP.reference(c.items);
+  if (!c || c.mode !== 'manual' || !item?.visible) return false;
+  const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
+  const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset];
+  const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
   c.moving = true;
   let moved = false;
   const move = (ev) => {
     const p = sheetAt(ev.clientX, ev.clientY);
     let o = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]];
-    const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = c.a && cmpSnap(c.a, [0, 0], q);     // where the grabbed point is now, and what of drawing 1 it snaps to
+    const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = target && cmpSnap(target, target.offset, q);
     c.snap = drop || (grab ? { x: q[0], y: q[1], kind: grab.kind } : null);
     if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
-    moved = true; c.manual = o; c.off = cmpOff(c); paintOverlay();
+    moved = true; item.offset = o; paintOverlay();
   };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) cmpMoved(d); else update(); };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   return true;
 }
-/** Manual line up: the arrow keys nudge drawing 2 by the toolbar's step. */
+/** Manual line up: arrow keys nudge the selected snapshot by the toolbar's step. */
 function cmpKey(e, mod) {
-  const d = cmpDoc(), c = d && d.cmp, dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
-  if (!c || c.mode !== 'manual' || !c.b || !dir || mod || e.altKey) return false;
+  const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
+  if (!c || c.mode !== 'manual' || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
-  c.manual = [PL.r6(c.off[0] + dir[0] * state.nudge), PL.r6(c.off[1] + dir[1] * state.nudge)];
+  item.offset = [PL.r6(item.offset[0] + dir[0] * state.nudge), PL.r6(item.offset[1] + dir[1] * state.nudge)];
   cmpMoved(d);
-  note(`Drawing 2 nudged ${state.nudge} mm`);
+  note(`${item.name} nudged ${state.nudge} mm`);
   return true;
 }
 function cmpCommand(c) {
-  const n = c.res ? c.res.diffs.length : 0, nm = (sd, col) => (sd ? sd.name : '(none)') + ` (${C.COLOURS.find((k) => k.id === col).label.toLowerCase()})`;
-  ui.hist.textContent = `Command: COMPARE   ${nm(c.a, c.ca)} vs ${nm(c.b, c.cb)} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : c.a && c.b ? 'press Compare' : 'choose two drawings');
+  const n = c.res ? c.res.diffs.length : 0, chosen = c.items.filter((x) => x.checked);
+  ui.hist.textContent = `Command: COMPARE   ${chosen.map((x) => x.name + ` (${x.colour})`).join(' vs ')} · tolerance ${c.tol} mm · ` + (c.res ? `${n} difference${n === 1 ? '' : 's'}${c.stale ? ' (out of date)' : ''}` : chosen.length >= 2 ? 'press Compare' : 'tick at least two drawings');
   ui.prompt.textContent = state.msg ? state.msg : c.stale ? 'Out of date - press Compare again:' : n ? `Zoom to a difference: click it in the panel (1-${n}):` : 'Line up, Tolerance and Show differences are in the panel:';
 }
 

@@ -544,6 +544,24 @@ select.fld { font-family: var(--sans); }
 .ssel-pilltext { fill: var(--accentink); font-family: var(--mono, monospace); font-weight: 500; pointer-events: none; }
 .btn[data-testid=sheet-select][aria-pressed=true] { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 .cmpname { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmpitems { display: flex; flex-direction: column; gap: 3px; }
+.cmpitem { display: flex; align-items: center; gap: 5px; padding: 4px; border: 1px solid var(--line); border-radius: var(--r); }
+.cmpitem.on { border-color: var(--accent); background: var(--sel); }
+.cmpitem .cmpname { border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; padding: 0; }
+.cmpname span { display: block; overflow: hidden; text-overflow: ellipsis; }
+.cmpname small { display: block; }
+.cmpitem .tog { flex-shrink: 0; width: 24px; height: 24px; padding: 2px; }
+.cmpitem [data-testid=cmp-eye][aria-pressed=false] { opacity: .45; }
+.cmpitem input { flex-shrink: 0; margin: 0; }
+.cmpadd { display: flex; flex-wrap: wrap; gap: 4px; }
+.cmpadd .btn { font-size: 11px; padding: 0 6px; }
+.cmp-source-menu { max-height: 60vh; max-width: 90vw; overflow: auto; }
+.cmptablewrap { overflow-x: auto; }
+.cmptablewrap.stale { opacity: .5; }
+.cmptable { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 10px; font-variant-numeric: tabular-nums; }
+.cmptable th, .cmptable td { padding: 5px 2px; border-bottom: 1px solid var(--line); text-align: right; overflow-wrap: anywhere; }
+.cmptable th:first-child { text-align: left; width: 27%; }
+.cmptable tbody th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cmprow { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left; }
 .cmprow .lbl:first-child { flex: 0 0 20px; }
 .cmprow .mono { flex: 0 0 auto; }
