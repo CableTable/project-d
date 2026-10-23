@@ -106,13 +106,12 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
         assert.deepEqual(await knight.locator('[data-field=resets]').allTextContents(), ['Reset', 'Reset']);
         assert.match(await knight.textContent(), /At this pace: no data yet/);
       }
-      for (const used of ['1', '0', '']) {
-        await page.evaluate((used_pct) => {
+      for (const [used, hours] of [['3', 4], ['3', 1], ['0', 4], ['', 4]]) {      // no forecast until the week has 3 h of data and some use
+        await page.evaluate(([used_pct, hours]) => {
           const now = Date.now();
-          window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, used_pct, starts: new Date(now - 3600e3).toISOString(), resets: new Date(now + 167 * 3600e3).toISOString(), as_of: new Date(now).toISOString()} : r)});
-        }, used);
-        if (used === '1') assert.equal(await knight.locator('[data-field=hit_at]').count(), 1);
-        else if (used === '0') assert.equal(await knight.locator('[data-field=at_reset_pct]').textContent(), '0');
+          window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, used_pct, starts: new Date(now - hours * 3600e3).toISOString(), resets: new Date(now + (168 - hours) * 3600e3).toISOString(), as_of: new Date(now).toISOString()} : r)});
+        }, [used, hours]);
+        if (used === '3' && hours === 4) assert.equal(await knight.locator('[data-field=hit_at]').count(), 1);
         else assert.match(await knight.textContent(), /At this pace: no data yet/);
       }
       await page.evaluate(() => window.__emit('limits', window.__docs.limits));
