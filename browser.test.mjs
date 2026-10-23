@@ -435,7 +435,11 @@ try {
 
   // a download the page makes: { name, text }
   const downloaded = async (action) => {
-    const [dl] = await Promise.all([page.waitForEvent('download'), action()]);
+    const [dl] = await Promise.all([page.waitForEvent('download'), action()]).catch(async (e) => {
+      // No download in 30 s: say what the page was doing (a dialog open swallows Ctrl+S; the status line shows a refused save)
+      const seen = await page.evaluate(() => ({ dialog: !!document.querySelector('.pop-back, .pdlg-back'), prompt: document.querySelector('[data-testid=cmd-prompt]')?.textContent, focus: document.activeElement?.tagName })).catch(() => ({}));
+      throw new Error(e.message + ' | page: ' + JSON.stringify(seen));
+    });
     return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'latin1') };
   };
   const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); };
