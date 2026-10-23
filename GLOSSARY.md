@@ -16,6 +16,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Balloon**: A numbered inspection callout placed by hand on a drawing, PDF or picture, with its data saved in a separate balloon file. Where: `DECISIONS.md`, Inspection balloons. Avoid: Dimension.
 
+**Break Apart**: Separates one selected layout group into ungrouped outlines, or an outline-only drawing block into its members one level down, keeping their placement and layers. Results stay selected; one Undo restores the object and selection. Modify menu, Ctrl+K or `BREAKAPART`. Where: `web/breakapart.js`, `web/app.js`. Avoid: Explode, which also splits polylines into lines and arcs.
+
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
@@ -98,7 +100,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Set length**: Makes a drawing or background true size by picking two points and entering their real distance in mm. Where: `DECISIONS.md`, 1:1 scale and Background.
 
-**Shaping**: CorelDRAW-style boolean operations on the selected closed outlines (Weld = union, Intersect = the shared area, Trim = the last picked outline minus the others), giving closed polylines; outlines inside another count as its holes. Simplify keeps each outline's visible part after subtracting outlines in front. Front minus back / Back minus front keep the frontmost / backmost outline minus all others; later in the drawing means in front. Create boundary adds the union on the current layer and keeps the originals. Where: Modify menu, `WELD` / `SHAPETRIM` / `INTERSECT` / `SIMPLIFY` / `FRONTMINUS` / `BACKMINUS` / `BOUNDARY`; `web/shaping.js`. Avoid: Trim (the tool that cuts lines back to cutting edges).
+**Shaping**: CorelDRAW-style boolean operations on the selected closed outlines (Weld = union, Intersect = the shared area, Trim = the last picked outline minus the others), giving closed polylines; outlines inside another count as its holes. Simplify keeps each outline's visible part after subtracting outlines in front. Front minus back / Back minus front keep the frontmost / backmost outline minus all others; later in the drawing means in front. Create boundary adds the union on the current layer and keeps the originals. Keep originals is one tick in Modify → Shaping, off by default and remembered on this PC: all six other operations leave their originals in place and add selected results on top; one Undo removes those results. Where: Modify menu, `WELD` / `SHAPETRIM` / `INTERSECT` / `SIMPLIFY` / `FRONTMINUS` / `BACKMINUS` / `BOUNDARY`; `web/shaping.js`. Avoid: Trim (the tool that cuts lines back to cutting edges).
 
 **Sheet**: The physical output rectangle with a custom or preset width and height in mm, whose bottom-left is the layout origin. Where: `DECISIONS.md`, Sheets and Open DXF. Avoid: Drawing extents; the whole canvas.
 
@@ -233,7 +235,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **All colours black**: Prints every artwork layer in black rather than its drawing colour for film output. Where: `DECISIONS.md`, PDF colour pages.
 
-**Check print**: A scaled paper proof with a title block and a warning that it is not film. Where: `DECISIONS.md`, PDF page rules. Avoid: A 1:1 film master.
+**Check print**: A scaled paper proof; its optional title block includes a warning that it is not film. Where: `DECISIONS.md`, PDF page rules. Avoid: A 1:1 film master.
 
 **Colour page**: One PDF page for each visible artwork layer when printing one page per colour, with Sheet and Marks excluded as artwork on layouts. Where: `DECISIONS.md`, PDF colour pages. Avoid: Automatic separation by every entity's colour.
 
@@ -300,3 +302,5 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **TODO sub-step**: An indented numbered line such as `66a.` under its parent item in `TODO.md`; a leading ✅ after its number marks it done. The usage page folds these lines under “N of M done” and remembers opened lists. Avoid: Inferring sub-steps from progress prose such as “(a built, b next)”.
 
 **Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.
+
+**Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).

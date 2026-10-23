@@ -871,9 +871,9 @@ try {
     assert.deepEqual(await t('pdf-check-paper').locator('option').allTextContents(), ['A4', 'A3']);
     const on = { mirror: true, negative: false, black: true, separate: true, crop: false, reg: false, strip: true };
     for (const [k, v] of Object.entries(on)) assert.equal(await t('pdf-' + k).isChecked(), v, k);
-    assert.deepEqual(await dialog.locator('legend').allTextContents(), ['Page', 'Film', 'Pages', 'Marks']);
-    const labels = (await dialog.locator('.pd-left label').allTextContents()).map((x) => x.replace(/\s+/g, ' ').trim());
-    assert.deepEqual(labels.slice(0, 3), ['Sheet size, 1:1 1000 × 700', 'Tile 1:1 on A3A4 pages 3 × 3 tiles'.replace('3 × 3', '4 × 2'), 'Check print, fit to A4A3 with title block scale 1 : 3.97'.replace('3.97', labels[2].match(/1 : [\d.]+/)[0].slice(4))]);
+    assert.deepEqual(await dialog.locator('legend').allTextContents(), ['Page', 'Title block', 'Film', 'Pages', 'Marks']);
+    const labels = (await dialog.locator('.pd-left .pd-set:not([hidden]) label').allTextContents()).map((x) => x.replace(/\s+/g, ' ').trim());
+    assert.deepEqual(labels.slice(0, 3), ['Sheet size, 1:1 1000 × 700', 'Tile 1:1 on A3A4 pages 3 × 3 tiles'.replace('3 × 3', '4 × 2'), 'Check print, fit to A4A3 scale 1 : 3.97'.replace('3.97', labels[2].match(/1 : [\d.]+/)[0].slice(4))]);
     assert.deepEqual(labels.slice(3, 9), ['Mirror (emulsion down)', 'Negative', 'All colours print black', 'One page per print colour (layer)', 'Crop marks', 'Registration marks'].slice(0, 3).concat(['One page per print colour (layer)', 'Crop marks', 'Registration marks']));
     assert.equal(labels[9], 'Job strip: file, date, colour');
     assert.deepEqual(await dialog.locator('.pd-footer button').allTextContents(), ['Cancel', 'Print…', 'Save PDF']);
@@ -977,6 +977,92 @@ try {
     const a3 = boxes(pdfText(await downloaded(() => t('pdf-go').click())))[0];
     assert.ok(Math.abs(a3[0] - 420) < 0.01 && Math.abs(a3[1] - 297) < 0.01, `${a3}`);
     await openPdf(); await t('pdf-page-sheet').check(); await closePdf();
+  });
+
+  await step('TODO 101 / T18: editable title block, off frees the strip, Reset, per-tab settings saved and reopened', async () => {
+    const titleCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const titlePage = await titleCtx.newPage();
+    const q = (id) => titlePage.locator(`[data-testid=${id}]`);
+    const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
+    const saveDownload = async (action) => {
+      const pending = titlePage.waitForEvent('download'); await action();
+      const dl = await pending;
+      return { name: dl.suggestedFilename(), buffer: readFileSync(await dl.path()) };
+    };
+    try {
+      await titlePage.goto(URL_);
+      const raw = newDoc();
+      addEntities(raw, dxfLine(0, 0, 100, 0), dxfLine(100, 0, 100, 200), dxfLine(100, 200, 0, 200), dxfLine(0, 200, 0, 0));
+      await q('picker').setInputFiles({ name: 'title-test.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await titlePage.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('title-test.dxf'));
+      await open(); await q('pdf-page-check').check();
+      assert.equal(await q('pdf-title-block').isChecked(), true);
+      const autoDate = await titlePage.evaluate(() => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); });
+      assert.equal(await q('pdf-title-date').inputValue(), autoDate);
+      const fields = { file: 'Shop bracket', scale: 'Approved scale', size: 'Part B / rev 2', date: 'Approved yesterday', footnote: 'Approved <shop> & checked' };
+      for (const [key, value] of Object.entries(fields)) await q('pdf-title-' + key).fill(value);
+      assert.equal(await q('pdf-dialog').locator('shop').count(), 0, 'typed markup stays text');
+      await q('pdf-title-footnote').scrollIntoViewIfNeeded();
+      await titlePage.screenshot({ path: shotDir + '/todo-101-title-block-light.png' });
+      await titlePage.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+      await titlePage.waitForTimeout(250);
+      await titlePage.screenshot({ path: shotDir + '/todo-101-title-block-dark.png' });
+      const exported = (await saveDownload(() => q('pdf-go').click())).buffer.toString('latin1');
+      for (const value of Object.values(fields)) assert.ok(exported.includes('(' + value + ') Tj'), value + ' is PDF text');
+      assert.match(exported, /\/Subject \(Scale [\d.]+ : [\d.]+\)/, 'properties keep the real scale');
+      await open();
+      for (const [key, value] of Object.entries(fields)) assert.equal(await q('pdf-title-' + key).inputValue(), value);
+      const withBoxScale = await q('pdf-scale').textContent();
+      await q('pdf-title-block').uncheck();
+      assert.equal(await q('pdf-title-footnote').isDisabled(), true);
+      assert.notEqual(await q('pdf-scale').textContent(), withBoxScale, 'scale uses the freed strip');
+      const noBox = (await saveDownload(() => q('pdf-go').click())).buffer.toString('latin1');
+      assert.equal(/ Tj ET/.test(noBox), false, 'no title text or warning on the page');
+      await open();
+      assert.equal(await q('pdf-title-block').isChecked(), false);
+      assert.equal(await q('pdf-title-footnote').inputValue(), fields.footnote);
+      await q('pdf-close').click();
+      const saved = await saveDownload(() => titlePage.keyboard.press('Control+s'));
+      const drawTabs = await titlePage.locator('.tabs .dtab:not([aria-label])').count();
+      await q('picker').setInputFiles({ name: saved.name, mimeType: 'application/dxf', buffer: saved.buffer });
+      await titlePage.waitForFunction((count) => document.querySelectorAll('.tabs .dtab:not([aria-label])').length > count, drawTabs);
+      await open();
+      assert.equal(await q('pdf-title-block').isChecked(), false, 'off survives Save and reopen');
+      await q('pdf-title-block').check();
+      for (const [key, value] of Object.entries(fields)) assert.equal(await q('pdf-title-' + key).inputValue(), value, 'reopened ' + key);
+      await q('pdf-title-footnote').fill('');
+      const empty = (await saveDownload(() => q('pdf-go').click())).buffer.toString('latin1');
+      assert.equal(empty.includes(fields.footnote), false);
+      await open(); await q('pdf-title-reset').click();
+      assert.equal(await q('pdf-title-date').inputValue(), autoDate);
+      assert.match(await q('pdf-title-footnote').inputValue(), /Fitted to one page/);
+      assert.match(await q('pdf-title-scale').inputValue(), /NOT 1:1/);
+      await q('pdf-title-footnote').fill('This tab only'); await q('pdf-close').click();
+      await q('picker').setInputFiles({ name: 'another-title.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await titlePage.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('another-title.dxf'));
+      await open();
+      assert.match(await q('pdf-title-footnote').inputValue(), /Fitted to one page/, 'other tab keeps its own defaults');
+      await q('pdf-close').click();
+      await titlePage.locator('.tabs .dtab', { hasText: saved.name }).last().click();
+      await open(); assert.equal(await q('pdf-title-footnote').inputValue(), 'This tab only');
+      await q('pdf-close').click();
+      await q('add-to-layout').click();
+      await open(); await q('pdf-page-check').check();
+      assert.equal(await q('pdf-title-block').isChecked(), true);
+      assert.match(await q('pdf-title-footnote').inputValue(), /^Check print:/, 'new layout has its own defaults');
+      await q('pdf-title-footnote').fill('Layout proof');
+      await q('pdf-title-block').uncheck(); await q('pdf-close').click();
+      const layoutSaved = await saveDownload(() => titlePage.keyboard.press('Control+s'));
+      const layoutTabs = await titlePage.locator('.tabs .dtab:not([aria-label])').count();
+      await q('picker').setInputFiles({ name: layoutSaved.name, mimeType: 'application/dxf', buffer: layoutSaved.buffer });
+      await titlePage.waitForFunction((count) => document.querySelectorAll('.tabs .dtab:not([aria-label])').length > count, layoutTabs);
+      await open();
+      assert.equal(await q('pdf-title-block').isChecked(), false, 'layout switch survives Save and reopen');
+      assert.equal(await q('pdf-title-footnote').inputValue(), 'Layout proof');
+      await q('pdf-title-reset').click();
+      assert.equal(await q('pdf-title-block').isChecked(), false, 'Reset restores text without changing the switch');
+      assert.match(await q('pdf-title-footnote').inputValue(), /^Check print:/);
+    } finally { await titleCtx.close(); }
   });
 
   await step('page buttons pick the preview page; Print… saves and opens the PDF', async () => {
@@ -1852,7 +1938,7 @@ try {
     assert.match(scaled, /^Scaled to fit one A4A3A0 page not 1:1 · scale [\d.]+ : 1$|^Scaled to fit one A4A3A0 page not 1:1 · scale 1 : [\d.]+$/);
     await t('pdf-page-sheet').check();
     assert.deepEqual(await t('pdf-check-paper').locator('option').allTextContents(), ['A4', 'A3', 'A0']);
-    assert.equal(await dialog.locator('legend').allTextContents().then((x) => x.join()), 'Page,Film,Label', 'no pages-per-colour, no crop or registration marks');
+    assert.equal(await dialog.locator('legend').allTextContents().then((x) => x.join()), 'Page,Title block,Film,Label', 'no pages-per-colour, no crop or registration marks');
     assert.equal(await t('pdf-foot').textContent(), 'outline.pdf');
     const sz = /^([\d.]+) × ([\d.]+) \+ 10 mm border$/.exec(await t('pdf-sheet-size').textContent());
     assert.ok(sz, 'says the part size and the border: ' + await t('pdf-sheet-size').textContent());
@@ -1896,7 +1982,7 @@ try {
     await t('add-to-layout').click();
     await t('pdf-open').click(); await dialog.waitFor();
     assert.equal(await t('pdf-tab-batch').isVisible(), true);
-    assert.equal(await dialog.locator('legend').allTextContents().then((x) => x.join()), 'Page,Film,Pages,Marks');
+    assert.equal(await dialog.locator('legend').allTextContents().then((x) => x.join()), 'Page,Title block,Film,Pages,Marks');
     await t('pdf-close').click(); await dialog.waitFor({ state: 'detached' });
     await closeTabs(/^outline/);
   });
@@ -6021,6 +6107,40 @@ try {
     assert.equal(await cmpCount(), '2 differences');
   });
 
+  await step('Compare: a library card dropped on the canvas or the panel joins Compare; five is the limit; a hint follows the pointer (T49)', async () => {
+    const partName = '<b>Compare part</b>';
+    await t('panel-library').click();
+    const id = await libCard(partName).getAttribute('data-part-id');
+    await t('panel-main').click();
+    const fire = (type, target) => page.evaluate(([ty, tg, pid]) => {
+      const dt = new DataTransfer(); dt.setData('application/x-pd-part', pid); dt.setData('text/plain', 'part');
+      document.querySelector(`[data-testid=${tg}]`).dispatchEvent(new DragEvent(ty, { dataTransfer: dt, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+    }, [type, target, id]);
+    await t('cmp-remove').last().click();
+    const before = await t('cmp-item').count(), tabs = await tabNames();
+    assert.equal(before, 2);
+    await fire('dragover', 'canvas');
+    assert.equal(await t('cmp-drop-hint').isVisible(), true);
+    assert.equal(await t('cmp-drop-hint').textContent(), 'Drop to add to Compare');
+    await shotBoth('t49-hint', () => fire('dragover', 'canvas'), () => page.evaluate(() => { document.querySelector('[data-testid=cmp-drop-hint]').hidden = true; }));
+    await fire('drop', 'canvas');
+    assert.equal(await t('cmp-drop-hint').isVisible(), false);
+    assert.equal(await t('cmp-item').count(), before + 1, 'a drop on the canvas adds one drawing');
+    assert.equal(await t('cmp-name-3').textContent(), partName);
+    assert.equal(await t('compare-panel').isVisible(), true, 'the app stays on Compare');
+    assert.deepEqual(await tabNames(), tabs, 'no layout tab is made or changed');
+    assert.deepEqual(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour)), ['red', 'blue', 'green'], 'the next free colour');
+    await shotBoth('t49-result');
+    await fire('drop', 'cmp-items');
+    assert.equal(await t('cmp-item').count(), before + 2, 'a drop on the panel list adds one more');
+    await fire('drop', 'canvas');
+    assert.equal(await t('cmp-item').count(), 4 + 1, 'five drawings');
+    await fire('drop', 'canvas');
+    assert.equal(await t('cmp-item').count(), 5, 'a sixth is not added');
+    assert.equal(await t('cmd-prompt').textContent(), 'Compare holds five drawings; remove one first');
+    await t('cmp-remove').last().click(); await t('cmp-remove').last().click();
+  });
+
   await step('Compare: screenshots, light and dark; the top bar still fits at 1024', async () => {
     await shotBoth('compare');
     await page.setViewportSize({ width: 1024, height: 700 });
@@ -6031,6 +6151,80 @@ try {
     await page.screenshot({ path: `${shotDir}/compare-1024-light.png` });
     await page.setViewportSize({ width: 1440, height: 900 });
     await closeTabs(/./);
+  });
+
+  await step('T50: a library card dropped on a drawing tab goes into that drawing (loose, selected, one Undo); on a layout tab it goes on the sheet; on the start screen it opens as a new drawing', async () => {
+    const file = (name, ents, layers = {}) => { const d = newDoc(4); for (const [n, aci] of Object.entries(layers)) addLayer(d, n, { aci }); addEntities(d, ents); return { name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(d)) }; };
+    await closeTabs(/./);
+    await t('picker').setInputFiles(file('t50-source.dxf', [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true, layer: 'T50CUT' }), dxfCircle(50, 30, 10, { layer: 'T50HOLE' })], { T50CUT: 1, T50HOLE: 3 }));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 't50-source.dxf');
+    await page.keyboard.press('Control+a');
+    await t('bar-extract').click();
+    await t('name-input').fill('T50 part'); await t('name-ok').click();
+    await t('name-dialog').waitFor({ state: 'detached' });
+    await closeTabs(/./);
+    await t('panel-library').click();
+    const id = await libCard('T50 part').getAttribute('data-part-id');
+    await t('panel-main').click();
+    const fire = (type, x, y) => page.evaluate(([ty, cx, cy, pid]) => {
+      const dt = new DataTransfer(); dt.setData('application/x-pd-part', pid); dt.setData('text/plain', 'T50 part');
+      document.querySelector('[data-testid=canvas]').dispatchEvent(new DragEvent(ty, { dataTransfer: dt, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
+    }, [type, x, y, id]);
+    const mid = async () => { const r = await t('canvas').boundingBox(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+
+    // the empty start screen: the part opens as its own new drawing tab, named after it, not saved yet
+    assert.deepEqual(await tabNames(), ['Drawing 1']);
+    let m = await mid();
+    await fire('dragover', m.x, m.y);
+    assert.equal(await t('drop-hint').textContent(), 'Drop to open as a new drawing');
+    await fire('drop', m.x, m.y);
+    assert.deepEqual(await tabNames(), ['T50 part.dxf']);
+    assert.equal(await entCount(), 2);
+    assert.match(await t('cmd-prompt').textContent(), /^T50 part opened as a new drawing: 2 entities\. Not saved yet: Save asks where$/);
+    await closeTabs(/./);
+
+    // a drawing tab: the entities go in at the drop point, the app stays on the tab
+    await t('picker').setInputFiles(file('t50-target.dxf', [dxfLine(0, 0, 300, 0, { layer: 'T50CUT' }), dxfLine(0, 10, 300, 10)], { T50CUT: 5 }));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 't50-target.dxf');
+    await page.locator('[data-tool=select]').click();
+    assert.equal(await entCount(), 2);
+    const to = await mid();
+    await fire('dragover', to.x, to.y);
+    const hint = (await t('drop-hint').textContent()).match(/^Drop to add to t50-target\.dxf at X (-?[\d.]+) Y (-?[\d.]+) mm$/);
+    assert.ok(hint, await t('drop-hint').textContent());
+    await fire('drop', to.x, to.y);
+    assert.equal(await t('drop-hint').isVisible(), false);
+    assert.deepEqual(await tabNames(), ['t50-target.dxf'], 'the app stays on the drawing tab');
+    assert.equal(await entCount(), 4);
+    assert.equal(await selCount(), '2 selected', 'the new entities are the selection');
+    assert.match(await t('cmd-prompt').textContent(), /^T50 part \(100\.00 × 60\.00 mm\) added to t50-target\.dxf: 2 entities selected, new layers: T50HOLE\. Ctrl\+Z takes them away$/);
+    const doc = await savedDoc();
+    assert.deepEqual(Object.keys(doc.layers).sort(), ['0', 'T50CUT', 'T50HOLE']);
+    const newOnes = doc.entities.slice(2), x10 = (e) => Number(e.r.v[e.r.c.indexOf(10)]), y20 = (e) => Number(e.r.v[e.r.c.indexOf(20)]);
+    assert.deepEqual(newOnes.map((e) => e.layer), ['T50CUT', 'T50HOLE'], 'each on its own layer');
+    const circle = newOnes.find((e) => e.type === 'CIRCLE');
+    assert.ok(Math.abs(x10(circle) - (Number(hint[1]) + 50)) < 0.01 && Math.abs(y20(circle) - (Number(hint[2]) + 30)) < 0.01, 'the part\'s lower-left corner is where the mouse was let go, 1:1');
+    await shotBoth('t50-drawing');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2, 'one Undo takes both away');
+    assert.deepEqual(await tabNames(), ['t50-target-edited.dxf'], 'still the one tab (the Save above gave it its -edited name)');
+
+    // a layout tab: on the sheet, as before
+    await t('new-layout').click();
+    m = await mid();
+    await fire('drop', m.x, m.y);
+    assert.match(await t('cmd-prompt').textContent(), /^T50 part \(100\.00 × 60\.00 mm\) added to Layout 1/);
+    assert.deepEqual(await tabNames(), ['t50-target-edited.dxf', 'Layout 1']);
+    await page.locator('.tabs .dtab', { hasText: 't50-target' }).click();
+    assert.equal(await entCount(), 2, 'the drawing tab is untouched');
+    await closeTabs(/./);
+    await t('panel-library').click();
+    page.once('dialog', (d) => d.accept());
+    await libCard('T50 part').locator('[data-testid=lib-menu]').click();
+    await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+    await libCard('T50 part').waitFor({ state: 'detached' });
+    await t('panel-main').click();
   });
 
   // ---- polar and object-snap tracking (track.js; mock-up R7a, Option A) ----
@@ -8313,6 +8507,91 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 124: Break Apart via Ctrl+K and BREAKAPART separates a group and a block of outlines, selects results, Undo restores selection; plain line explains no change', async () => {
+    await closeTabs(/./);
+    const open = async (raw, name) => {
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await page.keyboard.press('Control+a');
+    };
+    const run = async (key) => {
+      if (key) { await page.locator('[data-testid=cmd-input]').evaluate((e) => e.blur()); await page.keyboard.press('Control+k'); }
+      else await typeCmd('BREAKAPART');
+    };
+    const doc = newDoc();
+    addLayer(doc, 'Cut', { aci: 3 }); addLayer(doc, 'Holes', { aci: 2 });
+    addBlock(doc, 'Plate', [roundRect(0, 0, 80, 60, 8), dxfCircle(30, 30, 10, { layer: 'Holes' })]);
+    addEntities(doc, dxfInsert('Plate', 100, 100, { layer: 'Cut', rot: 90 }));
+    await open(doc, 'breakapart-block.dxf'); await waitSel('1 selected');
+    for (const th of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + th); await page.locator('[data-menu=Modify]').click();
+      const item = page.getByRole('menuitem', { name: 'Break Apart', exact: true });
+      assert.equal(await item.locator('.hint').textContent(), 'Ctrl+K');
+      assert.match(await item.getAttribute('title'), /Ctrl\+K/);
+      const labels = await page.locator('.dropdown button').evaluateAll((es) => es.map((e) => e.firstChild.textContent));
+      assert.equal(labels.indexOf('Break Apart'), labels.indexOf('Explode') + 1);
+      await page.screenshot({ path: `${shotDir}/breakapart-menu-${th}.png` });
+      await page.locator('[data-menu=Modify]').click();
+    }
+    for (const key of [true, false]) {
+      await run(key); assert.match(await prompt(), /^Break Apart: 2 outlines are separate/);
+      assert.equal(await entCount(), 2); await waitSel('2 selected');
+      assert.equal((await histLabels()).at(-1), 'Break Apart');
+      if (key) {
+        const saved = await savedDoc();
+        assert.deepEqual(saved.entities.map((e) => [e.type, e.layer]), [['LWPOLYLINE', 'Cut'], ['CIRCLE', 'Holes']]);
+        assert.equal(GR.get(saved.entities[0].r, 70) & 1, 1);
+        assert.equal(GR.get(saved.entities[1].r, 10), 70); assert.equal(GR.get(saved.entities[1].r, 20), 130);
+        for (const th of ['light', 'dark']) {
+          await menuItem('View', 'Theme: ' + th);
+          await page.screenshot({ path: `${shotDir}/breakapart-result-${th}.png` });
+        }
+      }
+      await page.keyboard.press('Control+z'); assert.equal(await entCount(), 1); await waitSel('1 selected');
+    }
+    await menuItem('Modify', 'Break Apart'); await waitSel('2 selected');
+    await page.keyboard.press('Control+z'); await waitSel('1 selected');
+    await closeTabs(/./);
+
+    const partDoc = newDoc(); addEntities(partDoc, roundRect(0, 0, 80, 60, 5, { layer: 'Cut' }));
+    addLayer(partDoc, 'Cut', { aci: 3 });
+    const lay = newLayout('Break Apart group');
+    lay.parts.plate = makePart('plate', 'Plate', partDoc);
+    lay.placed.push({ partId: 'plate', x: 100, y: 100, rot: 30, mirrorX: false, mirrorY: false, g: 'test124' },
+      { partId: 'plate', x: 250, y: 200, rot: 0, mirrorX: true, mirrorY: false, g: 'test124' });
+    await open(layoutRaw(lay), 'breakapart-group.dxf');
+    assert.equal(await t('sel-readout').textContent(), 'Group of 2');
+    for (const key of [true, false]) {
+      await run(key); assert.match(await prompt(), /^Break Apart: 2 outlines are separate/);
+      assert.equal(await page.locator('[data-group=tools] .group-tag').count(), 0);
+      assert.equal(await page.locator('[data-group=tools] .pick-badge').count(), 2, 'both outlines remain selected');
+      assert.equal((await histLabels()).at(-1), 'Break Apart');
+      if (key) {
+        const saved = layoutFromRaw(await savedDoc());
+        assert.deepEqual(saved.placed.map(({ g, ...p }) => p), lay.placed.map(({ g, ...p }) => p), 'placement is unchanged');
+        assert.ok(saved.placed.every((p) => !p.g), 'ungrouped in the saved layout');
+        assert.equal(saved.parts.plate.raw.entities[0].layer, 'Cut');
+      }
+      await page.keyboard.press('Control+z');
+      assert.equal(await t('sel-readout').textContent(), 'Group of 2');
+      assert.equal(await page.locator('[data-group=tools] .group-tag').count(), 1);
+    }
+    await menuItem('Layout', 'Lock'); await run(true);
+    assert.match(await prompt(), /group is locked/);
+    assert.equal(await t('sel-readout').textContent(), 'Group of 2');
+    await closeTabs(/./);
+
+    const plain = newDoc(); addEntities(plain, dxfLine(100, 100, 150, 100));
+    await open(plain, 'breakapart-line.dxf');
+    const before = await histLabels();
+    for (const key of [true, false]) {
+      await run(key); assert.match(await prompt(), /^Break Apart: LINE .*not a group or block/);
+      assert.equal(await entCount(), 1); await waitSel('1 selected');
+      assert.deepEqual(await histLabels(), before, 'no Undo step for a plain line');
+    }
+    await menuItem('View', 'Theme: light'); await closeTabs(/./);
+  });
+
   await step('TODO 122a: Shaping (Modify menu, WELD / SHAPETRIM / INTERSECT): two squares, each operation gives the exact area in one undo step; Trim cuts the last picked one and keeps the cutter; open outlines and too few outlines say so', async () => {
     const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
     await closeTabs(/./);
@@ -8435,6 +8714,97 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 123: Shaping Keep originals is remembered; all six operations append selected results, preserve original DXF bytes and Undo once; off restores replacement', async () => {
+    await closeTabs(/./);
+    const tick = () => page.getByRole('menuitemcheckbox', { name: /Shaping: Keep originals$/ });
+    const remembered = async (on) => {
+      await page.waitForFunction(async (want) => {
+        const { idbStore } = await import('./idbstore.js');
+        return (await idbStore('project-d-shaping', 'settings', 'Shaping settings').all()).some((r) => r.id === 'keepOriginals' && r.on === want);
+      }, on);
+    };
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await tick().getAttribute('aria-checked'), 'false', 'off by default');
+    await tick().click(); await remembered(true);
+    await page.reload(); await t('new-tab').waitFor();
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await tick().getAttribute('aria-checked'), 'true', 'remembered after reload');
+    await page.screenshot({ path: shotDir + '/shaping-keep-light.png' });
+    await page.keyboard.press('Escape'); await menuItem('View', 'Theme: dark');
+    await page.locator('[data-menu=Modify]').click();
+    await page.screenshot({ path: shotDir + '/shaping-keep-dark.png' });
+    await page.keyboard.press('Escape'); await menuItem('View', 'Theme: light');
+    // Exercise the real Save serializer in memory: no downloads or disk saves in this step.
+    await page.evaluate(() => {
+      window.__shapeSave = { text: '', writes: 0 };
+      window.__TAURI__ = { dialog: { save: async () => 'C:\\out\\shaping-123-saved.dxf' },
+        fs: { exists: async () => false, writeTextFile: async (_, text) => { window.__shapeSave.text = text; window.__shapeSave.writes++; } } };
+    });
+    const save = async () => {
+      const before = await page.evaluate(() => window.__shapeSave.writes);
+      await page.keyboard.press('Control+s');
+      await page.waitForFunction((n) => window.__shapeSave.writes > n && document.querySelector('[data-testid=cmd-prompt]').textContent.startsWith('Saved '), before);
+      return page.evaluate(() => window.__shapeSave.text);
+    };
+    const entityBytes = (text) => text.match(/  2\r\nENTITIES\r\n([\s\S]*?)  0\r\nENDSEC/)[1];
+    try {
+      const doc = newDoc();
+      addLayer(doc, 'Back'); addLayer(doc, 'Front');
+      addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true, layer: 'Back', aci: 1 }),
+        dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Front', aci: 3 }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
+      await t('picker').setInputFiles({ name: 'shaping-123.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-123.dxf');
+      const original = await save(), bytes = entityBytes(original);
+      await t('ptab-objects').click();
+      for (const [cmd, label, area, layer] of [
+        ['weld', 'Weld', '6300.00', 'Back'], ['shapetrim', 'Trim', '2700.00', 'Back'],
+        ['intersect', 'Intersect', '900.00', 'Back'], ['simplify', 'Simplify', '6300.00', 'Back'],
+        ['frontminus', 'Front minus back', '2700.00', 'Front'], ['backminus', 'Back minus front', '2700.00', 'Back'],
+        ['boundary', 'Create boundary', '6300.00', '0'],
+      ]) for (const via of ['menu', 'command']) {
+        await page.keyboard.press('Control+a');
+        if (via === 'menu') await menuItem('Modify', 'Shaping: ' + label); else await typeCmd(cmd);
+        assert.match(await prompt(), new RegExp('area ' + area.replace('.', '\\.') + ' mm²'));
+        assert.match(await prompt(), /The originals stay\. Ctrl\+Z removes/);
+        await waitSel('1 selected');
+        assert.deepEqual(await page.locator('.or.obj.sel').evaluateAll((rows) => rows.map((r) => Number(r.dataset.e))), [3], 'only the appended result is selected');
+        const saved = await save(), ents = readDxf(saved).entities;
+        assert.equal(ents.length, 4, cmd + ' appends one result');
+        assert.equal(entityBytes(saved).slice(0, bytes.length), bytes, cmd + ' keeps every original byte, including handles');
+        assert.equal(ents.at(-1).layer, layer);
+        assert.equal(ents.at(-1).type, 'LWPOLYLINE');
+        await page.keyboard.press('Control+z');
+        assert.equal(await save(), original, cmd + ': one Undo restores the entire saved drawing byte-for-byte');
+      }
+      await page.locator('[data-menu=Modify]').click(); await tick().click(); await remembered(false);
+      await page.keyboard.press('Control+a'); await typeCmd('weld');
+      assert.equal(await entCount(), 2, 'off again replaces the closed originals and leaves the open outline');
+      assert.match(await prompt(), /Ctrl\+Z puts the originals back$/);
+      await page.keyboard.press('Control+z'); assert.equal(await save(), original);
+      await closeTabs(/./);
+      // Empty differences with Keep originals must leave the drawing and Undo history alone.
+      const same = newDoc(), square = dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true });
+      addEntities(same, square, square);
+      await t('picker').setInputFiles({ name: 'shaping-123-empty.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(same)) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-123-empty.dxf');
+      await page.locator('[data-menu=Modify]').click(); await tick().click(); await remembered(true);
+      for (const cmd of ['frontminus', 'backminus']) {
+        await page.keyboard.press('Control+a'); await typeCmd(cmd);
+        assert.match(await prompt(), /nothing is left, nothing changed/);
+        assert.equal(await entCount(), 2);
+        assert.deepEqual(await histLabels(), ['Start']);
+      }
+      await page.locator('[data-menu=Modify]').click(); await tick().click(); await remembered(false);
+      await closeTabs(/./);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__shapeSave; localStorage.removeItem('pd-recent'); });
+    }
+    await page.reload(); await t('new-tab').waitFor();
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await tick().getAttribute('aria-checked'), 'false', 'off is remembered too');
+    await page.keyboard.press('Escape'); await t('ptab-drawing').click();
+  });
+
   await step('TODO 122a fix: Shaping leaves a block (INSERT) alone and says so, keeps open lines, and a locked layer is not welded', async () => {
     await closeTabs(/./);
     const doc = newDoc();
@@ -8475,7 +8845,7 @@ try {
 
   await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
-    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
     const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);

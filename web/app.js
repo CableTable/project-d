@@ -20,6 +20,7 @@ import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
+import { breakApart } from './breakapart.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
@@ -28,6 +29,7 @@ import * as MD from './modify.js';
 import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import * as LD from './layoutdoc.js';
+import { dropPart } from './dropin.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -47,12 +49,13 @@ import * as TO from './textoutline.js';
 import { loadFont } from './fontload.js';
 import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
-import { partSource } from './pdf-export.js';
+import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
 const viewStore = idbStore('project-d-view', 'settings', 'view settings');
+const shapingStore = idbStore('project-d-shaping', 'settings', 'Shaping settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 function showShortcuts() {
   ui.cmdUI.close();
@@ -170,6 +173,7 @@ const state = {
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
   wireframe: false,
+  shapingKeepOriginals: false,
   workArea: 'Follow app',
   dp: 2,                           // decimal places in dimensions (status bar), remembered on this PC
   meas: null,                      // Measure in progress: { pts: [[x, y] drawing units], hover }
@@ -384,8 +388,14 @@ function buildMenus() {
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
+  menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
+  const modifyItems = menus.Modify;
+  menus.Modify = () => [...modifyItems, [(state.shapingKeepOriginals ? '✓ ' : '  ') + 'Shaping: Keep originals', () => {
+    state.shapingKeepOriginals = !state.shapingKeepOriginals;
+    shapingStore.put({ id: 'keepOriginals', on: state.shapingKeepOriginals }).catch(() => note('Could not remember Keep originals; it still applies until the app closes'));
+  }, null, null, 'Keep the originals and add selected results on top; Create boundary always keeps originals', false, state.shapingKeepOriginals]];
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
@@ -582,7 +592,7 @@ async function readDrawing(bytes) {
 /** What a tab holds for a drawing: the DXF document (to save and to copy as a part), what is drawn, its layers and size. */
 function tabFields(raw, fl) {
   const factor = unitFactor(fl.units);
-  return { raw, fl, factor, off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
+  return { raw, fl, factor, titleBlock: readTitleBlock(raw), off: startHidden(fl), counts: layerCounts(raw, fl), entities: entityCount(raw, fl), conv: convertedNote(fl.units), box: drawingBoxMm(fl, factor) };
 }
 
 function addTab(d, replaceEmpty = true) {
@@ -615,7 +625,7 @@ async function openBytes(name, buf, path = null) {
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
-  if (lay) { openLayoutFile(lay, name, path, fontNote); return; }              // one of our saved layouts: it opens as a layout tab
+  if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc)); return; } // one of our saved layouts: it opens as a layout tab
   const doc = { name, path, openPath: path, dirty: false, ...tabFields(r.doc, fl) };       // openPath: the file itself, which Save never writes over
   addTab(doc);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
@@ -721,34 +731,51 @@ function sheetAt(clientX, clientY) {
   return [view.ox + (clientX - r.left) / view.scale, state.sheetH - (view.oy + (clientY - r.top) / view.scale)];
 }
 const PART_TYPE = 'application/x-pd-part';
+/** Where a library part dropped on the page goes (T50): into the drawing tab, onto the layout's sheet, or (no drawing open) as a new drawing tab. */
+const dropKind = () => { const d = curDoc(); return !d || d.cmp ? null : d.lay ? 'lay' : d.raw ? 'draw' : 'new'; };
 function attachDrop() {
+  // On the Compare tab a library part dropped on the canvas or the panel joins Compare (T49); the hint follows the pointer.
+  const onCmp = (e) => !!cmpDoc() && (ui.canvas.contains(e.target) || ui.cmpSec.contains(e.target));
+  const cmpHint = h('div', { class: 'pop drophint fixed', hidden: true, 'data-testid': 'cmp-drop-hint' }, 'Drop to add to Compare');
+  document.body.append(cmpHint);
   const over = (e) => {
     const types = e.dataTransfer ? [...e.dataTransfer.types] : [];
+    cmpHint.hidden = true;
     if (types.includes('Files')) { e.preventDefault(); ui.canvas.classList.add('dropping'); }
+    else if (types.includes(PART_TYPE) && onCmp(e)) {
+      e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+      cmpHint.hidden = false; cmpHint.style.left = Math.min(window.innerWidth - 200, e.clientX + 14) + 'px'; cmpHint.style.top = Math.max(4, e.clientY - 34) + 'px';
+    }
     else if (types.includes(PART_TYPE)) {                                                    // a part from the library
       e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
       const r = ui.canvas.getBoundingClientRect(), inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
       ui.canvas.classList.toggle('dropping', inside);
-      ui.dropHint.hidden = !inside || !curLay();
-      if (inside && curLay()) {
-        const [x, y] = sheetAt(e.clientX, e.clientY);
-        ui.dropHint.textContent = `Drop to place at X ${fmt(x)} Y ${fmt(y)} mm`;
+      const kind = dropKind();
+      ui.dropHint.hidden = !inside || !kind;
+      if (inside && kind) {
+        const dd = kind === 'draw' ? curDoc() : null, [x, y] = dd ? toDrawing(dd, e.clientX, e.clientY).map((v) => v * dd.factor) : sheetAt(e.clientX, e.clientY);
+        ui.dropHint.textContent = kind === 'new' ? 'Drop to open as a new drawing' : kind === 'draw' ? `Drop to add to ${dd.name} at X ${fmt(x)} Y ${fmt(y)} mm` : `Drop to place at X ${fmt(x)} Y ${fmt(y)} mm`;
         ui.dropHint.style.left = Math.min(r.width - 230, e.clientX - r.left + 14) + 'px'; ui.dropHint.style.top = Math.max(4, e.clientY - r.top - 34) + 'px';
       }
     }
   };
   window.addEventListener('dragover', over);
-  window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) { ui.canvas.classList.remove('dropping'); ui.dropHint.hidden = true; } });
+  window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) { ui.canvas.classList.remove('dropping'); ui.dropHint.hidden = true; cmpHint.hidden = true; } });
   window.addEventListener('drop', async (e) => {
     if (!e.dataTransfer) return;
-    ui.dropHint.hidden = true;
+    ui.dropHint.hidden = true; cmpHint.hidden = true;
     const id = e.dataTransfer.getData(PART_TYPE);
     if (id) {
       e.preventDefault();
       ui.canvas.classList.remove('dropping');
       const rec = lib.items.find((r) => r.id === id), r = ui.canvas.getBoundingClientRect();
+      if (onCmp(e)) { if (rec) cmpAddPart(cmpDoc(), rec); return; }
       const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-      if (rec && inside) addLibToSheet(rec, curLay() ? sheetAt(e.clientX, e.clientY) : undefined);
+      if (!rec || !inside) return;
+      const kind = dropKind();
+      if (kind === 'draw') dropLibInDrawing(rec, e.clientX, e.clientY);
+      else if (kind === 'new') openPartAsDrawing(rec);
+      else if (kind === 'lay') addLibToSheet(rec, sheetAt(e.clientX, e.clientY));
       return;
     }
     if (!e.dataTransfer.files.length) return;
@@ -1110,9 +1137,9 @@ function newLayoutTab() {
   addTab(freshLayout('Layout ' + n), false);
   note('New layout: set the sheet, then add parts from the Parts library, or pick a part for step and repeat');
 }
-function openLayoutFile(lay, name, path, fontNote) {
+function openLayoutFile(lay, name, path, fontNote, titleBlock) {
   lay.name = name;
-  const doc = { name, path, openPath: path, dirty: false, lay, fromFile: true };
+  const doc = { name, path, openPath: path, dirty: false, lay, titleBlock, fromFile: true };
   state.panel = 'main';
   addTab(doc);
   const used = LD.placedAll(lay, LD.gridOf(lay)).length;
@@ -2171,6 +2198,31 @@ function addLibToSheet(rec, at) {
   note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${t.name}, on whole mm. ${SHIFT_HINT}`);
 }
 
+/** A library part dropped on a drawing tab: loose entities at the drop point, 1:1, selected; one Undo takes them away (dropin.js is the maths). */
+function dropLibInDrawing(rec, clientX, clientY) {
+  const part = libPart(rec), d = editable();
+  if (!part || !d) { note(`${rec.name}: this part could not be read`); return; }
+  try {
+    const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
+    const r = dropPart(part, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d) }, toDrawing(d, clientX, clientY));
+    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers }, `Add ${rec.name}`);
+    if (r.made.length) d.newLayer = r.made[0];
+    setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
+    renderLayers();
+    const moved = Object.entries(r.moved);
+    note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${d.name}: ${r.count} ${r.count === 1 ? 'entity' : 'entities'} selected` + (r.made.length ? `, new layers: ${r.made.join(', ')}` : '') +
+      (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
+  } catch (err) { note(`${rec.name}: ${err && err.message ? err.message : err}`); }
+}
+/** A library part dropped with no drawing open: it opens as its own new drawing tab, named after the part, not saved yet. */
+function openPartAsDrawing(rec) {
+  const part = libPart(rec);
+  if (!part) { note(`${rec.name}: this part could not be read`); return; }
+  const raw = { ...part.raw, header: { ...part.raw.header }, blocks: LD.partBlocks(part.raw.blocks) };
+  addTab({ name: rec.name + '.dxf', path: null, openPath: null, dirty: true, ...tabFields(raw, flatten(raw)) });
+  note(`${rec.name} opened as a new drawing: ${curDoc().entities} entities. Not saved yet: Save asks where`);
+}
+
 async function renamePart(rec) {
   const name = await askName({ title: 'Rename part', value: rec.name, ok: 'Rename', validate: (v) => (lib.items.some((r) => r !== rec && r.name.toLowerCase() === v.toLowerCase()) ? 'A part with this name is already in the library' : '') });
   if (!name || name === rec.name) return;
@@ -2306,8 +2358,12 @@ function exportSource() {
   return null;
 }
 function exportPdf() {
-  openExport({ source: exportSource, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note });
+  const d = curDoc(), src = exportSource();
+  openExport({ source: () => src && { ...src, titleBlock: d.titleBlock }, sheet: () => ({ w: state.sheetW, h: state.sheetH }), readDrawing, note,
+    setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
+
+const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : d.raw, d.titleBlock);
 
 // ---- save ----
 const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
@@ -2340,16 +2396,16 @@ async function autosaveNow() {
     for (const d of state.docs.slice()) {
       if (!d.raw && !d.lay) continue;
       if (!d.dirty) { if (d.hasCopy) { d.hasCopy = false; await RC.removeCopy(d.rid); } continue; }
-      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers) continue;        // a drawing's state is replaced at every change: same one, same copy
+      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers && d.autoTitle === d.titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
       let dxf;
-      try { dxf = writeDxf(d.lay ? LD.layoutRaw(d.lay) : d.raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
+      try { dxf = writeDxf(rawForSave(d), { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
       if (d.lay && d.hasCopy && d.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
       if (d.lay) d.autoDxf = dxf;
       if (!d.rid) d.rid = uid();
       await RC.saveCopy({ id: d.rid, name: d.name, path: d.path || null, kind: d.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
         saved: !!d.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!d.acceptedLoss });
       d.hasCopy = true;
-      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; }
+      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; d.autoTitle = d.titleBlock; }
       if (!state.docs.includes(d) || !d.dirty) dropCopy(d);                                          // closed or saved while this was being written
     }
   } catch (err) { console.warn('Autosave failed:', err); } finally { autosaving = false; }
@@ -2380,7 +2436,7 @@ async function recoverOne(c) {
     if (!r.ok) return false;
     const lay = c.kind === 'layout' ? LD.layoutFromRaw(r.doc, c.name) : null;
     const openPath = c.saved ? null : c.path;                                  // not saved yet: its path is still the opened file's
-    const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, fromFile: c.fromFile, saved: c.saved }
+    const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
       : { name: c.name, path: c.path, openPath, dirty: true, saved: c.saved, fromPdf: c.fromPdf || undefined, acceptedLoss: c.acceptedLoss, ...tabFields(r.doc, r.result) };
     if (lay) lay.name = c.name;
     doc.rid = c.id; doc.hasCopy = true;                                       // the copy stays until the tab is saved or closed
@@ -2430,7 +2486,7 @@ async function save(forceAs) {
     if (d.balSaved === balOf(d)) { d.dirty = false; renderTabs(); }
     return;
   }
-  const raw = d.lay ? LD.layoutRaw(d.lay) : d.raw;
+  const raw = rawForSave(d);
   const bad = unwritable(raw);
   const lossy = bad.length > 0 && !d.acceptedLoss && !d.lay;       // a layout is a new file: nothing to overwrite
   if (lossy) note(`This file has things Save can't keep (${bad.map((b) => b.type + ' ' + b.count).join(', ')}), so it's saved as a copy`);
@@ -2972,6 +3028,7 @@ const DO = {
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
+  breakapart: () => breakApartSelected(),
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     const sp = selectedPlaced();
@@ -3763,6 +3820,24 @@ async function textToOutlines() {
   note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (substitutions.length ? '. Fonts: ' + substitutions.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
 }
 
+function breakApartSelected() {
+  if (curLay()) {
+    if (!wholeGroup()) { note('Break Apart: select one group first'); return; }
+    if (selItems().some((x) => x.p.lock)) { note('Break Apart: the group is locked; Unlock it first'); return; }
+    const r = editFlags('Break Apart', (pl) => { const { g, ...rest } = pl; return rest; });
+    note(`Break Apart: ${r.n} outlines are separate, still selected. Ctrl+Z restores the group`);
+    return;
+  }
+  const d = editable();
+  if (!d) { note('Break Apart: open a drawing or layout first'); return; }
+  const r = breakApart(d.raw, d.sel, d.locked);
+  if (r.error) { note('Break Apart: ' + r.error); return; }
+  d.hist.push({ ...snapshotOf(d), sel: [...d.sel] }, 'Break Apart');
+  restore(d, r);
+  setSel(d, r.selected);
+  note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
+}
+
 function explodeSelected() {
   const d = editable();
   if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
@@ -3777,7 +3852,7 @@ function explodeSelected() {
 // ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----
 const SHAPING_TITLE = { weld: 'Join the selected outlines into one outline (union)', intersect: 'Keep only the area all the selected outlines share', trim: 'Cut the others out of the last picked outline (or the largest after a box); the others stay',
   simplify: 'Keep each outline minus the outlines in front of it (later in the drawing)', frontminus: 'Keep the frontmost outline minus all the others', backminus: 'Keep the backmost outline minus all the others', boundary: 'Add the union on the current layer; the originals stay' };
-/** Results use their source's layer; Boundary adds on the current layer. Trim keeps cutters; Boundary keeps all originals. */
+/** Results use their source's layer; Boundary adds on the current layer and always keeps originals. */
 function shapeSelection(op) {
   const name = SH.OPS[op].label, d = editable();
   if (!d) { note(`${name} works on a drawing tab: open a drawing first`); return; }
@@ -3791,7 +3866,9 @@ function shapeSelection(op) {
   if (r.error) { note(r.error + skipped); return; }
   if (r.untouched.length === r.operands.length) { note(`${name}: no outline is overlapped by one in front, nothing changed` + skipped); return; }
   if (!r.rings.length && !r.untouched.length && op !== 'frontminus' && op !== 'backminus') { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
-  const gone = SH.goneEntities(found.loops, found.openEnts, (op === 'boundary' ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
+  const keep = op === 'boundary' || state.shapingKeepOriginals;
+  if (keep && !r.rings.length) { note(`${name}: nothing is left, nothing changed` + skipped); return; }
+  const gone = SH.goneEntities(found.loops, found.openEnts, (keep ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands.filter((_, i) => !r.untouched.includes(i))).flatMap((o) => o.loops));
   const kept = Ed.removeEntities(d.raw, gone);
   const made = r.rings.map((ring, i) => {
     const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
@@ -3799,7 +3876,7 @@ function shapeSelection(op) {
   }), at = kept.entities.length;
   commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);
   setSel(d, new Set(made.map((_, i) => at + i)));
-  note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back'));
+  note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' && !keep ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : keep ? '. The originals stay. Ctrl+Z removes the result' : '. Ctrl+Z puts the originals back'));
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----
@@ -4008,6 +4085,7 @@ function restore(d, st) {
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   showDoc();
   warm(d);
+  if (st.sel) setSel(d, new Set(st.sel));
 }
 /** Does the selection hold anything but kept dimensions? (Keep only and Extract part need geometry.) */
 const selHasPart = (d) => [...d.sel].some((e) => d.raw.entities[e].layer !== Ed.DIM_LAYER);
@@ -4581,7 +4659,7 @@ async function balSheet(d, n) {
       d.hist = Ed.createHistory();
     } else {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
-      Object.assign(d, tabFields(r.doc, flatten(r.doc)));
+      Object.assign(d, tabFields(r.doc, flatten(r.doc)), { titleBlock: d.titleBlock });
       d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; P.orig = r.doc.entities; P.origBlocks = r.doc.blocks; warm(d);
     }
   } catch (err) { note(`Sheet ${n}: could not read this page (${err && err.message ? err.message : err})`); return false; }
@@ -6634,13 +6712,19 @@ function cmpAdd(d, source) {
   } catch (err) { note(err.message); }
 }
 
+/** A library part into Compare: Add from library and a drop on the Compare tab both come here. */
+function cmpAddPart(d, rec) {
+  if (d.cmp.items.length >= CMP.MAX_ITEMS) { note('Compare holds five drawings; remove one first'); return; }
+  const source = libPart(rec);
+  if (source) cmpAdd(d, source); else note(rec.name + ': this part could not be read');
+}
+
 /** Reuse the app's picker menu: the chosen source is copied only when added. */
 function cmpChoose(e, library = false) {
   const d = cmpDoc(), r = e.currentTarget.getBoundingClientRect();
   const sources = library ? lib.items : state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box);
   popMenu(r.left, r.bottom + 2, sources.length ? sources.map((x) => [x.name, () => {
-    const source = library ? libPart(x) : x;
-    if (source) cmpAdd(d, source); else note(x.name + ': this part could not be read');
+    if (library) cmpAddPart(d, x); else cmpAdd(d, x);
   }]) : [[library ? 'No parts in the Parts library' : 'No open drawing tabs', () => {}, null, false]]);
   ui.ctx.classList.add('cmp-source-menu');
 }
@@ -6860,6 +6944,7 @@ async function init() {
     const mode = saved.find((r) => r.id === 'workArea')?.mode;
     if (WORK_AREAS.includes(mode)) state.workArea = mode;
   } catch { /* storage may be blocked */ }
+  try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();

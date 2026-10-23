@@ -196,7 +196,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 98. ✅ (built, session 15) **Usage page "Refresh failed" dumps a stack trace** (S, bug, T17): one short failure / limit-reached line, last good numbers retained, full diagnostics only in the agent's local log; Rook probe retries once.
 99. **Fix round for 92 / 88 (session 15 review)** ✅ (built, session 16) (S): (a) Medium: web/edit.js ~291 drops gaps on layers whose names hold "text", "dim" or "arrow" (e.g. "Text-cut", "DIM-OUTLINE"; Text to outlines keeps the text layer), so real cut outlines lose Tiny gaps / Join / the Preflight gap check. Drop the layer pattern, keep the entity-type check, add a test. (b) Low: web/cmdui.js ~127 error lines fade after 3 s like the rest; keep 9 s for errors.
 100. ✅ (built, session 15) **Usage page: token chart as cumulative lines** (S, his pick 2026-10-21): replace the grouped daily bars with one running-total line per agent (Rook, Bishop, Knight) over the 14 IST days, dd-mmm labels, legend, end value labelled; same token definition (cache reads excluded).
-101. **Edit the footnote / title block text that prints on the PDF** (S–M, ask, T18): see T18 in support/tickets.md. Grill first.
+101. ✅ (built, session 17) **Edit the footnote / title block text that prints on the PDF** (S–M, ask, T18): per-file Title block switch and five editable fields, Reset to automatic text; off frees the 22 mm strip and removes the warning. Saved with the document; untyped date stays today (2026-10-23 answers).
 102. ✅ (built, session 16) **PDF save: start in the drawing's own folder, like Save As** (S, ask, T19): see T19 in support/tickets.md. Grill first.
 103. ✅ (built, session 16) **Allow much more zoom (now max 40 px per mm)** (S, ask, T20): see T20 in support/tickets.md. Grill first.
 104. ✅ (built, session 17) **Join gaps leaves ~half the gaps: micro-arcs shorter than the tolerance block it** (M, bug, T21): guarded micro-piece removal before the existing average-point join; count reported, one Undo restores everything. Synthetic fixture checks closure and <= 0.1% total length change.
@@ -219,11 +219,10 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 120. ✅ (built, session 17) **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): selected drawing entities now drag together, with preview, one Undo and Escape / pointer-cancel. PDF drawing imports open unlocked, without a background picture.
 121. ✅ (built, session 17) **Join gaps: CorelDRAW-style join methods (Average point, Extend, Chamfer, Fillet, Bezier)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
 122. ~~**Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary**~~ (built, session 17: a = Weld / Trim / Intersect; b = Simplify / Front minus back / Back minus front / Create boundary). Boolean operations on closed outlines; Modify menu and command bar, one Undo.
-123. **Shaping: keep originals (S)**: a switch (like CorelDRAW's "Leave original source / target object") so Weld,
-     Trim, Intersect and the other Shaping tools can keep the shapes they started from. His ask, 2026-10-23; grill first.
-124. **Break Apart (Ctrl+K) (S)**: split one outline that has several closed paths (e.g. a Weld result with holes)
-     into separate outlines, one per path, the CorelDRAW way. Not the same as Explode (91), which splits into single
-     lines and arcs. His ask, 2026-10-23; grill first.
+123. ~~**Shaping: keep originals (S)**~~ (built, 2026-10-24): one remembered Keep originals tick in Modify → Shaping, off by default, shared by all six operations and their commands. Results are added on top and selected; one Undo removes only the results. Create boundary always keeps originals.
+124. ✅ **Break Apart (Ctrl+K) (S)** (built, 2026-10-24): Modify → Break Apart and `BREAKAPART` separate a selected layout group or an outline-only drawing block into outlines, still selected and in place on their layers. One Undo restores the original object and selection. Other selections explain why nothing changed. Shaping holes are already separate closed polylines; Explode (91) is unchanged.
+125. ✅ (built, session 17) **Drag a part from the Parts library onto Compare** (S, ask, T49): a drop on the Compare canvas or panel adds it like Add from library (five at most); a hint follows the pointer.
+126. ✅ (built, session 17) **Drag a part from the Parts library onto a drawing tab** (S, ask, T50): the part's entities go into that drawing at the drop point, 1:1, loose, on their own layers, all selected, one Undo; a layout tab still places it on the sheet; with no drawing open the part opens as its own new drawing tab.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

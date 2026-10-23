@@ -10,6 +10,7 @@ import { Page, writePdf, winAnsi, textWidthEm } from './pdf-write.js';
 import { mmul, mapply, mscale, arcSweep, opsBox, strokeWidth } from './drawing.js';
 import { shownItems, itemVisible } from './doc.js';
 import { markGeometry } from './layout.js';
+import { addBlock, text as dxfText } from './dxf-write.js';
 
 export const PAPERS = { A4: [297, 210], A3: [420, 297], A0: [1189, 841] };   // landscape, mm
 export const PART_BORDER = 10;                                       // round a part on its own page, mm
@@ -18,7 +19,38 @@ export const CHECK = { margin: 10, block: 22 };                      // page edg
 export const DEFAULT_OPTIONS = {
   page: 'sheet', tilePaper: 'A3', checkPaper: 'A4',
   mirror: true, negative: false, black: true, separate: true, crop: false, reg: false, strip: true,
+  titleBlock: { enabled: true },
 };
+
+export const TITLE_FIELDS = ['file', 'scale', 'size', 'date', 'footnote'];
+export const TITLE_BLOCK = 'PD_PDF_TITLE';
+
+/** Only typed strings are overrides; an empty string deliberately hides that field. */
+export function cleanTitleBlock(value) {
+  const out = { enabled: value?.enabled !== false };
+  for (const key of TITLE_FIELDS) if (typeof value?.[key] === 'string') out[key] = value[key];
+  return out;
+}
+
+/** Per-document PDF settings travel in an unused block, like the layout's metadata. */
+export function withTitleBlock(raw, value) {
+  if (!value) return raw;
+  const doc = { ...raw, blocks: { ...raw.blocks } };
+  const encoded = btoa(JSON.stringify(cleanTitleBlock(value)).replace(/[^\u0000-\u007f]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0')));
+  const entities = [];
+  for (let i = 0; i < encoded.length; i += 200) entities.push(dxfText(0, 0, 1, encoded.slice(i, i + 200)));
+  addBlock(doc, TITLE_BLOCK, entities);
+  return doc;
+}
+
+export function readTitleBlock(raw) {
+  const block = raw.blocks?.[TITLE_BLOCK];
+  if (!block) return undefined;
+  try {
+    const encoded = block.entities.filter((e) => e.type === 'TEXT' && e.r).map((e) => e.r.v[e.r.c.indexOf(1)] ?? '').join('');
+    return cleanTitleBlock(JSON.parse(atob(encoded)));
+  } catch { return undefined; }
+}
 
 const CAPH = 0.718;                                                  // Helvetica's capitals, in ems
 const BLACK = [0, 0, 0], WHITE = [1, 1, 1];
@@ -48,15 +80,28 @@ export function tileGrid(w, h, pw, ph) {
 }
 
 /** The scale a sheet w × h gets on a check-print page pw × ph, and where it sits (page mm). */
-export function checkFit(w, h, pw, ph) {
-  const aw = pw - 2 * CHECK.margin, ah = ph - 2 * CHECK.margin - CHECK.block;
+export function checkFit(w, h, pw, ph, titleBlock = true) {
+  const block = titleBlock ? CHECK.block : 0;
+  const aw = pw - 2 * CHECK.margin, ah = ph - 2 * CHECK.margin - block;
   const s = Math.min(aw / w, ah / h);
-  return { s, ox: CHECK.margin + (aw - w * s) / 2, oy: CHECK.margin + CHECK.block + (ah - h * s) / 2 };
+  return { s, ox: CHECK.margin + (aw - w * s) / 2, oy: CHECK.margin + block + (ah - h * s) / 2 };
 }
 
 /** "1 : 3.37" for a scale s (page mm per sheet mm); "2 : 1" when enlarged. */
 export function scaleText(s) {
   return s >= 1 ? `${trimNum(s)} : 1` : `1 : ${trimNum(1 / s)}`;
+}
+
+/** Automatic facts stay live until that individual field is typed. The caller supplies today's date. */
+export function titleBlockTexts(src, p, value) {
+  return {
+    file: src.name || 'drawing',
+    scale: (src.part ? 'NOT 1:1 · scale ' : 'Scale ') + scaleText(p.scale),
+    size: `${src.part ? 'Part' : 'Sheet'} ${trimNum(src.sheetW)} × ${trimNum(src.sheetH)} mm · ${p.layer == null ? 'ALL' : p.layer.toUpperCase()} · page ${p.n}/${p.of}`,
+    date: src.date || '',
+    footnote: src.part ? 'Fitted to one page: not 1:1, not to be used as film' : 'Check print: not to be used as film',
+    ...Object.fromEntries(TITLE_FIELDS.filter((k) => typeof value?.[k] === 'string').map((k) => [k, value[k]])),
+  };
 }
 
 /**
@@ -86,6 +131,7 @@ const colourName = (g) => (g.index == null ? 'ALL' : g.name.toUpperCase());
  */
 export function planPdf(src, opts) {
   const o = { ...DEFAULT_OPTIONS, ...opts };
+  o.titleBlock = cleanTitleBlock(o.titleBlock);
   const { fl, off, sheetW: W, sheetH: H } = src;
   const org = src.origin || [0, 0];                                  // where the sheet's corner is, in drawing mm (a part's page: its corner less the border)
   const hide = new Set((src.hide || []).map((s) => s.toLowerCase()));
@@ -109,7 +155,7 @@ export function planPdf(src, opts) {
     }
   } else if (o.page === 'check') {
     const [lw, lh] = PAPERS[o.checkPaper] || PAPERS.A4;
-    const a = checkFit(W, H, lw, lh), b = checkFit(W, H, lh, lw);
+    const a = checkFit(W, H, lw, lh, o.titleBlock.enabled), b = checkFit(W, H, lh, lw, o.titleBlock.enabled);
     const land = b.s > a.s * 1.0001 ? [lh, lw, b] : [lw, lh, a];
     geos = [{ w: land[0], h: land[1], scale: land[2] }];
   } else geos = [{ w: W, h: H }];
@@ -126,7 +172,7 @@ export function planPdf(src, opts) {
   const plan = {
     options: o, pages, count: pages.length, box,
     build: (i) => drawPage(src, o, plan, pages[i], box),
-    bytes: () => writePdf(pages.map((_, i) => plan.build(i)), { title: src.name || 'Project D' }),
+    bytes: () => writePdf(pages.map((_, i) => plan.build(i)), { title: src.name || 'Project D', subject: o.page === 'check' ? 'Scale ' + scaleText(pages[0].scale) : 'Scale 1 : 1' }),
   };
   return plan;
 }
@@ -319,16 +365,16 @@ function drawPage(src, o, plan, p, artBox) {
       (o.strip ? ` · ${job}` : ` · ${colour}`);
     page.fillColor(markInk);
     page.text([2.8, 0, 0, 2.8, TILE.margin, 2.6], fitText(label, 2.8, p.w - 2 * TILE.margin));
-  } else if (check) {
+  } else if (check && o.titleBlock.enabled) {
     const m = CHECK.margin, x0 = m, x1 = p.w - m, y0 = m, y1 = m + CHECK.block, half = (x1 - x0) / 2;
     page.lineWidth(0.25); page.rect(x0, y0, x1 - x0, CHECK.block); page.stroke();
-    page.text([5, 0, 0, 5, x0 + 3, y1 - 8], fitText(src.name || 'drawing', 5, half - 6));
-    page.text([3.2, 0, 0, 3.2, x0 + 3, y1 - 14], fitText(`${src.part ? 'Part' : 'Sheet'} ${trimNum(W)} × ${trimNum(H)} mm · ${colour} · page ${p.n}/${p.of}`, 3.2, half - 6));
-    page.text([3, 0, 0, 3, x0 + 3, y0 + 3.5], fitText(src.part ? 'Fitted to one page: not 1:1, not to be used as film' : 'Check print: not to be used as film', 3, half - 6));
-    const sc = (src.part ? 'NOT 1:1 · scale ' : 'Scale ') + scaleText(geo.scale.s), dt = src.date || '';
-    textAt(page, [1, 0, 0, 1, 0, 0], sc, x1 - 3, y1 - 8, 5, 2);
-    textAt(page, [1, 0, 0, 1, 0, 0], dt, x1 - 3, y1 - 14, 3.2, 2);
-  } else if (o.strip) {
+    const texts = titleBlockTexts(src, p, o.titleBlock);
+    page.text([5, 0, 0, 5, x0 + 3, y1 - 8], fitText(texts.file, 5, half - 6));
+    page.text([3.2, 0, 0, 3.2, x0 + 3, y1 - 14], fitText(texts.size, 3.2, half - 6));
+    page.text([3, 0, 0, 3, x0 + 3, y0 + 3.5], fitText(texts.footnote, 3, half - 6));
+    textAt(page, [1, 0, 0, 1, 0, 0], fitText(texts.scale, 5, half - 6), x1 - 3, y1 - 8, 5, 2);
+    textAt(page, [1, 0, 0, 1, 0, 0], fitText(texts.date, 3.2, half - 6), x1 - 3, y1 - 14, 3.2, 2);
+  } else if (!check && o.strip) {
     const size = Math.min(6, Math.max(2.5, Math.min(W, H) / 150));
     textAt(page, B, job, W - Math.min(10, W / 20), Math.min(6, H / 20), size, 2);
   }

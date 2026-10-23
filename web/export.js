@@ -1,9 +1,9 @@
 // export.js — the "PDF / Print" dialog (mock-up "PDF export"): This layout (page, film, pages, marks, live preview) and
 // A folder at once. The pages themselves are planned and drawn by pdf-export.js (pure); this file is the UI, saving and
-// printing. Settings are kept for the session (this object), never in a file. Text from a file goes in as text, via h().
+// printing. Page/film settings last the session; title block settings belong to the document. File text goes in via h().
 import { h, fill } from './dom.js';
 import { saveDefault, withExt } from './savepath.js';
-import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, checkFit, scaleText, PAPERS, PART_BORDER } from './pdf-export.js';
+import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER } from './pdf-export.js';
 import { drawingBoxMm, startHidden, unitFactor } from './doc.js';
 
 const layoutSettings = {
@@ -84,7 +84,7 @@ export function paintPage(canvas, page, box, colours) {
 
 /**
  * host: { source() → { name, path, fl, factor, off, sheetW, sheetH, hide } | null, sheet() → { w, h },
- *         readDrawing(bytes) → { ok, result, doc, sorry, error }, note(text) }
+ *         readDrawing(bytes) → { ok, result, doc, sorry, error }, setTitleBlock(value), note(text) }
  */
 export function openExport(host) {
   if (document.querySelector('.pdlg-back')) return;
@@ -93,6 +93,7 @@ export function openExport(host) {
   const date = today();
   const part = !!src.part, settings = part ? partSettings : layoutSettings;        // Part: the drawing and its dimensions alone, three ways
   const srcFull = { ...src, date, name: baseName(src.name) };
+  let titleBlock = cleanTitleBlock(src.titleBlock);
   const t = window.__TAURI__;
   const inApp = !!(t && t.dialog && t.dialog.save && t.fs && t.fs.writeFile);
   const ref = {};
@@ -110,7 +111,7 @@ export function openExport(host) {
   // Mirror and Negative are for film: greyed on a check print, and then they do not apply (they come back as they were)
   const opts = () => ({
     page: settings.page, tilePaper: settings.tilePaper, checkPaper: settings.checkPaper, mirror: settings.mirror && settings.page !== 'check', negative: settings.negative && settings.page !== 'check',
-    black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip,
+    black: settings.black, separate: settings.separate, crop: settings.crop, reg: settings.reg, strip: settings.strip, titleBlock,
   });
 
   // ---- little builders
@@ -147,11 +148,28 @@ export function openExport(host) {
   ref.canvas = h('canvas', { role: 'img', 'data-testid': 'pdf-preview' });
   ref.prevBox = h('div', { class: 'pd-prev' }, ref.canvas);
 
+  const rememberTitle = () => { host.setTitleBlock(titleBlock); refresh(); };
+  ref.titleSwitch = h('input', { type: 'checkbox', role: 'switch', class: 'swin', checked: titleBlock.enabled, 'aria-label': 'Title block', 'data-testid': 'pdf-title-block' });
+  ref.titleSwitch.addEventListener('change', () => { titleBlock = { ...titleBlock, enabled: ref.titleSwitch.checked }; rememberTitle(); });
+  ref.titleInputs = {};
+  const titleField = (key, label) => {
+    const input = h('input', { class: 'fld', type: 'text', 'data-testid': 'pdf-title-' + key });
+    input.addEventListener('input', () => { titleBlock = { ...titleBlock, [key]: input.value }; rememberTitle(); });
+    ref.titleInputs[key] = input;
+    return h('label', { class: 'lbl pd-fl' + (key === 'size' || key === 'footnote' ? ' wide' : '') }, label, input);
+  };
+  ref.titleReset = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'pdf-title-reset', onclick: () => { titleBlock = { enabled: titleBlock.enabled }; rememberTitle(); } }, 'Reset');
+  ref.titleSet = fieldset('Title block',
+    h('label', { class: 'row swrow' }, h('span', null, 'Title block'), ref.titleSwitch),
+    h('div', { class: 'pd-two pd-title-fields' }, titleField('file', 'File name'), titleField('scale', 'Scale'), titleField('size', 'Part / size / page'), titleField('date', 'Date'), titleField('footnote', 'Footnote')),
+    h('div', { class: 'pd-row' }, ref.titleReset, h('span', { class: 'lbl' }, 'Restore automatic text · empty hides the field')));
+
   const left = h('div', { class: 'pd-left' },
     fieldset('Page',
       radio('sheet', 'pdf-page-sheet', part ? 'Page cut to the part, 1:1 ' : 'Sheet size, 1:1 ', ref.sheetLbl),
       radio('tile', 'pdf-page-tile', 'Tile 1:1 on ', ref.tilePaper, ' pages ', ref.tileLbl),
-      radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' with title block ', ref.checkLbl)),
+      radio('check', 'pdf-page-check', part ? 'Scaled to fit one ' : 'Check print, fit to ', ref.checkPaper, part ? ' page ' : ' ', ref.checkLbl)),
+    ref.titleSet,
     fieldset('Film',
       check('mirror', 'Mirror (emulsion down)', 'pdf-mirror'),
       check('negative', 'Negative', 'pdf-negative'),
@@ -239,6 +257,7 @@ export function openExport(host) {
     }
     ref.go.textContent = 'Save PDF';
     const o = opts(), check = o.page === 'check';
+    srcFull.date = today();
     plan = planPdf(srcFull, o);
     if (settings.pageIdx >= plan.count) settings.pageIdx = plan.count - 1;
     if (settings.pageIdx < 0) settings.pageIdx = 0;
@@ -249,8 +268,7 @@ export function openExport(host) {
     const [tw, th] = PAPERS[settings.tilePaper], a = tileGrid(W, Hh, tw, th), b = tileGrid(W, Hh, th, tw);
     const g = b.cols * b.rows < a.cols * a.rows ? b : a;
     ref.tileLbl.textContent = `${g.cols} × ${g.rows} tiles`;
-    const [cw, ch] = PAPERS[settings.checkPaper], f1 = checkFit(W, Hh, cw, ch), f2 = checkFit(W, Hh, ch, cw);
-    ref.checkLbl.textContent = (part ? 'not 1:1 · scale ' : 'scale ') + scaleText(Math.max(f1.s, f2.s));
+    ref.checkLbl.textContent = (part ? 'not 1:1 · scale ' : 'scale ') + scaleText(plan.pages[0].scale || 1);
     ref.checkLbl.hidden = !check;                                   // the scale belongs to the Scaled / Check print option only
     for (const k of ['mirror', 'negative']) { ref[k].disabled = check; ref[k].checked = !check && settings[k]; }
     ref.filmNote.textContent = check ? (part ? 'Mirror and negative are for film, not a scaled print' : 'Mirror and negative are for film, not a check print') : '';
@@ -259,6 +277,11 @@ export function openExport(host) {
     ref.pagesNote.textContent = `${shownNames.join(' · ')} = ${plan.count} ${plan.count === 1 ? 'page' : 'pages'}`;
     ref.pagesNote2.textContent = '';
     const p = plan.pages[settings.pageIdx];
+    ref.titleSet.hidden = !check;
+    if (check) {
+      const texts = titleBlockTexts(srcFull, p, titleBlock);
+      for (const [key, input] of Object.entries(ref.titleInputs)) { input.value = texts[key]; input.disabled = !titleBlock.enabled; }
+    }
     ref.preLabel.textContent = `Preview · page ${p.n} of ${plan.count} · ${p.layer || 'All layers'}${p.tile ? ` · tile ${p.tile.n}/${p.tile.of}` : ''}`;
     ref.canvas.setAttribute('aria-label', `Page ${p.n} preview: ${p.layer || 'all layers'}${o.mirror && !check ? ', mirrored' : ''}${o.negative && !check ? ', negative' : ''}, ${o.black ? 'in black' : 'in colour'}`);
     const shownBtns = plan.pages.slice(0, 60);
@@ -387,7 +410,7 @@ export function openExport(host) {
         set(55);
         const factor = unitFactor(fl.units), box = drawingBoxMm(fl, factor);
         const sheetW = Math.max(sheet.w, box ? Math.ceil(box[2]) : 0), sheetH = Math.max(sheet.h, box ? Math.ceil(box[3]) : 0);
-        const p = planPdf({ fl, factor, off: startHidden(fl), sheetW, sheetH, name: baseName(e.name), date, hide: [] }, o);
+        const p = planPdf({ fl, factor, off: startHidden(fl), sheetW, sheetH, name: baseName(e.name), date: today(), hide: [] }, { ...o, titleBlock: readTitleBlock(r.doc) });
         const bytes = p.bytes();
         set(80);
         let out = baseName(e.name) + '.pdf';
