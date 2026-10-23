@@ -219,6 +219,11 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 120. ✅ (built, session 17) **PDF drawing: dragging a selection does nothing** (S–M, bug, T37): selected drawing entities now drag together, with preview, one Undo and Escape / pointer-cancel. PDF drawing imports open unlocked, without a background picture.
 121. ✅ (built, session 17) **Join gaps: CorelDRAW-style join methods (Average point, Extend, Chamfer, Fillet, Bezier)** (M, ask, T21 follow-up): Join today moves ends to their average point; add Corel's Join Curves methods (research in support/tickets.md, T21). After the bugs. Grill first.
 122. ~~**Shaping tools like CorelDRAW: Weld, Trim, Intersect, Simplify, Front minus back, Back minus front, Create boundary**~~ (built, session 17: a = Weld / Trim / Intersect; b = Simplify / Front minus back / Back minus front / Create boundary). Boolean operations on closed outlines; Modify menu and command bar, one Undo.
+123. **Shaping: keep originals (S)**: a switch (like CorelDRAW's "Leave original source / target object") so Weld,
+     Trim, Intersect and the other Shaping tools can keep the shapes they started from. His ask, 2026-10-23; grill first.
+124. **Break Apart (Ctrl+K) (S)**: split one outline that has several closed paths (e.g. a Weld result with holes)
+     into separate outlines, one per path, the CorelDRAW way. Not the same as Explode (91), which splits into single
+     lines and arcs. His ask, 2026-10-23; grill first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
