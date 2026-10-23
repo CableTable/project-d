@@ -8129,9 +8129,9 @@ try {
     await t('picker').setInputFiles({ name: 'shaping.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping.dxf');
     assert.equal(await entCount(), 3);
-    // the Modify menu lists the three after the existing items
+    // the Modify menu lists all seven after the existing items
     await page.locator('[data-menu=Modify]').click();
-    assert.deepEqual(await page.getByRole('menuitem').allTextContents().then((a) => a.filter((x) => /^Shaping/.test(x)).map((x) => x.trim())), ['Shaping: Weld', 'Shaping: Trim', 'Shaping: Intersect']);
+    assert.deepEqual(await page.getByRole('menuitem').allTextContents().then((a) => a.filter((x) => /^Shaping/.test(x)).map((x) => x.trim())), ['Shaping: Weld', 'Shaping: Trim', 'Shaping: Intersect', 'Shaping: Simplify', 'Shaping: Front minus back', 'Shaping: Back minus front', 'Shaping: Create boundary']);
     await page.screenshot({ path: shotDir + '/shaping-menu-light.png' });
     await theme('dark'); await page.locator('[data-menu=Modify]').click(); await page.screenshot({ path: shotDir + '/shaping-menu-dark.png' }); await page.keyboard.press('Escape'); await theme('light');
     // one outline picked: too few
@@ -8185,6 +8185,59 @@ try {
     await typeCmd('intersect');
     assert.equal(await prompt(), 'Intersect: the outlines do not overlap, nothing changed');
     assert.equal(await entCount(), 2);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 122b: all four operations from Modify and command bar, drawing order, source layers, boundary keeps originals, area/count and one Undo', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addLayer(doc, 'Back'); addLayer(doc, 'Front');
+    addEntities(doc, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true, layer: 'Back', aci: 1 }),
+      dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true, layer: 'Front', aci: 3 }), dxfPoly([[300, 100], [350, 100], [350, 150]]));
+    await t('picker').setInputFiles({ name: 'shaping-122b.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-122b.dxf');
+    // Saving renumbers DXF handles when entities are removed; compare all geometry and attributes without those handles.
+    const withoutHandles = (ents) => ents.map((e) => ({ ...e, r: { c: e.r.c.filter((c) => c !== 5), v: e.r.v.filter((_, i) => e.r.c[i] !== 5) } }));
+    const original = withoutHandles((await savedDoc()).entities);
+    for (const [cmd, label, count, area, layers] of [
+      ['simplify', 'Simplify', 2, '6300.00', ['Back', 'Front']],
+      ['frontminus', 'Front minus back', 1, '2700.00', ['Front']],
+      ['backminus', 'Back minus front', 1, '2700.00', ['Back']],
+      ['boundary', 'Create boundary', 1, '6300.00', ['0']],
+    ]) for (const via of ['menu', 'command']) {
+      // Pick the front first for the menu, back first for the command: last pick must not determine stacking.
+      const picks = via === 'menu' ? [[190, 160], [100, 130]] : [[100, 130], [190, 160]];
+      await click(...picks[0]); await click(...picks[1], { shift: true }); await click(300, 100, { shift: true });
+      await waitSel('3 selected');
+      if (via === 'menu') await menuItem('Modify', 'Shaping: ' + label); else await typeCmd(cmd);
+      const tail = cmd === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back';
+      assert.equal(await prompt(), `${label}: 2 outlines → ${count} outline${count === 1 ? '' : 's'}, area ${area} mm²; 1 open outline skipped` + tail);
+      assert.equal(await entCount(), cmd === 'boundary' ? 4 : count + 1);
+      const saved = withoutHandles((await savedDoc()).entities);
+      assert.deepEqual(saved.slice(-count).map((e) => e.layer), layers);
+      if (cmd === 'boundary') assert.deepEqual(saved.slice(0, 3), original, 'boundary leaves every original whole');
+      else assert.deepEqual(saved[0], original[2], 'the open outline stays whole');
+      if (cmd === 'simplify') assert.deepEqual(saved.slice(-count).map((e) => e.aci), [1, 3], 'each source keeps its colour');
+      if (cmd === 'frontminus' || cmd === 'backminus') {
+        assert.equal(Math.min(...saved.at(-1).r.v.filter((_, i) => saved.at(-1).r.c[i] === 10).map(Number)), cmd === 'frontminus' ? 130 : 100);
+      }
+      assert.equal((await histLabels()).at(-1), label);
+      await page.keyboard.press('Control+z');
+      assert.equal(await entCount(), 3);
+      assert.deepEqual(withoutHandles((await savedDoc()).entities), original, 'one Undo restores the entire drawing');
+    }
+    await closeTabs(/./);
+    const same = newDoc();
+    const square = dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true });
+    addEntities(same, square, square);
+    await t('picker').setInputFiles({ name: 'shaping-covered.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(same)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shaping-covered.dxf');
+    for (const [cmd, label, count, area] of [['simplify', 'Simplify', 1, '3600.00'], ['frontminus', 'Front minus back', 0, '0.00'], ['backminus', 'Back minus front', 0, '0.00']]) {
+      await page.keyboard.press('Control+a'); await typeCmd(cmd);
+      assert.equal(await prompt(), `${label}: 2 outlines → ${count} outline${count === 1 ? '' : 's'}, area ${area} mm². Ctrl+Z puts the originals back`);
+      assert.equal(await entCount(), count);
+      await page.keyboard.press('Control+z'); assert.equal(await entCount(), 2);
+    }
     await closeTabs(/./);
   });
 

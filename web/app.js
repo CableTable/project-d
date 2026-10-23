@@ -380,7 +380,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
-  // Shaping (TODO 122): the dropdown has no sub-menus, so its three items sit together after a separator, each named Shaping: …
+  // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
@@ -2960,6 +2960,7 @@ const DO = {
   dimstyle: () => showDimStyle(),
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
+  simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
@@ -3750,9 +3751,10 @@ async function textToOutlines() {
   note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
 }
 
-// ---- Shaping (TODO 122a): Weld / Trim / Intersect of the selected closed outlines, one undo step (shaping.js is the maths) ----
-const SHAPING_TITLE = { weld: 'Join the selected outlines into one outline (union)', intersect: 'Keep only the area all the selected outlines share', trim: 'Cut the others out of the last picked outline (or the largest after a box); the others stay' };
-/** The selected closed outlines are combined; the result is closed polylines on the target's layer. The originals go (Trim: only the target; the cutters stay). */
+// ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----
+const SHAPING_TITLE = { weld: 'Join the selected outlines into one outline (union)', intersect: 'Keep only the area all the selected outlines share', trim: 'Cut the others out of the last picked outline (or the largest after a box); the others stay',
+  simplify: 'Keep each outline minus the outlines in front of it (later in the drawing)', frontminus: 'Keep the frontmost outline minus all the others', backminus: 'Keep the backmost outline minus all the others', boundary: 'Add the union on the current layer; the originals stay' };
+/** Results use their source's layer; Boundary adds on the current layer. Trim keeps cutters; Boundary keeps all originals. */
 function shapeSelection(op) {
   const name = SH.OPS[op].label, d = editable();
   if (!d) { note(`${name} works on a drawing tab: open a drawing first`); return; }
@@ -3764,16 +3766,19 @@ function shapeSelection(op) {
   if (!found || found.loops.length < 2) { note(`${name}: select at least 2 closed outlines (click one, Shift+click the others, or drag a box)` + skipped); return; }
   const r = SH.shape(op, found.loops, d.sel.has(d.lastPick) ? found.loops.findIndex((l) => l.ents.has(d.lastPick)) : -1);
   if (r.error) { note(r.error + skipped); return; }
-  if (!r.rings.length) { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
-  const used = new Set((op === 'trim' ? [r.operands[r.target]] : r.operands).flatMap((o) => o.loops)), gone = new Set();
+  if (!r.rings.length && op !== 'frontminus' && op !== 'backminus') { note(`${name}: ${op === 'intersect' ? 'the outlines do not overlap' : 'nothing is left'}, nothing changed` + skipped); return; }
+  const used = new Set((op === 'boundary' ? [] : op === 'trim' ? [r.operands[r.target]] : r.operands).flatMap((o) => o.loops)), gone = new Set();
   found.loops.forEach((l, i) => { if (used.has(i)) l.ents.forEach((e) => gone.add(e)); });
   found.loops.forEach((l, i) => { if (!used.has(i)) l.ents.forEach((e) => gone.delete(e)); });   // an entity that also makes an unused loop or open line stays whole
   found.openEnts.forEach((e) => gone.delete(e));
-  const src = d.raw.entities[Math.min(...found.loops[r.operands[r.target].loops[0]].ents)], kept = Ed.removeEntities(d.raw, gone);
-  const made = r.rings.map((ring) => lwpoly(ring, { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps })), at = kept.entities.length;
+  const kept = Ed.removeEntities(d.raw, gone);
+  const made = r.rings.map((ring, i) => {
+    const src = d.raw.entities[Math.min(...found.loops[r.operands[r.sources[i]].loops[0]].ents)];
+    return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps });
+  }), at = kept.entities.length;
   commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);
   setSel(d, new Set(made.map((_, i) => at + i)));
-  note(`${name}: ${r.operands.length} outlines → ${made.length} outline${made.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + '. Ctrl+Z puts the originals back');
+  note(`${name}: ${r.operands.length} outlines → ${made.length} outline${made.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : '. Ctrl+Z puts the originals back'));
 }
 
 // ---- extra gaps: click the gap between two rows or columns, type the extra mm (layout.js does the maths) ----

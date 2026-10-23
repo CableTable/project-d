@@ -1,4 +1,4 @@
-// shaping.js — Weld, Trim, Intersect on closed outlines (TODO 122a).   node shaping.test.mjs
+// shaping.js — seven Shaping operations on closed outlines (TODO 122).   node shaping.test.mjs
 import assert from 'node:assert/strict';
 import * as S from './web/shaping.js';
 import * as E from './web/edit.js';
@@ -109,6 +109,80 @@ test('outlineLoops: closed outlines come out, an open polyline is counted open, 
   assert.deepEqual([...r.loops[r.loops.length - 1].ents].sort(), [4, 5, 6, 7]);   // the four lines make one loop
   const s = S.shape('weld', r.loops);
   near(s.area, 100 + 100 - 25 + Math.PI * 25 + 100, 1e-3);
+});
+
+test('Simplify: overlapping squares in either order retain each visible part on its source', () => {
+  const a = sq(0, 0, 10), b = sq(5, 5, 10);
+  for (const loops of [[a, b], [b, a]]) {
+    const r = S.shape('simplify', loops);
+    near(r.area, 175); assert.equal(r.rings.length, 2);
+    assert.deepEqual(r.sources, [0, 1]);
+    near(S.operandsOf([r.rings[0]])[0].area, 75);
+    near(S.operandsOf([r.rings[1]])[0].area, 100);
+    near(S.shape('intersect', r.rings).area, 0);
+    near(S.shape('intersect', [r.rings[1], loops[1]]).area, 100);
+  }
+});
+
+test('Simplify drops a fully covered outline and subtracts all outlines in front', () => {
+  const a = sq(0, 0, 10);
+  const r = S.shape('simplify', [a, a, sq(5, 0, 10)]);
+  near(r.area, 150); assert.equal(r.rings.length, 2);
+  assert.deepEqual(r.sources, [1, 2]);
+  near(S.operandsOf([r.rings[0]])[0].area, 50);
+});
+
+for (const [op, target] of [['frontminus', 1], ['backminus', 0]]) {
+  test(op + ': overlapping squares in both orders use drawing order, not the picked target', () => {
+    const a = sq(0, 0, 10), b = sq(5, 5, 10);
+    for (const loops of [[a, b], [b, a]]) {
+      const r = S.shape(op, loops, 1 - target);
+      assert.equal(r.target, target); near(r.area, 75); assert.equal(r.rings.length, 1);
+      assert.deepEqual(r.sources, [target]);
+      assert.deepEqual(r.rings, S.shape('trim', loops, target).rings);
+    }
+    const r = S.shape(op, [a, a]);
+    near(r.area, 0); assert.deepEqual(r.rings, []);
+  });
+}
+
+test('Front / Back minus subtract every other outline, including three overlapping outlines', () => {
+  const a = sq(0, 0, 10), b = sq(4, -5, 10), c = sq(6, 4, 10);
+  for (const loops of [[a, b, c], [c, b, a]]) {
+    const front = S.shape('frontminus', loops), back = S.shape('backminus', loops);
+    near(front.area, loops[2] === c ? 100 - 24 - 8 + 4 : 100 - 30 - 24 + 4);
+    near(back.area, loops[0] === a ? 100 - 30 - 24 + 4 : 100 - 24 - 8 + 4);
+    assert.equal(front.target, 2); assert.equal(back.target, 0);
+  }
+});
+
+test('Create boundary: overlapping squares in either order give one union; disjoint squares give two', () => {
+  const a = sq(0, 0, 10), b = sq(5, 5, 10);
+  for (const loops of [[a, b], [b, a]]) {
+    const r = S.shape('boundary', loops);
+    near(r.area, 175); assert.equal(r.rings.length, 1);
+  }
+  const r = S.shape('boundary', [a, sq(20, 0, 10)]);
+  near(r.area, 200); assert.equal(r.rings.length, 2);
+});
+
+test('new operations keep the even-odd hole rule and shared failure note', () => {
+  for (const op of ['simplify', 'frontminus', 'backminus', 'boundary']) {
+    assert.match(S.shape(op, [sq(0, 0, 20), sq(5, 5, 10)]).error, /count as its holes/);
+    assert.match(S.shape(op, [sq(0, 0, 10), { pts: [] }]).error, /Shaping failed/);
+    const r = S.shape(op, [sq(0, 0, 20), sq(5, 5, 10), sq(18, 0, 10)]);
+    near(r.area, { simplify: 380, frontminus: 80, backminus: 280, boundary: 380 }[op]);
+    if (op === 'simplify' || op === 'boundary') assert.equal(r.rings.length, 3 - (op === 'boundary' ? 1 : 0));
+  }
+});
+
+test('drawing entity order wins over selection order and loop discovery order', () => {
+  const back = { ...sq(0, 0, 10), ents: new Set([0, 1, 2, 3]) }, front = { ...sq(5, 5, 10), ents: new Set([4]) };
+  const r = S.shape('frontminus', [front, back], 1);
+  assert.equal(r.operands[r.target].loops[0], 0);
+  assert.deepEqual(r.rings, S.shape('trim', [front, back], 0).rings);
+  const s = S.shape('simplify', [front, back]);
+  assert.deepEqual(s.operands.map((o) => o.loops[0]), [1, 0]);
 });
 
 console.log(n + ' passed');

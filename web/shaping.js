@@ -5,8 +5,9 @@
 // as closed polylines. The boolean maths is the vendored polygon-clipping (MIT, web/vendor/polygon-clipping).
 //
 //   operandsOf(loops)            → [{ poly: [outer, ...holes], loops: [loop indexes], area }]   the shapes the loops make
-//   shape(op, loops, target)     → { rings, area, operands } | { error }   op: a key of OPS; target: the loop index Trim cuts (-1 = the largest shape)
-//   OPS                          → { weld, trim, intersect }   { label, run(polys, target) } (a new operation is one more entry)
+//   shape(op, loops, target)     → { rings, sources, area, operands, target } | { error }; sources indexes operands for each ring
+//                                 target input: the loop index Trim cuts (-1 = the largest shape)
+//   OPS                          → { label, run(polys, target), target?, each? } (each runs once per source operand)
 import pc from './vendor/polygon-clipping/polygon-clipping.js';
 
 const ringArea = (r) => { let s = 0; for (let i = 0, j = r.length - 1; i < r.length; j = i++) s += r[j][0] * r[i][1] - r[i][0] * r[j][1]; return Math.abs(s) / 2; };
@@ -29,6 +30,10 @@ export const OPS = {
   weld: { label: 'Weld', run: (polys) => pc.union(polys[0], ...polys.slice(1)) },
   trim: { label: 'Trim', run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
   intersect: { label: 'Intersect', run: (polys) => pc.intersection(polys[0], ...polys.slice(1)) },
+  simplify: { label: 'Simplify', each: true, run: (polys, t) => pc.difference(polys[t], ...polys.slice(t + 1)) },
+  frontminus: { label: 'Front minus back', target: (polys) => polys.length - 1, run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
+  backminus: { label: 'Back minus front', target: () => 0, run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
+  boundary: { label: 'Create boundary', run: (polys) => pc.union(polys[0], ...polys.slice(1)) },
 };
 
 export function shape(op, loops, target = -1) {
@@ -39,18 +44,24 @@ export function shape(op, loops, target = -1) {
 
 function run(o, loops, target) {
   const operands = operandsOf(loops);
+  // Selection order and closed-loop discovery order need not be drawing order; a chain takes its frontmost entity's position.
+  const order = (o) => loops[o.loops[0]].ents ? Math.max(...loops[o.loops[0]].ents) : o.loops[0];
+  operands.sort((a, b) => order(a) - order(b));
   if (operands.length < 2) return { error: `${o.label} needs at least 2 closed outlines` + (loops.length > 1 ? ' (outlines inside another one count as its holes)' : ''), operands };
   let t = operands.findIndex((x) => x.loops.includes(target));
   if (t < 0) t = operands.reduce((best, x, i) => (x.area > operands[best].area ? i : best), 0);
-  const multi = o.run(operands.map((x) => x.poly), t), rings = [];
+  if (o.target) t = o.target(operands);
+  const polys = operands.map((x) => x.poly), rings = [], sources = [];
+  const targets = o.each ? operands.map((_, i) => i) : [t];
   let area = 0;
-  for (const poly of multi) {
+  for (const source of targets) for (const poly of o.run(polys, source)) {
     poly.forEach((r, k) => {
       const ring = r.slice(0, -1);                                  // pc closes each ring by repeating its first point
       if (ring.length < 3) return;
       rings.push(ring);
+      sources.push(source);
       area += k ? -ringArea(ring) : ringArea(ring);
     });
   }
-  return { rings, area, operands, target: t };
+  return { rings, sources, area, operands, target: t };
 }
