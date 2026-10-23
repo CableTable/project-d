@@ -722,9 +722,18 @@ function sheetAt(clientX, clientY) {
 }
 const PART_TYPE = 'application/x-pd-part';
 function attachDrop() {
+  // On the Compare tab a library part dropped on the canvas or the panel joins Compare (T49); the hint follows the pointer.
+  const onCmp = (e) => !!cmpDoc() && (ui.canvas.contains(e.target) || ui.cmpSec.contains(e.target));
+  const cmpHint = h('div', { class: 'pop drophint fixed', hidden: true, 'data-testid': 'cmp-drop-hint' }, 'Drop to add to Compare');
+  document.body.append(cmpHint);
   const over = (e) => {
     const types = e.dataTransfer ? [...e.dataTransfer.types] : [];
+    cmpHint.hidden = true;
     if (types.includes('Files')) { e.preventDefault(); ui.canvas.classList.add('dropping'); }
+    else if (types.includes(PART_TYPE) && onCmp(e)) {
+      e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+      cmpHint.hidden = false; cmpHint.style.left = Math.min(window.innerWidth - 200, e.clientX + 14) + 'px'; cmpHint.style.top = Math.max(4, e.clientY - 34) + 'px';
+    }
     else if (types.includes(PART_TYPE)) {                                                    // a part from the library
       e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
       const r = ui.canvas.getBoundingClientRect(), inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
@@ -738,15 +747,16 @@ function attachDrop() {
     }
   };
   window.addEventListener('dragover', over);
-  window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) { ui.canvas.classList.remove('dropping'); ui.dropHint.hidden = true; } });
+  window.addEventListener('dragleave', (e) => { if (!e.relatedTarget) { ui.canvas.classList.remove('dropping'); ui.dropHint.hidden = true; cmpHint.hidden = true; } });
   window.addEventListener('drop', async (e) => {
     if (!e.dataTransfer) return;
-    ui.dropHint.hidden = true;
+    ui.dropHint.hidden = true; cmpHint.hidden = true;
     const id = e.dataTransfer.getData(PART_TYPE);
     if (id) {
       e.preventDefault();
       ui.canvas.classList.remove('dropping');
       const rec = lib.items.find((r) => r.id === id), r = ui.canvas.getBoundingClientRect();
+      if (onCmp(e)) { if (rec) cmpAddPart(cmpDoc(), rec); return; }
       const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
       if (rec && inside) addLibToSheet(rec, curLay() ? sheetAt(e.clientX, e.clientY) : undefined);
       return;
@@ -6638,13 +6648,19 @@ function cmpAdd(d, source) {
   } catch (err) { note(err.message); }
 }
 
+/** A library part into Compare: Add from library and a drop on the Compare tab both come here. */
+function cmpAddPart(d, rec) {
+  if (d.cmp.items.length >= CMP.MAX_ITEMS) { note('Compare holds five drawings; remove one first'); return; }
+  const source = libPart(rec);
+  if (source) cmpAdd(d, source); else note(rec.name + ': this part could not be read');
+}
+
 /** Reuse the app's picker menu: the chosen source is copied only when added. */
 function cmpChoose(e, library = false) {
   const d = cmpDoc(), r = e.currentTarget.getBoundingClientRect();
   const sources = library ? lib.items : state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box);
   popMenu(r.left, r.bottom + 2, sources.length ? sources.map((x) => [x.name, () => {
-    const source = library ? libPart(x) : x;
-    if (source) cmpAdd(d, source); else note(x.name + ': this part could not be read');
+    if (library) cmpAddPart(d, x); else cmpAdd(d, x);
   }]) : [[library ? 'No parts in the Parts library' : 'No open drawing tabs', () => {}, null, false]]);
   ui.ctx.classList.add('cmp-source-menu');
 }

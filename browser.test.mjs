@@ -6107,6 +6107,40 @@ try {
     assert.equal(await cmpCount(), '2 differences');
   });
 
+  await step('Compare: a library card dropped on the canvas or the panel joins Compare; five is the limit; a hint follows the pointer (T49)', async () => {
+    const partName = '<b>Compare part</b>';
+    await t('panel-library').click();
+    const id = await libCard(partName).getAttribute('data-part-id');
+    await t('panel-main').click();
+    const fire = (type, target) => page.evaluate(([ty, tg, pid]) => {
+      const dt = new DataTransfer(); dt.setData('application/x-pd-part', pid); dt.setData('text/plain', 'part');
+      document.querySelector(`[data-testid=${tg}]`).dispatchEvent(new DragEvent(ty, { dataTransfer: dt, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+    }, [type, target, id]);
+    await t('cmp-remove').last().click();
+    const before = await t('cmp-item').count(), tabs = await tabNames();
+    assert.equal(before, 2);
+    await fire('dragover', 'canvas');
+    assert.equal(await t('cmp-drop-hint').isVisible(), true);
+    assert.equal(await t('cmp-drop-hint').textContent(), 'Drop to add to Compare');
+    await shotBoth('t49-hint', () => fire('dragover', 'canvas'), () => page.evaluate(() => { document.querySelector('[data-testid=cmp-drop-hint]').hidden = true; }));
+    await fire('drop', 'canvas');
+    assert.equal(await t('cmp-drop-hint').isVisible(), false);
+    assert.equal(await t('cmp-item').count(), before + 1, 'a drop on the canvas adds one drawing');
+    assert.equal(await t('cmp-name-3').textContent(), partName);
+    assert.equal(await t('compare-panel').isVisible(), true, 'the app stays on Compare');
+    assert.deepEqual(await tabNames(), tabs, 'no layout tab is made or changed');
+    assert.deepEqual(await t('cmp-item').evaluateAll((rs) => rs.map((r) => r.dataset.colour)), ['red', 'blue', 'green'], 'the next free colour');
+    await shotBoth('t49-result');
+    await fire('drop', 'cmp-items');
+    assert.equal(await t('cmp-item').count(), before + 2, 'a drop on the panel list adds one more');
+    await fire('drop', 'canvas');
+    assert.equal(await t('cmp-item').count(), 4 + 1, 'five drawings');
+    await fire('drop', 'canvas');
+    assert.equal(await t('cmp-item').count(), 5, 'a sixth is not added');
+    assert.equal(await t('cmd-prompt').textContent(), 'Compare holds five drawings; remove one first');
+    await t('cmp-remove').last().click(); await t('cmp-remove').last().click();
+  });
+
   await step('Compare: screenshots, light and dark; the top bar still fits at 1024', async () => {
     await shotBoth('compare');
     await page.setViewportSize({ width: 1024, height: 700 });

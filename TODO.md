@@ -224,6 +224,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 124. **Break Apart (Ctrl+K) (S)**: split one outline that has several closed paths (e.g. a Weld result with holes)
      into separate outlines, one per path, the CorelDRAW way. Not the same as Explode (91), which splits into single
      lines and arcs. His ask, 2026-10-23; grill first.
+125. ✅ (built, session 17) **Drag a part from the Parts library onto Compare** (S, ask, T49): a drop on the Compare canvas or panel adds it like Add from library (five at most); a hint follows the pointer.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
