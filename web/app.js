@@ -6403,7 +6403,7 @@ function joinTinyGaps(whole = false) {
   // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
   const fell = Object.entries(r.by).filter(([m, n]) => m !== method && n).map(([m, n]) => `${n} by ${Ed.JOIN_METHODS[m].toLowerCase()}`);
   note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + (method === 'average' ? '' : ` (${Ed.JOIN_METHODS[method]})`) + (fell.length ? ', ' + fell.join(', ') : '') +
-    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length && !Object.keys(r.by).some((m) => m !== 'average' && m !== 'extend') ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');   // a bridge is itself a piece within the tolerance, so its gap still counts
+    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 

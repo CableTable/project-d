@@ -654,6 +654,16 @@ test('join methods: a 90 degree corner gap (0.01 each way)', () => {
   assert.equal(E.chainAt(bez.ed2, 0, 2e-6).length, 3);
 });
 
+test('join methods: a second Join leaves a bridged corner alone (bridge longer than the tolerance)', () => {
+  const { L } = joinFix, body = L(0, 0, 9.99, 0) + L(10, 0.01, 10, 10);              // the gap is 0.0141, tolerance 0.015: the fillet arc (0.0157) is longer
+  for (const method of ['average', 'extend', 'chamfer', 'fillet', 'bezier']) {
+    const one = joinFix.run(body, method, 0.015), two = E.joinTinyGaps(one.raw2, one.ed2, 0.015, () => true, method);
+    assert.equal(one.left, 0, method + ': no gap left after the first Join');
+    if (method !== 'chamfer') assert.deepEqual([two.changed, two.joined, two.skipped], [0, 0, {}], method + ': the second Join does nothing');   // a chamfer line within the tolerance is a micro piece: dropped and drawn again
+    assert.deepEqual(two.entities, one.raw2.entities, method + ': outline unchanged');
+  }
+});
+
 test('join methods: a collinear gap and a parallel-offset gap fall back (extend → average point, fillet → chamfer)', () => {
   const { L, run } = joinFix;
   for (const body of [L(0, 0, 9.995, 0) + L(10, 0, 20, 0), L(0, 0, 10, 0) + L(10.004, 0.003, 20, 0.003)]) {
