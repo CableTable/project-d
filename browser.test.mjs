@@ -8121,6 +8121,66 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 91 / T10: Explode menu, X / EXPLODE, new pieces selected and one Undo restores the polyline', async () => {
+    await closeTabs(/./);
+    const doc = newDoc();
+    addEntities(doc, roundRect(100, 100, 100, 70, 15), dxfLine(250, 100, 300, 100));
+    await t('picker').setInputFiles({ name: 'explode.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode.dxf');
+    const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
+    const historyBefore = await histLabels();
+    await typeCmd('x');
+    assert.match(await prompt(), /^Explode: nothing explodable \(0 exploded\)/);
+    assert.deepEqual(await histLabels(), historyBefore, 'empty selection adds no Undo step');
+    await click(140, 100); await waitSel('1 selected');
+    for (const name of ['light', 'dark']) {
+      await theme(name); await page.locator('[data-menu=Modify]').click();
+      const item = page.getByRole('menuitem', { name: /^Explode/ });
+      await item.waitFor(); assert.equal(await item.getAttribute('aria-disabled'), null);
+      await page.screenshot({ path: shotDir + '/knight-91-menu-' + name + '.png' });
+      await page.locator('[data-menu=Modify]').click();
+    }
+    await theme('light'); await typeCmd('X');
+    assert.equal(await entCount(), 9, 'one polyline became four lines and four arcs; the other line stays');
+    await waitSel('8 selected');
+    assert.match(await prompt(), /^Explode: 1 exploded → 8 pieces/);
+    const saved = await savedDoc();
+    assert.deepEqual(saved.entities.map((e) => e.type), ['LINE', 'ARC', 'LINE', 'ARC', 'LINE', 'ARC', 'LINE', 'ARC', 'LINE']);
+    assert.deepEqual((await histLabels()).slice(-1), ['Explode']);
+    for (const name of ['light', 'dark']) {
+      await theme(name);
+      await page.screenshot({ path: shotDir + '/knight-91-result-' + name + '.png' });
+    }
+    await theme('light'); await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 2, 'one Undo restores the polyline and leaves the other line');
+    assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LWPOLYLINE', 'LINE']);
+    await click(140, 100); await menuItem('Modify', 'Explode');
+    assert.equal(await entCount(), 9, 'the menu action also explodes');
+    await page.keyboard.press('Control+z');
+    await click(250, 100); await waitSel('1 selected');
+    const beforeLine = await histLabels();
+    await typeCmd('EXPLODE');
+    assert.match(await prompt(), /^Explode: nothing explodable/);
+    assert.equal(await entCount(), 2); assert.deepEqual(await histLabels(), beforeLine, 'a LINE adds no Undo step');
+    await closeTabs(/./);
+    const block = newDoc();
+    addLayer(block, 'Cut', { aci: 3 });
+    addBlock(block, 'Inner', [dxfLine(0, 0, 20, 0, { aci: 0 })]);
+    addBlock(block, 'Outer', [dxfInsert('Inner', 20, 20, { aci: 0 }), dxfLine(0, 0, 0, 30)]);
+    addEntities(block, dxfInsert('Outer', 100, 100, { layer: 'Cut', rot: 90, sx: -2, sy: 3, aci: 1 }));
+    await t('picker').setInputFiles({ name: 'explode-block.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(block)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-block.dxf');
+    await page.keyboard.press('Control+a'); await typeCmd('EXPLODE');
+    assert.equal(await entCount(), 2); await waitSel('2 selected');
+    const oneLevel = await savedDoc();
+    assert.deepEqual(oneLevel.entities.map((e) => e.type), ['INSERT', 'LINE']);
+    assert.equal(oneLevel.entities[0].layer, 'Cut'); assert.equal(oneLevel.entities[0].aci, 1);
+    await typeCmd('x');
+    assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'LINE']);
+    await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT', 'LINE']);
+    await closeTabs(/./);
+  });
+
   await step('TODO 122a: Shaping (Modify menu, WELD / SHAPETRIM / INTERSECT): two squares, each operation gives the exact area in one undo step; Trim cuts the last picked one and keeps the cutter; open outlines and too few outlines say so', async () => {
     const theme = async (name) => { await menuItem('View', 'Theme: ' + name); await page.waitForTimeout(150); };
     await closeTabs(/./);

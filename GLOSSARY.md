@@ -160,6 +160,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Entity**: One top-level DXF object in the shown drawing space, with an INSERT counted once even if it draws many block members. Where: `DECISIONS.md`, Kept dimensions and sizes and Layer and entity counts. Avoid: One rendered line segment.
 
+**Explode**: Replaces selected polylines with separate LINEs / ARCs or selected INSERTs with their transformed members, one block level at a time. The pieces are selected; one Undo restores the originals. Where: Modify menu, `X` / `EXPLODE`; `web/explode.js`. Avoid: Ungroup (layout parts).
+
 **Hairline**: The project's 0.05 mm outline-width preset and minimum physical stroke for PDF / Print. Where: `DECISIONS.md`, Line width and Preflight Hairline. Avoid: Zero width; a fixed screen-pixel width.
 
 **HATCH**: A DXF filled boundary using either solid colour or a line pattern, left out of cutter export. Where: `web/drawing.js`, `DECISIONS.md`, Cutter-safe DXF.

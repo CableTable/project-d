@@ -19,6 +19,7 @@ import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
 import { writeDxf, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
+import { explodeSelection } from './explode.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
@@ -380,6 +381,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify = [['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
+  menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
   menus.Format = [['Dimension style…', showDimStyle]];
@@ -2960,6 +2962,7 @@ const DO = {
   dimstyle: () => showDimStyle(),
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
+  explode: () => explodeSelected(),
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
     const sp = selectedPlaced();
@@ -3749,6 +3752,17 @@ async function textToOutlines() {
   const mtexts = [...r.done].filter((i) => raw[i].type === 'MTEXT').length, texts = r.texts - mtexts;
   const count = [texts ? `${texts} text${texts === 1 ? '' : 's'}` : '', mtexts ? `${mtexts} MTEXT` : ''].filter(Boolean).join(' + ');
   note(`${count} → ${r.ents.length} outline${r.ents.length === 1 ? '' : 's'}` + (shx.size ? `. SHX font (${[...shx].join(', ')}) → Arial` : '') + (subs.length ? `. Font file not found, used the fallback font (${subs.join(', ')})` : '') + missing + notes + '. Ctrl+Z takes them back');
+}
+
+function explodeSelected() {
+  const d = editable();
+  if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
+  const r = explodeSelection(d.raw, d.sel, d.locked);
+  const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
+  if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }
+  commit(d, { entities: r.entities, blocks: r.blocks }, 'Explode');
+  setSel(d, r.selected);
+  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. Ctrl+Z puts the originals back');
 }
 
 // ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----
