@@ -144,3 +144,10 @@ joined (0.01 mm default, his pick), new parts snap to a 5 mm grid, an undo histo
 
 **2026-10-23 (session 17, TODO 91 / T10).** Added Explode to Modify and X / EXPLODE. Polylines become lines and exact bulge arcs; block members inherit layer 0 / BYBLOCK properties and receive the insert transform, including mirrored or non-uniform scale. Nested inserts stay one level deep, with private definitions for sheared placements. New pieces are selected, locked entities are counted and skipped, and the operation is one Undo; no result adds no Undo. Unit coverage checks geometry, nesting, attributes, selection and safe failures; browser coverage checks both entry points, entity counts, Save, Undo and light / dark screenshots.
 **2026-10-23 (session 17, TODO 114 / T31).** Compare now holds up to five independent snapshots from open drawing tabs, the Parts library or DXF files. The first ticked snapshot is the reference; eyes control visibility independently, and manual movement acts on the selected item with the existing snaps. Compare still runs only on its button, with per-item coloured differences and a table of signed area, perimeter and W x H changes at the app decimals. Pure and browser coverage retain the two-item result and exercise the list, hidden results and snapshot isolation.
+
+**2026-10-23 (session 17, PR #12).** Merged: Shaping (TODO 122a/b: Weld, Trim, Intersect, Simplify, Front / Back minus,
+Create boundary), Explode (91), Compare up to five drawings (114), font note on open (56), usage page sub-steps (107),
+the session 17 fix round, two review fix rounds, and the pd-runs side pane (a Claude Code mod in tools/pd-runs, loaded
+through the user env var CLAUDE_CODE_PLUGIN_DIRS; Rook keeps runs<N>/queue.txt current). Knight's refused commits were
+traced to a stale COMMIT_EDITMSG (see WORKFLOW). Built but not in this PR: T18 title block editor (101) and T49 drag a
+library part onto Compare, for the next PR. New in TODO: 123 Shaping keep originals, 124 Break Apart.
