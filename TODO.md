@@ -245,6 +245,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 139. **Shape tool (CorelDRAW): edit the nodes of lines and polylines** (M, ask, T51): see T51 in support/tickets.md. Grill first.
 140. **Pen tool (CorelDRAW): draw lines and Bezier curves** (M, ask, T52): see T52 in support/tickets.md. Grill first.
 141. ✅ **Save drops AutoCAD tables without a word** (S–M, bug, found by Bishop-review 2026-10-24): `web/dxf-write.js:16` has no ACAD_TABLE in its save list, so open a DXF with a table, Save, reopen: the table is gone (its *T block is still written, unused). Write ACAD_TABLE back as read, or save it as a plain block reference, and note anything dropped. Grill first.
+142. **Session 20 review leftovers** (S, Bishop-review 2026-10-24, for Knight): (a) `web/app.js:4061` paste on a layout uses the old `unwritable()` note; use `writeDxfWithReport` + `saveReportNote` like Extract part; (b) TODO 111b's text still says "<source tab> paste": match its DECISIONS row (base name, sheet number); (c) Extract stores `source: d.name` with .dxf while paste stores the base name: one way.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
