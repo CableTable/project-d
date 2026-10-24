@@ -3,6 +3,7 @@
 //
 //   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
+//   writeDxfWithReport(doc, opts) → { text, tables, skipped }: the same file and counts for the caller's Save note
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
 //   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities }
@@ -118,11 +119,51 @@ export function addEntities(doc, ...ents) { doc.entities = doc.entities.concat(.
 
 /** What writeDxf leaves out: [{ type, count }], most first. */
 export function unwritable(doc) {
+  return prepareSave(doc).skipped;
+}
+
+/** Convert tables only in the saved copy, and count unsupported objects where they are filtered out. */
+function prepareSave(doc) {
+  const sourceBlocks = doc.blocks || {}, renamed = new Map(), taken = new Set(Object.keys(sourceBlocks).map((n) => n.toLowerCase()));
+  const field = (e, c, fallback = '') => e.r.v[e.r.c.indexOf(c)]?.trim() ?? fallback;
+  let next = 1, tables = 0;
+  const findTables = (list) => {
+    for (const e of list || []) {
+      if (e.type !== 'ACAD_TABLE') continue;
+      const name = field(e, 2), block = sourceBlocks[name];
+      if (!block || block.xref || renamed.has(name)) continue;
+      while (taken.has(`pd_table_${next}`)) next++;
+      const normal = `PD_TABLE_${next++}`;
+      taken.add(normal.toLowerCase()); renamed.set(name, normal);
+    }
+  };
+  findTables(doc.entities);
+  for (const b of Object.values(sourceBlocks)) if (!b.xref) findTables(b.entities);
   const n = new Map(), add = (t) => n.set(t, (n.get(t) || 0) + 1);
-  const scan = (ents) => { for (const e of ents || []) if (!SUPPORTED.has(e.type)) add(e.type); };
-  scan(doc.entities);
-  for (const b of Object.values(doc.blocks || {})) { if (b.xref) add('XREF'); else scan(b.entities); }
-  return [...n].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count || (a.type < b.type ? -1 : 1));
+  const saved = (list) => {
+    const result = [];
+    for (let e of list || []) {
+      const name = ['ACAD_TABLE', 'INSERT', 'DIMENSION'].includes(e.type) ? field(e, 2) : '', normal = renamed.get(name);
+      if (e.type === 'ACAD_TABLE' && normal) {
+        const rot = Math.atan2(+field(e, 21, '0'), +field(e, 11, '1')) * 180 / Math.PI;
+        e = insert(normal, +field(e, 10, '0'), +field(e, 20, '0'), { ...e, rot });
+        tables++;
+      } else if (!SUPPORTED.has(e.type)) { add(e.type); continue; }
+      else if (normal && (e.type === 'INSERT' || e.type === 'DIMENSION')) {
+        const v = e.r.v.slice(); v[e.r.c.indexOf(2)] = normal;
+        e = { ...e, r: { ...e.r, v } };
+      }
+      result.push(e);
+    }
+    return result;
+  };
+  const entities = saved(doc.entities), blocks = {};
+  for (const [name, b] of Object.entries(sourceBlocks)) {
+    if (b.xref) add('XREF');
+    blocks[renamed.get(name) || name] = { ...b, entities: b.xref ? [] : saved(b.entities) };
+  }
+  const skipped = [...n].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count || (a.type < b.type ? -1 : 1));
+  return { doc: { ...doc, entities, blocks }, tables, skipped };
 }
 
 // ---------------------------------------------------------------- one entity's pairs
@@ -230,6 +271,15 @@ const STD_LT = { DASHED: [0.5, -0.25], HIDDEN: [0.25, -0.125], CENTER: [1.25, -0
   DASHDOT: [0.5, -0.25, 0, -0.25], DOT: [0, -0.25] };
 
 export function writeDxf(doc, opts = {}) {
+  return writeDxfWithReport(doc, opts).text;
+}
+
+export function writeDxfWithReport(doc, opts = {}) {
+  const prepared = prepareSave(doc);
+  return { text: writePreparedDxf(prepared.doc, opts), tables: prepared.tables, skipped: prepared.skipped };
+}
+
+function writePreparedDxf(doc, opts) {
   const esc = !!opts.escapeUnicode;
   let hnext = 0x20;
   const handle = () => (hnext++).toString(16).toUpperCase();
@@ -252,7 +302,6 @@ export function writeDxf(doc, opts = {}) {
   addName(styles, 'Standard'); addName(dimstyles, 'Standard');
   for (const lt of Object.values(doc.ltypes || {})) for (const el of lt.elems || []) if (el.style) addName(styles, el.style);
   const refLt = (n) => { n = (n || '').trim().toUpperCase(); if (n && !['BYLAYER', 'BYBLOCK', 'CONTINUOUS'].includes(n) && !ltNames.has(n)) ltNames.set(n, STD_LT[n] || []); };
-  const supportedIn = (list) => (list || []).filter((e) => SUPPORTED.has(e.type));
   const scanRec = (r, p) => {
     addName(layerNames, p.layer); refLt(p.lt);
     for (let k = 0; k < r.c.length; k++) {
@@ -261,7 +310,7 @@ export function writeDxf(doc, opts = {}) {
     }
   };
   const scan = (list) => {
-    for (const e of supportedIn(list)) {
+    for (const e of list || []) {
       scanRec(e.r, { ...props(), ...e });
       for (const kid of e.kids || []) scanRec(kid, propsOf(kid));
     }
@@ -320,7 +369,7 @@ export function writeDxf(doc, opts = {}) {
   const blocksSec = [];
   { const o = out(blocksSec); o.s(0, 'SECTION').s(2, 'BLOCKS');
     for (const [name, b] of Object.entries(blocks)) {
-      const owner = rec.get(name), items = b.xref ? [] : supportedIn(b.entities);
+      const owner = rec.get(name), items = b.entities;
       const special = /^\*(model|paper)_space/i.test(name);
       const flags = (/^\*[UDTAX]/i.test(name) ? 1 : 0) | (items.some((e) => e.type === 'ATTDEF') ? 2 : 0);
       o.s(0, 'BLOCK').p(5, handle()).p(330, owner).s(100, 'AcDbEntity').s(8, '0').s(100, 'AcDbBlockBegin').s(2, name).p(70, special ? 0 : flags)
@@ -333,7 +382,7 @@ export function writeDxf(doc, opts = {}) {
   // ENTITIES
   const entSec = [];
   { const o = out(entSec); o.s(0, 'SECTION').s(2, 'ENTITIES');
-    for (const e of supportedIn(doc.entities)) ent(o, e, e.ps ? paperRec : modelRec);
+    for (const e of doc.entities) ent(o, e, e.ps ? paperRec : modelRec);
     o.s(0, 'ENDSEC'); }
 
   // TABLES

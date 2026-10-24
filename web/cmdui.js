@@ -117,7 +117,7 @@ export function buildCmdUI(hooks) {
   }
   function paintFade() {
     const f = CB.fadeOf(lines);
-    fadeRows.replaceChildren(...f.map((l) => h('div', { class: 'o' + l.age + (l.cls === 'er' ? ' er' : '') }, h('span', null, l.pre), l.ans ? h('span', { class: 'ans' }, l.ans) : null)));
+    fadeRows.replaceChildren(...f.map((l) => h('div', { class: 'o' + l.age + (l.cls === 'er' ? ' er' : ''), title: l.pre + (l.ans ? ' ' + l.ans : '') }, h('span', null, l.pre), l.ans ? h('span', { class: 'ans' }, l.ans) : null)));
     fadeUp();
   }
   /** The lines show for a while after a change (an error 9 s, so it can be read), then fade away; they stay while the bar or the drawer is open. */

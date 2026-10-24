@@ -86,6 +86,60 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 141: Save keeps table lines as named blocks, reports conversions and dropped types, and reopens the saved drawing', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const saved = async (expected) => {
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes(text), expected);
+      const message = p.locator('.cb-fade-rows > div').filter({ hasText: expected });
+      await message.waitFor({ state: 'visible' });
+      assert.ok((await message.getAttribute('title')).includes(expected), 'hover exposes the full one-line Save note');
+      await message.hover();
+      return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'utf8') };
+    };
+    const tableInk = () => q('drawing').evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] && d[i + 1] > d[i] * 1.5 && d[i + 1] > d[i + 2] * 1.5) n++;
+      return n;
+    });
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles('fixtures/table.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'table.dxf');
+      const singleNote = '1 table saved as a block (AutoCAD sees it as a block, not a table)';
+      const single = await saved(singleNote);
+      assert.equal(single.name, 'table-edited.dxf');
+      assert.equal(readDxf(single.text).entities[0].type, 'INSERT');
+      // Saving again still converts a table: Save must not replace the open document's entity.
+      await saved(singleNote);
+      const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
+      const end = fixture.lastIndexOf('0\nENDSEC\n');
+      const table = fixture.slice(fixture.indexOf('0\nACAD_TABLE\n'), end).replace('10\n100\n', '10\n150\n');
+      const extra = table + '0\nIMAGE\n8\n0\n0\nIMAGE\n8\n0\n0\nWIPEOUT\n8\n0\n';
+      await q('picker').setInputFiles({ name: 'tables-and-skips.dxf', mimeType: 'application/dxf', buffer: Buffer.from(fixture.slice(0, end) + extra + fixture.slice(end)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'tables-and-skips.dxf');
+      const combined = '2 tables saved as blocks (AutoCAD sees them as blocks, not tables); 3 objects not saved: IMAGE x2, WIPEOUT x1';
+      const both = await saved(combined), back = readDxf(both.text);
+      assert.equal(both.name, 'tables-and-skips-copy.dxf');
+      assert.deepEqual(back.entities.map((e) => e.type), ['INSERT', 'INSERT']);
+      assert.equal(flatten(back).items.filter((it) => it.k === 'p').length, 12);
+      assert.ok(!both.text.includes('*T1'));
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo141-save-${theme}.png` });
+      }
+      await q('picker').setInputFiles({ name: 'tables-reopened.dxf', mimeType: 'application/dxf', buffer: Buffer.from(both.text) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'tables-reopened.dxf');
+      assert.ok(await tableInk() > 100, 'reopened table lines are drawn');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo141-reopened-${theme}.png` });
+      }
+    } finally { await context.close(); }
+  });
+
   await step('TODO 117: PDF sheets keep edits and Undo without warning; close lists and saves dirty sheets; Delete sheet removes its balloons and keeps PDF numbers', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -1058,7 +1112,7 @@ try {
     assert.equal(dl.name, 'sample-copy.dxf');
     assert.deepEqual(layerNames(dl.text), fixtureLayers('sample.dxf'));
     assert.ok(!/VIEWPORT|IMAGE/.test(dl.text));
-    assert.match(await t('cmd-prompt').textContent(), /Saved sample-copy\.dxf \(without VIEWPORT 2, IMAGE 1\)/);
+    assert.match(await t('cmd-prompt').textContent(), /Saved sample-copy\.dxf\. 3 objects not saved: VIEWPORT x2, IMAGE x1/);
     assert.equal((await tabs()).filter((x) => x.startsWith('sample-copy.dxf')).length, 1);
   });
 
