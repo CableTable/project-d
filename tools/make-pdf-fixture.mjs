@@ -22,6 +22,7 @@ pg.rect(100, 40, 50, 30); pg.stroke();
 pg.moveTo(5, 60); pg.lineTo(40, 60); pg.stroke();
 pg.text([6, 0, 0, 6, 105, 80], winAnsi('HELLO'));
 writeFileSync('fixtures/vector.pdf', writePdf([pg], { title: 'vector fixture' }));
+writeFileSync('fixtures/three-sheets.pdf', writePdf([pg, pg, pg], { title: 'three PDF sheets' }));
 // fixtures/text-only.pdf: no vector lines at all, just a text (it opens as a background picture)
 const tp = new Page(200, 120);
 tp.text([10, 0, 0, 10, 20, 60], winAnsi('NO LINES HERE'));

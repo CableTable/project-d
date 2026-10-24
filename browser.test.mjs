@@ -81,10 +81,124 @@ try {
         const tab = page.locator('.tabs .dtab:not([aria-label])', { hasText: re }).first();
         if (!(await tab.count())) break;
         await tab.locator('.x').click();
+        if (await t('close-dialog').isVisible()) await t('close-discard').click();
         await page.waitForTimeout(60);
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 117: PDF sheets keep edits and Undo without warning; close lists and saves dirty sheets; Delete sheet removes its balloons and keeps PDF numbers', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      window.__destroyed = 0;
+      window.__TAURI__ = { window: { getCurrentWindow: () => ({ onCloseRequested: (fn) => { window.__onClose = fn; }, destroy: async () => { window.__destroyed++; } }) } };
+    });
+    const cmd = async (value) => {
+      if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+      await q('cmd-input').fill(value); await q('cmd-input').press('Enter');
+    };
+    const circle = async (radius) => {
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await cmd('c'); await cmd('60,60'); await cmd(String(radius));
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+    };
+    const sheet = async (n, left = 3) => {
+      await p.locator(`[data-sheet="${n}"]`).click();
+      await p.waitForFunction((text) => document.querySelector('[data-testid=sheet-chip]').textContent === text, `Sheet ${n} / ${left}`);
+    };
+    const saved = async () => {
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await dl.path(), 'utf8'));
+    };
+    const circles = (doc) => doc.entities.filter((e) => e.type === 'CIRCLE').map((e) => Number(e.r.v[e.r.c.indexOf(40)]));
+    const balloon = async () => {
+      await p.locator('[data-tool=balloon]').click();
+      const b = await p.locator('rect.sheet').boundingBox();
+      const sc = b.width / Number(await p.locator('[data-key=sheetW]').inputValue());
+      await p.mouse.click(b.x + 60 * sc, b.y + b.height - 60 * sc);
+      await p.mouse.click(b.x + 90 * sc, b.y + b.height - 90 * sc);
+      await p.locator('[data-tool=select]').click();
+    };
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles('fixtures/three-sheets.pdf');
+      await q('bal-sheets').waitFor();
+      const unexpected = (d) => { errors.push('Unexpected sheet warning: ' + d.message()); d.dismiss(); };
+      p.on('dialog', unexpected);
+      await circle(5); await sheet(2); await circle(8); await sheet(1);
+      assert.deepEqual(circles(await saved()), [5], 'sheet 1 edit survives switching');
+      await p.keyboard.press('Control+z'); assert.deepEqual(circles(await saved()), [], 'sheet 1 Undo survives switching');
+      await p.keyboard.press('Control+y'); await circle(6);
+      assert.deepEqual(circles(await saved()), [5, 6], 'another edit on the returned sheet works');
+      await p.keyboard.press('Control+z');
+      await sheet(2); assert.deepEqual(circles(await saved()), [8], 'sheet 1 Undo leaves sheet 2 alone');
+      await circle(9); await sheet(3);
+      assert.equal(await p.locator('.dtab.on .dot').count(), 1, 'clean active page still shows other unsaved edits');
+      const closing = p.evaluate(() => window.__onClose({ preventDefault() {} }));
+      await q('close-dialog').waitFor();
+      assert.match(await q('close-dialog').textContent(), /Sheets 1 and 2 have unsaved edits/);
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo117-close-${theme}.png` });
+      }
+      await q('close-cancel').click(); await closing;
+      assert.equal(await p.evaluate(() => window.__destroyed), 0);
+      assert.equal(await p.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), true);
+      // Cancel the second normal Save dialog: keep the tab, including its remaining edits.
+      await p.evaluate(() => {
+        window.__saveSheets = []; window.__writes = []; window.__paths = ['E:/sheet-one.dxf', null];
+        window.__TAURI__.dialog = { save: async () => { window.__saveSheets.push(document.querySelector('[data-testid=sheet-chip]').textContent); return window.__paths.shift(); } };
+        window.__TAURI__.fs = { exists: async () => false, writeTextFile: async (path, text) => { window.__writes.push({ path, text }); } };
+      });
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-save').click();
+      await p.waitForFunction(() => window.__saveSheets.length === 2);
+      assert.deepEqual(await p.evaluate(() => window.__saveSheets), ['Sheet 1 / 3', 'Sheet 2 / 3']);
+      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'three-sheets.dxf', 'cancelled second save keeps the tab');
+      await p.evaluate(() => { window.__paths = ['E:/sheet-two.dxf']; });
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor();
+      assert.match(await q('close-dialog').textContent(), /Sheet 2 has unsaved edits/);
+      await q('close-save').click(); await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'Drawing 1');
+      const writes = await p.evaluate(() => window.__writes);
+      assert.deepEqual(writes.map((w) => w.path), ['E:/sheet-one.dxf', 'E:/sheet-two.dxf']);
+      assert.deepEqual(writes.map((w) => circles(readDxf(w.text))), [[5], [8, 9]], 'each Save writes just that sheet');
+      await p.evaluate(() => { delete window.__TAURI__.dialog; delete window.__TAURI__.fs; });
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      await balloon(); await sheet(2); await balloon(); await sheet(3); await balloon();
+      await sheet(2); p.off('dialog', unexpected);
+      p.once('dialog', (d) => { assert.equal(d.message(), 'Delete sheet 2 from this tab? The PDF on disk is not changed. This cannot be undone.'); d.dismiss(); });
+      await q('delete-sheet').click(); assert.equal(await q('sheet-chip').textContent(), 'Sheet 2 / 3', 'Cancel keeps the page');
+      p.once('dialog', (d) => d.accept()); await q('delete-sheet').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 3 / 2');
+      assert.deepEqual(await p.locator('[data-sheet]').evaluateAll((els) => els.map((el) => el.dataset.sheet)), ['1', '3']);
+      assert.equal(await q('bal-count').textContent(), '2');
+      assert.deepEqual(await q('bal-filter').locator('option').allTextContents(), ['All sheets', 'Sheet 1', 'Sheet 3']);
+      await p.keyboard.press('Control+z'); assert.equal(await q('bal-count').textContent(), '1', 'Undo on sheet 3 preserves sheet 1 and cannot revive sheet 2');
+      await p.keyboard.press('Control+y'); assert.equal(await q('bal-count').textContent(), '2');
+      await p.waitForTimeout(400);
+      await p.waitForFunction(() => getComputedStyle(document.querySelector('.cb-fade-rows')).opacity === '0');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo117-deleted-${theme}.png` });
+      }
+      p.once('dialog', (d) => d.accept()); await q('delete-sheet').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 1');
+      assert.equal(await q('delete-sheet').isDisabled(), true);
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-discard').click();
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      assert.deepEqual(await p.locator('[data-sheet]').evaluateAll((els) => els.map((el) => el.dataset.sheet)), ['1', '2', '3'], 'reopen restores all PDF pages');
+      // Picture pages re-render, while geometry drawn over them keeps its own Undo.
+      p.once('dialog', (d) => d.accept('1'));
+      await q('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
+      await circle(3); await sheet(2, 2); await circle(4); await sheet(1, 2);
+      assert.deepEqual(circles(await saved()), [3]);
+      await p.keyboard.press('Control+z'); assert.deepEqual(circles(await saved()), []);
+      await sheet(2, 2); assert.deepEqual(circles(await saved()), [4]);
+    } finally { await context.close(); }
+  });
+
   await step('TODO 118: tab keys wrap, work in fields and command bar, respect dialogs and own keys, commit Text before close/switch, ignore repeated close, Cancel keeps text', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage();
@@ -6014,16 +6128,18 @@ try {
     }
   });
 
-  await step('Picture PDF: changing sheets clears undo and redo so Ctrl+Z cannot resize another sheet', async () => {
+  await step('Picture PDF: changing sheets keeps independent Undo and Redo and background scale', async () => {
     await closeTabs(/./);
     page.once('dialog', (d) => d.accept('1'));
     await t('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
+    const original = await sizeNow();
     await t('unit-up').click();
+    const enlarged = await sizeNow();
     assert.equal(await t('undo').isDisabled(), false);
     await page.locator('[data-sheet="2"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
-    assert.equal(await t('undo').isDisabled(), true, 'sheet 1 history was cleared');
+    assert.equal(await t('undo').isDisabled(), true, 'unvisited sheet 2 has no history');
     const before = await sizeNow();
     await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), before, 'sheet 2 size stays put');
     await t('unit-up').click(); await page.keyboard.press('Control+z');
@@ -6031,7 +6147,12 @@ try {
     assert.equal(await t('redo').isDisabled(), false);
     await page.locator('[data-sheet="1"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
-    assert.equal(await t('redo').isDisabled(), true, 'sheet 2 redo was cleared');
+    assert.equal(await t('redo').isDisabled(), true, 'sheet 1 has no redo');
+    assert.deepEqual(await sizeNow(), enlarged, 'sheet 1 keeps its background scale');
+    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), original, 'sheet 1 Undo still works');
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+    assert.equal(await t('redo').isDisabled(), false, 'sheet 2 redo stays with sheet 2');
     await closeTabs(/./);
   });
 

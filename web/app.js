@@ -14,6 +14,7 @@ import * as CL from './cleanup.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
+import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
@@ -479,7 +480,7 @@ function renderTabs() {
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
       const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : 'drawing' },
         d.lay && icon(GRID_ICON, { size: 14 }), h('span', { class: 'tname' }, d.name),
-        d.dirty && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
+        PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
       return b;
     }),
@@ -490,7 +491,7 @@ function renderTabs() {
 }
 
 // ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
-const dirtyDocs = () => state.docs.filter((d) => d.dirty);
+const dirtyDocs = () => state.docs.filter(PS.hasChanges);
 let closeAsk = null, closing = false;
 /** The close prompt over the page → 'save' | 'discard' | 'cancel' (Esc and a click outside are Cancel). */
 function askSaveChanges(dirty) {
@@ -502,6 +503,11 @@ function askSaveChanges(dirty) {
     const dlg = h('div', { class: 'pop-dialog', role: 'alertdialog', 'aria-label': words.title, 'data-testid': 'close-dialog' },
       h('strong', null, words.title),
       words.names.length ? h('div', { class: 'lbl' }, words.names.map((n) => h('div', null, n))) : null,
+      dirty.filter((d) => d.pdf).map((d) => {
+        const sheets = PS.dirtySheets(d), last = sheets.at(-1);
+        const list = sheets.length > 1 ? sheets.slice(0, -1).join(', ') + ' and ' + last : String(last);
+        return h('div', { class: 'lbl' }, (dirty.length > 1 ? d.name + ': ' : '') + `${sheets.length > 1 ? 'Sheets' : 'Sheet'} ${list} ${sheets.length > 1 ? 'have' : 'has'} unsaved edits`);
+      }),
       h('span', { class: 'lbl' }, "Your changes are lost if you don't save them."),
       h('div', { class: 'row end' }, btn('Cancel', 'cancel', 'close-cancel'), btn("Don't save", 'discard', 'close-discard'), save));
     const back = h('div', { class: 'pop-back', 'data-testid': 'close-back' }, dlg);
@@ -515,6 +521,8 @@ function askSaveChanges(dirty) {
 }
 /** May the window close? Asks when a tab has unsaved changes; Save goes through the usual Save for each (a cancelled Save dialog keeps the window open). */
 async function mayClose() {
+  textCommit();
+  if (state.docs.some((d) => d.pdf?.busy)) return false;
   const dirty = dirtyDocs();
   if (!dirty.length) { await dropCopiesNow(state.docs); return true; }
   if (closeAsk || closing) return false;                             // already asking, or saving after a Save
@@ -527,8 +535,7 @@ async function mayClose() {
     const i = state.docs.indexOf(d);
     if (i < 0) continue;
     state.doc = i; showDoc();
-    await save();
-    if (d.dirty) return false;                                       // the Save dialog was cancelled, or Save failed (it said why)
+    if (!(await saveDirtyPages(d))) return false;
   }
   } finally { closing = false; }
   await dropCopiesNow(state.docs);                                   // the window closes at once: wait for the deletes
@@ -546,7 +553,18 @@ function guardClose() {
 }
 
 async function closeTab(d) {
-  if (d.dirty && !(await confirmAsk(d.name + ' has changes that are not saved. Close it anyway?', 'Close without saving', 'warning', 'Keep it open'))) return;
+  if (d.pdf?.busy || closeAsk || closing) return;
+  if (d.pdf?.pages > 1 && PS.hasChanges(d)) {
+    const answer = await askSaveChanges([d]);
+    if (answer === 'cancel') return;
+    if (answer === 'save') {
+      closing = true;
+      try {
+        state.doc = state.docs.indexOf(d); showDoc();
+        if (!(await saveDirtyPages(d))) return;
+      } finally { closing = false; }
+    }
+  } else if (d.dirty && !(await confirmAsk(d.name + ' has changes that are not saved. Close it anyway?', 'Close without saving', 'warning', 'Keep it open'))) return;
   const i = state.docs.indexOf(d);
   if (i < 0) return;
   dropCopy(d);
@@ -554,6 +572,16 @@ async function closeTab(d) {
   if (!state.docs.length) { state.docs.push(emptyDoc()); view.fitted = true; }         // the fresh empty tab is fitted
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
   showDoc();
+}
+
+async function saveDirtyPages(d) {
+  const sheets = d.pdf ? PS.dirtySheets(d) : [null];
+  for (const n of sheets) {
+    if (n != null && n !== d.pdf.page && !(await balSheet(d, n))) return false;
+    await save(!!d.pdf);
+    if (d.dirty) return false; // A cancelled or failed Save stops the close.
+  }
+  return true;
 }
 
 const curDoc = () => state.docs[state.doc];
@@ -656,7 +684,7 @@ async function openPdf(name, buf, path = null) {
   }
   const raw = r.doc, fl = flatten(raw);
   const base = name.replace(/\.[^.\\/]*$/, ''), dxfName = base + '.dxf';
-  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, orig: raw.entities, origBlocks: raw.blocks }, ...tabFields(raw, fl) };
+  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page }, ...tabFields(raw, fl) };
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${dxfName}` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
@@ -4085,7 +4113,7 @@ function restoreBg(d, st) {
 }
 function restore(d, st) {
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
-  if ('bl' in st) d.balloons = st.bl;                           // a drawing edit does not carry balloons, an undo step does
+  if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
   if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
     d.dirty = true; showDoc(); return;
@@ -4659,26 +4687,49 @@ async function balExport(excel) {
   } catch (err) { note('Export failed: ' + (err && err.message ? err.message : err)); }
 }
 
-// -- sheets: a multi-page PDF is one tab showing one page; the switcher reads another page in (the balloons of every sheet stay in the tab) --
+// -- sheets: visited drawings and their Undo stay in the tab; unvisited pages are read from the PDF --
 async function balSheet(d, n) {
   const P = d.pdf;
-  if (!P || n === P.page || n < 1 || n > P.pages) return false;
-  if (!P.picture && (d.raw.entities !== P.orig || d.raw.blocks !== P.origBlocks) && !(await confirmAsk(`Go to sheet ${n}? The edits made to this sheet's drawing are dropped (the balloons stay).`, 'Go to sheet ' + n))) return false;
+  if (!P || P.busy || n === P.page || !PS.sheetNumbers(P).includes(n)) return false;
+  textCommit();
+  P.busy = true;
   try {
+    let next = P.states?.get(n);
     if (P.picture) {
       const r = await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
-      d.bg = { ...d.bg, bitmap: bm, w: bm.width, h: bm.height, mm: r.mmPerPx, x: 0, y: 0 };
-      d.hist = Ed.createHistory();
-    } else {
+      if (!next) { const raw = newDoc(); next = { ...tabFields(raw, flatten(raw)), hist: Ed.createHistory(), name: P.name, path: null, dirty: false }; }
+      next = { ...next, bg: { name: P.name, mm: r.mmPerPx, x: 0, y: 0, visible: true, ...next.bg, bitmap: bm, w: bm.width, h: bm.height } };
+    } else if (!next) {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
-      Object.assign(d, tabFields(r.doc, flatten(r.doc)), { titleBlock: d.titleBlock });
-      d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; P.orig = r.doc.entities; P.origBlocks = r.doc.blocks; warm(d);
+      next = { ...tabFields(r.doc, flatten(r.doc)), hist: Ed.createHistory(), name: P.name.replace(/\.[^.]*$/, '.dxf'), path: null, dirty: false };
     }
+    PS.keepPage(d);
+    if (P.picture) d.bg?.bitmap?.close();
+    Object.assign(d, PS.pageFields(next));
+    d.sel = new Set(); d.hl = []; d.ed = d.outl = d.hidC = d.txtMemo = d.gripCache = d.cAn = d.cRes = d.gaps = d.duplicates = d.txoSel = d.lastPick = d.newLayer = null;
+    P.page = n;
   } catch (err) { note(`Sheet ${n}: could not read this page (${err && err.message ? err.message : err})`); return false; }
-  P.page = n; state.balSel = null; view.fitted = true;
+  finally { P.busy = false; }
+  state.balSel = null; state.drawDoc = state.modDoc = null; view.fitted = true;
   showDoc();
-  note(`Sheet ${n} of ${P.pages}. The balloons of the other sheets are in the table`);
+  warm(d);
+  note(`Sheet ${n} of ${PS.sheetNumbers(P).length}. The balloons of the other sheets are in the table`);
   return true;
+}
+
+async function deleteSheet(d) {
+  const P = d?.pdf, n = P?.page, next = P && PS.withoutSheet(P, n);
+  if (!next || P.busy) return;
+  if (!(await confirmAsk(`Delete sheet ${n} from this tab? The PDF on disk is not changed. This cannot be undone.`, 'Delete sheet', 'warning', 'Cancel'))) return;
+  if (!(await balSheet(d, next.page))) return;
+  P.sheets = next.sheets; P.states.delete(n);
+  if (balOf(d).items.some((it) => it.sheet === n)) {
+    d.balloons = { ...balOf(d), items: balOf(d).items.filter((it) => it.sheet !== n) };
+    d.dirty = true;
+  }
+  state.balSel = null;
+  showDoc();
+  note(`Deleted sheet ${n} from this tab. The PDF on disk is not changed`);
 }
 
 // -- the sidecar: <name>.pdballoons.json next to the file; read when the file opens, written by Save --
@@ -4808,7 +4859,7 @@ function renderBalloons() {
   const d = editable(), set = d ? balOf(d) : BAL.EMPTY, lib = state.panel === 'library';
   if (state.balSel != null && !(d && balItem(d, state.balSel))) state.balSel = null;
   const sel = d && balSelItem(d), tool = state.tool === 'balloon', show = !!d && (set.items.length > 0 || tool), P = d && d.pdf;
-  const pages = Math.max(P ? P.pages : 1, ...set.items.map((it) => it.sheet));
+  const sheets = P ? PS.sheetNumbers(P) : Array.from({ length: Math.max(1, ...set.items.map((it) => it.sheet)) }, (_, i) => i + 1);
   ui.balDock.hidden = !show;
   ui.balDock.classList.toggle('collapsed', state.balDock.collapsed);
   ui.balDock.style.height = state.balDock.collapsed ? '' : state.balDock.h + 'px';
@@ -4825,9 +4876,9 @@ function renderBalloons() {
     ui.balPickBtn.title = text ? 'Fill the dimension from the text under the arrow' : 'This page is a picture: no text to pick from';
   }
   if (show) {
-    const opts = [['all', 'All sheets'], ...Array.from({ length: pages }, (_, i) => [String(i + 1), 'Sheet ' + (i + 1)])];
+    const opts = [['all', 'All sheets'], ...sheets.map((n) => [String(n), 'Sheet ' + n])];
     if (!opts.some((o) => o[0] === state.balDock.sheet)) state.balDock.sheet = 'all';
-    if (ui.balFilter.dataset.sig !== opts.length + ':' + pages) { ui.balFilter.replaceChildren(...opts.map(([v, text]) => h('option', { value: v }, text))); ui.balFilter.dataset.sig = opts.length + ':' + pages; }
+    if (ui.balFilter.dataset.sig !== sheets.join(',')) { ui.balFilter.replaceChildren(...opts.map(([v, text]) => h('option', { value: v }, text))); ui.balFilter.dataset.sig = sheets.join(','); }
     ui.balFilter.value = state.balDock.sheet;
     const list = BAL.rows(set, state.balDock.sheet === 'all' ? null : +state.balDock.sheet);
     ui.balCount.textContent = String(set.items.length);
@@ -4841,17 +4892,18 @@ function renderBalloons() {
   ui.balPic.hidden = !(d && tool && !balTexts(d).length);
   ui.balSheets.hidden = !(P && P.pages > 1);
   if (!ui.balSheets.hidden) {
-    const key = P.page + ':' + P.pages + ':' + P.name;
+    const key = P.page + ':' + sheets.join(',') + ':' + P.name;
     if (ui.balSheets.dataset.sig !== key) {
       ui.balSheets.dataset.sig = key;
       const go = (n) => balSheet(editable(), n);
-      const pick = P.pages <= 6 ? h('div', { class: 'grp', role: 'group', 'aria-label': 'Sheets' }, Array.from({ length: P.pages }, (_, i) => h('button', { class: 'seg' + (i + 1 === P.page ? ' on' : ''), type: 'button', 'data-sheet': i + 1, 'aria-pressed': String(i + 1 === P.page), onclick: () => go(i + 1) }, 'Sheet ' + (i + 1))))
-        : (() => { const sl = h('select', { class: 'fld', 'aria-label': 'Sheets', 'data-testid': 'bal-sheet-select' }, Array.from({ length: P.pages }, (_, i) => h('option', { value: i + 1 }, 'Sheet ' + (i + 1)))); sl.value = String(P.page); sl.addEventListener('change', () => go(+sl.value)); return sl; })();
-      ui.balSheets.replaceChildren(h('span', { class: 'lbl' }, `${P.name} · ${P.pages} pages`), pick);
+      const pick = sheets.length <= 6 ? h('div', { class: 'grp', role: 'group', 'aria-label': 'Sheets' }, sheets.map((n) => h('button', { class: 'seg' + (n === P.page ? ' on' : ''), type: 'button', 'data-sheet': n, 'aria-pressed': String(n === P.page), onclick: () => go(n) }, 'Sheet ' + n)))
+        : (() => { const sl = h('select', { class: 'fld', 'aria-label': 'Sheets', 'data-testid': 'bal-sheet-select' }, sheets.map((n) => h('option', { value: n }, 'Sheet ' + n))); sl.value = String(P.page); sl.addEventListener('change', () => go(+sl.value)); return sl; })();
+      ui.balSheets.replaceChildren(h('span', { class: 'lbl' }, `${P.name} · ${sheets.length} pages`), pick,
+        h('button', { class: 'btn', type: 'button', 'data-testid': 'delete-sheet', disabled: sheets.length === 1, onclick: () => deleteSheet(editable()) }, 'Delete sheet'));
     }
   }
   ui.sheetChip.hidden = !(P && P.pages > 1);
-  if (P) ui.sheetChip.textContent = `Sheet ${P.page} / ${P.pages}`;
+  if (P) ui.sheetChip.textContent = `Sheet ${P.page} / ${sheets.length}`;
 }
 
 // ---- Leader (TODO 28, leader.js; mock-up R8c): click the shape, click the next point (once more for a second segment, or Enter), type the note where it lands ----
