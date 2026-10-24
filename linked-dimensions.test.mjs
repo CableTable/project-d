@@ -255,3 +255,26 @@ test('TODO 129c: a link survives two saves, and a shape far from the dimension s
   const off = reopen(drawing(W.circle(50, 40, 10), { c: [50.00001, 40], r: 10, p: [70, 40] }, 'radius'));
   assert.equal(followDimensions(off, E.moveEntities(off, new Set([0]), 1, 1)).blocks, off.blocks);
 });
+
+test('Fix 129: a copied dimension has its own block; moving the copy leaves the original alone', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  const copied = { ...raw, ...E.copyEntities(raw, new Set([0, 1]), 0, 50) };
+  assert.equal(copied.entities.length, 4);
+  const n1 = E.dimOfEntity(copied, 1).name, n2 = E.dimOfEntity(copied, 3).name;
+  assert.notEqual(n1, n2);
+  const next = gripAt(copied, 2, 'b', [100, 80]);
+  assert.deepEqual(next.blocks[n1], copied.blocks[n1], 'the original dimension is unchanged');
+  assert.notDeepEqual(next.blocks[n2], copied.blocks[n2]);
+  const circ = drawing(W.circle(50, 40, 10), { c: [50, 40], r: 10, p: [70, 40] }, 'radius');
+  const cc = E.copyEntities(circ, new Set([0, 1]), 5, 5);
+  assert.match(E.dimOfEntity(cc, 3).name, /^PD_DIM_R\d+$/); assert.notEqual(E.dimOfEntity(cc, 3).name, E.dimOfEntity(cc, 1).name);
+});
+
+test('Fix 129: a Linear dimension dragged off its axis keeps its axis and value on reopen', () => {
+  for (const [axis, to] of [['h', [100, 30]], ['v', [30, 100]], ['h', [100, 0.05]]]) {
+    const b = axis === 'h' ? [100, 0] : [0, 100], raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear');
+    const next = gripAt(raw, 0, 'b', to), back = reopen(next), m = E.dimOfEntity(back, 1);
+    assert.equal(m.kind, 'linear'); assert.equal(m.params.axis, axis);
+    assert.equal(label(back), label(next)); assert.equal(label(back), '100.000');
+  }
+});

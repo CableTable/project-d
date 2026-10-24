@@ -887,10 +887,18 @@ export function moveEntities(raw, selection, dx, dy) {
   }), blocks: raw.blocks };
 }
 
-/** Append translated copies in drawing order, leaving the originals and shared blocks intact. */
+/** Append translated copies in drawing order, leaving the originals and shared blocks intact; a copied dimension gets a block of its own. */
 export function copyEntities(raw, selection, dx, dy) {
   const moved = moveEntities(raw, selection, dx, dy);
-  return { entities: [...raw.entities, ...moved.entities.filter((_, i) => selection.has(i))], blocks: moved.blocks };
+  let blocks = moved.blocks;
+  const copies = moved.entities.filter((_, i) => selection.has(i)).map((e) => {
+    const name = e.type === 'INSERT' ? fieldOf(e.r, 2) : '';
+    if (!DIM_BLOCK.test(name) || !blocks[name]) return e;
+    const kind = { R: 'radius', D: 'diameter', A: 'angle' }[(/^PD_DIM_([RDA])\d+$/.exec(name) || [])[1]], own = freeName(blocks, kind);
+    blocks = { ...blocks, [own]: structuredClone(blocks[name]) };
+    return { ...e, r: { ...e.r, v: e.r.v.map((v, k) => e.r.c[k] === 2 ? own : v) } };
+  });
+  return { entities: [...raw.entities, ...copies], blocks };
 }
 
 // ---------------------------------------------------------------- undo
@@ -1125,9 +1133,11 @@ export function dimParams(block) {
   const gap = Math.max(0, Math.abs((g(ext[0], 11) - p0[0]) * -uy + (g(ext[0], 21) - p0[1]) * ux) - 0.4 * th);          // the overshoot past the line is the gap and 0.4 text heights
   const back = (e) => { const l = Math.hypot(g(e, 11) - g(e, 10), g(e, 21) - g(e, 20)); return [g(e, 10) - (g(e, 11) - g(e, 10)) / l * gap, g(e, 20) - (g(e, 21) - g(e, 20)) / l * gap]; };
   const a = back(ext[0]), b = back(ext[1]);
-  const along = (b[0] - a[0]) * ux + (b[1] - a[1]) * uy, bl = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const bl = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const out = { a, b, offset: (p0[0] - a[0]) * -uy + (p0[1] - a[1]) * ux, gap, ...look };
-  if (bl > 1e-9 && Math.abs(along) < bl * (1 - 1e-6)) out.axis = Math.abs(ux) > Math.abs(uy) ? 'h' : 'v';      // the points are not along the line: a linear dimension
+  const flat = Math.min(Math.abs(ux), Math.abs(uy)) < 1e-6, perp =Math.abs((b[0] - a[0]) * -uy + (b[1] - a[1]) * ux);
+  // shortcut: a Linear whose points still lie on its axis draws exactly like an Aligned one, so it reads back as Aligned until a point leaves the axis.
+  if (bl > 1e-9 && flat && perp > 1e-5 + 1e-7 * bl) out.axis = Math.abs(ux) > Math.abs(uy) ? 'h' : 'v';      // the points are off the axis of a horizontal / vertical line: a linear dimension
   return out;
 }
 /** A kept dimension's kind and parameters from its block name and block: { kind, params } for dimGeom, or null when it is not one. */
