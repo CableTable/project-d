@@ -4722,7 +4722,7 @@ try {
   });
   await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
     await closeTabs(/./);
-    const name = '111b <img src=x>.dxf', first = `${name} paste`, second = `${first} 2`;
+    const name = '111b <img src=x>.dxf', base = '111b <img src=x>', first = `${base} paste`, second = `${first} 2`;
     const raw = newDoc(1); addEntities(raw, dxfCircle(6.25, 5.5, 2.5));
     await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
     await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
@@ -4753,7 +4753,7 @@ try {
     assert.deepEqual(await page.locator('[data-testid=lib-list] .cname').allTextContents(), [first, second]);
     assert.equal(await page.locator('[data-testid=lib-list] .cname img').count(), 0, 'source tab names stay literal text');
     const saved = (await parts()).filter((p) => p.name === first || p.name === second);
-    assert.equal(saved.length, 2); assert.ok(saved.every((p) => p.source === name));
+    assert.equal(saved.length, 2); assert.ok(saved.every((p) => p.source === base));
     assert.deepEqual(readDxf(saved[0].dxf).entities, readDxf(saved[1].dxf).entities, 'both library parts hold the copied objects');
     await shotBoth('todo111b-library');
     for (const name of [first, second]) {
@@ -4763,6 +4763,29 @@ try {
       await libCard(name).waitFor({ state: 'detached' });
     }
     await t('lib-search').fill('');
+    await t('panel-main').click();
+    await closeTabs(/./);
+  });
+  await step('TODO 111b: PDF layout paste remembers the base name and copied sheet after switching sheets and closing the source', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/three-sheets.pdf'); await t('bal-sheets').waitFor();
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 3');
+    await typeCmd('newlayout'); await page.keyboard.press('Escape');
+    await closeTabs(/three-sheets/);
+    await page.keyboard.press('Control+v');
+    const name = 'three-sheets sheet 2 paste';
+    await page.waitForFunction((nm) => document.querySelector('[data-testid=placed-name]').textContent === nm, name);
+    const lay = layoutFromRaw(await savedDoc());
+    assert.equal(lay.parts[lay.placed[0].partId].name, name);
+    await menuItem('Layout', 'Parts library');
+    await libCard(name).locator('[data-testid=lib-menu]').click();
+    page.once('dialog', (d) => d.accept());
+    await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+    await libCard(name).waitFor({ state: 'detached' });
     await t('panel-main').click();
     await closeTabs(/./);
   });

@@ -4046,7 +4046,8 @@ const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, lay
 function copySelection() {
   const d = editable();
   if (!d?.sel.size) { note('Nothing selected to copy'); return; }
-  clipboard = copySnapshot(d.raw, d.sel, d.factor, d.name);
+  const name = baseName(d.name) + (d.pdf && PS.sheetNumbers(d.pdf).length > 1 ? ` sheet ${d.pdf.page}` : '');
+  clipboard = copySnapshot(d.raw, d.sel, d.factor, name);
   note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
 }
 async function pasteSelection() {
