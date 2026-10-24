@@ -7911,7 +7911,7 @@ try {
       return canvas.getContext('2d').getImageData(x - 3, y - 3, 7, 7).data.some((v, i) => i % 4 === 3 && v > 0);
     }, ghost), 'the block ghost is drawn');
     await shotBoth('move', async () => { const p = await at(50, 50); await page.mouse.move(p.x, p.y); await frames(); });
-    await typeCmd('bad'); assert.match(await histLine(), /I do not understand/);
+    await typeCmd('bad'); assert.match(await histLine(), /Unknown command/);
     await typeCmd('10,-5');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select'); await waitSel('5 selected');
     const moved = await savedDoc();
@@ -7927,10 +7927,20 @@ try {
     const direct = await savedDoc(), dx = fieldOf(direct.entities[0], 10) - 20, dy = fieldOf(direct.entities[0], 20) - 30;
     assert.ok(Math.abs(Math.hypot(dx, dy) - 25) < 1e-5, `direct distance: dx=${dx}, dy=${dy}, hist=${await histLine()}`); assert.ok(Math.abs(dx / dy - 4 / 3) < .03);
     await undoMove();
+    // A typed command replaces Move at either point prompt without editing the drawing.
+    for (const [stage, alias, tool] of [['base', 'l', 'Line'], ['target', 'o', 'Offset']]) {
+      await typeCmd('mv'); if (stage === 'target') await typeCmd('0,0');
+      await typeCmd(alias);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: ' + tool);
+      await page.keyboard.press('Escape');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+    }
     // Esc at selection, base and target makes no edit.
     for (const stage of ['base', 'target']) {
       await typeCmd('mv'); if (stage === 'target') await typeCmd('0,0');
-      await page.keyboard.press('Escape'); assert.equal(await t('mod-line').count(), 0);
+      await page.keyboard.press('Escape');
+      await t('mod-line').waitFor({ state: 'detached' });
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
       assert.deepEqual((await savedDoc()).entities, before.entities);
     }
     await page.keyboard.press('Escape'); await typeCmd('mv');

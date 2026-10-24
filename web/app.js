@@ -5281,6 +5281,7 @@ function modTyped(d, raw) {
   if (m.kind === 'move' && m.stage !== 'pick') {
     const mm = (p) => p && p.slice(0, 2).map((v) => v * d.factor);
     const q = movePoint(raw, mm(m.p1), mm(m.cur));
+    if (!q && DR.parseInput(raw).kind === 'word') return false;
     if (q) moveTo(d, q.map((v) => v / d.factor));
     else note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'dx,dy or a positive distance toward the cursor'}`);
     return true;

@@ -872,8 +872,8 @@ export function resizeAbout(raw, sx, sy, ax, ay, space = 0, selection = null) {
   return { entities, blocks: raw.blocks, skipped: {} };
 }
 
-/** Translate selected records; sizes, direction vectors and shared block definitions stay unchanged. */
-export function moveEntities(raw, selection, dx, dy) {
+/** Translate selected records; sizes, direction vectors and shared blocks stay unchanged. Copy also isolates unshared native dimension blocks. */
+export function moveEntities(raw, selection, dx, dy, copy = false) {
   if (![dx, dy].every(Number.isFinite)) throw new Error('Move needs finite distances');
   const record = (type, r, x) => {
     if (type === 'HATCH') return moveHatch(r, x, dy);
@@ -882,19 +882,34 @@ export function moveEntities(raw, selection, dx, dy) {
     if (!pts) throw new Error('Cannot move ' + type);
     return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
   };
-  let blocks = raw.blocks;
+  let blocks = raw.blocks, blockRefs;
   const movedDims = new Map();
+  const countRefs = (entities) => {
+    for (const e of entities) if (['INSERT', 'DIMENSION', 'ACAD_TABLE'].includes(e.type)) {
+      const name = fieldOf(e.r, 2); blockRefs.set(name, (blockRefs.get(name) || 0) + 1);
+    }
+  };
   const one = (e) => {
     const x = e.flip && OCS.has(e.type) ? -dx : dx;
     let r = record(e.type, e.r, x);
     if (e.type === 'DIMENSION') {
       const name = fieldOf(e.r, 2), b = raw.blocks[name];
       if (b && !b.xref) {
+        if (!blockRefs) {
+          blockRefs = new Map();
+          countRefs(raw.entities);
+          for (const block of Object.values(raw.blocks)) countRefs(block.entities);
+        }
         let own = movedDims.get(name);
         if (!own) {
-          let n = 1;
-          while (blocks['*D' + n]) n++;
-          own = '*D' + n; movedDims.set(name, own);
+          own = name;
+          if (copy || blockRefs.get(name) > 1) {
+            let n = 1;
+            while (blocks['*D' + n]) n++;
+            own = '*D' + n;
+            countRefs(b.entities);       // The clone adds references before its nested dimensions move.
+          }
+          movedDims.set(name, own);
           // Native dimensions draw their block in world coordinates; isolate shared blocks before moving it.
           blocks = { ...blocks, [own]: b };
           const entities = b.entities.map(one);
@@ -903,7 +918,7 @@ export function moveEntities(raw, selection, dx, dy) {
         r = { ...r, v: r.v.map((v, k) => r.c[k] === 2 ? own : v) };
       }
     }
-    return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, +fieldOf(kid, 230) < 0 && OCS.has(kid.type) ? -dx : dx)) };
+    return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, OCS.has(kid.type) ? (+fieldOf(kid, 230) < 0 ? -dx : dx) : x)) };
   };
   const entities = raw.entities.map((e, i) => selection.has(i) ? one(e) : e);
   return { entities, blocks };
@@ -953,7 +968,7 @@ function moveMleader(r, dx, dy) {
 
 /** Append translated copies in drawing order, leaving the originals and shared blocks intact; copied dimensions and leaders get their own blocks. */
 export function copyEntities(raw, selection, dx, dy) {
-  const moved = moveEntities(raw, selection, dx, dy);
+  const moved = moveEntities(raw, selection, dx, dy, true);
   let blocks = moved.blocks;
   const copies = moved.entities.filter((_, i) => selection.has(i)).map((e) => {
     const name = e.type === 'INSERT' ? fieldOf(e.r, 2) : '';

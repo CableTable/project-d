@@ -54,6 +54,29 @@ test('copy selection appends moved copies in drawing order, preserves sources an
   assert.throws(() => E.copyEntities({ ...raw, entities: [W.entity('UNSUPPORTED', [])] }, new Set([0]), 1, 2), /Cannot move/);
 });
 
+test('Move and copy translate flipped polylines in world coordinates, including native dimension blocks', () => {
+  const poly = W.entity('POLYLINE', [[70, 0], [210, 0], [220, 0], [230, -1]]);
+  poly.kids = [[10, 4], [20, 8]].map(([x, y]) => W.entity('VERTEX', [[10, x], [20, y]]).r);
+  const lw = W.entity('LWPOLYLINE', [[90, 2], [70, 0], [10, 10], [20, 4], [10, 20], [20, 8], [210, 0], [220, 0], [230, -1]]);
+  for (const source of [poly, lw]) for (const inDim of [false, true]) {
+    const doc = W.newDoc(4);
+    if (inDim) {
+      W.addBlock(doc, '*D1', [source]);
+      W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [10, 0], [20, 0], [70, 0]]));
+    } else W.addEntities(doc, source);
+    const raw = D.readDxf(W.writeDxf(doc)), before = structuredClone(raw);
+    const a = drawingBoxMm(D.flatten(raw), 1);
+    for (const edit of [E.moveEntities, E.copyEntities]) {
+      const next = edit(raw, new Set([0]), 7, -3);
+      const moved = { ...raw, ...next, entities: [next.entities.at(-1)] };
+      const b = drawingBoxMm(D.flatten(moved), 1);
+      a.forEach((v, k) => near(b[k], v + (k % 2 ? -3 : 7), `${source.type}, dimension=${inDim}, ${edit.name}`));
+      assert.deepEqual(raw, before, 'the undo snapshot stays intact');
+      if (edit === E.copyEntities) assert.deepEqual(drawingBoxMm(D.flatten({ ...raw, ...next, entities: [next.entities[0]] }), 1), a);
+    }
+  }
+});
+
 test('Move translates fixture entity types, hatches, native dimensions and table blocks without changing their shape', () => {
   for (const name of ['sample.dxf', 'wireframe.dxf', 'outline.dxf', 'table.dxf']) {
     const { raw } = load(name), before = structuredClone(raw);
@@ -83,6 +106,39 @@ test('Move isolates shared native dimension blocks and keeps measurement and the
   near(+field(saved.blocks[field(e, 2)].entities[0], 10), 7);
   const hist = E.createHistory(); hist.push(raw, 'Move');
   assert.deepEqual(hist.undo(next), raw);
+});
+
+test('Move reuses an unshared native dimension block; copy and nested references keep the source block', () => {
+  const raw = W.newDoc(4);
+  W.addBlock(raw, '*D1', [W.line(0, 0, 10, 0)]);
+  W.addEntities(raw, W.entity('DIMENSION', [[2, '*D1'], [10, 0], [20, 0], [70, 0]]));
+  const before = structuredClone(raw), selected = new Set([0]), field = (e, c) => e.r.v[e.r.c.indexOf(c)];
+  let next = raw;
+  for (let i = 1; i <= 3; i++) {
+    next = { ...raw, ...E.moveEntities(next, selected, 7, -3) };
+    assert.deepEqual(Object.keys(next.blocks), ['*D1']);
+    near(+field(next.blocks['*D1'].entities[0], 10), 7 * i);
+  }
+  assert.deepEqual(Object.keys(D.readDxf(W.writeDxf(next)).blocks).filter((name) => /^\*D\d+$/.test(name)), ['*D1']);
+  const copied = E.copyEntities(raw, selected, 7, -3);
+  assert.equal(copied.blocks['*D1'], raw.blocks['*D1']);
+  assert.deepEqual(Object.keys(copied.blocks), ['*D1', '*D2']);
+  near(+field(copied.blocks['*D2'].entities[0], 10), 7);
+  assert.deepEqual(raw, before);
+  W.addBlock(raw, 'Part', [W.insert('*D1', 0, 0)]);
+  W.addEntities(raw, W.insert('Part', 0, 0));
+  const shared = E.moveEntities(raw, selected, 7, -3);
+  assert.equal(shared.blocks['*D1'], raw.blocks['*D1']);
+  assert.equal(shared.blocks.Part, raw.blocks.Part);
+  assert.ok(shared.blocks['*D2']);
+  delete raw.blocks.Part;
+  W.addBlock(raw, 'Outer', [raw.entities[0]]);
+  const outer = W.entity('DIMENSION', [[2, 'Outer'], [10, 0], [20, 0], [70, 0]]);
+  const nested = E.moveEntities({ ...raw, entities: [outer, structuredClone(outer)] }, selected, 7, -3);
+  assert.equal(nested.blocks.Outer, raw.blocks.Outer);
+  assert.equal(nested.blocks['*D1'], raw.blocks['*D1'], 'cloning Outer must also isolate its nested dimension');
+  const movedOuter = nested.blocks[field(nested.entities[0], 2)];
+  near(+field(nested.blocks[field(movedOuter.entities[0], 2)].entities[0], 10), 7);
 });
 
 test('Move keeps hatch ellipse axes and pattern spacing, multileader directions and wipeout vectors', () => {
