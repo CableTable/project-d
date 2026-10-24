@@ -887,6 +887,12 @@ export function moveEntities(raw, selection, dx, dy) {
   }), blocks: raw.blocks };
 }
 
+/** Append translated copies in drawing order, leaving the originals and shared blocks intact. */
+export function copyEntities(raw, selection, dx, dy) {
+  const moved = moveEntities(raw, selection, dx, dy);
+  return { entities: [...raw.entities, ...moved.entities.filter((_, i) => selection.has(i))], blocks: moved.blocks };
+}
+
 // ---------------------------------------------------------------- undo
 
 /**

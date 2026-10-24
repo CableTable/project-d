@@ -3361,7 +3361,7 @@ function hideNow(d) {
   if (!d || (drag == null && !move?.items && !(d.hid && d.hid.size))) return null;
   const out = new Set(hidIdx(d) || []);
   if (drag != null) out.add(drag);
-  if (move?.d === d && move.items) for (const e of move.sel) out.add(e);
+  if (move?.d === d && move.items && !move.copy) for (const e of move.sel) out.add(e);
   return out;
 }
 // the drawing canvas repaints once per frame, however often the view changes
@@ -3488,7 +3488,7 @@ function attachCanvasEvents() {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
         if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p)) && !e.shiftKey) {
-          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p };
+          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p, copy: e.ctrlKey || e.metaKey };
         }
         capture(c, e);
       }
@@ -3559,15 +3559,17 @@ function attachCanvasEvents() {
           const ready = moveSelectionTo(was.move, e);
           const g = was.move; state.entityDrag = null;
           if (ready && g.items && (g.dx || g.dy) && g.raw === d.raw.entities) {
-            commit(d, Ed.moveEntities(d.raw, g.sel, g.dx, g.dy), 'Move selection'); setSel(d, g.sel);
-            note('Selection moved. Ctrl+Z takes it back');
+            const next = (g.copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, g.sel, g.dx, g.dy);
+            const sel = g.copy ? new Set(next.entities.slice(g.raw.length).map((_, i) => g.raw.length + i)) : g.sel;
+            commit(d, next, g.copy ? 'Copy selection' : 'Move selection'); setSel(d, sel);
+            note(g.copy ? 'Selection copied. Ctrl+Z removes the copy' : 'Selection moved. Ctrl+Z takes it back');
           }
           paintOverlay();
         }
       }
       else if (!editable()) { /* a layout tab: its placed parts are picked by the page itself (data-i) */ }
       else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift);
-      else clickSelect(d, was.p, e.shiftKey || was.shift);
+      else clickSelect(d, was.p, e.shiftKey || was.shift || e.ctrlKey || e.metaKey);
     }
     end();
     state.entityDrag = null;
@@ -6635,6 +6637,10 @@ function renderEdit() {
   ui.textbar.hidden = !tb; if (tb) renderTextBar();
   ui.canvas.classList.toggle('texttool', on && state.tool === 'text');
   renderContour();
+  if (on && state.tool !== 'contour') {
+    ui.hintPill.hidden = state.tool !== 'select' || !d.sel.size || !!state.match;
+    ui.hintPill.textContent = 'Ctrl-drag = copy';
+  }
   ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!editable() && state.tool === 'measure'));
   if (!on) return;
   renderSelection(d);

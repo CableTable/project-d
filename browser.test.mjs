@@ -4333,6 +4333,55 @@ try {
     assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the visible text and the original strokes');
     await closeTabs(/search-text/);
   });
+  await step('TODO 135: Ctrl+drag copies a drawing selection, leaves originals, Undo removes copies, Ctrl-click toggles', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
+    await t('picker').setInputFiles({ name: 'ctrl-drag.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'ctrl-drag.dxf');
+    await page.keyboard.press('Control+a'); await waitSel('2 selected');
+    assert.equal(await t('hint-pill').isVisible(), true);
+    assert.equal(await t('hint-pill').textContent(), 'Ctrl-drag = copy');
+    const before = await savedDoc(), start = await at(30, 20), end = await at(45, 30);
+    await page.keyboard.down('Control');
+    await page.mouse.move(start.x, start.y); await page.mouse.down();
+    await page.mouse.move(end.x, end.y, { steps: 5 });
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    for (const [x, y] of [[50, 20], [65, 30]]) {
+      const point = await at(x, y);
+      assert.ok(await t('drawing').evaluate((canvas, p) => {
+        const b = canvas.getBoundingClientRect(), px = Math.round((p.x - b.x) * canvas.width / b.width), py = Math.round((p.y - b.y) * canvas.height / b.height);
+        return canvas.getContext('2d').getImageData(px - 2, py - 2, 5, 5).data.some((v, i) => i % 4 === 3 && v > 0);
+      }, point), 'both the original and moved copy are painted during the drag');
+    }
+    await page.mouse.up(); await page.keyboard.up('Control');
+    await waitSel('2 selected');
+    const copied = await savedDoc();
+    assert.equal(copied.entities.length, 4);
+    assert.deepEqual(copied.entities.slice(0, 2), before.entities, 'originals stay in place');
+    for (let i = 0; i < 2; i++) for (const code of [10, 11, 20, 21]) {
+      assert.ok(Math.abs(fieldOf(copied.entities[i + 2], code) - fieldOf(before.entities[i], code) - (code < 20 ? 15 : 10)) < .05, 'each copy moves by the drag distance');
+    }
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+      await page.screenshot({ path: `${shotDir}/todo135-copy-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo removes all copies');
+    for (const count of ['1 selected', '0 selected', '1 selected']) {
+      await page.keyboard.down('Control'); await click(30, 20); await page.keyboard.up('Control');
+      await waitSel(count);
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'Ctrl-click creates no copies');
+    }
+    await t('ptab-objects').click();
+    await page.locator('.or.layer[data-layer="0"]').click();
+    const row = page.locator('.or[data-e="0"]');
+    await row.click({ modifiers: ['Control'] }); await waitSel('0 selected');
+    await row.click({ modifiers: ['Control'] }); await waitSel('1 selected');
+    await t('ptab-drawing').click();
+    await closeTabs(/ctrl-drag/);
+  });
   await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
     await closeTabs(/./);
     const empty = await t('canvas').boundingBox(), errorCount = errors.length;
@@ -4412,10 +4461,14 @@ try {
     await t('ptab-drawing').click();
     await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
     const before = await savedDoc(), start = await at(30, 20), end = await at(35, 25);
-    await page.mouse.move(start.x, start.y); await page.mouse.down();
-    await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
-    assert.match(await prompt(), /Layer Locked is locked/);
-    assert.deepEqual((await savedDoc()).entities, before.entities);
+    for (const copy of [false, true]) {
+      if (copy) await page.keyboard.down('Control');
+      await page.mouse.move(start.x, start.y); await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
+      if (copy) await page.keyboard.up('Control');
+      assert.match(await prompt(), /Layer Locked is locked/);
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'locked selection cannot move or copy');
+    }
     await closeTabs(/locked-drag/);
   });
   const histLabels = async () => {

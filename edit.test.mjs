@@ -33,6 +33,27 @@ test('move selection translates PDF geometry and text without changing sizes, ve
   assert.throws(() => E.moveEntities({ ...raw, entities: [W.entity('HATCH', [])] }, new Set([0]), 1, 2), /Cannot move/);
 });
 
+test('copy selection appends moved copies in drawing order, preserves sources and shared blocks, and undoes once', () => {
+  const raw = W.newDoc(4);
+  W.addBlock(raw, 'Part', [W.circle(0, 0, 5)]);
+  W.addEntities(raw, [W.line(1, 2, 3, 4), W.circle(30, 40, 10), W.insert('Part', 10, 20)]);
+  const before = structuredClone(raw), selected = new Set([2, 0]);
+  const next = E.copyEntities(raw, selected, 7, -3);
+  assert.deepEqual(raw, before, 'the input stays intact');
+  assert.deepEqual(next.entities.slice(0, 3), before.entities);
+  const copies = next.entities.slice(3), f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  assert.deepEqual(copies.map((e) => e.type), ['LINE', 'INSERT']);
+  assert.deepEqual(copies.map((e) => [f(e, 10), f(e, 20)]), [[8, -1], [17, 17]]);
+  assert.deepEqual([f(copies[0], 11), f(copies[0], 21)], [10, 1]);
+  assert.equal(next.blocks, raw.blocks, 'INSERT copies reuse their block');
+  assert.equal(next.entities.length, 5);
+  const hist = E.createHistory(); hist.push(raw, 'Copy selection');
+  assert.deepEqual(hist.undo(next).entities, before.entities);
+  assert.equal(hist.canUndo, false, 'copy is one undo step');
+  assert.throws(() => E.copyEntities(raw, selected, Infinity, 0), /finite/);
+  assert.throws(() => E.copyEntities({ ...raw, entities: [W.entity('HATCH', [])] }, new Set([0]), 1, 2), /Cannot move/);
+});
+
 test('flatten tells each item its entity (a block\'s contents: the INSERT)', () => {
   const { raw, fl } = load('outline.dxf');
   const ins = raw.entities.findIndex((e) => e.type === 'INSERT');

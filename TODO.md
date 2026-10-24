@@ -234,7 +234,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 132. **Parts library sits at the bottom of the right panel: scroll to reach it** (S, ask, T42): see T42 in support/tickets.md. Grill first.
 133. **Dotted rubber-band line from the pointer when a tool starts (line thickness?)** (S, ask, T43): see T43 in support/tickets.md. Grill first.
 134. **Extra Alt shortcuts for locked / fixed ones (Delete, Save, Save as)** (M, ask, T44): see T44 in support/tickets.md. Grill first.
-135. **Ctrl + drag: copy and drag the copy does not work** (M, bug, T45): see T45 in support/tickets.md. Grilled 2026-10-24: on drawing tabs, Ctrl+drag copies the selection and drags the copy (original stays, one Undo step, hint "Ctrl-drag = copy"), as layouts already do (`web/app.js:1973`); today drawing tabs just move (`web/app.js:3490`, `moveSelectionTo` 4025).
+135. ✅ **Ctrl + drag: copy and drag the copy does not work** (M, bug, T45): see T45 in support/tickets.md. Grilled 2026-10-24: on drawing tabs, Ctrl+drag copies the selection and drags the copy (original stays, one Undo step, hint "Ctrl-drag = copy"), as layouts already do (`web/app.js:1973`); today drawing tabs just move (`web/app.js:3490`, `moveSelectionTo` 4025).
 136. **Start page with recent files and pinned / favourite drawings instead of an empty sheet** (M, ask, T46): see T46 in support/tickets.md. Grill first.
 137. **Zoom level at bottom right: type a custom zoom** (S, ask, T47): see T47 in support/tickets.md. Grill first.
 138. **Open .tif / .tiff files (as a background picture and for Trace bitmap)** (M, ask, T48): see T48 in support/tickets.md. Grill first.
