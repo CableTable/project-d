@@ -237,7 +237,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 133. **Dotted rubber-band line from the pointer when a tool starts (line thickness?)** (S, ask, T43): see T43 in support/tickets.md. Grill first.
 134. **Extra Alt shortcuts for locked / fixed ones (Delete, Save, Save as)** (M, ask, T44): see T44 in support/tickets.md. Grill first.
 135. ✅ **Ctrl + drag: copy and drag the copy does not work** (M, bug, T45): see T45 in support/tickets.md. Grilled 2026-10-24: on drawing tabs, Ctrl+drag copies the selection and drags the copy (original stays, one Undo step, hint "Ctrl-drag = copy"), as layouts already do (`web/app.js:1973`); today drawing tabs just move (`web/app.js:3490`, `moveSelectionTo` 4025).
-    135b. (review finding 2026-10-24) Ctrl+Shift-drag on a drawing tab copies straight (as layouts, DECISIONS "Move and copy by dragging"); today the drag needs `!e.shiftKey` (`web/app.js:3490`) and starts a box select. Add a browser step for Ctrl-drag on a locked layer.
+    135b. ✅ (built, Knight; review finding 2026-10-24) Ctrl+Shift-drag on a drawing tab copies straight along X or Y (as layouts, DECISIONS "Move and copy by dragging"). Plain Shift-drag keeps box selection. Browser checks both axes, one Undo, unchanged originals, and refusal of Ctrl-drag / Ctrl+Shift-drag on a locked layer.
 136. **Start page with recent files and pinned / favourite drawings instead of an empty sheet** (M, ask, T46): see T46 in support/tickets.md. Grill first.
 137. **Zoom level at bottom right: type a custom zoom** (S, ask, T47): see T47 in support/tickets.md. Grill first.
 138. **Open .tif / .tiff files (as a background picture and for Trace bitmap)** (M, ask, T48): see T48 in support/tickets.md. Grill first.

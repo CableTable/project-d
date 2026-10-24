@@ -4459,6 +4459,49 @@ try {
     await t('ptab-drawing').click();
     await closeTabs(/ctrl-drag/);
   });
+  await step('TODO 135b: Ctrl+Shift-drag copies straight on either axis; plain Shift-drag still selects a box', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
+    await t('picker').setInputFiles({ name: 'straight-copy.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'straight-copy.dxf');
+    const before = await savedDoc();
+    for (const [dx, dy] of [[15, 10], [10, 15]]) {
+      await page.keyboard.press('Control+a'); await waitSel('2 selected');
+      const start = await at(30, 20), end = await at(30 + dx, 20 + dy);
+      await page.keyboard.down('Control'); await page.keyboard.down('Shift');
+      await page.mouse.move(start.x, start.y); await page.mouse.down();
+      await page.mouse.move(end.x, end.y, { steps: 5 });
+      assert.equal(await t('rubber').isVisible(), false, 'copy drag does not start box selection');
+      await page.mouse.up(); await page.keyboard.up('Shift'); await page.keyboard.up('Control');
+      await waitSel('2 selected');
+      const copied = await savedDoc();
+      assert.equal(copied.entities.length, 4);
+      assert.deepEqual(copied.entities.slice(0, 2), before.entities, 'originals stay in place');
+      for (let i = 0; i < 2; i++) for (const code of [10, 11, 20, 21]) {
+        const offset = code < 20 ? (dx > dy ? dx : 0) : (dy > dx ? dy : 0);
+        assert.ok(Math.abs(fieldOf(copied.entities[i + 2], code) - fieldOf(before.entities[i], code) - offset) < .05, 'copies move only along the dominant axis');
+      }
+      if (dx > dy) {
+        for (const theme of ['light', 'dark']) {
+          await menuItem('View', 'Theme: ' + theme); await page.waitForTimeout(150);
+          await page.screenshot({ path: `${shotDir}/todo135b-straight-${theme}.png` });
+        }
+        await menuItem('View', 'Theme: light');
+      }
+      await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo removes straight copies');
+    }
+    await page.keyboard.press('Control+a'); await waitSel('2 selected');
+    const start = await at(30, 20), end = await at(45, 30);
+    await page.keyboard.down('Shift');
+    await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(end.x, end.y, { steps: 5 });
+    assert.equal(await t('rubber').isVisible(), true, 'plain Shift-drag keeps its box');
+    await page.mouse.up(); await page.keyboard.up('Shift');
+    await waitSel('2 selected');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'plain Shift-drag does not move or copy');
+    await closeTabs(/straight-copy/);
+  });
   await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
     await closeTabs(/./);
     const empty = await t('canvas').boundingBox(), errorCount = errors.length;
@@ -4526,7 +4569,7 @@ try {
     if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
     await closeTabs(/drag-letter/);
   });
-  await step('TODO 120 fix: dragging a selection containing a locked layer reports the layer and keeps every entity', async () => {
+  await step('TODO 120 fix / TODO 135b: move, Ctrl-drag and Ctrl+Shift-drag on a locked layer are refused', async () => {
     await closeTabs(/./);
     const raw = newDoc(4);
     addLayer(raw, 'Locked');
@@ -4538,11 +4581,11 @@ try {
     await t('ptab-drawing').click();
     await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
     const before = await savedDoc(), start = await at(30, 20), end = await at(35, 25);
-    for (const copy of [false, true]) {
-      if (copy) await page.keyboard.down('Control');
+    for (const modifiers of [[], ['Control'], ['Control', 'Shift']]) {
+      for (const key of modifiers) await page.keyboard.down(key);
       await page.mouse.move(start.x, start.y); await page.mouse.down();
       await page.mouse.move(end.x, end.y, { steps: 5 }); await page.mouse.up();
-      if (copy) await page.keyboard.up('Control');
+      for (const key of modifiers.toReversed()) await page.keyboard.up(key);
       assert.match(await prompt(), /Layer Locked is locked/);
       assert.deepEqual((await savedDoc()).entities, before.entities, 'locked selection cannot move or copy');
     }
