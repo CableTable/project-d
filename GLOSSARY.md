@@ -84,7 +84,9 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Nest**: The packed arrangement of parts produced by Auto-nest, also the command name that opens its dialog. Where: `DECISIONS.md`, Auto-nest method and UI.
 
-**Nudge**: Moves selected placed parts with the arrow keys by a chosen mm step, or ten times that step with Shift. Where: `DECISIONS.md`, Nudge.
+**Nudge**: Moves selected placed parts, drawing objects or Compare snapshots with the arrow keys by a chosen mm step, or ten times that step with Shift. Where: `DECISIONS.md`, Nudge.
+
+**Nudge step**: The shared positive distance in mm used by arrow keys on drawings, layouts and Compare, remembered on this PC. Set it in a layout's top bar / panel or with `NU` / `NUDGE` at the command bar. Where: `DECISIONS.md`, Nudge command.
 
 **Objects tab**: The right-panel tree of layers and objects, or parts and their placements on a layout, used to find, select, hide and lock things. Where: `DECISIONS.md`, Objects tab. Avoid: A separate drawing tab; Object Manager is the older feature name.
 

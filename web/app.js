@@ -1641,7 +1641,8 @@ function setNudgeText(text) {
   state.nudge = v;
   try { localStorage.setItem('pd-nudge', String(v)); } catch { /* storage may be blocked */ }
   renderProps();
-  note(`Nudge step ${fmt1(v)} mm: an arrow key moves the part by it, Shift + arrow by ${fmt1(v * 10)} mm`);
+  renderCompare();
+  note(`Nudge step ${fmt1(v)} mm: an arrow key moves the selection by it, Shift + arrow by ${fmt1(v * 10)} mm`);
   return '';
 }
 function setDupText(key, text) {
@@ -3079,6 +3080,7 @@ const DO = {
   dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
+  nudge: () => ui.cmdUI.openNudge(String(state.nudge), setNudgeText),
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
@@ -3543,7 +3545,7 @@ function attachCanvasEvents() {
       if (d && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
-        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p)) && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
+        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p))) {
           drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p, copy: e.ctrlKey || e.metaKey };
         }
         capture(c, e);
@@ -4136,6 +4138,17 @@ function moveLocked(d, sel) {
   if (i == null) return false;
   note(`Layer ${d.raw.entities[i].layer} is locked: unlock it in the Objects tab to move this`);
   return true;
+}
+
+function nudgeDrawing(d, dir, big) {
+  if (!d.sel.size || moveLocked(d, d.sel)) return;
+  const [dx, dy] = PL.nudgeVector(dir, state.nudge, big), sel = new Set(d.sel);
+  try {
+    const next = Ed.moveEntities(d.raw, sel, dx / d.factor, dy / d.factor);
+    view.fitted = false;
+    commit(d, followDimensions(d.raw, next, d.factor), 'Nudge'); setSel(d, sel);
+    note(`Selection moved ${fmt(Math.hypot(dx, dy))} mm ${dir}. Ctrl+Z takes it back`);
+  } catch (err) { note(err.message); }
 }
 
 /** A click: the edge under it with everything joined to it end to end; Shift adds it or, if it is in already, takes it out. */
@@ -6000,7 +6013,7 @@ function editKey(e) {
     e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else pasteSelection(); return;
   }
   if (own && (!inField || own.name === 'properties')) { e.preventDefault(); runCommand(own); return; }       // Properties' key works in a field too, as Ctrl+1 always did
-  if (inField) return;
+  if (inField || e.target?.isContentEditable) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const dialog = !!document.querySelector('.pop-back, .pdlg-back'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
@@ -6009,6 +6022,8 @@ function editKey(e) {
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
   if (layoutKey(e, mod, k)) return;
   if (!d) return;
+  const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
+  if (dir && !mod && !e.altKey && state.tool === 'select' && !state.grip && !state.entityDrag) { e.preventDefault(); nudgeDrawing(d, dir, e.shiftKey); return; }
   if (e.key === 'Enter' && state.meas && state.meas.pts.length === 2) { e.preventDefault(); keepMeasure(); return; }
   if (e.key === 'Enter' && state.ldr && state.ldr.pts.length === 2) { e.preventDefault(); ldrNoteOpen(d); return; }
   if (modLive() && e.key === 'Enter') { e.preventDefault(); modEnter(d); return; }
@@ -7015,7 +7030,7 @@ function renderCompare() {
     } }, '×'))));
   for (const b of ui.cmpAdd) b.disabled = c.items.length >= CMP.MAX_ITEMS;
   for (const b of ui.cmpModes) { const on = b.dataset.m === c.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
-  ui.cmpHint.textContent = (c.mode === 'manual' ? `Drag the selected drawing (SNAP follows the status bar), or use the arrow keys (${state.nudge} mm). ` : '') +
+  ui.cmpHint.textContent = `Drag the selected drawing (SNAP follows the status bar), or use the arrow keys (${state.nudge} mm). ` +
     (selected ? `Selected: ${selected.name} · moved X ${fmt(selected.offset[0])}, Y ${fmt(selected.offset[1])} mm` : 'Add drawings to compare');
   if (document.activeElement !== ui.cmpTol) ui.cmpTol.value = String(c.tol);
   ui.cmpShow.checked = c.show;
@@ -7090,13 +7105,15 @@ function cmpSnap(sd, o, p) {
 /** Move the selected snapshot with the editor's snaps, without calculating differences. */
 function cmpDown(e) {
   const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), ref = c && CMP.reference(c.items);
-  if (!c || c.mode !== 'manual' || !item?.visible) return false;
+  if (!c || !item?.visible) return false;
   const target = ref === item ? c.items.find((x) => x !== item && x.checked && x.visible) : ref?.visible ? ref : null;
   const p0 = sheetAt(e.clientX, e.clientY), m0 = [...item.offset];
   const grab = cmpSnap(item, m0, p0), g = grab ? [grab.x, grab.y] : p0;
   c.moving = true;
-  let moved = false;
+  let moved = false, manual = false;
   const move = (ev) => {
+    if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) <= 4) return;
+    manual = cmpManual(c) || manual;
     const p = sheetAt(ev.clientX, ev.clientY);
     let o = [m0[0] + p[0] - p0[0], m0[1] + p[1] - p0[1]];
     const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = target && cmpSnap(target, target.offset, q);
@@ -7104,18 +7121,24 @@ function cmpDown(e) {
     if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
     moved = true; item.offset = o; paintOverlay();
   };
-  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) cmpMoved(d); else update(); };
+  const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) { cmpMoved(d); if (manual) note('Line-up set to Manual'); } };
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
   return true;
 }
-/** Manual line up: arrow keys nudge the selected snapshot by the toolbar's step. */
+function cmpManual(c) {
+  if (c.mode === 'manual') return false;
+  c.mode = 'manual'; note('Line-up set to Manual');
+  return true;
+}
+/** Arrow keys nudge the selected snapshot by the shared step. */
 function cmpKey(e, mod) {
-  const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), dir = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
-  if (!c || c.mode !== 'manual' || !item?.visible || !dir || mod || e.altKey) return false;
+  const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
+  if (!c || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
-  item.offset = [PL.r6(item.offset[0] + dir[0] * state.nudge), PL.r6(item.offset[1] + dir[1] * state.nudge)];
+  const manual = cmpManual(c), [dx, dy] = PL.nudgeVector(dir, state.nudge, e.shiftKey);
+  item.offset = [PL.r6(item.offset[0] + dx), PL.r6(item.offset[1] + dy)];
   cmpMoved(d);
-  note(`${item.name} nudged ${state.nudge} mm`);
+  note(`${manual ? 'Line-up set to Manual. ' : ''}${item.name} nudged ${Math.hypot(dx, dy)} mm`);
   return true;
 }
 function cmpCommand(c) {

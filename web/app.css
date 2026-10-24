@@ -749,6 +749,7 @@ select.fld { font-family: var(--sans); }
 kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line); border-radius: var(--r); color: var(--muted); background: var(--panel); }
 .cbar { position: absolute; z-index: 30; width: 380px; max-width: calc(100% - 8px); background: var(--panel); border: 1px solid var(--accent); border-radius: 8px; box-shadow: 0 12px 32px rgba(0, 0, 0, .3); overflow: hidden; user-select: text; cursor: default; }
 .cbar[hidden] { display: none; }
+.cbar.nudgebox { width: 260px; }
 .cb-in { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 36px; }
 .cbar svg, .cdrawer svg, .cb-echo svg { width: 14px; height: 14px; flex-shrink: 0; }       /* a generic svg rule makes them fill the row otherwise */
 .cb-fs svg, .cb-echo svg { width: 12px; height: 12px; }

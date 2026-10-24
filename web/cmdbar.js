@@ -23,6 +23,7 @@ const TABLE = [
   ['measure', 'Edit', 'Distance between two points', ['m'], 'draw'],
   ['pan', 'View', 'Drag the view around', [], ''],
   ['move', 'Edit', 'Move objects from a base point to a target', ['mv'], 'draw'],
+  ['nudge', 'Edit', 'Set the arrow-key Nudge step in mm', ['nu'], ''],
   ['offset', 'Edit', 'A parallel copy at a distance', ['o'], 'draw'],
   ['trim', 'Edit', 'Cut objects back to cutting edges', ['tr'], 'draw'],
   ['mirror', 'Edit', 'Mirror objects about a line', ['mi'], 'draw'],

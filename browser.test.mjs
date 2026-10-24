@@ -4864,7 +4864,7 @@ try {
     await t('ptab-drawing').click();
     await closeTabs(/ctrl-drag/);
   });
-  await step('TODO 135b: Ctrl+Shift-drag copies straight on either axis; plain Shift-drag still selects a box', async () => {
+  await step('TODO 135b / 66a2: Ctrl+Shift-drag copies straight on either axis; Shift-drag moves selected objects straight', async () => {
     await closeTabs(/./);
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
@@ -4901,10 +4901,22 @@ try {
     const start = await at(30, 20), end = await at(45, 30);
     await page.keyboard.down('Shift');
     await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(end.x, end.y, { steps: 5 });
-    assert.equal(await t('rubber').isVisible(), true, 'plain Shift-drag keeps its box');
+    assert.equal(await t('rubber').isVisible(), false, 'Shift-drag of selected objects moves straight');
     await page.mouse.up(); await page.keyboard.up('Shift');
     await waitSel('2 selected');
-    assert.deepEqual((await savedDoc()).entities, before.entities, 'plain Shift-drag does not move or copy');
+    const straight = await savedDoc();
+    assert.equal(straight.entities.length, 2);
+    for (let i = 0; i < 2; i++) for (const code of [10, 11, 20, 21]) {
+      assert.ok(Math.abs(fieldOf(straight.entities[i], code) - fieldOf(before.entities[i], code) - (code < 20 ? 15 : 0)) < .05);
+    }
+    await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+    const empty = await at(10, 10), corner = await at(70, 50);
+    await page.keyboard.down('Shift');
+    await page.mouse.move(empty.x, empty.y); await page.mouse.down(); await page.mouse.move(corner.x, corner.y, { steps: 5 });
+    assert.equal(await t('rubber').isVisible(), true, 'Shift-drag from empty space keeps box selection');
+    await page.mouse.up(); await page.keyboard.up('Shift');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
     await closeTabs(/straight-copy/);
   });
   await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
@@ -7955,6 +7967,96 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/move-locked/);
     await t('new-layout').click(); await typeCmd('mv'); assert.match(await prompt(), /Move works on a drawing tab/);
     await closeTabs(/Layout/);
+  });
+
+  await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfCircle(130, 80, 10));
+    Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [20, 30], b: [60, 50], offset: 15, textH: 3 }, 1, 'PD_DIM_1')));
+    await openGrips(writeDxf(raw), 'nudge.dxf');
+    const before = await savedDoc(), xy = (doc) => [10, 20].map((c) => fieldOf(doc.entities[0], c));
+    const blur = () => page.evaluate(() => document.activeElement?.blur());
+    await click(35, 37.5); await waitSel('1 selected');
+    await typeCmd('nu');
+    await t('nudge-input').fill('1'); await t('nudge-input').press('Enter');
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await page.keyboard.press('Shift+ArrowUp');
+    let doc = await savedDoc(); assert.deepEqual(xy(doc), [22, 40]);
+    dimParams(doc.blocks.PD_DIM_1).a.forEach((v, i) => assert.ok(Math.abs(v - [22, 40][i]) < 1e-5, 'linked dimension follows nudge'));
+    for (const expected of [[22, 30], [21, 30], [20, 30]]) {
+      await page.keyboard.press('Control+z'); assert.deepEqual(xy(await savedDoc()), expected, 'one Undo per press');
+    }
+    await click(35, 37.5); await waitSel('1 selected');
+    await typeCmd('nudge');
+    assert.equal(await t('nudge-input').evaluate((el) => el.selectionEnd - el.selectionStart), 1);
+    await t('nudge-input').fill('2.5'); await t('nudge-input').press('Enter');
+    await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowDown');
+    assert.deepEqual(xy(await savedDoc()), [17.5, 27.5]);
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    await click(35, 37.5); await waitSel('1 selected');
+    await typeCmd('nu'); await t('nudge-input').fill('99'); await t('nudge-input').press('Escape');
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-nudge')), '2.5');
+    await typeCmd('nu');
+    for (const invalid of ['0', '-2', 'text']) {
+      await t('nudge-input').fill(invalid); await t('nudge-input').press('Enter');
+      assert.equal(await t('nudge-box').isVisible(), true); assert.match(await prompt(), /must be a number above 0 mm/);
+      assert.equal(await page.evaluate(() => localStorage.getItem('pd-nudge')), '2.5');
+    }
+    await t('nudge-input').press('ArrowLeft');
+    assert.deepEqual(xy(await savedDoc()), [20, 30], 'arrows in a field do not move the drawing');
+    await t('nudge-input').press('Escape');
+    await shotBoth('66a2-nudge-box', () => typeCmd('nu'), () => t('nudge-input').press('Escape'));
+    // Hold Shift before pickup too; ORTHO and Ctrl+Shift copy use the same drag path.
+    for (const mode of ['shift', 'ortho', 'copy']) {
+      if (mode === 'ortho') await t('tog-ortho').click(); else await page.keyboard.down('Shift');
+      if (mode === 'copy') await page.keyboard.down('Control');
+      const from = await at(35, 37.5), to = await at(65, 46.5);
+      await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 5 }); await page.mouse.up();
+      await page.keyboard.up('Shift'); await page.keyboard.up('Control');
+      if (mode === 'ortho') await t('tog-ortho').click();
+      doc = await savedDoc();
+      const moved = mode === 'copy' ? doc.entities.at(-1) : doc.entities[0];
+      assert.equal(fieldOf(moved, 20), 30, `${mode} keeps Y unchanged`);
+      assert.ok(Math.abs(fieldOf(moved, 10) - 50) < .1, `${mode} moves along X`);
+      if (mode === 'copy') assert.deepEqual(doc.entities.slice(0, before.entities.length), before.entities);
+      await blur(); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+      await click(35, 37.5);
+    }
+    await page.keyboard.press('Control+c');
+    await t('new-layout').click(); await page.keyboard.press('Control+v'); await typeCmd('nu');
+    assert.equal(await t('nudge-input').inputValue(), '2.5');
+    await t('nudge-input').fill('3'); await t('nudge-input').press('Enter');
+    assert.equal(await t('nudge-step').inputValue(), '3.0');
+    assert.equal(await t('nudge-step2').inputValue(), '3.0');
+    await closeTabs(/Layout/);
+    await menuItem('File', 'Compare drawings…'); await t('compare-panel').waitFor({ state: 'visible' });
+    await typeCmd('nu'); await t('nudge-input').fill('2.5'); await t('nudge-input').press('Enter');
+    await t('cmp-lineup-centre').click();
+    const canvas = await t('canvas').boundingBox();
+    await page.mouse.click(canvas.x + 400, canvas.y + 300);
+    assert.equal(await t('cmp-lineup-centre').getAttribute('aria-pressed'), 'true', 'a click keeps Auto');
+    const oldX = await cmpOffX();
+    await page.mouse.move(canvas.x + 400, canvas.y + 300); await page.mouse.down();
+    await page.mouse.move(canvas.x + 460, canvas.y + 310, { steps: 5 }); await page.mouse.up();
+    assert.equal(await t('cmp-lineup-manual').getAttribute('aria-pressed'), 'true');
+    assert.match(await prompt(), /Line-up set to Manual/); assert.ok(await cmpOffX() > oldX);
+    await shotBoth('66a2-compare-manual');
+    await t('cmp-lineup-bl').click(); await page.keyboard.press('Shift+ArrowUp');
+    assert.equal(await t('cmp-lineup-manual').getAttribute('aria-pressed'), 'true');
+    assert.match(await cmpHint(), /Y 25\.00 mm/); assert.match(await prompt(), /Line-up set to Manual/);
+    // Connected outlines can contain a locked-layer object: refuse the entire nudge.
+    const locked = newDoc(4); addLayer(locked, 'Cut');
+    addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
+    await openGrips(writeDxf(locked), 'nudge-locked.dxf'); const lockedBefore = await savedDoc();
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await page.keyboard.press('ArrowRight'); assert.match(await prompt(), /Layer Cut is locked/);
+    assert.deepEqual((await savedDoc()).entities, lockedBefore.entities);
+    const inches = newDoc(1); addEntities(inches, dxfLine(1, 1, 3, 2));
+    await openGrips(writeDxf(inches), 'nudge-inches.dxf'); await page.keyboard.press('Control+a');
+    await page.keyboard.press('ArrowRight');
+    assert.ok(Math.abs(fieldOf((await savedDoc()).entities[0], 10) - (1 + 2.5 / 25.4)) < 1e-6, 'step stays in mm on inch drawings');
+    await typeCmd('nu'); await t('nudge-input').fill('1'); await t('nudge-input').press('Enter');
   });
 
   await step('Mirror: the selection (or the objects picked, then Enter), two points, Erase Yes / No (default No); text keeps reading the same way; one undo step "Mirror"', async () => {
