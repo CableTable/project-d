@@ -10005,6 +10005,35 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 129b: a radius dimension follows its circle on Move (value and position), one Undo restores both, light and dark', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, [dxfCircle(60, 60, 20)]);
+    await t('picker').setInputFiles({ name: 'linked-radius.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'linked-radius.dxf');
+    await typeCmd('dra'); await click(60, 80); await click(100, 60);
+    assert.match(await prompt(), /Dimension placed: R/);
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    const before = await savedDoc(), old = readDim('PD_DIM_R1', before.blocks.PD_DIM_R1);
+    assert.equal(old.kind, 'radius');
+    await pick(60, 80, 5);
+    await dragGripTo('0:c', 75, 75); await frames();
+    const after = await savedDoc(), dim = readDim('PD_DIM_R1', after.blocks.PD_DIM_R1);
+    const centre = [fieldOf(after.entities[0], 10), fieldOf(after.entities[0], 20)];
+    assert.ok(Math.hypot(centre[0] - 60, centre[1] - 60) > 5, 'the circle moved: ' + centre);
+    assert.ok(Math.hypot(dim.params.c[0] - centre[0], dim.params.c[1] - centre[1]) < 1e-5, 'the dimension centre follows the circle');
+    assert.ok(Math.hypot(dim.params.p[0] - old.params.p[0] - (centre[0] - 60), dim.params.p[1] - old.params.p[1] - (centre[1] - 60)) < 1e-5, 'its pointer moves by the same amount');
+    assert.ok(Math.abs(dim.params.r - 20) < 1e-5);
+    assert.deepEqual(after.entities.length, before.entities.length);
+    await shotBoth('todo129b-linked-radius');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    const undone = await savedDoc();
+    assert.deepEqual(undone.entities, before.entities, 'one Undo restores the circle');
+    assert.deepEqual(undone.blocks.PD_DIM_R1, before.blocks.PD_DIM_R1, 'and its dimension');
+    await closeTabs(/./);
+  });
+
   await step('T22b: rectangle edge drag snaps, updates selection and panel W / H, Shift keeps proportions, one Undo', async () => {
     const doc = newDoc(4);
     addEntities(doc, dxfPoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), dxfLine(150, 50, 170, 50));

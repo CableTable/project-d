@@ -9,7 +9,7 @@ import { followDimensions } from './web/linked-dimensions.js';
 function drawing(shape, params, kind = 'aligned', factor = 1) {
   const raw = W.newDoc(4);
   W.addEntities(raw, shape);
-  Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { textH: 2, offset: 10, ...params }, factor, 'PD_DIM_1', 3)));
+  Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { textH: 2, offset: 10, ...params }, factor, E.freeName({}, kind === 'linear' ? 'aligned' : kind), 3)));
   return raw;
 }
 const model = (raw) => E.dimOfEntity(raw, 1);
@@ -18,7 +18,7 @@ const point = (a, b) => a.forEach((v, i) => close(v, b[i]));
 const grip = (raw, id, to) => followDimensions(raw, {
   entities: raw.entities.map((e, i) => i === 0 ? dragGrip(e, id, to).ent : e), blocks: raw.blocks
 });
-const label = (raw) => { const r = raw.blocks.PD_DIM_1.entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
+const label = (raw) => { const r = raw.blocks[E.dimOfEntity(raw, 1).name].entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
 
 test('rectangle corner: aligned dimension value and position follow, one Undo / Redo restores both', () => {
   const raw = drawing(W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), { a: [120, 20], b: [120, 80] });
@@ -95,7 +95,7 @@ test('replacement, deletion and Copy leave the dimension in place', () => {
   }
 });
 
-test('block vertices follow Move; radius dimensions wait for 129b', () => {
+test('block vertices follow Move; a radius dimension on no circle stays', () => {
   const raw = drawing(W.insert('Part', 20, 30), { a: [20, 30], b: [120, 30] });
   W.addBlock(raw, 'Part', [W.line(0, 0, 100, 0)]);
   const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7));
@@ -162,4 +162,59 @@ test('hidden dimensions follow too; blocks with every member hidden cannot break
   point(model(next).params.a, [10, 20]); assert.equal(next.entities[1].hidden, true);
   raw.blocks.PD_DIM_1.entities = raw.blocks.PD_DIM_1.entities.map((e) => ({ ...e, hidden: true }));
   assert.doesNotThrow(() => followDimensions(raw, E.moveEntities(raw, new Set([0]), 10, 20)));
+});
+
+test('radius dimension follows its circle: Move and Scale (value, centre, pointer); one Undo restores', () => {
+  const raw = drawing(W.circle(50, 40, 10), { c: [50, 40], r: 10, p: [70, 40] }, 'radius');
+  const before = structuredClone(raw), moved = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7)), p = model(moved).params;
+  point(p.c, [55, 47]); point(p.p, [75, 47]); close(p.r, 10); assert.equal(label(moved), 'R10.000');
+  assert.deepEqual(raw, before);
+  const h = E.createHistory(); h.push(raw, 'Move selection');
+  assert.deepEqual(h.undo(moved), before);
+  const scaled = followDimensions(raw, E.scaleAbout(raw, 2, 0, 0, 0, new Set([0]))), q = model(scaled).params;
+  point(q.c, [100, 80]); close(q.r, 20); point(q.p, [140, 80]); assert.equal(label(scaled), 'R20.000');
+});
+
+test('radius dimension of an arc follows; another radius, a stacked twin and a free centre do not link', () => {
+  const arc = drawing(W.arc(0, 0, 10, 0, 90), { c: [0, 0], r: 10, p: [20, 0] }, 'radius');
+  point(model(followDimensions(arc, E.moveEntities(arc, new Set([0]), 5, 7))).params.c, [5, 7]);
+  const two = drawing(W.circle(0, 0, 10), { c: [0, 0], r: 10, p: [20, 0] }, 'radius');
+  W.addEntities(two, W.circle(0, 0, 30));
+  assert.equal(followDimensions(two, E.moveEntities(two, new Set([2]), 5, 7)).blocks, two.blocks, 'the bigger circle does not move it');
+  point(model(followDimensions(two, E.moveEntities(two, new Set([0]), 5, 7))).params.c, [5, 7]);
+  W.addEntities(two, W.circle(0, 0, 10));
+  assert.equal(followDimensions(two, E.moveEntities(two, new Set([0]), 5, 7)).blocks, two.blocks, 'ambiguous: stays');
+  const free = drawing(W.circle(0, 0, 10), { c: [1, 0], r: 10, p: [20, 0] }, 'radius');
+  assert.equal(followDimensions(free, E.moveEntities(free, new Set([0]), 5, 7)).blocks, free.blocks);
+});
+
+test('diameter dimension follows its circle: Move and Scale keep its direction', () => {
+  const raw = drawing(W.circle(50, 40, 10), { a: [40, 40], b: [60, 40] }, 'diameter');
+  const moved = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7)), p = model(moved).params;
+  point(p.a, [45, 47]); point(p.b, [65, 47]); assert.equal(label(moved), 'Ø20.000');
+  const scaled = followDimensions(raw, E.scaleAbout(raw, 2, 0, 0, 0, new Set([0])));
+  point(model(scaled).params.a, [80, 80]); point(model(scaled).params.b, [120, 80]); assert.equal(label(scaled), 'Ø40.000');
+  const slanted = drawing(W.circle(0, 0, 5), { a: [-3, -4], b: [3, 4] }, 'diameter');
+  const s = model(followDimensions(slanted, E.moveEntities(slanted, new Set([0]), 10, 0))).params;
+  point(s.a, [7, -4]); point(s.b, [13, 4]);
+});
+
+test('angle dimension follows its two lines: Move of one, a tilt, and a Move of both', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { v: [0, 0], r: 20, a0: 0, a1: 90 }, 'angle');
+  W.addEntities(raw, W.line(0, 0, 0, 100));
+  const lone = followDimensions(raw, E.moveEntities(raw, new Set([0]), 0, 10)), p = model(lone).params;
+  close(p.a0, 0); close(p.a1, 90); point(p.v, [0, 10]); assert.equal(label(lone), '90.000°');
+  const both = followDimensions(raw, E.moveEntities(raw, new Set([0, 2]), 5, 7));
+  point(model(both).params.v, [5, 7]); close(model(both).params.a1, 90);
+  const tilt = followDimensions(raw, { entities: raw.entities.map((e, i) => i === 0 ? W.line(0, 0, 100, 100) : e), blocks: raw.blocks });
+  close(model(tilt).params.a0, 45); close(model(tilt).params.a1, 90); assert.equal(label(tilt), '45.000°');
+});
+
+test('angle at a rectangle corner follows a grip drag of the corner; a vertex off the lines does not link', () => {
+  const square = [[20, 20], [120, 20], [120, 80], [20, 80]];
+  const raw = drawing(W.lwpoly(square, { closed: true }), { v: [120, 20], r: 15, a0: 90, a1: 180 }, 'angle');
+  const next = grip(raw, 'v1', [150, 20]), p = model(next).params;
+  point(p.v, [150, 20]); close(p.a0, 180 - Math.atan2(60, 30) * 180 / Math.PI); close(p.a1, 180);
+  const unlinked = drawing(W.lwpoly(square, { closed: true }), { v: [121, 20], r: 15, a0: 90, a1: 180 }, 'angle');
+  assert.equal(grip(unlinked, 'v1', [150, 20]).blocks, unlinked.blocks);
 });
