@@ -1085,7 +1085,12 @@ export function dimBlock(g, name) {
   const ents = [...g.lines.map((l) => line(...l, o)), ...(g.arcs || []).map((a) => arc(...a, o)), ...g.arrows.map(solid), txt];
   return { name, block: { base: [0, 0], xref: false, entities: ents }, insert: insert(name, 0, 0, { layer: DIM_LAYER }), mm: g.mm, label: g.label };
 }
-export const buildDim = (kind, params, factor, name, dp = 2) => { const g = dimGeom(kind, params, factor, dp); return g && dimBlock(g, name); };
+export const buildDim = (kind, params, factor, name, dp = 2) => {
+  const g = dimGeom(kind, params, factor, dp), built = g && dimBlock(g, name);
+  // A straight Linear dimension and an Aligned one have identical geometry; keep the distinction in-session.
+  if (built && kind === 'linear') built.block.dimAxis = params.axis;
+  return built;
+};
 /** An aligned or linear dimension (see dimGeometry) as a block; null for two equal points. */
 export const buildDimension = (params, factor, name, dp = 2) => buildDim('aligned', params, factor, name, dp);
 /** The first free block name for a dimension of this kind: PD_DIM_n, PD_DIM_R n (radius), D (diameter) or A (angle). */
@@ -1135,6 +1140,7 @@ export function readDim(name, block) {
     return tag === 'A' && ar ? { kind: 'angle', params: { ...look, v: [g(ar, 10), g(ar, 20)], r: g(ar, 40), a0: g(ar, 50), a1: g(ar, 51) } } : null;
   }
   const p = dimParams(block);
+  if (p && block.dimAxis) p.axis = block.dimAxis;
   return p && { kind: tag === 'D' ? 'diameter' : p.axis ? 'linear' : 'aligned', params: p };
 }
 /** The signed offset of a dimension line through point p, for a dimension from a to b (positive: left of a→b); axis 'h' / 'v': of a linear one. */

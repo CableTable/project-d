@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { dimParams, readDim, GAP_MARK_CAP } from './web/edit.js';
+import { dimParams, readDim, dimGeom, GAP_MARK_CAP } from './web/edit.js';
 import { read as readLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
@@ -1818,7 +1818,7 @@ try {
     await t('dw').fill('272'); await t('dw').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=dw]').value === '272');
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160.00', '72.12'], 'twice the size: twice the numbers');
+    assert.deepEqual(labels(readDxf(dl.text)), ['160.00', '72.11'], 'linked values are rebuilt from scaled geometry, without doubling a rounded label');
     // the status bar's decimal places re-label every kept dimension; Ctrl+Z undoes it
     assert.equal(await t('decimals').inputValue(), '2');
     await t('decimals').selectOption('1');
@@ -9815,6 +9815,47 @@ try {
     await t('size-padlock').click();
     await t('dw').fill('26.5'); await t('dw').press('Enter'); assert.deepEqual(await sizeNow(), ['26.5', '20']);
     await t('size-padlock').click();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 129a: aligned dimension follows a rectangle corner grip (value and position), one Undo restores both, light and dark', async () => {
+    await closeTabs(/./);
+    for (const id of ['tog-ortho', 'tog-polar', 'tog-otrack']) {
+      if (await t(id).getAttribute('aria-pressed') === 'true') await t(id).click();
+    }
+    await page.locator('[data-tool=rect]').click();
+    await typeCmd('40,100'); await typeCmd('100,60');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await page.getByRole('button', { name: 'Zoom out', exact: true }).click({ clickCount: 2 }); await frames();
+    if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
+    await t('decimals').selectOption('2');
+    await page.locator('[data-tool=dimension]').click(); await typeCmd('d');
+    await click(40, 160); await click(140, 160); await click(90, 180);
+    assert.match(await prompt(), /Dimension placed:/);
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    const before = await savedDoc(), old = readDim('PD_DIM_1', before.blocks.PD_DIM_1);
+    assert.equal(old.kind, 'aligned');
+    const points = (p, q) => p.forEach((v, i) => assert.ok(Math.abs(v - q[i]) < 1e-5, `${p} != ${q}`));
+    points(old.params.a, [40, 160]); points(old.params.b, [140, 160]);
+    await click(90, 100); await gripWhen(8);
+    await dragGripTo('0:v2', 180, 200); await frames();
+    const after = await savedDoc(), dim = readDim('PD_DIM_1', after.blocks.PD_DIM_1);
+    const corner = GR.lwVertices(after.entities[0].r)[2];
+    points(dim.params.a, [40, 160]); points(dim.params.b, [corner.x, corner.y]);
+    assert.ok(Math.abs(corner.x - 180) < 1 && Math.abs(corner.y - 200) < 1);
+    assert.ok(Math.abs(dim.params.offset - old.params.offset) < 1e-5, 'callout keeps its distance from the measured side');
+    const geometry = dimGeom(dim.kind, dim.params, 1, 2);
+    const tx = after.blocks.PD_DIM_1.entities.find((e) => e.type === 'TEXT');
+    assert.equal(tx.r.v[tx.r.c.indexOf(1)], geometry.label, 'saved value measures the stretched side');
+    assert.ok(geometry.mm > 140, 'the original 100 mm side is longer');
+    assert.notDeepEqual(after.blocks.PD_DIM_1, before.blocks.PD_DIM_1, 'callout geometry follows the corner');
+    await shotBoth('todo129a-linked-dimension');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    await page.keyboard.press('Control+z');
+    const undone = await savedDoc();
+    assert.deepEqual(undone.entities, before.entities, 'one Undo restores the rectangle');
+    assert.deepEqual(undone.blocks.PD_DIM_1, before.blocks.PD_DIM_1, 'and its dimension');
     await closeTabs(/./);
   });
 

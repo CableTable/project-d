@@ -1,0 +1,129 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as W from './web/dxf-write.js';
+import * as E from './web/edit.js';
+import { dragGrip } from './web/grips.js';
+import { flatten } from './web/drawing.js';
+import { followDimensions } from './web/linked-dimensions.js';
+
+function drawing(shape, params, kind = 'aligned', factor = 1) {
+  const raw = W.newDoc(4);
+  W.addEntities(raw, shape);
+  Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { textH: 2, offset: 10, ...params }, factor, 'PD_DIM_1', 3)));
+  return raw;
+}
+const model = (raw) => E.dimOfEntity(raw, 1);
+const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-8, `${a} != ${b}`);
+const point = (a, b) => a.forEach((v, i) => close(v, b[i]));
+const grip = (raw, id, to) => followDimensions(raw, {
+  entities: raw.entities.map((e, i) => i === 0 ? dragGrip(e, id, to).ent : e), blocks: raw.blocks
+});
+const label = (raw) => { const r = raw.blocks.PD_DIM_1.entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
+
+test('rectangle corner: aligned dimension value and position follow, one Undo / Redo restores both', () => {
+  const raw = drawing(W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), { a: [120, 20], b: [120, 80] });
+  const before = structuredClone(raw), next = grip(raw, 'v2', [150, 100]), p = model(next).params;
+  point(p.a, [120, 20]); point(p.b, [150, 100]); close(p.offset, 10);
+  assert.equal(label(next), Math.hypot(30, 80).toFixed(3));
+  assert.notDeepEqual(next.blocks.PD_DIM_1, raw.blocks.PD_DIM_1);
+  assert.deepEqual(raw, before, 'undo snapshot remains immutable');
+  const h = E.createHistory(); h.push(raw, 'Stretch vertex');
+  assert.deepEqual(h.undo(next), before); assert.equal(h.canUndo, false);
+  assert.deepEqual(h.redo(raw), next);
+});
+
+test('Move a line: both measured points and callout move; a subsequent grip follows again', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0], units: 'inch', pos: 'centre', arrow: 1, gap: .5 });
+  const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7)), p = model(next).params;
+  point(p.a, [5, 7]); point(p.b, [105, 7]); close(p.offset, 10);
+  close(p.textH, 2); close(p.arrow, 1); close(p.gap, .5);
+  assert.equal(p.units, 'inch'); assert.equal(p.pos, 'centre'); assert.equal(model(next).dp, 3);
+  point(model(grip({ ...raw, ...next }, 'b', [125, 7])).params.b, [125, 7]);
+});
+
+test('Scale a line alone, or with its dimension: exact value with no double transform', () => {
+  for (const selected of [new Set([0]), new Set([0, 1])]) {
+    const raw = drawing(W.line(10, 20, 110, 20), { a: [10, 20], b: [110, 20] });
+    const next = followDimensions(raw, E.scaleAbout(raw, 2, 10, 20, 0, selected)), p = model(next).params;
+    point(p.a, [10, 20]); point(p.b, [210, 20]); assert.equal(label(next), '200.000');
+    close(p.offset, selected.has(1) ? 20 : 10); close(p.textH, selected.has(1) ? 4 : 2);
+    point(model(grip({ ...raw, ...next }, 'b', [250, 20])).params.b, [250, 20]);
+  }
+  const diagonal = drawing(W.line(50, 20, 80, 40), { a: [50, 20], b: [80, 40] });
+  assert.equal(label(diagonal), '36.056');
+  assert.equal(label(followDimensions(diagonal, E.scaleAbout(diagonal, 2, 0, 0))), '72.111', 'recalculate instead of multiplying the rounded label');
+});
+
+test('moving a line and its dimension together once, then moving only the line, respects the INSERT frame', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  const next = followDimensions(raw, E.moveEntities(raw, new Set([0, 1]), 5, 7));
+  point(model(next).params.a, [0, 0]); point(model(next).params.b, [100, 0]);
+  const again = followDimensions({ ...raw, ...next }, E.moveEntities({ ...raw, ...next }, new Set([0]), 10, 20));
+  point(model(again).params.a, [10, 20]); point(model(again).params.b, [110, 20]);
+  assert.deepEqual(flatten({ ...raw, ...again }).boxes.model, [15, 27, 115, 40.4]);
+});
+
+test('Linear dimensions retain their axis even when initially indistinguishable from Aligned', () => {
+  for (const axis of ['h', 'v']) {
+    const b = axis === 'h' ? [100, 0] : [0, 100];
+    const raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear');
+    const next = grip(raw, 'b', [120, 80]), dim = model(next);
+    assert.equal(dim.kind, 'linear'); assert.equal(dim.params.axis, axis);
+    point(dim.params.b, [120, 80]); assert.equal(label(next), axis === 'h' ? '120.000' : '80.000');
+  }
+});
+
+test('free dimensions and near misses stay put; tolerance is 1e-9 mm, including inch drawings', () => {
+  for (const factor of [1, 25.4]) {
+    const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 2e-9 / factor], b: [100, 2e-9 / factor] }, 'aligned', factor);
+    const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7), factor);
+    assert.equal(next.blocks, raw.blocks, 'outside tolerance is not linked');
+    const exact = drawing(W.line(0, 0, 100, 0), { a: [0, 0.1e-9 / factor], b: [100, 0.1e-9 / factor] }, 'aligned', factor);
+    const followed = followDimensions(exact, E.moveEntities(exact, new Set([0]), 5, 7), factor);
+    point(model(followed).params.a, [5, 7]);
+  }
+  const free = drawing(W.line(0, 0, 100, 0), { a: [20, 20], b: [80, 20] });
+  assert.equal(grip(free, 'b', [150, 0]).blocks, free.blocks);
+});
+
+test('replacement, deletion and Copy leave the dimension in place', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  // Replacement tools and Delete commit their own state, without followDimensions.
+  const replaced = { entities: [W.line(0, 10, 100, 10), raw.entities[1]], blocks: raw.blocks };
+  for (const next of [replaced, E.removeEntities(raw, new Set([0])), E.copyEntities(raw, new Set([0]), 5, 7)]) {
+    assert.deepEqual(next.blocks.PD_DIM_1, raw.blocks.PD_DIM_1);
+  }
+});
+
+test('block vertices follow Move; radius dimensions wait for 129b', () => {
+  const raw = drawing(W.insert('Part', 20, 30), { a: [20, 30], b: [120, 30] });
+  W.addBlock(raw, 'Part', [W.line(0, 0, 100, 0)]);
+  const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7));
+  point(model(next).params.a, [25, 37]); point(model(next).params.b, [125, 37]);
+  const r = E.buildDim('radius', { c: [0, 0], r: 10, p: [20, 0] }, 1, 'PD_DIM_R1');
+  Object.assign(raw, E.addDimension(raw, r));
+  const moved = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7));
+  assert.equal(moved.blocks.PD_DIM_R1, raw.blocks.PD_DIM_R1);
+});
+
+test('all matching dimensions follow, including an endpoint on a different shape; paper and model stay separate', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  W.addEntities(raw, W.line(100, 0, 100, 100));
+  Object.assign(raw, E.addDimension(raw, E.buildDim('linear', { a: [0, 0], b: [100, 100], axis: 'v', offset: 20, textH: 2 }, 1, 'PD_DIM_2')));
+  W.addEntities(raw, W.line(0, 0, 100, 0, { ps: true }));
+  const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 10, 20));
+  point(model(next).params.a, [10, 20]);
+  const other = E.dimOfEntity(next, 3);
+  point(other.params.a, [10, 20]); point(other.params.b, [100, 100]);
+  const paperOnly = followDimensions(raw, E.moveEntities(raw, new Set([4]), 10, 20));
+  assert.equal(paperOnly.blocks, raw.blocks, 'a vertex in paper space cannot move a model dimension');
+});
+
+test('hidden dimensions follow too; blocks with every member hidden cannot break a shape edit', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  raw.entities[1] = { ...raw.entities[1], hidden: true };
+  const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 10, 20));
+  point(model(next).params.a, [10, 20]); assert.equal(next.entities[1].hidden, true);
+  raw.blocks.PD_DIM_1.entities = raw.blocks.PD_DIM_1.entities.map((e) => ({ ...e, hidden: true }));
+  assert.doesNotThrow(() => followDimensions(raw, E.moveEntities(raw, new Set([0]), 10, 20)));
+});

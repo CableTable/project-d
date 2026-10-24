@@ -25,6 +25,7 @@ import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
 import * as GR from './grips.js';
+import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
@@ -3561,7 +3562,7 @@ function attachCanvasEvents() {
           if (ready && g.items && (g.dx || g.dy) && g.raw === d.raw.entities) {
             const next = (g.copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, g.sel, g.dx, g.dy);
             const sel = g.copy ? new Set(next.entities.slice(g.raw.length).map((_, i) => g.raw.length + i)) : g.sel;
-            commit(d, next, g.copy ? 'Copy selection' : 'Move selection'); setSel(d, sel);
+            commit(d, g.copy ? next : followDimensions(d.raw, next, d.factor), g.copy ? 'Copy selection' : 'Move selection'); setSel(d, sel);
             note(g.copy ? 'Selection copied. Ctrl+Z removes the copy' : 'Selection moved. Ctrl+Z takes it back');
           }
           paintOverlay();
@@ -4127,7 +4128,7 @@ function scaleDrawing(d, s, label = 'Scale') {
   const b = drawBox(d.fl), pb = partBox(d);
   if (!b || !pb) return;
   const r = Ed.scaleAbout(d.raw, s, pb[0] / d.factor, pb[1] / d.factor, spaceOf(d.fl));       // about the part's own bottom-left, not a dimension's
-  commit(d, r, `${label} ×${s.toFixed(3)}`);
+  commit(d, followDimensions(d.raw, r, d.factor), `${label} ×${s.toFixed(3)}`);
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', '), nb = partBox(d);
   note(`Scaled ×${+s.toPrecision(6)}: now ${fmtSize(nb[2] - nb[0])} × ${fmtSize(nb[3] - nb[1])} mm` + (left ? ` (not scaled: ${left})` : ''));
 }
@@ -4146,7 +4147,7 @@ function unitFix(fix) {
     return;
   }
   const r = Ed.scaleAbout(d.raw, fix.s, 0, 0, spaceOf(d.fl));
-  commit(d, r, `Unit fix ${fix.text}`);
+  commit(d, followDimensions(d.raw, r, d.factor), `Unit fix ${fix.text}`);
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', ');
   note(UF.unitFixLine(fix, was, UF.unitFixSize(partBox(d), 1)) + (left ? ` (not scaled: ${left})` : ''));
 }
@@ -4184,7 +4185,7 @@ function sizeTyped(input, axis) {
   try {
     const r = Ed.resizeAbout(d.raw, sx, sy, b[0] / d.factor, b[1] / d.factor, spaceOf(d.fl), selection);
     if (Object.keys(r.skipped).length) { note('Cannot resize this selection: some objects do not support scaling'); renderEdit(); return; }
-    commit(d, r, 'Resize ' + (selection ? 'selection' : 'drawing'));
+    commit(d, followDimensions(d.raw, r, d.factor), 'Resize ' + (selection ? 'selection' : 'drawing'));
     if (selection) setSel(d, selection);
     note('Resized ' + (selection ? 'selection' : 'drawing') + ' about its bottom-left. Ctrl+Z undoes this size change');
   } catch (error) { note(error.message); renderEdit(); }
@@ -5693,7 +5694,7 @@ function gripCommit() {
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
   const d = g.d, label = g.label, text = GR.readoutOf(g.ent, g.id, g.next, d.factor);
   view.fitted = false;
-  commit(d, g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, label);
+  commit(d, g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
   setSel(d, g.sel);
   note(`${label}: ${text}. Ctrl+Z takes it back`);
 }
