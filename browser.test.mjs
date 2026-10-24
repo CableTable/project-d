@@ -2068,7 +2068,7 @@ try {
     await page.screenshot({ path: shotDir + '/s9-pdf-dark.png' });
     await menuItem('View', 'Theme: light');
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.equal(dl.name, 'vector-sheet1.dxf');
+    assert.equal(dl.name, 'vector.dxf');
     const doc = readDxf(dl.text);
     assert.equal(doc.entities.length, 8);
     assert.deepEqual(flatten(doc).boxes.model.map((v) => Math.round(v * 100) / 100), [20, 20, 180, 100]);

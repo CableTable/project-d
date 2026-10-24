@@ -690,7 +690,7 @@ async function openPdf(name, buf, path = null) {
   const base = name.replace(/\.[^.\\/]*$/, ''), dxfName = base + '.dxf';
   const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page }, ...tabFields(raw, fl) };
   addTab(doc);
-  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}-sheet${r.page}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
+  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
 }
 /** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
@@ -2453,7 +2453,7 @@ async function autosaveNow() {
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
           saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
-        r.hasCopy = true; r.autoDxf = dxf;
+        r.hasCopy = true; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw.entities; r.autoBlocks = raw.blocks; r.autoLayers = raw.layers; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
       }
@@ -2544,7 +2544,7 @@ async function save(forceAs) {
   const source = forceAs && d.openPath;
   const first = (!d.saved || source) && !d.fromPdf && !d.scratch && !lossy && (!d.lay || d.fromFile);
   const base = baseName(dxfName(source ? source.split(/[\\/]/).pop() : d.name));
-  const want = d.pdf && !d.path ? baseName(d.pdf.name) + `-sheet${d.pdf.page}.dxf` : lossy ? base + '-copy.dxf' : first ? base + '-edited.dxf' : dxfName(d.name);
+  const want = d.pdf && !d.path ? baseName(d.pdf.name) + (PS.sheetNumbers(d.pdf).length > 1 ? `-sheet${d.pdf.page}` : '') + '.dxf' : lossy ? base + '-copy.dxf' : first ? base + '-edited.dxf' : dxfName(d.name);
   const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
