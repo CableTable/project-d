@@ -1,8 +1,10 @@
 // Only visited pages hold drawing state. The active page lives on the tab.
-const FIELDS = 'raw fl factor off counts entities conv box hist bg dirty name path saved acceptedLoss curLayer addedLayers locked hid om scaleTarget savedAs'.split(' ');
+const FIELDS = 'raw fl factor off counts entities conv box hist bg dirty name path saved acceptedLoss curLayer addedLayers locked hid om scaleTarget savedAs recovery'.split(' ');
 
 export const pageFields = (d) => Object.fromEntries(FIELDS.map((key) => [key, d[key]]));
 export const sheetNumbers = (pdf) => pdf.sheets || Array.from({ length: pdf.pages }, (_, i) => i + 1);
+export const pageState = (d, n) => !d.pdf || n === d.pdf.page ? d : d.pdf.states?.get(n);
+export const pageStates = (d) => d.pdf ? sheetNumbers(d.pdf).map((n) => pageState(d, n)).filter(Boolean) : [d];
 
 export function keepPage(d) {
   const pages = d.pdf.states || (d.pdf.states = new Map());

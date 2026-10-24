@@ -571,7 +571,7 @@ async function closeTab(d) {
   } else if (d.dirty && !(await confirmAsk(d.name + ' has changes that are not saved. Close it anyway?', 'Close without saving', 'warning', 'Keep it open'))) return;
   const i = state.docs.indexOf(d);
   if (i < 0) return;
-  dropCopy(d);
+  PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
   if (!state.docs.length) { state.docs.push(emptyDoc()); view.fitted = true; }         // the fresh empty tab is fitted
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
@@ -582,7 +582,7 @@ async function saveDirtyPages(d) {
   const sheets = d.pdf ? PS.dirtySheets(d) : [null];
   for (const n of sheets) {
     if (n != null && n !== d.pdf.page && !(await balSheet(d, n))) return false;
-    await save(!!d.pdf);
+    await save();
     if (d.dirty) return false; // A cancelled or failed Save stops the close.
   }
   return true;
@@ -690,7 +690,7 @@ async function openPdf(name, buf, path = null) {
   const base = name.replace(/\.[^.\\/]*$/, ''), dxfName = base + '.dxf';
   const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page }, ...tabFields(raw, fl) };
   addTab(doc);
-  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${dxfName}` + (fl.truncated ? '. Too big to show all of it' : ''));
+  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}-sheet${r.page}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
 }
 /** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
@@ -2410,16 +2410,18 @@ const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : d.raw, d.
 const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
 
 // ---- autosave and recovery (TODO 32) ----
-// Every 2 minutes a copy of each tab with unsaved changes is kept inside the app (recovery.js, IndexedDB): the text Save would write,
+// Every 2 minutes a copy of each tab or PDF sheet with unsaved changes is kept inside the app (recovery.js, IndexedDB): the text Save would write,
 // with the tab's name, path and kind. A copy goes when the tab is saved or closed. At start-up, copies left over (a crash, a power cut)
 // are offered back. Nothing here ever blocks: if storage fails the app simply goes on without recovery.
 // ?autosave=<ms> in the page address sets another interval (the browser test uses it); 120000 (2 minutes) otherwise.
 let autosaving = false;
 function dropCopy(d) {
-  d.autoEnts = d.autoBlocks = d.autoLayers = d.autoDxf = null;
-  if (!d.hasCopy) return;
-  d.hasCopy = false;
-  RC.removeCopy(d.rid).catch(() => {});
+  const r = d.recovery;
+  if (!r) return;
+  r.autoEnts = r.autoBlocks = r.autoLayers = r.autoDxf = null;
+  if (!r.hasCopy) return;
+  r.hasCopy = false;
+  return RC.removeCopy(r.rid).catch(() => {});
 }
 /** Deletes the copies of these tabs and waits for it (the window may close right after). */
 /** The window is closing: no new autosave round, and a copy still being written finishes first, so it is deleted too (up to 2 s). */
@@ -2427,27 +2429,34 @@ let dropping = false;
 const dropCopiesNow = async (docs) => {
   dropping = true;
   for (let i = 0; autosaving && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
-  return Promise.all(docs.filter((d) => d.hasCopy).map((d) => { d.hasCopy = false; return RC.removeCopy(d.rid).catch(() => {}); }));
+  return Promise.all(docs.flatMap(PS.pageStates).map(dropCopy));
 };
-/** One round: a copy of every tab with unsaved changes that changed since its last copy; the copy of a tab that is saved now is dropped. */
+/** One round: copy changed tabs and PDF sheets; drop copies that have been saved. */
 async function autosaveNow() {
   if (autosaving || dropping) return;
   autosaving = true;
   try {
     for (const d of state.docs.slice()) {
-      if (!d.raw && !d.lay) continue;
-      if (!d.dirty) { if (d.hasCopy) { d.hasCopy = false; await RC.removeCopy(d.rid); } continue; }
-      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers && d.autoTitle === d.titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
-      let dxf;
-      try { dxf = writeDxf(rawForSave(d), { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
-      if (d.lay && d.hasCopy && d.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
-      if (d.lay) d.autoDxf = dxf;
-      if (!d.rid) d.rid = uid();
-      await RC.saveCopy({ id: d.rid, name: d.name, path: d.path || null, kind: d.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-        saved: !!d.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!d.acceptedLoss });
-      d.hasCopy = true;
-      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; d.autoTitle = d.titleBlock; }
-      if (!state.docs.includes(d) || !d.dirty) dropCopy(d);                                          // closed or saved while this was being written
+      if (d.pdf?.busy) continue;
+      if (!PS.hasChanges(d)) { await Promise.all(PS.pageStates(d).map(dropCopy)); continue; }
+      for (const n of d.pdf ? PS.sheetNumbers(d.pdf) : [null]) {
+        const page = PS.pageState(d, n);
+        if (!page || (!page.raw && !page.lay)) continue;
+        if (!page.dirty) { await dropCopy(page); continue; }
+        // Shared with the kept page so an in-flight copy still belongs to it after switching sheets.
+        const r = page.recovery || (page.recovery = { rid: uid() + (n == null ? '' : `-sheet${n}`) });
+        const raw = page.raw, titleBlock = d.titleBlock;
+        if (!page.lay && r.autoEnts === raw.entities && r.autoBlocks === raw.blocks && r.autoLayers === raw.layers && r.autoTitle === titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
+        let dxf;
+        try { dxf = writeDxf(rawForSave({ ...page, titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        if (page.lay && r.hasCopy && r.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
+        const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
+        await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
+          saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
+        r.hasCopy = true; r.autoDxf = dxf;
+        if (!page.lay) { r.autoEnts = raw.entities; r.autoBlocks = raw.blocks; r.autoLayers = raw.layers; r.autoTitle = titleBlock; }
+        if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
+      }
     }
   } catch (err) { console.warn('Autosave failed:', err); } finally { autosaving = false; }
 }
@@ -2480,7 +2489,7 @@ async function recoverOne(c) {
     const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
       : { name: c.name, path: c.path, openPath, dirty: true, saved: c.saved, fromPdf: c.fromPdf || undefined, acceptedLoss: c.acceptedLoss, ...tabFields(r.doc, r.result) };
     if (lay) lay.name = c.name;
-    doc.rid = c.id; doc.hasCopy = true;                                       // the copy stays until the tab is saved or closed
+    doc.recovery = { rid: c.id, hasCopy: true };                              // the copy stays until the tab is saved or closed
     state.panel = 'main';
     addTab(doc);
     return true;
@@ -2535,7 +2544,7 @@ async function save(forceAs) {
   const source = forceAs && d.openPath;
   const first = (!d.saved || source) && !d.fromPdf && !d.scratch && !lossy && (!d.lay || d.fromFile);
   const base = baseName(dxfName(source ? source.split(/[\\/]/).pop() : d.name));
-  const want = lossy ? base + '-copy.dxf' : first ? base + '-edited.dxf' : dxfName(d.name);
+  const want = d.pdf && !d.path ? baseName(d.pdf.name) + `-sheet${d.pdf.page}.dxf` : lossy ? base + '-copy.dxf' : first ? base + '-edited.dxf' : dxfName(d.name);
   const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
@@ -2556,7 +2565,7 @@ async function save(forceAs) {
       await t.fs.writeTextFile(path, text);
       name = path.split(/[\\/]/).pop();
     } else {
-      name = ask ? want : dxfName(d.name);
+      name = ask || !path ? want : dxfName(d.name);
       download(name, text);
     }
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
@@ -4750,6 +4759,7 @@ async function deleteSheet(d) {
   if (!next || P.busy) return;
   if (!(await confirmAsk(`Delete sheet ${n} from this tab? The PDF on disk is not changed. This cannot be undone.`, 'Delete sheet', 'warning', 'Cancel'))) return;
   if (!(await balSheet(d, next.page))) return;
+  dropCopy(P.states.get(n));
   P.sheets = next.sheets; P.states.delete(n);
   if (balOf(d).items.some((it) => it.sheet === n)) {
     d.balloons = { ...balOf(d), items: balOf(d).items.filter((it) => it.sheet !== n) };

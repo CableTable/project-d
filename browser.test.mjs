@@ -147,21 +147,24 @@ try {
       assert.equal(await p.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), true);
       // Cancel the second normal Save dialog: keep the tab, including its remaining edits.
       await p.evaluate(() => {
-        window.__saveSheets = []; window.__writes = []; window.__paths = ['E:/sheet-one.dxf', null];
-        window.__TAURI__.dialog = { save: async () => { window.__saveSheets.push(document.querySelector('[data-testid=sheet-chip]').textContent); return window.__paths.shift(); } };
+        window.__saveSheets = []; window.__defaults = []; window.__writes = []; window.__paths = ['E:/sheet-one.dxf', null];
+        window.__TAURI__.dialog = { save: async (opts) => { window.__defaults.push(opts.defaultPath); window.__saveSheets.push(document.querySelector('[data-testid=sheet-chip]').textContent); return window.__paths.shift(); } };
         window.__TAURI__.fs = { exists: async () => false, writeTextFile: async (path, text) => { window.__writes.push({ path, text }); } };
       });
       await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-save').click();
       await p.waitForFunction(() => window.__saveSheets.length === 2);
       assert.deepEqual(await p.evaluate(() => window.__saveSheets), ['Sheet 1 / 3', 'Sheet 2 / 3']);
-      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'three-sheets.dxf', 'cancelled second save keeps the tab');
+      assert.deepEqual(await p.evaluate(() => window.__defaults), ['three-sheets-sheet1.dxf', 'three-sheets-sheet2.dxf']);
+      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'three-sheets-sheet2.dxf', 'cancelled second save keeps the tab');
+      await sheet(1); await circle(7); await sheet(3);
       await p.evaluate(() => { window.__paths = ['E:/sheet-two.dxf']; });
       await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor();
-      assert.match(await q('close-dialog').textContent(), /Sheet 2 has unsaved edits/);
+      assert.match(await q('close-dialog').textContent(), /Sheets 1 and 2 have unsaved edits/);
       await q('close-save').click(); await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'Drawing 1');
+      assert.deepEqual(await p.evaluate(() => window.__saveSheets), ['Sheet 1 / 3', 'Sheet 2 / 3', 'Sheet 2 / 3'], 'close Save writes sheet 1 to its saved path without asking where');
       const writes = await p.evaluate(() => window.__writes);
-      assert.deepEqual(writes.map((w) => w.path), ['E:/sheet-one.dxf', 'E:/sheet-two.dxf']);
-      assert.deepEqual(writes.map((w) => circles(readDxf(w.text))), [[5], [8, 9]], 'each Save writes just that sheet');
+      assert.deepEqual(writes.map((w) => w.path), ['E:/sheet-one.dxf', 'E:/sheet-one.dxf', 'E:/sheet-two.dxf']);
+      assert.deepEqual(writes.map((w) => circles(readDxf(w.text))), [[5], [5, 7], [8, 9]], 'each Save writes just that sheet');
       await p.evaluate(() => { delete window.__TAURI__.dialog; delete window.__TAURI__.fs; });
       await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
       await balloon(); await sheet(2); await balloon(); await sheet(3); await balloon();
@@ -196,6 +199,48 @@ try {
       assert.deepEqual(circles(await saved()), [3]);
       await p.keyboard.press('Control+z'); assert.deepEqual(circles(await saved()), []);
       await sheet(2, 2); assert.deepEqual(circles(await saved()), [4]);
+
+      // Each dirty sheet survives autosave while another, clean sheet is shown.
+      await p.goto(URL_ + '?autosave=300');
+      const copies = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies());
+      const waitCopies = async (n) => {
+        for (let i = 0; i < 60; i++) { const list = await copies(); if (list.length === n) return list; await p.waitForTimeout(150); }
+        throw new Error(`Waiting for ${n} recovery copies, got ${(await copies()).length}`);
+      };
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      await circle(11); const [firstCopy] = await waitCopies(1);
+      assert.match(firstCopy.id, /-sheet1$/);
+      await sheet(2); await p.waitForTimeout(700);
+      assert.deepEqual(await copies(), [firstCopy], 'a clean shown sheet neither deletes nor rewrites sheet 1 recovery');
+      await circle(12); await waitCopies(2); await sheet(3); await p.waitForTimeout(700);
+      const twoCopies = await copies();
+      assert.deepEqual(twoCopies.map((c) => c.name).sort(), ['three-sheets.pdf sheet 1', 'three-sheets.pdf sheet 2']);
+      assert.deepEqual(twoCopies.map((c) => circles(readDxf(c.dxf))).sort((a, b) => a[0] - b[0]), [[11], [12]]);
+      assert.match(twoCopies.find((c) => c.name.endsWith('2')).id, /-sheet2$/);
+      await p.reload(); await q('recover-dialog').waitFor();
+      assert.match(await q('recover-text').textContent(), /^Recover 2 unsaved drawings/);
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo117-recovery-${theme}.png` });
+      }
+      await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+      await p.waitForFunction(() => document.querySelectorAll('.dtab .dot').length === 2);
+      assert.equal(await p.locator('.dtab .dot').count(), 2, 'both recover as unsaved drawing tabs');
+      for (const n of [1, 2]) {
+        await p.locator('.dtab', { hasText: `three-sheets.pdf sheet ${n}` }).click();
+        assert.equal(await q('bal-sheets').isVisible(), false, 'each recovered sheet is its own drawing');
+        assert.deepEqual(circles(await saved()), [10 + n]);
+        await waitCopies(2 - n);
+      }
+      // Saving or deleting a PDF sheet drops only that sheet's copy; close drops the rest.
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      await circle(13); await sheet(2); await circle(14); await sheet(3); await circle(15); await waitCopies(3);
+      await sheet(1); await saved(); await waitCopies(2);
+      assert.deepEqual((await copies()).map((c) => c.name).sort(), ['three-sheets.pdf sheet 2', 'three-sheets.pdf sheet 3']);
+      await sheet(2); p.once('dialog', (d) => d.accept()); await q('delete-sheet').click();
+      await waitCopies(1); assert.equal((await copies())[0].name, 'three-sheets.pdf sheet 3');
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-discard').click();
+      await waitCopies(0);
     } finally { await context.close(); }
   });
 
@@ -1969,7 +2014,7 @@ try {
     await page.screenshot({ path: shotDir + '/s9-pdf-dark.png' });
     await menuItem('View', 'Theme: light');
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.equal(dl.name, 'vector.dxf');
+    assert.equal(dl.name, 'vector-sheet1.dxf');
     const doc = readDxf(dl.text);
     assert.equal(doc.entities.length, 8);
     assert.deepEqual(flatten(doc).boxes.model.map((v) => Math.round(v * 100) / 100), [20, 20, 180, 100]);
@@ -7485,7 +7530,7 @@ try {
 
   await step('balloons: Save writes <name>.pdballoons.json next to the drawing (here a download), and opening the PDF with it brings the balloons and the table back', async () => {
     const dls = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
-    assert.deepEqual(dls.map((x) => x.name).sort(), ['insp.dxf', 'insp.pdballoons.json']);
+    assert.deepEqual(dls.map((x) => x.name).sort(), ['insp-sheet1.dxf', 'insp.pdballoons.json']);
     balJson = dls.find((x) => x.name === 'insp.pdballoons.json').text;
     const file = JSON.parse(balJson);
     assert.equal(file.kind, 'project-d-balloons'); assert.equal(file.pages, 2); assert.equal(file.items.length, 6); assert.equal(file.items.find((i) => i.n === 2).dim, '120.0 ±0.1');
