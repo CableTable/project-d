@@ -18,7 +18,7 @@ test('key strings and events normalize to the same modifier order, including Cmd
 });
 
 test('every reserved key has a reason; bare and Shift letters/digits cannot be keys', () => {
-  assert.deepEqual(Object.keys(SC.RESERVED).sort(), ['Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Esc', 'Delete', 'F2', 'F10', 'F11', 'F5', 'Ctrl+R', 'Ctrl+D'].sort());
+  assert.deepEqual(Object.keys(SC.RESERVED).sort(), ['Ctrl+C', 'Ctrl+V', 'Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Esc', 'Delete', 'F2', 'F10', 'F11', 'F5', 'Ctrl+R', 'Ctrl+D'].sort());
   assert.ok(SC.keyReason('Ctrl+D'));
   for (const key of ['w', 'Shift+W', '1', 'Shift+2', 'Space', 'Enter', 'Tab', 'Backspace', 'ArrowUp', 'Shift+ArrowLeft']) assert.match(SC.keyReason(key), /typing and drawing/);
   for (const key of ['Ctrl+Alt+W', 'Alt+W', 'F6', 'Ctrl+Shift+1', 'Shift+F6']) assert.equal(SC.keyReason(key), '');
@@ -46,6 +46,13 @@ test('saved own keys win over new tab defaults; explicit tab bindings still repo
   assert.deepEqual(SC.clashes(b), []);
   assert.deepEqual(SC.bindings(SC.differences(b)), b, 'cleared defaults persist');
   assert.ok(SC.clashes(SC.bindings({ ...overrides, nexttab: { key: 'Ctrl+Tab' } })).some((c) => c.field === 'key'));
+});
+
+test('Copy / Paste stay fixed and clear older conflicting own keys, including tab keys that capture field input', () => {
+  const b = SC.bindings({ closetab: { key: 'Ctrl+C' }, properties: { key: 'Ctrl+V' }, copy: { key: 'Alt+C' }, paste: { key: 'Alt+V' } });
+  assert.equal(b.closetab.key, ''); assert.equal(b.properties.key, '');
+  assert.equal(b.copy.key, 'Ctrl+C'); assert.equal(b.paste.key, 'Ctrl+V');
+  assert.deepEqual(SC.clashes(b), []);
 });
 
 test('Swap exchanges complete cells using the previous edited cell, leaving no duplicate binding', () => {

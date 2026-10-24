@@ -2632,7 +2632,7 @@ try {
     await typeCmd('s'); assert.ok(await on('select'));
   });
 
-  await step('review: Edit menu has Undo, Redo, Delete; shortcut hints; unbuilt menus are greyed', async () => {
+  await step('review: Edit menu has Undo, Redo, Copy, Paste, Delete; shortcut hints; unbuilt menus are greyed', async () => {
     await page.locator('[data-menu=File]').click();
     const hint = (name) => page.getByRole('menuitem', { name, exact: true }).locator('.hint').textContent();
     assert.equal(await hint('Save'), 'Ctrl+S'); assert.equal(await hint('Save As…'), 'Ctrl+Shift+S');
@@ -2646,7 +2646,7 @@ try {
     assert.equal(await hint('Line'), 'L'); assert.equal(await hint('Text'), 'T');
     await page.keyboard.press('Escape');
     await page.locator('[data-menu=Edit]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'PasteCtrl+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
     assert.equal(await page.getByRole('menuitem', { name: 'Undo', exact: true }).isDisabled(), true, 'nothing to undo yet');
     assert.equal(await page.getByRole('menuitem', { name: 'Delete', exact: true }).isDisabled(), true, 'nothing selected');
     await page.keyboard.press('Escape');
@@ -4525,6 +4525,98 @@ try {
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+  await step('TODO 111a: copy between drawing tabs at the same coordinates, selected and one Undo; private dimension blocks; PDF sheet 1 to 2; layout note', async () => {
+    await closeTabs(/./);
+    const editItem = (name) => page.getByRole('menuitem', { name, exact: true });
+    const open = async (name, raw) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    };
+    const selectDim = async (i) => {
+      await t('ptab-objects').click();
+      const row = page.locator(`.or[data-e="${i}"]`).first();
+      if (!(await row.isVisible())) await page.locator('.or.layer[data-layer="Dimensions"]').click();
+      await row.click(); await t('ptab-drawing').click(); await waitSel('1 selected');
+    };
+    const blockName = (e) => e.r.v[e.r.c.indexOf(2)];
+    const entityData = (e) => {
+      const keep = e.r.c.map((c, i) => [c, e.r.v[i]]).filter(([c]) => ![5, 330, 100].includes(c));
+      return { ...e, r: { type: e.r.type, c: keep.map(([c]) => c), v: keep.map(([, v]) => v) } };
+    };
+    let source = newDoc(4);
+    addLayer(source, '111a CUT', { aci: 1, lt: '111A DASH' }); source.ltypes['111A DASH'] = { pattern: [3, -1] };
+    addEntities(source, dxfCircle(60, 60, 20, { layer: '111a CUT' }));
+    source = { ...source, ...addDimension(source, buildDim('radius', { c: [60, 60], r: 20, p: [100, 60] }, 1, 'PD_DIM_R1', 2)) };
+    const copiedHeight = readDim('PD_DIM_R1', source.blocks.PD_DIM_R1).params.textH;
+    await open('clipboard-A.dxf', source);
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await editItem('Copy').isDisabled(), true); assert.equal(await editItem('Paste').isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    assert.match(await prompt(), /Copied 2 drawing objects/);
+    await selectDim(1); await t('dim-height').fill('6'); await t('dim-height').press('Enter');
+    const changedSource = await savedDoc();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+c');
+    assert.equal(await prompt(), 'Nothing selected to copy');
+    let target = newDoc(4); addEntities(target, dxfLine(180, 60, 220, 60));
+    target = { ...target, ...addDimension(target, buildDim('radius', { c: [180, 60], r: 10, p: [220, 60] }, 1, 'PD_DIM_R1', 2)) };
+    await open('clipboard-B.dxf', target);
+    const before = await savedDoc();
+    await page.keyboard.press('Control+v'); await waitSel('2 selected');
+    const pasted = await savedDoc(), dimName = blockName(pasted.entities[3]);
+    assert.deepEqual(entityData(pasted.entities[2]), entityData(source.entities[0]), 'same drawing coordinates, size and layer');
+    assert.notEqual(dimName, 'PD_DIM_R1', 'a clashing dimension gets its own valid name');
+    assert.equal(readDim(dimName, pasted.blocks[dimName]).kind, 'radius');
+    assert.equal(readDim(dimName, pasted.blocks[dimName]).params.textH, copiedHeight, 'clipboard is the snapshot before the source edit');
+    assert.equal(pasted.layers['111a CUT'].aci, 1); assert.deepEqual(pasted.ltypes['111A DASH'].pattern, [3, -1]);
+    await shotBoth('todo111a-paste', () => page.locator('[data-menu=Edit]').click(), () => page.keyboard.press('Escape'));
+    await page.keyboard.press('Control+z');
+    const undone = await savedDoc();
+    assert.deepEqual(undone.entities, before.entities); assert.deepEqual(undone.blocks, before.blocks);
+    assert.equal(undone.layers['111a CUT'], undefined, 'one Undo also removes the imported layer');
+    assert.equal(undone.ltypes['111A DASH'], undefined, 'and its linetype');
+    await menuItem('Edit', 'Paste'); await waitSel('2 selected');
+    await selectDim(3); await t('dim-height').fill('9'); await t('dim-height').press('Enter');
+    const edited = await savedDoc();
+    assert.equal(readDim(dimName, edited.blocks[dimName]).params.textH, 9);
+    assert.deepEqual(edited.blocks.PD_DIM_R1.entities.map(entityData), before.blocks.PD_DIM_R1.entities.map(entityData), 'editing the paste leaves the target original alone');
+    await page.locator('.tabs .dtab', { hasText: 'clipboard-A' }).click();
+    assert.deepEqual((await savedDoc()).blocks, changedSource.blocks, 'editing the pasted dimension leaves its source alone');
+    await closeTabs(/clipboard-A/);
+    await page.keyboard.press('Control+v'); await waitSel('2 selected');
+    const twice = await savedDoc();
+    assert.equal(twice.entities.length, 6, 'clipboard survives closing the source; a second paste adds another copy');
+    assert.deepEqual(entityData(twice.entities[4]), entityData(pasted.entities[2]), 'successive pastes overlap at the same position');
+    assert.equal(readDim(blockName(twice.entities[5]), twice.blocks[blockName(twice.entities[5])]).params.textH, copiedHeight);
+    await cmdLine().fill('native clipboard');
+    assert.deepEqual(await t('cmd-input').evaluate((input) => ['c', 'v'].map((key) => {
+      const e = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true }); input.dispatchEvent(e); return e.defaultPrevented;
+    })), [false, false], 'command-bar copy/paste stays native');
+    await page.keyboard.press('Escape');
+    await typeCmd('newlayout'); await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+v');
+    assert.equal(await prompt(), 'Paste works on drawing tabs and PDF sheets');
+    await page.locator('[data-menu=Edit]').click(); assert.equal(await editItem('Paste').isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/three-sheets.pdf'); await t('bal-sheets').waitFor();
+    await typeCmd('c'); await typeCmd('60,60'); await typeCmd('7');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    const sheet1 = await savedDoc();
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
+    const sheet2 = await savedDoc();
+    await page.keyboard.press('Control+v');
+    await waitSel(`${sheet1.entities.length} selected`);
+    assert.deepEqual((await savedDoc()).entities.slice(sheet2.entities.length).map(entityData), sheet1.entities.map(entityData), 'sheet 1 objects paste at the same coordinates on sheet 2');
+    await shotBoth('todo111a-pdf');
+    await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities, sheet2.entities);
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 3');
+    assert.deepEqual((await savedDoc()).entities, sheet1.entities, 'sheet 2 paste and Undo leave sheet 1 alone');
+    await closeTabs(/./);
+  });
   await step('TODO 115 / T32: PDF invisible search text stays out; visible text becomes outlines once, with one Undo', async () => {
     await closeTabs(/./);
     await menuItem('File', 'Open…');

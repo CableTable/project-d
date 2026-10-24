@@ -32,6 +32,7 @@ import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import * as LD from './layoutdoc.js';
 import { dropPart } from './dropin.js';
+import { copySnapshot, pasteSnapshot } from './clipboard.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -59,6 +60,7 @@ const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
 const viewStore = idbStore('project-d-view', 'settings', 'view settings');
 const shapingStore = idbStore('project-d-shaping', 'settings', 'Shaping settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
+let clipboard = null;
 function showShortcuts() {
   ui.cmdUI.close();
   openShortcuts(ownBindings, async (draft) => {
@@ -371,6 +373,8 @@ function buildMenus() {
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
+      ['Copy', copySelection, 'Ctrl+C', () => !!editable()?.sel.size],
+      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && !!editable()],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
@@ -2241,7 +2245,7 @@ function dropLibInDrawing(rec, clientX, clientY) {
   try {
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = dropPart(part, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d) }, toDrawing(d, clientX, clientY));
-    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers }, `Add ${rec.name}`);
+    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Add ${rec.name}`);
     if (r.made.length) d.newLayer = r.made[0];
     setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
     renderLayers();
@@ -3079,6 +3083,7 @@ const DO = {
   newlayout: () => newLayoutTab(), library: () => showLibrary(), open: () => openFile(), save: () => save(false), saveas: () => save(true), pdf: () => exportPdf(), compare: () => cmpStart(),
   undo: () => { const d = editable(); if (d) undo(d); else undoLay(); },
   redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
+  copy: copySelection, paste: pasteSelection,
   history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(),
@@ -4026,7 +4031,29 @@ function partBox(d) {
 const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, ltypes: d.raw.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+function copySelection() {
+  const d = editable();
+  if (!d?.sel.size) { note('Nothing selected to copy'); return; }
+  clipboard = copySnapshot(d.raw, d.sel, d.factor);
+  note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
+}
+function pasteSelection() {
+  const d = editable();
+  if (!d) { note('Paste works on drawing tabs and PDF sheets'); return; }
+  if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
+  try {
+    const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
+    const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
+    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`);
+    if (r.made.length) d.newLayer = r.made[0];
+    setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
+    renderLayers();
+    const moved = Object.entries(r.moved);
+    note(`Pasted ${r.count} drawing object${r.count === 1 ? '' : 's'} at the same coordinates` +
+      (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
+  } catch (err) { note(`Paste: ${err.message}`); }
+}
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
@@ -4113,6 +4140,7 @@ function restoreBg(d, st) {
 }
 function restore(d, st) {
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
+  if (st.ltypes) d.raw.ltypes = st.ltypes;
   if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
   if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
@@ -5886,6 +5914,10 @@ function editKey(e) {
   }
   const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
   const inField = e.target && e.target.closest && e.target.closest('input, textarea, select');
+  if (key === 'Ctrl+C' || key === 'Ctrl+V') {
+    if (inField || e.target?.isContentEditable) return;
+    e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else pasteSelection(); return;
+  }
   if (own && (!inField || own.name === 'properties')) { e.preventDefault(); runCommand(own); return; }       // Properties' key works in a field too, as Ctrl+1 always did
   if (inField) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();

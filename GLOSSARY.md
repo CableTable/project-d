@@ -66,6 +66,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
+**In-app clipboard**: The session-only snapshot of selected drawing objects taken with Ctrl+C and pasted with Ctrl+V into drawing tabs or PDF sheets at the same coordinates and true size. It survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first.
+
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
 
 **Padlock**: The W / H proportions control: locked scales both sides together; unlocked changes each side independently. It starts locked and applies to selection size or the whole drawing when nothing is selected. Where: Drawing size fields; `web/app.js`. Avoid: Layer Lock.
