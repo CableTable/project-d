@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { dimParams, readDim } from './web/edit.js';
+import { dimParams, readDim, GAP_MARK_CAP } from './web/edit.js';
 import { read as readLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
@@ -5677,6 +5677,61 @@ try {
     assert.deepEqual((await savedDoc()).entities, before.entities, 'undo restores every original');
     await t('duplicate-remove').click(); await t('duplicate-remove').click();
     assert.equal(await t('duplicate-count').textContent(), '0 found', 'explicit check updates the count');
+  });
+  await step('TODO 128: greyed Clean up buttons explain no duplicates, no tiny gaps and too many gaps', async () => {
+    const raw = newDoc();
+    for (let i = 0; i <= GAP_MARK_CAP; i++) {
+      const x = (i % 10) * 30, y = Math.floor(i / 10) * 20;
+      addEntities(raw, dxfLine(x, y, x + 10, y), dxfLine(x + 10 + (i === GAP_MARK_CAP ? .008 : .004), y, x + 20, y));
+    }
+    await openGrips(writeDxf(raw), 'cleanup-reasons.dxf');
+    const tolerance = async (v) => { await t('gap-tol').fill(v); await t('gap-tol').press('Enter'); await frames(); };
+    const reason = async (button, noteId, text) => {
+      assert.equal(await t(button).isDisabled(), true);
+      assert.equal(await t(button).getAttribute('title'), text);
+      assert.equal(await t(button).getAttribute('aria-describedby'), noteId);
+      assert.equal(await t(noteId).isVisible(), true);
+      assert.equal(await t(noteId).textContent(), text);
+      assert.ok((await prompt()).includes(text), 'the status line explains the greyed state');
+      await page.waitForFunction((text) => document.querySelector('[data-testid=cmd-fade]').textContent.includes(text), text);
+      assert.equal(await t('cmd-fade').evaluate((el) => el.classList.contains('idle')), false, 'the reason reaches the visible command display');
+      await t(button).evaluate((b) => b.click()); // native disabled buttons ignore click attempts
+      assert.ok((await prompt()).includes(text));
+    };
+    const shots = async (state) => {
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        await page.screenshot({ path: `${shotDir}/todo-128-${state}-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+    };
+    await tolerance('0.005');
+    assert.equal(await t('gap-count').textContent(), String(GAP_MARK_CAP));
+    assert.equal(await t('gap-show').isEnabled(), true, 'the cap itself still allows Show');
+    await tolerance('0.01');
+    await reason('gap-show', 'gap-reason', `Too many gaps to show (${GAP_MARK_CAP + 1}): Join still works`);
+    assert.equal(await t('gap-join').isEnabled(), true);
+    await shots('cap');
+    await t('gap-method').selectOption('average');
+    await t('gap-join').click(); await frames();
+    assert.equal(await t('gap-count').textContent(), '0');
+    await reason('gap-show', 'gap-reason', 'No tiny gaps');
+    await t('duplicate-remove').click(); await frames();
+    assert.equal(await t('duplicate-count').textContent(), '0 found');
+    await reason('duplicate-remove', 'duplicate-reason', 'No duplicates since the last check: edit the drawing to check again');
+    await shots('none');
+    await t('undo').click(); await frames();
+    assert.equal(await t('duplicate-remove').isEnabled(), true, 'editing allows another duplicate check');
+    assert.equal(await t('duplicate-remove').getAttribute('title'), '');
+    assert.equal(await t('duplicate-reason').isVisible(), false);
+    await tolerance('0.005');
+    assert.equal(await t('gap-show').isEnabled(), true);
+    assert.equal(await t('gap-show').getAttribute('title'), 'Mark the gaps on the drawing');
+    assert.equal(await t('gap-reason').isVisible(), false);
+    await t('gap-show').click();
+    assert.equal(await t('gap-show').getAttribute('aria-pressed'), 'true');
+    await tolerance('0.01');
+    await closeTabs(/./);
   });
   await step('Preflight open, Select, Fix, Recheck and Close, light/dark screenshots (TODO 50)', async () => {
     await openGrips(cleanupDrawing(), 'preflight.dxf');

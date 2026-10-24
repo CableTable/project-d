@@ -5872,10 +5872,11 @@ function buildDrawingSection() {
     h('span', { class: 'row' }, h('span', { class: 'chip' }, 'Leader'), h('span', { class: 'lbl' }, 'selected')), h('label', { class: 'field' }, 'Note', ui.ldrNote),
     h('div', { class: 'ldrgrid' }, h('label', { class: 'field' }, 'Text height (mm)', ui.ldrH), h('label', { class: 'field' }, 'Arrow size (mm)', ui.ldrA)), ui.ldrStyle);
   ui.gapCount = h('span', { class: 'lbl', 'data-testid': 'gap-count' });
+  ui.gapReason = h('span', { class: 'lbl', id: 'gap-reason', 'data-testid': 'gap-reason', hidden: true });
   ui.gapTol = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'gap-tol', 'aria-label': 'Tiny gap tolerance in mm' });
   ui.gapTol.addEventListener('change', gapTolTyped);
   ui.gapTol.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.gapTol.blur(); });
-  ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
+  ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', 'aria-describedby': 'gap-reason', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
   ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Remove touching micro pieces, then close each gap by the Method (one undo step)', onclick: joinTinyGaps }, 'Join');
   ui.gapMethod = h('select', { class: 'fld', 'data-testid': 'gap-method', 'aria-label': 'Join gaps method', title: 'How Join closes each gap; a gap the method cannot do is closed by average point' },
     Object.entries(Ed.JOIN_METHODS).map(([v, text]) => h('option', { value: v }, text)));
@@ -5886,7 +5887,8 @@ function buildDrawingSection() {
   ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin,
     h('label', { class: 'gapmethod' }, h('span', { class: 'lbl' }, 'Method'), ui.gapMethod));
   ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
-  ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', onclick: removeDuplicates }, 'Remove duplicates…');
+  ui.duplicateReason = h('span', { class: 'lbl', id: 'duplicate-reason', 'data-testid': 'duplicate-reason', hidden: true });
+  ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', 'aria-describedby': 'duplicate-reason', onclick: removeDuplicates }, 'Remove duplicates…');
   ui.realLen = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'real-length', 'aria-label': 'Real length in mm', placeholder: 'real length, mm' });
   ui.realLen.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyLength(); } });
   ui.measured = h('span', { class: 'lbl mono', 'data-testid': 'measured' });
@@ -5903,8 +5905,8 @@ function buildDrawingSection() {
       tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
       tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
-    ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
-    h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount),
+    ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow, ui.gapReason,
+    h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount), ui.duplicateReason,
     h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
@@ -6535,11 +6537,12 @@ function joinTinyGaps(whole = false) {
   const method = state.gapMethod, r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e), method);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
+  edIndex(d); renderEdit();
   const left = gapsOf(d) || [];
   // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
   const fell = Object.entries(r.by).filter(([m, n]) => m !== method && n).map(([m, n]) => `${n} by ${Ed.JOIN_METHODS[m].toLowerCase()}`);
   note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + (method === 'average' ? '' : ` (${Ed.JOIN_METHODS[method]})`) + (fell.length ? ', ' + fell.join(', ') : '') +
-    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
+    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back' + (ui.gapShow.disabled ? '. ' + ui.gapReason.textContent : ''));
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
@@ -6548,7 +6551,7 @@ function removeDuplicates() {
   if (!d) return;
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
   d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
-  if (!r.count) { note('No removable duplicates / overlaps (locked layers are kept)'); renderEdit(); return; }
+  if (!r.count) { renderEdit(); note(ui.duplicateRemove.disabled ? ui.duplicateReason.textContent : 'No removable duplicates / overlaps (locked layers are kept)'); return; }
   commit(d, r, 'Remove duplicates / overlaps');
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
@@ -6679,9 +6682,20 @@ function renderEdit() {
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
   ui.gapShow.classList.toggle('on', !!d.gapShow); ui.gapShow.setAttribute('aria-pressed', String(!!d.gapShow));
   ui.gapJoin.disabled = !gl || !gl.length; ui.gapShow.disabled = ui.gapJoin.disabled || countOnly;
+  const gapReason = !gl ? '' : countOnly ? `Too many gaps to show (${gl.length}): Join still works` : !gl.length ? 'No tiny gaps' : '';
+  // Announce changes after a check or edit, without replacing the file-open/font message on the first index.
+  if (gl && d.gapReason !== undefined && gapReason && gapReason !== d.gapReason) note(state.msg ? state.msg + '. ' + gapReason : gapReason);
+  if (gl) d.gapReason = gapReason;
+  ui.gapReason.textContent = gapReason; ui.gapReason.hidden = !gapReason;
+  ui.gapShow.title = gapReason || 'Mark the gaps on the drawing';
   const duplicates = d.duplicates?.source === d.raw.entities ? d.duplicates : null;
   ui.duplicateCount.textContent = duplicates ? `${duplicates.count} found` : 'Check';
   ui.duplicateRemove.disabled = duplicates?.count === 0;
+  const duplicateReason = ui.duplicateRemove.disabled ? 'No duplicates since the last check: edit the drawing to check again' : '';
+  if (duplicateReason && duplicateReason !== d.duplicateReason) note(duplicateReason);
+  d.duplicateReason = duplicateReason;
+  ui.duplicateReason.textContent = duplicateReason; ui.duplicateReason.hidden = !duplicateReason;
+  ui.duplicateRemove.title = duplicateReason;
   ui.lenRow.hidden = !(L && L.measured);
   if (L && L.measured) ui.measured.textContent = fmtSize(L.measured) + ' mm measured';
 }
