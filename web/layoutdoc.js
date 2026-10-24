@@ -164,7 +164,7 @@ export function cleanSettings(s = {}) {
   };
 }
 
-const refs = (ents) => ents.filter((e) => (e.type === 'INSERT' || e.type === 'DIMENSION') && e.r).map((e) => String(e.r.v[e.r.c.indexOf(2)] || '').trim());
+const refs = (ents) => ents.filter((e) => (e.type === 'INSERT' || e.type === 'DIMENSION' || e.type === 'ACAD_TABLE') && e.r).map((e) => String(e.r.v[e.r.c.indexOf(2)] || '').trim());
 /** The blocks a list of entities uses, and the blocks those use, as { name: block }. */
 export function blocksUsed(blocks, ents) {
   const out = {}, todo = refs(ents);

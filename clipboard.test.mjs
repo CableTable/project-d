@@ -47,6 +47,24 @@ test('case-insensitive block clashes, including nested references and multiple r
   assert.notEqual(field(parent.entities[0], 2), field(parent.entities[1], 2));
 });
 
+for (const nested of [false, true]) test(`pasted ${nested ? 'nested ' : ''}tables bring their own block when the target has *T1`, () => {
+  const raw = newDoc(4), t = target();
+  addBlock(raw, '*T1', [line(0, 0, 10, 20)]);
+  const table = entity('ACAD_TABLE', [[2, '*T1'], [10, 0], [20, 0]]);
+  if (nested) addBlock(raw, 'PARENT', [table]);
+  addEntities(raw, nested ? insert('PARENT', 0, 0) : table);
+  addBlock(t.raw, '*T1', [circle(0, 0, 5)]);
+  addEntities(t.raw, table);
+  const before = structuredClone(t.raw), r = pasteSnapshot(copyAll(raw), t);
+  const pasted = nested ? r.blocks[field(r.entities[r.from], 2)].entities[0] : r.entities[r.from];
+  const name = field(pasted, 2);
+  assert.notEqual(name, '*T1');
+  assert.deepEqual(r.blocks[name], raw.blocks['*T1']);
+  assert.deepEqual(r.blocks['*T1'], before.blocks['*T1']);
+  assert.deepEqual(r.entities[0], before.entities[0]);
+  assert.deepEqual(t.raw, before);
+});
+
 for (const [kind, params, name] of [
   ['aligned', { a: [10, 20], b: [50, 20], offset: 8 }, 'PD_DIM_1'],
   ['linear', { a: [10, 20], b: [50, 40], offset: 8, axis: 'h' }, 'PD_DIM_H1'],
