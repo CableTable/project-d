@@ -223,6 +223,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 124. ✅ **Break Apart (Ctrl+K) (S)** (built, 2026-10-24): Modify → Break Apart and `BREAKAPART` separate a selected layout group or an outline-only drawing block into outlines, still selected and in place on their layers. One Undo restores the original object and selection. Other selections explain why nothing changed. Shaping holes are already separate closed polylines; Explode (91) is unchanged.
 125. ✅ (built, session 17) **Drag a part from the Parts library onto Compare** (S, ask, T49): a drop on the Compare canvas or panel adds it like Add from library (five at most); a hint follows the pointer.
 126. ✅ (built, session 17) **Drag a part from the Parts library onto a drawing tab** (S, ask, T50): the part's entities go into that drawing at the drop point, 1:1, loose, on their own layers, all selected, one Undo; a layout tab still places it on the sheet; with no drawing open the part opens as its own new drawing tab.
+127. **Step and repeat: the original placed part stays and overlaps the grid** (S, bug, PC test v0.1.81, 2026-10-24): on a layout, after step and repeat (typed 3 × 2) the part placed before stays where it was, on top of the new grid (shot `shots/exe/out-s19/C-22-layout-reopened-dark.png`, report `runs19/report-C.md`). Expected: the grid takes the original's place, no overlap. To grill before building.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
