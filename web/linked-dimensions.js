@@ -50,12 +50,18 @@ export function followDimensions(raw, next, factor = 1) {
     const m = dimMatrix(raw, e), nextMatrix = dimMatrix(afterRaw, e), current = dimOfEntity(afterRaw, e), params = { ...current.params };
     if (!m || !nextMatrix) continue;
     let moved = false;
+    const paper = !!raw.entities[e].ps, end = {};
     for (const key of ['a', 'b']) {
-      const p = mapply(m, ...dim.params[key]), paper = !!raw.entities[e].ps;
-      // An unchanged shape at the same point makes ownership ambiguous.
-      if (stationary.some(([q, ps]) => ps === paper && near(q, p, factor))) continue;
-      const match = moves.find(([from, , ps]) => ps === paper && near(from, p, factor));
-      if (match) { params[key] = local(nextMatrix, match[1]); moved = true; }
+      const p = mapply(m, ...dim.params[key]);
+      end[key] = {
+        shared: stationary.some(([q, ps]) => ps === paper && near(q, p, factor)),
+        match: moves.find(([from, , ps]) => ps === paper && near(from, p, factor)),
+      };
+    }
+    for (const [key, other] of [['a', 'b'], ['b', 'a']]) {
+      const { shared, match } = end[key];
+      // A point a moved and a stayed shape share goes with the shape holding the other end; if that is unclear, it stays.
+      if (match && (!shared || (end[other].match && !end[other].shared))) { params[key] = local(nextMatrix, match[1]); moved = true; }
     }
     if (!moved) continue;
     const built = buildDim(dim.kind, params, factor, dim.name, dim.dp);

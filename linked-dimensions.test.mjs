@@ -120,6 +120,18 @@ test('moving a touching rectangle leaves the unchanged rectangle dimension in pl
   }
 });
 
+test('a shared point goes with the shape holding the dimension\'s other end', () => {
+  const raw = drawing(W.lwpoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), { a: [0, 0], b: [100, 0] });
+  W.addEntities(raw, W.lwpoly([[100, 0], [200, 0], [200, 60], [100, 60]], { closed: true }));
+  const add = (name, a, b) => Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { a, b, offset: 10, textH: 2 }, 1, name, 3)));
+  add('PD_DIM_2', [100, 0], [200, 0]); add('PD_DIM_3', [0, 60], [200, 60]);
+  const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 0, 50));
+  const own = E.dimOfEntity(next, 1).params, neighbour = E.dimOfEntity(next, 3).params, far = E.dimOfEntity(next, 4).params;
+  point(own.a, [0, 50]); point(own.b, [100, 50]);
+  point(neighbour.a, [100, 0]); point(neighbour.b, [200, 0]);
+  point(far.a, [0, 110]); point(far.b, [200, 60]);
+});
+
 test('grip dragging one LINE of a four-LINE rectangle leaves a shared dimension end in place', () => {
   const raw = drawing(W.line(0, 0, 100, 0), { a: [100, 0], b: [100, 60] });
   W.addEntities(raw, [W.line(100, 0, 100, 60), W.line(100, 60, 0, 60), W.line(0, 60, 0, 0)]);
@@ -136,7 +148,7 @@ test('all matching dimensions follow, including an endpoint on a different shape
   Object.assign(raw, E.addDimension(raw, E.buildDim('linear', { a: [0, 0], b: [100, 100], axis: 'v', offset: 20, textH: 2 }, 1, 'PD_DIM_2')));
   W.addEntities(raw, W.line(0, 0, 100, 0, { ps: true }));
   const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 10, 20));
-  point(model(next).params.a, [10, 20]);
+  point(model(next).params.a, [10, 20]); point(model(next).params.b, [110, 20]);
   const other = E.dimOfEntity(next, 3);
   point(other.params.a, [10, 20]); point(other.params.b, [100, 100]);
   const paperOnly = followDimensions(raw, E.moveEntities(raw, new Set([4]), 10, 20));
