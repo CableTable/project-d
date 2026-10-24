@@ -4,7 +4,7 @@ import { COMMANDS } from './cmdbar.js';
 import * as SC from './shortcuts.js';
 import { withExt } from './savepath.js';
 
-const LABELS = { rrect: 'Rounded rectangle', dimlinear: 'Linear dimension', dimradius: 'Radius dimension', dimdiameter: 'Diameter dimension', dimangular: 'Angular dimension', dimstyle: 'Dimension style', newlayout: 'New layout', saveas: 'Save As', selectall: 'Select all', mx: 'Mirror X', my: 'Mirror Y', pdf: 'PDF / Print', history: 'Undo history' };
+const LABELS = { rrect: 'Rounded rectangle', dimlinear: 'Linear dimension', dimradius: 'Radius dimension', dimdiameter: 'Diameter dimension', dimangular: 'Angular dimension', dimstyle: 'Dimension style', newlayout: 'New layout', saveas: 'Save As', selectall: 'Select all', mx: 'Mirror X', my: 'Mirror Y', pdf: 'PDF / Print', history: 'Undo history', closetab: 'Close tab', nexttab: 'Next tab', previoustab: 'Previous tab' };
 const label = (n) => LABELS[n] || n[0].toUpperCase() + n.slice(1);
 function glyph(path, size = 14) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'), p = document.createElementNS(svg.namespaceURI, 'path');

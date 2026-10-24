@@ -558,6 +558,11 @@ async function closeTab(d) {
 
 const curDoc = () => state.docs[state.doc];
 
+function cycleTab(step) {
+  state.doc = (state.doc + step + state.docs.length) % state.docs.length;
+  showDoc();
+}
+
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
   ui.fontNote.hidden = true;
@@ -3047,6 +3052,7 @@ const DO = {
   fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(),
   shortcuts: () => showShortcuts(),
+  closetab: () => closeTab(curDoc()), nexttab: () => cycleTab(1), previoustab: () => cycleTab(-1),
 };
 /** A command of the table started by its name (typed in the bar, a history line, Space on the drawing). */
 function runCommand(cmd) {
@@ -6980,6 +6986,12 @@ async function init() {
     balDock, cmdLog, buildStatus()));
   renderTabs();
   attachDrop();
+  document.addEventListener('keydown', (e) => {
+    if (document.querySelector('.pop-back, .pdlg-back')) return;
+    const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key);
+    if (!['closetab', 'nexttab', 'previoustab'].includes(cmd?.name)) return;
+    e.preventDefault(); e.stopPropagation(); runCommand(cmd);
+  }, true);                                               // tab keys also work in fields that handle their own keys
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }

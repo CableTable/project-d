@@ -85,6 +85,83 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 118: tab keys wrap, work in fields and command bar, respect dialogs and own keys, Cancel keeps a changed tab', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage();
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const tabs = p.locator('.tabs .dtab:not([aria-label])');
+    const active = () => p.locator('.dtab.on .tname').textContent();
+    const openShortcuts = async () => {
+      await p.locator('[data-menu=Tools]').click(); await p.getByRole('menuitem', { name: 'Shortcuts…' }).click();
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-testid=new-layout]').click();
+      await p.locator('[data-testid=new-tab]').click();
+      const names = await tabs.locator('.tname').allTextContents();
+      assert.equal(names.length, 3);
+      await p.keyboard.press('Control+Tab'); assert.equal(await active(), names[0], 'next wraps to first');
+      await p.keyboard.press('Control+Shift+Tab'); assert.equal(await active(), names[2], 'previous wraps to last');
+      await p.keyboard.press('Control+Shift+Tab'); assert.equal(await active(), names[1], 'strip order includes layouts');
+      await p.locator('[data-testid=cmd-echo]').click();
+      await p.locator('[data-testid=cmd-input]').fill('re');
+      await p.keyboard.press('Control+Tab'); assert.equal(await active(), names[2], 'next works in command bar');
+      await p.locator('[data-testid=cmd-echo]').click();
+      await p.locator('[data-testid=cmd-input]').focus();
+      await p.keyboard.press('Control+Shift+Tab'); assert.equal(await active(), names[1], 'previous works in command bar');
+      await openShortcuts();
+      const dialog = p.getByRole('dialog', { name: 'Shortcuts', exact: true });
+      for (const [name, key] of [['Close tab', 'Ctrl+W'], ['Next tab', 'Ctrl+Tab'], ['Previous tab', 'Ctrl+Shift+Tab']]) {
+        assert.equal(await dialog.getByRole('button', { name: name + ' key', exact: true }).textContent(), key);
+      }
+      for (const key of ['Control+Tab', 'Control+Shift+Tab', 'Control+w']) await p.keyboard.press(key);
+      assert.equal(await active(), names[1]); assert.equal(await tabs.count(), 3, 'dialog blocks tab keys');
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((th) => { document.documentElement.dataset.theme = th; }, theme);
+        await dialog.getByRole('searchbox').fill('tab');
+        await p.screenshot({ path: `${shotDir}/todo118-shortcuts-${theme}.png` });
+      }
+      await dialog.getByRole('searchbox').fill('');
+      for (const [name, key] of [['Close tab', 'Control+Alt+w'], ['Next tab', 'F6'], ['Previous tab', 'F7'], ['Properties', 'Control+Tab']]) {
+        await dialog.getByRole('button', { name: name + ' key', exact: true }).click(); await p.keyboard.press(key);
+      }
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
+      await p.keyboard.press('F6'); assert.equal(await active(), names[2]);
+      await p.keyboard.press('F7'); assert.equal(await active(), names[1]);
+      await p.keyboard.press('Control+Tab'); assert.equal(await active(), names[1], 'own Properties key wins over default next');
+      await p.keyboard.press('Control+Alt+w'); assert.equal(await tabs.count(), 2, 'own close key closes clean layout');
+      await openShortcuts();
+      await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
+      await dialog.getByRole('button', { name: 'Save', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
+      await p.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
+      await p.locator('.dtab.on .dot').waitFor();
+      const count = await tabs.count();
+      const cancelledClose = async (close) => {
+        const asked = new Promise((resolve) => p.once('dialog', async (d) => { const message = d.message(); await d.dismiss(); resolve(message); }));
+        await close(); return asked;
+      };
+      const message = await cancelledClose(() => p.keyboard.press('Control+w'));
+      assert.match(message, /outline\.dxf.*changes.*not saved/);
+      assert.equal(await tabs.count(), count); assert.equal(await active(), 'outline.dxf', 'Cancel keeps changed tab');
+      assert.equal(await cancelledClose(() => p.locator('.dtab.on .x').click()), message, 'X and Ctrl+W use the same prompt');
+      p.once('dialog', (d) => d.accept()); await p.keyboard.press('Control+w');
+      await p.waitForFunction((n) => document.querySelectorAll('.tabs .dtab:not([aria-label])').length === n, count - 1);
+      for (let i = 0; i < count - 1; i++) await p.keyboard.press('Control+w');
+      assert.equal(await tabs.count(), 1); assert.equal(await active(), 'Drawing 1', 'last close creates fresh drawing');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 0);
+      await p.evaluate(async () => {
+        const { idbStore } = await import('./idbstore.js');
+        await idbStore('project-d-shortcuts', 'settings', 'shortcuts').put({ id: 'own', overrides: { properties: { key: 'Ctrl+Tab' } } });
+      });
+      await p.reload(); await p.locator('[data-testid=new-tab]').click();
+      const current = await active();
+      await p.keyboard.press('Control+Tab'); assert.equal(await active(), current, 'a saved own key wins on upgrade');
+      await openShortcuts();
+      assert.equal(await dialog.getByRole('button', { name: 'Properties key', exact: true }).textContent(), 'Ctrl+Tab');
+      assert.equal(await dialog.getByRole('button', { name: 'Next tab key', exact: true }).textContent(), 'Press keys…');
+    } finally { await context.close(); }
+  });
   await step('TODO 56: font note on open, once per open, literal file names, light and dark', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

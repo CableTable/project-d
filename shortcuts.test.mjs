@@ -38,6 +38,16 @@ test('defaults have no clashes; aliases overlap across draw/layout only, keys cl
   assert.ok(SC.clashes(b).filter((c) => c.reason).length >= 3);
 });
 
+test('saved own keys win over new tab defaults; explicit tab bindings still report clashes', () => {
+  const overrides = { properties: { key: 'ctrl+tab' }, contour: { key: 'Ctrl+W' }, mirror: { key: 'Ctrl+Shift+Tab' } };
+  const b = SC.bindings(overrides);
+  for (const name of ['closetab', 'nexttab', 'previoustab']) assert.equal(b[name].key, '');
+  assert.equal(b.properties.key, 'Ctrl+Tab');
+  assert.deepEqual(SC.clashes(b), []);
+  assert.deepEqual(SC.bindings(SC.differences(b)), b, 'cleared defaults persist');
+  assert.ok(SC.clashes(SC.bindings({ ...overrides, nexttab: { key: 'Ctrl+Tab' } })).some((c) => c.field === 'key'));
+});
+
 test('Swap exchanges complete cells using the previous edited cell, leaving no duplicate binding', () => {
   const b = SC.bindings();
   b.contour.alias = ['co', 'mi']; b.contour.key = 'Ctrl+G';
