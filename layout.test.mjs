@@ -1,6 +1,6 @@
 // layout.js — step and repeat.   node layout.test.mjs
 import assert from 'node:assert/strict';
-import { stepRepeat, usableArea, presetFor, markGeometry, PRESETS } from './web/layout.js';
+import { stepRepeat, gridCellNote, usableArea, presetFor, markGeometry, PRESETS } from './web/layout.js';
 
 const base = { sheetW: 1000, sheetH: 700, gripTop: 10, gripRight: 10, gripBottom: 30, gripLeft: 10, partW: 120, partH: 80, gapX: 5, gapY: 5, rotate: '0', align: 'centre' };
 const near = (a, b, t = 1e-9) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
@@ -174,7 +174,7 @@ test('Fit off: rows and columns typed by hand; the grid may not fit and says so'
 });
 
 
-test('Fit skips overlapping occupied boxes once per cell, permits touching, and keeps manual counts', () => {
+test('both modes skip overlapping occupied boxes once per cell and permit touching', () => {
   const o = { sheetW: 40, sheetH: 20, partW: 10, partH: 20, gapX: 0, gapY: 0, rotate: '0', align: 'topleft' };
   const occupied = [[0, 0, 10, 20], [0, 0, 10, 20], [19, 5, 21, 6]];
   const r = stepRepeat({ ...o, occupied });
@@ -182,9 +182,93 @@ test('Fit skips overlapping occupied boxes once per cell, permits touching, and 
   assert.equal(r.skipped, 3); assert.equal(r.count, 1); assert.equal(r.usedPct, 25);
   assert.equal(stepRepeat({ ...o, occupied: [[0, 0, 40, 20]] }).count, 0);
   const manual = stepRepeat({ ...o, occupied, fit: false, rows: 1, cols: 4 });
-  assert.equal(manual.count, 4); assert.equal(manual.skipped, 0);
+  assert.equal(manual.count, 1); assert.equal(manual.skipped, 3);
   const turned = stepRepeat({ ...o, partW: 20, partH: 10, rotate: '90', occupied });
   assert.deepEqual(turned.positions, r.positions);
+});
+
+// TODO 127: boxes use sheet coordinates, y down; placements keep their DXF angle.
+const anchored = { sheetW: 360, sheetH: 240, partW: 100, partH: 60, gapX: 10, gapY: 10, rotate: '0', gridPart: 'a' };
+const cell = (x, y, over = {}) => ({ partId: 'a', rot: 0, box: [x, y, x + 100, y + 60], ...over });
+
+test('matching placed part anchors Fit and fills left, above, right and below, independent of alignment', () => {
+  for (const align of ['centre', 'topleft']) {
+    const r = stepRepeat({ ...anchored, align, placed: [cell(130, 90)] });
+    assert.equal(r.cols, 3); assert.equal(r.rows, 3);
+    assert.deepEqual([r.x0, r.y0], [20, 20]);
+    assert.equal(r.count, 8); assert.equal(r.taken, 1); assert.equal(r.skipped, 0); assert.equal(r.dropped, 0);
+    assert.ok(r.positions.some((p) => p.x === 20 && p.y === 20));
+    assert.ok(r.positions.some((p) => p.x === 240 && p.y === 160));
+    assert.ok(!r.positions.some((p) => p.x === 130 && p.y === 90));
+    assert.equal(gridCellNote(r), '');
+  }
+});
+
+test('typed grows right and down from the matching cell, dropping sheet and gripper cells', () => {
+  const o = { ...anchored, fit: false, cols: 3, rows: 2, placed: [cell(130, 90)] };
+  const r = stepRepeat(o);
+  assert.deepEqual(r.positions, [{ x: 240, y: 90 }, { x: 130, y: 160 }, { x: 240, y: 160 }]);
+  assert.equal(r.taken, 1); assert.equal(r.dropped, 2); assert.equal(r.skipped, 0); assert.equal(r.fits, true);
+  assert.equal(gridCellNote(r), '3 × 2: 2 off the sheet');
+  for (const grips of [{ gripRight: 30 }, { gripBottom: 30 }]) {
+    const g = stepRepeat({ ...o, ...grips });
+    assert.equal(g.dropped, 4); assert.equal(g.count, 1);
+  }
+  const blockedAnchor = stepRepeat({ ...o, gripLeft: 140, gripTop: 100 });
+  assert.deepEqual(blockedAnchor.positions, [{ x: 240, y: 160 }]);
+  assert.equal(blockedAnchor.dropped, 5);
+});
+
+test('top-left matching part wins regardless of input order; on-cell parts take cells, between-cell parts skip', () => {
+  const placed = [cell(240, 160), cell(130, 90)];
+  const r = stepRepeat({ ...anchored, fit: false, rows: 2, cols: 2, placed });
+  assert.deepEqual([r.x0, r.y0], [130, 90]);
+  assert.equal(r.taken, 2); assert.equal(r.count, 2); assert.equal(r.skipped, 0);
+  const between = stepRepeat({ ...anchored, fit: false, rows: 2, cols: 2, placed: [cell(130, 90), cell(200, 120)] });
+  assert.equal(between.taken, 1); assert.equal(between.skipped, 3); assert.equal(between.count, 0);
+  const tied = stepRepeat({ ...anchored, fit: false, rows: 1, cols: 2, placed: [cell(240, 90), cell(130, 90)] });
+  assert.equal(tied.x0, 130); assert.equal(tied.taken, 2);
+  const fit = stepRepeat({ ...anchored, placed });
+  assert.equal(fit.taken, 2); assert.equal(fit.count, 7); assert.equal(fit.skipped, 0);
+  const fitBetween = stepRepeat({ ...anchored, placed: [cell(130, 90), cell(200, 120)] });
+  assert.equal(fitBetween.taken, 1); assert.equal(fitBetween.skipped, 3); assert.equal(fitBetween.count, 5);
+});
+
+test('different, rotated and mirrored parts skip covered typed cells without anchoring', () => {
+  const o = { ...anchored, fit: false, rows: 2, cols: 3, align: 'centre' };
+  const plain = stepRepeat(o);
+  for (const over of [{ partId: 'b' }, { rot: 90 }, { rot: 180 }, { rot: 270 }, { mirrorX: true }, { mirrorY: true }]) {
+    const r = stepRepeat({ ...o, placed: [cell(plain.x0, plain.y0, over)] });
+    assert.deepEqual([r.x0, r.y0, r.gridW, r.gridH], [plain.x0, plain.y0, plain.gridW, plain.gridH]);
+    assert.equal(r.count, 5); assert.equal(r.skipped, 1); assert.equal(r.taken, 0); assert.equal(r.dropped, 0);
+  }
+  const mixed = stepRepeat({ ...o, placed: [cell(130, 90), cell(240, 90, { partId: 'b' })] });
+  assert.equal(gridCellNote(mixed), '3 × 2: 1 cell skipped, 2 off the sheet');
+});
+
+test('no matching part preserves centred and aligned fit and oversized typed positions', () => {
+  for (const fit of [true, false]) for (const align of ['centre', 'topleft']) {
+    const o = { ...anchored, fit, align, cols: 10, rows: 10 };
+    assert.deepEqual(stepRepeat({ ...o, placed: [cell(2000, 2000, { partId: 'b' })] }), stepRepeat(o));
+  }
+});
+
+test('matching angle is normalized and follows the clockwise grid rotation without matching mirrors', () => {
+  for (const rot of [270, -90, 630]) {
+    const r = stepRepeat({ ...anchored, rotate: '90', fit: false, rows: 1, cols: 2,
+      placed: [cell(130, 90, { rot, box: [130, 90, 190, 190] })] });
+    assert.deepEqual(r.positions, [{ x: 200, y: 90 }]); assert.equal(r.taken, 1);
+  }
+  assert.equal(stepRepeat({ ...anchored, fit: false, rows: 1, cols: 2, placed: [cell(130, 90, { rot: 360 })] }).taken, 1);
+});
+
+test('anchored Fit keeps extra gaps counted from the top and left and still includes the placed cell', () => {
+  const r = stepRepeat({ ...anchored, sheetW: 600, sheetH: 400, placed: [cell(250, 170)],
+    extraCols: [{ after: 1, mm: 20 }], extraRows: [{ after: 1, mm: 10 }] });
+  assert.equal(r.taken, 1);
+  assert.equal(r.x0, 10); assert.equal(r.y0, 20);
+  assert.equal(r.colGaps[0].size, 30); assert.equal(r.rowGaps[0].size, 20);
+  assert.ok(r.positions.every((p) => p.x >= 0 && p.y >= 0 && p.x + r.partW <= 600 && p.y + r.partH <= 400));
 });
 
 console.log(n + ' tests passed');

@@ -63,6 +63,21 @@ function lay(n, size, gap, extra, start) {
   return { at, len: n ? p - start - gap - (extra.get(n) || 0) : 0 };
 }
 
+/** Fit on both sides of an existing cell; extra gaps still count from the left / top. */
+function anchoredLine(start, avail, size, gap, extra, anchor) {
+  const before = Math.max(0, fitCount(anchor - start + size, size, gap, extra) - 1);
+  const first = anchor - lay(before + 1, size, gap, extra, 0).len + size;
+  return lay(fitCount(start + avail - first, size, gap, extra), size, gap, extra, first).at.filter((at) => at >= start - 1e-9);
+}
+
+/** The status note is empty when all cells can be used. */
+export function gridCellNote(L) {
+  const notes = [];
+  if (L.skipped) notes.push(`${L.skipped} cell${L.skipped === 1 ? '' : 's'} skipped`);
+  if (L.dropped) notes.push(`${L.dropped} off the sheet`);
+  return notes.length ? `${L.cols} × ${L.rows}: ${notes.join(', ')}` : '';
+}
+
 /**
  * Fits copies of a partW × partH part on the sheet.
  * rotate: 'best' | '0' | '90'; align: 'centre' | 'topleft'.
@@ -70,7 +85,9 @@ function lay(n, size, gap, extra, start) {
  *   The grid is centred (or top-left) on the usable area even if it does not fit; `fits` says whether it does.
  * extraRows / extraCols: [{ after, mm }] extra room after row `after` (counted from the top, 1 = the first row) or
  * after column `after` (from the left), on top of gapY / gapX. One that lies beyond the last row / column is ignored.
- * occupied: placed-part boxes [x0, y0, x1, y1], sheet mm, y down; Fit skips overlapping cells (touching edges are OK).
+ * occupied: obstacle boxes [x0, y0, x1, y1], sheet mm, y down; both modes skip overlaps (touching edges are OK).
+ * placed: placements with a `box` in the same coordinates; same gridPart, angle and mirror anchors the grid.
+ * Matching cells are taken by those parts, excluded from positions; anchored typed grids drop cells outside the usable area.
  * Returns the footprint (partW/partH already swapped when rotated) and the top-left of each copy, plus
  * rowGaps / colGaps: [{ after, at, size }] the strip between two rows / columns (sheet mm, with its extra).
  */
@@ -94,24 +111,41 @@ export function stepRepeat(o) {
     if (!(partW > 0 && partH > 0) || cols * rows > MAX_COUNT) { cols = 0; rows = 0; }
   }
   const pw = rotated ? partH : partW, ph = rotated ? partW : partH;
-  const gridW = lay(cols, pw, gapX, ex, 0).len, gridH = lay(rows, ph, gapY, ey, 0).len;
-  const x0 = align === 'topleft' ? area.x : area.x + (area.w - gridW) / 2;
-  const y0 = align === 'topleft' ? area.y : area.y + (area.h - gridH) / 2;
-  const xs = lay(cols, pw, gapX, ex, x0).at, ys = lay(rows, ph, gapY, ey, y0).at;
+  const placed = o.placed || [];
+  const matching = placed.filter((p) => o.gridPart && p.partId === o.gridPart && !p.mirrorX && !p.mirrorY &&
+    (((p.rot || 0) % 360 + 360) % 360) === (rotated ? 270 : 0));
+  const anchor = pw > 0 && ph > 0 && matching.sort((a, b) => a.box[1] - b.box[1] || a.box[0] - b.box[0])[0];
+  let gridW = lay(cols, pw, gapX, ex, 0).len, gridH = lay(rows, ph, gapY, ey, 0).len;
+  let x0 = anchor ? anchor.box[0] : align === 'topleft' ? area.x : area.x + (area.w - gridW) / 2;
+  let y0 = anchor ? anchor.box[1] : align === 'topleft' ? area.y : area.y + (area.h - gridH) / 2;
+  const xs = anchor && !manual ? anchoredLine(area.x, area.w, pw, gapX, ex, x0) : lay(cols, pw, gapX, ex, x0).at;
+  const ys = anchor && !manual ? anchoredLine(area.y, area.h, ph, gapY, ey, y0) : lay(rows, ph, gapY, ey, y0).at;
+  if (anchor && !manual) {
+    cols = xs.length; rows = ys.length;
+    x0 = xs[0] ?? x0; y0 = ys[0] ?? y0;
+    gridW = cols ? xs[cols - 1] + pw - x0 : 0; gridH = rows ? ys[rows - 1] + ph - y0 : 0;
+  }
+  const occupied = [...(o.occupied || []), ...placed.map((p) => p.box)];
   const positions = [];
+  let skipped = 0, dropped = 0, taken = 0;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
     const x = xs[c], y = ys[r];
-    if (!manual && (o.occupied || []).some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9)) continue;
+    if (anchor && (x < area.x - 1e-9 || y < area.y - 1e-9 || x + pw > area.x + area.w + 1e-9 || y + ph > area.y + area.h + 1e-9)) { dropped++; continue; }
+    if (matching.some(({ box: b }) => Math.abs(x - b[0]) < 1e-9 && Math.abs(y - b[1]) < 1e-9)) { taken++; continue; }
+    if (occupied.some((b) => x < b[2] - 1e-9 && x + pw > b[0] + 1e-9 && y < b[3] - 1e-9 && y + ph > b[1] + 1e-9)) { skipped++; continue; }
     positions.push({ x, y });
   }
-  const count = positions.length, skipped = cols * rows - count;
+  const count = positions.length;
   const colGaps = xs.slice(0, -1).map((x, i) => ({ after: i + 1, at: x + pw, size: xs[i + 1] - x - pw }));
   const rowGaps = ys.slice(0, -1).map((y, i) => ({ after: i + 1, at: y + ph, size: ys[i + 1] - y - ph }));
-  const base = manual ? { cols, rows } : rotated ? base90 : base0;
+  const base = manual ? { cols, rows } : anchor ? {
+    cols: anchoredLine(area.x, area.w, pw, gapX, new Map(), anchor.box[0]).length,
+    rows: anchoredLine(area.y, area.h, ph, gapY, new Map(), anchor.box[1]).length,
+  } : rotated ? base90 : base0;
   const sheetArea = o.sheetW * o.sheetH;
   const usedPct = sheetArea > 0 ? (count * partW * partH) / sheetArea * 100 : 0;
-  const fits = count > 0 && gridW <= area.w + 1e-9 && gridH <= area.h + 1e-9;      // always true when the grid was worked out
-  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, skipped, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, colGaps, rowGaps, manual, fits };
+  const fits = count > 0 && (!!anchor || (gridW <= area.w + 1e-9 && gridH <= area.h + 1e-9));
+  return { cols, rows, baseCols: base.cols, baseRows: base.rows, count, skipped, dropped, taken, rotated, partW: pw, partH: ph, x0, y0, gridW, gridH, usedPct, area, positions, colGaps, rowGaps, manual, fits };
 }
 
 /**

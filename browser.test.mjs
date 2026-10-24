@@ -2172,6 +2172,14 @@ try {
 
   await step('step and repeat per layout: pick the part; Fit to sheet on works out rows × columns, off lets them be typed (it may not fit, and says so); Apply makes them placed parts', async () => {
     await t('panel-main').click();
+    // Keep this older oversized-grid flow unanchored; TODO 127 covers matching placed cells.
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    await t('px').fill('850'); await t('px').press('Enter');
+    await t('py').fill('550'); await t('py').press('Enter');
+    await t('pa').fill('180'); await t('pa').press('Enter');
+    await page.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true });
+    await t('px').fill('50'); await t('px').press('Enter');
+    await t('py').fill('550'); await t('py').press('Enter');
     await t('part').selectOption({ label: 'Plate A · 100 × 60' });
     const worked = gridOf(layoutFromRaw(readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text)));
     assert.equal(await t('count').textContent(), String(worked.count));
@@ -9328,13 +9336,14 @@ try {
     await closeTabs(/./);
   });
 
-  const fitFixture = async (name, placed = true) => {
+  const fitFixture = async (name, placed = true, obstacle = false) => {
     await closeTabs(/./);
     const lay = newLayout(name), doc = newDoc(4);
     addEntities(doc, roundRect(0, 0, 100, 100, 0));
     lay.parts.fit = makePart('fit', 'Fit plate', doc);
     Object.assign(lay.s, { sheetW: 400, sheetH: 300, gripBottom: 0, gapX: 0, gapY: 0, align: 'topleft', gridPart: 'fit' });
-    if (placed) lay.placed.push({ partId: 'fit', x: 0, y: 200, rot: 0, mirrorX: false, mirrorY: false });
+    if (obstacle) lay.parts.other = makePart('other', 'Other plate', doc);
+    if (placed) lay.placed.push({ partId: obstacle ? 'other' : 'fit', x: 0, y: 200, rot: 0, mirrorX: false, mirrorY: false });
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
     await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
     await t('panel-main').click();
@@ -9342,11 +9351,11 @@ try {
   await step('TODO 86: Fit skips placed parts, reports skipped cells, and Apply keeps them clear (light then dark)', async () => {
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme);
-      await fitFixture('fit-skip.dxf');
+      await fitFixture('fit-skip.dxf', true, true);
       assert.equal(await t('count').textContent(), '11');
       assert.equal(await t('grid').textContent(), 'fit · 11 copies');
       assert.match(await prompt(), /^11 fit copies,/);
-      assert.equal(await t('step-hint').textContent(), '1 cell skipped: overlap with placed parts.');
+      assert.equal(await t('step-hint').textContent(), '4 × 3: 1 cell skipped');
       assert.equal(await sheetParts(), 12);
       await page.screenshot({ path: shotDir + `/s15-86-fit-${theme}.png` });
       await t('apply').click();
@@ -9356,9 +9365,48 @@ try {
       assert.equal(new Set(meta.placed.map((p) => `${p.x},${p.y}`)).size, 12, 'no cell overlaps the original');
       await t('part').selectOption('fit');
       assert.equal(await t('count').textContent(), '0');
-      assert.match(await t('step-hint').textContent(), /^12 cells skipped/);
+      assert.equal(await t('step-hint').textContent(), '4 × 3: 1 cell skipped');
       assert.equal(await t('apply').isDisabled(), true);
     }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 127: a matching placed part takes a typed 3 × 2 cell; status reports skipped and dropped cells; Apply keeps one part per cell', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Matching grid'), doc = newDoc(4);
+    addEntities(doc, roundRect(0, 0, 100, 100, 0));
+    lay.parts.fit = makePart('fit', 'Grid plate', doc);
+    lay.parts.other = makePart('other', 'Other plate', doc);
+    Object.assign(lay.s, { sheetW: 400, sheetH: 300, gripBottom: 0, gapX: 0, gapY: 0, gridPart: 'fit' });
+    lay.placed.push({ partId: 'fit', x: 150, y: 100, rot: 0 }, { partId: 'other', x: 250, y: 100, rot: 0 });
+    await t('picker').setInputFiles({ name: 'matching-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'matching-grid.dxf');
+    await t('panel-main').click();
+    await t('fit-switch').uncheck();
+    await page.locator('[data-key=cols]').fill('3');
+    await page.locator('[data-key=rows]').fill('2');
+    await page.locator('[data-key=rows]').press('Tab');
+    const note = '3 × 2: 1 cell skipped, 2 off the sheet';
+    assert.equal(await t('step-hint').textContent(), note);
+    assert.ok((await prompt()).includes(note), 'command status reports both counts');
+    assert.equal(await t('count').textContent(), '2', 'only two new copies');
+    assert.equal(await sheetParts(), 4, 'existing matching cell has no copy over it');
+    assert.equal(await t('fit-note').isVisible(), false, 'off-sheet copies have been dropped');
+    await t('step-hint').scrollIntoViewIfNeeded();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await page.screenshot({ path: `${shotDir}/todo-127-grid-${theme}.png` });
+    }
+    const preview = readMeta(await savedDoc());
+    assert.equal(preview.placed.length, 2, 'derived copies are not stored');
+    await t('apply').click();
+    assert.equal(await t('part').inputValue(), '');
+    assert.ok((await prompt()).includes(note), 'Apply reports skipped and dropped cells');
+    assert.equal(await sheetParts(), 4);
+    const meta = readMeta(await savedDoc());
+    assert.equal(meta.s.gridPart, null); assert.equal(meta.placed.length, 4);
+    assert.equal(new Set(meta.placed.map((p) => `${p.x},${p.y}`)).size, 4, 'Apply leaves one part per cell');
+    assert.deepEqual(meta.placed.map((p) => [p.x, p.y]), [[150, 100], [250, 100], [150, 0], [250, 0]]);
     await closeTabs(/./);
   });
 
