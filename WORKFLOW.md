@@ -61,6 +61,8 @@ usage-agent-install.ps1.
    **The skill is loaded at session start** (his call, 2026-10-22): Rook's (and Bishop-lead's) first action in a
    session is the Skill tool for `grilling`, before any other work, and every grill round after that uses it; never
    questions written without it.
+   **Facts first, one round at a time** (his call, 2026-10-24): every code or fact lookup a round needs finishes
+   before the round is asked. Never ask a round and then replace it when a lookup comes back: two sets of questions confuse.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
