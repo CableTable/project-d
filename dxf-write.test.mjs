@@ -115,6 +115,40 @@ test('TODO 141: a table saves as a named block with the same contents, placement
   assert.deepEqual(doc, before, 'the open document stays an ACAD_TABLE');
 });
 
+test('TODO 141: a table found only inside a block saves as a named block too', () => {
+  const doc = load('table.dxf');
+  W.addBlock(doc, 'Outer', doc.entities);
+  doc.entities = [W.insert('Outer', 10, 20)];
+  const before = structuredClone(doc), report = W.writeDxfWithReport(doc), back = D.readDxf(report.text);
+  assert.equal(report.tables, 1);
+  assert.deepEqual(report.skipped, []);
+  const nested = back.blocks.Outer.entities[0];
+  assert.equal(nested.type, 'INSERT');
+  assert.equal(nested.r.v[nested.r.c.indexOf(2)], 'PD_TABLE_1');
+  assert.deepEqual(sigs(back.blocks.PD_TABLE_1.entities), sigs(doc.blocks['*T1'].entities));
+  assert.ok(!report.text.includes('*T1'));
+  assert.deepEqual(D.flatten(back).boxes.model, D.flatten(doc).boxes.model);
+  assert.deepEqual(doc, before);
+});
+
+test('TODO 141: a table without its drawn block is dropped and reported as ACAD_TABLE x1', () => {
+  const doc = load('table.dxf');
+  delete doc.blocks['*T1'];
+  const report = W.writeDxfWithReport(doc);
+  assert.equal(report.tables, 0);
+  assert.deepEqual(report.skipped, [{ type: 'ACAD_TABLE', count: 1 }]);
+  assert.deepEqual(W.unwritable(doc), report.skipped);
+  assert.deepEqual(D.readDxf(report.text).entities, []);
+  assert.equal(W.saveReportNote(report), '. 1 object not saved: ACAD_TABLE x1');
+});
+
+test('Save report notes share conversion and loss wording', () => {
+  assert.equal(W.saveReportNote({ tables: 0, skipped: [] }), '');
+  assert.equal(W.saveReportNote({ tables: 1, skipped: [] }), '. 1 table saved as a block (AutoCAD sees it as a block, not a table)');
+  assert.equal(W.saveReportNote({ tables: 2, skipped: [{ type: 'IMAGE', count: 2 }, { type: 'WIPEOUT', count: 1 }] }),
+    '. 2 tables saved as blocks (AutoCAD sees them as blocks, not tables); 3 objects not saved: IMAGE x2, WIPEOUT x1');
+});
+
 test('TODO 141: table names avoid case-insensitive clashes and update shared and nested references', () => {
   const doc = load('table.dxf');
   W.addBlock(doc, 'pd_table_1', [W.circle(0, 0, 5)]);

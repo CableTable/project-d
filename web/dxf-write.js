@@ -122,6 +122,15 @@ export function unwritable(doc) {
   return prepareSave(doc).skipped;
 }
 
+/** The same conversion and loss note for Save and the Parts library. */
+export function saveReportNote({ tables, skipped }) {
+  const changes = [];
+  if (tables) changes.push(tables === 1 ? '1 table saved as a block (AutoCAD sees it as a block, not a table)' : `${tables} tables saved as blocks (AutoCAD sees them as blocks, not tables)`);
+  const dropped = skipped.reduce((sum, b) => sum + b.count, 0);
+  if (dropped) changes.push(`${dropped} ${dropped === 1 ? 'object' : 'objects'} not saved: ` + skipped.map((b) => b.type + ' x' + b.count).join(', '));
+  return changes.length ? '. ' + changes.join('; ') : '';
+}
+
 /** Convert tables only in the saved copy, and count unsupported objects where they are filtered out. */
 function prepareSave(doc) {
   const sourceBlocks = doc.blocks || {}, renamed = new Map(), taken = new Set(Object.keys(sourceBlocks).map((n) => n.toLowerCase()));

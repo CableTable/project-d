@@ -114,6 +114,15 @@ try {
       assert.equal(readDxf(single.text).entities[0].type, 'INSERT');
       // Saving again still converts a table: Save must not replace the open document's entity.
       await saved(singleNote);
+      await p.keyboard.press('Control+a');
+      await q('bar-extract').click();
+      await q('name-input').fill('Extracted table'); await q('name-ok').click();
+      await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Part Extracted table saved to the Parts library:') && document.querySelector('[data-testid=cmd-prompt]').textContent.includes(text), singleNote);
+      await p.locator('.cb-fade-rows > div').filter({ hasText: 'Part Extracted table saved to the Parts library:' }).waitFor({ state: 'visible' });
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo141-extract-${theme}.png` });
+      }
       const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
       const end = fixture.lastIndexOf('0\nENDSEC\n');
       const table = fixture.slice(fixture.indexOf('0\nACAD_TABLE\n'), end).replace('10\n100\n', '10\n150\n');

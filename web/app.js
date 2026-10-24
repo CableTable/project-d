@@ -18,7 +18,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
-import { writeDxf, writeDxfWithReport, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
+import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
@@ -2311,12 +2311,12 @@ async function extractPart() {
   });
   if (!name) return;
   part.name = name;
-  const bad = unwritable(raw);
+  const report = writeDxfWithReport(part.raw, { escapeUnicode: true });
   libCache.set(part.id, part);
-  const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: LD.partToDxf(part), thumb: thumbFor(part), source: d.name, t: Date.now() });
+  const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: d.name, t: Date.now() });
   d.savedAs = (d.savedAs || []).concat(sizeKey(part.w, part.h));
   renderEdit();
-  note(`Part ${name} saved to the Parts library: ${fmt(part.w)} × ${fmt(part.h)} mm` + (bad.length ? ` (without ${bad.map((b) => b.type + ' ' + b.count).join(', ')})` : '') + (ok ? '' : KEPT_ONLY_NOW));
+  note(`Part ${name} saved to the Parts library: ${fmt(part.w)} × ${fmt(part.h)} mm` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
 }
 const sizeKey = (w, h) => fmt(w) + 'x' + fmt(h);
 
@@ -2578,11 +2578,7 @@ async function save(forceAs) {
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
-    const changes = [];
-    if (tables) changes.push(tables === 1 ? '1 table saved as a block (AutoCAD sees it as a block, not a table)' : `${tables} tables saved as blocks (AutoCAD sees them as blocks, not tables)`);
-    const dropped = skipped.reduce((sum, b) => sum + b.count, 0);
-    if (dropped) changes.push(`${dropped} ${dropped === 1 ? 'object' : 'objects'} not saved: ` + skipped.map((b) => b.type + ' x' + b.count).join(', '));
-    const saveNote = changes.length ? '. ' + changes.join('; ') : '';
+    const saveNote = saveReportNote({ tables, skipped });
     if (!balloonsSaved) { note('Saved ' + name + saveNote + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
     note('Saved ' + name + (dir ? ' to ' + dir : '') + saveNote + (d.bg ? '. The background picture is not saved in the DXF' : ''));
