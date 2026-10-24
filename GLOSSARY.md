@@ -66,6 +66,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
+**In-app clipboard**: The session-only snapshot of selected drawing objects taken with Ctrl+C and pasted with Ctrl+V into drawing tabs or PDF sheets at the same coordinates and true size, or saved as a new Parts library part and placed at those mm coordinates on a layout tab. It remembers the source tab name at Ctrl+C. It survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first.
+
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
 
 **Padlock**: The W / H proportions control: locked scales both sides together; unlocked changes each side independently. It starts locked and applies to selection size or the whole drawing when nothing is selected. Where: Drawing size fields; `web/app.js`. Avoid: Layer Lock.
@@ -106,7 +108,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Shaping**: CorelDRAW-style boolean operations on the selected closed outlines (Weld = union, Intersect = the shared area, Trim = the last picked outline minus the others), giving closed polylines; outlines inside another count as its holes. Simplify keeps each outline's visible part after subtracting outlines in front. Front minus back / Back minus front keep the frontmost / backmost outline minus all others; later in the drawing means in front. Create boundary adds the union on the current layer and keeps the originals. Keep originals is one tick in Modify → Shaping, off by default and remembered on this PC: all six other operations leave their originals in place and add selected results on top; one Undo removes those results. Where: Modify menu, `WELD` / `SHAPETRIM` / `INTERSECT` / `SIMPLIFY` / `FRONTMINUS` / `BACKMINUS` / `BOUNDARY`; `web/shaping.js`. Avoid: Trim (the tool that cuts lines back to cutting edges).
 
-**Sheet**: The physical output rectangle with a custom or preset width and height in mm, whose bottom-left is the layout origin. Where: `DECISIONS.md`, Sheets and Open DXF. Avoid: Drawing extents; the whole canvas.
+**Sheet**: The physical output rectangle with a custom or preset width and height in mm, whose bottom-left is the layout origin. In a multi-page PDF tab, a sheet is one original PDF page, with its own drawing edits and Undo; deleting another sheet keeps its original page number. Where: `DECISIONS.md`, Sheets and Open DXF; PDF sheets keep their edits (TODO 117). Avoid: Drawing extents; the whole canvas.
 
 **Step and repeat**: Fills a layout with a regular grid of one part using rows, columns, rotation and gaps. Where: `TODO.md`, items 7 and 8; `web/layout.js`. Avoid: Auto-nest of mixed parts.
 

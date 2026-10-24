@@ -98,6 +98,101 @@ test('unwritable: reports what the writer cannot carry', () => {
   assert.deepEqual(W.unwritable(W.newDoc()), []);
 });
 
+test('TODO 141: a table saves as a named block with the same contents, placement and colour, without changing the document', () => {
+  const doc = load('table.dxf'), before = structuredClone(doc);
+  const report = W.writeDxfWithReport(doc), back = D.readDxf(report.text), e = back.entities[0];
+  assert.equal(report.tables, 1);
+  assert.deepEqual(report.skipped, []);
+  assert.deepEqual(W.unwritable(doc), []);
+  assert.equal(e.type, 'INSERT');
+  assert.equal(e.r.v[e.r.c.indexOf(2)], 'PD_TABLE_1');
+  assert.deepEqual([10, 20, 50].map((c) => +e.r.v[e.r.c.indexOf(c)]), [100, 50, 90]);
+  assert.equal(e.layer, 'Tables'); assert.equal(e.aci, 3);
+  assert.deepEqual(back.blocks.PD_TABLE_1.base, doc.blocks['*T1'].base);
+  assert.deepEqual(sigs(back.blocks.PD_TABLE_1.entities), sigs(doc.blocks['*T1'].entities));
+  assert.ok(!report.text.includes('*T1'), 'no unused anonymous table block');
+  assert.deepEqual(D.flatten(back).boxes.model, D.flatten(doc).boxes.model);
+  assert.deepEqual(doc, before, 'the open document stays an ACAD_TABLE');
+});
+
+test('TODO 141: a table found only inside a block saves as a named block too', () => {
+  const doc = load('table.dxf');
+  W.addBlock(doc, 'Outer', doc.entities);
+  doc.entities = [W.insert('Outer', 10, 20)];
+  const before = structuredClone(doc), report = W.writeDxfWithReport(doc), back = D.readDxf(report.text);
+  assert.equal(report.tables, 1);
+  assert.deepEqual(report.skipped, []);
+  const nested = back.blocks.Outer.entities[0];
+  assert.equal(nested.type, 'INSERT');
+  assert.equal(nested.r.v[nested.r.c.indexOf(2)], 'PD_TABLE_1');
+  assert.deepEqual(sigs(back.blocks.PD_TABLE_1.entities), sigs(doc.blocks['*T1'].entities));
+  assert.ok(!report.text.includes('*T1'));
+  assert.deepEqual(D.flatten(back).boxes.model, D.flatten(doc).boxes.model);
+  assert.deepEqual(doc, before);
+});
+
+test('TODO 141: a table without its drawn block is dropped and reported as ACAD_TABLE x1', () => {
+  const doc = load('table.dxf');
+  delete doc.blocks['*T1'];
+  const report = W.writeDxfWithReport(doc);
+  assert.equal(report.tables, 0);
+  assert.deepEqual(report.skipped, [{ type: 'ACAD_TABLE', count: 1 }]);
+  assert.deepEqual(W.unwritable(doc), report.skipped);
+  assert.deepEqual(D.readDxf(report.text).entities, []);
+  assert.equal(W.saveReportNote(report), '. 1 object not saved: ACAD_TABLE x1');
+});
+
+test('Save report notes share conversion and loss wording', () => {
+  assert.equal(W.saveReportNote({ tables: 0, skipped: [] }), '');
+  assert.equal(W.saveReportNote({ tables: 1, skipped: [] }), '. 1 table saved as a block (AutoCAD sees it as a block, not a table)');
+  assert.equal(W.saveReportNote({ tables: 2, skipped: [{ type: 'IMAGE', count: 2 }, { type: 'WIPEOUT', count: 1 }] }),
+    '. 2 tables saved as blocks (AutoCAD sees them as blocks, not tables); 3 objects not saved: IMAGE x2, WIPEOUT x1');
+});
+
+test('TODO 141: table names avoid case-insensitive clashes and update shared and nested references', () => {
+  const doc = load('table.dxf');
+  W.addBlock(doc, 'pd_table_1', [W.circle(0, 0, 5)]);
+  W.addBlock(doc, 'Outer', [doc.entities[0], W.insert('*T1', 1, 2)]);
+  W.addEntities(doc, doc.entities[0], W.insert('*T1', 3, 4));
+  const { text, tables } = W.writeDxfWithReport(doc), back = D.readDxf(text);
+  assert.equal(tables, 3);
+  assert.deepEqual(sigs(back.blocks.pd_table_1.entities), sigs(doc.blocks.pd_table_1.entities));
+  assert.deepEqual(sigs(back.blocks.PD_TABLE_2.entities), sigs(doc.blocks['*T1'].entities));
+  for (const e of [...back.entities, ...back.blocks.Outer.entities]) {
+    assert.equal(e.type, 'INSERT'); assert.equal(e.r.v[e.r.c.indexOf(2)], 'PD_TABLE_2');
+  }
+  assert.ok(!text.includes('*T1'));
+});
+
+test('TODO 141: the writer reports dropped objects including a table whose drawn block is missing', () => {
+  const doc = load('table.dxf');
+  W.addEntities(doc, W.entity('IMAGE', []), W.entity('IMAGE', []), W.entity('WIPEOUT', []));
+  W.addBlock(doc, 'Other', [W.entity('IMAGE', [])]);
+  const report = W.writeDxfWithReport(doc);
+  assert.equal(report.tables, 1);
+  assert.deepEqual(report.skipped, [{ type: 'IMAGE', count: 3 }, { type: 'WIPEOUT', count: 1 }]);
+  assert.deepEqual(report.skipped, W.unwritable(doc));
+  const back = D.readDxf(report.text);
+  assert.deepEqual(back.entities.map((e) => e.type), ['INSERT']);
+  assert.deepEqual(back.blocks.Other.entities, []);
+  delete doc.blocks['*T1'];
+  assert.deepEqual(W.writeDxfWithReport(doc).skipped, [{ type: 'IMAGE', count: 3 }, { type: 'ACAD_TABLE', count: 1 }, { type: 'WIPEOUT', count: 1 }]);
+});
+
+test('TODO 141: distinct table blocks get successive names and preserve default rotation and true colour', () => {
+  const doc = load('table.dxf');
+  W.addBlock(doc, '*T2', [W.line(0, 0, 2, 3)]);
+  W.addEntities(doc, W.entity('ACAD_TABLE', [[2, '*T2'], [10, -10], [20, 20]], { layer: 'Tables', tc: 0x123456, ps: true }));
+  const report = W.writeDxfWithReport(doc), back = D.readDxf(report.text), e = back.entities[1];
+  assert.equal(report.tables, 2);
+  assert.deepEqual(back.entities.map((it) => it.r.v[it.r.c.indexOf(2)]), ['PD_TABLE_1', 'PD_TABLE_2']);
+  assert.deepEqual(sigs(back.blocks.PD_TABLE_2.entities), sigs(doc.blocks['*T2'].entities));
+  assert.deepEqual([10, 20].map((c) => +e.r.v[e.r.c.indexOf(c)]), [-10, 20]);
+  assert.ok(!e.r.c.includes(50), 'missing direction defaults to zero rotation');
+  assert.equal(e.tc, 0x123456); assert.equal(e.ps, true);
+  assert.ok(!Object.keys(back.blocks).some((name) => name.startsWith('*T')));
+});
+
 test('app-made geometry: a block with a rounded rectangle, three INSERTs on layer Parts, marks', () => {
   const doc = W.newDoc(4);
   W.addLayer(doc, 'Parts', { aci: 3 }); W.addLayer(doc, 'Marks', { aci: 1, lw: 25 });

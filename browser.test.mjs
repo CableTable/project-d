@@ -81,10 +81,232 @@ try {
         const tab = page.locator('.tabs .dtab:not([aria-label])', { hasText: re }).first();
         if (!(await tab.count())) break;
         await tab.locator('.x').click();
+        if (await t('close-dialog').isVisible()) await t('close-discard').click();
         await page.waitForTimeout(60);
       }
     } finally { page.off('dialog', accept); }
   };
+  await step('TODO 141: Save keeps table lines as named blocks, reports conversions and dropped types, and reopens the saved drawing', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const saved = async (expected) => {
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes(text), expected);
+      const message = p.locator('.cb-fade-rows > div').filter({ hasText: expected });
+      await message.waitFor({ state: 'visible' });
+      assert.ok((await message.getAttribute('title')).includes(expected), 'hover exposes the full one-line Save note');
+      await message.hover();
+      return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'utf8') };
+    };
+    const tableInk = () => q('drawing').evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) if (d[i + 3] && d[i + 1] > d[i] * 1.5 && d[i + 1] > d[i + 2] * 1.5) n++;
+      return n;
+    });
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles('fixtures/table.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'table.dxf');
+      const singleNote = '1 table saved as a block (AutoCAD sees it as a block, not a table)';
+      const single = await saved(singleNote);
+      assert.equal(single.name, 'table-edited.dxf');
+      assert.equal(readDxf(single.text).entities[0].type, 'INSERT');
+      // Saving again still converts a table: Save must not replace the open document's entity.
+      await saved(singleNote);
+      await p.keyboard.press('Control+a');
+      await q('bar-extract').click();
+      await q('name-input').fill('Extracted table'); await q('name-ok').click();
+      await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Part Extracted table saved to the Parts library:') && document.querySelector('[data-testid=cmd-prompt]').textContent.includes(text), singleNote);
+      await p.locator('.cb-fade-rows > div').filter({ hasText: 'Part Extracted table saved to the Parts library:' }).waitFor({ state: 'visible' });
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo141-extract-${theme}.png` });
+      }
+      const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
+      const end = fixture.lastIndexOf('0\nENDSEC\n');
+      const table = fixture.slice(fixture.indexOf('0\nACAD_TABLE\n'), end).replace('10\n100\n', '10\n150\n');
+      const extra = table + '0\nIMAGE\n8\n0\n0\nIMAGE\n8\n0\n0\nWIPEOUT\n8\n0\n';
+      await q('picker').setInputFiles({ name: 'tables-and-skips.dxf', mimeType: 'application/dxf', buffer: Buffer.from(fixture.slice(0, end) + extra + fixture.slice(end)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'tables-and-skips.dxf');
+      const combined = '2 tables saved as blocks (AutoCAD sees them as blocks, not tables); 3 objects not saved: IMAGE x2, WIPEOUT x1';
+      const both = await saved(combined), back = readDxf(both.text);
+      assert.equal(both.name, 'tables-and-skips-copy.dxf');
+      assert.deepEqual(back.entities.map((e) => e.type), ['INSERT', 'INSERT']);
+      assert.equal(flatten(back).items.filter((it) => it.k === 'p').length, 12);
+      assert.ok(!both.text.includes('*T1'));
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo141-save-${theme}.png` });
+      }
+      await q('picker').setInputFiles({ name: 'tables-reopened.dxf', mimeType: 'application/dxf', buffer: Buffer.from(both.text) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'tables-reopened.dxf');
+      assert.ok(await tableInk() > 100, 'reopened table lines are drawn');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo141-reopened-${theme}.png` });
+      }
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 117: PDF sheets keep edits and Undo without warning; close lists and saves dirty sheets; Delete sheet removes its balloons and keeps PDF numbers', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      window.__destroyed = 0;
+      window.__TAURI__ = { window: { getCurrentWindow: () => ({ onCloseRequested: (fn) => { window.__onClose = fn; }, destroy: async () => { window.__destroyed++; } }) } };
+    });
+    const cmd = async (value) => {
+      if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+      await q('cmd-input').fill(value); await q('cmd-input').press('Enter');
+    };
+    const circle = async (radius) => {
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await cmd('c'); await cmd('60,60'); await cmd(String(radius));
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+    };
+    const sheet = async (n, left = 3) => {
+      await p.locator(`[data-sheet="${n}"]`).click();
+      await p.waitForFunction((text) => document.querySelector('[data-testid=sheet-chip]').textContent === text, `Sheet ${n} / ${left}`);
+    };
+    const saved = async () => {
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await dl.path(), 'utf8'));
+    };
+    const circles = (doc) => doc.entities.filter((e) => e.type === 'CIRCLE').map((e) => Number(e.r.v[e.r.c.indexOf(40)]));
+    const balloon = async () => {
+      await p.locator('[data-tool=balloon]').click();
+      const b = await p.locator('rect.sheet').boundingBox();
+      const sc = b.width / Number(await p.locator('[data-key=sheetW]').inputValue());
+      await p.mouse.click(b.x + 60 * sc, b.y + b.height - 60 * sc);
+      await p.mouse.click(b.x + 90 * sc, b.y + b.height - 90 * sc);
+      await p.locator('[data-tool=select]').click();
+    };
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles('fixtures/three-sheets.pdf');
+      await q('bal-sheets').waitFor();
+      const unexpected = (d) => { errors.push('Unexpected sheet warning: ' + d.message()); d.dismiss(); };
+      p.on('dialog', unexpected);
+      await circle(5); await sheet(2); await circle(8); await sheet(1);
+      assert.deepEqual(circles(await saved()), [5], 'sheet 1 edit survives switching');
+      await p.keyboard.press('Control+z'); assert.deepEqual(circles(await saved()), [], 'sheet 1 Undo survives switching');
+      await p.keyboard.press('Control+y'); await circle(6);
+      assert.deepEqual(circles(await saved()), [5, 6], 'another edit on the returned sheet works');
+      await p.keyboard.press('Control+z');
+      await sheet(2); assert.deepEqual(circles(await saved()), [8], 'sheet 1 Undo leaves sheet 2 alone');
+      await circle(9); await sheet(3);
+      assert.equal(await p.locator('.dtab.on .dot').count(), 1, 'clean active page still shows other unsaved edits');
+      const closing = p.evaluate(() => window.__onClose({ preventDefault() {} }));
+      await q('close-dialog').waitFor();
+      assert.match(await q('close-dialog').textContent(), /Sheets 1 and 2 have unsaved edits/);
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo117-close-${theme}.png` });
+      }
+      await q('close-cancel').click(); await closing;
+      assert.equal(await p.evaluate(() => window.__destroyed), 0);
+      assert.equal(await p.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), true);
+      // Cancel the second normal Save dialog: keep the tab, including its remaining edits.
+      await p.evaluate(() => {
+        window.__saveSheets = []; window.__defaults = []; window.__writes = []; window.__paths = ['E:/sheet-one.dxf', null];
+        window.__TAURI__.dialog = { save: async (opts) => { window.__defaults.push(opts.defaultPath); window.__saveSheets.push(document.querySelector('[data-testid=sheet-chip]').textContent); return window.__paths.shift(); } };
+        window.__TAURI__.fs = { exists: async () => false, writeTextFile: async (path, text) => { window.__writes.push({ path, text }); } };
+      });
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-save').click();
+      await p.waitForFunction(() => window.__saveSheets.length === 2);
+      assert.deepEqual(await p.evaluate(() => window.__saveSheets), ['Sheet 1 / 3', 'Sheet 2 / 3']);
+      assert.deepEqual(await p.evaluate(() => window.__defaults), ['three-sheets-sheet1.dxf', 'three-sheets-sheet2.dxf']);
+      assert.equal(await p.locator('.dtab.on .tname').textContent(), 'three-sheets-sheet2.dxf', 'cancelled second save keeps the tab');
+      await sheet(1); await circle(7); await sheet(3);
+      await p.evaluate(() => { window.__paths = ['E:/sheet-two.dxf']; });
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor();
+      assert.match(await q('close-dialog').textContent(), /Sheets 1 and 2 have unsaved edits/);
+      await q('close-save').click(); await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'Drawing 1');
+      assert.deepEqual(await p.evaluate(() => window.__saveSheets), ['Sheet 1 / 3', 'Sheet 2 / 3', 'Sheet 2 / 3'], 'close Save writes sheet 1 to its saved path without asking where');
+      const writes = await p.evaluate(() => window.__writes);
+      assert.deepEqual(writes.map((w) => w.path), ['E:/sheet-one.dxf', 'E:/sheet-one.dxf', 'E:/sheet-two.dxf']);
+      assert.deepEqual(writes.map((w) => circles(readDxf(w.text))), [[5], [5, 7], [8, 9]], 'each Save writes just that sheet');
+      await p.evaluate(() => { delete window.__TAURI__.dialog; delete window.__TAURI__.fs; });
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      await balloon(); await sheet(2); await balloon(); await sheet(3); await balloon();
+      await sheet(2); p.off('dialog', unexpected);
+      p.once('dialog', (d) => { assert.equal(d.message(), 'Delete sheet 2 from this tab? The PDF on disk is not changed. This cannot be undone.'); d.dismiss(); });
+      await q('delete-sheet').click(); assert.equal(await q('sheet-chip').textContent(), 'Sheet 2 / 3', 'Cancel keeps the page');
+      p.once('dialog', (d) => d.accept()); await q('delete-sheet').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 3 / 2');
+      assert.deepEqual(await p.locator('[data-sheet]').evaluateAll((els) => els.map((el) => el.dataset.sheet)), ['1', '3']);
+      assert.equal(await q('bal-count').textContent(), '2');
+      assert.deepEqual(await q('bal-filter').locator('option').allTextContents(), ['All sheets', 'Sheet 1', 'Sheet 3']);
+      await p.keyboard.press('Control+z'); assert.equal(await q('bal-count').textContent(), '1', 'Undo on sheet 3 preserves sheet 1 and cannot revive sheet 2');
+      await p.keyboard.press('Control+y'); assert.equal(await q('bal-count').textContent(), '2');
+      await p.waitForTimeout(400);
+      await p.waitForFunction(() => getComputedStyle(document.querySelector('.cb-fade-rows')).opacity === '0');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme });
+        await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo117-deleted-${theme}.png` });
+      }
+      p.once('dialog', (d) => d.accept()); await q('delete-sheet').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 1');
+      assert.equal(await q('delete-sheet').isDisabled(), true);
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-discard').click();
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      assert.deepEqual(await p.locator('[data-sheet]').evaluateAll((els) => els.map((el) => el.dataset.sheet)), ['1', '2', '3'], 'reopen restores all PDF pages');
+      // Picture pages re-render, while geometry drawn over them keeps its own Undo.
+      p.once('dialog', (d) => d.accept('1'));
+      await q('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
+      await p.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
+      await circle(3); await sheet(2, 2); await circle(4); await sheet(1, 2);
+      assert.deepEqual(circles(await saved()), [3]);
+      await p.keyboard.press('Control+z'); assert.deepEqual(circles(await saved()), []);
+      await sheet(2, 2); assert.deepEqual(circles(await saved()), [4]);
+
+      // Each dirty sheet survives autosave while another, clean sheet is shown.
+      await p.goto(URL_ + '?autosave=300');
+      const copies = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies());
+      const waitCopies = async (n) => {
+        for (let i = 0; i < 60; i++) { const list = await copies(); if (list.length === n) return list; await p.waitForTimeout(150); }
+        throw new Error(`Waiting for ${n} recovery copies, got ${(await copies()).length}`);
+      };
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      await circle(11); const [firstCopy] = await waitCopies(1);
+      assert.match(firstCopy.id, /-sheet1$/);
+      await sheet(2); await p.waitForTimeout(700);
+      assert.deepEqual(await copies(), [firstCopy], 'a clean shown sheet neither deletes nor rewrites sheet 1 recovery');
+      await circle(12); await waitCopies(2); await sheet(3); await p.waitForTimeout(700);
+      const twoCopies = await copies();
+      assert.deepEqual(twoCopies.map((c) => c.name).sort(), ['three-sheets.pdf sheet 1', 'three-sheets.pdf sheet 2']);
+      assert.deepEqual(twoCopies.map((c) => circles(readDxf(c.dxf))).sort((a, b) => a[0] - b[0]), [[11], [12]]);
+      assert.match(twoCopies.find((c) => c.name.endsWith('2')).id, /-sheet2$/);
+      await p.reload(); await q('recover-dialog').waitFor();
+      assert.match(await q('recover-text').textContent(), /^Recover 2 unsaved drawings/);
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo117-recovery-${theme}.png` });
+      }
+      await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+      await p.waitForFunction(() => document.querySelectorAll('.dtab .dot').length === 2);
+      assert.equal(await p.locator('.dtab .dot').count(), 2, 'both recover as unsaved drawing tabs');
+      for (const n of [1, 2]) {
+        await p.locator('.dtab', { hasText: `three-sheets.pdf sheet ${n}` }).click();
+        assert.equal(await q('bal-sheets').isVisible(), false, 'each recovered sheet is its own drawing');
+        assert.deepEqual(circles(await saved()), [10 + n]);
+        await waitCopies(2 - n);
+      }
+      // Saving or deleting a PDF sheet drops only that sheet's copy; close drops the rest.
+      await q('picker').setInputFiles('fixtures/three-sheets.pdf'); await q('bal-sheets').waitFor();
+      await circle(13); await sheet(2); await circle(14); await sheet(3); await circle(15); await waitCopies(3);
+      await sheet(1); await saved(); await waitCopies(2);
+      assert.deepEqual((await copies()).map((c) => c.name).sort(), ['three-sheets.pdf sheet 2', 'three-sheets.pdf sheet 3']);
+      await sheet(2); p.once('dialog', (d) => d.accept()); await q('delete-sheet').click();
+      await waitCopies(1); assert.equal((await copies())[0].name, 'three-sheets.pdf sheet 3');
+      await p.locator('.dtab.on .x').click(); await q('close-dialog').waitFor(); await q('close-discard').click();
+      await waitCopies(0);
+    } finally { await context.close(); }
+  });
+
   await step('TODO 118: tab keys wrap, work in fields and command bar, respect dialogs and own keys, commit Text before close/switch, ignore repeated close, Cancel keeps text', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage();
@@ -899,7 +1121,7 @@ try {
     assert.equal(dl.name, 'sample-copy.dxf');
     assert.deepEqual(layerNames(dl.text), fixtureLayers('sample.dxf'));
     assert.ok(!/VIEWPORT|IMAGE/.test(dl.text));
-    assert.match(await t('cmd-prompt').textContent(), /Saved sample-copy\.dxf \(without VIEWPORT 2, IMAGE 1\)/);
+    assert.match(await t('cmd-prompt').textContent(), /Saved sample-copy\.dxf\. 3 objects not saved: VIEWPORT x2, IMAGE x1/);
     assert.equal((await tabs()).filter((x) => x.startsWith('sample-copy.dxf')).length, 1);
   });
 
@@ -2518,7 +2740,7 @@ try {
     await typeCmd('s'); assert.ok(await on('select'));
   });
 
-  await step('review: Edit menu has Undo, Redo, Delete; shortcut hints; unbuilt menus are greyed', async () => {
+  await step('review: Edit menu has Undo, Redo, Copy, Paste, Delete; shortcut hints; unbuilt menus are greyed', async () => {
     await page.locator('[data-menu=File]').click();
     const hint = (name) => page.getByRole('menuitem', { name, exact: true }).locator('.hint').textContent();
     assert.equal(await hint('Save'), 'Ctrl+S'); assert.equal(await hint('Save As…'), 'Ctrl+Shift+S');
@@ -2532,7 +2754,7 @@ try {
     assert.equal(await hint('Line'), 'L'); assert.equal(await hint('Text'), 'T');
     await page.keyboard.press('Escape');
     await page.locator('[data-menu=Edit]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'PasteCtrl+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
     assert.equal(await page.getByRole('menuitem', { name: 'Undo', exact: true }).isDisabled(), true, 'nothing to undo yet');
     assert.equal(await page.getByRole('menuitem', { name: 'Delete', exact: true }).isDisabled(), true, 'nothing selected');
     await page.keyboard.press('Escape');
@@ -4411,6 +4633,162 @@ try {
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+  await step('TODO 111a: copy between drawing tabs at the same coordinates, selected and one Undo; private dimension blocks; PDF sheet 1 to 2', async () => {
+    await closeTabs(/./);
+    const editItem = (name) => page.getByRole('menuitem', { name, exact: true });
+    const open = async (name, raw) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    };
+    const selectDim = async (i) => {
+      await t('ptab-objects').click();
+      const row = page.locator(`.or[data-e="${i}"]`).first();
+      if (!(await row.isVisible())) await page.locator('.or.layer[data-layer="Dimensions"]').click();
+      await row.click(); await t('ptab-drawing').click(); await waitSel('1 selected');
+    };
+    const blockName = (e) => e.r.v[e.r.c.indexOf(2)];
+    const entityData = (e) => {
+      const keep = e.r.c.map((c, i) => [c, e.r.v[i]]).filter(([c]) => ![5, 330, 100].includes(c));
+      return { ...e, r: { type: e.r.type, c: keep.map(([c]) => c), v: keep.map(([, v]) => v) } };
+    };
+    let source = newDoc(4);
+    addLayer(source, '111a CUT', { aci: 1, lt: '111A DASH' }); source.ltypes['111A DASH'] = { pattern: [3, -1] };
+    addEntities(source, dxfCircle(60, 60, 20, { layer: '111a CUT' }));
+    source = { ...source, ...addDimension(source, buildDim('radius', { c: [60, 60], r: 20, p: [100, 60] }, 1, 'PD_DIM_R1', 2)) };
+    const copiedHeight = readDim('PD_DIM_R1', source.blocks.PD_DIM_R1).params.textH;
+    await open('clipboard-A.dxf', source);
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await editItem('Copy').isDisabled(), true); assert.equal(await editItem('Paste').isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    assert.match(await prompt(), /Copied 2 drawing objects/);
+    await selectDim(1); await t('dim-height').fill('6'); await t('dim-height').press('Enter');
+    const changedSource = await savedDoc();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+c');
+    assert.equal(await prompt(), 'Nothing selected to copy');
+    let target = newDoc(4); addEntities(target, dxfLine(180, 60, 220, 60));
+    target = { ...target, ...addDimension(target, buildDim('radius', { c: [180, 60], r: 10, p: [220, 60] }, 1, 'PD_DIM_R1', 2)) };
+    await open('clipboard-B.dxf', target);
+    const before = await savedDoc();
+    await page.keyboard.press('Control+v'); await waitSel('2 selected');
+    const pasted = await savedDoc(), dimName = blockName(pasted.entities[3]);
+    assert.deepEqual(entityData(pasted.entities[2]), entityData(source.entities[0]), 'same drawing coordinates, size and layer');
+    assert.notEqual(dimName, 'PD_DIM_R1', 'a clashing dimension gets its own valid name');
+    assert.equal(readDim(dimName, pasted.blocks[dimName]).kind, 'radius');
+    assert.equal(readDim(dimName, pasted.blocks[dimName]).params.textH, copiedHeight, 'clipboard is the snapshot before the source edit');
+    assert.equal(pasted.layers['111a CUT'].aci, 1); assert.deepEqual(pasted.ltypes['111A DASH'].pattern, [3, -1]);
+    await shotBoth('todo111a-paste', () => page.locator('[data-menu=Edit]').click(), () => page.keyboard.press('Escape'));
+    await page.keyboard.press('Control+z');
+    const undone = await savedDoc();
+    assert.deepEqual(undone.entities, before.entities); assert.deepEqual(undone.blocks, before.blocks);
+    assert.equal(undone.layers['111a CUT'], undefined, 'one Undo also removes the imported layer');
+    assert.equal(undone.ltypes['111A DASH'], undefined, 'and its linetype');
+    await menuItem('Edit', 'Paste'); await waitSel('2 selected');
+    await selectDim(3); await t('dim-height').fill('9'); await t('dim-height').press('Enter');
+    const edited = await savedDoc();
+    assert.equal(readDim(dimName, edited.blocks[dimName]).params.textH, 9);
+    assert.deepEqual(edited.blocks.PD_DIM_R1.entities.map(entityData), before.blocks.PD_DIM_R1.entities.map(entityData), 'editing the paste leaves the target original alone');
+    await page.locator('.tabs .dtab', { hasText: 'clipboard-A' }).click();
+    assert.deepEqual((await savedDoc()).blocks, changedSource.blocks, 'editing the pasted dimension leaves its source alone');
+    await closeTabs(/clipboard-A/);
+    await page.keyboard.press('Control+v'); await waitSel('2 selected');
+    const twice = await savedDoc();
+    assert.equal(twice.entities.length, 6, 'clipboard survives closing the source; a second paste adds another copy');
+    assert.deepEqual(entityData(twice.entities[4]), entityData(pasted.entities[2]), 'successive pastes overlap at the same position');
+    assert.equal(readDim(blockName(twice.entities[5]), twice.blocks[blockName(twice.entities[5])]).params.textH, copiedHeight);
+    await cmdLine().fill('native clipboard');
+    assert.deepEqual(await t('cmd-input').evaluate((input) => ['c', 'v'].map((key) => {
+      const e = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true }); input.dispatchEvent(e); return e.defaultPrevented;
+    })), [false, false], 'command-bar copy/paste stays native');
+    await page.keyboard.press('Escape');
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/three-sheets.pdf'); await t('bal-sheets').waitFor();
+    await typeCmd('c'); await typeCmd('60,60'); await typeCmd('7');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    const sheet1 = await savedDoc();
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
+    const sheet2 = await savedDoc();
+    await page.keyboard.press('Control+v');
+    await waitSel(`${sheet1.entities.length} selected`);
+    assert.deepEqual((await savedDoc()).entities.slice(sheet2.entities.length).map(entityData), sheet1.entities.map(entityData), 'sheet 1 objects paste at the same coordinates on sheet 2');
+    await shotBoth('todo111a-pdf');
+    await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities, sheet2.entities);
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 3');
+    assert.deepEqual((await savedDoc()).entities, sheet1.entities, 'sheet 2 paste and Undo leave sheet 1 alone');
+    await closeTabs(/./);
+  });
+  await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
+    await closeTabs(/./);
+    const name = '111b <img src=x>.dxf', base = '111b <img src=x>', first = `${base} paste`, second = `${first} 2`;
+    const raw = newDoc(1); addEntities(raw, dxfCircle(6.25, 5.5, 2.5));
+    await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    await typeCmd('newlayout'); await page.keyboard.press('Escape');
+    await closeTabs(/111b/);
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Paste', exact: true }).isDisabled(), false);
+    await page.keyboard.press('Escape');
+    const parts = () => page.evaluate(async () => (await import('./partstore.js')).loadParts());
+    const placed = async (nm) => {
+      await page.waitForFunction((name) => document.querySelector('[data-testid=placed-name]').textContent === name, nm);
+      assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 1, 'the pasted part is selected');
+      const lay = layoutFromRaw(await savedDoc()), pl = lay.placed[0], part = lay.parts[pl.partId];
+      assert.equal(lay.placed.length, 1); assert.equal(part.name, nm);
+      for (const [actual, want] of [[pl.x, 95.25], [pl.y, 76.2], [part.w, 127], [part.h, 127]]) assert.ok(Math.abs(actual - want) < 1e-6, `${actual} should be ${want}`);
+    };
+    await page.keyboard.press('Control+v'); await placed(first);
+    await shotBoth('todo111b-layout');
+    await page.keyboard.press('Control+z');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 0, 'one Undo removes only the placement');
+    assert.ok((await parts()).some((p) => p.name === first), 'the library part survives Undo');
+    await menuItem('Edit', 'Paste'); await placed(second);
+    await page.keyboard.press('Control+z');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 0);
+    await menuItem('Layout', 'Parts library');
+    await t('lib-search').fill('111b');
+    assert.deepEqual(await page.locator('[data-testid=lib-list] .cname').allTextContents(), [first, second]);
+    assert.equal(await page.locator('[data-testid=lib-list] .cname img').count(), 0, 'source tab names stay literal text');
+    const saved = (await parts()).filter((p) => p.name === first || p.name === second);
+    assert.equal(saved.length, 2); assert.ok(saved.every((p) => p.source === base));
+    assert.deepEqual(readDxf(saved[0].dxf).entities, readDxf(saved[1].dxf).entities, 'both library parts hold the copied objects');
+    await shotBoth('todo111b-library');
+    for (const name of [first, second]) {
+      await libCard(name).locator('[data-testid=lib-menu]').click();
+      page.once('dialog', (d) => d.accept());
+      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+      await libCard(name).waitFor({ state: 'detached' });
+    }
+    await t('lib-search').fill('');
+    await t('panel-main').click();
+    await closeTabs(/./);
+  });
+  await step('TODO 111b: PDF layout paste remembers the base name and copied sheet after switching sheets and closing the source', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/three-sheets.pdf'); await t('bal-sheets').waitFor();
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    await page.locator('[data-sheet="1"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 3');
+    await typeCmd('newlayout'); await page.keyboard.press('Escape');
+    await closeTabs(/three-sheets/);
+    await page.keyboard.press('Control+v');
+    const name = 'three-sheets sheet 2 paste';
+    await page.waitForFunction((nm) => document.querySelector('[data-testid=placed-name]').textContent === nm, name);
+    const lay = layoutFromRaw(await savedDoc());
+    assert.equal(lay.parts[lay.placed[0].partId].name, name);
+    await menuItem('Layout', 'Parts library');
+    await libCard(name).locator('[data-testid=lib-menu]').click();
+    page.once('dialog', (d) => d.accept());
+    await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+    await libCard(name).waitFor({ state: 'detached' });
+    await t('panel-main').click();
+    await closeTabs(/./);
+  });
   await step('TODO 115 / T32: PDF invisible search text stays out; visible text becomes outlines once, with one Undo', async () => {
     await closeTabs(/./);
     await menuItem('File', 'Open…');
@@ -6014,16 +6392,18 @@ try {
     }
   });
 
-  await step('Picture PDF: changing sheets clears undo and redo so Ctrl+Z cannot resize another sheet', async () => {
+  await step('Picture PDF: changing sheets keeps independent Undo and Redo and background scale', async () => {
     await closeTabs(/./);
     page.once('dialog', (d) => d.accept('1'));
     await t('bg-picker').setInputFiles({ name: 'picture-sheets.pdf', mimeType: 'application/pdf', buffer: Buffer.from(writePdf([new Page(80, 50), new Page(120, 90)])) });
     await page.waitForFunction(() => document.querySelector('[data-testid=bg-name]').textContent === 'picture-sheets.pdf');
+    const original = await sizeNow();
     await t('unit-up').click();
+    const enlarged = await sizeNow();
     assert.equal(await t('undo').isDisabled(), false);
     await page.locator('[data-sheet="2"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
-    assert.equal(await t('undo').isDisabled(), true, 'sheet 1 history was cleared');
+    assert.equal(await t('undo').isDisabled(), true, 'unvisited sheet 2 has no history');
     const before = await sizeNow();
     await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), before, 'sheet 2 size stays put');
     await t('unit-up').click(); await page.keyboard.press('Control+z');
@@ -6031,7 +6411,12 @@ try {
     assert.equal(await t('redo').isDisabled(), false);
     await page.locator('[data-sheet="1"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
-    assert.equal(await t('redo').isDisabled(), true, 'sheet 2 redo was cleared');
+    assert.equal(await t('redo').isDisabled(), true, 'sheet 1 has no redo');
+    assert.deepEqual(await sizeNow(), enlarged, 'sheet 1 keeps its background scale');
+    await page.keyboard.press('Control+z'); assert.deepEqual(await sizeNow(), original, 'sheet 1 Undo still works');
+    await page.locator('[data-sheet="2"]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 2');
+    assert.equal(await t('redo').isDisabled(), false, 'sheet 2 redo stays with sheet 2');
     await closeTabs(/./);
   });
 
@@ -7272,7 +7657,7 @@ try {
 
   await step('balloons: Save writes <name>.pdballoons.json next to the drawing (here a download), and opening the PDF with it brings the balloons and the table back', async () => {
     const dls = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
-    assert.deepEqual(dls.map((x) => x.name).sort(), ['insp.dxf', 'insp.pdballoons.json']);
+    assert.deepEqual(dls.map((x) => x.name).sort(), ['insp-sheet1.dxf', 'insp.pdballoons.json']);
     balJson = dls.find((x) => x.name === 'insp.pdballoons.json').text;
     const file = JSON.parse(balJson);
     assert.equal(file.kind, 'project-d-balloons'); assert.equal(file.pages, 2); assert.equal(file.items.length, 6); assert.equal(file.items.find((i) => i.n === 2).dim, '120.0 ±0.1');

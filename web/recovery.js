@@ -2,7 +2,7 @@
 // the user's files and never over them. Every call can fail (private mode, blocked storage, a full disk): the caller catches and the app
 // carries on without recovery.
 //
-// A record: { id (the tab's recovery id), name, path, kind ('drawing' | 'layout'), dxf (the text Save would write), t (ms),
+// A record: { id (the tab or PDF sheet's recovery id), name, path, kind ('drawing' | 'layout'), dxf (the text Save would write), t (ms),
 //             saved, fromFile, fromPdf, acceptedLoss (the tab's Save state, so Save works as before after a recovery) }.
 import { idbStore } from './idbstore.js';
 

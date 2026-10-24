@@ -28,7 +28,7 @@ Session 13 (2026-10-21, PR #8): Text to outlines done (53a–d), grips off on bi
 Sessions 17–18 (2026-10-23/24, PRs #12, #13): Shaping (122, 123 Keep originals), Explode (91), Break Apart (124), Compare
 up to five (114, T49), drag parts onto drawings (T50), PDF title block editor (101).
 Session 19 (2026-10-24): step and repeat grid cell (127), linked dimensions (129), tab keys (118), Ctrl+drag copy (135),
-open a library part as a drawing (116), Clean up greyed buttons (128). **Next:** 117 and 111a (grilled), then open bugs,
+open a library part as a drawing (116), Clean up greyed buttons (128). Session 20 (2026-10-24, PR #15): PDF sheets keep edits + Delete sheet (117), copy / paste between tabs, sheets and layouts (111a, 111b), tables saved as blocks (141). **Next:** 142 (review leftovers), then open bugs,
 then TODO.md "Rakshith's list".
 Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare, theme "Modern SaaS", Offset / Trim /
 Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close

@@ -5,12 +5,13 @@ export const RESERVED = {
   'Ctrl+S': 'Reserved for Save, so saving a drawing stays available.',
   'Ctrl+Shift+S': 'Reserved for Save As.',
   'Ctrl+Z': 'Reserved for Undo.', 'Ctrl+Y': 'Reserved for Redo.', 'Ctrl+Shift+Z': 'Reserved for Redo.',
+  'Ctrl+C': 'Reserved for Copy inside the app.', 'Ctrl+V': 'Reserved for Paste inside the app.',
   Esc: 'Reserved for cancel / close / clear selection.', Delete: 'Reserved for deleting the selection.',
   'Ctrl+D': 'Reserved for Duplicate in a layout.',
   F2: 'Reserved for command history.', F10: 'Reserved for polar tracking.', F11: 'Reserved for object snap tracking.',
   F5: 'Reserved for the desktop reload guard.', 'Ctrl+R': 'Reserved for the desktop reload guard.',
 };
-export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'delete'].includes(name);
+export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'copy', 'paste', 'delete'].includes(name);
 export const aliases = (text) => [...new Set(String(text).toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
 
 /** Canonical modifier order; Meta / Cmd share Ctrl, as in the app's existing handlers. null = malformed. */
@@ -52,6 +53,8 @@ export function bindings(overrides = {}) {
     return [c.name, { alias: Array.isArray(o?.alias) && o.alias.every((a) => typeof a === 'string') ? aliases(o.alias.join(',')) : [...c.alias],
       key: typeof o?.key === 'string' && !fixedKey(c.name) ? normalizeKey(o.key) ?? o.key : c.key }];
   }));
+  // Copy / Paste were assignable before the in-app clipboard existed.
+  for (const [name, b] of Object.entries(bound)) if (!fixedKey(name) && ['Ctrl+C', 'Ctrl+V'].includes(b.key)) b.key = '';
   // Existing own keys win over the newly added tab defaults on upgrade.
   for (const name of ['closetab', 'nexttab', 'previoustab']) {
     if (!Object.hasOwn(overrides?.[name] || {}, 'key') && COMMANDS.some((c) => c.name !== name && typeof overrides?.[c.name]?.key === 'string' && bound[c.name].key === bound[name].key)) bound[name].key = '';

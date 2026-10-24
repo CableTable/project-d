@@ -14,10 +14,11 @@ import * as CL from './cleanup.js';
 import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
+import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
-import { writeDxf, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
+import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
@@ -31,6 +32,7 @@ import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import * as LD from './layoutdoc.js';
 import { dropPart } from './dropin.js';
+import { copySnapshot, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -58,6 +60,7 @@ const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
 const viewStore = idbStore('project-d-view', 'settings', 'view settings');
 const shapingStore = idbStore('project-d-shaping', 'settings', 'Shaping settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
+let clipboard = null;
 function showShortcuts() {
   ui.cmdUI.close();
   openShortcuts(ownBindings, async (draft) => {
@@ -370,6 +373,8 @@ function buildMenus() {
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
+      ['Copy', copySelection, 'Ctrl+C', () => !!editable()?.sel.size],
+      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
@@ -479,7 +484,7 @@ function renderTabs() {
       x.addEventListener('click', (e) => { e.stopPropagation(); closeTab(d); });
       const b = h('button', { class: 'dtab' + (i === state.doc ? ' on' : ''), type: 'button', 'data-kind': d.lay ? 'layout' : 'drawing' },
         d.lay && icon(GRID_ICON, { size: 14 }), h('span', { class: 'tname' }, d.name),
-        d.dirty && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
+        PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
       return b;
     }),
@@ -490,7 +495,7 @@ function renderTabs() {
 }
 
 // ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
-const dirtyDocs = () => state.docs.filter((d) => d.dirty);
+const dirtyDocs = () => state.docs.filter(PS.hasChanges);
 let closeAsk = null, closing = false;
 /** The close prompt over the page → 'save' | 'discard' | 'cancel' (Esc and a click outside are Cancel). */
 function askSaveChanges(dirty) {
@@ -502,6 +507,11 @@ function askSaveChanges(dirty) {
     const dlg = h('div', { class: 'pop-dialog', role: 'alertdialog', 'aria-label': words.title, 'data-testid': 'close-dialog' },
       h('strong', null, words.title),
       words.names.length ? h('div', { class: 'lbl' }, words.names.map((n) => h('div', null, n))) : null,
+      dirty.filter((d) => d.pdf).map((d) => {
+        const sheets = PS.dirtySheets(d), last = sheets.at(-1);
+        const list = sheets.length > 1 ? sheets.slice(0, -1).join(', ') + ' and ' + last : String(last);
+        return h('div', { class: 'lbl' }, (dirty.length > 1 ? d.name + ': ' : '') + `${sheets.length > 1 ? 'Sheets' : 'Sheet'} ${list} ${sheets.length > 1 ? 'have' : 'has'} unsaved edits`);
+      }),
       h('span', { class: 'lbl' }, "Your changes are lost if you don't save them."),
       h('div', { class: 'row end' }, btn('Cancel', 'cancel', 'close-cancel'), btn("Don't save", 'discard', 'close-discard'), save));
     const back = h('div', { class: 'pop-back', 'data-testid': 'close-back' }, dlg);
@@ -515,6 +525,8 @@ function askSaveChanges(dirty) {
 }
 /** May the window close? Asks when a tab has unsaved changes; Save goes through the usual Save for each (a cancelled Save dialog keeps the window open). */
 async function mayClose() {
+  textCommit();
+  if (state.docs.some((d) => d.pdf?.busy)) return false;
   const dirty = dirtyDocs();
   if (!dirty.length) { await dropCopiesNow(state.docs); return true; }
   if (closeAsk || closing) return false;                             // already asking, or saving after a Save
@@ -527,8 +539,7 @@ async function mayClose() {
     const i = state.docs.indexOf(d);
     if (i < 0) continue;
     state.doc = i; showDoc();
-    await save();
-    if (d.dirty) return false;                                       // the Save dialog was cancelled, or Save failed (it said why)
+    if (!(await saveDirtyPages(d))) return false;
   }
   } finally { closing = false; }
   await dropCopiesNow(state.docs);                                   // the window closes at once: wait for the deletes
@@ -546,14 +557,35 @@ function guardClose() {
 }
 
 async function closeTab(d) {
-  if (d.dirty && !(await confirmAsk(d.name + ' has changes that are not saved. Close it anyway?', 'Close without saving', 'warning', 'Keep it open'))) return;
+  if (d.pdf?.busy || closeAsk || closing) return;
+  if (d.pdf?.pages > 1 && PS.hasChanges(d)) {
+    const answer = await askSaveChanges([d]);
+    if (answer === 'cancel') return;
+    if (answer === 'save') {
+      closing = true;
+      try {
+        state.doc = state.docs.indexOf(d); showDoc();
+        if (!(await saveDirtyPages(d))) return;
+      } finally { closing = false; }
+    }
+  } else if (d.dirty && !(await confirmAsk(d.name + ' has changes that are not saved. Close it anyway?', 'Close without saving', 'warning', 'Keep it open'))) return;
   const i = state.docs.indexOf(d);
   if (i < 0) return;
-  dropCopy(d);
+  PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
   if (!state.docs.length) { state.docs.push(emptyDoc()); view.fitted = true; }         // the fresh empty tab is fitted
   state.doc = Math.min(state.doc > i ? state.doc - 1 : state.doc, state.docs.length - 1);
   showDoc();
+}
+
+async function saveDirtyPages(d) {
+  const sheets = d.pdf ? PS.dirtySheets(d) : [null];
+  for (const n of sheets) {
+    if (n != null && n !== d.pdf.page && !(await balSheet(d, n))) return false;
+    await save();
+    if (d.dirty) return false; // A cancelled or failed Save stops the close.
+  }
+  return true;
 }
 
 const curDoc = () => state.docs[state.doc];
@@ -656,9 +688,9 @@ async function openPdf(name, buf, path = null) {
   }
   const raw = r.doc, fl = flatten(raw);
   const base = name.replace(/\.[^.\\/]*$/, ''), dxfName = base + '.dxf';
-  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page, orig: raw.entities, origBlocks: raw.blocks }, ...tabFields(raw, fl) };
+  const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page }, ...tabFields(raw, fl) };
   addTab(doc);
-  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${dxfName}` + (fl.truncated ? '. Too big to show all of it' : ''));
+  note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
   await balLoad(doc, path, name);
 }
 /** Asks a yes / no question (the native dialog in the app, confirm() in a browser). */
@@ -2194,16 +2226,18 @@ function renderLibrary() {
 }
 
 /** Add to sheet: a copy of a saved part on the layout (the open one, else the last one, else a new one), at `at` (sheet mm, y up) or near the middle. */
-function addLibToSheet(rec, at) {
+function addLibToSheet(rec, at, keepPosition = false) {
   const part = libPart(rec);
   if (!part) { note(`${rec.name}: this part could not be read`); return; }
   const existing = targetLayout(), t = existing || freshLayout('Layout 1'), lay = t.lay;
   pushLay(t, null, '', `Add ${part.name}`);
   const i = addPlaced(lay, { ...part }, at);
+  // Paste keeps fractional source coordinates; library drops snap to whole mm.
+  if (keepPosition) { lay.placed[i].x = part.box[0] * part.factor; lay.placed[i].y = part.box[1] * part.factor; }
   t.dirty = true; renderTabs();
   showLayoutTab(t, !existing);
   update(); selectLoose(i);
-  note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${t.name}, on whole mm. ${SHIFT_HINT}`);
+  note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${t.name}, ${keepPosition ? 'at the same coordinates' : 'on whole mm'}. ${SHIFT_HINT}`);
 }
 
 /** A library part dropped on a drawing tab: loose entities at the drop point, 1:1, selected; one Undo takes them away (dropin.js is the maths). */
@@ -2213,7 +2247,7 @@ function dropLibInDrawing(rec, clientX, clientY) {
   try {
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = dropPart(part, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d) }, toDrawing(d, clientX, clientY));
-    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers }, `Add ${rec.name}`);
+    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Add ${rec.name}`);
     if (r.made.length) d.newLayer = r.made[0];
     setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
     renderLayers();
@@ -2277,12 +2311,12 @@ async function extractPart() {
   });
   if (!name) return;
   part.name = name;
-  const bad = unwritable(raw);
+  const report = writeDxfWithReport(part.raw, { escapeUnicode: true });
   libCache.set(part.id, part);
-  const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: LD.partToDxf(part), thumb: thumbFor(part), source: d.name, t: Date.now() });
+  const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: d.name, t: Date.now() });
   d.savedAs = (d.savedAs || []).concat(sizeKey(part.w, part.h));
   renderEdit();
-  note(`Part ${name} saved to the Parts library: ${fmt(part.w)} × ${fmt(part.h)} mm` + (bad.length ? ` (without ${bad.map((b) => b.type + ' ' + b.count).join(', ')})` : '') + (ok ? '' : KEPT_ONLY_NOW));
+  note(`Part ${name} saved to the Parts library: ${fmt(part.w)} × ${fmt(part.h)} mm` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
 }
 const sizeKey = (w, h) => fmt(w) + 'x' + fmt(h);
 
@@ -2378,16 +2412,18 @@ const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : d.raw, d.
 const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
 
 // ---- autosave and recovery (TODO 32) ----
-// Every 2 minutes a copy of each tab with unsaved changes is kept inside the app (recovery.js, IndexedDB): the text Save would write,
+// Every 2 minutes a copy of each tab or PDF sheet with unsaved changes is kept inside the app (recovery.js, IndexedDB): the text Save would write,
 // with the tab's name, path and kind. A copy goes when the tab is saved or closed. At start-up, copies left over (a crash, a power cut)
 // are offered back. Nothing here ever blocks: if storage fails the app simply goes on without recovery.
 // ?autosave=<ms> in the page address sets another interval (the browser test uses it); 120000 (2 minutes) otherwise.
 let autosaving = false;
 function dropCopy(d) {
-  d.autoEnts = d.autoBlocks = d.autoLayers = d.autoDxf = null;
-  if (!d.hasCopy) return;
-  d.hasCopy = false;
-  RC.removeCopy(d.rid).catch(() => {});
+  const r = d.recovery;
+  if (!r) return;
+  r.autoEnts = r.autoBlocks = r.autoLayers = r.autoDxf = null;
+  if (!r.hasCopy) return;
+  r.hasCopy = false;
+  return RC.removeCopy(r.rid).catch(() => {});
 }
 /** Deletes the copies of these tabs and waits for it (the window may close right after). */
 /** The window is closing: no new autosave round, and a copy still being written finishes first, so it is deleted too (up to 2 s). */
@@ -2395,27 +2431,34 @@ let dropping = false;
 const dropCopiesNow = async (docs) => {
   dropping = true;
   for (let i = 0; autosaving && i < 100; i++) await new Promise((r) => setTimeout(r, 20));
-  return Promise.all(docs.filter((d) => d.hasCopy).map((d) => { d.hasCopy = false; return RC.removeCopy(d.rid).catch(() => {}); }));
+  return Promise.all(docs.flatMap(PS.pageStates).map(dropCopy));
 };
-/** One round: a copy of every tab with unsaved changes that changed since its last copy; the copy of a tab that is saved now is dropped. */
+/** One round: copy changed tabs and PDF sheets; drop copies that have been saved. */
 async function autosaveNow() {
   if (autosaving || dropping) return;
   autosaving = true;
   try {
     for (const d of state.docs.slice()) {
-      if (!d.raw && !d.lay) continue;
-      if (!d.dirty) { if (d.hasCopy) { d.hasCopy = false; await RC.removeCopy(d.rid); } continue; }
-      if (!d.lay && d.autoEnts === d.raw.entities && d.autoBlocks === d.raw.blocks && d.autoLayers === d.raw.layers && d.autoTitle === d.titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
-      let dxf;
-      try { dxf = writeDxf(rawForSave(d), { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', d.name, e); continue; }
-      if (d.lay && d.hasCopy && d.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
-      if (d.lay) d.autoDxf = dxf;
-      if (!d.rid) d.rid = uid();
-      await RC.saveCopy({ id: d.rid, name: d.name, path: d.path || null, kind: d.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-        saved: !!d.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!d.acceptedLoss });
-      d.hasCopy = true;
-      if (!d.lay) { d.autoEnts = d.raw.entities; d.autoBlocks = d.raw.blocks; d.autoLayers = d.raw.layers; d.autoTitle = d.titleBlock; }
-      if (!state.docs.includes(d) || !d.dirty) dropCopy(d);                                          // closed or saved while this was being written
+      if (d.pdf?.busy) continue;
+      if (!PS.hasChanges(d)) { await Promise.all(PS.pageStates(d).map(dropCopy)); continue; }
+      for (const n of d.pdf ? PS.sheetNumbers(d.pdf) : [null]) {
+        const page = PS.pageState(d, n);
+        if (!page || (!page.raw && !page.lay)) continue;
+        if (!page.dirty) { await dropCopy(page); continue; }
+        // Shared with the kept page so an in-flight copy still belongs to it after switching sheets.
+        const r = page.recovery || (page.recovery = { rid: uid() + (n == null ? '' : `-sheet${n}`) });
+        const raw = page.raw, titleBlock = d.titleBlock;
+        if (!page.lay && r.autoEnts === raw.entities && r.autoBlocks === raw.blocks && r.autoLayers === raw.layers && r.autoTitle === titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
+        let dxf;
+        try { dxf = writeDxf(rawForSave({ ...page, titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
+        if (page.lay && r.hasCopy && r.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
+        const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
+        await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
+          saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
+        r.hasCopy = true; if (page.lay) r.autoDxf = dxf;
+        if (!page.lay) { r.autoEnts = raw.entities; r.autoBlocks = raw.blocks; r.autoLayers = raw.layers; r.autoTitle = titleBlock; }
+        if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
+      }
     }
   } catch (err) { console.warn('Autosave failed:', err); } finally { autosaving = false; }
 }
@@ -2448,7 +2491,7 @@ async function recoverOne(c) {
     const doc = lay ? { name: c.name, path: c.path, openPath, dirty: true, lay, titleBlock: readTitleBlock(r.doc), fromFile: c.fromFile, saved: c.saved }
       : { name: c.name, path: c.path, openPath, dirty: true, saved: c.saved, fromPdf: c.fromPdf || undefined, acceptedLoss: c.acceptedLoss, ...tabFields(r.doc, r.result) };
     if (lay) lay.name = c.name;
-    doc.rid = c.id; doc.hasCopy = true;                                       // the copy stays until the tab is saved or closed
+    doc.recovery = { rid: c.id, hasCopy: true };                              // the copy stays until the tab is saved or closed
     state.panel = 'main';
     addTab(doc);
     return true;
@@ -2503,11 +2546,11 @@ async function save(forceAs) {
   const source = forceAs && d.openPath;
   const first = (!d.saved || source) && !d.fromPdf && !d.scratch && !lossy && (!d.lay || d.fromFile);
   const base = baseName(dxfName(source ? source.split(/[\\/]/).pop() : d.name));
-  const want = lossy ? base + '-copy.dxf' : first ? base + '-edited.dxf' : dxfName(d.name);
+  const want = d.pdf && !d.path ? baseName(d.pdf.name) + (PS.sheetNumbers(d.pdf).length > 1 ? `-sheet${d.pdf.page}` : '') + '.dxf' : lossy ? base + '-copy.dxf' : first ? base + '-edited.dxf' : dxfName(d.name);
   const ask = forceAs || lossy || first || (d.lay && !d.saved) || (d.scratch && !d.saved);
   const t = window.__TAURI__;
   try {
-    const text = writeDxf(raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
+    const { text, tables, skipped } = writeDxfWithReport(raw, { escapeUnicode: true, extents: d.lay || !d.fl ? null : d.fl.boxes.model });
     let path = d.path, name = d.name;
     if (t && t.dialog && t.dialog.save && t.fs && t.fs.writeTextFile) {
       if (ask || !path) {
@@ -2524,7 +2567,7 @@ async function save(forceAs) {
       await t.fs.writeTextFile(path, text);
       name = path.split(/[\\/]/).pop();
     } else {
-      name = ask ? want : dxfName(d.name);
+      name = ask || !path ? want : dxfName(d.name);
       download(name, text);
     }
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
@@ -2535,10 +2578,10 @@ async function save(forceAs) {
     if (d.lay) d.lay.name = name;
     if (bad.length) d.acceptedLoss = true;
     renderTabs();
-    const without = bad.length ? ' (without ' + bad.map((b) => b.type + ' ' + b.count).join(', ') + ')' : '';
-    if (!balloonsSaved) { note('Saved ' + name + without + '. ' + state.msg); return; }
+    const saveNote = saveReportNote({ tables, skipped });
+    if (!balloonsSaved) { note('Saved ' + name + saveNote + '. ' + state.msg); return; }
     const dir = path ? path.slice(0, Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))) : '';
-    note('Saved ' + name + without + (dir ? ' to ' + dir : '') + (d.bg ? '. The background picture is not saved in the DXF' : ''));
+    note('Saved ' + name + (dir ? ' to ' + dir : '') + saveNote + (d.bg ? '. The background picture is not saved in the DXF' : ''));
   } catch (err) {
     note('Save failed: ' + (err && err.message ? err.message : err));
   }
@@ -3051,6 +3094,7 @@ const DO = {
   newlayout: () => newLayoutTab(), library: () => showLibrary(), open: () => openFile(), save: () => save(false), saveas: () => save(true), pdf: () => exportPdf(), compare: () => cmpStart(),
   undo: () => { const d = editable(); if (d) undo(d); else undoLay(); },
   redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
+  copy: copySelection, paste: pasteSelection,
   history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(),
@@ -3998,7 +4042,42 @@ function partBox(d) {
 const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, ltypes: d.raw.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+function copySelection() {
+  const d = editable();
+  if (!d?.sel.size) { note('Nothing selected to copy'); return; }
+  const name = baseName(d.name) + (d.pdf && PS.sheetNumbers(d.pdf).length > 1 ? ` sheet ${d.pdf.page}` : '');
+  clipboard = copySnapshot(d.raw, d.sel, d.factor, name);
+  note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
+}
+async function pasteSelection() {
+  const d = curDoc();
+  if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
+  if (!d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
+  try {
+    if (d.lay) {
+      const part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
+      if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
+      const bad = unwritable(part.raw);
+      const rec = { id: part.id, name: part.name, w: part.w, h: part.h, dxf: LD.partToDxf(part), thumb: thumbFor(part), source: part.src, t: Date.now() };
+      libCache.set(part.id, part);
+      const saving = libAdd(rec);
+      addLibToSheet(rec, null, true);
+      const ok = await saving;
+      note(`Part ${part.name} saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement` + (bad.length ? ` (without ${bad.map((b) => b.type + ' ' + b.count).join(', ')})` : '') + (ok ? '' : KEPT_ONLY_NOW));
+      return;
+    }
+    const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
+    const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
+    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`);
+    if (r.made.length) d.newLayer = r.made[0];
+    setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
+    renderLayers();
+    const moved = Object.entries(r.moved);
+    note(`Pasted ${r.count} drawing object${r.count === 1 ? '' : 's'} at the same coordinates` +
+      (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
+  } catch (err) { note(`Paste: ${err.message}`); }
+}
 /** The edit index of a tab (pick grid, ends), built on first use and again after a change. */
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
@@ -4085,7 +4164,8 @@ function restoreBg(d, st) {
 }
 function restore(d, st) {
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
-  if ('bl' in st) d.balloons = st.bl;                           // a drawing edit does not carry balloons, an undo step does
+  if (st.ltypes) d.raw.ltypes = st.ltypes;
+  if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
   if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
     d.dirty = true; showDoc(); return;
@@ -4659,26 +4739,50 @@ async function balExport(excel) {
   } catch (err) { note('Export failed: ' + (err && err.message ? err.message : err)); }
 }
 
-// -- sheets: a multi-page PDF is one tab showing one page; the switcher reads another page in (the balloons of every sheet stay in the tab) --
+// -- sheets: visited drawings and their Undo stay in the tab; unvisited pages are read from the PDF --
 async function balSheet(d, n) {
   const P = d.pdf;
-  if (!P || n === P.page || n < 1 || n > P.pages) return false;
-  if (!P.picture && (d.raw.entities !== P.orig || d.raw.blocks !== P.origBlocks) && !(await confirmAsk(`Go to sheet ${n}? The edits made to this sheet's drawing are dropped (the balloons stay).`, 'Go to sheet ' + n))) return false;
+  if (!P || P.busy || n === P.page || !PS.sheetNumbers(P).includes(n)) return false;
+  textCommit();
+  P.busy = true;
   try {
+    let next = P.states?.get(n);
     if (P.picture) {
       const r = await renderPdfPage(P.bytes.slice(0), { page: n, dpi: 150 }), bm = await createImageBitmap(r.canvas);
-      d.bg = { ...d.bg, bitmap: bm, w: bm.width, h: bm.height, mm: r.mmPerPx, x: 0, y: 0 };
-      d.hist = Ed.createHistory();
-    } else {
+      if (!next) { const raw = newDoc(); next = { ...tabFields(raw, flatten(raw)), hist: Ed.createHistory(), name: P.name, path: null, dirty: false }; }
+      next = { ...next, bg: { name: P.name, mm: r.mmPerPx, x: 0, y: 0, visible: true, ...next.bg, bitmap: bm, w: bm.width, h: bm.height } };
+    } else if (!next) {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
-      Object.assign(d, tabFields(r.doc, flatten(r.doc)), { titleBlock: d.titleBlock });
-      d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; P.orig = r.doc.entities; P.origBlocks = r.doc.blocks; warm(d);
+      next = { ...tabFields(r.doc, flatten(r.doc)), hist: Ed.createHistory(), name: P.name.replace(/\.[^.]*$/, '.dxf'), path: null, dirty: false };
     }
+    PS.keepPage(d);
+    if (P.picture) d.bg?.bitmap?.close();
+    Object.assign(d, PS.pageFields(next));
+    d.sel = new Set(); d.hl = []; d.ed = d.outl = d.hidC = d.txtMemo = d.gripCache = d.cAn = d.cRes = d.gaps = d.duplicates = d.txoSel = d.lastPick = d.newLayer = null;
+    P.page = n;
   } catch (err) { note(`Sheet ${n}: could not read this page (${err && err.message ? err.message : err})`); return false; }
-  P.page = n; state.balSel = null; view.fitted = true;
+  finally { P.busy = false; }
+  state.balSel = null; state.drawDoc = state.modDoc = null; view.fitted = true;
   showDoc();
-  note(`Sheet ${n} of ${P.pages}. The balloons of the other sheets are in the table`);
+  warm(d);
+  note(`Sheet ${n} of ${PS.sheetNumbers(P).length}. The balloons of the other sheets are in the table`);
   return true;
+}
+
+async function deleteSheet(d) {
+  const P = d?.pdf, n = P?.page, next = P && PS.withoutSheet(P, n);
+  if (!next || P.busy) return;
+  if (!(await confirmAsk(`Delete sheet ${n} from this tab? The PDF on disk is not changed. This cannot be undone.`, 'Delete sheet', 'warning', 'Cancel'))) return;
+  if (!(await balSheet(d, next.page))) return;
+  dropCopy(P.states.get(n));
+  P.sheets = next.sheets; P.states.delete(n);
+  if (balOf(d).items.some((it) => it.sheet === n)) {
+    d.balloons = { ...balOf(d), items: balOf(d).items.filter((it) => it.sheet !== n) };
+    d.dirty = true;
+  }
+  state.balSel = null;
+  showDoc();
+  note(`Deleted sheet ${n} from this tab. The PDF on disk is not changed`);
 }
 
 // -- the sidecar: <name>.pdballoons.json next to the file; read when the file opens, written by Save --
@@ -4808,7 +4912,7 @@ function renderBalloons() {
   const d = editable(), set = d ? balOf(d) : BAL.EMPTY, lib = state.panel === 'library';
   if (state.balSel != null && !(d && balItem(d, state.balSel))) state.balSel = null;
   const sel = d && balSelItem(d), tool = state.tool === 'balloon', show = !!d && (set.items.length > 0 || tool), P = d && d.pdf;
-  const pages = Math.max(P ? P.pages : 1, ...set.items.map((it) => it.sheet));
+  const sheets = P ? PS.sheetNumbers(P) : Array.from({ length: Math.max(1, ...set.items.map((it) => it.sheet)) }, (_, i) => i + 1);
   ui.balDock.hidden = !show;
   ui.balDock.classList.toggle('collapsed', state.balDock.collapsed);
   ui.balDock.style.height = state.balDock.collapsed ? '' : state.balDock.h + 'px';
@@ -4825,9 +4929,9 @@ function renderBalloons() {
     ui.balPickBtn.title = text ? 'Fill the dimension from the text under the arrow' : 'This page is a picture: no text to pick from';
   }
   if (show) {
-    const opts = [['all', 'All sheets'], ...Array.from({ length: pages }, (_, i) => [String(i + 1), 'Sheet ' + (i + 1)])];
+    const opts = [['all', 'All sheets'], ...sheets.map((n) => [String(n), 'Sheet ' + n])];
     if (!opts.some((o) => o[0] === state.balDock.sheet)) state.balDock.sheet = 'all';
-    if (ui.balFilter.dataset.sig !== opts.length + ':' + pages) { ui.balFilter.replaceChildren(...opts.map(([v, text]) => h('option', { value: v }, text))); ui.balFilter.dataset.sig = opts.length + ':' + pages; }
+    if (ui.balFilter.dataset.sig !== sheets.join(',')) { ui.balFilter.replaceChildren(...opts.map(([v, text]) => h('option', { value: v }, text))); ui.balFilter.dataset.sig = sheets.join(','); }
     ui.balFilter.value = state.balDock.sheet;
     const list = BAL.rows(set, state.balDock.sheet === 'all' ? null : +state.balDock.sheet);
     ui.balCount.textContent = String(set.items.length);
@@ -4841,17 +4945,18 @@ function renderBalloons() {
   ui.balPic.hidden = !(d && tool && !balTexts(d).length);
   ui.balSheets.hidden = !(P && P.pages > 1);
   if (!ui.balSheets.hidden) {
-    const key = P.page + ':' + P.pages + ':' + P.name;
+    const key = P.page + ':' + sheets.join(',') + ':' + P.name;
     if (ui.balSheets.dataset.sig !== key) {
       ui.balSheets.dataset.sig = key;
       const go = (n) => balSheet(editable(), n);
-      const pick = P.pages <= 6 ? h('div', { class: 'grp', role: 'group', 'aria-label': 'Sheets' }, Array.from({ length: P.pages }, (_, i) => h('button', { class: 'seg' + (i + 1 === P.page ? ' on' : ''), type: 'button', 'data-sheet': i + 1, 'aria-pressed': String(i + 1 === P.page), onclick: () => go(i + 1) }, 'Sheet ' + (i + 1))))
-        : (() => { const sl = h('select', { class: 'fld', 'aria-label': 'Sheets', 'data-testid': 'bal-sheet-select' }, Array.from({ length: P.pages }, (_, i) => h('option', { value: i + 1 }, 'Sheet ' + (i + 1)))); sl.value = String(P.page); sl.addEventListener('change', () => go(+sl.value)); return sl; })();
-      ui.balSheets.replaceChildren(h('span', { class: 'lbl' }, `${P.name} · ${P.pages} pages`), pick);
+      const pick = sheets.length <= 6 ? h('div', { class: 'grp', role: 'group', 'aria-label': 'Sheets' }, sheets.map((n) => h('button', { class: 'seg' + (n === P.page ? ' on' : ''), type: 'button', 'data-sheet': n, 'aria-pressed': String(n === P.page), onclick: () => go(n) }, 'Sheet ' + n)))
+        : (() => { const sl = h('select', { class: 'fld', 'aria-label': 'Sheets', 'data-testid': 'bal-sheet-select' }, sheets.map((n) => h('option', { value: n }, 'Sheet ' + n))); sl.value = String(P.page); sl.addEventListener('change', () => go(+sl.value)); return sl; })();
+      ui.balSheets.replaceChildren(h('span', { class: 'lbl' }, `${P.name} · ${sheets.length} pages`), pick,
+        h('button', { class: 'btn', type: 'button', 'data-testid': 'delete-sheet', disabled: sheets.length === 1, onclick: () => deleteSheet(editable()) }, 'Delete sheet'));
     }
   }
   ui.sheetChip.hidden = !(P && P.pages > 1);
-  if (P) ui.sheetChip.textContent = `Sheet ${P.page} / ${P.pages}`;
+  if (P) ui.sheetChip.textContent = `Sheet ${P.page} / ${sheets.length}`;
 }
 
 // ---- Leader (TODO 28, leader.js; mock-up R8c): click the shape, click the next point (once more for a second segment, or Enter), type the note where it lands ----
@@ -5834,6 +5939,10 @@ function editKey(e) {
   }
   const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
   const inField = e.target && e.target.closest && e.target.closest('input, textarea, select');
+  if (key === 'Ctrl+C' || key === 'Ctrl+V') {
+    if (inField || e.target?.isContentEditable) return;
+    e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else pasteSelection(); return;
+  }
   if (own && (!inField || own.name === 'properties')) { e.preventDefault(); runCommand(own); return; }       // Properties' key works in a field too, as Ctrl+1 always did
   if (inField) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
