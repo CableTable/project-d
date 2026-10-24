@@ -209,6 +209,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
     111a. ✅ (his call 2026-10-24, queued after 117) Ctrl+C / Ctrl+V of drawing objects inside the app: between drawing tabs and between the sheets of a PDF tab; a paste lands at the same position, one Undo. Not from other programs (rest of 111 later).
+    111b. (his call 2026-10-24, grilled) Ctrl+V on a layout tab: the copied objects become a new Parts library part "<source tab> paste" (numbered on a clash), placed at the same mm position on the layout sheet, selected; one Undo removes the placement, the library part stays.
 112. ✅ (built, session 16) **Compare, manual mode: no snapping** (S, bug, T29): see T29 in support/tickets.md. Grill first.
 113. ✅ (built, session 16) **Compare runs constantly: make it a toggle or a run-once button** (S, bug, T30): see T30 in support/tickets.md. Grill first.
 114. ✅ (built, session 17) **Compare: choose which drawings, more than two, from Parts library or drawing tabs** (M, ask, T31): up to five snapshots from tabs, the Parts library or disk; first ticked reference, visibility, per-item differences and measurement table.
