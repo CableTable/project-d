@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import * as E from './web/edit.js';
 import { dragGrip } from './web/grips.js';
-import { flatten } from './web/drawing.js';
+import { flatten, readDxf } from './web/drawing.js';
 import { followDimensions } from './web/linked-dimensions.js';
 
 function drawing(shape, params, kind = 'aligned', factor = 1) {
@@ -73,12 +73,12 @@ test('Linear dimensions retain their axis even when initially indistinguishable 
   }
 });
 
-test('free dimensions and near misses stay put; tolerance is 1e-9 mm, including inch drawings', () => {
+test('free dimensions and near misses stay put; tolerance is 2e-6 drawing units, in inch drawings too', () => {
   for (const factor of [1, 25.4]) {
-    const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 2e-9 / factor], b: [100, 2e-9 / factor] }, 'aligned', factor);
+    const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 5e-6], b: [100, 5e-6] }, 'aligned', factor);
     const next = followDimensions(raw, E.moveEntities(raw, new Set([0]), 5, 7), factor);
     assert.equal(next.blocks, raw.blocks, 'outside tolerance is not linked');
-    const exact = drawing(W.line(0, 0, 100, 0), { a: [0, 0.1e-9 / factor], b: [100, 0.1e-9 / factor] }, 'aligned', factor);
+    const exact = drawing(W.line(0, 0, 100, 0), { a: [0, 1e-6], b: [100, 1e-6] }, 'aligned', factor);
     const followed = followDimensions(exact, E.moveEntities(exact, new Set([0]), 5, 7), factor);
     point(model(followed).params.a, [5, 7]);
   }
@@ -217,4 +217,41 @@ test('angle at a rectangle corner follows a grip drag of the corner; a vertex of
   point(p.v, [150, 20]); close(p.a0, 180 - Math.atan2(60, 30) * 180 / Math.PI); close(p.a1, 180);
   const unlinked = drawing(W.lwpoly(square, { closed: true }), { v: [121, 20], r: 15, a0: 90, a1: 180 }, 'angle');
   assert.equal(grip(unlinked, 'v1', [150, 20]).blocks, unlinked.blocks);
+});
+
+// TODO 129c: a saved drawing read back keeps its links (DXF holds 6 decimals; the dimension blocks are rebuilt through arithmetic).
+const like = (a, b) => a.forEach((v, k) => assert.ok(Math.abs(v - b[k]) < 1e-5, `${a} != ${b}`));   // what a file holds is good to 6 decimals
+const reopen = (raw) => readDxf(W.writeDxf(raw));
+const gripAt = (raw, i, id, to) => followDimensions(raw, {
+  entities: raw.entities.map((e, k) => k === i ? dragGrip(e, id, to).ent : e), blocks: raw.blocks
+});
+
+test('TODO 129c: aligned dimension of an odd-valued rectangle follows a grip drag after save and reopen', () => {
+  const raw = drawing(W.lwpoly([[20.1234567, 20], [120.3333333, 20], [120, 80.7777], [20, 80]], { closed: true }), { a: [120.3333333, 20], b: [120, 80.7777] });
+  const back = reopen(raw), next = gripAt(back, 0, 'v2', [150, 100]), p = model(next).params;
+  assert.notEqual(next.blocks, back.blocks);
+  like(p.a, [120.333333, 20]); like(p.b, [150, 100]);
+  assert.equal(label(next), Math.hypot(150 - 120.333333, 80).toFixed(3));
+});
+
+test('TODO 129c: radius, diameter and angle dimensions follow Move after save and reopen', () => {
+  const circ = W.circle(50.123456789, 40.5, 10.3333333);
+  const rad = reopen(drawing(circ, { c: [50.123456789, 40.5], r: 10.3333333, p: [70, 40] }, 'radius'));
+  like(model(followDimensions(rad, E.moveEntities(rad, new Set([0]), 5, 7))).params.c, [55.123457, 47.5]);
+  const dia = reopen(drawing(circ, { a: [39.790123, 40.5], b: [60.456789, 40.5] }, 'diameter'));
+  like(model(followDimensions(dia, E.moveEntities(dia, new Set([0]), 5, 7))).params.a, [44.790123, 47.5]);
+  const ang = W.newDoc(4);
+  W.addEntities(ang, W.line(0, 0, 100, 37), W.line(0, 0, 10, 90));
+  Object.assign(ang, E.addDimension(ang, E.buildDim('angle', { textH: 2, v: [0, 0], r: 30, a0: Math.atan2(37, 100) * 180 / Math.PI, a1: Math.atan2(90, 10) * 180 / Math.PI }, 1, 'PD_DIM_A1', 3)));
+  const back = reopen(ang), moved = followDimensions(back, E.moveEntities(back, new Set([0, 1]), 5, 7));
+  assert.notEqual(moved.blocks, back.blocks);
+  like(E.dimOfEntity(moved, 2).params.v, [5, 7]);
+});
+
+test('TODO 129c: a link survives two saves, and a shape far from the dimension still does not link', () => {
+  const raw = drawing(W.circle(50.123456789, 40.5, 10.3333333), { c: [50.123456789, 40.5], r: 10.3333333, p: [70, 40] }, 'radius');
+  const twice = reopen(reopen(raw));
+  like(model(followDimensions(twice, E.moveEntities(twice, new Set([0]), 1, 1))).params.c, [51.123457, 41.5]);
+  const off = reopen(drawing(W.circle(50, 40, 10), { c: [50.00001, 40], r: 10, p: [70, 40] }, 'radius'));
+  assert.equal(followDimensions(off, E.moveEntities(off, new Set([0]), 1, 1)).blocks, off.blocks);
 });

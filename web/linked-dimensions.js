@@ -22,6 +22,9 @@ function parts(raw, entities) {
   return byEnt;
 }
 
+// A dimension read back from a file is off its shape by the DXF's 6 decimals (shape points rounded, the dimension block rebuilt through arithmetic): matching is this loose, in drawing units; moving is judged exactly.
+const LINK_TOL = 2e-6, LINK_ANGLE = 1e-7;
+const fits = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= LINK_TOL;
 const near = (a, b, factor) => Math.hypot(a[0] - b[0], a[1] - b[1]) * factor <= 1e-9;
 const arcMoved = ([f, t], factor) => !near(f.c, t.c, factor) || Math.abs(f.r - t.r) * factor > 1e-9;
 const segMoved = ([f, t], factor) => f.some((v, i) => Math.abs(v - t[i]) * factor > 1e-9);
@@ -44,8 +47,8 @@ function followPoints(dim, params, m, nm, paper, ctx) {
   for (const key of ['a', 'b']) {
     const p = mapply(m, ...dim.params[key]);
     end[key] = {
-      shared: stationary.some(([q, ps]) => ps === paper && near(q, p, factor)),
-      match: moves.find(([from, , ps]) => ps === paper && near(from, p, factor)),
+      shared: stationary.some(([q, ps]) => ps === paper && fits(q, p)),
+      match: moves.find(([from, , ps]) => ps === paper && fits(from, p)),
     };
   }
   for (const [key, other] of [['a', 'b'], ['b', 'a']]) {
@@ -66,7 +69,7 @@ function followCircle(dim, params, m, nm, paper, ctx) {
     c = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; R = Math.hypot(b[0] - a[0], b[1] - a[1]) / 2;
   }
   // shortcut: two stacked circles with the same centre and radius are ambiguous, so the dimension stays; upgrade if duplicates must follow
-  const hit = ctx.arcs.filter(([f, , ps]) => ps === paper && near(f.c, c, factor) && Math.abs(f.r - R) * factor <= 1e-9);
+  const hit = ctx.arcs.filter(([f, , ps]) => ps === paper && fits(f.c, c) && Math.abs(f.r - R) <= LINK_TOL);
   if (hit.length !== 1 || !arcMoved(hit[0], factor)) return false;
   const [f, t] = hit[0], k = t.r / f.r;
   if (radius) {
@@ -87,8 +90,8 @@ function followAngle(dim, params, m, nm, paper, ctx) {
     const u = [Math.cos(a * DEG + rot), Math.sin(a * DEG + rot)];
     const hit = ctx.segs.filter(([f, , ps]) => {
       const d = [f[2] - f[0], f[3] - f[1]], len = Math.hypot(...d);
-      return ps === paper && Math.abs(d[0] * u[1] - d[1] * u[0]) / len <= 1e-9 &&
-        Math.abs((v[0] - f[0]) * d[1] - (v[1] - f[1]) * d[0]) / len * factor <= 1e-7;
+      return ps === paper && Math.abs(d[0] * u[1] - d[1] * u[0]) / len <= LINK_ANGLE &&
+        Math.abs((v[0] - f[0]) * d[1] - (v[1] - f[1]) * d[0]) / len <= LINK_TOL;
     });
     if (hit.length !== 1) return false;       // shortcut: collinear pieces are ambiguous, the dimension stays; upgrade if polylines with collinear sides must follow
     const [f, t] = hit[0], sign = Math.sign((f[2] - f[0]) * u[0] + (f[3] - f[1]) * u[1]);

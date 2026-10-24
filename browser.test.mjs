@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
-import { dimParams, readDim, dimGeom, GAP_MARK_CAP } from './web/edit.js';
+import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
 import { read as readLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
@@ -10031,6 +10031,24 @@ try {
     const undone = await savedDoc();
     assert.deepEqual(undone.entities, before.entities, 'one Undo restores the circle');
     assert.deepEqual(undone.blocks.PD_DIM_R1, before.blocks.PD_DIM_R1, 'and its dimension');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 129c: a radius dimension in a reopened file (6-decimal numbers) still follows its circle', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, [dxfCircle(60.123456789, 60.987654321, 20.3333333)]);
+    Object.assign(raw, addDimension(raw, buildDim('radius', { textH: 2, c: [60.123456789, 60.987654321], r: 20.3333333, p: [80, 61] }, 1, 'PD_DIM_R1', 2)));
+    await t('picker').setInputFiles({ name: 'reopened-radius.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'reopened-radius.dxf');
+    const before = await savedDoc();
+    await pick(60, 81, 5);
+    await dragGripTo('0:c', 75, 75); await frames();
+    const after = await savedDoc(), dim = readDim('PD_DIM_R1', after.blocks.PD_DIM_R1);
+    const centre = [fieldOf(after.entities[0], 10), fieldOf(after.entities[0], 20)];
+    assert.ok(Math.hypot(centre[0] - 60.123457, centre[1] - 60.987654) > 5, 'the circle moved: ' + centre);
+    assert.ok(Math.hypot(dim.params.c[0] - centre[0], dim.params.c[1] - centre[1]) < 1e-5, 'the dimension centre follows the circle');
+    assert.notDeepEqual(after.blocks.PD_DIM_R1, before.blocks.PD_DIM_R1);
     await closeTabs(/./);
   });
 
