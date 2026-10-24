@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { copySnapshot, pasteSnapshot } from './web/clipboard.js';
+import { copySnapshot, pasteSnapshot, partFromSnapshot } from './web/clipboard.js';
 import { newDoc, addEntities, addLayer, addBlock, line, circle, insert, entity, writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { addDimension, buildDim, readDim, createHistory, moveEntities } from './web/edit.js';
@@ -8,7 +8,32 @@ import * as LR from './web/leader.js';
 
 const field = (e, c) => e.r.v[e.r.c.indexOf(c)];
 const target = (raw = newDoc(4), factor = 1, space = 0) => ({ raw, factor, space, dp: 2, names: Object.keys(raw.layers), hidden: [], locked: [], cur: '0' });
-const copyAll = (raw, factor = 1) => copySnapshot(raw, new Set(raw.entities.map((_, i) => i)), factor);
+const copyAll = (raw, factor = 1) => copySnapshot(raw, new Set(raw.entities.map((_, i) => i)), factor, 'source.dxf');
+
+test('a layout paste keeps the copied source name, gets an unused library name, and owns its extracted drawing', () => {
+  const raw = newDoc(1); addEntities(raw, circle(2.25, 3.5, 0.5));
+  const snapshot = copySnapshot(raw, new Set([0]), 25.4, 'Source <b>.dxf'), before = structuredClone(snapshot);
+  const first = partFromSnapshot(snapshot, 'one', []);
+  assert.equal(first.name, 'Source <b>.dxf paste'); assert.equal(first.src, 'Source <b>.dxf');
+  assert.equal(first.factor, 25.4); assert.deepEqual(first.box, [1.75, 3, 2.75, 4]);
+  assert.equal(first.w, 25.4); assert.equal(first.h, 25.4);
+  const second = partFromSnapshot(snapshot, 'two', ['SOURCE <B>.DXF PASTE']);
+  assert.equal(second.name, 'Source <b>.dxf paste 2');
+  assert.equal(partFromSnapshot(snapshot, 'three', [first.name, second.name]).name, 'Source <b>.dxf paste 3');
+  first.raw.entities[0].r.v[0] = 'changed';
+  assert.deepEqual(snapshot, before); assert.deepEqual(second.raw.entities, snapshot.raw.entities);
+});
+
+test('layout paste follows extraction: kept dimensions are excluded; a dimension-only clipboard has no part', () => {
+  let raw = newDoc(4);
+  raw = { ...raw, ...addDimension(raw, buildDim('radius', { c: [20, 30], r: 5, p: [40, 30] }, 1, 'PD_DIM_R1', 2)) };
+  const dims = copySnapshot(raw, new Set([0]), 1, 'dimensions.dxf');
+  assert.equal(partFromSnapshot(dims, 'none', []), null);
+  addEntities(raw, circle(20, 30, 5));
+  const mixed = partFromSnapshot(copyAll(raw), 'outline', []);
+  assert.equal(mixed.raw.entities.length, 1); assert.equal(mixed.raw.entities[0].type, 'CIRCLE');
+  assert.deepEqual(mixed.raw.blocks, {});
+});
 
 test('snapshot keeps only the selected objects and their nested blocks; paste is independent, same coordinates, one Undo', () => {
   const raw = newDoc(4);
@@ -16,7 +41,7 @@ test('snapshot keeps only the selected objects and their nested blocks; paste is
   addBlock(raw, 'PARENT', [insert('CHILD', 1, 2)]);
   addBlock(raw, 'UNUSED', [line(0, 0, 1, 1)]);
   addEntities(raw, insert('PARENT', 20, 30), line(40, 50, 60, 70));
-  const snapshot = copySnapshot(raw, new Set([0]), 1), original = structuredClone(snapshot);
+  const snapshot = copySnapshot(raw, new Set([0]), 1, 'source.dxf'), original = structuredClone(snapshot);
   raw.blocks.CHILD.entities[0].r.v[raw.blocks.CHILD.entities[0].r.c.indexOf(40)] = '99';
   raw.entities.length = 0;
   const t = target(), before = structuredClone(t.raw), r = pasteSnapshot(snapshot, t);

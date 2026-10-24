@@ -1,11 +1,20 @@
 // In-app drawing snapshots and same-coordinate paste; no browser clipboard access.
-import { blocksUsed } from './layoutdoc.js';
+import { blocksUsed, extractRaw, makePart } from './layoutdoc.js';
 import { dropPart } from './dropin.js';
 import { relabelDims, DIM_BLOCK, LDR_BLOCK } from './edit.js';
 
-export function copySnapshot(raw, selection, factor) {
+export function copySnapshot(raw, selection, factor, name) {
   const entities = raw.entities.filter((_, i) => selection.has(i));
-  return structuredClone({ raw: { ...raw, entities, blocks: blocksUsed(raw.blocks, entities) }, factor });
+  return structuredClone({ raw: { ...raw, entities, blocks: blocksUsed(raw.blocks, entities) }, factor, name });
+}
+
+/** The clipboard as a new extracted part, with its source name and an unused library name. */
+export function partFromSnapshot(snapshot, id, taken) {
+  const base = `${snapshot.name} paste`, names = new Set(taken.map((n) => n.toLowerCase()));
+  let name = base;
+  for (let n = 2; names.has(name.toLowerCase()); n++) name = `${base} ${n}`;
+  const raw = extractRaw(structuredClone(snapshot.raw), null);
+  return raw && makePart(id, name, raw, snapshot.factor, snapshot.name);
 }
 
 export function pasteSnapshot(snapshot, target) {

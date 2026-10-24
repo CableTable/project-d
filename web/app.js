@@ -32,7 +32,7 @@ import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import * as LD from './layoutdoc.js';
 import { dropPart } from './dropin.js';
-import { copySnapshot, pasteSnapshot } from './clipboard.js';
+import { copySnapshot, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -374,7 +374,7 @@ function buildMenus() {
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
       ['Copy', copySelection, 'Ctrl+C', () => !!editable()?.sel.size],
-      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && !!editable()],
+      ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
@@ -2226,16 +2226,18 @@ function renderLibrary() {
 }
 
 /** Add to sheet: a copy of a saved part on the layout (the open one, else the last one, else a new one), at `at` (sheet mm, y up) or near the middle. */
-function addLibToSheet(rec, at) {
+function addLibToSheet(rec, at, keepPosition = false) {
   const part = libPart(rec);
   if (!part) { note(`${rec.name}: this part could not be read`); return; }
   const existing = targetLayout(), t = existing || freshLayout('Layout 1'), lay = t.lay;
   pushLay(t, null, '', `Add ${part.name}`);
   const i = addPlaced(lay, { ...part }, at);
+  // Paste keeps fractional source coordinates; library drops snap to whole mm.
+  if (keepPosition) { lay.placed[i].x = part.box[0] * part.factor; lay.placed[i].y = part.box[1] * part.factor; }
   t.dirty = true; renderTabs();
   showLayoutTab(t, !existing);
   update(); selectLoose(i);
-  note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${t.name}, on whole mm. ${SHIFT_HINT}`);
+  note(`${rec.name} (${fmt(rec.w)} × ${fmt(rec.h)} mm) added to ${t.name}, ${keepPosition ? 'at the same coordinates' : 'on whole mm'}. ${SHIFT_HINT}`);
 }
 
 /** A library part dropped on a drawing tab: loose entities at the drop point, 1:1, selected; one Undo takes them away (dropin.js is the maths). */
@@ -4048,14 +4050,26 @@ const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, lay
 function copySelection() {
   const d = editable();
   if (!d?.sel.size) { note('Nothing selected to copy'); return; }
-  clipboard = copySnapshot(d.raw, d.sel, d.factor);
+  clipboard = copySnapshot(d.raw, d.sel, d.factor, d.name);
   note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
 }
-function pasteSelection() {
-  const d = editable();
-  if (!d) { note('Paste works on drawing tabs and PDF sheets'); return; }
+async function pasteSelection() {
+  const d = curDoc();
   if (!clipboard) { note('Nothing to paste: copy drawing objects first'); return; }
+  if (!d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
   try {
+    if (d.lay) {
+      const part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
+      if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
+      const bad = unwritable(part.raw);
+      const rec = { id: part.id, name: part.name, w: part.w, h: part.h, dxf: LD.partToDxf(part), thumb: thumbFor(part), source: part.src, t: Date.now() };
+      libCache.set(part.id, part);
+      const saving = libAdd(rec);
+      addLibToSheet(rec, null, true);
+      const ok = await saving;
+      note(`Part ${part.name} saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement` + (bad.length ? ` (without ${bad.map((b) => b.type + ' ' + b.count).join(', ')})` : '') + (ok ? '' : KEPT_ONLY_NOW));
+      return;
+    }
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
     commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`);

@@ -4624,7 +4624,7 @@ try {
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
-  await step('TODO 111a: copy between drawing tabs at the same coordinates, selected and one Undo; private dimension blocks; PDF sheet 1 to 2; layout note', async () => {
+  await step('TODO 111a: copy between drawing tabs at the same coordinates, selected and one Undo; private dimension blocks; PDF sheet 1 to 2', async () => {
     await closeTabs(/./);
     const editItem = (name) => page.getByRole('menuitem', { name, exact: true });
     const open = async (name, raw) => {
@@ -4692,11 +4692,6 @@ try {
       const e = new KeyboardEvent('keydown', { key, ctrlKey: true, bubbles: true, cancelable: true }); input.dispatchEvent(e); return e.defaultPrevented;
     })), [false, false], 'command-bar copy/paste stays native');
     await page.keyboard.press('Escape');
-    await typeCmd('newlayout'); await page.keyboard.press('Escape');
-    await page.keyboard.press('Control+v');
-    assert.equal(await prompt(), 'Paste works on drawing tabs and PDF sheets');
-    await page.locator('[data-menu=Edit]').click(); assert.equal(await editItem('Paste').isDisabled(), true);
-    await page.keyboard.press('Escape');
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/three-sheets.pdf'); await t('bal-sheets').waitFor();
     await typeCmd('c'); await typeCmd('60,60'); await typeCmd('7');
@@ -4714,6 +4709,52 @@ try {
     await page.locator('[data-sheet="1"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 3');
     assert.deepEqual((await savedDoc()).entities, sheet1.entities, 'sheet 2 paste and Undo leave sheet 1 alone');
+    await closeTabs(/./);
+  });
+  await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
+    await closeTabs(/./);
+    const name = '111b <img src=x>.dxf', first = `${name} paste`, second = `${first} 2`;
+    const raw = newDoc(1); addEntities(raw, dxfCircle(6.25, 5.5, 2.5));
+    await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    await typeCmd('newlayout'); await page.keyboard.press('Escape');
+    await closeTabs(/111b/);
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Paste', exact: true }).isDisabled(), false);
+    await page.keyboard.press('Escape');
+    const parts = () => page.evaluate(async () => (await import('./partstore.js')).loadParts());
+    const placed = async (nm) => {
+      await page.waitForFunction((name) => document.querySelector('[data-testid=placed-name]').textContent === name, nm);
+      assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 1, 'the pasted part is selected');
+      const lay = layoutFromRaw(await savedDoc()), pl = lay.placed[0], part = lay.parts[pl.partId];
+      assert.equal(lay.placed.length, 1); assert.equal(part.name, nm);
+      for (const [actual, want] of [[pl.x, 95.25], [pl.y, 76.2], [part.w, 127], [part.h, 127]]) assert.ok(Math.abs(actual - want) < 1e-6, `${actual} should be ${want}`);
+    };
+    await page.keyboard.press('Control+v'); await placed(first);
+    await shotBoth('todo111b-layout');
+    await page.keyboard.press('Control+z');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 0, 'one Undo removes only the placement');
+    assert.ok((await parts()).some((p) => p.name === first), 'the library part survives Undo');
+    await menuItem('Edit', 'Paste'); await placed(second);
+    await page.keyboard.press('Control+z');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 0);
+    await menuItem('Layout', 'Parts library');
+    await t('lib-search').fill('111b');
+    assert.deepEqual(await page.locator('[data-testid=lib-list] .cname').allTextContents(), [first, second]);
+    assert.equal(await page.locator('[data-testid=lib-list] .cname img').count(), 0, 'source tab names stay literal text');
+    const saved = (await parts()).filter((p) => p.name === first || p.name === second);
+    assert.equal(saved.length, 2); assert.ok(saved.every((p) => p.source === name));
+    assert.deepEqual(readDxf(saved[0].dxf).entities, readDxf(saved[1].dxf).entities, 'both library parts hold the copied objects');
+    await shotBoth('todo111b-library');
+    for (const name of [first, second]) {
+      await libCard(name).locator('[data-testid=lib-menu]').click();
+      page.once('dialog', (d) => d.accept());
+      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+      await libCard(name).waitFor({ state: 'detached' });
+    }
+    await t('lib-search').fill('');
+    await t('panel-main').click();
     await closeTabs(/./);
   });
   await step('TODO 115 / T32: PDF invisible search text stays out; visible text becomes outlines once, with one Undo', async () => {
