@@ -6990,7 +6990,9 @@ async function init() {
     if (document.querySelector('.pop-back, .pdlg-back')) return;
     const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key);
     if (!['closetab', 'nexttab', 'previoustab'].includes(cmd?.name)) return;
-    e.preventDefault(); e.stopPropagation(); runCommand(cmd);
+    e.preventDefault(); e.stopPropagation();
+    if (cmd.name === 'closetab' && e.repeat) return;
+    textCommit(); runCommand(cmd);
   }, true);                                               // tab keys also work in fields that handle their own keys
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits

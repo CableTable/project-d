@@ -85,7 +85,7 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
-  await step('TODO 118: tab keys wrap, work in fields and command bar, respect dialogs and own keys, Cancel keeps a changed tab', async () => {
+  await step('TODO 118: tab keys wrap, work in fields and command bar, respect dialogs and own keys, commit Text before close/switch, ignore repeated close, Cancel keeps text', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage();
     p.on('pageerror', (e) => errors.push(String(e)));
@@ -150,6 +150,32 @@ try {
       for (let i = 0; i < count - 1; i++) await p.keyboard.press('Control+w');
       assert.equal(await tabs.count(), 1); assert.equal(await active(), 'Drawing 1', 'last close creates fresh drawing');
       assert.equal(await p.locator('.dtab.on .dot').count(), 0);
+      await p.locator('[data-testid=new-tab]').click();
+      await p.locator('[data-testid=new-tab]').click();
+      await p.keyboard.down('Control'); await p.keyboard.down('w');
+      assert.equal(await tabs.count(), 2, 'first close keydown closes one clean tab');
+      await p.keyboard.down('w');
+      assert.equal(await tabs.count(), 2, 'repeated close keydown keeps the remaining tabs');
+      await p.keyboard.up('w'); await p.keyboard.up('Control');
+      const textTab = await active();
+      await p.locator('[data-tool=text]').click(); await p.mouse.click(500, 400);
+      await p.locator('[data-testid=text-editor]').waitFor(); await p.keyboard.type('Keep this text');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 0, 'typing has not committed yet');
+      assert.match(await cancelledClose(() => p.keyboard.press('Control+w')), /changes.*not saved/);
+      assert.equal(await tabs.count(), 2); assert.equal(await active(), textTab, 'Cancel keeps the text tab');
+      assert.equal(await p.locator('[data-testid=text-edit-box]').isVisible(), false);
+      assert.equal(Number((await p.locator('[data-testid=entities]').textContent()).replace(/\D+/g, '')), 1);
+      await p.mouse.click(600, 500);
+      await p.locator('[data-testid=text-editor]').waitFor(); await p.keyboard.type('Stay in the old tab');
+      await p.keyboard.press('Control+Tab');
+      assert.notEqual(await active(), textTab);
+      assert.equal(await p.locator('[data-testid=text-edit-box]').isVisible(), false, 'switch ends typing');
+      assert.equal(Number((await p.locator('[data-testid=entities]').textContent()).replace(/\D+/g, '')), 0, 'new tab stays empty');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 0, 'new tab stays clean');
+      await p.keyboard.press('Control+Shift+Tab'); assert.equal(await active(), textTab);
+      const downloading = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      const saved = readDxf(readFileSync(await (await downloading).path(), 'utf8'));
+      assert.deepEqual(saved.entities.map((e) => decodeText(e)?.lines), [['Keep this text'], ['Stay in the old tab']], 'both texts belong to the old tab');
       await p.evaluate(async () => {
         const { idbStore } = await import('./idbstore.js');
         await idbStore('project-d-shortcuts', 'settings', 'shortcuts').put({ id: 'own', overrides: { properties: { key: 'Ctrl+Tab' } } });
