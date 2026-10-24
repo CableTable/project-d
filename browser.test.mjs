@@ -6793,15 +6793,15 @@ try {
     await click(100, 100); await click(220, 20); await click(270, 60);
     assert.match(await prompt(), /Dimension placed: 80\.00 mm/);
     const dims = await dimBlocks();
-    assert.deepEqual(Object.keys(dims).sort(), ['PD_DIM_1', 'PD_DIM_2']);
-    assert.equal(dims.PD_DIM_1.kind, 'linear'); assert.equal(dims.PD_DIM_1.params.axis, 'h');
-    assert.ok(Math.abs(Math.abs(dims.PD_DIM_1.params.b[0] - dims.PD_DIM_1.params.a[0]) - 120) < 1e-6 && Math.abs(dims.PD_DIM_1.params.offset + 95) < 0.7, 'x distance, the line at y = 5, 95 below the first point: ' + JSON.stringify(dims.PD_DIM_1.params));
-    assert.equal(dims.PD_DIM_2.params.axis, 'v');
+    assert.deepEqual(Object.keys(dims).sort(), ['PD_DIM_H1', 'PD_DIM_V1']);
+    assert.equal(dims.PD_DIM_H1.kind, 'linear'); assert.equal(dims.PD_DIM_H1.params.axis, 'h');
+    assert.ok(Math.abs(Math.abs(dims.PD_DIM_H1.params.b[0] - dims.PD_DIM_H1.params.a[0]) - 120) < 1e-6 && Math.abs(dims.PD_DIM_H1.params.offset + 95) < 0.7, 'x distance, the line at y = 5, 95 below the first point: ' + JSON.stringify(dims.PD_DIM_H1.params));
+    assert.equal(dims.PD_DIM_V1.params.axis, 'v');
     assert.ok(ink0 >= 0);
     await page.keyboard.press('Control+z');
-    assert.deepEqual(Object.keys(await dimBlocks()), ['PD_DIM_1'], 'one undo takes the second one back');
+    assert.deepEqual(Object.keys(await dimBlocks()), ['PD_DIM_H1'], 'one undo takes the second one back');
     await page.keyboard.press('Control+y');
-    assert.deepEqual(Object.keys(await dimBlocks()).sort(), ['PD_DIM_1', 'PD_DIM_2'], 'and redo brings it back');
+    assert.deepEqual(Object.keys(await dimBlocks()).sort(), ['PD_DIM_H1', 'PD_DIM_V1'], 'and redo brings it back');
     await page.keyboard.press('Control+z');                                           // (the vertical one stands in the way of the next clicks)
     await typeCmd('dli'); await click(100, 100); await click(220, 20);
     await typeCmd('h'); assert.match(await prompt(), /Linear: horizontal/);
@@ -6864,7 +6864,7 @@ try {
     await page.locator('[data-testid=decimals]').selectOption('0');
     const doc = await savedDoc();
     const label = (name) => { const tx = doc.blocks[name].entities.find((e) => e.type === 'TEXT'); return tx.r.v[tx.r.c.indexOf(1)].replace(/\\U\+([0-9A-F]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))); };
-    assert.deepEqual(['PD_DIM_1', 'PD_DIM_R1', 'PD_DIM_D1', 'PD_DIM_A1'].map(label), ['120', 'R25', 'Ø50', '45°'], 'the decimals re-label every kind, keeping R, Ø and °');
+    assert.deepEqual(['PD_DIM_H1', 'PD_DIM_R1', 'PD_DIM_D1', 'PD_DIM_A1'].map(label), ['120', 'R25', 'Ø50', '45°'], 'the decimals re-label every kind, keeping R, Ø and °');
     await page.locator('[data-testid=decimals]').selectOption('2');
     await page.keyboard.press('Escape');
     // Save, close and open the saved file: they are still there and still selectable
@@ -6876,7 +6876,7 @@ try {
     await click(190, 150 + 0.1); await waitSel('1 selected');
     assert.equal(await t('dim-row').isVisible(), true, 'the reopened radius dimension is a kept dimension');
     dims = await dimBlocks();
-    assert.deepEqual(Object.keys(dims).sort(), ['PD_DIM_1', 'PD_DIM_A1', 'PD_DIM_A2', 'PD_DIM_D1', 'PD_DIM_R1', 'PD_DIM_R2']);
+    assert.deepEqual(Object.keys(dims).sort(), ['PD_DIM_A1', 'PD_DIM_A2', 'PD_DIM_D1', 'PD_DIM_H1', 'PD_DIM_R1', 'PD_DIM_R2']);
     await page.keyboard.press('Delete'); await page.keyboard.press('Control+z');
   });
   await step('dimension types: screenshots, light and dark (all five kinds, the flyout open)', async () => {
@@ -9620,14 +9620,14 @@ try {
     const startD = async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.locator('[data-tool=dimension]').click(); await typeCmd('d'); };
     assert.ok(Math.abs(await placed() - dx) < 3, 'the X distance only: ' + await prompt());
     const onArc = (p) => Math.abs(Math.hypot(p.b[0] - 200, p.b[1] - 150) - 20) < 0.01 && Math.abs(p.a[1] - 20) < 1e-6 && p.b[1] > 150;       // the 2nd point on the arc, the 1st on the line
-    const d1 = (await dimBlocks()).PD_DIM_1;
+    const d1 = (await dimBlocks()).PD_DIM_H1;
     assert.deepEqual([d1.kind, d1.params.axis], ['linear', 'h'], 'kept as a linear dimension: ' + JSON.stringify(d1));
     assert.ok(onArc(d1.params), 'the 2nd point is on the arc, the 1st on the line: ' + JSON.stringify(d1.params));
     await page.screenshot({ path: shotDir + '/s14-89-linear-light.png' });
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+z');          // (its extension lines would snap the next picks)
     await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(35, 90);       // the line to the left (the right-hand corner of the canvas holds the zoom box): vertical
     assert.ok(Math.abs(await placed() - dy) < 3, 'the Y distance only: ' + await prompt());
-    const d2 = (await dimBlocks()).PD_DIM_1;
+    const d2 = (await dimBlocks()).PD_DIM_V1;
     assert.deepEqual([d2.kind, d2.params.axis], ['linear', 'v']);
     assert.ok(onArc(d2.params), JSON.stringify(d2.params));
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);

@@ -4285,7 +4285,7 @@ function dimHover(d, p, shift) {
 /** Puts the dimension m ({ kind, params }) in the drawing (one undo step) and starts the next. */
 function dimPlace(d, m) {
   if (!m) { note(state.dimType === 'angle' ? 'Dimension: no angle there, try another place' : 'Dimension: nothing to measure there, try another place'); return; }
-  const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(d.raw.blocks, m.kind === 'linear' ? 'aligned' : m.kind), state.dp);
+  const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(d.raw.blocks, m.kind, m.params.axis), state.dp);
   if (!dim) { note('Dimension: nothing to measure there, try another place'); return; }
   dimClear(state.dim);
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)

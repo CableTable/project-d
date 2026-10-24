@@ -5,6 +5,8 @@ import * as E from './web/edit.js';
 import { dragGrip } from './web/grips.js';
 import { flatten, readDxf } from './web/drawing.js';
 import { followDimensions } from './web/linked-dimensions.js';
+import { labelOf } from './web/objects.js';
+import { explodeSelection } from './web/explode.js';
 
 function drawing(shape, params, kind = 'aligned', factor = 1) {
   const raw = W.newDoc(4);
@@ -70,6 +72,39 @@ test('Linear dimensions retain their axis even when initially indistinguishable 
     const next = grip(raw, 'b', [120, 80]), dim = model(next);
     assert.equal(dim.kind, 'linear'); assert.equal(dim.params.axis, axis);
     point(dim.params.b, [120, 80]); assert.equal(label(next), axis === 'h' ? '120.000' : '80.000');
+  }
+});
+
+test('Linear axis tags survive DXF reopen and Copy: dragging off-axis keeps 100.00', () => {
+  for (const axis of ['h', 'v']) for (const offset of [0, 10]) {
+    const b = axis === 'h' ? [100, 0] : [0, 100], to = axis === 'h' ? [100, 30] : [30, 100];
+    const raw = W.newDoc(4);
+    W.addEntities(raw, W.line(0, 0, ...b));
+    const dim = E.makeDimension([0, 0], b, 1, raw.blocks, 2, { axis, offset, textH: 2 });
+    assert.equal(dim.name, `PD_DIM_${axis.toUpperCase()}1`);
+    Object.assign(raw, E.addDimension(raw, dim));
+    const back = readDxf(W.writeDxf(raw));
+    assert.equal(model(back).kind, 'linear'); assert.equal(model(back).params.axis, axis);
+    assert.equal(label(grip(back, 'b', to)), '100.00');
+    assert.equal(labelOf(back.entities[1], 1, back.blocks), 'Dimension');
+    assert.equal(explodeSelection(back, new Set([1])).exploded, 1);
+    const copied = readDxf(W.writeDxf({ ...back, ...E.copyEntities(back, new Set([0, 1]), 0, 50) }));
+    const copy = E.dimOfEntity(copied, 3);
+    assert.equal(copy.name, `PD_DIM_${axis.toUpperCase()}2`); assert.equal(copy.params.axis, axis);
+    const moved = followDimensions(copied, { ...copied, entities: copied.entities.map((e, i) => i === 2 ? dragGrip(e, 'b', [to[0], to[1] + 50]).ent : e) });
+    const tx = moved.blocks[copy.name].entities.find((e) => e.type === 'TEXT');
+    assert.equal(tx.r.v[tx.r.c.indexOf(1)], '100.00');
+    assert.equal(label(moved), '100.00', 'the original stays independent');
+  }
+});
+
+test('old untagged Linear files keep geometry inference, including on-axis ambiguity', () => {
+  for (const axis of ['h', 'v']) for (const offAxis of [false, true]) {
+    const b = offAxis ? [100, 100] : axis === 'h' ? [100, 0] : [0, 100];
+    const back = readDxf(W.writeDxf(drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear')));
+    assert.equal(model(back).name, 'PD_DIM_1');
+    assert.equal(model(back).kind, offAxis ? 'linear' : 'aligned');
+    assert.equal(model(back).params.axis, offAxis ? axis : undefined);
   }
 });
 
