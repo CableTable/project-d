@@ -775,6 +775,7 @@ function attachDrop() {
       e.preventDefault();
       ui.canvas.classList.remove('dropping');
       const rec = lib.items.find((r) => r.id === id), r = ui.canvas.getBoundingClientRect();
+      if (ui.tabs.parentElement.contains(e.target)) { if (rec) openPartAsDrawing(rec); return; }
       if (onCmp(e)) { if (rec) cmpAddPart(cmpDoc(), rec); return; }
       const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
       if (!rec || !inside) return;
@@ -2170,19 +2171,20 @@ function renderLibrary() {
   if (!ui.libList) return;
   const shown = lib.items.filter((r) => !lib.q || r.name.toLowerCase().includes(lib.q));
   ui.libList.replaceChildren(...shown.map((rec) => {
-    const more = h('button', { class: 'tog', type: 'button', 'aria-label': 'Part menu for ' + rec.name, title: 'Rename, Export, Delete', 'data-testid': 'lib-menu' }, '⋯');
+    const more = h('button', { class: 'tog', type: 'button', 'aria-label': 'Part menu for ' + rec.name, title: 'Open as drawing, Rename, Export, Delete', 'data-testid': 'lib-menu' }, '⋯');
     more.addEventListener('click', (e) => {
       e.stopPropagation();
       const r = more.getBoundingClientRect();
-      popMenu(r.left, r.bottom + 2, [['Add to sheet', () => addLibToSheet(rec)], ['Export .dxf…', () => exportPart(rec)], ['Rename…', () => renamePart(rec)], ['Delete from library', () => deletePart(rec)]]);
+      popMenu(r.left, r.bottom + 2, [['Add to sheet', () => addLibToSheet(rec)], ['Open as drawing', () => openPartAsDrawing(rec)], ['Export .dxf…', () => exportPart(rec)], ['Rename…', () => renamePart(rec)], ['Delete from library', () => deletePart(rec)]]);
     });
-    const card = h('div', { class: 'card', 'data-part-id': rec.id, 'data-name': rec.name, draggable: 'true', title: 'Drag onto the sheet, or press Add to sheet' },
+    const card = h('div', { class: 'card', 'data-part-id': rec.id, 'data-name': rec.name, draggable: 'true', title: 'Double-click or drag onto the tab strip to open as a drawing; drag onto the sheet to place' },
       /^data:image\/png;base64,/.test(rec.thumb || '') ? h('img', { class: 'thumb', src: rec.thumb, alt: '', draggable: 'false' }) : h('div', { class: 'thumb none' }),
       h('strong', { class: 'cname' }, rec.name),
       h('span', { class: 'lbl mono', 'data-testid': 'lib-size' }, `${fmt(rec.w)} × ${fmt(rec.h)}`),
       h('span', { class: 'lbl' }, rec.source || ''),
       h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', 'data-testid': 'lib-add', onclick: () => addLibToSheet(rec) }, 'Add to sheet'), more));
     card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-pd-part', rec.id); e.dataTransfer.setData('text/plain', rec.name); e.dataTransfer.effectAllowed = 'copy'; });
+    card.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) openPartAsDrawing(rec); });
     return card;
   }));
   const n = lib.items.length;
@@ -2220,12 +2222,13 @@ function dropLibInDrawing(rec, clientX, clientY) {
       (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
   } catch (err) { note(`${rec.name}: ${err && err.message ? err.message : err}`); }
 }
-/** A library part dropped with no drawing open: it opens as its own new drawing tab, named after the part, not saved yet. */
+/** Open an independent copy of a library part as a new drawing, not saved yet. */
 function openPartAsDrawing(rec) {
   const part = libPart(rec);
   if (!part) { note(`${rec.name}: this part could not be read`); return; }
-  const raw = { ...part.raw, header: { ...part.raw.header }, blocks: LD.partBlocks(part.raw.blocks) };
-  addTab({ name: rec.name + '.dxf', path: null, openPath: null, dirty: true, ...tabFields(raw, flatten(raw)) });
+  const raw = structuredClone(part.raw);
+  raw.blocks = LD.partBlocks(raw.blocks);
+  addTab({ name: rec.name, path: null, openPath: null, scratch: true, dirty: true, ...tabFields(raw, flatten(raw)) });
   note(`${rec.name} opened as a new drawing: ${curDoc().entities} entities. Not saved yet: Save asks where`);
 }
 

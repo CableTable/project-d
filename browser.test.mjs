@@ -2196,7 +2196,7 @@ try {
     const openMenu = (name) => libCard(name).locator('[data-testid=lib-menu]').click();
     await shotBoth('library', async () => { await openMenu('Plate B'); await page.waitForSelector('[data-testid=ctx-menu]'); }, async () => { await page.keyboard.press('Escape'); });
     await openMenu('Plate B');
-    assert.deepEqual(await ctxItems(), ['Add to sheet', 'Export .dxf…', 'Rename…', 'Delete from library']);
+    assert.deepEqual(await ctxItems(), ['Add to sheet', 'Open as drawing', 'Export .dxf…', 'Rename…', 'Delete from library']);
     await page.getByRole('menuitem', { name: 'Rename…' }).click();
     await nameDlg.waitFor();
     assert.equal(await nameDlg.getAttribute('aria-label'), 'Rename part');
@@ -2690,7 +2690,7 @@ try {
     await page.locator('[data-testid=lib-search]').fill('zzz-no-such-part');
     assert.match(await t('lib-nomatch').textContent(), /No part matches "zzz-no-such-part"/);
     await page.locator('[data-testid=lib-search]').fill('');
-    assert.equal(await page.locator('[data-testid=lib-menu]').first().getAttribute('title'), 'Rename, Export, Delete');
+    assert.equal(await page.locator('[data-testid=lib-menu]').first().getAttribute('title'), 'Open as drawing, Rename, Export, Delete');
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
     await t('panel-main').click();
     await t('part').selectOption({ index: 1 });                                        // Plate A fills the sheet as a grid
@@ -6440,7 +6440,7 @@ try {
     await fire('dragover', m.x, m.y);
     assert.equal(await t('drop-hint').textContent(), 'Drop to open as a new drawing');
     await fire('drop', m.x, m.y);
-    assert.deepEqual(await tabNames(), ['T50 part.dxf']);
+    assert.deepEqual(await tabNames(), ['T50 part']);
     assert.equal(await entCount(), 2);
     assert.match(await t('cmd-prompt').textContent(), /^T50 part opened as a new drawing: 2 entities\. Not saved yet: Save asks where$/);
     await closeTabs(/./);
@@ -6486,6 +6486,59 @@ try {
     await libCard('T50 part').locator('[data-testid=lib-menu]').click();
     await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
     await libCard('T50 part').waitFor({ state: 'detached' });
+    await t('panel-main').click();
+  });
+
+  await step('TODO 116: menu, double-click and tab-strip drop open independent drawing copies named after the library part; Save asks where', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4), name = 'T116 <b>& part';
+    addEntities(raw, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 10)]);
+    await t('picker').setInputFiles({ name: 'todo116-source.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'todo116-source.dxf');
+    await page.keyboard.press('Control+a'); await t('bar-extract').click();
+    await t('name-input').fill(name); await t('name-ok').click();
+    await t('name-dialog').waitFor({ state: 'detached' });
+    await t('panel-library').click();
+    const id = await libCard(name).getAttribute('data-part-id');
+    const storedPart = () => page.evaluate(async (id) => (await (await import('./partstore.js')).loadParts()).find((p) => p.id === id), id);
+    const original = await storedPart();
+    assert.ok(original, 'the source part is stored');
+    const openMenu = () => libCard(name).locator('[data-testid=lib-menu]').click();
+    await shotBoth('todo116-menu', openMenu, () => page.keyboard.press('Escape'));
+    await openMenu(); await page.getByRole('menuitem', { name: 'Open as drawing', exact: true }).click();
+    assert.deepEqual(await tabNames(), ['todo116-source.dxf', name]);
+    assert.equal(await page.locator('.dtab.on').getAttribute('data-kind'), 'drawing');
+    assert.equal(await page.locator('.dtab.on .tname b').count(), 0, 'part names stay plain text');
+    assert.equal(await entCount(), 2);
+    await page.evaluate(() => {
+      window.__partSave = { asked: [], wrote: [] };
+      window.__TAURI__ = {
+        dialog: { save: async (o) => { window.__partSave.asked.push(o.defaultPath); return null; } },
+        fs: { writeTextFile: async (p) => { window.__partSave.wrote.push(p); } },
+      };
+    });
+    try {
+      await t('save').click();
+      assert.deepEqual(await page.evaluate(() => window.__partSave), { asked: [name + '.dxf'], wrote: [] }, 'Save asks for a destination; cancelling writes nothing');
+    } finally { await page.evaluate(() => { delete window.__TAURI__; delete window.__partSave; }); }
+    await t('panel-main').click();
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
+    assert.equal(await entCount(), 0, 'the first copy was edited');
+    await t('panel-library').click();
+    await libCard(name).locator('.cname').dblclick();
+    assert.deepEqual(await tabNames(), ['todo116-source.dxf', name, name]);
+    assert.equal(await entCount(), 2, 'double-click opens the original geometry, despite edits to the first copy');
+    await libCard(name).dragTo(page.locator('.tabs .dtab.on .tname'));
+    assert.deepEqual(await tabNames(), ['todo116-source.dxf', name, name, name]);
+    assert.equal(await entCount(), 2, 'a tab-strip drop opens a new tab even with a drawing already open');
+    assert.deepEqual(await storedPart(), original, 'editing a copy leaves the entire stored library record unchanged');
+    const exported = await downloaded(async () => { await openMenu(); await page.getByRole('menuitem', { name: 'Export .dxf…', exact: true }).click(); });
+    assert.equal(exported.text, original.dxf, 'the library still exports the original part');
+    await shotBoth('todo116-drawing');
+    await closeTabs(/./);
+    page.once('dialog', (d) => d.accept());
+    await openMenu(); await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+    await libCard(name).waitFor({ state: 'detached' });
     await t('panel-main').click();
   });
 
