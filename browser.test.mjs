@@ -16,6 +16,16 @@ import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 
+// WCAG relative luminance; opacity composites drawing feedback onto its background.
+function contrastRatio(foreground, background, opacity = 1) {
+  const rgb = (hex) => hex.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16) / 255);
+  const bg = rgb(background), fg = rgb(foreground).map((c, i) => c * opacity + bg[i] * (1 - opacity));
+  const luminance = (channels) => channels.map((c) => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4)
+    .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+  const a = luminance(fg), b = luminance(bg);
+  return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+}
+
 const PORT = Number(process.env.TEST_PORT) || Number(process.argv[2]) || 5181;   // TEST_PORT or `npm run test:browser -- 5291`
 const URL_ = `http://localhost:${PORT}/`;
 const server = spawn(process.execPath, ['serve.mjs', String(PORT)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(PORT) } });
@@ -591,7 +601,7 @@ try {
       await view.click();
       for (const active of ['follow system', 'light', 'dark', 'follow system']) {
         const rows = await themes.evaluateAll((els) => els.map((el) => [el.textContent.trim(), el.getAttribute('aria-checked')]));
-        assert.deepEqual(rows, ['follow system', 'light', 'dark'].map((mode) => [(mode === active ? '✓ ' : '') + 'Theme: ' + mode, String(mode === active)]));
+        assert.deepEqual(rows, ['follow system', 'light', 'dark'].map((mode) => [(mode === active ? '✓ ' : '') + 'Theme: ' + mode + (mode === 'light' ? ' (CorelDRAW-like)' : mode === 'dark' ? ' (AutoCAD-like)' : ''), String(mode === active)]));
         for (const group of ['Work area:', 'Theme:']) {
           const items = p.getByRole('menuitemcheckbox', { name: new RegExp(group) });
           const geometry = await items.evaluateAll((els) => els.map((el) => {
@@ -625,6 +635,66 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 110a: R19 palette, AA panel / selected / button text, explicit and system themes', async () => {
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const theme = async (name) => {
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '\\b') }).click();
+    };
+    const tokens = () => p.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      return Object.fromEntries(['app', 'panel', 'ribbon', 'line', 'line2', 'text', 'muted', 'accent', 'accentink', 'accenttext', 'sel', 'canvas', 'ctx']
+        .map((name) => [name, css.getPropertyValue('--' + name).trim()]));
+    });
+    const checkText = async (selector) => {
+      const pairs = await p.locator(selector).evaluateAll((els) => els.filter((el) => el.checkVisibility()).map((el) => {
+        const css = getComputedStyle(el);
+        let parent = el, bg;
+        do { bg = getComputedStyle(parent).backgroundColor; parent = parent.parentElement; } while (bg === 'rgba(0, 0, 0, 0)' && parent);
+        const hex = (value) => '#' + value.match(/\d+/g).slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+        return [el.textContent.trim().slice(0, 40), hex(css.color), hex(bg)];
+      }));
+      assert.ok(pairs.length, selector + ' has visible text');
+      for (const [label, fg, bg] of pairs) assert.ok(contrastRatio(fg, bg) >= 4.5, `${label}: ${fg} on ${bg} meets AA`);
+    };
+    const layoutFixture = newLayout('R19 layout'), plate = newDoc(4);
+    addEntities(plate, roundRect(0, 0, 130, 100, 8));
+    layoutFixture.parts.plate = makePart('plate', 'L1-bracket', plate);
+    Object.assign(layoutFixture.s, { sheetW: 760, sheetH: 430, gripTop: 22, gripBottom: 0, gridPart: 'plate', rows: 2, cols: 4, fit: false, gapX: 22, gapY: 20 });
+    try {
+      await p.goto(URL_); await q('new-tab').waitFor();
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.locator('.layer.current').waitFor();
+      for (const mode of ['light', 'dark']) {
+        await theme(mode);
+        const c = await tokens();
+        assert.deepEqual([c.app, c.panel, c.ribbon, c.line, c.line2, c.text, c.muted, c.accent, c.sel, c.canvas, c.ctx], mode === 'light'
+          ? ['#e6e6e6', '#f2f2f2', '#f6f6f6', '#cfcfcf', '#dedede', '#262626', '#6b6b6b', '#2f7bd0', '#d6e6f7', '#e9e9e9', '#2f9e6f']
+          : ['#262a31', '#2b2f36', '#3b4048', '#1c1f24', '#4b515b', '#e6e8eb', '#9ba2ac', '#0696d7', '#14516e', '#212830', '#2fb7a3']);
+        for (const bg of ['app', 'panel', 'ribbon', 'sel']) {
+          assert.ok(contrastRatio(c.text, c[bg]) >= 4.5, `body text on ${bg}`);
+          assert.ok(contrastRatio(c.accenttext, c[bg]) >= 4.5, `blue text on ${bg}`);
+        }
+        assert.ok(contrastRatio(c.muted, c.panel) >= 4.5, 'muted panel text');
+        assert.ok(contrastRatio(c.accentink, c.accent) >= 4.5, 'accent button text');
+        await checkText('.panel .sec, .panel .lbl, .layer.current .nm, .layer.current .lbl, .ptab.on, .status .lbl');
+        await p.screenshot({ path: `${shotDir}/todo110a-drawing-${mode}.png` });
+        await q('picker').setInputFiles({ name: 'R19 layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(layoutFixture)), 'latin1') });
+        await q('apply').waitFor({ state: 'visible' });
+        await checkText('.layer.on .nm, .layer.on .lbl, .stepbox .sec, .stepbox .field, .stepbox .lbl, .stepfoot .btn.primary:not(:disabled), .stepfoot .lbl');
+        await p.screenshot({ path: `${shotDir}/todo110a-layout-${mode}.png` });
+        await p.locator('.tabs .dtab', { hasText: 'outline.dxf' }).click();
+        await p.emulateMedia({ colorScheme: mode === 'light' ? 'dark' : 'light' });
+        assert.deepEqual(await tokens(), c, 'explicit theme overrides system preference');
+        await theme('follow system'); await p.emulateMedia({ colorScheme: mode });
+        assert.deepEqual(await tokens(), c, 'system theme has identical tokens');
+      }
+      await theme('light'); await p.reload(); await q('new-tab').waitFor();
+      assert.equal(await p.evaluate(() => document.documentElement.dataset.theme), 'light', 'explicit theme persists');
+    } finally { await context.close(); }
+  });
+
   const partText = () => t('part').evaluate((s) => s.selectedOptions[0].textContent);
   await step('start state: one empty "Drawing 1", no sample data, Apply disabled with its hint', async () => {
     assert.deepEqual(await tabNames(), ['Drawing 1']);
@@ -640,10 +710,10 @@ try {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: dir + '/s4-start-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     await page.waitForTimeout(150);
     await page.screenshot({ path: dir + '/s4-start-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
   });
 
   await step('× on the only tab leaves a fresh "Drawing 1"; + adds "Drawing 2"; × closes any tab', async () => {
@@ -770,7 +840,7 @@ try {
     });
     return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'latin1') };
   };
-  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); };
+  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '\\b') : item, exact: true }).click(); };
   const grip = (side) => page.locator(`[data-key=grip${side}]`);
   await step('gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px', async () => {
     assert.equal(await page.locator('[data-key=margin]').count(), 0, 'no margin field');
@@ -1705,11 +1775,11 @@ try {
     };
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     await page.waitForTimeout(150);
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
     await t('unit-down').click(); await waitSize('62.5', '37.5');
     assert.match(await t('cmd-prompt').textContent(), /Unit fix ÷25\.4 · 1587\.50 × 952\.50 → 62\.50 × 37\.50 mm/);
     await page.keyboard.press('Control+z'); await waitSize('1587.5', '952.5');        // one undo step each
@@ -2620,20 +2690,20 @@ try {
     const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const light = await bg();
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     const dark = await bg();
-    assert.notEqual(light, dark); assert.equal(dark, 'rgb(11, 11, 13)');
+    assert.notEqual(light, dark); assert.equal(dark, 'rgb(38, 42, 49)');
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     await page.screenshot({ path: shotDir + '/a-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
     assert.equal(await bg(), light);
   });
 
   await step('prefers-color-scheme: dark is followed', async () => {
     const p2 = await (await browser.newContext({ colorScheme: 'dark' })).newPage();
     await p2.goto(URL_);
-    assert.equal(await p2.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(11, 11, 13)');
+    assert.equal(await p2.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(38, 42, 49)');
   });
 
   await step('Parts library with no storage (private mode, blocked): a part is still kept in memory and the app says so; nothing breaks', async () => {
@@ -3929,7 +3999,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light', false], ['  Theme: dark', false]]);
+      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await t('rulers-show').isChecked(), false);
@@ -7726,11 +7796,11 @@ try {
     await page.getByRole('button', { name: 'Fit', exact: true }).click();
     await page.screenshot({ path: dir + '/s2-light.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     await page.waitForTimeout(100);
     await page.screenshot({ path: dir + '/s2-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
   });
 
   // ---- Next sessions 6: Offset, Trim and Mirror (modify.js) ----
@@ -9161,7 +9231,7 @@ try {
     const p = await c.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
     p.on('pageerror', (e) => errors.push(String(e)));
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); await frame(); };
+    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '\\b') : item, exact: true }).click(); await frame(); };
     const download = async (act) => { const [dl] = await Promise.all([p.waitForEvent('download'), act()]); return readFileSync(await dl.path()); };
     const pdf = async () => {
       await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
@@ -10005,7 +10075,7 @@ try {
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
     p.on('pageerror', (e) => errors.push(String(e)));
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '$') }).click(); await frame(); };
+    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '\\b') }).click(); await frame(); };
     const work = async (name) => {
       await p.locator('[data-menu=View]').click();
       await p.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frame();
@@ -10042,8 +10112,8 @@ try {
         assert.equal(await q('work-area').getAttribute('title'), 'Work area: ' + name);
       }
       for (const [app, area, background, ink, selection, mark] of [
-        ['light', 'Dark', 'rgb(0, 0, 0)', 'e8e8ec', '60a5fa', 'fb923c'],
-        ['dark', 'Light', 'rgb(255, 255, 255)', '1b1d22', '4f46e5', 'c2410c'],
+        ['light', 'Dark', 'rgb(33, 40, 48)', 'e8e8ec', '60a5fa', 'fb923c'],
+        ['dark', 'Light', 'rgb(255, 255, 255)', '1b1d22', '2f7bd0', 'c2410c'],
       ]) {
         await theme(app); const originalPdf = await pdf();
         const appBg = await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -10064,13 +10134,13 @@ try {
         await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a'); await frame();
         assert.ok(await pixels(selection) > 400, 'selected lines follow the work area');
         const grip = q('grip').first(); await grip.waitFor();
-        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(96, 165, 250)' : 'rgb(79, 70, 229)');
+        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(96, 165, 250)' : 'rgb(47, 123, 208)');
         const hover = await p.evaluate(() => {
           const svg = document.querySelector('.ovl svg'), edge = document.createElementNS(svg.namespaceURI, 'path');
           edge.setAttribute('class', 'dr-edge'); svg.append(edge);
           const cs = getComputedStyle(edge), result = [cs.stroke, cs.strokeOpacity]; edge.remove(); return result;
         });
-        assert.deepEqual(hover, area === 'Dark' ? ['rgb(96, 165, 250)', '0.8'] : ['rgb(79, 70, 229)', '0.35']);
+        assert.deepEqual(hover, area === 'Dark' ? ['rgb(96, 165, 250)', '0.8'] : ['rgb(47, 123, 208)', '0.35']);
         await p.screenshot({ path: `${shotDir}/s15-96-app-${app}-work-${area.toLowerCase()}.png` });
         const endpoint = await grip.boundingBox();
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
@@ -10080,7 +10150,7 @@ try {
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await q('new-layout').click(); await frame();
         assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), undefined, 'layout tabs follow the app theme entirely');
-        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
+        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(33, 40, 48)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
         await p.reload(); await q('work-area').waitFor(); await frame();
         assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + area, 'remembered after reload');
         await open();
@@ -10089,16 +10159,16 @@ try {
         await work('Follow app');
       }
       await p.emulateMedia({ colorScheme: 'dark' }); await theme('follow system');
-      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
+      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(33, 40, 48)');
       await p.emulateMedia({ colorScheme: 'light' }); await frame();
       assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
     } finally { await context.close(); }
   });
 
-  await step('TODO 90: black dark drawing area, contrasting selection / hover / grips / snaps, light and PDF unchanged', async () => {
+  await step('TODO 90 / 110a: R19 model space, contrasting selection / hover / grips / snaps and unchanged PDF', async () => {
     const doc = newDoc(4);
     addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 60, 120, 60));
-    await openGrips(writeDxf(doc), 'black-canvas.dxf');
+    await openGrips(writeDxf(doc), 'r19-canvas.dxf');
     await click(70, 30); await gripWhen(3);
     const colours = () => page.evaluate(() => {
       const root = getComputedStyle(document.documentElement), token = (n) => root.getPropertyValue(n).trim();
@@ -10108,12 +10178,6 @@ try {
         hot: token('--hot'), mark: token('--mark'), muted: token('--muted'), guide: token('--guide'),
         grip: getComputedStyle(document.querySelector('[data-testid=grip]')).fill };
     });
-    // WCAG relative luminance against #000, including translucent feedback composited on black.
-    const contrast = (hex, opacity = 1) => {
-      const rgb = hex.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16) / 255 * opacity);
-      const linear = rgb.map((c) => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
-      return (linear[0] * .2126 + linear[1] * .7152 + linear[2] * .0722 + .05) / .05;
-    };
     let lightPdf;
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme); await frames();
@@ -10121,15 +10185,15 @@ try {
       if (theme === 'light') {
         assert.equal(c.background, 'rgb(255, 255, 255)');
         assert.deepEqual([c.surround, c.sheet, c.part, c.selection, c.accent, c.panel, c.paper],
-          ['#ececef', '#ffffff', '#ffffff', '#4f46e5', '#4f46e5', '#ffffff', '#ffffff']);
-        assert.equal(c.grip, 'rgb(79, 70, 229)');
+          ['#e9e9e9', '#ffffff', '#ffffff', '#2f7bd0', '#2f7bd0', '#f2f2f2', '#ffffff']);
+        assert.equal(c.grip, 'rgb(47, 123, 208)');
       } else {
-        assert.equal(c.background, 'rgb(0, 0, 0)');
-        assert.deepEqual([c.surround, c.sheet, c.part], ['#000000', '#000000', '#000000']);
-        assert.deepEqual([c.accent, c.panel, c.paper], ['#8a8fff', '#131316', '#f4f5f6'], 'UI and PDF preview tokens stay as before');
+        assert.equal(c.background, 'rgb(33, 40, 48)');
+        assert.deepEqual([c.surround, c.sheet, c.part], ['#212830', '#212830', '#212830']);
+        assert.deepEqual([c.accent, c.panel, c.paper], ['#0696d7', '#2b2f36', '#f4f5f6'], 'R19 UI and unchanged PDF preview paper');
         assert.equal(c.grip, 'rgb(96, 165, 250)');
         for (const name of ['selection', 'hot', 'mark', 'muted', 'guide']) {
-          assert.ok(contrast(c[name]) >= 4.5, `${name} ${c[name]} contrasts at least 4.5:1 with black`);
+          assert.ok(contrastRatio(c[name], '#212830') >= 4.5, `${name} ${c[name]} contrasts at least 4.5:1 with model space`);
         }
         const hover = await page.evaluate(() => {
           const svg = document.querySelector('.ovl svg'), edge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -10138,7 +10202,7 @@ try {
           edge.remove(); return result;
         });
         assert.equal(hover.colour, c.grip, 'hover and grips use the drawing selection colour');
-        assert.ok(contrast(c.selection, hover.opacity) >= 4.5, 'translucent hover contrasts at least 4.5:1 on black');
+        assert.ok(contrastRatio(c.selection, '#212830', hover.opacity) >= 3, 'translucent graphical hover contrasts at least 3:1 on model space');
       }
       assert.ok(await accentWhen((n) => n > 100) > 100, 'selected line is painted in the selection token');
       await page.screenshot({ path: `${shotDir}/s14-90-${theme}.png` });
@@ -10156,14 +10220,14 @@ try {
     }
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.evaluate(() => { delete document.documentElement.dataset.theme; }); await frames();
-    assert.equal((await colours()).background, 'rgb(0, 0, 0)', 'Windows dark theme also uses black');
+    assert.equal((await colours()).background, 'rgb(33, 40, 48)', 'Windows dark theme also uses model space');
     assert.equal((await colours()).selection, '#60a5fa');
     await menuItem('View', 'Theme: dark');
     await t('new-layout').click(); await frames();
-    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)', 'layout surround is black too');
-    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 0, 0)', 'layout sheet is black too');
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(33, 40, 48)', 'layout surround uses model space too');
+    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(33, 40, 48)', 'layout sheet uses model space too');
     await menuItem('View', 'Theme: light'); await frames();
-    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(236, 236, 239)');
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(233, 233, 233)');
     assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(255, 255, 255)');
     await page.emulateMedia({ colorScheme: 'light' });
     await closeTabs(/./);
@@ -10364,7 +10428,7 @@ try {
       for (const theme of ['light', 'dark']) {
         await q('picker').setInputFiles('fixtures/outline.dxf');
         await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
         await p.locator('[data-tool=balloon]').click();
         assert.equal((await q('bal-dock').boundingBox()).height, 140);
         assert.ok((await q('canvas').boundingBox()).height > 350, 'canvas keeps room at 1024?768');
@@ -10418,7 +10482,7 @@ try {
     try {
       await p.goto(URL_); await q('new-tab').waitFor();
       for (const theme of ['light', 'dark']) {
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
         await open(50);
         assert.equal(await q('gap-show').getAttribute('aria-pressed'), 'false');
         assert.equal(await p.evaluate(() => window.__gapRings), 0, 'import does not mark gaps');
@@ -10514,7 +10578,7 @@ try {
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
       for (const theme of ['light', 'dark']) {
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
         await p.screenshot({ path: shotDir + '/s16-103-zoom-' + theme + '.png' });
       }
       const background = await p.evaluate(async () => {
