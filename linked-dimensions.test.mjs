@@ -106,6 +106,30 @@ test('block vertices follow Move; radius dimensions wait for 129b', () => {
   assert.equal(moved.blocks.PD_DIM_R1, raw.blocks.PD_DIM_R1);
 });
 
+test('moving a touching rectangle leaves the unchanged rectangle dimension in place', () => {
+  for (const kind of ['aligned', 'linear']) {
+    const raw = drawing(W.lwpoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }),
+      { a: [100, 0], b: [200, 0], axis: 'h' }, kind);
+    W.addEntities(raw, W.lwpoly([[100, 0], [200, 0], [200, 60], [100, 60]], { closed: true }));
+    const moved = E.moveEntities(raw, new Set([0]), -30, 0);
+    const next = followDimensions(raw, moved), p = model(next).params;
+    point(p.a, [100, 0]); point(p.b, [200, 0]);
+    assert.equal(label(next), '100.000');
+    assert.equal(next.entities[2], raw.entities[2], 'the dimensioned rectangle stayed put');
+    assert.equal(next.blocks, raw.blocks);
+  }
+});
+
+test('grip dragging one LINE of a four-LINE rectangle leaves a shared dimension end in place', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [100, 0], b: [100, 60] });
+  W.addEntities(raw, [W.line(100, 0, 100, 60), W.line(100, 60, 0, 60), W.line(0, 60, 0, 0)]);
+  const next = grip(raw, 'b', [70, 0]), p = model(next).params;
+  point(p.a, [100, 0]); point(p.b, [100, 60]);
+  assert.equal(label(next), '60.000');
+  assert.equal(next.entities[2], raw.entities[2], 'the dimensioned LINE stayed put');
+  assert.equal(next.blocks, raw.blocks);
+});
+
 test('all matching dimensions follow, including an endpoint on a different shape; paper and model stay separate', () => {
   const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
   W.addEntities(raw, W.line(100, 0, 100, 100));

@@ -28,11 +28,12 @@ export function followDimensions(raw, next, factor = 1) {
   const dims = raw.entities.map((_, i) => [i, dimOfEntity(raw, i)])
     .filter(([, d]) => d && (d.kind === 'aligned' || d.kind === 'linear'));
   if (!dims.length) return next;
-  const changed = raw.entities.map((_, i) => i).filter((i) => {
+  const shapes = raw.entities.map((_, i) => i).filter((i) => {
     const e = raw.entities[i];
-    return e !== next.entities[i] && e.layer !== DIM_LAYER && e.type !== 'DIMENSION' &&
+    return e.layer !== DIM_LAYER && e.type !== 'DIMENSION' &&
       !(e.type === 'INSERT' && /^PD_(DIM|LDR)_/.test(e.r.v[e.r.c.indexOf(2)]));
   });
+  const changed = shapes.filter((i) => raw.entities[i] !== next.entities[i]);
   if (!changed.length) return next;
   const before = vertices(raw, changed.map((i) => raw.entities[i])), afterRaw = { ...raw, ...next };
   const after = vertices(afterRaw, changed.map((i) => next.entities[i])), moves = [];
@@ -42,13 +43,18 @@ export function followDimensions(raw, next, factor = 1) {
     points.forEach((p, i) => { if (!near(p, to[i], factor)) moves.push([p, to[i], !!raw.entities[changed[e]].ps]); });
   }
   if (!moves.length) return next;
+  const unchanged = shapes.filter((i) => raw.entities[i] === next.entities[i]).map((i) => raw.entities[i]);
+  const stationary = [...vertices(raw, unchanged)].flatMap(([e, points]) => points.map((p) => [p, !!unchanged[e].ps]));
   let result = next;
   for (const [e, dim] of dims) {
     const m = dimMatrix(raw, e), nextMatrix = dimMatrix(afterRaw, e), current = dimOfEntity(afterRaw, e), params = { ...current.params };
     if (!m || !nextMatrix) continue;
     let moved = false;
     for (const key of ['a', 'b']) {
-      const p = mapply(m, ...dim.params[key]), match = moves.find(([from, , ps]) => ps === !!raw.entities[e].ps && near(from, p, factor));
+      const p = mapply(m, ...dim.params[key]), paper = !!raw.entities[e].ps;
+      // An unchanged shape at the same point makes ownership ambiguous.
+      if (stationary.some(([q, ps]) => ps === paper && near(q, p, factor))) continue;
+      const match = moves.find(([from, , ps]) => ps === paper && near(from, p, factor));
       if (match) { params[key] = local(nextMatrix, match[1]); moved = true; }
     }
     if (!moved) continue;
