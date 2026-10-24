@@ -887,14 +887,22 @@ export function moveEntities(raw, selection, dx, dy) {
   }), blocks: raw.blocks };
 }
 
-/** Append translated copies in drawing order, leaving the originals and shared blocks intact; a copied dimension gets a block of its own. */
+/** Append translated copies in drawing order, leaving the originals and shared blocks intact; copied dimensions and leaders get their own blocks. */
 export function copyEntities(raw, selection, dx, dy) {
   const moved = moveEntities(raw, selection, dx, dy);
   let blocks = moved.blocks;
   const copies = moved.entities.filter((_, i) => selection.has(i)).map((e) => {
     const name = e.type === 'INSERT' ? fieldOf(e.r, 2) : '';
-    if (!DIM_BLOCK.test(name) || !blocks[name]) return e;
-    const dim = readDim(name, blocks[name]), own = freeName(blocks, dim?.kind, dim?.params.axis);
+    if ((!DIM_BLOCK.test(name) && !LDR_BLOCK.test(name)) || !blocks[name]) return e;
+    let own;
+    if (LDR_BLOCK.test(name)) {
+      let n = 1;
+      while (blocks['PD_LDR_' + n]) n++;
+      own = 'PD_LDR_' + n;
+    } else {
+      const dim = readDim(name, blocks[name]);
+      own = freeName(blocks, dim?.kind, dim?.params.axis);
+    }
     blocks = { ...blocks, [own]: structuredClone(blocks[name]) };
     return { ...e, r: { ...e.r, v: e.r.v.map((v, k) => e.r.c[k] === 2 ? own : v) } };
   });
