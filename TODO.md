@@ -241,6 +241,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 136. **Start page with recent files and pinned / favourite drawings instead of an empty sheet** (M, ask, T46): see T46 in support/tickets.md. Grill first.
 137. **Zoom level at bottom right: type a custom zoom** (S, ask, T47): see T47 in support/tickets.md. Grill first.
 138. **Open .tif / .tiff files (as a background picture and for Trace bitmap)** (M, ask, T48): see T48 in support/tickets.md. Grill first.
+139. **Shape tool (CorelDRAW): edit the nodes of lines and polylines** (M, ask, T51): see T51 in support/tickets.md. Grill first.
+140. **Pen tool (CorelDRAW): draw lines and Bezier curves** (M, ask, T52): see T52 in support/tickets.md. Grill first.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
