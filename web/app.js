@@ -3629,7 +3629,7 @@ function renderCommand() {
     : state.tool === 'contour' && ed ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:')
     : lay ? (gp
-      ? (layout.count ? `${layout.count} ${word}${layout.skipped ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. ${gridCellNote(layout) ? gridCellNote(layout) + '. ' : ''}[Apply / Rotate / Nest]:`
+      ? (layout.count ? `${layout.count} ${word}${gridCellNote(layout) ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. ${gridCellNote(layout) ? gridCellNote(layout) + '. ' : ''}[Apply / Rotate / Nest]:`
         : `${gridCellNote(layout) || (layout.taken ? 'All grid cells are already placed' : '0 fit: the part is larger than the usable area')}. [Apply / Rotate / Nest]:`)
       : `${placedNow.length} placed part${placedNow.length === 1 ? '' : 's'}. Pick a part for step and repeat, or add one from the Parts library:`)
     : state.tool === 'balloon' && ed ? balPrompt()

@@ -214,9 +214,43 @@ test('typed grows right and down from the matching cell, dropping sheet and grip
     const g = stepRepeat({ ...o, ...grips });
     assert.equal(g.dropped, 4); assert.equal(g.count, 1);
   }
-  const blockedAnchor = stepRepeat({ ...o, gripLeft: 140, gripTop: 100 });
-  assert.deepEqual(blockedAnchor.positions, [{ x: 240, y: 160 }]);
-  assert.equal(blockedAnchor.dropped, 5);
+});
+
+test('Best uses the nearest eligible placed angle before choosing the grid footprint in both modes', () => {
+  for (const fit of [true, false]) for (const rot of [0, 270, -90, 630]) {
+    const turned = rot !== 0;
+    const o = { ...anchored, rotate: 'best', fit, cols: 2, rows: 2,
+      sheetW: turned ? 240 : 360, sheetH: turned ? 360 : 240 };
+    if (fit) assert.equal(stepRepeat(o).rotated, !turned, 'unanchored Best prefers the other angle');
+    const box = turned ? [20, 20, 80, 120] : [20, 20, 120, 80];
+    const other = turned ? cell(130, 150) : cell(150, 100, { rot: 270, box: [150, 100, 210, 200] });
+    const r = stepRepeat({ ...o, placed: [other, cell(20, 20, { rot, box })] });
+    assert.equal(r.rotated, turned); assert.equal(r.taken, 1);
+    assert.deepEqual([r.x0, r.y0, r.partW, r.partH], [20, 20, turned ? 60 : 100, turned ? 100 : 60]);
+    assert.ok(!r.positions.some((p) => p.x === 20 && p.y === 20));
+  }
+});
+
+test('nearest matching box to the sheet top-left sets the grid, rather than the topmost box', () => {
+  for (const fit of [true, false]) for (const placed of [[cell(240, 10), cell(20, 100)], [cell(20, 100), cell(240, 10)]]) {
+    const r = stepRepeat({ ...anchored, fit, cols: 1, rows: 1, placed });
+    assert.equal(r.x0, 20); assert.equal(r.y0, fit ? 30 : 100);
+    assert.equal(r.taken, 1);
+  }
+});
+
+test('parts crossing any gripper never anchor either mode or set Best rotation; edge contact is allowed', () => {
+  const grips = { gripLeft: 20, gripTop: 20, gripRight: 20, gripBottom: 20 };
+  for (const fit of [true, false]) for (const [x, y] of [[10, 30], [30, 10], [290, 30], [30, 130]]) {
+    const o = { ...anchored, ...grips, rotate: 'best', fit, cols: 2, rows: 2 };
+    const p = cell(x, y, { rot: 270, box: [x, y, x + 60, y + 100] });
+    const r = stepRepeat({ ...o, placed: [p] });
+    const plain = stepRepeat({ ...o, occupied: [p.box] });
+    assert.deepEqual(r, plain, 'a part crossing a gripper only acts as an obstacle');
+    const valid = stepRepeat({ ...o, placed: [p, cell(20, 20)] });
+    assert.equal(valid.rotated, false); assert.equal(valid.taken, 1);
+    assert.deepEqual([valid.x0, valid.y0], [20, 20]);
+  }
 });
 
 test('top-left matching part wins regardless of input order; on-cell parts take cells, between-cell parts skip', () => {
@@ -267,6 +301,9 @@ test('anchored Fit keeps extra gaps counted from the top and left and still incl
     extraCols: [{ after: 1, mm: 20 }], extraRows: [{ after: 1, mm: 10 }] });
   assert.equal(r.taken, 1);
   assert.equal(r.x0, 10); assert.equal(r.y0, 20);
+  assert.deepEqual([r.cols, r.rows, r.baseCols, r.baseRows, r.count], [5, 5, 5, 5, 24]);
+  assert.deepEqual(r.positions.filter((p) => p.y === 20).map((p) => p.x), [10, 140, 250, 360, 470]);
+  assert.deepEqual(r.positions.filter((p) => p.x === 10).map((p) => p.y), [20, 100, 170, 240, 310]);
   assert.equal(r.colGaps[0].size, 30); assert.equal(r.rowGaps[0].size, 20);
   assert.ok(r.positions.every((p) => p.x >= 0 && p.y >= 0 && p.x + r.partW <= 600 && p.y + r.partH <= 400));
 });

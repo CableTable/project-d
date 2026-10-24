@@ -81,12 +81,13 @@ export function gridCellNote(L) {
 /**
  * Fits copies of a partW × partH part on the sheet.
  * rotate: 'best' | '0' | '90'; align: 'centre' | 'topleft'.
- * fit: false → rows and columns are the typed o.rows and o.cols (at least 1), not worked out; 'best' then means 0°.
+ * fit: false → rows and columns are the typed o.rows and o.cols (at least 1), not worked out; unanchored 'best' means 0°.
  *   The grid is centred (or top-left) on the usable area even if it does not fit; `fits` says whether it does.
  * extraRows / extraCols: [{ after, mm }] extra room after row `after` (counted from the top, 1 = the first row) or
  * after column `after` (from the left), on top of gapY / gapX. One that lies beyond the last row / column is ignored.
  * occupied: obstacle boxes [x0, y0, x1, y1], sheet mm, y down; both modes skip overlaps (touching edges are OK).
- * placed: placements with a `box` in the same coordinates; same gridPart, angle and mirror anchors the grid.
+ * placed: placements with a `box` in the same coordinates; the nearest matching box to sheet top-left anchors the grid.
+ * Anchors must be wholly usable, with the same gridPart, angle and mirror; 'best' follows an anchor at 0° or 270°.
  * Matching cells are taken by those parts, excluded from positions; anchored typed grids drop cells outside the usable area.
  * Returns the footprint (partW/partH already swapped when rotated) and the top-left of each copy, plus
  * rowGaps / colGaps: [{ after, at, size }] the strip between two rows / columns (sheet mm, with its extra).
@@ -101,8 +102,16 @@ export function stepRepeat(o) {
   const a90 = tryOrientation(area, partH, partW, gapX, gapY, ex, ey);
   const base0 = tryOrientation(area, partW, partH, gapX, gapY, new Map(), new Map()), base90 = tryOrientation(area, partH, partW, gapX, gapY, new Map(), new Map());
   const manual = o.fit === false;                                     // rows and columns typed by hand: the grid may not fit
+  const placed = o.placed || [];
+  const angle = (p) => ((p.rot || 0) % 360 + 360) % 360;
+  const candidates = placed.filter((p) => o.gridPart && p.partId === o.gridPart && !p.mirrorX && !p.mirrorY &&
+    (String(rotate) === 'best' ? angle(p) === 0 || angle(p) === 270 : angle(p) === (String(rotate) === '90' ? 270 : 0)) &&
+    p.box[0] >= area.x - 1e-9 && p.box[1] >= area.y - 1e-9 &&
+    p.box[2] <= area.x + area.w + 1e-9 && p.box[3] <= area.y + area.h + 1e-9);
+  const anchor = partW > 0 && partH > 0 && candidates.sort((a, b) => Math.hypot(a.box[0], a.box[1]) - Math.hypot(b.box[0], b.box[1]))[0];
   let rotated = false;
-  if (String(rotate) === '90') rotated = true;
+  if (anchor) rotated = angle(anchor) === 270;
+  else if (String(rotate) === '90') rotated = true;
   else if (String(rotate) === 'best' && !manual) rotated = a90.cols * a90.rows > a0.cols * a0.rows;
   let { cols, rows } = rotated ? a90 : a0;
   if (manual) {
@@ -111,10 +120,7 @@ export function stepRepeat(o) {
     if (!(partW > 0 && partH > 0) || cols * rows > MAX_COUNT) { cols = 0; rows = 0; }
   }
   const pw = rotated ? partH : partW, ph = rotated ? partW : partH;
-  const placed = o.placed || [];
-  const matching = placed.filter((p) => o.gridPart && p.partId === o.gridPart && !p.mirrorX && !p.mirrorY &&
-    (((p.rot || 0) % 360 + 360) % 360) === (rotated ? 270 : 0));
-  const anchor = pw > 0 && ph > 0 && matching.sort((a, b) => a.box[1] - b.box[1] || a.box[0] - b.box[0])[0];
+  const matching = candidates.filter((p) => angle(p) === (rotated ? 270 : 0));
   let gridW = lay(cols, pw, gapX, ex, 0).len, gridH = lay(rows, ph, gapY, ey, 0).len;
   let x0 = anchor ? anchor.box[0] : align === 'topleft' ? area.x : area.x + (area.w - gridW) / 2;
   let y0 = anchor ? anchor.box[1] : align === 'topleft' ? area.y : area.y + (area.h - gridH) / 2;

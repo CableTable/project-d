@@ -9518,6 +9518,30 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 127b: dropped cells without skipped cells name the grid dimensions once in status (light and dark)', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Dropped grid'), doc = newDoc(4);
+    addEntities(doc, roundRect(0, 0, 100, 100, 0));
+    lay.parts.fit = makePart('fit', 'Grid plate', doc);
+    Object.assign(lay.s, { sheetW: 400, sheetH: 300, gripBottom: 0, gapX: 0, gapY: 0,
+      gridPart: 'fit', fit: false, cols: 3, rows: 2 });
+    lay.placed.push({ partId: 'fit', x: 150, y: 100, rot: 0 });
+    await t('picker').setInputFiles({ name: 'dropped-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dropped-grid.dxf');
+    await t('panel-main').click();
+    assert.equal(await t('step-hint').textContent(), '3 × 2: 2 off the sheet');
+    assert.equal(await t('count').textContent(), '3');
+    assert.equal(await sheetParts(), 4);
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      assert.equal((await prompt()).match(/3 × 2/g)?.length, 1, 'status names the grid once');
+      assert.match(await prompt(), /3 × 2: 2 off the sheet/);
+      await t('step-hint').scrollIntoViewIfNeeded();
+      await page.screenshot({ path: `${shotDir}/todo-127b-dropped-${theme}.png` });
+    }
+    await closeTabs(/./);
+  });
+
   await step('TODO 87: Auto-nest ignores the grid preview, keeps placed obstacles, Cancel preserves it and Apply replaces it in one undo (light then dark)', async () => {
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme);
