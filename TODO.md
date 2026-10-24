@@ -126,7 +126,7 @@ From the v0.1.30 exe test (Pip-test, 2026-10-20):
 
 From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/VPxPFSo6u1vonP7QdBetXE; his ask: all of it):
 66. **More Modify tools** (S–L): Move and Copy (base point, then target or typed distance) first, then Rotate and Scale, then Fillet and Extend; in the Modify menu and the command bar (AutoCAD M, CO, RO, SC, F, EX).
-    66a. Move selected drawing objects from a base point to a clicked or typed target through Modify and M, respecting layer locks and supporting preview, Esc and one-step undo, with unit and browser tests.
+    66a. ✅ (built, 2026-10-24) Move selected drawing objects from a clicked or typed base point to a snapped target, typed dx,dy or direct distance (mm) through Modify and MV / MOVE. Layer locks, live ghosts, Shift / ORTHO, Esc, selection retained and one-step undo; pure and browser tests. M stays Measure; CT / CONTOUR opens Contour; CO stays free for Copy (66b).
     66b. (after 66a) Copy selected drawing objects using the same base-point / target flow through Modify and CO, preserving the originals and properties with unit and browser undo tests.
     66c. (after 66a) Rotate selected drawing objects about a chosen pivot by a clicked or typed angle through Modify and RO, with preview, Esc, undo and unit / browser tests.
     66d. (after 66a) Scale selected drawing objects about a base point by a positive typed factor through Modify and SC, preserving widths and refusing unsupported transforms with unit and browser tests.
@@ -247,6 +247,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 141. ✅ **Save drops AutoCAD tables without a word** (S–M, bug, found by Bishop-review 2026-10-24): `web/dxf-write.js:16` has no ACAD_TABLE in its save list, so open a DXF with a table, Save, reopen: the table is gone (its *T block is still written, unused). Write ACAD_TABLE back as read, or save it as a plain block reference, and note anything dropped. Grill first.
 142. **Session 20 review leftovers** (S, Bishop-review 2026-10-24, for Knight): (a) `web/app.js:4061` paste on a layout uses the old `unwritable()` note; use `writeDxfWithReport` + `saveReportNote` like Extract part; (b) TODO 111b's text still says "<source tab> paste": match its DECISIONS row (base name, sheet number); (c) Extract stores `source: d.name` with .dxf while paste stores the base name: one way.
 
+143. **Measure on layout tabs** (his ask 2026-10-24, S, tab parity survey).
+144. **Ctrl+C on layout tabs** (his ask 2026-10-24, S, tab parity survey).
+
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
 1. ✅ (built, PR #10) Drawing tools: line, polyline, rectangle, rounded rectangle, circle, ellipse, arc, text and dimension, with snaps, ortho and polar tracking, and typed coordinates. (Text: TODO 17. Polar tracking: TODO 21, built in PR #12.)
@@ -272,4 +275,4 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 1. IBM Plex fonts are not bundled, so the system font is used. Bundle them locally if he wants the mock-up's look.
 2. A per-user .dxf file association, with no admin rights.
 3. A "keep settings next to the exe" switch.
-4. Drawing selection drag refuses HATCH and DIMENSION entities (`moveEntities`); add their move support.
+4. ✅ (built, TODO 66a) Drawing selection drag now moves HATCH and native DIMENSION entities through the shared translation code.
