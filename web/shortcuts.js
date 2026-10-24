@@ -47,11 +47,16 @@ export function keyReason(key) {
 
 /** Apply only known, well-formed fields; callers check clashes before using loaded or imported bindings. */
 export function bindings(overrides = {}) {
-  return Object.fromEntries(COMMANDS.map((c) => {
+  const bound = Object.fromEntries(COMMANDS.map((c) => {
     const o = Object.hasOwn(overrides || {}, c.name) ? overrides[c.name] : null;
     return [c.name, { alias: Array.isArray(o?.alias) && o.alias.every((a) => typeof a === 'string') ? aliases(o.alias.join(',')) : [...c.alias],
       key: typeof o?.key === 'string' && !fixedKey(c.name) ? normalizeKey(o.key) ?? o.key : c.key }];
   }));
+  // Existing own keys win over the newly added tab defaults on upgrade.
+  for (const name of ['closetab', 'nexttab', 'previoustab']) {
+    if (!Object.hasOwn(overrides?.[name] || {}, 'key') && COMMANDS.some((c) => c.name !== name && typeof overrides?.[c.name]?.key === 'string' && bound[c.name].key === bound[name].key)) bound[name].key = '';
+  }
+  return bound;
 }
 export function differences(draft) {
   return Object.fromEntries(COMMANDS.flatMap((c) => {

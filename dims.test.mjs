@@ -130,10 +130,11 @@ test('scaling re-labels R and Ø and inch dimensions, and leaves their prefix an
   assert.equal(txt(E.scaleAbout({ entities: [inch.insert], blocks: { PD_DIM_1: reopen(inch) }, layers: {} }, 2, 0, 0, 0).blocks.PD_DIM_1), '20.00"');
 });
 
-test('free names: aligned PD_DIM_n, then R, D, A with their own counts; circleOf and lineOf pick only what can be dimensioned', () => {
-  const blocks = { PD_DIM_1: {}, PD_DIM_R1: {}, PD_DIM_R2: {} };
+test('free names: aligned PD_DIM_n, then H, V, R, D, A with their own counts; circleOf and lineOf pick only what can be dimensioned', () => {
+  const blocks = { PD_DIM_1: {}, PD_DIM_H1: {}, PD_DIM_V1: {}, PD_DIM_V2: {}, PD_DIM_R1: {}, PD_DIM_R2: {} };
   assert.equal(E.freeName(blocks), 'PD_DIM_2'); assert.equal(E.freeName(blocks, 'radius'), 'PD_DIM_R3');
   assert.equal(E.freeName(blocks, 'diameter'), 'PD_DIM_D1'); assert.equal(E.freeName(blocks, 'angle'), 'PD_DIM_A1');
+  assert.equal(E.freeName(blocks, 'linear', 'h'), 'PD_DIM_H2'); assert.equal(E.freeName(blocks, 'linear', 'v'), 'PD_DIM_V3');
   assert.deepEqual(E.circleOf(circle(5, 6, 7)), { c: [5, 6], r: 7 }); assert.deepEqual(E.circleOf(arc(1, 2, 3, 0, 90)), { c: [1, 2], r: 3 });
   assert.equal(E.circleOf(line(0, 0, 1, 1)), null); assert.equal(E.circleOf(undefined), null);
   assert.deepEqual(E.lineOf(line(0, 0, 3, 4)), [0, 0, 3, 4]); assert.equal(E.lineOf(line(1, 1, 1, 1)), null); assert.equal(E.lineOf(circle(0, 0, 1)), null);

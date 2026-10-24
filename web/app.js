@@ -6,7 +6,7 @@ import * as SC from './shortcuts.js';
 import { openShortcuts } from './shortcutdlg.js';
 import { idbStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
-import { PRESETS, presetFor, stepRepeat, GRIP_KEYS } from './layout.js';
+import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import * as UF from './unitfix.js';
@@ -25,6 +25,7 @@ import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as TX from './text.js';
 import * as GR from './grips.js';
+import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
@@ -557,6 +558,11 @@ async function closeTab(d) {
 
 const curDoc = () => state.docs[state.doc];
 
+function cycleTab(step) {
+  state.doc = (state.doc + step + state.docs.length) % state.docs.length;
+  showDoc();
+}
+
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
   ui.fontNote.hidden = true;
@@ -769,6 +775,7 @@ function attachDrop() {
       e.preventDefault();
       ui.canvas.classList.remove('dropping');
       const rec = lib.items.find((r) => r.id === id), r = ui.canvas.getBoundingClientRect();
+      if (ui.tabs.parentElement.contains(e.target)) { if (rec) openPartAsDrawing(rec); return; }
       if (onCmp(e)) { if (rec) cmpAddPart(cmpDoc(), rec); return; }
       const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
       if (!rec || !inside) return;
@@ -1219,12 +1226,12 @@ function apply() {
   if (!lay) { note('Apply is on a layout tab: Add to layout, or New layout'); return; }
   if (!lay.s.gridPart) { note('Pick a part for step and repeat first'); return; }
   if (!layout.count) { note('Nothing fits on the sheet, so there is nothing to apply'); return; }
-  const grid = placedNow.filter((p) => p.src === 'grid'), id = lay.s.gridPart, skipped = layout.skipped;
+  const grid = placedNow.filter((p) => p.src === 'grid'), id = lay.s.gridPart, cellNote = gridCellNote(layout);
   pushLay(d, null, '', 'Apply the grid');
   for (const p of grid) lay.placed.push(placement1(p.partId, p.x, p.y, p.rot));
   lay.s.gridPart = null;
   touch(); update();
-  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. ${skipped ? `${skipped} cell${skipped === 1 ? '' : 's'} skipped: overlap with placed parts. ` : ''}Pick a part in Step and repeat to make another grid`);
+  note(`${grid.length} copies of ${lay.parts[id].name} are now placed parts of their own. ${cellNote ? cellNote + '. ' : ''}Pick a part in Step and repeat to make another grid`);
 }
 
 // ---- Auto-nest (nestdlg.js is the dialog, nest.js the packer): the preview is only applied by Apply, as one undo step ----
@@ -2090,7 +2097,7 @@ function renderStep() {
   const bad = layout.count > 0 && !layout.fits;
   ui.fitNote.hidden = !bad;
   ui.fitNote.textContent = bad ? `Does not fit: the grid is ${fmtSize(layout.gridW)} × ${fmtSize(layout.gridH)} mm, the usable area ${fmtSize(layout.area.w)} × ${fmtSize(layout.area.h)} mm.` : '';
-  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : layout.skipped ? `${layout.skipped} cell${layout.skipped === 1 ? '' : 's'} skipped: overlap with placed parts.` : !layout.count && on ? 'The part is larger than the usable area.' : '';
+  ui.stepHint.textContent = !lay ? '' : !s.gridPart ? 'Pick a part to repeat over the sheet, or add parts from the Parts library.' : gridCellNote(layout) || (!layout.count && !layout.taken && on ? 'The part is larger than the usable area.' : '');
   ui.stepFoot.classList.toggle('idle', !!lay && !s.gridPart);     // no grid part: just the hint, not a floating "0" and a greyed Apply
   ui.applyBtn.disabled = !lay || !layout.count;
   ui.applyBtn.title = !lay ? 'Apply is on a layout tab' : !s.gridPart ? 'Pick a part for step and repeat first' : '';
@@ -2164,19 +2171,20 @@ function renderLibrary() {
   if (!ui.libList) return;
   const shown = lib.items.filter((r) => !lib.q || r.name.toLowerCase().includes(lib.q));
   ui.libList.replaceChildren(...shown.map((rec) => {
-    const more = h('button', { class: 'tog', type: 'button', 'aria-label': 'Part menu for ' + rec.name, title: 'Rename, Export, Delete', 'data-testid': 'lib-menu' }, '⋯');
+    const more = h('button', { class: 'tog', type: 'button', 'aria-label': 'Part menu for ' + rec.name, title: 'Open as drawing, Rename, Export, Delete', 'data-testid': 'lib-menu' }, '⋯');
     more.addEventListener('click', (e) => {
       e.stopPropagation();
       const r = more.getBoundingClientRect();
-      popMenu(r.left, r.bottom + 2, [['Add to sheet', () => addLibToSheet(rec)], ['Export .dxf…', () => exportPart(rec)], ['Rename…', () => renamePart(rec)], ['Delete from library', () => deletePart(rec)]]);
+      popMenu(r.left, r.bottom + 2, [['Add to sheet', () => addLibToSheet(rec)], ['Open as drawing', () => openPartAsDrawing(rec)], ['Export .dxf…', () => exportPart(rec)], ['Rename…', () => renamePart(rec)], ['Delete from library', () => deletePart(rec)]]);
     });
-    const card = h('div', { class: 'card', 'data-part-id': rec.id, 'data-name': rec.name, draggable: 'true', title: 'Drag onto the sheet, or press Add to sheet' },
+    const card = h('div', { class: 'card', 'data-part-id': rec.id, 'data-name': rec.name, draggable: 'true', title: 'Double-click or drag onto the tab strip to open as a drawing; drag onto the sheet to place' },
       /^data:image\/png;base64,/.test(rec.thumb || '') ? h('img', { class: 'thumb', src: rec.thumb, alt: '', draggable: 'false' }) : h('div', { class: 'thumb none' }),
       h('strong', { class: 'cname' }, rec.name),
       h('span', { class: 'lbl mono', 'data-testid': 'lib-size' }, `${fmt(rec.w)} × ${fmt(rec.h)}`),
       h('span', { class: 'lbl' }, rec.source || ''),
       h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', 'data-testid': 'lib-add', onclick: () => addLibToSheet(rec) }, 'Add to sheet'), more));
     card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-pd-part', rec.id); e.dataTransfer.setData('text/plain', rec.name); e.dataTransfer.effectAllowed = 'copy'; });
+    card.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) openPartAsDrawing(rec); });
     return card;
   }));
   const n = lib.items.length;
@@ -2214,12 +2222,13 @@ function dropLibInDrawing(rec, clientX, clientY) {
       (moved.length ? `. Layer ${moved.map(([l, n]) => `${l} (${n})`).join(', ')} is locked or hidden here, so those went on ${curLayerName(d)}` : '') + '. Ctrl+Z takes them away');
   } catch (err) { note(`${rec.name}: ${err && err.message ? err.message : err}`); }
 }
-/** A library part dropped with no drawing open: it opens as its own new drawing tab, named after the part, not saved yet. */
+/** Open an independent copy of a library part as a new drawing, not saved yet. */
 function openPartAsDrawing(rec) {
   const part = libPart(rec);
   if (!part) { note(`${rec.name}: this part could not be read`); return; }
-  const raw = { ...part.raw, header: { ...part.raw.header }, blocks: LD.partBlocks(part.raw.blocks) };
-  addTab({ name: rec.name + '.dxf', path: null, openPath: null, dirty: true, ...tabFields(raw, flatten(raw)) });
+  const raw = structuredClone(part.raw);
+  raw.blocks = LD.partBlocks(raw.blocks);
+  addTab({ name: rec.name, path: null, openPath: null, scratch: true, dirty: true, ...tabFields(raw, flatten(raw)) });
   note(`${rec.name} opened as a new drawing: ${curDoc().entities} entities. Not saved yet: Save asks where`);
 }
 
@@ -3046,6 +3055,7 @@ const DO = {
   fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(),
   shortcuts: () => showShortcuts(),
+  closetab: () => closeTab(curDoc()), nexttab: () => cycleTab(1), previoustab: () => cycleTab(-1),
 };
 /** A command of the table started by its name (typed in the bar, a history line, Space on the drawing). */
 function runCommand(cmd) {
@@ -3361,7 +3371,7 @@ function hideNow(d) {
   if (!d || (drag == null && !move?.items && !(d.hid && d.hid.size))) return null;
   const out = new Set(hidIdx(d) || []);
   if (drag != null) out.add(drag);
-  if (move?.d === d && move.items) for (const e of move.sel) out.add(e);
+  if (move?.d === d && move.items && !move.copy) for (const e of move.sel) out.add(e);
   return out;
 }
 // the drawing canvas repaints once per frame, however often the view changes
@@ -3487,8 +3497,8 @@ function attachCanvasEvents() {
       if (d && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
-        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p)) && !e.shiftKey) {
-          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p };
+        if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p)) && (!e.shiftKey || e.ctrlKey || e.metaKey)) {
+          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p, copy: e.ctrlKey || e.metaKey };
         }
         capture(c, e);
       }
@@ -3559,15 +3569,17 @@ function attachCanvasEvents() {
           const ready = moveSelectionTo(was.move, e);
           const g = was.move; state.entityDrag = null;
           if (ready && g.items && (g.dx || g.dy) && g.raw === d.raw.entities) {
-            commit(d, Ed.moveEntities(d.raw, g.sel, g.dx, g.dy), 'Move selection'); setSel(d, g.sel);
-            note('Selection moved. Ctrl+Z takes it back');
+            const next = (g.copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, g.sel, g.dx, g.dy);
+            const sel = g.copy ? new Set(next.entities.slice(g.raw.length).map((_, i) => g.raw.length + i)) : g.sel;
+            commit(d, g.copy ? next : followDimensions(d.raw, next, d.factor), g.copy ? 'Copy selection' : 'Move selection'); setSel(d, sel);
+            note(g.copy ? 'Selection copied. Ctrl+Z removes the copy' : 'Selection moved. Ctrl+Z takes it back');
           }
           paintOverlay();
         }
       }
       else if (!editable()) { /* a layout tab: its placed parts are picked by the page itself (data-i) */ }
       else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift);
-      else clickSelect(d, was.p, e.shiftKey || was.shift);
+      else clickSelect(d, was.p, e.shiftKey || was.shift || e.ctrlKey || e.metaKey);
     }
     end();
     state.entityDrag = null;
@@ -3627,8 +3639,8 @@ function renderCommand() {
     : state.tool === 'contour' && ed ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:')
     : lay ? (gp
-      ? (layout.count ? `${layout.count} ${word}${layout.skipped ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. [Apply / Rotate / Nest]:`
-        : '0 fit: the part is larger than the usable area. [Apply / Rotate / Nest]:')
+      ? (layout.count ? `${layout.count} ${word}${gridCellNote(layout) ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. ${gridCellNote(layout) ? gridCellNote(layout) + '. ' : ''}[Apply / Rotate / Nest]:`
+        : `${gridCellNote(layout) || (layout.taken ? 'All grid cells are already placed' : '0 fit: the part is larger than the usable area')}. [Apply / Rotate / Nest]:`)
       : `${placedNow.length} placed part${placedNow.length === 1 ? '' : 's'}. Pick a part for step and repeat, or add one from the Parts library:`)
     : state.tool === 'balloon' && ed ? balPrompt()
     : ed && ed.sel.size ? `${ed.sel.size} selected. [Extract / Keep only / Measure]:`
@@ -4125,7 +4137,7 @@ function scaleDrawing(d, s, label = 'Scale') {
   const b = drawBox(d.fl), pb = partBox(d);
   if (!b || !pb) return;
   const r = Ed.scaleAbout(d.raw, s, pb[0] / d.factor, pb[1] / d.factor, spaceOf(d.fl));       // about the part's own bottom-left, not a dimension's
-  commit(d, r, `${label} ×${s.toFixed(3)}`);
+  commit(d, followDimensions(d.raw, r, d.factor), `${label} ×${s.toFixed(3)}`);
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', '), nb = partBox(d);
   note(`Scaled ×${+s.toPrecision(6)}: now ${fmtSize(nb[2] - nb[0])} × ${fmtSize(nb[3] - nb[1])} mm` + (left ? ` (not scaled: ${left})` : ''));
 }
@@ -4144,7 +4156,7 @@ function unitFix(fix) {
     return;
   }
   const r = Ed.scaleAbout(d.raw, fix.s, 0, 0, spaceOf(d.fl));
-  commit(d, r, `Unit fix ${fix.text}`);
+  commit(d, followDimensions(d.raw, r, d.factor), `Unit fix ${fix.text}`);
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', ');
   note(UF.unitFixLine(fix, was, UF.unitFixSize(partBox(d), 1)) + (left ? ` (not scaled: ${left})` : ''));
 }
@@ -4182,7 +4194,7 @@ function sizeTyped(input, axis) {
   try {
     const r = Ed.resizeAbout(d.raw, sx, sy, b[0] / d.factor, b[1] / d.factor, spaceOf(d.fl), selection);
     if (Object.keys(r.skipped).length) { note('Cannot resize this selection: some objects do not support scaling'); renderEdit(); return; }
-    commit(d, r, 'Resize ' + (selection ? 'selection' : 'drawing'));
+    commit(d, followDimensions(d.raw, r, d.factor), 'Resize ' + (selection ? 'selection' : 'drawing'));
     if (selection) setSel(d, selection);
     note('Resized ' + (selection ? 'selection' : 'drawing') + ' about its bottom-left. Ctrl+Z undoes this size change');
   } catch (error) { note(error.message); renderEdit(); }
@@ -4273,7 +4285,7 @@ function dimHover(d, p, shift) {
 /** Puts the dimension m ({ kind, params }) in the drawing (one undo step) and starts the next. */
 function dimPlace(d, m) {
   if (!m) { note(state.dimType === 'angle' ? 'Dimension: no angle there, try another place' : 'Dimension: nothing to measure there, try another place'); return; }
-  const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(d.raw.blocks, m.kind === 'linear' ? 'aligned' : m.kind), state.dp);
+  const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(d.raw.blocks, m.kind, m.params.axis), state.dp);
   if (!dim) { note('Dimension: nothing to measure there, try another place'); return; }
   dimClear(state.dim);
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
@@ -5691,7 +5703,7 @@ function gripCommit() {
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
   const d = g.d, label = g.label, text = GR.readoutOf(g.ent, g.id, g.next, d.factor);
   view.fitted = false;
-  commit(d, g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, label);
+  commit(d, g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
   setSel(d, g.sel);
   note(`${label}: ${text}. Ctrl+Z takes it back`);
 }
@@ -5872,10 +5884,11 @@ function buildDrawingSection() {
     h('span', { class: 'row' }, h('span', { class: 'chip' }, 'Leader'), h('span', { class: 'lbl' }, 'selected')), h('label', { class: 'field' }, 'Note', ui.ldrNote),
     h('div', { class: 'ldrgrid' }, h('label', { class: 'field' }, 'Text height (mm)', ui.ldrH), h('label', { class: 'field' }, 'Arrow size (mm)', ui.ldrA)), ui.ldrStyle);
   ui.gapCount = h('span', { class: 'lbl', 'data-testid': 'gap-count' });
+  ui.gapReason = h('span', { class: 'lbl', id: 'gap-reason', 'data-testid': 'gap-reason', hidden: true });
   ui.gapTol = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'gap-tol', 'aria-label': 'Tiny gap tolerance in mm' });
   ui.gapTol.addEventListener('change', gapTolTyped);
   ui.gapTol.addEventListener('keydown', (e) => { if (e.key === 'Enter') ui.gapTol.blur(); });
-  ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
+  ui.gapShow = h('button', { class: 'tog', type: 'button', 'data-testid': 'gap-show', 'aria-describedby': 'gap-reason', title: 'Mark the gaps on the drawing', onclick: () => { const d = editable(); if (d) { d.gapShow = !d.gapShow; paintOverlay(); renderEdit(); } } }, 'Show');
   ui.gapJoin = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'gap-join', title: 'Remove touching micro pieces, then close each gap by the Method (one undo step)', onclick: joinTinyGaps }, 'Join');
   ui.gapMethod = h('select', { class: 'fld', 'data-testid': 'gap-method', 'aria-label': 'Join gaps method', title: 'How Join closes each gap; a gap the method cannot do is closed by average point' },
     Object.entries(Ed.JOIN_METHODS).map(([v, text]) => h('option', { value: v }, text)));
@@ -5886,7 +5899,8 @@ function buildDrawingSection() {
   ui.gapRow = h('div', { class: 'gaprow2', 'data-testid': 'gap-row' }, h('span', { class: 'lbl', title: 'Ends that almost meet, closer than the tolerance' }, 'Tiny gaps'), ui.gapCount, h('span', { class: 'lbl' }, '<'), ui.gapTol, h('span', { class: 'lbl' }, 'mm'), ui.gapShow, ui.gapJoin,
     h('label', { class: 'gapmethod' }, h('span', { class: 'lbl' }, 'Method'), ui.gapMethod));
   ui.duplicateCount = h('span', { class: 'lbl', 'data-testid': 'duplicate-count' });
-  ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', onclick: removeDuplicates }, 'Remove duplicates…');
+  ui.duplicateReason = h('span', { class: 'lbl', id: 'duplicate-reason', 'data-testid': 'duplicate-reason', hidden: true });
+  ui.duplicateRemove = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'duplicate-remove', 'aria-describedby': 'duplicate-reason', onclick: removeDuplicates }, 'Remove duplicates…');
   ui.realLen = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', 'data-testid': 'real-length', 'aria-label': 'Real length in mm', placeholder: 'real length, mm' });
   ui.realLen.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); applyLength(); } });
   ui.measured = h('span', { class: 'lbl mono', 'data-testid': 'measured' });
@@ -5903,8 +5917,8 @@ function buildDrawingSection() {
       tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
       tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
-    ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow,
-    h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount),
+    ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow, ui.gapReason,
+    h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount), ui.duplicateReason,
     h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
@@ -6535,11 +6549,12 @@ function joinTinyGaps(whole = false) {
   const method = state.gapMethod, r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e), method);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
+  edIndex(d); renderEdit();
   const left = gapsOf(d) || [];
   // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
   const fell = Object.entries(r.by).filter(([m, n]) => m !== method && n).map(([m, n]) => `${n} by ${Ed.JOIN_METHODS[m].toLowerCase()}`);
   note(`Joined ${r.joined} gap${r.joined === 1 ? '' : 's'}` + (method === 'average' ? '' : ` (${Ed.JOIN_METHODS[method]})`) + (fell.length ? ', ' + fell.join(', ') : '') +
-    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back');
+    (r.removed ? `; ${r.removed} micro pieces removed` : '') + skippedText(r.skipped) + (left.length ? `; ${left.length} left` : '') + '. Ctrl+Z puts them back' + (ui.gapShow.disabled ? '. ' + ui.gapReason.textContent : ''));
 }
 const skippedText = (sk) => { const l = Object.entries(sk).map(([t, n]) => t + ' ' + n).join(', '); return l ? ` (not moved: ${l})` : ''; };
 
@@ -6548,7 +6563,7 @@ function removeDuplicates() {
   if (!d) return;
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
   d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
-  if (!r.count) { note('No removable duplicates / overlaps (locked layers are kept)'); renderEdit(); return; }
+  if (!r.count) { renderEdit(); note(ui.duplicateRemove.disabled ? ui.duplicateReason.textContent : 'No removable duplicates / overlaps (locked layers are kept)'); return; }
   commit(d, r, 'Remove duplicates / overlaps');
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
@@ -6632,6 +6647,10 @@ function renderEdit() {
   ui.textbar.hidden = !tb; if (tb) renderTextBar();
   ui.canvas.classList.toggle('texttool', on && state.tool === 'text');
   renderContour();
+  if (on && state.tool !== 'contour') {
+    ui.hintPill.hidden = state.tool !== 'select' || !d.sel.size || !!state.match;
+    ui.hintPill.textContent = 'Ctrl-drag = copy';
+  }
   ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!editable() && state.tool === 'measure'));
   if (!on) return;
   renderSelection(d);
@@ -6679,9 +6698,20 @@ function renderEdit() {
   if (document.activeElement !== ui.gapTol) ui.gapTol.value = String(state.gapMm);
   ui.gapShow.classList.toggle('on', !!d.gapShow); ui.gapShow.setAttribute('aria-pressed', String(!!d.gapShow));
   ui.gapJoin.disabled = !gl || !gl.length; ui.gapShow.disabled = ui.gapJoin.disabled || countOnly;
+  const gapReason = !gl ? '' : countOnly ? `Too many gaps to show (${gl.length}): Join still works` : !gl.length ? 'No tiny gaps' : '';
+  // Announce changes after a check or edit, without replacing the file-open/font message on the first index.
+  if (gl && d.gapReason !== undefined && gapReason && gapReason !== d.gapReason) note(state.msg ? state.msg + '. ' + gapReason : gapReason);
+  if (gl) d.gapReason = gapReason;
+  ui.gapReason.textContent = gapReason; ui.gapReason.hidden = !gapReason;
+  ui.gapShow.title = gapReason || 'Mark the gaps on the drawing';
   const duplicates = d.duplicates?.source === d.raw.entities ? d.duplicates : null;
   ui.duplicateCount.textContent = duplicates ? `${duplicates.count} found` : 'Check';
   ui.duplicateRemove.disabled = duplicates?.count === 0;
+  const duplicateReason = ui.duplicateRemove.disabled ? 'No duplicates since the last check: edit the drawing to check again' : '';
+  if (duplicateReason && duplicateReason !== d.duplicateReason) note(duplicateReason);
+  d.duplicateReason = duplicateReason;
+  ui.duplicateReason.textContent = duplicateReason; ui.duplicateReason.hidden = !duplicateReason;
+  ui.duplicateRemove.title = duplicateReason;
   ui.lenRow.hidden = !(L && L.measured);
   if (L && L.measured) ui.measured.textContent = fmtSize(L.measured) + ' mm measured';
 }
@@ -6959,6 +6989,14 @@ async function init() {
     balDock, cmdLog, buildStatus()));
   renderTabs();
   attachDrop();
+  document.addEventListener('keydown', (e) => {
+    if (document.querySelector('.pop-back, .pdlg-back')) return;
+    const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key);
+    if (!['closetab', 'nexttab', 'previoustab'].includes(cmd?.name)) return;
+    e.preventDefault(); e.stopPropagation();
+    if (cmd.name === 'closetab' && e.repeat) return;
+    textCommit(); runCommand(cmd);
+  }, true);                                               // tab keys also work in fields that handle their own keys
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }

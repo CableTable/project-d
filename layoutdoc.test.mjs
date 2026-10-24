@@ -255,4 +255,24 @@ test('Fit clears rotated mirrored placed boxes in sheet coordinates, including s
   assert.equal(LD.layoutRaw(lay).entities.filter((e) => e.type === 'INSERT').length, 12);
 });
 
+test('TODO 127: anchored grids derive identically after save and reopen, without storing copies', () => {
+  for (const fit of [true, false]) for (const rotate of ['0', '90']) {
+    const lay = LD.newLayout('Anchored');
+    lay.parts.a = LD.makePart('a', 'Plate', plate(100, 60));
+    lay.parts.b = LD.makePart('b', 'Other', plate(100, 60));
+    Object.assign(lay.s, { sheetW: 360, sheetH: 240, gripBottom: 0, gapX: 10, gapY: 10, gridPart: 'a', fit, rotate, cols: 3, rows: 2 });
+    lay.placed.push(placement1('a', 130, rotate === '90' ? 150 : 90, rotate === '90' ? -90 : 0), placement1('b', 240, 90));
+    const grid = LD.gridOf(lay), all = LD.placedAll(lay);
+    assert.equal(grid.taken, 1);
+    assert.equal(all.length, grid.count + 2);
+    assert.equal(new Set(all.map((p) => `${p.x},${p.y}`)).size, all.length);
+    const raw = LD.layoutRaw(lay);
+    assert.equal(LD.readMeta(raw).placed.length, 2, 'only loose parts are stored');
+    assert.equal(raw.entities.filter((e) => e.type === 'INSERT').length, all.length);
+    const back = LD.layoutFromRaw(readDxf(writeDxf(raw)));
+    assert.deepEqual(LD.gridOf(back), grid);
+    assert.deepEqual(LD.placedAll(back), all);
+  }
+});
+
 console.log(n + ' tests passed');

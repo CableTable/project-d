@@ -72,6 +72,37 @@ test('names, replace, and the drawing scaled (the block and its note scale; the 
   assert.deepEqual(LD.read('PD_LDR_1', num.blocks.PD_LDR_1).lines, ['25'], 'even a note that is just a number');
 });
 
+test('copied leaders get the first free blocks; editing their notes, sizes and grips leaves the originals unchanged', () => {
+  for (const lines of [['Original'], ['Original', 'Second line']]) {
+    const b = LD.build(model({ lines }), 'PD_LDR_1'), raw = newDoc(4);
+    raw.blocks = { PD_LDR_1: b.block, PD_LDR_3: structuredClone(b.block) };
+    raw.entities = [b.insert, LD.build(model({ lines }), 'PD_LDR_3').insert];
+    const before = structuredClone(raw), copied = E.copyEntities(raw, new Set([1, 0]), 20, -10);
+    assert.deepEqual(raw, before, 'copy leaves the input and undo snapshot intact');
+    assert.deepEqual(copied.entities.slice(0, 2), raw.entities);
+    assert.deepEqual([LD.ofEntity(copied, 2).name, LD.ofEntity(copied, 3).name], ['PD_LDR_2', 'PD_LDR_4']);
+    for (const i of [2, 3]) {
+      const copy = LD.ofEntity(copied, i), original = LD.ofEntity(copied, i - 2);
+      assert.deepEqual(copied.blocks[copy.name], raw.blocks[original.name]);
+      assert.notEqual(copied.blocks[copy.name], raw.blocks[original.name]);
+      const ent = copied.entities[i], f = (c) => +ent.r.v[ent.r.c.indexOf(c)];
+      assert.deepEqual([f(10), f(20)], [20, -10]);
+      const grip = GR.dragGrip({ type: 'LEADER', name: copy.name, model: copy.model }, 'v1', [300, 150]);
+      for (const changed of [{ ...copy.model, lines: ['Edited copy'] }, { ...copy.model, textH: 7, arrow: 4 }, grip.ent.model]) {
+        const next = LD.replace(copied, copy.name, changed);
+        assert.deepEqual(LD.ofEntity(next, i).model.lines, changed.lines);
+        near(LD.ofEntity(next, i).model.textH, changed.textH);
+        assert.deepEqual(LD.ofEntity(next, i).model.pts, changed.pts);
+        for (const name of Object.keys(copied.blocks).filter((name) => name !== copy.name)) {
+          assert.deepEqual(next.blocks[name], copied.blocks[name], 'only the edited copy changes');
+        }
+      }
+    }
+    const hist = E.createHistory(); hist.push(raw, 'Copy selection');
+    assert.deepEqual(hist.undo(copied), before);
+  }
+});
+
 test('grips: a point each (arrowhead, bend, end); dragging moves that point only, never onto another; the rubber band starts from the neighbour', () => {
   const ent = { type: 'LEADER', name: 'PD_LDR_1', model: model() };
   assert.equal(GR.hasGrips(ent), true);

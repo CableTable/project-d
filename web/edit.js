@@ -779,7 +779,7 @@ function scaleHatch(r, s, a) {
  * The entities of the shown space (space 0 model, 1 paper) scaled by s about (ax, ay); other spaces stay. A DIMENSION's
  * block is scaled with it. skipped: { TYPE: count } of what has no scaling here (it stays as it was).
  */
-/** The blocks a kept dimension (makeDimension) lives in: PD_DIM_n aligned or linear, PD_DIM_R / D / A n radius, diameter, angle. */
+/** Kept dimension blocks: PD_DIM_n aligned, PD_DIM_H / V n linear, PD_DIM_R / D / A n radius, diameter, angle. */
 export const DIM_BLOCK = /^PD_DIM_/;
 /** The blocks a leader lives in (leader.js). */
 export const LDR_BLOCK = /^PD_LDR_/;
@@ -885,6 +885,28 @@ export function moveEntities(raw, selection, dx, dy) {
     const x = e.flip && OCS.has(e.type) ? -dx : dx;
     return { ...e, r: record(e.type, e.r, x), kids: e.kids?.map((kid) => record(kid.type, kid, x)) };
   }), blocks: raw.blocks };
+}
+
+/** Append translated copies in drawing order, leaving the originals and shared blocks intact; copied dimensions and leaders get their own blocks. */
+export function copyEntities(raw, selection, dx, dy) {
+  const moved = moveEntities(raw, selection, dx, dy);
+  let blocks = moved.blocks;
+  const copies = moved.entities.filter((_, i) => selection.has(i)).map((e) => {
+    const name = e.type === 'INSERT' ? fieldOf(e.r, 2) : '';
+    if ((!DIM_BLOCK.test(name) && !LDR_BLOCK.test(name)) || !blocks[name]) return e;
+    let own;
+    if (LDR_BLOCK.test(name)) {
+      let n = 1;
+      while (blocks['PD_LDR_' + n]) n++;
+      own = 'PD_LDR_' + n;
+    } else {
+      const dim = readDim(name, blocks[name]);
+      own = freeName(blocks, dim?.kind, dim?.params.axis);
+    }
+    blocks = { ...blocks, [own]: structuredClone(blocks[name]) };
+    return { ...e, r: { ...e.r, v: e.r.v.map((v, k) => e.r.c[k] === 2 ? own : v) } };
+  });
+  return { entities: [...raw.entities, ...copies], blocks };
 }
 
 // ---------------------------------------------------------------- undo
@@ -1079,12 +1101,17 @@ export function dimBlock(g, name) {
   const ents = [...g.lines.map((l) => line(...l, o)), ...(g.arcs || []).map((a) => arc(...a, o)), ...g.arrows.map(solid), txt];
   return { name, block: { base: [0, 0], xref: false, entities: ents }, insert: insert(name, 0, 0, { layer: DIM_LAYER }), mm: g.mm, label: g.label };
 }
-export const buildDim = (kind, params, factor, name, dp = 2) => { const g = dimGeom(kind, params, factor, dp); return g && dimBlock(g, name); };
+export const buildDim = (kind, params, factor, name, dp = 2) => {
+  const g = dimGeom(kind, params, factor, dp), built = g && dimBlock(g, name);
+  // Keep the axis in-session too when rebuilding an old untagged Linear block.
+  if (built && kind === 'linear') built.block.dimAxis = params.axis;
+  return built;
+};
 /** An aligned or linear dimension (see dimGeometry) as a block; null for two equal points. */
 export const buildDimension = (params, factor, name, dp = 2) => buildDim('aligned', params, factor, name, dp);
-/** The first free block name for a dimension of this kind: PD_DIM_n, PD_DIM_R n (radius), D (diameter) or A (angle). */
-export function freeName(blocks, kind = 'aligned') {
-  const tag = { radius: 'R', diameter: 'D', angle: 'A' }[kind] || '';
+/** First free name: PD_DIM_n aligned, H / V linear, R radius, D diameter or A angle. */
+export function freeName(blocks, kind = 'aligned', axis = null) {
+  const tag = kind === 'linear' ? { h: 'H', v: 'V' }[axis] || '' : { radius: 'R', diameter: 'D', angle: 'A' }[kind] || '';
   let n = 1;
   while (blocks['PD_DIM_' + tag + n]) n++;
   return 'PD_DIM_' + tag + n;
@@ -1114,21 +1141,24 @@ export function dimParams(block) {
   const gap = Math.max(0, Math.abs((g(ext[0], 11) - p0[0]) * -uy + (g(ext[0], 21) - p0[1]) * ux) - 0.4 * th);          // the overshoot past the line is the gap and 0.4 text heights
   const back = (e) => { const l = Math.hypot(g(e, 11) - g(e, 10), g(e, 21) - g(e, 20)); return [g(e, 10) - (g(e, 11) - g(e, 10)) / l * gap, g(e, 20) - (g(e, 21) - g(e, 20)) / l * gap]; };
   const a = back(ext[0]), b = back(ext[1]);
-  const along = (b[0] - a[0]) * ux + (b[1] - a[1]) * uy, bl = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const bl = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const out = { a, b, offset: (p0[0] - a[0]) * -uy + (p0[1] - a[1]) * ux, gap, ...look };
-  if (bl > 1e-9 && Math.abs(along) < bl * (1 - 1e-6)) out.axis = Math.abs(ux) > Math.abs(uy) ? 'h' : 'v';      // the points are not along the line: a linear dimension
+  const flat = Math.min(Math.abs(ux), Math.abs(uy)) < 1e-6, perp =Math.abs((b[0] - a[0]) * -uy + (b[1] - a[1]) * ux);
+  if (bl > 1e-9 && flat && perp > 1e-5 + 1e-7 * bl) out.axis = Math.abs(ux) > Math.abs(uy) ? 'h' : 'v';      // the points are off the axis of a horizontal / vertical line: a linear dimension
   return out;
 }
 /** A kept dimension's kind and parameters from its block name and block: { kind, params } for dimGeom, or null when it is not one. */
 export function readDim(name, block) {
   if (!block || !DIM_BLOCK.test(name)) return null;
-  const tag = (/^PD_DIM_([RDA])\d+$/.exec(name) || [])[1], ents = block.entities || [], g = (e, c) => +fieldOf(e.r, c);
+  const tag = (/^PD_DIM_([RDAHV])\d+$/.exec(name) || [])[1], ents = block.entities || [], g = (e, c) => +fieldOf(e.r, c);
   if (tag === 'R' || tag === 'A') {
     const ln = ents.find((e) => e.type === 'LINE'), sd = ents.find((e) => e.type === 'SOLID'), ar = ents.find((e) => e.type === 'ARC'), look = lookOf(ents);
     if (tag === 'R' && ln && sd) { const c = [g(ln, 10), g(ln, 20)]; return { kind: 'radius', params: { ...look, c, r: Math.hypot(g(sd, 10) - c[0], g(sd, 20) - c[1]), p: [g(ln, 11), g(ln, 21)] } }; }
     return tag === 'A' && ar ? { kind: 'angle', params: { ...look, v: [g(ar, 10), g(ar, 20)], r: g(ar, 40), a0: g(ar, 50), a1: g(ar, 51) } } : null;
   }
   const p = dimParams(block);
+  const axis = { H: 'h', V: 'v' }[tag] || block.dimAxis;
+  if (p && axis) p.axis = axis;
   return p && { kind: tag === 'D' ? 'diameter' : p.axis ? 'linear' : 'aligned', params: p };
 }
 /** The signed offset of a dimension line through point p, for a dimension from a to b (positive: left of a→b); axis 'h' / 'v': of a linear one. */
@@ -1138,9 +1168,10 @@ export function dimOffsetAt(a, b, p, axis = null) {
   const len = Math.hypot(dx, dy);
   return len > 1e-12 ? (-(p[0] - a[0]) * dy + (p[1] - a[1]) * dx) / len : 0;
 }
-/** A dimension with the first free name PD_DIM_n, offset 0 and the default text height, or `look` (what Measure's Keep makes). */
+/** A dimension with its first free block name, offset 0 and default text height, or `look` (what Measure's Keep makes). */
 export function makeDimension(a, b, factor, blocks = {}, dp = 2, look = {}) {
-  return buildDimension({ a, b, offset: 0, ...look }, factor, freeName(blocks), dp);
+  const kind = look.axis ? 'linear' : 'aligned';
+  return buildDim(kind, { a, b, offset: 0, ...look }, factor, freeName(blocks, kind, look.axis), dp);
 }
 /** The dimension INSERT at entity index e → { name, kind, params, dp } (see readDim; dp: the decimals its text has), or null when that is not a kept dimension. */
 export function dimOfEntity(raw, e) {
