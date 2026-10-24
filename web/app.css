@@ -44,6 +44,37 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
 
 .shell { display: flex; flex-direction: column; height: 100vh; width: 100%; overflow: hidden; }
 
+/* R19 Option A: 26 px tabs, 90 px grouped ribbon; folded panels overlay the canvas. */
+.ribbon { flex: none; position: relative; z-index: 12; font-family: 'Segoe UI', system-ui, sans-serif; font-size: 12px; }
+.ribbon-tabrow { display: flex; align-items: end; height: 26px; padding: 0 8px; background: var(--app); }
+.ribbon-tabs { display: flex; min-width: 0; overflow-x: auto; }
+.ribbon .ribbon-tabs button { flex: none; padding: 4px 15px; color: var(--muted); background: none; border: 1px solid transparent; border-bottom: 0; border-radius: 3px 3px 0 0; cursor: pointer; }
+.ribbon .ribbon-tabs [aria-selected='true'] { background: var(--ribbon); color: var(--text); border-color: var(--line2); font-weight: 600; }
+.ribbon-cycle { flex: none; margin: 0 4px 3px auto; height: 20px; border: 1px solid var(--line2); border-radius: 3px; background: none; color: var(--muted); cursor: pointer; }
+.ribbon-body { display: flex; height: 90px; overflow-x: auto; background: var(--ribbon); border-top: 1px solid var(--line2); border-bottom: 1px solid var(--line); }
+.ribbon-body[hidden], .ribbon-titles[hidden], .ribbon-group[hidden], .rail[hidden] { display: none; }
+.ribbon-group { display: flex; flex: none; flex-direction: column; border-right: 1px solid var(--line2); padding: 3px 6px 0; }
+.ribbon-groupbody { display: flex; flex: 1; align-items: start; gap: 2px; }
+.ribbon-gtitle { height: 16px; line-height: 16px; margin: 0 -6px; text-align: center; font-size: 10.5px; color: var(--muted); background: rgba(128,128,128,.12); }
+.ribbon button { color: var(--text); }
+.ribbon-big, .ribbon-small { display: flex; align-items: center; gap: 6px; background: none; border: 0; border-radius: 3px; cursor: pointer; }
+.ribbon-big { flex-direction: column; gap: 3px; width: 54px; padding: 5px 2px; font-size: 11px; line-height: 1.15; text-align: center; }
+.ribbon-big svg, .ribbon-small svg { flex: none; }
+.ribbon-small { height: 21px; padding: 0 6px 0 4px; font-size: 11.5px; white-space: nowrap; }
+.ribbon-stack { display: flex; flex-direction: column; gap: 1px; padding-top: 1px; }
+.ribbon button:hover:not(:disabled) { background: var(--sel); }
+.ribbon button[aria-pressed='true'] { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+.ribbon button:disabled { opacity: .4; cursor: default; }
+.ribbon button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ribbon-field { display: flex; align-items: center; gap: 6px; height: 21px; font-size: 11.5px; white-space: nowrap; padding: 0 2px; }
+.ribbon-field > span { color: var(--muted); min-width: 50px; }
+.ribbon-swatch { width: 10px; height: 10px; border: 1px solid var(--line2); border-radius: 2px; margin-right: -3px; }
+.ribbon-field select { width: 110px; min-width: 0; height: 20px; padding: 0 3px; font: inherit; color: var(--text); border: 1px solid var(--line2); border-radius: 2px; background: var(--field); }
+.ribbon-titles { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; background: var(--ribbon); border-block: 1px solid var(--line2); overflow-x: auto; }
+.ribbon-titles button { flex: none; height: 20px; border: 1px solid var(--line2); border-radius: 3px; background: none; font-size: 11.5px; cursor: pointer; }
+.ribbon.flyout .ribbon-body { position: absolute; top: 100%; left: 0; max-width: 100%; min-width: 300px; box-shadow: 0 6px 12px var(--shadow); }
+.ribbon-coming { color: var(--muted); padding: 18px; }
+
 /* menu bar */
 .menubar { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--app); flex-shrink: 0; position: relative; }
 .menubar strong { margin-right: 12px; font-size: 13px; letter-spacing: .02em; }
@@ -85,7 +116,7 @@ select.fld { font-family: var(--sans); }
 .propbar .fld.short { width: 56px; }
 
 /* body */
-.main { flex: 1; min-height: 0; display: flex; }
+.main { flex: 1; min-height: 180px; display: flex; } /* Keep floating panel controls reachable above an expanded Balloons dock. */
 .rail { width: 52px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
 .tool { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: var(--r); background: transparent; color: var(--text); cursor: pointer; padding: 0; flex-shrink: 0; }
 .tool { position: relative; }
@@ -160,7 +191,7 @@ select.fld { font-family: var(--sans); }
 .panel { width: 300px; flex-shrink: 0; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
 .panel section { display: flex; flex-direction: column; gap: 6px; }
 .panel > section { flex-shrink: 0; }
-.panel section.layers { gap: 2px; flex: 1 1 auto; min-height: 120px; }       /* (was 150: the Drawing | Objects tabs above took their room) */
+.panel section.layers { gap: 2px; flex: 1 1 auto; min-height: 64px; }       /* Leave room for the full ribbon; the list scrolls within the panel. */
 .panel .layers-rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .panel section.stepbox { padding: 8px 10px; border: 1px solid var(--accent); border-radius: var(--r); background: var(--sel); }
 .sec { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
@@ -319,7 +350,7 @@ select.fld { font-family: var(--sans); }
 .card .row .btn { flex: 1; justify-content: center; }
 .chip { font-size: 11px; padding: 2px 7px; border-radius: 9px; background: var(--sel); color: var(--accenttext); font-weight: 600; }
 .outbox .btn { align-self: flex-start; }
-.outlist { display: flex; flex-direction: column; gap: 2px; max-height: 104px; overflow-y: auto; }          /* the Method row took 28px of the panel */
+.outlist { display: flex; flex-direction: column; gap: 2px; max-height: 104px; overflow-y: auto; }
 .orow { display: flex; align-items: center; gap: 8px; padding: 4px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); color: var(--text); cursor: pointer; text-align: left; }
 .orow:hover { border-color: var(--accent); }
 .orow .nm { flex: 1; }
@@ -376,6 +407,10 @@ select.fld { font-family: var(--sans); }
 @media (max-height: 960px) {
   .rail { width: 84px; flex-direction: row; flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 2px; padding: 6px 4px; }
   .rail .sep { width: 100%; margin: 2px 0; }
+  .outlist { max-height: 46px; } /* Leave room for the full ribbon; the outline list scrolls. */
+}
+@media (max-height: 800px) {
+  .rail .tool { width: 32px; height: 32px; }
 }
 .selbar .area { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: 1; }
 
@@ -633,7 +668,7 @@ select.fld { font-family: var(--sans); }
 .balsheets { position: absolute; right: 14px; bottom: 54px; z-index: 4; display: flex; align-items: center; gap: 10px; padding: 6px 8px; }
 .balpic[hidden], .balsheets[hidden] { display: none; }
 .grp { display: inline-flex; border: 1px solid var(--line); border-radius: var(--r); overflow: hidden; }
-.baldock { flex-shrink: 0; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); min-height: 0; }
+.baldock { flex-shrink: 1; display: flex; flex-direction: column; background: var(--panel); border-top: 1px solid var(--line); min-height: 0; }
 .baldock[hidden] { display: none; }
 .baldrag { height: 10px; flex-shrink: 0; cursor: ns-resize; display: flex; align-items: center; justify-content: center; touch-action: none; }
 .baldrag span { width: 44px; height: 3px; border-radius: 2px; background: var(--line); }

@@ -74,6 +74,13 @@ try {
   await page.goto(URL_);
   await page.waitForSelector('[data-testid=count]', { state: 'attached' });
   const t = (id) => page.locator(`[data-testid=${id}]`);
+  // Display toggles moved from the right panel to View in TODO 110b.
+  const ribbonToggle = (name) => {
+    const button = async () => { await page.locator('[data-ribbon-tab=View]').click(); return page.locator('.ribbon-body').getByRole('button', { name, exact: true }); };
+    const checked = async () => (await (await button()).getAttribute('aria-pressed')) === 'true';
+    const set = async (on) => { if (await checked() !== on) await (await button()).click(); };
+    return { isChecked: checked, check: () => set(true), uncheck: () => set(false) };
+  };
   // the command bar's input: a letter typed on the drawing or the echo button opens the bar; this opens it by the echo button when it is shut
   const cmdLine = () => { const i = t('cmd-input'), open = async () => { if (!(await i.isVisible())) { await t('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } }; return { fill: async (v) => { await open(); await i.fill(v); }, press: async (k) => { await open(); await i.press(k); }, inputValue: () => i.inputValue(), focus: open }; };
   const typeCmd = async (text) => { await cmdLine().fill(text); await cmdLine().press('Enter'); };
@@ -81,6 +88,108 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 110b: ribbon tab sets, Home actions, View toggles, folding, flyouts and remembered settings', async () => {
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const rb = p.locator('.ribbon-body'), tab = (name) => p.locator(`[data-ribbon-tab=${name}]`);
+    let foldStep = 0;
+    const fold = async (mode) => assert.equal(await q('ribbon').getAttribute('data-fold'), mode, 'fold check ' + ++foldStep);
+    const labels = () => p.locator('[data-ribbon-tab]').allTextContents();
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      assert.deepEqual(await labels(), ['Home', 'Draw', 'Modify', 'Annotate', 'View', 'Output']);
+      await tab('Home').focus(); await p.keyboard.press('ArrowRight');
+      assert.equal(await tab('Draw').getAttribute('aria-selected'), 'true');
+      await p.keyboard.press('Home');
+      assert.equal(await tab('Home').getAttribute('aria-selected'), 'true');
+      await rb.getByRole('button', { name: 'Line', exact: true }).click();
+      assert.match(await p.locator('.rail [data-tool=line]').getAttribute('class'), /on/);
+      await p.keyboard.press('Escape');
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await rb.getByRole('button', { name: 'Move', exact: true }).click();
+      assert.equal(await p.locator('.rail [data-tool=move]').getAttribute('class'), 'tool on');
+      await p.keyboard.press('Escape');
+      await tab('View').click();
+      await rb.getByRole('button', { name: 'Show rulers', exact: true }).click();
+      assert.equal(await q('ruler-top').isVisible(), false);
+      await rb.getByRole('button', { name: 'Show rulers', exact: true }).click();
+      assert.equal(await q('ruler-top').isVisible(), true);
+      await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
+      assert.equal(await p.locator('.rail').isVisible(), false);
+      await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
+      await tab('Home').click();
+      for (const label of ['Rotate', 'Scale', 'Fillet', 'Extend']) {
+        const b = rb.getByRole('button', { name: label, exact: true });
+        assert.equal(await b.isDisabled(), true); assert.match(await b.getAttribute('title'), /coming/);
+      }
+      const canvasTop = (await q('canvas').boundingBox()).y;
+      await p.keyboard.press('Control+a');
+      const selection = await q('sel-count').textContent();
+      await tab('Home').dblclick(); await fold('tabs');
+      assert.equal(await rb.isVisible(), false);
+      const foldedTop = (await q('canvas').boundingBox()).y;
+      assert.ok(foldedTop < canvasTop - 80);
+      await tab('Home').click(); assert.equal(await rb.isVisible(), true);
+      assert.equal((await q('canvas').boundingBox()).y, foldedTop, 'flyout overlays the canvas');
+      await p.keyboard.press('Escape'); assert.equal(await rb.isVisible(), false);
+      assert.equal(await q('sel-count').textContent(), selection, 'closing a flyout preserves selection');
+      await tab('Home').dblclick(); await fold('full');
+      await q('ribbon-cycle').click(); await fold('titles');
+      await p.locator('.ribbon-titles').getByRole('button', { name: 'Modify' }).click();
+      assert.equal(await rb.locator('section:visible').count(), 1);
+      assert.equal(await rb.locator('section:visible').getAttribute('aria-label'), 'Modify');
+      await p.keyboard.press('Escape');
+      await tab('Home').dblclick(); await fold('tabs');
+      await tab('Home').dblclick(); await fold('titles');
+      await q('ribbon-cycle').click(); await fold('tabs');
+      await p.waitForFunction(() => new Promise((resolve) => {
+        const open = indexedDB.open('project-d-view');
+        open.onsuccess = () => {
+          const db = open.result, r = db.transaction('settings').objectStore('settings').get('ribbon');
+          r.onsuccess = () => { resolve(r.result?.mode === 'tabs'); db.close(); };
+        };
+      }));
+      await p.reload(); await q('count').waitFor({ state: 'attached' }); await fold('tabs');
+      assert.equal(await rb.isVisible(), false);
+      await q('ribbon-cycle').click(); await fold('full');
+      await q('new-layout').click();
+      assert.deepEqual(await labels(), ['Home', 'Layout', 'View', 'Output']);
+      await p.locator('[data-menu=File]').click();
+      await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      assert.deepEqual(await labels(), ['Home', 'Compare', 'View', 'Output']);
+      await tab('Compare').click();
+      await p.locator('.tabs .dtab').filter({ hasText: 'Layout' }).first().click();
+      assert.equal(await tab('Home').getAttribute('aria-selected'), 'true', 'unavailable tab falls back to Home');
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await p.keyboard.press('Control+a');
+      await rb.getByLabel('Ribbon line width').selectOption('0.25');
+      await p.keyboard.press('Control+1');
+      assert.equal(await q('prop-width').locator('[data-width="0.25"]').getAttribute('aria-pressed'), 'true');
+      await rb.getByRole('button', { name: 'Copy', exact: true }).first().click();
+      assert.equal(await rb.getByRole('button', { name: 'Paste', exact: true }).isEnabled(), true);
+      await rb.getByRole('button', { name: 'Cut', exact: true }).click();
+      await p.keyboard.press('Control+z');
+      await p.keyboard.press('Control+a');
+      for (const theme of ['light', 'dark']) {
+        await tab('View').click(); await rb.getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        for (const name of ['Home', 'View', 'Output']) {
+          await tab(name).click(); await p.mouse.move(780, 700);
+          await p.screenshot({ path: `${shotDir}/todo110b-${name.toLowerCase()}-${theme}.png` });
+        }
+      }
+      const hostile = '<img src=x onerror=alert(1)>', raw = newDoc(4);
+      addLayer(raw, hostile); addEntities(raw, [dxfLine(0, 0, 10, 10, { layer: hostile })]);
+      await q('picker').setInputFiles({ name: 'layer-text.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'layer-text.dxf');
+      await tab('Home').click();
+      await rb.getByLabel('Current layer', { exact: true }).selectOption(hostile);
+      assert.equal(await rb.getByLabel('Current layer', { exact: true }).inputValue(), hostile);
+      assert.equal(await rb.locator('img').count(), 0, 'file names remain text');
+    } finally { await context.close(); }
+  });
   const tabNames = () => page.locator('.tabs .dtab:not([aria-label]) .tname').allTextContents();
   // closes (accepting "close without saving?") every tab whose name matches
   const closeTabs = async (re) => {
@@ -2825,7 +2934,7 @@ try {
     assert.equal(await hint('Line'), 'L'); assert.equal(await hint('Text'), 'T');
     await page.keyboard.press('Escape');
     await page.locator('[data-menu=Edit]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'PasteCtrl+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'Cut', 'PasteCtrl+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
     assert.equal(await page.getByRole('menuitem', { name: 'Undo', exact: true }).isDisabled(), true, 'nothing to undo yet');
     assert.equal(await page.getByRole('menuitem', { name: 'Delete', exact: true }).isDisabled(), true, 'nothing selected');
     await page.keyboard.press('Escape');
@@ -3994,17 +4103,17 @@ try {
     const topLabels = (await t('ruler-top').locator('text').allTextContents()).map(Number), leftLabels = (await t('ruler-left').locator('text').allTextContents()).map(Number);
     assert.ok(topLabels.includes(0) && topLabels.includes(500) && topLabels.includes(1000) || topLabels.includes(100), 'numbers along the top: ' + topLabels);
     assert.ok(leftLabels.includes(0) && leftLabels.some((v) => v > 0), 'numbers up the left: ' + leftLabels);
-    assert.equal(await t('rulers-show').isChecked(), true);
-    assert.equal(await page.locator('[data-testid=rulers-panel] .lbl').textContent(), "Millimetres. Zero is the sheet's bottom-left corner; Y counts up, like the X / Y in the status bar.");
+    assert.equal(await ribbonToggle('Show rulers').isChecked(), true);
+    assert.equal(await t('rulers-panel').count(), 0, 'ruler switch moved to View');
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
+      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
-    assert.equal(await t('rulers-show').isChecked(), false);
+    assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-rulers')), '0', 'remembered on this PC');
-    await t('rulers-show').check();
+    await ribbonToggle('Show rulers').check();
     assert.equal(await t('ruler-top').isVisible(), true);
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-rulers')), '1');
     // drawing tabs have them too
@@ -4106,12 +4215,12 @@ try {
     assert.match(await prompt(), /^A guide's position must be a number in mm:?$/);
     assert.deepEqual(await guideVals(), [['y', 600], ['x', 250]]);
     // Show / Lock switches and Clear all
-    assert.equal(await t('guides-show').isChecked(), true); assert.equal(await t('guides-lock').isChecked(), false);
-    await t('guides-show').uncheck();
+    assert.equal(await ribbonToggle('Show guides').isChecked(), true); assert.equal(await ribbonToggle('Lock guides').isChecked(), false);
+    await ribbonToggle('Show guides').uncheck();
     assert.equal(await guideLines(), 0, 'hidden guides are not drawn'); assert.equal((await guideVals()).length, 2, 'but still listed');
-    await t('guides-show').check();
+    await ribbonToggle('Show guides').check();
     assert.equal(await guideLines(), 2);
-    await t('guides-lock').check();
+    await ribbonToggle('Lock guides').check();
     assert.equal(await page.locator('[data-group=guides] .guide-hit.locked').count(), 2);
     const lp = await at(60, 600);
     await page.mouse.move(lp.x, lp.y); await page.mouse.down(); await page.mouse.move(lp.x, lp.y + 50, { steps: 3 }); await page.mouse.up();
@@ -4127,7 +4236,7 @@ try {
     await dragMm([pp[0], pp[1]], [pp[0] + 30, pp[1] + 30]);
     approx((await pos())[0], at0[0] + 30, 1.2, 'the part under the locked guide was dragged'); approx((await pos())[1], at0[1] + 30, 1.2);
     await page.keyboard.press('Control+z');
-    await t('guides-lock').uncheck();
+    await ribbonToggle('Lock guides').uncheck();
     // right-click a guide: Delete guide, Lock guides, Hide guides
     const gp = await at(60, pp[1]);
     await page.mouse.click(gp.x, gp.y, { button: 'right' });
@@ -4138,23 +4247,23 @@ try {
     const gx = await at(250, 600);
     await page.mouse.click(gx.x, gx.y, { button: 'right' });
     await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Lock guides' }).click();
-    assert.equal(await t('guides-lock').isChecked(), true);
+    assert.equal(await ribbonToggle('Lock guides').isChecked(), true);
     await page.mouse.click(gx.x, gx.y, { button: 'right' });
     assert.deepEqual(await ctxItems(), ['Delete guide', 'Unlock guides', 'Hide guides']);
     assert.equal(await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Delete guide' }).isDisabled(), true);
     await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Hide guides' }).click();
-    assert.equal(await guideLines(), 0); assert.equal(await t('guides-show').isChecked(), false);
+    assert.equal(await guideLines(), 0); assert.equal(await ribbonToggle('Show guides').isChecked(), false);
     // View menu: Guides, Lock guides, Clear all guides
     await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 7)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', 'Clear all guides']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 8)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
     await page.getByRole('menuitem', { name: /Guides/ }).click();
-    assert.equal(await guideLines(), 1); assert.equal(await t('guides-show').isChecked(), true);
+    assert.equal(await guideLines(), 1); assert.equal(await ribbonToggle('Show guides').isChecked(), true);
     await menuItem('View', 'Clear all guides');
     assert.equal((await guideVals()).length, 0);
     assert.match(await prompt(), /^1 guide cleared\. Ctrl\+Z brings it back:?$/);
     await page.keyboard.press('Control+z');
     assert.equal((await guideVals()).length, 1);
-    await t('guides-lock').uncheck();
+    await ribbonToggle('Lock guides').uncheck();
     await t('guide-clear').click();
     assert.equal((await guideVals()).length, 0);
     await t('guide-del').count().then((n) => assert.equal(n, 0));
@@ -4204,11 +4313,18 @@ try {
     assert.equal((await pos())[1], 450, 'straight along X: Y did not change');
     assert.equal((await pos())[0], 300, 'X snapped to the guide');
     // hidden guides do not snap
-    await t('guides-show').uncheck();
+    await ribbonToggle('Show guides').uncheck();
     await t('px').fill('312'); await t('px').press('Enter');
     await dragMm([362, 480], [352, 480]);
     approx((await pos())[0], 302, 1.2);
-    await t('guides-show').check();
+    await ribbonToggle('Show guides').check();
+    // View can disable guide snapping while the guides and global SNAP remain on.
+    await ribbonToggle('Snap to guides').uncheck();
+    await t('px').fill('312'); await t('px').press('Enter');
+    await dragMm([362, 480], [352, 480]);
+    approx((await pos())[0], 302, 1.2);
+    assert.equal(await page.locator('.guide').count() > 0, true);
+    await ribbonToggle('Snap to guides').check();
   });
 
   await step('TODO 38: guides are saved in the layout file (settings block) and reopen, with Show and Lock; screenshots light and dark', async () => {
@@ -4219,7 +4335,7 @@ try {
     await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
     await page.locator('[data-testid=guides-panel]').scrollIntoViewIfNeeded();
     await shotBoth('guides');
-    await t('guides-lock').check();
+    await ribbonToggle('Lock guides').check();
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const m = readMeta(readDxf(dl.text));
     assert.deepEqual(m.s.guides, [{ axis: 'y', mm: 600 }, { axis: 'x', mm: 250 }]);
@@ -4228,7 +4344,7 @@ try {
     await t('picker').setInputFiles({ name: 'Guided.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
     await page.waitForFunction(() => { const b = document.querySelector('.tabs .dtab.on'); return b && b.dataset.kind === 'layout' && b.textContent.startsWith('Guided.dxf'); });
     assert.deepEqual(await guideVals(), [['y', 600], ['x', 250]], 'the guides came back');
-    assert.equal(await t('guides-lock').isChecked(), true); assert.equal(await t('guides-show').isChecked(), true);
+    assert.equal(await ribbonToggle('Lock guides').isChecked(), true); assert.equal(await ribbonToggle('Show guides').isChecked(), true);
     assert.equal(await guideLines(), 2);
     // each layout has its own guides
     await t('new-layout').click();
@@ -9891,6 +10007,7 @@ try {
       const resizedHandle = await t('bal-drag').boundingBox(), resizedHeight = (await t('bal-dock').boundingBox()).height;
       await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2); await page.mouse.down();
       await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2 + resizedHeight - dockHeight); await page.mouse.up();
+      approx((await t('bal-dock').boundingBox()).height, dockHeight, 1, 'dock resizes from its visible height after reaching the canvas limit');
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.locator('[data-tool=select]').click();
       await closeTabs(/./);

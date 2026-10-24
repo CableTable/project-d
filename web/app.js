@@ -6,6 +6,7 @@ import * as SC from './shortcuts.js';
 import { openShortcuts } from './shortcutdlg.js';
 import { idbStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
+import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
@@ -62,6 +63,7 @@ const viewStore = idbStore('project-d-view', 'settings', 'view settings');
 const shapingStore = idbStore('project-d-shaping', 'settings', 'Shaping settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 let clipboard = null;
+const ribbon = { mode: 'full', last: 'full', tab: 'Home', flyout: false, panel: null, rail: true, guideSnap: true };
 function showShortcuts() {
   ui.cmdUI.close();
   openShortcuts(ownBindings, async (draft) => {
@@ -253,6 +255,7 @@ function setTheme(mode) {
   renderWorkArea();
   if (ui.dcanvas && layout) { paintOverlay(); renderLayers(); }
   if (cmpDoc()) update(); // Compare colours and drawing tints are per theme
+  renderRibbon();
 }
 const isDark = () => {
   const t = document.documentElement.dataset.theme;
@@ -376,6 +379,7 @@ function buildMenus() {
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
       ['Copy', copySelection, 'Ctrl+C', () => !!editable()?.sel.size],
+      ['Cut', cutSelection, null, () => !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
@@ -386,7 +390,9 @@ function buildMenus() {
         [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!curLay().s.guidesShow), null, () => !!curLay()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!curLay().s.guidesLock), null, () => !!curLay()],
+        [tick(ribbon.guideSnap, 'Snap to guides'), toggleGuideSnap, null, () => !!curLay()],
         ['Clear all guides', clearGuides, null, () => !!curLay() && curLay().s.guides.length > 0],
+        [tick(ribbon.rail, 'Tool rail'), toggleRail],
         ...WORK_AREAS.map((mode, i) => [tick(state.workArea === mode, 'Work area: ' + mode), () => setWorkArea(mode), null, null, null, i === 0, state.workArea === mode]),
         ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label], i) => [tick(theme === mode, 'Theme: ' + label), () => setTheme(mode), null, null, null, i === 0, theme === mode])];
     },
@@ -440,6 +446,173 @@ function buildMenus() {
   return h('div', { class: 'menubar' }, h('strong', null, 'Project D'), ui.menuBtns, drop);
 }
 
+// ---- Ribbon A (R19): contents reuse the menu and Properties actions. ----
+function rememberRibbon() {
+  viewStore.put({ id: 'ribbon', mode: ribbon.mode, last: ribbon.last, rail: ribbon.rail, guideSnap: ribbon.guideSnap })
+    .catch(() => note('Could not remember ribbon settings; they still apply until the app closes'));
+}
+function foldRibbon(mode) {
+  if (ribbon.mode !== 'tabs') ribbon.last = ribbon.mode;
+  ribbon.mode = mode; ribbon.flyout = false; ribbon.panel = null;
+  rememberRibbon(); renderRibbon();
+}
+function toggleRail() {
+  ribbon.rail = !ribbon.rail; rememberRibbon();
+  document.querySelector('.rail').hidden = !ribbon.rail;
+  renderRibbon();
+}
+function toggleGuideSnap() { ribbon.guideSnap = !ribbon.guideSnap; rememberRibbon(); renderRibbon(); }
+function closeRibbon() {
+  if (!ribbon.flyout) return;
+  ribbon.flyout = false; ribbon.panel = null; renderRibbon();
+}
+function buildRibbon() {
+  ui.ribbonTabs = h('div', { class: 'ribbon-tabs', role: 'tablist', 'aria-label': 'Ribbon tabs' });
+  ui.ribbonCycle = h('button', { type: 'button', class: 'ribbon-cycle', 'data-testid': 'ribbon-cycle',
+    'aria-label': 'Cycle ribbon: full, panel titles, tab names', onclick: () => foldRibbon(nextFold(ribbon.mode)) }, '▾ ▴');
+  ui.ribbonTitles = h('div', { class: 'ribbon-titles' });
+  ui.ribbonBody = h('div', { class: 'ribbon-body', role: 'tabpanel', id: 'ribbon-body' });
+  ui.ribbon = h('nav', { class: 'ribbon', 'aria-label': 'Ribbon', 'data-testid': 'ribbon' },
+    h('div', { class: 'ribbon-tabrow' }, ui.ribbonTabs, ui.ribbonCycle), ui.ribbonTitles, ui.ribbonBody);
+  document.addEventListener('pointerdown', (e) => { if (!ui.ribbon.contains(e.target)) closeRibbon(); });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && ribbon.flyout) {
+      e.preventDefault(); e.stopPropagation(); closeRibbon(); ui.ribbonTabs.querySelector('[aria-selected=true]')?.focus();
+    }
+  }, true);
+  ui.ribbonTabs.addEventListener('keydown', (e) => {
+    const tabs = [...ui.ribbonTabs.children], i = tabs.indexOf(document.activeElement);
+    if (i < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault(); e.stopPropagation();
+    const n = e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    tabs[n].click(); tabs[n].focus();
+  });
+  return ui.ribbon;
+}
+function ribbonButton(label, svg, action, { small = false, enabled = () => true, pressed, title = label } = {}) {
+  const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title,
+    'aria-label': label, onclick: () => { action(); closeRibbon(); renderRibbon(); } },
+  icon(svg, { size: small ? 15 : 30, width: 1.5, cap: 'round', join: 'round' }), h('span', null, label));
+  b.ribbonSync = () => { b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
+  return b;
+}
+function ribbonTool(id, small = false) {
+  const t = TOOLS.find((t) => t.id === id);
+  return ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : setTool(id),
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable(), pressed: () => state.tool === id, title: t.title });
+}
+const ribbonStack = (...kids) => h('div', { class: 'ribbon-stack' }, kids);
+function ribbonGroup(title, ...kids) {
+  return h('section', { class: 'ribbon-group', 'data-panel': title, 'aria-label': title },
+    h('div', { class: 'ribbon-groupbody' }, kids), h('div', { class: 'ribbon-gtitle' }, title));
+}
+function ribbonField(label, select) { return h('label', { class: 'ribbon-field' }, h('span', null, label), select); }
+function ribbonContents(kind) {
+  const btn = ribbonButton, stack = ribbonStack, group = ribbonGroup;
+  const copy = '<rect x="4" y="8" width="11" height="12" rx="1.5"/><path d="M9 8V4h11v12h-5"/>',
+    paste = '<rect x="5" y="5" width="14" height="16" rx="2"/><rect x="9" y="3" width="6" height="4" rx="1"/>',
+    saveIcon = '<path d="M4 4h13l3 3v13H4z"/><rect x="8" y="4" width="8" height="5"/><rect x="7" y="13" width="10" height="7"/>',
+    themeIcon = '<circle cx="12" cy="12" r="8"/><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>';
+  if (ribbon.tab === 'View') return [
+    group('Show',
+      btn('Show rulers', TOOLS.find((t) => t.id === 'measure').svg, () => setRulers(!state.rulers), { pressed: () => state.rulers }),
+      btn('Show guides', EYE, () => setGuidesShow(!curLay().s.guidesShow), { enabled: () => !!curLay(), pressed: () => !!curLay()?.s.guidesShow }),
+      btn('Snap to guides', '<rect x="4" y="4" width="16" height="16"/><circle cx="12" cy="12" r="3"/>', toggleGuideSnap, { enabled: () => !!curLay(), pressed: () => ribbon.guideSnap }),
+      btn('Lock guides', LOCK, () => setGuidesLock(!curLay().s.guidesLock), { enabled: () => !!curLay(), pressed: () => !!curLay()?.s.guidesLock }),
+      btn('Clear all guides', '<path d="M6 6l12 12M18 6L6 18"/>', clearGuides, { enabled: () => !!curLay()?.s.guides.length })),
+    group('Navigate', btn('Fit to window', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit),
+      btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe })),
+    group('Windows', btn('Properties panel', '<rect x="3" y="4" width="18" height="16"/><path d="M15 4v16"/>', toggleProps, { pressed: () => state.propsOn }),
+      btn('Tool rail', '<rect x="3" y="4" width="18" height="16"/><path d="M8 4v16"/>', toggleRail, { pressed: () => ribbon.rail })),
+    group('Theme', ...['system', 'light', 'dark'].map((mode) => btn(mode[0].toUpperCase() + mode.slice(1), themeIcon, () => setTheme(mode), { pressed: () => (document.documentElement.dataset.theme || 'system') === mode })))];
+  if (ribbon.tab === 'Output') return [
+    group('Save', btn('Save', saveIcon, () => save(false)), btn('Save As…', saveIcon, () => save(true))),
+    group('Print', btn('PDF / Print…', '<rect x="6" y="3" width="12" height="6"/><rect x="4" y="9" width="16" height="8"/><rect x="7" y="14" width="10" height="7"/>', exportPdf)),
+    group('Cutter', btn('Export for cutter…', '<path d="M5 12v8h14v-8M12 3v12M8 7l4-4 4 4"/>', exportCutter))];
+  // shortcut: other tab contents arrive in TODO 110c; their tools remain in the menus and rail.
+  if (ribbon.tab !== 'Home') return [group(ribbon.tab, h('span', { class: 'ribbon-coming' }, 'Tab contents coming · use the menu or tool rail'))];
+  const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!editable() || !!curLay()) }),
+    stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
+      btn('Copy', copy, copySelection, { small: true, enabled: () => !!editable()?.sel.size }),
+      btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
+  if (kind === 'layout') return [...groups,
+    group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
+      btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary),
+      btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart)),
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest'))];
+  if (kind === 'drawing') {
+    groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
+    const coming = (label, svg) => btn(label, svg, () => {}, { small: true, enabled: () => false, title: label + ' · coming' });
+    groups.push(group('Modify', stack(ribbonTool('move', true), coming('Rotate', '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>'), ribbonTool('mirror', true)),
+      stack(coming('Copy', copy), coming('Scale', '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>'), ribbonTool('offset', true)),
+      stack(coming('Fillet', '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>'), coming('Extend', '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>'), ribbonTool('trim', true))));
+  }
+  ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
+    const d = editable(); if (!d) return;
+    d.curLayer = e.target.value; renderLayers(); renderCommand(); renderEdit();
+  } });
+  groups.push(group('Layers', stack(ribbonField('Layer', ui.ribbonLayer)), btn('+ Add layer', '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>', addLayerNow, { small: true, enabled: () => !!curDoc() && !curLay() && !cmpDoc() })));
+  if (kind === 'drawing') {
+    ui.ribbonColour = h('select', { 'aria-label': 'Ribbon colour', onchange: (e) => propSet('colour', e.target.value) });
+    ui.ribbonWidth = h('select', { 'aria-label': 'Ribbon line width', onchange: (e) => propWidthSet(['ByLayer', 'Hairline'].includes(e.target.value) ? e.target.value : PL.parseMm(e.target.value)) });
+    ui.ribbonLt = h('select', { 'aria-label': 'Ribbon line style', onchange: (e) => propSet('lt', e.target.value) });
+    const colourField = ribbonField('Colour', ui.ribbonColour);
+    ui.ribbonSwatch = h('i', { class: 'ribbon-swatch', 'aria-hidden': 'true' });
+    colourField.insertBefore(ui.ribbonSwatch, ui.ribbonColour);
+    groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt))));
+  }
+  return groups;
+}
+function renderRibbon() {
+  if (!ui.ribbon) return;
+  const d = curDoc(), kind = d?.lay ? 'layout' : d?.cmp ? 'compare' : 'drawing', tabs = ribbonTabs(kind);
+  if (!tabs.includes(ribbon.tab)) { ribbon.tab = 'Home'; ribbon.flyout = false; }
+  if (ui.ribbon.dataset.kind !== kind) {
+    ui.ribbon.dataset.kind = kind; ribbon.flyout = false; ribbon.panel = null;
+    ui.ribbonTabs.replaceChildren(...tabs.map((tab) => h('button', { type: 'button', role: 'tab', id: 'ribbon-tab-' + tab,
+      'aria-controls': 'ribbon-body', 'data-ribbon-tab': tab,
+      onclick: () => { ribbon.tab = tab; ribbon.flyout = ribbon.mode !== 'full'; ribbon.panel = null; renderRibbon(); },
+      ondblclick: () => foldRibbon(doubleFold(ribbon.mode, ribbon.last)) }, tab)));
+    ui.ribbonBody.dataset.contents = '';
+  }
+  const sig = kind + ribbon.tab;
+  if (ui.ribbonBody.dataset.contents !== sig) {
+    ui.ribbonBody.dataset.contents = sig;
+    ui.ribbonLayer = ui.ribbonColour = ui.ribbonWidth = ui.ribbonLt = ui.ribbonSwatch = null;
+    ui.ribbonBody.replaceChildren(...ribbonContents(kind));
+    ui.ribbonTitles.replaceChildren(...[...ui.ribbonBody.children].map((g) => h('button', { type: 'button',
+      onclick: () => { ribbon.panel = g.dataset.panel; ribbon.flyout = true; renderRibbon(); } }, g.dataset.panel + ' ▾')));
+  }
+  ui.ribbon.dataset.fold = ribbon.mode;
+  ui.ribbon.classList.toggle('flyout', ribbon.flyout);
+  ui.ribbonTitles.hidden = ribbon.mode !== 'titles';
+  ui.ribbonBody.hidden = ribbon.mode !== 'full' && !ribbon.flyout;
+  ui.ribbonBody.setAttribute('aria-labelledby', 'ribbon-tab-' + ribbon.tab);
+  ui.ribbonCycle.title = 'Ribbon: ' + ({ full: 'Full', titles: 'Panel titles', tabs: 'Tab names' })[ribbon.mode] + ' · click to cycle';
+  for (const b of ui.ribbonTabs.children) {
+    b.setAttribute('aria-selected', String(b.textContent === ribbon.tab));
+    b.tabIndex = b.textContent === ribbon.tab ? 0 : -1;
+  }
+  for (const g of ui.ribbonBody.children) g.hidden = ribbon.flyout && ribbon.panel != null && g.dataset.panel !== ribbon.panel;
+  for (const b of ui.ribbonBody.querySelectorAll('button')) b.ribbonSync?.();
+  if (ui.ribbonLayer) {
+    ui.ribbonLayer.disabled = !editable();
+    setSelect(ui.ribbonLayer, [...new Set(editable() ? ['0', ...allLayerNames(d)] : ['0'])].map((n) => [n, n]), editable() ? curLayerName(d) : '0');
+  }
+  if (ui.ribbonColour) {
+    const ents = editable() ? propEnts(d).map((x) => x[1]) : [], all = editable() ? propEnts(d, true).map((x) => x[1]) : [], sm = PR.summarize(ents);
+    const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] : '';
+    ui.ribbonSwatch.style.background = sm.colour == null ? 'var(--muted)' : colourCss(sm.colour === 'bylayer' ? PR.effectiveColour(ents[0], layerMap(d)) : sm.colour);
+    for (const [sel, options, value] of [[ui.ribbonColour, PR.COLOURS.map((c) => [c.key, c.label]), sm.colour],
+      [ui.ribbonLt, PR.LINETYPES.map((c) => [c.key, c.label]), sm.lt],
+      [ui.ribbonWidth, PR.WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]), String(width)]]) {
+      if (value && !options.some(([v]) => v === value)) options.push([value, value]);
+      setSelect(sel, [['', ents.length || all.length ? '*varies*' : 'Select objects'], ...options], value || '');
+      sel.disabled = sel === ui.ribbonWidth ? !all.length : !ents.length;
+    }
+  }
+}
+
 function buildTabs() {
   ui.tabs = h('div', { class: 'tabs' });
   const modeBtns = [['2D drawing', true], ['3D viewer', false]].map(([text, on]) => {
@@ -476,6 +649,7 @@ function applyKind() {
   else if (!lay && state.tool === 'step') setTool('select');
   else if (lay && wasLayout === false && state.tool === 'select') setTool('step');
   wasLayout = lay;
+  renderRibbon();
 }
 
 const GRID_ICON = TOOLS.find((t) => t.id === 'step').svg;
@@ -1054,13 +1228,8 @@ function buildPanel() {
       ui.guideList = h('div', { class: 'guidelist', 'data-testid': 'guide-list' }),
       ui.guideEmpty = h('span', { class: 'lbl' }, 'None yet. Drag one out of a ruler, or add one here.'),
       h('div', { class: 'btnrow' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-add-h', onclick: () => addGuide('y') }, '+ Horizontal'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-add-v', onclick: () => addGuide('x') }, '+ Vertical')),
-      h('label', { class: 'row swrow' }, h('span', null, 'Show guides'), ui.guidesShowSw = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'data-testid': 'guides-show', 'aria-label': 'Show guides', onchange: (e) => setGuidesShow(e.target.checked) })),
-      h('label', { class: 'row swrow' }, h('span', null, 'Lock guides'), ui.guidesLockSw = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'data-testid': 'guides-lock', 'aria-label': 'Lock guides', onchange: (e) => setGuidesLock(e.target.checked) })),
+      h('span', { class: 'lbl' }, 'Show, Snap and Lock are on the View ribbon tab.'),
       ui.guideClear = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-clear', onclick: clearGuides }, 'Clear all guides')),
-    ui.rulerSec = h('section', { 'data-testid': 'rulers-panel' },
-      h('h2', { class: 'sec' }, 'Rulers'),
-      h('label', { class: 'row swrow' }, h('span', null, 'Show rulers'), ui.rulersSw = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'data-testid': 'rulers-show', 'aria-label': 'Show rulers', onchange: (e) => setRulers(e.target.checked) })),
-      h('span', { class: 'lbl' }, "Millimetres. Zero is the sheet's bottom-left corner; Y counts up, like the X / Y in the status bar.")),
     buildDrawingSection(),
     buildCompareSection(),
     ui.partsSec = h('section', { 'data-testid': 'parts-panel' },
@@ -1830,7 +1999,7 @@ function drawGuides() {
 /** A part being dragged near a guide lands on it (the SNAP toggle also switches this off). → the move to use and the guides it landed on. */
 function snapToGuides(p, dx, dy) {
   const lay = curLay();
-  if (!lay || !state.snap || !lay.s.guidesShow || !lay.s.guides.length) return { dx, dy, hit: null };
+  if (!lay || !state.snap || !ribbon.guideSnap || !lay.s.guidesShow || !lay.s.guides.length) return { dx, dy, hit: null };
   const u = A.unionBox(p.items.map((x) => placedBox(x.part, x.orig))), straight = !!p.straight;
   const sn = G.snapBoxToGuides([u[0] + dx, u[1] + dy, u[2] + dx, u[3] + dy], lay.s.guides, 6 / view.scale, { skipX: straight && dx === 0, skipY: straight && dy === 0 });
   return { dx: r2(dx + sn.dx), dy: r2(dy + sn.dy), hit: sn.hits.length ? sn.hits : null };
@@ -1897,14 +2066,15 @@ function setRulers(on) {
   try { localStorage.setItem('pd-rulers', on ? '1' : '0'); } catch { /* storage may be blocked */ }
   if (view.fitted) fit(); else { drawRulers(); }
   renderGuidePanel();
+  renderRibbon();
   note(on ? 'Rulers on: millimetres, 0,0 at the sheet\'s bottom-left, Y counts up' : 'Rulers off');
 }
 
-/** The Guides and Rulers sections of the right panel: a position field and a delete button per guide, add, Show, Lock, Clear all. */
+/** Guide creation and positions stay in the panel; display toggles live on View. */
 function renderGuidePanel() {
   if (!ui.guideSec) return;
   const lay = curLay(), lib = state.panel === 'library';
-  ui.guideSec.hidden = ui.rulerSec.hidden = !lay || lib;
+  ui.guideSec.hidden = !lay || lib;
   if (!lay || lib) return;
   const sig = lay.s.guides.map((q) => q.axis + q.mm).join(',');
   if (ui.guideSig !== sig || ui.guideLay !== lay) {
@@ -1919,7 +2089,6 @@ function renderGuidePanel() {
     }));
   }
   ui.guideEmpty.hidden = lay.s.guides.length > 0;
-  ui.guidesShowSw.checked = lay.s.guidesShow; ui.guidesLockSw.checked = lay.s.guidesLock; ui.rulersSw.checked = state.rulers;
   ui.guideClear.disabled = !lay.s.guides.length;
 }
 
@@ -1927,7 +2096,7 @@ function renderGuidePanel() {
 function guideDown(e, axis, idx) {
   const lay = curLay();
   if (!lay) { note('Guides belong to a layout tab: open or make a layout first'); return; }
-  if (lay.s.guidesLock) { note('Guides are locked: View → Lock guides, or the switch in the Guides section, unlocks them'); return; }
+  if (lay.s.guidesLock) { note('Guides are locked: View → Lock guides unlocks them'); return; }
   gdrag = { axis, idx, isNew: idx == null, x: e.clientX, y: e.clientY, moved: false, g: null, orig: idx != null ? lay.s.guides[idx].mm : null, over: false };
 }
 function guideMove(e) {
@@ -3181,6 +3350,7 @@ function toggleWireframe() {
   state.wireframe = !state.wireframe;
   ui.wireframe.classList.toggle('on', state.wireframe);
   ui.wireframe.setAttribute('aria-pressed', String(state.wireframe));
+  renderRibbon();
   paintOverlay();
   note(state.wireframe ? 'Wireframe on: outlines only; PDF / Print and export keep fills' : 'Wireframe off');
   viewStore.put({ id: 'wireframe', on: state.wireframe }).catch(() => note('Could not remember Wireframe; it still applies until the app closes'));
@@ -4052,7 +4222,12 @@ function copySelection() {
   if (!d?.sel.size) { note('Nothing selected to copy'); return; }
   const name = baseName(d.name) + (d.pdf && PS.sheetNumbers(d.pdf).length > 1 ? ` sheet ${d.pdf.page}` : '');
   clipboard = copySnapshot(d.raw, d.sel, d.factor, name);
+  renderRibbon();
   note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
+}
+function cutSelection() {
+  if (!editable()?.sel.size) return;
+  copySelection(); deleteSelection();
 }
 async function pasteSelection() {
   const d = curDoc();
@@ -4911,7 +5086,7 @@ function buildBalloonDock() {
   const handle = h('div', { class: 'baldrag', role: 'separator', 'aria-orientation': 'horizontal', 'aria-label': 'Drag to resize', title: 'Drag to resize', 'data-testid': 'bal-drag' }, h('span'));
   handle.addEventListener('pointerdown', (e) => {
     if (e.button !== 0 || state.balDock.collapsed) return;
-    const y0 = e.clientY, h0 = state.balDock.h;
+    const y0 = e.clientY, h0 = ui.balDock.getBoundingClientRect().height;
     capture(handle, e);
     const mv = (ev) => { state.balDock.h = Math.round(Math.max(90, Math.min(window.innerHeight * 0.6, h0 + y0 - ev.clientY))); renderBalloons(); };
     const up = () => { try { localStorage.setItem('pd-baldock-height', String(state.balDock.h)); } catch { /* ignore */ } handle.removeEventListener('pointermove', mv); handle.removeEventListener('pointerup', up); handle.removeEventListener('pointercancel', up); };
@@ -6809,6 +6984,7 @@ function recheckPreflight(check) {
 
 function renderEdit() {
   if (!ui.drawSec) return;
+  renderRibbon();
   renderStatus();                                          // the status bar's layer follows the selection
   renderBalloons();
   const d = curDoc(), on = !!editable(), L = state.setlen, lib = state.panel === 'library';
@@ -7162,6 +7338,10 @@ async function init() {
     state.wireframe = saved.some((r) => r.id === 'wireframe' && r.on === true);
     const mode = saved.find((r) => r.id === 'workArea')?.mode;
     if (WORK_AREAS.includes(mode)) state.workArea = mode;
+    const rb = saved.find((r) => r.id === 'ribbon');
+    if (FOLDS.includes(rb?.mode)) ribbon.mode = rb.mode;
+    if (['full', 'titles'].includes(rb?.last)) ribbon.last = rb.last;
+    ribbon.rail = rb?.rail !== false; ribbon.guideSnap = rb?.guideSnap !== false;
   } catch { /* storage may be blocked */ }
   try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
@@ -7173,9 +7353,10 @@ async function init() {
   try { const v = Number(localStorage.getItem('pd-baldock-height')); if (Number.isFinite(v) && v >= 90) state.balDock.h = Math.min(v, window.innerHeight * 0.6); } catch { /* ignore */ }
   const balDock = buildBalloonDock();                      // before the canvas: its picture-only chip and sheet switcher sit on the canvas
   app.append(h('div', { class: 'shell' },
-    buildMenus(), buildTabs(), buildPropbar(), buildSelbar(), buildTextbar(),
+    buildMenus(), buildTabs(), buildRibbon(), buildPropbar(), buildSelbar(), buildTextbar(),
     h('div', { class: 'main' }, buildRail(), buildCanvas(), buildPanel()),
     balDock, cmdLog, buildStatus()));
+  document.querySelector('.rail').hidden = !ribbon.rail;
   renderTabs();
   attachDrop();
   document.addEventListener('keydown', (e) => {

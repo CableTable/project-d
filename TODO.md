@@ -208,6 +208,10 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
+    110a. ✅ Theme: AutoCAD dark, CorelDRAW light (built, session 21).
+    110b. ✅ Ribbon frame: Option A, per-kind tabs, remembered fold states, Home / View / Output (built, Knight).
+    110c. Remaining tab contents (Draw, Modify, Annotate, Layout, Compare) and the contextual Part tab.
+    110d. Right panel: Option A docker tabs, folding sections, resize / hide, Parts library order (94, 132).
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
     111a. ✅ (his call 2026-10-24, queued after 117) Ctrl+C / Ctrl+V of drawing objects inside the app: between drawing tabs and between the sheets of a PDF tab; a paste lands at the same position, one Undo. Not from other programs (rest of 111 later).
     111b. ✅ (built, Knight; his call 2026-10-24, grilled) Ctrl+V on a layout tab: the copied objects become a new Parts library part "<source tab> paste" (numbered on a clash), placed at the same mm position on the layout sheet, selected; one Undo removes the placement, the library part stays.
