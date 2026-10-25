@@ -254,7 +254,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 
 143. **Measure on layout tabs** (his ask 2026-10-24, S, tab parity survey).
 144. **Ctrl+C on layout tabs** (his ask 2026-10-24, S, tab parity survey).
-145. **Exe test v0.1.95 leftovers** (S, bugs, Bishop-test 2026-10-25): (a) the Guides field keeps its orange invalid border after a bad entry is cleared; (b) the panel width reads 289.99 instead of 290 after a drag at 125% scaling; (c) once, a typed "25" (direct distance) in Move did not apply after a single mouse jump (not reproduced in 3 tries; check the cursor sample is current); (d) the Part context tab sits after Output: place it last on purpose or next to Layout (Rook: keep last, as AutoCAD context tabs). Report: `runs21/exe-report.txt`.
+145. ✅ **Exe test v0.1.95 leftovers** (S, bugs, Bishop-test 2026-10-25): (a) Guides clears its invalid border and aria-invalid when edited or cleared, in the panel and ribbon; (b) panel widths round to whole px for dragging, keyboard resizing and restored settings; browser check covers a fractional drag at 125% scaling, saved width and reload; (c) Move / Copy already sample the cursor synchronously on pointermove, before Enter uses it; browser checks now type "25", jump once to a different direction and press Enter without waiting for a frame. Rotate / Scale parse typed degrees / factor directly; (d) ✅ keep the Part context tab last, after Output, as AutoCAD context tabs (decision only). Report: `runs21/exe-report.txt`.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 

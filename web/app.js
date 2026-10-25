@@ -1262,7 +1262,7 @@ function buildPanel() {
     ribbonGroup('Grippers, mm', ribbonStack(numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }),
       numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop })), ribbonStack(numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight }))),
     ribbonGroup('Marks', check('crop', 'Crop marks'), check('reg', 'Reg marks')),
-    ribbonGroup('Guides', ...[['y', '+ Horizontal'], ['x', '+ Vertical']].map(([axis, label]) => ribbonButton(label, axis === 'y' ? '<path d="M3 12h18" stroke-dasharray="3 2"/><path d="M12 5v4M10 7h4"/>' : '<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M17 10h4M19 8v4"/>', () => addTypedGuide(axis, ui.ribbonGuide))), ribbonStack(ribbonField('x or y', ui.ribbonGuide = h('input', { class: 'fld', 'aria-label': 'Guide position in mm' })))),
+      ribbonGroup('Guides', ...[['y', '+ Horizontal'], ['x', '+ Vertical']].map(([axis, label]) => ribbonButton(label, axis === 'y' ? '<path d="M3 12h18" stroke-dasharray="3 2"/><path d="M12 5v4M10 7h4"/>' : '<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M17 10h4M19 8v4"/>', () => addTypedGuide(axis, ui.ribbonGuide))), ribbonStack(ribbonField('x or y', ui.ribbonGuide = h('input', { class: 'fld', 'aria-label': 'Guide position in mm', oninput: (e) => flagInvalid(e.target, false) })))),
     ribbonGroup('Parts', ribbonButton('Fit', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit), ribbonTool('nest'),
       ribbonButton('Apply', '<path d="M4 12l5 5L20 6"/>', apply, { enabled: () => !ui.applyBtn.disabled })));
   ui.sheetSelBtn.dataset.testid = 'sheet-select';
@@ -1303,7 +1303,7 @@ function buildPanel() {
     buildPlacedPanel(),
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
       h('h2', { class: 'sec' }, 'Guides'),
-      h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, 'x or y'), ui.guidePosition = h('input', { class: 'fld', inputmode: 'decimal', 'aria-label': 'Guide position in mm', 'data-testid': 'guide-position' })),
+      h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, 'x or y'), ui.guidePosition = h('input', { class: 'fld', inputmode: 'decimal', 'aria-label': 'Guide position in mm', 'data-testid': 'guide-position', oninput: (e) => flagInvalid(e.target, false) })),
       h('div', { class: 'btnrow' }, ...[['y', 'h', '+ Horizontal'], ['x', 'v', '+ Vertical']].map(([axis, id, label]) => h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-add-' + id, onclick: () => addTypedGuide(axis, ui.guidePosition) }, label))),
       ui.guideList = h('div', { class: 'guidelist', 'data-testid': 'guide-list' }),
       ui.guideEmpty = h('span', { class: 'lbl' }, 'None yet. Drag one out of a ruler, or add one here.'),

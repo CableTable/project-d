@@ -117,7 +117,7 @@ try {
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
   await step('TODO 94/132: docker tabs, remembered folds, library first, resize, hide/show and typed Guides', async () => {
-    const context = await browser.newContext({ viewport: { width: 1180, height: 760 } });
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, deviceScaleFactor: 1.25 });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
     p.on('pageerror', (e) => errors.push(String(e)));
     const fold = (id) => q(id).locator('.section-toggle').first();
@@ -179,7 +179,9 @@ try {
       await dragTo(700); assert.equal(await width(), 520);
       await q('panel-resize').focus(); await p.keyboard.press('Home'); assert.equal(await width(), 220);
       await p.keyboard.press('ArrowLeft'); assert.equal(await width(), 230);
-      await dragTo(290);
+      await dragTo(289.99); assert.equal(await width(), 290, 'fractional drag at 125% rounds to whole px');
+      assert.equal(await q('panel-resize').getAttribute('aria-valuenow'), '290');
+      await savedPanel({ width: 290 });
       await q('panel-hide').click(); assert.equal(await p.locator('aside.panel').isVisible(), false);
       assert.equal(await q('panel-show').evaluate((el) => document.activeElement === el), true, 'hide keeps keyboard focus reachable');
       await savedPanel({ on: false });
@@ -202,8 +204,19 @@ try {
       await q('guide-position').fill('120'); await q('guide-add-h').click();
       await q('guide-position').fill('-35'); await q('guide-add-v').click();
       assert.deepEqual(await q('guide-pos').evaluateAll((els) => els.map((e) => e.value)), ['120.00', '-35.00']);
-      await q('guide-position').fill('bad'); await q('guide-add-h').click(); assert.equal(await q('guide-row').count(), 2);
-      await q('guide-position').fill('');
+      await p.locator('[data-ribbon-tab=Layout]').click();
+      for (const [input, add] of [[q('guide-position'), q('guide-add-h')],
+        [p.locator('[data-testid=sheet-panel] input[aria-label="Guide position in mm"]'), p.locator('[data-testid=sheet-panel]').getByRole('button', { name: '+ Horizontal', exact: true })]]) {
+        for (const correction of ['', '25']) {
+          await input.fill('bad'); await add.click(); assert.equal(await q('guide-row').count(), 2);
+          assert.equal(await input.getAttribute('aria-invalid'), 'true');
+          assert.equal(await input.evaluate((el) => el.classList.contains('invalid')), true);
+          await input.fill(correction);
+          assert.equal(await input.getAttribute('aria-invalid'), null);
+          assert.equal(await input.evaluate((el) => el.classList.contains('invalid')), false);
+        }
+        await input.fill('');
+      }
       await capture('guides');
       await fold('guides-panel').click(); await fold('parts-panel').click();
       await q('ptab-step').click(); assert.equal(await q('step-panel').isVisible(), true); assert.equal(await q('parts-panel').isVisible(), false);
@@ -8330,10 +8343,12 @@ try {
     assert.deepEqual([fieldOf(moved.entities[3], 10), fieldOf(moved.entities[3], 20)], [150, 55]);
     assert.equal(fieldOf(moved.entities[2], 40), 5);
     assert.equal((await histLabels()).at(-1), 'Move'); await undoMove();
-    // A single length follows the cursor; the base can be typed.
+    // Enter uses the last single cursor jump, even after the distance was typed (TODO 145c).
     await typeCmd('move'); await typeCmd('0,0');
-    const direction = await at(100, 75); await page.mouse.move(direction.x, direction.y); await frames();
-    await typeCmd('25');
+    const oldDirection = await at(75, 100); await page.mouse.move(oldDirection.x, oldDirection.y);
+    await cmdLine().fill('25');
+    const direction = await at(100, 75); await page.mouse.move(direction.x, direction.y);
+    await page.keyboard.press('Enter');
     const direct = await savedDoc(), dx = fieldOf(direct.entities[0], 10) - 20, dy = fieldOf(direct.entities[0], 20) - 30;
     assert.ok(Math.abs(Math.hypot(dx, dy) - 25) < 1e-5, `direct distance: dx=${dx}, dy=${dy}, hist=${await histLine()}`); assert.ok(Math.abs(dx / dy - 4 / 3) < .03);
     await undoMove();
@@ -8434,8 +8449,10 @@ try {
     assert.deepEqual((await savedDoc()).entities, before.entities);
 
     await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('0,0');
-    const direction = await at(100, 75); await page.mouse.move(direction.x, direction.y); await frames();
-    await typeCmd('25');
+    const oldDirection = await at(75, 100); await page.mouse.move(oldDirection.x, oldDirection.y);
+    await cmdLine().fill('25');
+    const direction = await at(100, 75); await page.mouse.move(direction.x, direction.y);
+    await page.keyboard.press('Enter');
     const direct = (await savedDoc()).entities.at(-1), dx = xy(direct)[0] - 20, dy = xy(direct)[1] - 30;
     assert.ok(Math.abs(Math.hypot(dx, dy) - 25) < 1e-5);
     assert.ok(Math.abs(dx / dy - 4 / 3) < .03, 'direct distance follows the cursor');
