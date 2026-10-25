@@ -433,7 +433,7 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
-  await step('TODO 141: Save keeps table lines as named blocks, reports conversions and dropped types, and reopens the saved drawing', async () => {
+  await step('TODO 141 / 142: Save and layout paste report table conversions and dropped types; Extract shows the source base name; saved tables reopen', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
     p.on('pageerror', (e) => errors.push(String(e)));
@@ -461,7 +461,12 @@ try {
       assert.equal(readDxf(single.text).entities[0].type, 'INSERT');
       // Saving again still converts a table: Save must not replace the open document's entity.
       await saved(singleNote);
+      const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
+      const lossyPart = fixture.replace('0\nENDBLK\n', '0\nIMAGE\n8\n0\n0\nENDBLK\n');
+      await q('picker').setInputFiles({ name: 'plate.dxf', mimeType: 'application/dxf', buffer: Buffer.from(lossyPart) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'plate.dxf');
       await p.keyboard.press('Control+a');
+      await p.keyboard.press('Control+c');
       await q('bar-extract').click();
       await q('name-input').fill('Extracted table'); await q('name-ok').click();
       await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Part Extracted table saved to the Parts library:') && document.querySelector('[data-testid=cmd-prompt]').textContent.includes(text), singleNote);
@@ -470,7 +475,31 @@ try {
         await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
         await p.screenshot({ path: `${shotDir}/todo141-extract-${theme}.png` });
       }
-      const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
+      await p.locator('[data-tab=library]').click();
+      const extracted = p.locator('[data-testid=lib-list] .card[data-name="Extracted table"]');
+      assert.equal(await extracted.locator(':scope > .lbl:not(.mono)').textContent(), 'plate', 'the extracted card shows the source without its extension');
+      assert.equal((await extracted.getAttribute('title')).split('\n')[0], 'plate', 'the compact card exposes the source in its tooltip');
+      assert.equal((await p.evaluate(async () => (await import('./partstore.js')).loadParts())).find((r) => r.name === 'Extracted table').source, 'plate');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo142-source-${theme}.png` });
+      }
+      if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+      await q('cmd-input').fill('newlayout'); await q('cmd-input').press('Enter'); await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+v');
+      const pasteNote = `Part plate paste saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement. ${singleNote}; 1 object not saved: IMAGE x1`;
+      await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent === text, pasteNote);
+      const pasteMessage = p.locator('.cb-fade-rows > div').filter({ hasText: pasteNote });
+      await pasteMessage.waitFor({ state: 'visible' });
+      assert.equal(await pasteMessage.getAttribute('title'), pasteNote, 'the full paste report is available on hover');
+      const pasted = (await p.evaluate(async () => (await import('./partstore.js')).loadParts())).find((r) => r.name === 'plate paste');
+      assert.equal(pasted.source, 'plate');
+      assert.equal(readDxf(pasted.dxf).entities[0].type, 'INSERT');
+      assert.ok(!pasted.dxf.includes('\nIMAGE\r\n'), 'the saved part omits the reported unsupported object');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo142-paste-${theme}.png` });
+      }
       const end = fixture.lastIndexOf('0\nENDSEC\n');
       const table = fixture.slice(fixture.indexOf('0\nACAD_TABLE\n'), end).replace('10\n100\n', '10\n150\n');
       const extra = table + '0\nIMAGE\n8\n0\n0\nIMAGE\n8\n0\n0\nWIPEOUT\n8\n0\n';
@@ -2824,7 +2853,7 @@ try {
     assert.deepEqual(await page.locator('[data-testid=lib-list] .card img.thumb').evaluateAll((im) => im.map((i) => [i.src.slice(0, 22), i.naturalWidth > 0])), [['data:image/png;base64,', true], ['data:image/png;base64,', true], ['data:image/png;base64,', true]]);
     assert.match(await t('lib-foot').textContent(), /^3 parts · saved inside the app\. Drag a card onto the sheet, or Add to sheet\.$/);
     assert.deepEqual(await libCard('Plate A').locator('.btn, .tog').allTextContents(), ['Add to sheet', '⋯']);
-    assert.equal(await libCard('Plate A').locator('.lbl').last().textContent(), 'outline.dxf');
+    assert.equal(await libCard('Plate A').locator('.lbl').last().textContent(), 'outline');
     await t('lib-search').fill('PLATE'); assert.deepEqual(await libNames(), ['Plate A', 'Plate B']);
     await t('lib-search').fill('zzz'); assert.deepEqual(await libNames(), []);
     await t('lib-search').fill(''); assert.equal((await libNames()).length, 3);

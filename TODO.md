@@ -214,7 +214,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     110d. ✅ (built, Knight; session 21) Right panel: Option A docker tabs, folding sections, resize / hide, Parts library order (94, 132).
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
     111a. ✅ (his call 2026-10-24, queued after 117) Ctrl+C / Ctrl+V of drawing objects inside the app: between drawing tabs and between the sheets of a PDF tab; a paste lands at the same position, one Undo. Not from other programs (rest of 111 later).
-    111b. ✅ (built, Knight; his call 2026-10-24, grilled) Ctrl+V on a layout tab: the copied objects become a new Parts library part "<source tab> paste" (numbered on a clash), placed at the same mm position on the layout sheet, selected; one Undo removes the placement, the library part stays.
+    111b. ✅ (built, Knight; his call 2026-10-24, grilled) Ctrl+V on a layout tab: the copied objects become a new Parts library part "<source base name> paste" (without extension; a multi-page PDF adds its copied sheet number: "x sheet 2 paste"; numbered on a clash, e.g. "x sheet 2 paste 2"), placed at the same mm position on the layout sheet, selected; one Undo removes the placement, the library part stays.
 112. ✅ (built, session 16) **Compare, manual mode: no snapping** (S, bug, T29): see T29 in support/tickets.md. Grill first.
 113. ✅ (built, session 16) **Compare runs constantly: make it a toggle or a run-once button** (S, bug, T30): see T30 in support/tickets.md. Grill first.
 114. ✅ (built, session 17) **Compare: choose which drawings, more than two, from Parts library or drawing tabs** (M, ask, T31): up to five snapshots from tabs, the Parts library or disk; first ticked reference, visibility, per-item differences and measurement table.
@@ -250,7 +250,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 139. **Shape tool (CorelDRAW): edit the nodes of lines and polylines** (M, ask, T51): see T51 in support/tickets.md. Grill first.
 140. **Pen tool (CorelDRAW): draw lines and Bezier curves** (M, ask, T52): see T52 in support/tickets.md. Grill first.
 141. ✅ **Save drops AutoCAD tables without a word** (S–M, bug, found by Bishop-review 2026-10-24): `web/dxf-write.js:16` has no ACAD_TABLE in its save list, so open a DXF with a table, Save, reopen: the table is gone (its *T block is still written, unused). Write ACAD_TABLE back as read, or save it as a plain block reference, and note anything dropped. Grill first.
-142. **Session 20 review leftovers** (S, Bishop-review 2026-10-24, for Knight): (a) `web/app.js:4061` paste on a layout uses the old `unwritable()` note; use `writeDxfWithReport` + `saveReportNote` like Extract part; (b) TODO 111b's text still says "<source tab> paste": match its DECISIONS row (base name, sheet number); (c) Extract stores `source: d.name` with .dxf while paste stores the base name: one way.
+142. ✅ **Session 20 review leftovers** (built, Knight): (a) layout paste uses `writeDxfWithReport` + `saveReportNote` like Extract part; (b) TODO 111b matches its DECISIONS row (base name, sheet number); (c) Extract and paste store the source name without extension using `baseName`; old library entries are unchanged. Browser coverage checks the paste conversion / loss note and the extracted part's source label.
 
 143. **Measure on layout tabs** (his ask 2026-10-24, S, tab parity survey).
 144. **Ctrl+C on layout tabs** (his ask 2026-10-24, S, tab parity survey).

@@ -2651,7 +2651,7 @@ async function extractPart() {
   if (!d) { note('Extract part: open a drawing first'); return; }
   if (!d.sel.size) { note('Extract part: click an outline in the drawing first'); return; }
   if (!selHasPart(d)) { note('Extract part: a kept dimension is not part of a part. Select the outline'); return; }
-  const raw = LD.extractRaw(d.raw, d.sel), part = raw && LD.makePart(uid(), '', raw, d.factor, d.name);
+  const raw = LD.extractRaw(d.raw, d.sel), part = raw && LD.makePart(uid(), '', raw, d.factor, baseName(d.name));
   if (!part) { note('Extract part: the selection has no size (kept dimensions are not part of a part)'); return; }
   const name = await askName({
     title: 'Extract part', value: LD.nextName(baseName(d.name), lib.items.map((r) => r.name)), ok: 'Save to library',
@@ -2662,7 +2662,7 @@ async function extractPart() {
   part.name = name;
   const report = writeDxfWithReport(part.raw, { escapeUnicode: true });
   libCache.set(part.id, part);
-  const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: d.name, t: Date.now() });
+  const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: part.src, t: Date.now() });
   d.savedAs = (d.savedAs || []).concat(sizeKey(part.w, part.h));
   renderEdit();
   note(`Part ${name} saved to the Parts library: ${fmt(part.w)} × ${fmt(part.h)} mm` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
@@ -4411,13 +4411,13 @@ async function pasteSelection() {
     if (d.lay) {
       const part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
       if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
-      const bad = unwritable(part.raw);
-      const rec = { id: part.id, name: part.name, w: part.w, h: part.h, dxf: LD.partToDxf(part), thumb: thumbFor(part), source: part.src, t: Date.now() };
+      const report = writeDxfWithReport(part.raw, { escapeUnicode: true });
+      const rec = { id: part.id, name: part.name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: part.src, t: Date.now() };
       libCache.set(part.id, part);
       const saving = libAdd(rec);
       addLibToSheet(rec, null, true);
       const ok = await saving;
-      note(`Part ${part.name} saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement` + (bad.length ? ` (without ${bad.map((b) => b.type + ' ' + b.count).join(', ')})` : '') + (ok ? '' : KEPT_ONLY_NOW));
+      note(`Part ${part.name} saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
       return;
     }
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
