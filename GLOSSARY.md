@@ -4,6 +4,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 ## App
 
+**Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
+
+**Docker tab**: One of Properties, Objects, Layers, Parts library and Step and repeat across the right panel. Only the active tab shows its name; its sections fold. The panel can be resized or hidden, with settings remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, R19 pick: Option A.
+
 **Add to layout**: Takes the prepared drawing into a layout as a part at its true size. Where: `web/app.js`.
 
 **Apply**: Commits the current preview, which in Step and repeat turns the grid into separate placed parts. Where: `web/app.js`. Avoid: Save.

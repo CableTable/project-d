@@ -202,12 +202,34 @@ select.fld { font-family: var(--sans); }
 .dim-bg { fill: var(--sheet); }
 
 /* right panel */
-.panel { width: 300px; flex-shrink: 0; overflow-y: auto; background: var(--panel); border-left: 1px solid var(--line); padding: 10px 14px; display: flex; flex-direction: column; gap: 10px; }
+.docker { display: flex; flex-shrink: 0; min-height: 0; }
+.panel { width: 290px; flex-shrink: 0; min-height: 0; position: relative; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; }
+.panel-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 6px 0; }
+.docker-pane { display: flex; flex-direction: column; min-height: 100%; }
+.panel section { flex-shrink: 0; padding: 0; border: 0; border-bottom: 1px solid var(--line); }
+.panel section > .sec, .panel section > .layers-head { margin: 0; padding: 0 10px; min-height: 28px; }
+.panel section > .sec { display: flex; }
+.panel .section-body { display: flex; flex-direction: column; gap: 6px; padding: 2px 10px 10px; }
+.section-toggle { display: flex; align-items: center; gap: 6px; flex: 1; width: 100%; min-height: 28px; text-align: left; border: 0; background: none; color: inherit; padding: 0; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; }
+.section-toggle svg { flex-shrink: 0; }
+.docker-folded > .section-body { display: none; }
+.docker-folded > .sec .section-toggle svg, .docker-folded > .layers-head .section-toggle svg { transform: rotate(-90deg); }
+.panel .layers-head > .sec { flex: 1; }
+.panel .layers-head > .tog { flex-shrink: 0; }
+.panel-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 5; }
+.panel-resize::before { content: ''; position: absolute; left: 2px; top: calc(50% - 17px); height: 34px; width: 2px; background: var(--line2); box-shadow: 3px 0 var(--line2); border-radius: 2px; }
+.panel-resize:hover, .panel-resize:focus-visible { background: var(--sel); outline: 1px solid var(--accent); }
+.panel-top { display: flex; align-items: center; height: 30px; padding: 0 4px 0 6px; background: var(--app); border-bottom: 1px solid var(--line); flex-shrink: 0; gap: 2px; }
+.panel-hide, .panel-show { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; border: 1px solid var(--line2); border-radius: 3px; color: var(--muted); background: var(--app); cursor: pointer; }
+.panel-show { margin: 4px; }
 .panel section { display: flex; flex-direction: column; gap: 6px; }
 .panel > section { flex-shrink: 0; }
-.panel section.layers { gap: 2px; flex: 1 1 auto; min-height: 64px; }       /* Leave room for the full ribbon; the list scrolls within the panel. */
+.panel section.layers { gap: 0; }
+.docker-pane[data-docker='layers'] { height: 100%; }
+.panel section.layers:not(.docker-folded) { flex: 1; min-height: 0; }
+.panel section.layers > .section-body { flex: 1; min-height: 0; overflow: hidden; }
 .panel .layers-rows { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-.panel section.stepbox { padding: 8px 10px; border: 1px solid var(--accent); border-radius: var(--r); background: var(--sel); }
+.panel section.stepbox { background: var(--panel); }
 .sec { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
 .stepbox .sec { color: var(--accenttext); }
 .field { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
@@ -354,14 +376,20 @@ select.fld { font-family: var(--sans); }
 .partrows { display: flex; flex-direction: column; gap: 2px; }
 .prow { display: flex; align-items: center; gap: 8px; padding: 3px 4px 3px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); }
 .prow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.libbox { gap: 10px; flex: 1 1 auto; min-height: 0; }
-.liblist { display: flex; flex-direction: column; gap: 8px; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
-.card { border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 8px; display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+.libbox { gap: 10px; }
+.liblist { display: flex; flex-direction: column; gap: 2px; }
+.card { border: 1px solid transparent; border-radius: 3px; padding: 4px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 2px 8px; flex-shrink: 0; }
+.card:hover { background: var(--sel); }
 .card[draggable=true] { cursor: grab; }
-.card .thumb { width: 100%; height: 84px; object-fit: contain; background: #ffffff; border: 1px solid var(--line); border-radius: var(--r); }
+.card .thumb { grid-column: 1; grid-row: 1 / 3; width: 34px; height: 26px; object-fit: contain; background: var(--field); border: 1px solid var(--line2); border-radius: 2px; }
 .card .thumb.none { background: var(--sel); }
-.card .cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card .row .btn { flex: 1; justify-content: center; }
+.card .cname { grid-column: 2; grid-row: 1; font-size: 12px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card > .mono { grid-column: 2; grid-row: 2; font-size: 10.5px; }
+.card > .lbl:not(.mono) { display: none; }
+.card > .row { grid-column: 3; grid-row: 1 / 3; gap: 2px; }
+.card .row .btn { width: 22px; height: 22px; padding: 0; font-size: 0; justify-content: center; }
+.card .row .btn::before { content: '+'; font-size: 14px; }
+.docker-pane:has(.stepbox.docker-folded) > .stepfoot { display: none; }
 .chip { font-size: 11px; padding: 2px 7px; border-radius: 9px; background: var(--sel); color: var(--accenttext); font-weight: 600; }
 .outbox .btn { align-self: flex-start; }
 .outlist { display: flex; flex-direction: column; gap: 2px; max-height: 104px; overflow-y: auto; }
@@ -412,7 +440,7 @@ select.fld { font-family: var(--sans); }
 .panel section.stepbox { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom: 0; }
 .stepfoot.idle { position: static; }
 .stepfoot.idle .readout, .stepfoot.idle .btnrow [data-testid=apply] { display: none; }
-.stepfoot { position: sticky; bottom: 0; z-index: 2; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; margin-top: -10px; padding: 0 10px 10px; border: 1px solid var(--accent); border-top: 0; border-radius: 0 0 var(--r) var(--r); background: var(--sel); }
+.stepfoot { position: sticky; bottom: -6px; z-index: 2; flex-shrink: 0; display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding: 8px 10px; border-top: 1px solid var(--line); background: var(--panel); }
 .stepfoot[hidden] { display: none; }
 .dim-bg.tag { stroke: var(--dim); stroke-width: .8; }
 /* a small window (1024 × 700): the tools in two columns so every one is reachable without scrolling */
@@ -558,7 +586,7 @@ select.fld { font-family: var(--sans); }
 .ovl .gr-new { fill: none; stroke: var(--partline); stroke-width: 1.6; stroke-dasharray: 6 3; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 
 /* Properties (TODO 24, 25; R5b Option B): the section at the top of the Drawing panel */
-.panel section.propbox { padding: 8px; border: 1px solid var(--accent); border-radius: var(--r); background: var(--field); gap: 6px; }
+.panel section.propbox { border-bottom: 1px solid var(--line); }
 .propbox .layers-head { display: flex; align-items: center; gap: 8px; }
 .propbox .layers-head .chip { margin-left: auto; }
 .propbody, .propgeo { display: flex; flex-direction: column; gap: 6px; }
@@ -753,13 +781,13 @@ select.fld { font-family: var(--sans); }
 .layer .swatch.pick::-webkit-color-swatch-wrapper { padding: 0; }
 .layer .swatch.pick::-webkit-color-swatch { border: 0; border-radius: 2px; }
 
-/* ---- the right panel's tabs and the Objects tab (mock-up R11a, Option A) ---- */
-.ptabs { display: flex; border-bottom: 1px solid var(--line); flex-shrink: 0; margin: -10px -14px -4px; position: sticky; top: -10px; z-index: 2; background: var(--panel); }
-.ptab { flex: 1; text-align: center; padding: 6px 0; border: 0; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; cursor: pointer; }
-.ptab.on { color: var(--accenttext); border-bottom-color: var(--accenttext); font-weight: 600; }
-.panel[data-ptab='objects'] { padding: 0; gap: 0; overflow: hidden; }
-.panel[data-ptab='objects'] > .ptabs { margin: 0; position: static; }
-.panel[data-ptab='objects'] > :not(.ptabs):not(.objpanel) { display: none !important; }
+/* R19 Panel A: only the active docker tab carries its name. */
+.ptabs { display: flex; align-self: stretch; align-items: end; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.ptab { display: flex; align-items: center; gap: 5px; flex-shrink: 0; height: 24px; padding: 0 7px; border: 1px solid transparent; border-bottom: 0; border-radius: 3px 3px 0 0; background: none; color: var(--muted); font: 12px var(--sans); cursor: pointer; }
+.ptab.on { color: var(--text); background: var(--panel); border-color: var(--line2); box-shadow: inset 0 2px var(--accent); font-weight: 600; }
+.ptab:not(.on) .ptab-name { display: none; }
+.ptab:disabled { opacity: .45; cursor: default; }
+.docker-pane[data-docker='objects'] { height: 100%; }
 .objpanel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
 .objpanel[hidden] { display: none; }
 .omtop { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); flex-shrink: 0; }

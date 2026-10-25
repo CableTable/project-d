@@ -56,6 +56,7 @@ import { fontForStyle, fontSubstitutions } from './fontsub.js';
 import { outlineOf } from './nestshape.js';
 import { partSource, readTitleBlock, withTitleBlock } from './pdf-export.js';
 import { readPdf, renderPdfPage, isPdf } from './pdf-read.js';
+import { panelWidth } from './docker.js';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 const shortcutStore = idbStore('project-d-shortcuts', 'settings', 'shortcuts');
@@ -64,6 +65,7 @@ const shapingStore = idbStore('project-d-shaping', 'settings', 'Shaping settings
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 let clipboard = null;
 const ribbon = { mode: 'full', last: 'full', tab: 'Home', flyout: false, panel: null, rail: true, guideSnap: true };
+const docker = { width: 290, folds: {} };
 function showShortcuts() {
   ui.cmdUI.close();
   openShortcuts(ownBindings, async (draft) => {
@@ -172,8 +174,8 @@ const state = {
   rulers: true,                          // mm rulers along the top and left of the canvas (View → Rulers; remembered on this PC)
   guideDrag: null,                       // a guide being dragged out of a ruler or along the sheet: see gdrag
   nudge: 1, dupAxis: 'x', dupGap: 5, dupCount: 3, arrangeRel: 'selection',   // the arrow-key step (mm, remembered on this PC) and the Duplicate section's last values
-  panel: 'main',                         // the right panel: 'main' (Layout / Drawing) or 'library' (Parts library)
-  ptab: 'drawing',                       // the right panel's tab: 'drawing' (everything else) or 'objects' (the tree of the open file, mock-up R11a)
+  panel: 'main',                         // library mode or the active document's controls
+  ptab: 'drawing',                       // Properties, Objects, Layers, Parts library or Step and repeat
   hidden: { parts: false, marks: false, dims: false },
   docs: [], doc: 0,
   snap: true,                      // the SNAP toggle in the status bar (kept for the session)
@@ -203,7 +205,7 @@ const state = {
   drawHover: null,                 // where the pointer is for the drawing tool: [x, y (mm), snap kind]
   grip: null,                      // a grip being dragged: { d, e (the entity), id, ent, next (the changed entity), to, label, hot (click, then click), moved }
   sheetSel: null, sheetDrag: null,   // the layout whose sheet is selected (Sheet resize, TODO 23); a handle being dragged: { side, p0, W, H, newW, newH, hot, moved }
-  propsOn: false, match: null,    // View → Properties (remembered on this PC); Match properties in progress: { d, src (the source's index) }
+  propsOn: true, match: null,     // The whole docker's visibility; Match properties in progress: { d, src (the source's index) }
   text: { cfg: null, ed: null, drag: null },   // the Text tool: the next text's height (mm), font, alignment, bold, angle; the editor open (or null); a corner being dragged
 };
 // The selection on a layout: `sel` is the main selected placed part (an index into placedNow), `picks` the several selected, in the order they
@@ -697,9 +699,9 @@ function applyKind() {
   renderWorkArea();
   for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
   ui.layersSec.hidden = lib || !!(d && d.cmp); ui.libSec.hidden = !lib;
-  ui.panelMain.textContent = lay ? 'Layout' : d && d.cmp ? 'Compare' : 'Drawing';
-  ui.panelMain.classList.toggle('on', !lib); ui.panelLib.classList.toggle('on', lib);
-  ui.panelMain.setAttribute('aria-pressed', String(!lib)); ui.panelLib.setAttribute('aria-pressed', String(lib));
+  if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
+  if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
+  renderDocker();
   if (lay && (state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.tool === 'contour' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
   else if (!lay && state.tool === 'step') setTool('select');
   else if (lay && wasLayout === false && state.tool === 'select') setTool('step');
@@ -1111,7 +1113,7 @@ function buildRail() {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : t.title, 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
-    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (!b.dataset.held) setTool(t.id); delete b.dataset.held; });
+    b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (t.id === 'step' && curLay()) DO.step(); else if (!b.dataset.held) setTool(t.id); delete b.dataset.held; });
     ui.toolBtns[t.id] = b;
     if (t.id === 'dimension') dimButton(b);
     return b;
@@ -1255,12 +1257,7 @@ function buildPanel() {
     ribbonGroup('Grippers, mm', ribbonStack(numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }),
       numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop })), ribbonStack(numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight }))),
     ribbonGroup('Marks', check('crop', 'Crop marks'), check('reg', 'Reg marks')),
-    ribbonGroup('Guides', ...[['y', '+ Horizontal'], ['x', '+ Vertical']].map(([axis, label]) => ribbonButton(label, axis === 'y' ? '<path d="M3 12h18" stroke-dasharray="3 2"/><path d="M12 5v4M10 7h4"/>' : '<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M17 10h4M19 8v4"/>', () => {
-      const raw = ui.ribbonGuide.value.trim(), mm = raw ? PL.parseMm(raw) : null;
-      flagInvalid(ui.ribbonGuide, !!raw && mm == null);
-      if (raw && mm == null) { note('Guide position must be a number in mm'); return; }
-      addGuide(axis, mm);
-    })), ribbonStack(ribbonField('x or y', ui.ribbonGuide = h('input', { class: 'fld', 'aria-label': 'Guide position in mm' })))),
+    ribbonGroup('Guides', ...[['y', '+ Horizontal'], ['x', '+ Vertical']].map(([axis, label]) => ribbonButton(label, axis === 'y' ? '<path d="M3 12h18" stroke-dasharray="3 2"/><path d="M12 5v4M10 7h4"/>' : '<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M17 10h4M19 8v4"/>', () => addTypedGuide(axis, ui.ribbonGuide))), ribbonStack(ribbonField('x or y', ui.ribbonGuide = h('input', { class: 'fld', 'aria-label': 'Guide position in mm' })))),
     ribbonGroup('Parts', ribbonButton('Fit', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit), ribbonTool('nest'),
       ribbonButton('Apply', '<path d="M4 12l5 5L20 6"/>', apply, { enabled: () => !ui.applyBtn.disabled })));
   ui.sheetSelBtn.dataset.testid = 'sheet-select';
@@ -1287,22 +1284,25 @@ function buildPanel() {
   ui.fitNote = h('div', { class: 'lbl warn', 'data-testid': 'fit-note', hidden: true });
   ui.stepHint = h('div', { class: 'lbl', 'data-testid': 'step-hint' });
 
-  ui.panelMain = h('button', { class: 'seg on', type: 'button', 'data-testid': 'panel-main', onclick: () => { state.panel = 'main'; applyKind(); update(); } }, 'Layout');
-  ui.panelLib = h('button', { class: 'seg', type: 'button', 'data-testid': 'panel-library', onclick: () => showLibrary() }, 'Parts library');
-
-  ui.tabDrawing = h('button', { class: 'ptab on', type: 'button', role: 'tab', 'aria-selected': 'true', 'data-testid': 'ptab-drawing', onclick: () => setPtab('drawing') }, 'Drawing');
-  ui.tabObjects = h('button', { class: 'ptab', type: 'button', role: 'tab', 'aria-selected': 'false', 'data-testid': 'ptab-objects', onclick: () => setPtab('objects') }, 'Objects');
-  return ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Properties', 'data-ptab': 'drawing' },
-    h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab' }, ui.tabDrawing, ui.tabObjects),
-    h('div', { class: 'mode panelsw', role: 'group', 'aria-label': 'Panel' }, ui.panelMain, ui.panelLib),
+  const tabs = [
+    ['drawing', 'Properties', '<path d="M5 6h14M5 12h14M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/>'],
+    ['objects', 'Objects', '<path d="M4 6h4M4 12h4M4 18h4M10 6h10M10 12h10M10 18h10"/>'],
+    ['layers', 'Layers', '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>'],
+    ['library', 'Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="9" y="4" width="5" height="16"/><path d="M16 6l5 1-3 14-5-1z"/>'],
+    ['step', 'Step and repeat', GRID_ICON],
+  ];
+  ui.dockerTabs = tabs.map(([id, label, svg]) => h('button', { class: 'ptab', type: 'button', role: 'tab', title: label, 'aria-label': label,
+    id: 'docker-tab-' + id, 'aria-controls': 'docker-body', 'data-tab': id, 'data-testid': id === 'library' ? 'panel-library' : 'ptab-' + id,
+    onclick: () => setPtab(id) }, icon(svg, { size: 14 }), h('span', { class: 'ptab-name' }, label)));
+  ui.panelScroll = h('div', { class: 'panel-scroll', id: 'docker-body', role: 'tabpanel', 'aria-labelledby': 'docker-tab-drawing' },
     buildPlacedPanel(),
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
       h('h2', { class: 'sec' }, 'Guides'),
+      h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, 'x or y'), ui.guidePosition = h('input', { class: 'fld', inputmode: 'decimal', 'aria-label': 'Guide position in mm', 'data-testid': 'guide-position' })),
+      h('div', { class: 'btnrow' }, ...[['y', 'h', '+ Horizontal'], ['x', 'v', '+ Vertical']].map(([axis, id, label]) => h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-add-' + id, onclick: () => addTypedGuide(axis, ui.guidePosition) }, label))),
       ui.guideList = h('div', { class: 'guidelist', 'data-testid': 'guide-list' }),
       ui.guideEmpty = h('span', { class: 'lbl' }, 'None yet. Drag one out of a ruler, or add one here.'),
-      h('div', { class: 'btnrow' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-add-h', onclick: () => addGuide('y') }, '+ Horizontal'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-add-v', onclick: () => addGuide('x') }, '+ Vertical')),
-      h('span', { class: 'lbl' }, 'Show, Snap and Lock are on the View ribbon tab.'),
-      ui.guideClear = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-clear', onclick: clearGuides }, 'Clear all guides')),
+      h('span', { class: 'lbl' }, 'Or drag from a ruler. Show, Snap and Lock are on the View tab.')),
     buildDrawingSection(),
     buildCompareSection(),
     ui.partsSec = h('section', { 'data-testid': 'parts-panel' },
@@ -1333,6 +1333,100 @@ function buildPanel() {
         h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
       ui.layerRows),
     buildObjects());
+  // Reuse the existing controls and their validation; only their docker and section containers change.
+  ui.dockerPanes = Object.fromEntries(tabs.map(([id]) => [id, h('div', { class: 'docker-pane', 'data-docker': id })]));
+  ui.dockerPanes.drawing.append(ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ...ui.placedSecs.slice(1), ui.drawSec, ui.tinySec, ui.dupsSec, ui.outSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
+  ui.dockerPanes.objects.append(ui.objPanel);
+  ui.dockerPanes.layers.append(ui.layersSec);
+  ui.dockerPanes.library.append(ui.libSec);
+  ui.dockerPanes.step.append(ui.stepSec, ui.gapSec, ui.stepFoot);
+  ui.panelScroll.replaceChildren(...Object.values(ui.dockerPanes));
+  for (const section of ui.panelScroll.querySelectorAll('section')) foldableSection(section);
+  ui.secTitle = ui.placedSecs[0].querySelector('.section-title');
+  ui.panelHide = h('button', { class: 'panel-hide', type: 'button', title: 'Hide panel', 'aria-label': 'Hide panel', 'data-testid': 'panel-hide', onclick: toggleProps }, icon('<path d="M9 6l6 6-6 6M19 4v16"/>', { size: 13 }));
+  const tabsEl = h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab' }, ui.dockerTabs);
+  tabsEl.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault(); e.stopPropagation();
+    const enabled = ui.dockerTabs.filter((b) => !b.disabled), i = enabled.indexOf(document.activeElement);
+    const next = e.key === 'Home' ? 0 : e.key === 'End' ? enabled.length - 1 : (i + (e.key === 'ArrowRight' ? 1 : -1) + enabled.length) % enabled.length;
+    enabled[next].click(); enabled[next].focus();
+  });
+  ui.panelEl = h('aside', { class: 'panel', 'aria-label': 'Properties' },
+    buildPanelResize(), h('div', { class: 'panel-top' }, tabsEl, ui.panelHide), ui.panelScroll);
+  ui.panelShow = h('button', { class: 'panel-show', type: 'button', title: 'Show panel', 'aria-label': 'Show panel', 'data-testid': 'panel-show', onclick: toggleProps }, icon('<path d="M15 6l-6 6 6 6M5 4v16"/>', { size: 14 }));
+  return h('div', { class: 'docker' }, ui.panelEl, ui.panelShow);
+}
+
+function rememberDocker() {
+  viewStore.put({ id: 'docker', width: docker.width, on: state.propsOn, folds: docker.folds })
+    .catch(() => note('Could not remember the panel settings; they still apply until the app closes'));
+}
+
+function foldableSection(section) {
+  const heading = section.querySelector('h2.sec');
+  if (!heading) return;
+  const header = heading.parentElement === section ? heading : heading.parentElement;
+  const key = section.dataset.testid || heading.textContent;
+  section.dataset.section = key;
+  const body = h('div', { class: 'section-body', id: 'section-' + key.replace(/\s+/g, '-') });
+  for (const child of [...section.childNodes]) if (child !== header) body.append(child);
+  const label = h('span', { class: 'section-title' }, heading.textContent);
+  const button = h('button', { class: 'section-toggle', type: 'button', 'aria-controls': body.id, onclick: () => {
+    docker.folds[key] = !section.classList.contains('docker-folded');
+    applySectionFold(section); rememberDocker();
+  } }, icon('<path d="M6 9l6 6 6-6"/>', { size: 12 }), label);
+  heading.replaceChildren(button); section.append(body);
+  applySectionFold(section);
+}
+
+function applySectionFold(section) {
+  const available = !['drawing-panel', 'tiny-panel', 'duplicates-panel'].includes(section.dataset.section) || !!editable();
+  const folded = !available || (docker.folds[section.dataset.section] ?? ['drawing-panel', 'tiny-panel', 'duplicates-panel', 'outlines-panel', 'guides-panel', 'sec-group', 'sec-rotate', 'sec-mirror', 'sec-duplicate', 'sec-nudge'].includes(section.dataset.section));
+  section.classList.toggle('docker-folded', folded);
+  const button = section.querySelector('.section-toggle');
+  button.setAttribute('aria-expanded', String(!folded)); button.disabled = !available;
+  button.title = available ? '' : 'Open a drawing tab to use this section';
+  section.querySelector('.section-body').inert = folded;
+}
+
+function buildPanelResize() {
+  const handle = h('div', { class: 'panel-resize', role: 'separator', tabindex: '0', 'aria-label': 'Resize panel', 'aria-orientation': 'vertical', 'aria-valuemin': '220', 'aria-valuemax': '520', 'data-testid': 'panel-resize' });
+  handle.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const start = e.clientX, width = docker.width;
+    handle.setPointerCapture(e.pointerId);
+    const move = (event) => { docker.width = panelWidth(width + start - event.clientX); renderDocker(); };
+    const end = () => {
+      handle.removeEventListener('pointermove', move); handle.removeEventListener('pointerup', end); handle.removeEventListener('pointercancel', end);
+      rememberDocker();
+    };
+    handle.addEventListener('pointermove', move); handle.addEventListener('pointerup', end); handle.addEventListener('pointercancel', end);
+  });
+  handle.addEventListener('keydown', (e) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    e.preventDefault(); e.stopPropagation();
+    docker.width = panelWidth(e.key === 'Home' ? 220 : e.key === 'End' ? 520 : docker.width + (e.key === 'ArrowLeft' ? 10 : -10));
+    renderDocker(); rememberDocker();
+  });
+  return ui.panelResize = handle;
+}
+
+function renderDocker() {
+  if (!ui.panelEl) return;
+  ui.panelEl.hidden = !state.propsOn; ui.panelShow.hidden = state.propsOn;
+  ui.panelEl.style.width = docker.width + 'px';
+  ui.panelResize.setAttribute('aria-valuenow', String(docker.width));
+  for (const button of ui.dockerTabs) {
+    const on = button.dataset.tab === state.ptab;
+    button.classList.toggle('on', on); button.setAttribute('aria-selected', String(on)); button.tabIndex = on ? 0 : -1;
+    button.disabled = button.dataset.tab === 'step' && !curLay();
+  }
+  for (const [id, pane] of Object.entries(ui.dockerPanes)) pane.hidden = id !== state.ptab;
+  ui.panelScroll.setAttribute('aria-labelledby', 'docker-tab-' + state.ptab);
+  const scalePane = state.ptab === 'library' ? ui.dockerPanes.library : ui.dockerPanes.drawing;
+  for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) if (section.parentElement !== scalePane) scalePane.insertBefore(section, state.ptab === 'library' ? null : ui.outSec);
 }
 
 /**
@@ -2098,7 +2192,13 @@ function addGuide(axis, mm) {
   note(`${axis === 'y' ? 'Horizontal' : 'Vertical'} guide at ${G.guideText({ axis, mm: at })}: type its position in the Guides section, or drag it`);
   const rows = ui.guideList.querySelectorAll('input.fld');
   const inp = rows[rows.length - 1];
-  if (inp) { inp.focus(); inp.select(); }
+  if (inp && inp.getClientRects().length) { inp.focus(); inp.select(); }
+}
+function addTypedGuide(axis, input) {
+  const raw = input.value.trim(), mm = raw ? PL.parseMm(raw) : null;
+  flagInvalid(input, !!raw && mm == null);
+  if (raw && mm == null) { note('Guide position must be a number in mm'); return; }
+  addGuide(axis, mm);
 }
 function deleteGuide(i) {
   const lay = curLay(), gd = lay && lay.s.guides[i];
@@ -2162,7 +2262,6 @@ function renderGuidePanel() {
     }));
   }
   ui.guideEmpty.hidden = lay.s.guides.length > 0;
-  ui.guideClear.disabled = !lay.s.guides.length;
 }
 
 /** Pointer down on a ruler (a new guide) or on a guide (move it): the drag follows the pointer until it is let go. */
@@ -2440,9 +2539,9 @@ function buildLibrary() {
   ui.libList = h('div', { class: 'liblist', 'data-testid': 'lib-list' });
   ui.libFoot = h('span', { class: 'lbl', 'data-testid': 'lib-foot' });
   return ui.libSec = h('section', { class: 'libbox', 'data-testid': 'library', hidden: true },
-    h('label', { class: 'field' }, 'Search', ui.libSearch), ui.libList, ui.libFoot);
+    h('h2', { class: 'sec' }, 'Parts'), h('label', { class: 'field' }, 'Search', ui.libSearch), ui.libList, ui.libFoot);
 }
-function showLibrary() { state.panel = 'library'; applyKind(); renderLibrary(); renderProps(); }
+function showLibrary() { setPtab('library'); }
 
 function renderLibrary() {
   if (!ui.libList) return;
@@ -2454,12 +2553,12 @@ function renderLibrary() {
       const r = more.getBoundingClientRect();
       popMenu(r.left, r.bottom + 2, [['Add to sheet', () => addLibToSheet(rec)], ['Open as drawing', () => openPartAsDrawing(rec)], ['Export .dxf…', () => exportPart(rec)], ['Rename…', () => renamePart(rec)], ['Delete from library', () => deletePart(rec)]]);
     });
-    const card = h('div', { class: 'card', 'data-part-id': rec.id, 'data-name': rec.name, draggable: 'true', title: 'Double-click or drag onto the tab strip to open as a drawing; drag onto the sheet to place' },
+    const card = h('div', { class: 'card', 'data-part-id': rec.id, 'data-name': rec.name, draggable: 'true', title: (rec.source ? rec.source + '\n' : '') + 'Double-click or drag onto the tab strip to open as a drawing; drag onto the sheet to place' },
       /^data:image\/png;base64,/.test(rec.thumb || '') ? h('img', { class: 'thumb', src: rec.thumb, alt: '', draggable: 'false' }) : h('div', { class: 'thumb none' }),
       h('strong', { class: 'cname' }, rec.name),
       h('span', { class: 'lbl mono', 'data-testid': 'lib-size' }, `${fmt(rec.w)} × ${fmt(rec.h)}`),
       h('span', { class: 'lbl' }, rec.source || ''),
-      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', 'data-testid': 'lib-add', onclick: () => addLibToSheet(rec) }, 'Add to sheet'), more));
+      h('div', { class: 'row' }, h('button', { class: 'btn', type: 'button', 'data-testid': 'lib-add', title: 'Add to sheet', 'aria-label': 'Add to sheet', onclick: () => addLibToSheet(rec) }, 'Add to sheet'), more));
     card.addEventListener('dragstart', (e) => { e.dataTransfer.setData('application/x-pd-part', rec.id); e.dataTransfer.setData('text/plain', rec.name); e.dataTransfer.effectAllowed = 'copy'; });
     card.addEventListener('dblclick', (e) => { if (!e.target.closest('button')) openPartAsDrawing(rec); });
     return card;
@@ -3023,9 +3122,12 @@ function buildObjects() {
 
 function setPtab(tab) {
   state.ptab = tab;
-  ui.panelEl.dataset.ptab = tab;
-  for (const [b, id] of [[ui.tabDrawing, 'drawing'], [ui.tabObjects, 'objects']]) { b.classList.toggle('on', tab === id); b.setAttribute('aria-selected', String(tab === id)); }
+  state.panel = tab === 'library' ? 'library' : 'main';
+  state.propsOn = true;
   ui.objPanel.hidden = tab !== 'objects';
+  applyKind(); update(); renderLibrary(); rememberDocker();
+  ui.panelScroll.scrollTop = 0;
+  ui.dockerTabs.find((button) => button.dataset.tab === tab)?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
   if (tab === 'objects') renderObjects();
 }
 
@@ -3323,7 +3425,7 @@ const DO = {
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
   nudge: () => ui.cmdUI.openNudge(String(state.nudge), setNudgeText),
-  step: () => { state.panel = 'main'; setPtab('drawing'); applyKind(); update(); setTool('step'); ui.stepSec.scrollIntoView({ block: 'nearest' }); },
+  step: () => { setPtab('step'); docker.folds['step-panel'] = false; applySectionFold(ui.stepSec); rememberDocker(); setTool('step'); ui.stepSec.scrollIntoView({ block: 'nearest' }); },
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
@@ -6340,8 +6442,7 @@ function buildDrawingSection() {
       tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
       tog('÷25.4', 'unit-down', () => unitFix(UF.UNIT_FIXES.down), '')),
     h('span', { class: 'lbl' }, 'Make the whole drawing 1:1 once. Every part extracted from it is true size.'),
-    ui.selRow, ui.dimRow, ui.ldrRow, ui.gapRow, ui.gapReason,
-    h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount), ui.duplicateReason,
+    ui.selRow, ui.dimRow, ui.ldrRow,
     h('div', { class: 'row' }, ui.sizeLabel = h('span', { class: 'lbl sizelbl', 'data-testid': 'size-target-label' }, 'Whole drawing'), sizePadlock('panel-size-padlock')),
     h('div', { class: 'grid2' }, size('Width mm', 'dw', 'w'), size('Height mm', 'dh', 'h')),
     ui.scaleTarget, ui.bgRow, ui.lenRow, useBtn);
@@ -6350,7 +6451,9 @@ function buildDrawingSection() {
     h('h2', { class: 'sec' }, 'Outlines in this drawing'), ui.outList,
     btn('Extract part…', 'extract', extractPart, 'btn primary'),
     h('span', { class: 'lbl' }, 'Click an outline in the drawing, then Extract part…, or right-click it.'));
-  return h('div', { class: 'contents' }, buildPropsSection(), ...buildBalloonPanel(), ui.drawSec, ui.outSec);
+  ui.tinySec = h('section', { 'data-testid': 'tiny-panel', hidden: true }, h('h2', { class: 'sec' }, 'Tiny gaps'), ui.gapRow, ui.gapReason);
+  ui.dupsSec = h('section', { 'data-testid': 'duplicates-panel', hidden: true }, h('h2', { class: 'sec' }, 'Duplicates'), h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount), ui.duplicateReason);
+  return h('div', { class: 'contents' }, buildPropsSection(), ...buildBalloonPanel(), ui.drawSec, ui.tinySec, ui.dupsSec, ui.outSec);
 }
 
 // ---- Sheet resize (TODO 23; mock-up R5c, right pane): select the sheet, drag a side handle, whole mm; the parts stay exactly where they are ----
@@ -6471,7 +6574,6 @@ function drawSheetSel() {
 // ---- Properties (TODO 24, 25; mock-up R5b, Option B): a section at the top of the Drawing panel, switched on from View → Properties (Ctrl+1) ----
 // Layer, colour and line type of what is selected, its geometry (length, radius, centre, text height …), Select similar and Match properties.
 // A value the selected shapes do not share shows "*varies*"; typing into it sets it on all of them. One undo step per change.
-const PROPS_SAVED = 'pd-props';
 const VARIES = '*varies*';
 /** [index, entity] of the selection without kept dimensions (a dimension has its own text-height field). */
 function propEnts(d, all = false) {
@@ -6538,7 +6640,7 @@ function setSelect(sel, options, current) {
   sel.value = current;
 }
 function renderPropsPanel(d) {
-  const show = state.propsOn && !!d && state.panel !== 'library';
+  const show = !!d;
   ui.propSec.hidden = !show;
   if (!show) return;
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
@@ -6642,10 +6744,11 @@ function propFieldSet(key, textValue) {
 }
 
 function toggleProps() {
+  const focus = ui.panelEl.contains(document.activeElement) || document.activeElement === ui.panelShow;
   state.propsOn = !state.propsOn;
-  try { localStorage.setItem(PROPS_SAVED, state.propsOn ? '1' : '0'); } catch { /* ignore */ }
-  renderEdit();
-  note(state.propsOn ? (editable() ? 'Properties on (View → Properties, Ctrl+1)' : 'Properties on: it shows at the top of the Drawing panel on a drawing tab') : 'Properties off');
+  renderDocker(); renderRibbon(); rememberDocker();
+  if (focus) (state.propsOn ? ui.panelHide : ui.panelShow).focus();
+  note(state.propsOn ? 'Panel shown (Ctrl+1)' : 'Panel hidden (Ctrl+1)');
 }
 
 // -- Select similar: every shape on the same layer, in the same colour or of the same type as the first one selected
@@ -7062,7 +7165,8 @@ function renderEdit() {
       else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
     }
   }
-  ui.drawSec.hidden = !on || lib; ui.outSec.hidden = !on || lib;
+  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = !on && !lib; ui.outSec.hidden = !on || lib;
+  for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
   if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
   if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }
@@ -7246,20 +7350,21 @@ function buildCompareSection() {
   ui.cmpTable = h('tbody');
   ui.cmpTableWrap = h('div', { class: 'cmptablewrap' }, h('table', { class: 'cmptable', 'data-testid': 'cmp-table', 'aria-label': 'Differences from reference' },
     h('thead', null, h('tr', null, ['Drawing', 'Δ area (mm²)', 'Δ perimeter (mm)', 'Δ W × H (mm)'].map((text) => h('th', { scope: 'col' }, text)))), ui.cmpTable));
+  ui.diffSec = h('section', { class: 'propbox cmpbox', hidden: true, 'data-testid': 'differences-panel' },
+    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Differences'), ui.cmpCount), ui.cmpStale, ui.cmpTableWrap, ui.cmpList);
   ui.cmpSec = h('section', { class: 'propbox cmpbox', hidden: true, 'data-testid': 'compare-panel' },
     h('h2', { class: 'sec' }, 'Compare'), ui.cmpItems, h('div', { class: 'cmpadd' }, ui.cmpAdd),
     h('div', { class: 'lbl' }, 'Snapshots · max 5 · first ticked = reference'),
     h('div', { class: 'lbl' }, 'Line up'), h('div', { class: 'mode', role: 'group', 'aria-label': 'Line up' }, ui.cmpModes), ui.cmpHint,
     h('div', { class: 'proprow' }, h('span', { class: 'lbl' }, 'Tolerance'), ui.cmpTol, h('span', { class: 'lbl' }, 'mm')),
     h('label', { class: 'row swrow' }, h('span', null, 'Show differences'), ui.cmpShow),
-    ui.cmpRunBtn, ui.cmpStale, ui.cmpTableWrap,
-    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Differences'), ui.cmpCount), ui.cmpList, ui.cmpPicker);
-  return ui.cmpSec;
+    ui.cmpRunBtn, ui.cmpPicker);
+  return h('div', { class: 'contents' }, ui.cmpSec, ui.diffSec);
 }
 
 function renderCompare() {
   const d = cmpDoc();
-  ui.cmpSec.hidden = !d || state.panel === 'library';
+  ui.cmpSec.hidden = ui.diffSec.hidden = !d || state.panel === 'library';
   if (ui.cmpSec.hidden) return;
   const c = d.cmp;
   const ref = CMP.reference(c.items), selected = cmpSelected(c);
@@ -7409,6 +7514,9 @@ async function init() {
     if (FOLDS.includes(rb?.mode)) ribbon.mode = rb.mode;
     if (['full', 'titles'].includes(rb?.last)) ribbon.last = rb.last;
     ribbon.rail = rb?.rail !== false; ribbon.guideSnap = rb?.guideSnap !== false;
+    const panel = saved.find((r) => r.id === 'docker');
+    docker.width = panelWidth(panel?.width); state.propsOn = panel?.on !== false;
+    if (panel?.folds && typeof panel.folds === 'object') docker.folds = Object.fromEntries(Object.entries(panel.folds).filter(([, value]) => typeof value === 'boolean'));
   } catch { /* storage may be blocked */ }
   try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
@@ -7450,7 +7558,6 @@ async function init() {
   ui.gapMethod.value = state.gapMethod;
   try { const v = PL.parseMm(localStorage.getItem('pd-nudge') || ''); if (v != null && v > 0) state.nudge = v; } catch { /* ignore */ }
   try { if (localStorage.getItem('pd-rulers') === '0') state.rulers = false; } catch { /* ignore */ }
-  try { if (localStorage.getItem(PROPS_SAVED) === '1') state.propsOn = true; } catch { /* ignore */ }
   ui.dp.addEventListener('change', () => setDecimals(ui.dp.value));
   syncFields(); applyKind();
   update(true);
