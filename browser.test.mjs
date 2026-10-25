@@ -8772,11 +8772,11 @@ try {
       assert.deepEqual((await savedDoc()).entities, before.entities);
     };
     await typeCmd('f');
-    assert.equal(await prompt(), 'Select the first line or arc [Radius / Esc] (Shift = sharp corner):'); assert.equal(await t('tool-chip').textContent(), 'Tool: Fillet');
+    assert.equal(await prompt(), 'Select the first line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):'); assert.equal(await t('tool-chip').textContent(), 'Tool: Fillet');
     assert.equal(await page.locator('nav.rail [data-tool=fillet]').count(), 0);
     await typeCmd('r'); assert.equal(await prompt(), 'Fillet radius <5>:');
     await typeCmd('-1'); assert.match(await histLine(), /I do not understand.*0 or more/); await typeCmd('5');
-    await click(40, 20); assert.match(await prompt(), /^Select the second line or arc/);
+    await click(40, 20); assert.match(await prompt(), /^Select the second line, arc or polyline segment/);
     const hover = await at(60, 40); await page.mouse.move(hover.x, hover.y); await frames();
     assert.equal(await t('mod-preview').count(), 3, 'two trimmed lines and the arc are previewed');
     await shotBoth('fillet', async () => { await cmdLine().focus(); const p = await at(60, 40); await page.mouse.move(p.x, p.y); await frames(); });
@@ -8785,7 +8785,7 @@ try {
     assert.deepEqual(coords(doc.entities[0]), [20, 20, 55, 20]); assert.deepEqual(coords(doc.entities[1]), [60, 25, 60, 60]);
     assert.equal(doc.entities[3].type, 'ARC'); assert.deepEqual([10, 20, 40, 50, 51].map((c) => fieldOf(doc.entities[3], c)), [55, 25, 5, 270, 0]);
     assert.equal(doc.entities[1].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Fillet');
-    assert.match(await prompt(), /^Select the first line or arc/, 'Fillet repeats'); await undo();
+    assert.match(await prompt(), /^Select the first line, arc or polyline segment/, 'Fillet repeats'); await undo();
     await page.mouse.move(0, 0); await click(40, 20);
     await page.keyboard.down('Shift'); await page.mouse.move(hover.x, hover.y); await frames();
     assert.equal(await t('mod-preview').count(), 2, 'Shift previews two sharp lines, with no arc');
@@ -8796,7 +8796,7 @@ try {
     await click(60, 40, { shift: true });
     doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.deepEqual(coords(doc.entities[0]), [20, 20, 60, 20]); await undo();
     await click(40, 20); await click(40, 70); assert.match(await histLine(), /parallel/);
-    await page.keyboard.press('Escape'); assert.match(await prompt(), /^Select the first line or arc/);
+    await page.keyboard.press('Escape'); assert.match(await prompt(), /^Select the first line, arc or polyline segment/);
     await typeCmd('r'); await typeCmd('100'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /too big/);
     assert.deepEqual((await savedDoc()).entities, before.entities); assert.equal(await page.evaluate(() => localStorage.getItem('pd-fillet')), '100');
     assert.equal(await t('mod-preview').count(), 0, 'oversized saved radius has no preview');
@@ -8812,9 +8812,9 @@ try {
     for (const tab of ['Home', 'Modify']) {
       await page.locator(`[data-ribbon-tab=${tab}]`).click();
       const button = page.locator('.ribbon [data-panel=Modify]').getByRole('button', { name: 'Fillet', exact: true });
-      assert.equal(await button.isEnabled(), true); await button.click(); assert.match(await prompt(), /^Select the first line or arc/); await page.keyboard.press('Escape');
+      assert.equal(await button.isEnabled(), true); await button.click(); assert.match(await prompt(), /^Select the first line, arc or polyline segment/); await page.keyboard.press('Escape');
     }
-    await menuItem('Modify', 'Fillet'); assert.match(await prompt(), /^Select the first line or arc/);
+    await menuItem('Modify', 'Fillet'); assert.match(await prompt(), /^Select the first line, arc or polyline segment/);
     await page.keyboard.press('Escape');
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
     await typeCmd('f'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /nothing there/);
@@ -8833,7 +8833,7 @@ try {
     };
     await typeCmd('f'); await typeCmd('r'); await typeCmd('5');
     await click(130, 70); assert.match(await histLine(), /circles.*not supported/);
-    await click(15, 40); assert.match(await prompt(), /^Select the second line or arc/);
+    await click(15, 40); assert.match(await prompt(), /^Select the second line, arc or polyline segment/);
     const hover = async () => { await cmdLine().focus(); const p = await at(36, 28); await page.mouse.move(p.x, p.y); await frames(); };
     await hover(); assert.equal(await t('mod-preview').count(), 3);
     await shotBoth('fillet-line-arc', hover);
@@ -8870,6 +8870,46 @@ try {
     await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
     assert.deepEqual((await savedDoc()).entities, original.entities);
     await page.keyboard.press('Escape'); await closeTabs(/fillet/);
+  });
+
+  await step('TODO 66g: Fillet polyline corner', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    addEntities(raw, dxfPoly([[20, 20], [100, 20], [100, 100], [20, 100]], { closed: true, layer: 'Cut', width: .5 }), dxfLine(20, 130, 100, 130));
+    await openGrips(writeDxf(raw), 'fillet-polyline.dxf'); const before = await savedDoc();
+    const undo = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the original polyline');
+    };
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('10'); await click(60, 20);
+    const hover = async () => { await cmdLine().focus(); const p = await at(100, 65); await page.mouse.move(p.x, p.y); await frames(); };
+    await hover(); assert.equal(await t('mod-preview').count(), 1, 'the result previews as one polyline');
+    assert.match(await t('mod-preview').getAttribute('d'), /A/);
+    await shotBoth('fillet-polyline', hover); await click(100, 65);
+    let doc = await savedDoc(), e = doc.entities[0];
+    assert.equal(doc.entities.length, 2); assert.equal(e.type, 'LWPOLYLINE'); assert.equal(fieldOf(e, 90), 5);
+    assert.equal(fieldOf(e, 70) & 1, 1); assert.equal(fieldOf(e, 43), .5);
+    const vs = GR.lwVertices(e.r); assert.deepEqual(vs.map((v) => [v.x, v.y]), [[20, 20], [90, 20], [100, 30], [100, 100], [20, 100]]);
+    assert.ok(Math.abs(vs[1].b - Math.tan(Math.PI / 8)) < 1e-6, 'Save retains the inserted bulge and vertex count');
+    await page.keyboard.press('Escape'); await shotBoth('fillet-polyline-result'); await typeCmd('f');
+    assert.equal((await histLabels()).at(-1), 'Fillet'); await undo();
+    await click(60, 20); await hover(); await page.keyboard.down('Shift'); await hover();
+    assert.equal(await t('mod-preview').count(), 1); assert.doesNotMatch(await t('mod-preview').getAttribute('d'), /A/);
+    await page.keyboard.up('Shift'); await click(100, 65, { shift: true });
+    assert.deepEqual((await savedDoc()).entities, before.entities); await undo();
+    await typeCmd('r'); await typeCmd('0'); await click(60, 20); await click(100, 65);
+    assert.deepEqual((await savedDoc()).entities, before.entities); await undo();
+    await typeCmd('r'); await typeCmd('1000'); await click(60, 20); await click(100, 65);
+    assert.match(await histLine(), /too big/); assert.equal(await t('mod-preview').count(), 0); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await page.keyboard.press('Escape'); await typeCmd('r'); await typeCmd('10');
+    await click(60, 20); await click(60, 100); assert.match(await histLine(), /adjacent/);
+    await click(60, 130); assert.match(await histLine(), /same polyline/); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await page.keyboard.press('Escape'); await click(20, 60); await click(60, 20);
+    doc = await savedDoc(); assert.equal(fieldOf(doc.entities[0], 90), 5); assert.ok(GR.lwVertices(doc.entities[0].r)[0].b > .41, 'the closing segment fillets at the first vertex'); await undo();
+    await page.keyboard.press('Escape');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await typeCmd('f'); await click(60, 20); assert.match(await histLine(), /nothing there/); assert.match(await prompt(), /^Select the first/);
+    assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/fillet/);
   });
 
   await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {

@@ -1,6 +1,7 @@
 // Fillet lines and finite arcs, pure: fillet.test.mjs. Drawing units, y up; angles in degrees, counter-clockwise.
 import { shapeOf, get } from './grips.js';
-import { rebuilt } from './modify.js';
+import { rebuilt, pathOf, geo, closest } from './modify.js';
+import { fmt } from './dxf-write.js';
 
 const EPS = 1e-9, DEG = 180 / Math.PI;
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -66,8 +67,8 @@ function kept(s, p, T, X) {
   return { shape: { ...s, a0: end ? a : s.a0, a1: end ? s.a1 : a }, away: v };
 }
 
-function filletCurves(a, p1, b, p2, r) {
-  const corners = intersections(a, b).sort((x, y) => dist(x, p1) + dist(x, p2) - dist(y, p1) - dist(y, p2)), X = corners[0];
+function filletCurves(a, p1, b, p2, r, corner) {
+  const X = corner || intersections(a, b).sort((x, y) => dist(x, p1) + dist(x, p2) - dist(y, p1) - dist(y, p2))[0];
   if (!r) {
     if (!X) return { error: 'Radius 0 needs a line and arc, or arcs, that intersect' };
     const k1 = kept(a, p1, X, X), k2 = kept(b, p2, X, X);
@@ -90,7 +91,7 @@ function filletCurves(a, p1, b, p2, r) {
         for (const sign of Math.abs(area) < EPS * r * r ? [1, -1] : [area > 0 ? 1 : -1]) {
           const v1 = turn(sub(t1, c)), v2 = turn(sub(t2, c));
           if (dot(k1.away, v1) * sign >= -EPS || dot(k2.away, v2) * sign <= EPS) continue;
-          const score = dist(t1, p1) + dist(t2, p2);
+          const score = dist(t1, corner || p1) + dist(t2, corner || p2);
           if (!best || score < best.score) best = { score, shapes: [k1.shape, k2.shape, { t: 'arc', c, r, a0: angle(c, sign > 0 ? t1 : t2), a1: angle(c, sign > 0 ? t2 : t1) }] };
         }
       }
@@ -132,8 +133,12 @@ export function filletLines(l1, p1, l2, p2, r) {
 
 /** LINE / ARC pair → { ents: [first, second, arc?] }; the fillet takes the first entity's properties. */
 export function filletEntities(e1, p1, e2, p2, r) {
+  if ([e1, e2].some(isPolyline)) {
+    if (e1 !== e2) return { error: 'Pick two adjacent segments of the same polyline; separate objects cannot be filleted to a polyline' };
+    return filletPolyline(e1, p1, p2, r);
+  }
   if (e1 === e2) return { error: 'Pick a second, different line or arc' };
-  if (![e1, e2].every((e) => ['LINE', 'ARC'].includes(e?.type))) return { error: 'Fillet takes lines and arcs; circles and polylines are not supported' };
+  if (![e1, e2].every((e) => ['LINE', 'ARC'].includes(e?.type))) return { error: 'Fillet takes lines, arcs and polyline corners; circles are not supported' };
   if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
   if ([e1, e2].some((e) => e.type === 'ARC' && (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS))) return { error: 'Fillet needs arcs in the drawing plane' };
   const s1 = drawingShape(e1), s2 = drawingShape(e2);
@@ -150,4 +155,94 @@ export function filletEntities(e1, p1, e2, p2, r) {
   const ents = [rebuilt({ t: 'line', a: f.l1[0], b: f.l1[1] }, e1), rebuilt({ t: 'line', a: f.l2[0], b: f.l2[1] }, e2)];
   if (f.arc) ents.push(rebuilt({ t: 'arc', ...f.arc }, e1));
   return { ents };
+}
+
+const isPolyline = (e) => ['LWPOLYLINE', 'POLYLINE'].includes(e?.type);
+
+// Keep raw vertex records so unrelated bulges, widths and vertex data survive the edit.
+function polyRecords(e) {
+  if (e.type === 'POLYLINE') return { header: e.r, vertices: e.kids || [] };
+  const header = { ...e.r, c: [], v: [] }, vertices = [];
+  for (let k = 0; k < e.r.c.length; k++) {
+    const c = e.r.c[k], v = e.r.v[k];
+    if (c === 10) vertices.push({ type: 'VERTEX', c: [], v: [] });
+    const r = vertices.length && [10, 20, 40, 41, 42, 91].includes(c) ? vertices.at(-1) : header;
+    r.c.push(c); r.v.push(v);
+  }
+  return { header, vertices };
+}
+
+function recordWith(r, pairs) {
+  const out = { ...r, c: r.c.slice(), v: r.v.slice() };
+  for (const [c, v] of pairs) {
+    const k = out.c.indexOf(c);
+    if (k < 0) { out.c.push(c); out.v.push(String(v)); } else out.v[k] = String(v);
+  }
+  return out;
+}
+
+/** The polyline preview in drawing coordinates, including legacy POLYLINE and OCS -Z. */
+export function filletPolylineShape(e, factor = 1) {
+  const { vertices } = polyRecords(e), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+  return { t: 'poly', closed: !!((get(e.r, 70) ?? 0) & 1), pts: vertices.map((v) => [
+    (get(v, 10) ?? 0) * factor * flip, (get(v, 20) ?? 0) * factor, (get(v, 42) ?? 0) * flip,
+  ]) };
+}
+
+/** Replace one shared vertex by two tangent vertices; the new arc copies the first picked segment's widths. */
+function filletPolyline(e, p1, p2, r) {
+  if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
+  if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS ||
+      (e.type === 'POLYLINE' && ((get(e.r, 70) ?? 0) & (2 | 4 | 8 | 16 | 64)))) return { error: 'Fillet needs a plain 2D polyline in the drawing plane' };
+  const { header, vertices } = polyRecords(e), n = vertices.length;
+  const sh = { t: 'poly', closed: !!((get(e.r, 70) ?? 0) & 1), pts: vertices.map((v) => [get(v, 10) ?? 0, get(v, 20) ?? 0, get(v, 42) ?? 0]) };
+  const P = pathOf(sh), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+  if (sh.closed && n === 2) P.segs.push({ a: sh.pts[1], b: sh.pts[0], bulge: sh.pts[1][2] });
+  const pick = (p) => closest(P, [p[0] * flip, p[1]]).index;
+  const first = pick(p1), second = pick(p2);
+  let i = first, j = second;
+  if ((j + 1) % n === i && (sh.closed || i > j)) [i, j] = [j, i];
+  if (sh.closed && n === 2 && first !== second) {
+    const score = (p) => dist(p, [p1[0] * flip, p1[1]]) + dist(p, [p2[0] * flip, p2[1]]);
+    j = score(sh.pts[0]) < score(sh.pts[1]) ? 0 : 1; i = 1 - j;
+  }
+  if (i === j || (i + 1) % n !== j || (!sh.closed && j === 0) || !P.segs[i] || !P.segs[j]) return { error: 'Pick two adjacent segments of the same polyline' };
+  const a = P.segs[i], b = P.segs[j];
+  if ([a, b].some((s) => dist(s.a, s.b) < EPS)) return { error: 'A polyline segment has no length' };
+  if (!r) return { ents: [e] }; // The segments already meet at their sharp corner.
+  const gs = [geo(a), geo(b)];
+  const curves = gs.map((g) => g.line ? { t: 'line', a: g.a, b: g.b } : {
+    t: 'arc', c: g.c, r: g.r, a0: norm((g.a0 + Math.min(0, g.sw)) * DEG), a1: norm((g.a0 + Math.max(0, g.sw)) * DEG),
+  });
+  let shapes;
+  if (gs.every((g) => g.line)) {
+    const f = filletLines([a.a, a.b], a.a, [b.a, b.b], b.b, r);
+    if (f.error) return f;
+    shapes = [{ t: 'line', a: f.l1[0], b: f.l1[1] }, { t: 'line', a: f.l2[0], b: f.l2[1] }, { t: 'arc', ...f.arc }];
+  } else {
+    const f = filletCurves(curves[0], a.a, curves[1], b.b, r, a.b);
+    if (f.error) return { error: 'The radius is too big or no tangent fillet fits these polyline segments' };
+    shapes = f.shapes;
+  }
+  const arcPoint = (s, t) => along(s.c, [Math.cos(t / DEG), Math.sin(t / DEG)], s.r);
+  const tip = (s, g, incoming) => s.t === 'line' ? (incoming ? s.b : s.a) : arcPoint(s, (g.sw > 0) === incoming ? s.a1 : s.a0);
+  const t1 = tip(shapes[0], gs[0], true), t2 = tip(shapes[1], gs[1], false), arc = shapes[2];
+  // A polyline trims finite segments; never extend past the shared vertex or consume a far endpoint.
+  if (gs.some((g, k) => g.line && (dot(sub(k ? t2 : t1, g.a), g.u) < -EPS || dot(sub(k ? t2 : t1, g.a), g.u) > g.len + EPS))) return { error: 'The radius is too big for these polyline segments' };
+  const bulge = (s, g) => g.line ? 0 : Math.sign(g.sw) * Math.tan(norm(s.a1 - s.a0) / DEG / 4);
+  const sign = dist(t1, arcPoint(arc, arc.a0)) < dist(t1, arcPoint(arc, arc.a1)) ? 1 : -1;
+  const arcBulge = sign * Math.tan(norm(arc.a1 - arc.a0) / DEG / 4);
+  const saved = [a.a, t1, t2, b.b].map((p) => p.slice(0, 2).map((v) => +fmt(v)));
+  if (saved.slice(1).some((p, k) => dist(p, saved[k]) < EPS) || !+fmt(arcBulge) ||
+      gs.some((g, k) => !g.line && !+fmt(bulge(shapes[k], g)))) return { error: 'The fillet would leave a segment too small for drawing precision' };
+  const out = vertices.slice();
+  out[i] = recordWith(vertices[i], [[42, bulge(shapes[0], gs[0])]]);
+  const start = recordWith(vertices[first], [[10, t1[0]], [20, t1[1]], [42, arcBulge]]);
+  // A copied vertex ID must not give the new vertex the identity of an existing one.
+  const id = start.c.indexOf(91); if (id >= 0) { start.c.splice(id, 1); start.v.splice(id, 1); }
+  out.splice(j, 1, start, recordWith(vertices[j], [[10, t2[0]], [20, t2[1]], [42, bulge(shapes[1], gs[1])]]));
+  if (e.type === 'POLYLINE') return { ents: [{ ...e, kids: out }] };
+  const next = recordWith(header, [[90, out.length]]);
+  for (const v of out) { next.c.push(...v.c); next.v.push(...v.v); }
+  return { ents: [{ ...e, r: next }] };
 }
