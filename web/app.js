@@ -18,6 +18,7 @@ import * as LR from './leader.js';
 import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
+import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
@@ -37,6 +38,7 @@ import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
 import { extendEntity } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
+import { layoutSnap } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, pasteSnapshot, partFromSnapshot } from './clipboard.js';
@@ -517,7 +519,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : setTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable(), pressed: () => state.tool === id, title: t.title });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable(), pressed: () => state.tool === id, title: t.title });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -576,7 +578,7 @@ function ribbonContents(kind) {
     group('Dimensions', ribbonTool('dimension'), ribbonTool('leader'), ribbonTool('balloon'),
       stack(btn('Dimension style…', toolIcon('dimension'), showDimStyle, { small: true }))),
     group('Inspect', ribbonTool('measure'))];
-  if (ribbon.tab === 'Layout') return [ui.sheetSec];
+  if (ribbon.tab === 'Layout') return [ui.sheetSec, group('Inspect', ribbonTool('measure'))];
   if (ribbon.tab === 'Part') return [ui.partRibbon];
   if (ribbon.tab === 'Compare') return [
     group('Snapshots · max 5', btn('Add tab', '<path d="M6 3h8l4 4v14H6zM14 3v4h4"/>', (e) => cmpChoose(e), { enabled: () => cmpDoc().cmp.items.length < CMP.MAX_ITEMS }),
@@ -709,7 +711,7 @@ function applyKind() {
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
-  if (lay && (state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.tool === 'contour' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
+  if (lay && (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.tool === 'contour' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
   else if (!lay && state.tool === 'step') setTool('select');
   else if (lay && wasLayout === false && state.tool === 'select') setTool('step');
   wasLayout = lay;
@@ -1182,7 +1184,8 @@ function setTool(id) {
   if (id === 'dimension') state.msg = dimPrompt();
   if (id === 'balloon') state.msg = balPrompt();
   if (id === 'leader') state.msg = ldrPrompt();
-  if (id === 'measure') state.msg = editable() ? 'Measure: click the first point (it snaps to ends and centres)' : 'Measure: open a drawing tab first';
+  if (id === 'measure') state.msg = measureTarget() ? 'Measure: click the first point (it snaps to ends and centres)' : 'Measure: open a drawing or layout tab first';
+  if (id === 'measure' && curLay()) { state.mode = 'select'; state.rotCopy = false; selectSheet(false); }
   if (id === 'step') state.msg = curLay() ? null : 'Step and repeat is on a layout tab: New layout, or Add to layout';
   if (id === 'contour') { state.msg = null; placeContourPanel(); }
   if (id !== 'select' && id !== 'pan' && ui.cmdUI) ui.cmdUI.ran(id === 'rect' ? 'rectangle' : id);       // Space on the drawing repeats it
@@ -2110,7 +2113,8 @@ function layoutMenu(e) {
   const many = items.length > 1;
   popMenu(e.clientX, e.clientY, [['Duplicate', duplicateOne, 'Ctrl+D'], ['Mirror X', () => mirrorSel('x'), 'MX'], '-',
     ['Group', groupSel, 'Ctrl+G', many && !wholeGroup()], ['Ungroup', ungroupSel, 'Ctrl+Shift+G', items.some((x) => x.p.g)],
-    ['Lock', () => lockSel(true), null, items.some((x) => !x.p.lock)], ['Unlock', () => lockSel(false), null, items.some((x) => x.p.lock)], '-', ['Delete', deletePlaced, 'Del']]);
+    ['Lock', () => lockSel(true), null, items.some((x) => !x.p.lock)], ['Unlock', () => lockSel(false), null, items.some((x) => x.p.lock)], '-',
+    ['Measure from here', () => { setTool('measure'); measurePoint(curDoc(), sheetAt(e.clientX, e.clientY)); }], ['Delete', deletePlaced, 'Del']]);
 }
 
 // ---- Rulers and guides (TODO 38; mock-up R4c): mm rulers along the top and left of the canvas; guides are dragged out of them ----
@@ -3849,6 +3853,8 @@ function paintOverlay(gesture = false) {
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); ui.cmdUI.place(); return; }
+    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur } : null);
+    const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
@@ -3862,11 +3868,14 @@ function paintOverlay(gesture = false) {
           if (outside.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
+      if (marks) {
+        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+        drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'));
+        canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
+      }
       ui.cmdUI.place();
       return;
     }
-    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur } : null);
-    const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
     const drawn = paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
       bg: d && d.bg, hl: d ? (state.entityDrag?.items ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
@@ -3924,7 +3933,7 @@ function attachCanvasEvents() {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
-    if (e.button === 0 && gh0 && curLay() && !state.setlen && state.tool !== 'pan' && !curLay().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
+    if (e.button === 0 && gh0 && curLay() && !state.setlen && state.tool !== 'pan' && state.tool !== 'measure' && !curLay().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
     if (e.button === 0 && state.tool !== 'pan' && cmpDown(e)) return;
     if (e.button === 1 || (e.button === 0 && state.tool === 'pan')) {
       e.preventDefault();
@@ -3939,8 +3948,8 @@ function attachCanvasEvents() {
       if (!state.match && textHandleDown(e)) { capture(c, e); return; }
       if (state.tool === 'text' && drawTarget()) { textToolDown(e); return; }
       if (state.draw && drawTarget()) { drawClick(e); return; }
-      if (gh && !state.setlen) return;                          // a gap is picked on click (below), so the browser's own focus change does not undo ours
-      const d = state.tool === 'measure' || state.setlen ? editable() : editable();
+      if (gh && !state.setlen && state.tool !== 'measure') return;                          // a gap is picked on click (below), so the browser's own focus change does not undo ours
+      const d = state.tool === 'measure' ? measureTarget() : editable();
       if (d && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
@@ -3967,7 +3976,7 @@ function attachCanvasEvents() {
       view.fitted = false;
       applyView(true);
     }
-    const d = editable();
+    const d = state.tool === 'measure' ? measureTarget() : editable();
     if (state.draw && d && state.drawDoc === curDoc()) drawHoverAt(d, e.clientX, e.clientY, e.shiftKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     if (state.text.drag) textDragMove(e);
@@ -4002,7 +4011,7 @@ function attachCanvasEvents() {
     if (pdrag) placedUp();
     if (lrub) { const r = lrub; lrub = null; hideRubber(); layoutBoxSelect(r, e); }
     const was = drag; drag = null;
-    const d = editable();
+    const d = state.tool === 'measure' ? measureTarget() : editable();
     if (was && d && e.button === 0) {
       hideRubber();
       const p = toDrawing(d, e.clientX, e.clientY);
@@ -4034,7 +4043,7 @@ function attachCanvasEvents() {
     end();
     state.entityDrag = null;
   });
-  c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen) pickGap(gh.dataset.gap); });
+  c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
   c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
   c.addEventListener('pointercancel', () => { if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
@@ -4085,6 +4094,7 @@ function renderCommand() {
     : 'Command: ' + t.label.toUpperCase();
   const word = state.fit ? 'fit' : 'placed';
   ui.prompt.textContent = gd ? `${gd.axis.toUpperCase()} position <${fmt(gd.mm)}>:` : state.msg ? state.msg
+    : state.tool === 'measure' && measureTarget() ? (state.meas?.pts.length === 2 ? Ed.formatMeasure(state.meas.result) : state.meas?.pts.length ? 'Measure: now the second point' : 'Measure: click the first point (it snaps to ends and centres)')
     : rs ? `Angle <${fmt(rs.p.rot)}>: ${state.rotCopy ? 'Copy on. ' : ''}[Pivot / Copy / Esc]:`
     : state.tool === 'contour' && ed ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:')
@@ -4438,6 +4448,7 @@ function partBox(d) {
 }
 /** The tab being edited: a drawing tab (not a layout). */
 const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
+const measureTarget = () => curLay() ? curDoc() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, ltypes: d.raw.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
@@ -4494,11 +4505,16 @@ function layersChanged(d) { d.ed = null; d.outl = null; d.sel = new Set(); d.hl 
 function toDrawing(d, cx, cy) {
   const r = ui.canvas.getBoundingClientRect();
   const mx = view.ox + (cx - r.left) / view.scale, my = view.oy + (cy - r.top) / view.scale;
-  return [mx / d.factor, (state.sheetH - my) / d.factor];
+  const f = d.lay ? 1 : d.factor;
+  return [mx / f, (state.sheetH - my) / f];
 }
-const pickTol = (d) => 7 / (view.scale * d.factor);
+const pickTol = (d) => 7 / (view.scale * (d.lay ? 1 : d.factor));
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
-const snapPoint = (d, p, skip, extra) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip, state.snapTypes, extra); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
+const snapPoint = (d, p, skip, extra) => {
+  const sn = d.lay ? state.snap && layoutSnap(d.lay.parts, state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl)), state.sheetW, state.sheetH, p[0], p[1], pickTol(d), state.snapTypes)
+    : Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip, state.snapTypes, extra);
+  return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]];
+};
 /** A Measure / Dimension / Leader pick: the snaps (any kind, Nearest too), then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point (a snapped point is never bent). */
 function pickPoint(d, p, pts, shift, hover = false) {
   const q = snapPoint(d, p), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
@@ -4726,7 +4742,7 @@ function measurePoint(d, p, shift = false) {
   M.pts.push(pickPoint(d, p, M.pts, shift)); M.hover = null;
   if (M.pts.length === 1) note('Measure: now the second point');
   else {
-    M.result = Ed.measureTwo(M.pts[0], M.pts[1], d.factor);
+    M.result = Ed.measureTwo(M.pts[0], M.pts[1], d.lay ? 1 : d.factor);
     note(Ed.formatMeasure(M.result));
   }
   paintOverlay();
@@ -6543,7 +6559,7 @@ function editKey(e) {
     else if (state.sheetDrag) sheetCancel();
     else if (sheetSelOn() && !pdrag) selectSheet(false);
     else if (curLay() && pdrag) cancelPlacedDrag();
-    else if (curLay() && multiSel() && !state.setlen) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
+    else if (curLay() && multiSel() && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.match) endMatch();
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
@@ -6559,7 +6575,7 @@ function editKey(e) {
     else if (state.dim && dimBusy(state.dim)) { dimClear(state.dim); note('Dimension cancelled. ' + dimPrompt()); paintOverlay(); }
     else if (state.ldr && state.ldr.pts.length) { state.ldr.pts = []; state.ldr.hover = null; note('Leader cancelled. ' + ldrPrompt()); paintOverlay(); }
     else if (state.bal && state.bal.tip) { state.bal.tip = null; note('Balloon cancelled. ' + balPrompt()); paintOverlay(); }
-    else if (state.meas && state.meas.pts.length) { state.meas.pts = []; note('Measure cleared'); paintOverlay(); }
+    else if (state.meas && state.meas.pts.length) { state.meas.pts = []; state.meas.hover = null; note('Measure cleared'); paintOverlay(); }
     else if (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'measure' || state.tool === 'balloon') setTool('select');       // nothing in progress: back to Select
     else if (state.tool === 'contour' && !(d && d.sel.size)) setTool('select');
     else if (d && state.balSel != null) balSelect(d, null);
@@ -7395,7 +7411,8 @@ function renderEdit() {
     ui.hintPill.hidden = state.tool !== 'select' || !d.sel.size || !!state.match;
     ui.hintPill.textContent = 'Ctrl-drag = copy';
   }
-  ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!editable() && state.tool === 'measure'));
+  if (state.tool === 'measure') ui.hintPill.hidden = true;
+  ui.canvas.classList.toggle('pick', (on && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'dimension' || !!state.draw || !!L)) || (!!measureTarget() && state.tool === 'measure'));
   if (!on) return;
   renderSelection(d);
   const n = d.sel.size, b = sizeBox(d), rb = resizeBox(d), scalable = !!b;

@@ -23,6 +23,8 @@ test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('mv').name, 'move');
   assert.equal(CB.resolve('move').where, 'draw');
   assert.equal(CB.resolve('m').name, 'measure');
+  assert.equal(CB.resolve('m', 'draw').name, 'measure');
+  for (const tab of ['draw', 'layout']) for (const word of ['measure', 'mea']) assert.equal(CB.resolve(word, tab).name, 'measure');
   assert.equal(CB.resolve('ct').name, 'contour');
   assert.equal(CB.resolve('contour').name, 'contour');
   assert.equal(CB.resolve('co').name, 'copy');

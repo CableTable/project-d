@@ -2387,12 +2387,110 @@ try {
     await page.keyboard.press('Escape');
     assert.match(await t('cmd-prompt').textContent(), /Measure cleared/);
     assert.equal(await accentWhen((n) => n === 0), 0, 'the measure is gone from the canvas');
-    // a layout tab has no drawing to measure: it says so
+    // Measure stays available when switching to a layout.
     await page.locator('.tabs .dtab[data-kind=layout]').first().click();
+    assert.match(await page.locator('[data-tool=measure]').getAttribute('class'), /on/);
+    assert.match(await t('cmd-prompt').textContent(), /Measure: click the first point/);
     await page.locator('[data-tool=measure]').click();
-    assert.match(await t('cmd-prompt').textContent(), /Measure: open a drawing tab first/);
+    assert.match(await t('cmd-prompt').textContent(), /Measure: click the first point/);
     await drawingTab().click();
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 143: Measure on a layout', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4);
+    addEntities(raw, [dxfPoly([[10, 20], [50, 20], [50, 40], [10, 40]], true), dxfCircle(30, 30, 4)]);
+    const lay = newLayout('Measure layout');
+    Object.assign(lay.s, { sheetW: 400, sheetH: 300 });
+    lay.parts.p = makePart('p', 'Plate', raw, 1);
+    lay.placed = [{ partId: 'p', x: 80, y: 80, rot: 90, lock: true }, { partId: 'p', x: 240, y: 100, mirrorX: true }];
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect();
+      const sc = b.width / +sheet.getAttribute('width'), H = +sheet.getAttribute('height');
+      return { x: b.x + x * sc, y: b.y + (H - y) * sc };
+    }, [x, y]);
+    const clickAt = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const readout = () => q('cmd-prompt').textContent();
+    const dirty = () => p.locator('.dtab.on').getAttribute('class');
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles({ name: 'measure-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on').dataset.kind === 'layout');
+      const clean = await dirty();
+      let ribbonMeasures = 0;
+      for (const tab of ['Home', 'Layout', 'View', 'Output']) {
+        await p.locator(`[data-ribbon-tab=${tab}]`).click();
+        const buttons = p.locator('.ribbon-body').getByRole('button', { name: 'Measure', exact: true });
+        for (const b of await buttons.all()) { assert.equal(await b.isEnabled(), true); ribbonMeasures++; }
+      }
+      assert.ok(ribbonMeasures > 0);
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.keyboard.press('Control+a');          // Esc in Measure must work with several parts selected.
+      await command('measure');
+      await clickAt(60.2, 120.2); await clickAt(199.8, 120.2);
+      assert.equal((await readout()).trim(), 'Distance 140 mm   ΔX 140   ΔY 0   Angle 0°');
+      assert.equal(await q('meas-keep').isVisible(), false);
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').textContent.includes('Distance 140 mm'));
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        await p.locator('[data-ribbon-tab=Layout]').click();
+        await p.mouse.move(900, 700);
+        await p.screenshot({ path: `${shotDir}/todo143-measure-${theme}.png` });
+      }
+      const cursor = await point(50, 150), a = await point(60, 120), b = await point(200, 120);
+      await p.mouse.move(cursor.x, cursor.y); await p.keyboard.type('measure');
+      await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const bar = await q('cmd-bar').boundingBox();
+      assert.ok(bar.x + bar.width <= a.x - 15 || bar.x >= b.x + 15 || bar.y + bar.height <= a.y - 15 || bar.y >= a.y + 15,
+        'the command box leaves layout Measure marks clear, like drawing Measure');
+      await q('cmd-input').press('Enter');
+      await clickAt(0.2, 0.2); await clickAt(60.2, 120.2);
+      assert.match(await readout(), /Distance 134\.16 mm   ΔX 60   ΔY 120/);
+      await p.keyboard.press('Escape'); assert.match(await readout(), /Measure cleared/);
+      await p.keyboard.press('Escape'); assert.match(await p.locator('[data-tool=select]').getAttribute('class'), /on/);
+      await command('mea');
+      await clickAt(100, 200);
+      await p.keyboard.down('Shift'); await clickAt(150, 210); await p.keyboard.up('Shift');
+      assert.match(await readout(), /ΔY 0   Angle 0°/);
+      await q('tog-ortho').click();
+      await clickAt(100, 200); await clickAt(110, 250);
+      assert.match(await readout(), /ΔX 0   ΔY [\d.]+   Angle 90°/);
+      await q('tog-ortho').click();
+      await q('tog-snap').click();
+      await clickAt(0.2, 0.2); await clickAt(60, 120);
+      assert.match(await readout(), /ΔX 59\.8   ΔY 119\.8/);
+      await q('tog-snap').click();
+      await q('snap-types-open').click();
+      for (const kind of ['end', 'mid', 'near']) await q('snap-type-' + kind).uncheck();
+      await p.keyboard.press('Escape');
+      await clickAt(0.2, 0.2); await clickAt(199.8, 120.2);
+      assert.match(await readout(), /ΔX 199\.6   ΔY 120/, 'layout picks respect disabled part and sheet snap types');
+      await clickAt(70.1, 100.1); await clickAt(199.8, 120.2);
+      assert.match(await readout(), /ΔX 129\.8   ΔY 20\.2/, 'the enabled transformed centre still snaps');
+      await q('snap-types-open').click();
+      for (const kind of ['end', 'mid', 'near']) await q('snap-type-' + kind).check();
+      await p.keyboard.press('Escape');
+      const corner = await point(200, 120);
+      await p.mouse.click(corner.x, corner.y, { button: 'right' });
+      await p.getByRole('menuitem', { name: 'Measure from here', exact: true }).click();
+      await clickAt(0.2, 0.2);
+      assert.match(await readout(), /Distance 233\.24 mm   ΔX -200   ΔY -120/);
+      assert.equal(await dirty(), clean, 'Measure leaves the tab clean');
+      await p.locator('[data-menu=Edit]').click();
+      assert.equal(await p.getByRole('menuitem', { name: 'Undo', exact: true }).isEnabled(), false, 'Measure adds no undo step');
+      await p.keyboard.press('Escape');
+      const download = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      const saved = await download, reopened = layoutFromRaw(readDxf(readFileSync(await saved.path(), 'utf8')));
+      assert.deepEqual(reopened.placed, layoutFromRaw(layoutRaw(lay)).placed, 'placements stay unchanged');
+      assert.deepEqual(reopened.s, lay.s, 'sheet and grid stay unchanged');
+    } finally { await context.close(); }
   });
 
   await step('snap toggle: Off measures the exact clicked point, On snaps to ends again; the state is shown', async () => {
@@ -4091,7 +4189,8 @@ try {
     await t('align-bottom').click(); b = await selBoxes();
     for (const x of b) near(x[1], Math.min(...before.map((q) => q[1])), 'bottom edges meet');
     await page.keyboard.press('Control+z');
-    await t('align-middle').click(); b = await selBoxes();
+    await cmdLine().fill('m'); await page.keyboard.press('Enter'); b = await selBoxes();
+    assert.match(await prompt(), /^3 parts aligned middle to the selection:?$/, 'M remains contextual Middle on layouts');
     const cy = (Math.min(...before.map((q) => q[1])) + Math.max(...before.map((q) => q[3]))) / 2;
     for (const x of b) near((x[1] + x[3]) / 2, cy, 'middles meet');
     await page.keyboard.press('Control+z');
@@ -4326,9 +4425,9 @@ try {
     // the right-click menu
     await rightClickMm(p0[0] + 50, p0[1] + 30);
     await page.waitForSelector('[data-testid=ctx-menu]');
-    assert.deepEqual(await ctxItems(), ['DuplicateCtrl+D', 'Mirror XMX', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Lock', 'Unlock', 'DeleteDel']);
+    assert.deepEqual(await ctxItems(), ['DuplicateCtrl+D', 'Mirror XMX', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Lock', 'Unlock', 'Measure from here', 'DeleteDel']);
     const enabled = await page.locator('[data-testid=ctx-menu] .mi').evaluateAll((bs) => bs.map((b) => !b.disabled));
-    assert.deepEqual(enabled, [true, true, false, false, false, true, true], 'Group / Ungroup / Lock are greyed on one locked part');
+    assert.deepEqual(enabled, [true, true, false, false, false, true, true, true], 'Group / Ungroup / Lock are greyed on one locked part; Measure stays available');
     await shotBoth('locked', async () => { if (!(await t('ctx-menu').count())) await rightClickMm(p0[0] + 50, p0[1] + 30); await page.waitForSelector('[data-testid=ctx-menu]'); }, async () => { await page.keyboard.press('Escape'); });
     await rightClickMm(p0[0] + 50, p0[1] + 30); await page.waitForSelector('[data-testid=ctx-menu]');
     await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Unlock' }).click();
@@ -7701,7 +7800,7 @@ try {
     await closeTabs(/./);
     await t('new-layout').click();
     await page.locator('[data-tool=measure]').click();
-    assert.match(await prompt(), /Measure: open a drawing tab first/);
+    assert.match(await prompt(), /Measure: click the first point/);
     await page.mouse.move(700, 450); await page.mouse.move(720, 460);
     await page.waitForTimeout(200);
     for (const c of ['trk-line', 'trk-polar', 'trk-x', 'trk-plus']) assert.equal(await trkN(c), 0, c);
