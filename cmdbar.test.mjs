@@ -32,6 +32,7 @@ test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('r', 'draw').name, 'rectangle');
   assert.equal(CB.resolve('r', 'layout').name, 'rotate');
   assert.equal(CB.resolve('a', 'layout').name, 'apply');
+  assert.equal(CB.resolve('sr', 'layout').name, 'step');
   assert.equal(CB.resolve('a', 'draw').name, 'arc');
   assert.equal(CB.resolve('zzz'), null);
   assert.equal(CB.resolve(''), null);

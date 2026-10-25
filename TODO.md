@@ -210,7 +210,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
     110a. ✅ Theme: AutoCAD dark, CorelDRAW light (built, session 21).
     110b. ✅ Ribbon frame: Option A, per-kind tabs, remembered fold states, Home / View / Output (built, Knight).
-    110c. Remaining tab contents (Draw, Modify, Annotate, Layout, Compare) and the contextual Part tab.
+    110c. ✅ Remaining tab contents (Draw, Modify, Annotate, Layout, Compare) and the contextual Part tab.
     110d. Right panel: Option A docker tabs, folding sections, resize / hide, Parts library order (94, 132).
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
     111a. ✅ (his call 2026-10-24, queued after 117) Ctrl+C / Ctrl+V of drawing objects inside the app: between drawing tabs and between the sheets of a PDF tab; a paste lands at the same position, one Undo. Not from other programs (rest of 111 later).
@@ -237,7 +237,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     129a. ✅ Linked dimensions for aligned and linear: link on placing, follow grip drag / Move / Scale, unlink on replace / delete.
     129b. ✅ Radius, diameter and angle dimensions follow their circle, arc or lines (exact centre + radius, or exact lines through the vertex; Move, Scale, grip drag).
     129c. ✅ Links come back when a drawing opens: matching is good to 2e-6 drawing units (the DXF holds 6 decimals), tested by save → reopen → follow (`linked-dimensions.test.mjs`). AutoCAD-made DIMENSION entities are not Project D dimensions and stay as they are.
-130. **Move line width out of Properties into the top ribbon (with T27)** (S, ask, T40): see T40 in support/tickets.md. Grill first.
+130. ✅ **Line width in the Home ribbon and still in Properties** (T40, R19 Option A; built with 110b / 110c).
 131. **Measure: Keep stores all 3 values; keep / preview next to the measured line; unkept measure vanishes** (M, ask, T41): see T41 in support/tickets.md. Grill first.
 132. **Parts library sits at the bottom of the right panel: scroll to reach it** (S, ask, T42): see T42 in support/tickets.md. Grill first.
 133. **Dotted rubber-band line from the pointer when a tool starts (line thickness?)** (S, ask, T43): see T43 in support/tickets.md. Grill first.

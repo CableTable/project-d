@@ -240,7 +240,7 @@ const partHid = (p) => { const d = curDoc(); return !!(d && d.hiddenParts && d.h
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
 const cssVar = (name, fallback) => { const c = cssCache || (cssCache = new Map()); if (!c.has(name)) c.set(name, getComputedStyle(ui.canvas).getPropertyValue(name).trim() || fallback); return c.get(name); };
 const capture = (el, e) => { try { el.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ } };
-const clampSel = () => { if (state.sel >= placedNow.length || (state.sel < 0 && placedNow.length)) state.sel = placedNow.length ? 0 : -1; };
+const clampSel = () => { if (state.sel >= placedNow.length) state.sel = placedNow.length ? 0 : -1; };
 /** The grid of the open layout: its step-and-repeat part laid out by the settings, or an empty grid (count 0). */
 const gridNow = () => { const lay = curLay(); return (lay && LD.gridOf(lay)) || stepRepeat({ ...state, partW: 0, partH: 0 }); };
 /** Something in the open layout was changed: it has unsaved changes now. */
@@ -291,6 +291,7 @@ function flagInvalid(input, bad) {
 const clearInvalid = (input) => { input.addEventListener('focus', () => flagInvalid(input, false)); };
 const MAX_SHEET = 100000;              // mm: a sheet side above this is refused (1e308 made invalid SVG)
 function numField(label, key, opts = {}) {
+  const caption = key === 'sheetW' ? 'W mm' : key === 'sheetH' ? 'H mm' : label;
   const input = h('input', { class: 'fld', type: 'text', inputmode: 'decimal', value: String(state[key]), 'data-key': key });
   // a whole-number field (Rows, Columns) says why a typed value is refused instead of snapping back silently
   const refusal = () => {
@@ -326,7 +327,7 @@ function numField(label, key, opts = {}) {
   });
   clearInvalid(input);
   ui[key] = input;
-  return h('label', { class: 'field' }, label, input);
+  return h('label', { class: 'field' }, caption, input);
 }
 
 function select(options, value, onchange, attrs = {}) {
@@ -343,7 +344,7 @@ function propField(label, id, cls = '') {
   return h('label', { class: 'lbl inline' }, label, input);
 }
 
-// ---- number fields of the selected placed part (top bar and right panel): shown from the part, applied on Enter or leaving the field ----
+// ---- selected placed-part fields (ribbon and right panel): applied on Enter or leaving the field ----
 const placedFields = [];            // [{ input, show (→ text), enabled (→ bool) }]
 /**
  * A text field kept in step with the selected placed part. apply(text) returns '' when it took the value, else what is wrong
@@ -406,10 +407,7 @@ function buildMenus() {
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, () => !curLay(), SHAPING_TITLE[op], i === 0]));
   const modifyItems = menus.Modify;
-  menus.Modify = () => [...modifyItems, [(state.shapingKeepOriginals ? '✓ ' : '  ') + 'Shaping: Keep originals', () => {
-    state.shapingKeepOriginals = !state.shapingKeepOriginals;
-    shapingStore.put({ id: 'keepOriginals', on: state.shapingKeepOriginals }).catch(() => note('Could not remember Keep originals; it still applies until the app closes'));
-  }, null, null, 'Keep the originals and add selected results on top; Create boundary always keeps originals', false, state.shapingKeepOriginals]];
+  menus.Modify = () => [...modifyItems, [(state.shapingKeepOriginals ? '✓ ' : '  ') + 'Shaping: Keep originals', toggleShapingKeep, null, null, 'Keep the originals and add selected results on top; Create boundary always keeps originals', false, state.shapingKeepOriginals]];
   menus.Format = [['Dimension style…', showDimStyle]];
   menus.Tools = [['Preflight…', showPreflight, 'Drawing checks'], ['Shortcuts…', showShortcuts, 'Aliases + keys']];
   menus.Layout = [['New layout', newLayoutTab], ['Add to layout', addToLayout], ['Parts library', () => showLibrary()], ['Extract part…', () => extractPart()],
@@ -446,6 +444,12 @@ function buildMenus() {
   return h('div', { class: 'menubar' }, h('strong', null, 'Project D'), ui.menuBtns, drop);
 }
 
+function toggleShapingKeep() {
+  state.shapingKeepOriginals = !state.shapingKeepOriginals;
+  shapingStore.put({ id: 'keepOriginals', on: state.shapingKeepOriginals }).catch(() => note('Could not remember Keep originals; it still applies until the app closes'));
+  renderRibbon();
+}
+
 // ---- Ribbon A (R19): contents reuse the menu and Properties actions. ----
 function rememberRibbon() {
   viewStore.put({ id: 'ribbon', mode: ribbon.mode, last: ribbon.last, rail: ribbon.rail, guideSnap: ribbon.guideSnap })
@@ -472,8 +476,9 @@ function buildRibbon() {
     'aria-label': 'Cycle ribbon: full, panel titles, tab names', onclick: () => foldRibbon(nextFold(ribbon.mode)) }, '▾ ▴');
   ui.ribbonTitles = h('div', { class: 'ribbon-titles' });
   ui.ribbonBody = h('div', { class: 'ribbon-body', role: 'tabpanel', id: 'ribbon-body' });
+  ui.ribbonCache = h('div', { hidden: true });
   ui.ribbon = h('nav', { class: 'ribbon', 'aria-label': 'Ribbon', 'data-testid': 'ribbon' },
-    h('div', { class: 'ribbon-tabrow' }, ui.ribbonTabs, ui.ribbonCycle), ui.ribbonTitles, ui.ribbonBody);
+    h('div', { class: 'ribbon-tabrow' }, ui.ribbonTabs, ui.ribbonCycle), ui.ribbonTitles, ui.ribbonBody, ui.ribbonCache);
   document.addEventListener('pointerdown', (e) => { if (!ui.ribbon.contains(e.target)) closeRibbon(); });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && ribbon.flyout) {
@@ -491,15 +496,21 @@ function buildRibbon() {
 }
 function ribbonButton(label, svg, action, { small = false, enabled = () => true, pressed, title = label } = {}) {
   const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title,
-    'aria-label': label, onclick: () => { action(); closeRibbon(); renderRibbon(); } },
+    'aria-label': label, onclick: (e) => { if (e.currentTarget.dataset.held) { delete e.currentTarget.dataset.held; return; } action(e); closeRibbon(); renderRibbon(); } },
   icon(svg, { size: small ? 15 : 30, width: 1.5, cap: 'round', join: 'round' }), h('span', null, label));
   b.ribbonSync = () => { b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
   return b;
 }
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
-  return ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : setTool(id),
+  const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : setTool(id),
     { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable(), pressed: () => state.tool === id, title: t.title });
+  if (id === 'dimension') {
+    b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
+    b.setAttribute('aria-haspopup', 'menu');
+    dimButton(b);
+  }
+  return b;
 }
 const ribbonStack = (...kids) => h('div', { class: 'ribbon-stack' }, kids);
 function ribbonGroup(title, ...kids) {
@@ -529,8 +540,47 @@ function ribbonContents(kind) {
     group('Save', btn('Save', saveIcon, () => save(false)), btn('Save As…', saveIcon, () => save(true))),
     group('Print', btn('PDF / Print…', '<rect x="6" y="3" width="12" height="6"/><rect x="4" y="9" width="16" height="8"/><rect x="7" y="14" width="10" height="7"/>', exportPdf)),
     group('Cutter', btn('Export for cutter…', '<path d="M5 12v8h14v-8M12 3v12M8 7l4-4 4 4"/>', exportCutter))];
-  // shortcut: other tab contents arrive in TODO 110c; their tools remain in the menus and rail.
-  if (ribbon.tab !== 'Home') return [group(ribbon.tab, h('span', { class: 'ribbon-coming' }, 'Tab contents coming · use the menu or tool rail'))];
+  const toolIcon = (id) => TOOLS.find((t) => t.id === id).svg;
+  const convert = (label, action, svg, small = false) => btn(label, svg, action, { small, enabled: () => !!editable() });
+  const coming = (label, svg) => btn(label, svg, () => {}, { small: true, enabled: () => false, title: label + ' · coming' });
+  const rotateIcon = '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>',
+    scaleIcon = '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>',
+    filletIcon = '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>', extendIcon = '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>',
+    outlinesIcon = '<path d="M5 5h14M12 5v14" stroke-dasharray="2 1.5"/><path d="M8 19h8"/>';
+  if (ribbon.tab === 'Draw') return [
+    group('Draw', ...['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
+    group('Text', ribbonTool('text'), convert('Text to outlines', textToOutlines, outlinesIcon)),
+    group('Annotate', ...['dimension', 'leader', 'balloon', 'measure'].map((id) => ribbonTool(id))),
+    group('Tools', ribbonTool('select'), ribbonTool('pan'))];
+  if (ribbon.tab === 'Modify') return [
+    group('Modify', stack(ribbonTool('move', true), coming('Rotate', rotateIcon), ribbonTool('mirror', true)),
+      stack(coming('Copy', copy), coming('Scale', scaleIcon), ribbonTool('offset', true)),
+      stack(coming('Fillet', filletIcon), coming('Extend', extendIcon), ribbonTool('trim', true))),
+    group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>'),
+      convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon)),
+    group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
+      op === 'boundary' ? '<path d="M4 8l8-4 8 5v8l-8 4-8-5z" stroke-dasharray="3 2"/>' : op === 'trim' ? toolIcon('trim') : '<rect x="3" y="5" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>' + (op === 'intersect' ? '<rect x="9" y="9" width="6" height="8" fill="currentColor" stroke="none" opacity=".55"/>' : ''))),
+      stack(...['frontminus', 'backminus'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op), '<rect x="3" y="5" width="12" height="12" fill="currentColor" opacity=".5"/><rect x="9" y="9" width="12" height="12"/>', true)),
+        btn('Keep originals', copy, toggleShapingKeep, { small: true, pressed: () => state.shapingKeepOriginals })))];
+  if (ribbon.tab === 'Annotate') return [
+    group('Text', ribbonTool('text')),
+    group('Dimensions', ribbonTool('dimension'), ribbonTool('leader'), ribbonTool('balloon'),
+      stack(btn('Dimension style…', toolIcon('dimension'), showDimStyle, { small: true }))),
+    group('Inspect', ribbonTool('measure'))];
+  if (ribbon.tab === 'Layout') return [ui.sheetSec];
+  if (ribbon.tab === 'Part') return [ui.partRibbon];
+  if (ribbon.tab === 'Compare') return [
+    group('Snapshots · max 5', btn('Add tab', '<path d="M6 3h8l4 4v14H6zM14 3v4h4"/>', (e) => cmpChoose(e), { enabled: () => cmpDoc().cmp.items.length < CMP.MAX_ITEMS }),
+      btn('Add from library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', (e) => cmpChoose(e, true), { enabled: () => cmpDoc().cmp.items.length < CMP.MAX_ITEMS }),
+      btn('Add file…', '<path d="M6 3h8l4 4v14H6zM14 3v4h4"/>', cmpPick, { enabled: () => cmpDoc().cmp.items.length < CMP.MAX_ITEMS })),
+    group('Line up', ...[['bl', 'Bottom-left', '<path d="M5 4v16M9 8h10M9 14h6"/>'], ['centre', 'Centres', '<rect x="4" y="4" width="16" height="16" rx="2"/><circle cx="12" cy="12" r="3"/>'], ['manual', 'Manual', toolIcon('move')]].map(([mode, label, svg]) => btn(label, svg, () => {
+      const d = cmpDoc(); d.cmp.mode = mode; cmpMoved(d);
+    }, { pressed: () => cmpDoc().cmp.mode === mode }))),
+    group('Differences', ribbonField('Tolerance', ui.ribbonTolerance = h('input', { class: 'fld', 'aria-label': 'Ribbon tolerance, mm',
+      onchange: (e) => { ui.cmpTol.value = e.target.value; ui.cmpTol.dispatchEvent(new Event('change')); e.target.value = ui.cmpTol.value; },
+      onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); } })),
+      btn('Show differences', EYE, () => { cmpDoc().cmp.show = !cmpDoc().cmp.show; update(); }, { small: true, pressed: () => cmpDoc().cmp.show }),
+      btn('Compare', '<rect x="3" y="6" width="12" height="13"/><rect x="9" y="5" width="12" height="13" stroke-dasharray="2 2"/>', () => cmpRun(cmpDoc()), { enabled: () => cmpDoc().cmp.items.filter((x) => x.checked).length >= 2 }))];
   const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!editable() || !!curLay()) }),
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => !!editable()?.sel.size }),
@@ -542,10 +592,9 @@ function ribbonContents(kind) {
     group('Step and repeat', ribbonTool('step'), ribbonTool('nest'))];
   if (kind === 'drawing') {
     groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
-    const coming = (label, svg) => btn(label, svg, () => {}, { small: true, enabled: () => false, title: label + ' · coming' });
-    groups.push(group('Modify', stack(ribbonTool('move', true), coming('Rotate', '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>'), ribbonTool('mirror', true)),
-      stack(coming('Copy', copy), coming('Scale', '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>'), ribbonTool('offset', true)),
-      stack(coming('Fillet', '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>'), coming('Extend', '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>'), ribbonTool('trim', true))));
+    groups.push(group('Modify', stack(ribbonTool('move', true), coming('Rotate', rotateIcon), ribbonTool('mirror', true)),
+      stack(coming('Copy', copy), coming('Scale', scaleIcon), ribbonTool('offset', true)),
+      stack(coming('Fillet', filletIcon), coming('Extend', extendIcon), ribbonTool('trim', true))));
   }
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
     const d = editable(); if (!d) return;
@@ -565,12 +614,16 @@ function ribbonContents(kind) {
 }
 function renderRibbon() {
   if (!ui.ribbon) return;
-  const d = curDoc(), kind = d?.lay ? 'layout' : d?.cmp ? 'compare' : 'drawing', tabs = ribbonTabs(kind);
+  const d = curDoc(), kind = d?.lay ? 'layout' : d?.cmp ? 'compare' : 'drawing', part = kind === 'layout' && !!selectedPlaced(), tabs = ribbonTabs(kind, part);
+  const context = part ? state.doc + ':' + selIdxs().join(',') : null;
+  if (context && ribbon.context !== context) { ribbon.tab = 'Part'; ribbon.flyout = false; ribbon.panel = null; }
+  ribbon.context = context;
   if (!tabs.includes(ribbon.tab)) { ribbon.tab = 'Home'; ribbon.flyout = false; }
-  if (ui.ribbon.dataset.kind !== kind) {
+  if (ui.ribbon.dataset.kind !== kind || ui.ribbon.dataset.part !== String(part)) {
+    ui.ribbon.dataset.part = String(part);
     ui.ribbon.dataset.kind = kind; ribbon.flyout = false; ribbon.panel = null;
     ui.ribbonTabs.replaceChildren(...tabs.map((tab) => h('button', { type: 'button', role: 'tab', id: 'ribbon-tab-' + tab,
-      'aria-controls': 'ribbon-body', 'data-ribbon-tab': tab,
+      'aria-controls': 'ribbon-body', 'data-ribbon-tab': tab, class: tab === 'Part' ? 'ribbon-context' : null,
       onclick: () => { ribbon.tab = tab; ribbon.flyout = ribbon.mode !== 'full'; ribbon.panel = null; renderRibbon(); },
       ondblclick: () => foldRibbon(doubleFold(ribbon.mode, ribbon.last)) }, tab)));
     ui.ribbonBody.dataset.contents = '';
@@ -579,8 +632,9 @@ function renderRibbon() {
   if (ui.ribbonBody.dataset.contents !== sig) {
     ui.ribbonBody.dataset.contents = sig;
     ui.ribbonLayer = ui.ribbonColour = ui.ribbonWidth = ui.ribbonLt = ui.ribbonSwatch = null;
+    for (const node of [ui.sheetSec, ui.partRibbon]) if (node?.parentNode === ui.ribbonBody) ui.ribbonCache.append(node);
     ui.ribbonBody.replaceChildren(...ribbonContents(kind));
-    ui.ribbonTitles.replaceChildren(...[...ui.ribbonBody.children].map((g) => h('button', { type: 'button',
+    ui.ribbonTitles.replaceChildren(...[...ui.ribbonBody.querySelectorAll('.ribbon-group')].map((g) => h('button', { type: 'button',
       onclick: () => { ribbon.panel = g.dataset.panel; ribbon.flyout = true; renderRibbon(); } }, g.dataset.panel + ' ▾')));
   }
   ui.ribbon.dataset.fold = ribbon.mode;
@@ -593,8 +647,10 @@ function renderRibbon() {
     b.setAttribute('aria-selected', String(b.textContent === ribbon.tab));
     b.tabIndex = b.textContent === ribbon.tab ? 0 : -1;
   }
-  for (const g of ui.ribbonBody.children) g.hidden = ribbon.flyout && ribbon.panel != null && g.dataset.panel !== ribbon.panel;
+  for (const g of ui.ribbonBody.querySelectorAll('.ribbon-group')) g.hidden = ribbon.flyout && ribbon.panel != null && g.dataset.panel !== ribbon.panel;
   for (const b of ui.ribbonBody.querySelectorAll('button')) b.ribbonSync?.();
+  if (ribbon.tab === 'Layout') syncFields();
+  if (ribbon.tab === 'Compare' && ui.ribbonTolerance && document.activeElement !== ui.ribbonTolerance) ui.ribbonTolerance.value = String(d.cmp.tol);
   if (ui.ribbonLayer) {
     ui.ribbonLayer.disabled = !editable();
     setSelect(ui.ribbonLayer, [...new Set(editable() ? ['0', ...allLayerNames(d)] : ['0'])].map((n) => [n, n]), editable() ? curLayerName(d) : '0');
@@ -639,9 +695,8 @@ function applyKind() {
   const d = curDoc(), lay = !!(d && d.lay), lib = state.panel === 'library';
   ui.canvas.classList.toggle('part', !lay);
   renderWorkArea();
-  for (const sec of [ui.sheetSec, ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
+  for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
   ui.layersSec.hidden = lib || !!(d && d.cmp); ui.libSec.hidden = !lib;
-  ui.propbar.hidden = !lay;
   ui.panelMain.textContent = lay ? 'Layout' : d && d.cmp ? 'Compare' : 'Drawing';
   ui.panelMain.classList.toggle('on', !lib); ui.panelLib.classList.toggle('on', lib);
   ui.panelMain.setAttribute('aria-pressed', String(!lib)); ui.panelLib.setAttribute('aria-pressed', String(lib));
@@ -775,7 +830,8 @@ function cycleTab(step) {
 function showDoc() {
   ui.fontNote.hidden = true;
   state.entityDrag = null;
-  state.sel = -1;                         // the layout selection belongs to the tab it was made on (the setter clears the picks; clampSel picks part 0)
+  state.sel = 0;                          // a tab opens with its first part selected; an explicit deselection stays empty
+  ribbon.context = null;
   state.gapSel = null; gapSig = ''; hideMenu();
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
   state.setlen = null; state.grip = null; trackClear(); if (state.mod && state.modDoc !== curDoc()) { state.mod = newMod(state.mod.kind); state.modDoc = curDoc(); } if (state.draw && state.drawDoc !== curDoc()) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
@@ -1004,23 +1060,30 @@ function attachDrop() {
  * On a layout tab: the selected placed part with its place and turn on the sheet. X, Y (the lower-left of the part's box) and Angle are
  * typed; W and H are read-only. Mirror X / Mirror Y, and the Nudge step the arrow keys use.
  */
-function buildPropbar() {
+function buildPartRibbon() {
   ui.partName = h('span', { class: 'name', 'data-testid': 'placed-name' });
-  ui.partKind = h('span', { class: 'lbl', 'data-testid': 'placed-kind' }, 'placed part');
-  ui.partFrom = h('span', { class: 'lbl', 'data-testid': 'parts-from' });
   const xyTitle = (a) => `${a}: where the lower-left of the part's box is on the sheet, in mm (y up). Type a value and press Enter`;
   ui.px = pfield({ 'data-lockable': '1', 'data-testid': 'px', 'aria-label': 'X', title: xyTitle('X') }, () => showBox(0), (t) => setBoxPos('x', t));
   ui.py = pfield({ 'data-lockable': '1', 'data-testid': 'py', 'aria-label': 'Y', title: xyTitle('Y') }, () => showBox(1), (t) => setBoxPos('y', t));
   ui.pa = pfield({ 'data-lockable': '1', 'data-testid': 'pa', 'aria-label': 'Angle', title: 'Angle in degrees, anticlockwise. The part turns about its pivot (the centre unless you moved it). Type a value and press Enter' }, showAngle, setAngleText);
   ui.barNudge = pfield({ 'data-testid': 'nudge-step', 'aria-label': 'Nudge step in mm', title: 'How far an arrow key moves the part, in mm (Shift + arrow: 10 times this)' }, showNudge, setNudgeText);
-  const mirror = (axis, id) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, title: axis === 'x' ? 'Mirror X: flip the part left to right about its centre' : 'Mirror Y: flip the part top to bottom about its centre', onclick: () => mirrorSel(axis) }, axis === 'x' ? 'Mirror X' : 'Mirror Y');
-  const gbtn = (id, onclick) => { const b = h('button', { class: 'btn sm gbtn', type: 'button', 'data-testid': id, onclick }); ui[id] = b; return b; };
-  ui.lockChip = h('span', { class: 'chip lockchip', hidden: true, 'data-testid': 'lock-chip' }, icon(ICONS.lock, { size: 12, width: 1.8, cap: 'round', join: 'round' }), 'Locked');
-  ui.pfields = h('span', { class: 'pfields' }, labelled('X', ui.px), labelled('Y', ui.py), propField('W', 'pw'), propField('H', 'ph'), labelled('Angle', ui.pa),
-    mirror('x', 'bar-mirror-x'), mirror('y', 'bar-mirror-y'), labelled('Nudge', ui.barNudge, 'lbl inline barnudge'),
-    h('span', { class: 'vsep', 'aria-hidden': 'true' }), gbtn('bar-group', () => (wholeGroup() ? ungroupSel() : groupSel())), gbtn('bar-lock', () => lockSel(!selItems().every((x) => x.p.lock))));
-  ui.partOrigin = h('span', { class: 'lbl origin', 'data-testid': 'sheet-origin' });
-  return ui.propbar = h('div', { class: 'propbar', 'data-testid': 'propbar' }, ui.partName, ui.lockChip, ui.partKind, ui.pfields, ui.partFrom, ui.partOrigin, h('span', { class: 'lbl unit' }, 'mm'));
+  const mirror = (axis, id) => {
+    const b = ribbonButton('Mirror ' + axis.toUpperCase(), TOOLS.find((t) => t.id === 'mirror').svg, () => mirrorSel(axis), { title: axis === 'x' ? 'Mirror X: flip the part left to right about its centre' : 'Mirror Y: flip the part top to bottom about its centre' });
+    b.dataset.testid = id; return b;
+  };
+  const gbtn = (id, label, svg, action) => { const b = ribbonButton(label, svg, action, { enabled: () => id !== 'bar-group' || selItems().length > 1 }); b.dataset.testid = id; ui[id] = b; return b; };
+  ui.pfields = h('div', { class: 'ribbon-page' },
+    ribbonGroup('Position', ribbonStack(ribbonField('Name', ui.partName), ribbonField('X mm', ui.px), ribbonField('Y mm', ui.py)),
+      ribbonStack(propField('W', 'pw'), propField('H', 'ph'))),
+    ribbonGroup('Rotate', ribbonStack(ribbonField('Angle', ui.pa), ribbonField('Pivot', ui.partPivot = select([['centre', 'Centre'], ['bl', 'Bottom-left'], ['custom', 'Custom']], 'centre', setPivotKind, { 'aria-label': 'Part pivot' })),
+      ribbonButton('Rotate 90°', '<path d="M20 12a8 8 0 1 1-3-6M20 4v5h-5"/>', () => setAngleText(String((selectedPlaced()?.p.rot || 0) + 90)), { small: true, enabled: () => !selItems().some((x) => x.p.lock) }))),
+    ribbonGroup('Mirror', mirror('x', 'bar-mirror-x'), mirror('y', 'bar-mirror-y')),
+    ribbonGroup('Nudge', ...[['left', 'Left', 'M19 12H5m6-6-6 6 6 6'], ['up', 'Up', 'M12 19V5m-6 6 6-6 6 6'], ['down', 'Down', 'M12 5v14m-6-6 6 6 6-6'], ['right', 'Right', 'M5 12h14m-6-6 6 6-6 6']].map(([dir, label, path]) => ribbonButton(label, '<path d="' + path + '"/>', () => nudgeSel(dir), { enabled: () => !selItems().some((x) => x.p.lock) })), ribbonStack(ribbonField('Step mm', ui.barNudge))),
+    ribbonGroup('Arrange', gbtn('bar-group', 'Group', ICONS.group, () => (wholeGroup() ? ungroupSel() : groupSel())),
+      gbtn('bar-lock', 'Lock', ICONS.lock, () => lockSel(!selItems().every((x) => x.p.lock)))),
+    ribbonGroup('Copy', ribbonButton('Duplicate part', '<rect x="3" y="3" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>', duplicateOne)));
+  ui.partRibbon = h('div', { class: 'ribbon-page', 'data-testid': 'part-ribbon' }, ui.pfields);
+  ui.ribbonCache.append(ui.partRibbon);
 }
 /** On a drawing tab with something selected: what it is, its size, Keep only and Extract part…. */
 function buildSelbar() {
@@ -1181,8 +1244,27 @@ function buildPanel() {
     const c = h('input', { type: 'checkbox', checked: state[key], 'data-key': key });
     c.addEventListener('change', () => { if (!curLay()) return; pushLay(curDoc(), null, 'set:' + key, text); state[key] = c.checked; touch(); update(); });
     ui[key + 'Check'] = c;
-    return h('label', null, c, ' ' + text);
+    return h('label', { class: 'ribbon-mark' }, icon(key === 'crop' ? '<path d="M7 3v4H3M17 3v4h4M7 21v-4H3M17 21v-4h4"/>' : '<circle cx="12" cy="12" r="5"/><path d="M12 3v18M3 12h18"/>', { size: 30 }), h('span', null, c, text));
   };
+
+  ui.sheetSec = h('div', { class: 'ribbon-page', 'data-testid': 'sheet-panel' },
+    ribbonGroup('Sheet', ribbonStack(ribbonField('Size', ui.preset),
+      numField('Width', 'sheetW', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }),
+      numField('Height', 'sheetH', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) })),
+      ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, title: 'Or click the sheet edge. Drag a side handle to resize.', pressed: sheetSelOn })),
+    ribbonGroup('Grippers, mm', ribbonStack(numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }),
+      numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop })), ribbonStack(numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight }))),
+    ribbonGroup('Marks', check('crop', 'Crop marks'), check('reg', 'Reg marks')),
+    ribbonGroup('Guides', ...[['y', '+ Horizontal'], ['x', '+ Vertical']].map(([axis, label]) => ribbonButton(label, axis === 'y' ? '<path d="M3 12h18" stroke-dasharray="3 2"/><path d="M12 5v4M10 7h4"/>' : '<path d="M12 3v18" stroke-dasharray="3 2"/><path d="M17 10h4M19 8v4"/>', () => {
+      const raw = ui.ribbonGuide.value.trim(), mm = raw ? PL.parseMm(raw) : null;
+      flagInvalid(ui.ribbonGuide, !!raw && mm == null);
+      if (raw && mm == null) { note('Guide position must be a number in mm'); return; }
+      addGuide(axis, mm);
+    })), ribbonStack(ribbonField('x or y', ui.ribbonGuide = h('input', { class: 'fld', 'aria-label': 'Guide position in mm' })))),
+    ribbonGroup('Parts', ribbonButton('Fit', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit), ribbonTool('nest'),
+      ribbonButton('Apply', '<path d="M4 12l5 5L20 6"/>', apply, { enabled: () => !ui.applyBtn.disabled })));
+  ui.sheetSelBtn.dataset.testid = 'sheet-select';
+  ui.ribbonCache.append(ui.sheetSec);
 
   ui.count = h('span', { class: 'big mono', 'data-testid': 'count' }, '0');
   ui.grid = h('span', { 'data-testid': 'grid' }, '');
@@ -1214,15 +1296,6 @@ function buildPanel() {
     h('div', { class: 'ptabs', role: 'tablist', 'aria-label': 'Panel tab' }, ui.tabDrawing, ui.tabObjects),
     h('div', { class: 'mode panelsw', role: 'group', 'aria-label': 'Panel' }, ui.panelMain, ui.panelLib),
     buildPlacedPanel(),
-    ui.sheetSec = h('section', { 'data-testid': 'sheet-panel' },
-      h('h2', { class: 'sec' }, 'Sheet'),
-      h('label', { class: 'field' }, 'Preset', ui.preset),
-      h('div', { class: 'grid2' }, numField('Width', 'sheetW', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }), numField('Height', 'sheetH', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) })),
-      ui.sheetSelBtn = h('button', { class: 'btn', type: 'button', 'data-testid': 'sheet-select', 'aria-pressed': 'false', title: 'Select the sheet: four handles to drag', onclick: () => selectSheet(!sheetSelOn()) }, 'Select sheet'),
-      h('span', { class: 'lbl' }, 'Or click the sheet edge. Drag a side handle to resize.'),
-      h('div', { class: 'lbl' }, 'Gripper per side, mm (0 = none)'),
-      h('div', { class: 'grid4' }, numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }), numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop }), numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight })),
-      h('div', { class: 'checks' }, check('crop', 'Crop marks'), check('reg', 'Reg marks'))),
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
       h('h2', { class: 'sec' }, 'Guides'),
       ui.guideList = h('div', { class: 'guidelist', 'data-testid': 'guide-list' }),
@@ -1611,8 +1684,8 @@ const newGroupId = () => 'g' + uid();
 /** Select these placed parts (indexes into placedNow, in pick order); `main` (default the last) is the one the single-part fields follow. */
 function selectMany(list, main) {
   const l = [...new Set(list)];
-  if (!l.length) return;
-  state.sel = main != null ? main : l[l.length - 1];
+  ribbon.context = null;
+  state.sel = l.length ? (main != null ? main : l[l.length - 1]) : -1;
   picksArr = l.length > 1 ? l : [];
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false;
 }
@@ -1713,7 +1786,7 @@ function setBoxPos(axis, text) {
   if (r) { carryPivot(dx, dy); afterEdit(r, `${r.name} moved to ${resultPos(r)}`); }
   return '';
 }
-/** The Angle typed (top bar, Rotate section, command line): the part turns about its pivot to that angle; a selection of several turns by that angle about its middle. → '' or what is wrong. */
+/** The Angle typed (Part ribbon, Rotate section, command line): the part turns about its pivot to that angle; a selection of several turns by that angle about its middle. → '' or what is wrong. */
 function setAngleText(text, copy = false) {
   const v = PL.parseAngle(text);
   if (v == null) return 'Angle must be a number in degrees';
@@ -1803,7 +1876,7 @@ function duplicateRow() {
     off ? `${off === count ? 'All' : off + ' of'} the ${count === 1 ? 'copy is' : 'copies are'} off the sheet (drawn in orange). ${off === 1 && count === 1 ? 'It is' : 'They are'} still placed` : '',
     over ? `${over === 1 ? '1 copy lands' : over + ' copies land'} on top of other parts` : '');
 }
-/** The Nudge step typed (top bar or Nudge section): mm above 0, kept on this PC. */
+/** The Nudge step typed (Part ribbon or Nudge section): mm above 0, kept on this PC. */
 function setNudgeText(text) {
   const v = PL.parseMm(text);
   if (v == null || !(v > 0)) return 'The nudge step must be a number above 0 mm';
@@ -3250,6 +3323,7 @@ const DO = {
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
   nudge: () => ui.cmdUI.openNudge(String(state.nudge), setNudgeText),
+  step: () => { state.panel = 'main'; setPtab('drawing'); applyKind(); update(); setTool('step'); ui.stepSec.scrollIntoView({ block: 'nearest' }); },
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
@@ -3870,23 +3944,14 @@ function renderCommand() {
  * itself and where its parts come from. The Parts library open: what to do with it.
  */
 function renderProps() {
-  const lay = curLay(), library = state.panel === 'library', p = lay && !library && state.sel >= 0 && placedNow[state.sel], part = p && lay.parts[p.partId];
+  const lay = curLay(), library = state.panel === 'library', p = lay && state.sel >= 0 && placedNow[state.sel], part = p && lay.parts[p.partId];
   const items = p ? selItems() : [], many = items.length > 1, whole = many && wholeGroup();
   const locked = items.length > 0 && items.some((x) => x.p.lock), allLocked = items.length > 0 && items.every((x) => x.p.lock);
-  ui.pfields.hidden = !p; ui.partFrom.hidden = !!p;
-  if (lay && !p) {
-    const from = [...new Set(Object.values(lay.parts).map((q) => q.src).filter(Boolean))];
-    ui.partName.textContent = library ? 'Parts library' : 'Layout · ' + curDoc().name;
-    ui.partKind.textContent = library ? 'drag a part onto the sheet, or press Add to sheet' : 'its own tab, not tied to one drawing';
-    ui.partFrom.textContent = library ? '' : 'Parts from: ' + (from.length ? from.join(', ') : 'none yet');
-  } else {
-    ui.partName.textContent = many ? (whole ? `Group of ${items.length}` : `${items.length} parts selected`) : part ? part.name : '';
-    ui.partKind.textContent = many ? (whole ? 'group' : '') : p ? (p.src === 'grid' ? 'placed part · step and repeat' : 'placed part') : '';
-  }
-  ui.partKind.hidden = !!(many && !whole);
-  ui.partOrigin.hidden = !(lay && !p && !library);
-  if (lay) ui.partOrigin.textContent = `Sheet ${fmtSize(lay.s.sheetW)} × ${fmtSize(lay.s.sheetH)} mm · Origin 0,0 at the sheet's bottom-left · Y points up` + (state.rulers ? ' · Rulers: mm' : '');
-  ui.lockChip.hidden = !allLocked; ui.ppLock.hidden = !allLocked;
+  ui.pfields.hidden = !p;
+  ui.partPivot.value = state.pivot.kind;
+  ui.partName.textContent = many ? (whole ? `Group of ${items.length}` : `${items.length} parts selected`) : part ? part.name : '';
+  ui.partName.title = ui.partName.textContent;
+  ui.ppLock.hidden = !allLocked;
   const b = many ? selBox() : part && placedBox(part, p);
   ui.pw.value = b ? fmt(b[2] - b[0]) : '—';
   ui.ph.value = b ? fmt(b[3] - b[1]) : '—';
@@ -3896,7 +3961,7 @@ function renderProps() {
     if (document.activeElement !== f.input) f.input.value = p ? f.show() : '—';
   }
   const secOn = { 'sec-arrange': many, 'sec-group': true };
-  for (const sec of ui.placedSecs) sec.hidden = !p || (sec.dataset.testid in secOn && !secOn[sec.dataset.testid]);
+  for (const sec of ui.placedSecs) sec.hidden = !p || library || (sec.dataset.testid in secOn && !secOn[sec.dataset.testid]);
   if (p) {
     ui.ppName.textContent = many ? (whole ? `Group of ${items.length}` : `${items.length} parts`) : part.name;
     ui.ppSize.textContent = `${fmtSize(b[2] - b[0])} × ${fmtSize(b[3] - b[1])}`;
@@ -3910,16 +3975,17 @@ function renderProps() {
     const hasGroup = items.some((x) => x.p.g);
     ui['grp-group'].disabled = !many || whole; ui['grp-ungroup'].disabled = !hasGroup; ui['grp-lock'].disabled = allLocked; ui['grp-unlock'].disabled = !locked;
     ui.dupAxisBtns.forEach((btn) => { const on = btn.dataset.axis === state.dupAxis; btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); });
-    // the top bar: Group / Ungroup (several selected) and Lock / Unlock
+    // Part ribbon: Group / Ungroup (several selected) and Lock / Unlock
     const gs = whole ? ['Ungroup', 'ungroup', 'Ungroup (Ctrl+Shift+G)'] : ['Group', 'group', 'Group the selected parts (Ctrl+G)'], ls = allLocked ? ['Unlock', 'unlock', 'Unlock'] : ['Lock', 'lock', 'Lock: it cannot be moved, turned, mirrored or deleted'];
-    ui['bar-group'].hidden = !many; ui['bar-group'].replaceChildren(icon(ICONS[gs[1]], { size: 16, cap: 'round', join: 'round' }), h('span', { class: 't' }, gs[0])); ui['bar-group'].title = gs[2];
-    ui['bar-lock'].replaceChildren(icon(ICONS[ls[1]], { size: 16, cap: 'round', join: 'round' }), h('span', { class: 't' }, ls[0])); ui['bar-lock'].title = ls[2];
+    ui['bar-group'].disabled = !many; ui['bar-group'].replaceChildren(icon(ICONS[gs[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, gs[0])); ui['bar-group'].title = gs[2]; ui['bar-group'].setAttribute('aria-label', gs[0]);
+    ui['bar-lock'].replaceChildren(icon(ICONS[ls[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, ls[0])); ui['bar-lock'].title = ls[2]; ui['bar-lock'].setAttribute('aria-label', ls[0]);
   }
   ui.hintPill.hidden = !p;
   ui.hintPill.textContent = state.mode === 'rotate' ? 'Drag a corner arrow to turn · Shift = 15° steps · drag ◎ to move the pivot · Esc = done'
     : whole ? 'A group moves, turns and copies as one part · Ctrl+Shift+G ungroups'
     : many ? 'Rubber-band or Shift-click to select several parts · the number is the pick order'
     : 'Ctrl-drag = copy · Ctrl+Shift-drag = copy straight (along X or Y)';
+  renderRibbon();
   if (lay && state.ptab === 'objects') renderObjects();                    // a part picked on the sheet is lit in the tree
 }
 
@@ -6180,6 +6246,7 @@ function editKey(e) {
     else if (state.tool === 'contour' && !(d && d.sel.size)) setTool('select');
     else if (d && state.balSel != null) balSelect(d, null);
     else if (d && d.sel.size) setSel(d, new Set());
+    else if (curLay() && selIdxs().length) { selectMany([]); update(); }
     return;
   }
   const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
@@ -7171,7 +7238,7 @@ function buildCompareSection() {
     if (v == null || v <= 0 || v > C.MAX_TOL) { note(`Tolerance: a number above 0 and up to ${C.MAX_TOL} mm`); ui.cmpTol.value = String(d.cmp.tol); return; }
     d.cmp.tol = v; cmpMoved(d);
   });
-  ui.cmpShow = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'aria-label': 'Show differences', 'data-testid': 'cmp-show', onchange: (e) => { cmpDoc().cmp.show = e.target.checked; paintOverlay(); } });
+  ui.cmpShow = h('input', { type: 'checkbox', role: 'switch', class: 'swin', 'aria-label': 'Show differences', 'data-testid': 'cmp-show', onchange: (e) => { cmpDoc().cmp.show = e.target.checked; paintOverlay(); renderRibbon(); } });
   ui.cmpCount = h('span', { class: 'chip', 'data-testid': 'cmp-count' });
   ui.cmpRunBtn = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'cmp-run', onclick: () => cmpRun(cmpDoc()) }, 'Compare');
   ui.cmpStale = h('div', { class: 'lbl cmpstale', role: 'status', 'data-testid': 'cmp-stale', hidden: true }, 'Out of date - press Compare again');
@@ -7353,7 +7420,7 @@ async function init() {
   try { const v = Number(localStorage.getItem('pd-baldock-height')); if (Number.isFinite(v) && v >= 90) state.balDock.h = Math.min(v, window.innerHeight * 0.6); } catch { /* ignore */ }
   const balDock = buildBalloonDock();                      // before the canvas: its picture-only chip and sheet switcher sit on the canvas
   app.append(h('div', { class: 'shell' },
-    buildMenus(), buildTabs(), buildRibbon(), buildPropbar(), buildSelbar(), buildTextbar(),
+    buildMenus(), buildTabs(), buildRibbon(), buildPartRibbon(), buildSelbar(), buildTextbar(),
     h('div', { class: 'main' }, buildRail(), buildCanvas(), buildPanel()),
     balDock, cmdLog, buildStatus()));
   document.querySelector('.rail').hidden = !ribbon.rail;

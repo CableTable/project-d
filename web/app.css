@@ -50,6 +50,21 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
 .ribbon-tabs { display: flex; min-width: 0; overflow-x: auto; }
 .ribbon .ribbon-tabs button { flex: none; padding: 4px 15px; color: var(--muted); background: none; border: 1px solid transparent; border-bottom: 0; border-radius: 3px 3px 0 0; cursor: pointer; }
 .ribbon .ribbon-tabs [aria-selected='true'] { background: var(--ribbon); color: var(--text); border-color: var(--line2); font-weight: 600; }
+.ribbon .ribbon-tabs .ribbon-context { color: var(--ctx); border-top: 2px solid var(--ctx); margin-left: 6px; }
+.ribbon .ribbon-tabs .ribbon-context[aria-selected='true'] { border-color: var(--ctx); color: var(--text); }
+.ribbon-page { display: flex; flex: none; }
+.ribbon-page[hidden] { display: none; }
+.ribbon-page .field, .ribbon-page .lbl.inline { display: flex; flex-direction: row; align-items: center; gap: 6px; height: 21px; padding: 0 2px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.ribbon-page .field .fld, .ribbon-page .lbl.inline .fld, .ribbon-field input { width: 72px; height: 19px; padding: 0 6px; font: inherit; }
+.ribbon-page .field { justify-content: space-between; }
+.ribbon-page .name { display: block; max-width: 120px; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+.ribbon-page input[readonly] { background: transparent; border-color: transparent; cursor: default; font-weight: 500; }
+.ribbon-mark { display: flex; flex-direction: column; align-items: center; gap: 3px; width: 54px; padding: 5px 2px; border-radius: 3px; font-size: 11px; text-align: center; cursor: pointer; }
+.ribbon-mark input { width: 11px; height: 11px; margin: 0 3px 0 0; vertical-align: middle; }
+.ribbon-mark:has(:checked) { background: var(--sel); box-shadow: inset 0 0 0 1px var(--accent); }
+.ribbon-mark:has(:focus-visible) { outline: 2px solid var(--accent); }
+.ribbon-big:has(.flyout) { position: relative; }
+.ribbon-big .flyout { position: absolute; right: 0; bottom: 0; padding: 3px; }
 .ribbon-cycle { flex: none; margin: 0 4px 3px auto; height: 20px; border: 1px solid var(--line2); border-radius: 3px; background: none; color: var(--muted); cursor: pointer; }
 .ribbon-body { display: flex; height: 90px; overflow-x: auto; background: var(--ribbon); border-top: 1px solid var(--line2); border-bottom: 1px solid var(--line); }
 .ribbon-body[hidden], .ribbon-titles[hidden], .ribbon-group[hidden], .rail[hidden] { display: none; }
@@ -73,7 +88,6 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
 .ribbon-titles { display: flex; align-items: center; gap: 8px; height: 26px; padding: 0 10px; background: var(--ribbon); border-block: 1px solid var(--line2); overflow-x: auto; }
 .ribbon-titles button { flex: none; height: 20px; border: 1px solid var(--line2); border-radius: 3px; background: none; font-size: 11.5px; cursor: pointer; }
 .ribbon.flyout .ribbon-body { position: absolute; top: 100%; left: 0; max-width: 100%; min-width: 300px; box-shadow: 0 6px 12px var(--shadow); }
-.ribbon-coming { color: var(--muted); padding: 18px; }
 
 /* menu bar */
 .menubar { display: flex; align-items: center; gap: 2px; height: 30px; padding: 0 8px; border-bottom: 1px solid var(--line); background: var(--app); flex-shrink: 0; position: relative; }
@@ -106,7 +120,7 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
 .propbar { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; height: 40px; padding: 0 12px; background: var(--ribbon); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .propbar .name { font-weight: 600; }
 .propbar .unit { margin-left: auto; }
-@media (max-width: 1150px) { .propbar { gap: 10px; } .propbar .unit { display: none; } .propbar .barnudge { display: none; } }   /* Nudge stays in the panel's Nudge section */   /* the status bar says mm too; keeps the bar on one line at 1024 */
+@media (max-width: 1150px) { .propbar { gap: 10px; } .propbar .unit { display: none; } }   /* the status bar says mm too; keeps the bar on one line at 1024 */
 .lbl { font-size: 12px; color: var(--muted); }
 label.inline { display: flex; align-items: center; gap: 6px; }
 .fld { height: 28px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--field); color: var(--text); font-family: var(--mono); font-size: 12px; padding: 0 8px; width: 100%; min-width: 0; }
@@ -376,8 +390,6 @@ select.fld { font-family: var(--sans); }
 .cutnote { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); }
 .cutnote.bad { border-color: var(--mark); color: var(--mark); }
 .cutnote.bad .lbl { color: var(--muted); }
-.pfields { display: flex; align-items: center; gap: 14px; }
-.pfields[hidden] { display: none; }
 
 /* not built yet: greyed but visible, with a "Not built yet" tooltip; a click only says so in the command line */
 .menu.off, .tool.off, .seg.off, .tog.off, .btn.off { opacity: .45; cursor: default; }
@@ -431,8 +443,6 @@ select.fld { font-family: var(--sans); }
 .member .lbl:first-child { width: 16px; }
 .member .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .propbar .vsep { width: 1px; height: 24px; background: var(--line); }
-.propbar .gbtn[hidden] { display: none; }
-@media (max-width: 1150px) { .propbar .pfields .fld:not([readonly]) { width: 66px; } .propbar .gbtn .t { display: none; } .propbar .gbtn { padding: 0 7px; } .propbar .vsep { display: none; } }
 .sel-multi { stroke-width: 1.6; vector-effect: non-scaling-stroke; }
 .sel-union { fill: none; stroke: var(--accent); stroke-dasharray: 6 4; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .sel-readout { fill: var(--accent); font-family: var(--mono); font-weight: 500; }
@@ -477,7 +487,6 @@ select.fld { font-family: var(--sans); }
 .guiderow .gax { width: 14px; flex-shrink: 0; }
 .guiderow .fld { flex: 1; min-width: 0; }
 .guiderow .ib { width: 32px; height: 28px; }
-@media (max-width: 1150px) { .propbar .origin { display: none; } }
 
 /* Contour (TODO 35; mock-up R4d, Option A): a floating panel over the canvas, the preview drawn on the sheet */
 :root { --contour: #0e7c66; }

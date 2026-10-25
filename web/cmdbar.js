@@ -43,7 +43,7 @@ const TABLE = [
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
   ['rotate', 'Layout', 'Turn the selected part about a pivot', ['r', 'ro'], 'layout'],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
-  ['step', 'Layout', 'Step and repeat the chosen part', [], 'layout'],
+  ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
   ['group', 'Layout', 'Group the selected parts', ['g'], 'layout', 'Ctrl+G'],
   ['ungroup', 'Layout', 'Split a group', ['u'], 'layout', 'Ctrl+Shift+G'],
   ['lock', 'Layout', 'Lock the selected parts', [], 'layout'],

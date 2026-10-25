@@ -74,6 +74,8 @@ try {
   await page.goto(URL_);
   await page.waitForSelector('[data-testid=count]', { state: 'attached' });
   const t = (id) => page.locator(`[data-testid=${id}]`);
+  const layoutTab = () => page.locator('[data-ribbon-tab=Layout]').click();
+  const partTab = () => page.locator('[data-ribbon-tab=Part]').click();
   // Display toggles moved from the right panel to View in TODO 110b.
   const ribbonToggle = (name) => {
     const button = async () => { await page.locator('[data-ribbon-tab=View]').click(); return page.locator('.ribbon-body').getByRole('button', { name, exact: true }); };
@@ -88,6 +90,92 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab; sr', async () => {
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 } });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const tab = (name) => p.locator(`[data-ribbon-tab=${name}]`), rb = p.locator('.ribbon-body');
+    const capture = async (names) => {
+      for (const theme of ['light', 'dark']) {
+        await tab('View').click(); await rb.getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        for (const name of names) {
+          await tab(name).click(); await p.locator('aside.panel').evaluate((el) => { el.scrollTop = 0; }); await p.mouse.move(780, 700);
+          await p.screenshot({ path: `${shotDir}/todo110c-${name.toLowerCase()}-${theme}.png` });
+          await q('ribbon').screenshot({ path: `${shotDir}/todo110c-${name.toLowerCase()}-ribbon-${theme}.png` });
+        }
+      }
+    };
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      for (const [name, labels] of [['Draw', ['Line', 'Polyline', 'Rectangle', 'Rounded rectangle', 'Circle', 'Ellipse', 'Arc', 'Text', 'Dimension', 'Leader', 'Balloon', 'Measure', 'Select', 'Pan']],
+        ['Modify', ['Move', 'Offset', 'Trim', 'Mirror', 'Explode', 'Break Apart', 'Contour', 'Text to outlines', 'Weld', 'Intersect', 'Simplify', 'Front minus back', 'Back minus front', 'Create boundary']],
+        ['Annotate', ['Text', 'Dimension', 'Leader', 'Balloon', 'Measure']]]) {
+        await tab(name).click();
+        for (const label of labels) assert.equal(await rb.getByRole('button', { name: label, exact: true }).first().isEnabled(), true, label);
+      }
+      await rb.getByRole('button', { name: 'Measure', exact: true }).click();
+      assert.match(await p.locator('[data-tool=measure]').getAttribute('class'), /on/);
+      await p.keyboard.press('Escape');
+      await rb.getByRole('button', { name: 'Dimension', exact: true }).locator('.flyout').click();
+      assert.deepEqual(await q('ctx-menu').getByRole('menuitem').locator('.mi-l').allTextContents(), ['Aligned', 'Linear', 'Radius', 'Diameter', 'Angle']);
+      await q('ctx-menu').getByRole('menuitem', { name: /^Radius/ }).click();
+      assert.match(await p.locator('[data-tool=dimension]').getAttribute('title'), /Radius/);
+      await p.keyboard.press('Escape');
+      await capture(['Draw', 'Modify', 'Annotate']);
+      await p.locator('[data-menu=File]').click();
+      await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await tab('Compare').click();
+      await rb.getByRole('button', { name: 'Centres', exact: true }).click();
+      assert.equal(await q('cmp-lineup-centre').getAttribute('aria-pressed'), 'true');
+      await rb.getByLabel('Ribbon tolerance, mm').fill('0.1'); await rb.getByLabel('Ribbon tolerance, mm').press('Tab');
+      assert.equal(await q('cmp-tol').inputValue(), '0.1');
+      await rb.getByLabel('Ribbon tolerance, mm').fill('-1'); await rb.getByLabel('Ribbon tolerance, mm').press('Tab');
+      assert.equal(await rb.getByLabel('Ribbon tolerance, mm').inputValue(), '0.1', 'invalid tolerance uses the panel validator');
+      await rb.getByRole('button', { name: 'Add tab', exact: true }).click();
+      await p.locator('.cmp-source-menu').getByRole('menuitem', { name: 'outline.dxf', exact: true }).click();
+      await rb.getByRole('button', { name: 'Compare', exact: true }).click();
+      assert.equal(await q('cmp-result').count(), 2);
+      await capture(['Compare']);
+      const raw = readDxf(readFileSync('fixtures/outline.dxf', 'utf8')), lay = newLayout('R19 layout');
+      lay.parts.p = makePart('p', '<R19 bracket>', raw, 1);
+      lay.placed.push({ partId: 'p', x: 84, y: 151.5, rot: 0 });
+      await q('picker').setInputFiles({ name: 'R19-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await tab('Part').waitFor(); assert.equal(await tab('Part').getAttribute('aria-selected'), 'true');
+      await tab('Layout').click(); await q('preset').selectOption('a3');
+      assert.deepEqual(await p.locator('[data-key=sheetW], [data-key=sheetH]').evaluateAll((els) => els.map((e) => e.value)), ['420', '297']);
+      assert.equal(await p.locator('aside [data-key=sheetW]').count(), 0);
+      assert.equal(await rb.getByRole('button', { name: 'Step and repeat', exact: true }).count(), 0);
+      await rb.getByLabel('Guide position in mm').fill('abc');
+      await rb.getByRole('button', { name: '+ Horizontal', exact: true }).click();
+      assert.equal(await rb.getByLabel('Guide position in mm').getAttribute('aria-invalid'), 'true');
+      await rb.getByLabel('Guide position in mm').fill('120');
+      await rb.getByRole('button', { name: '+ Horizontal', exact: true }).click();
+      assert.equal(await q('guide-list').locator('input').last().inputValue(), '120.00');
+      await p.locator('.rail [data-tool=select]').click(); await p.keyboard.press('Control+a');
+      assert.equal(await tab('Part').getAttribute('aria-selected'), 'true');
+      assert.equal(await q('placed-name').textContent(), '<R19 bracket>');
+      assert.equal(await q('propbar').count(), 0);
+      const before = await q('px').inputValue();
+      const partLeft = () => p.locator('[data-group=parts] .part-hit').first().evaluate((el) => Math.min(...el.getAttribute('points').split(' ').map((pt) => Number(pt.split(',')[0]))));
+      assert.equal(await partLeft(), 84);
+      await q('px').fill('92'); await q('px').press('Enter');
+      assert.equal(await q('px').inputValue(), '92.00');
+      assert.equal(await partLeft(), 92, 'X changes the actual placed part');
+      await p.keyboard.press('Control+z'); assert.equal(await q('px').inputValue(), before); assert.equal(await partLeft(), 84);
+      await q('px').fill('92'); await q('px').press('Enter');
+      await capture(['Layout', 'Part']);
+      await p.keyboard.press('Escape'); assert.equal(await tab('Part').count(), 0);
+      await q('panel-library').click(); await q('ptab-objects').click();
+      await tab('Home').click(); await rb.getByRole('button', { name: 'Step and repeat', exact: true }).click();
+      assert.equal(await q('step-panel').isVisible(), true, 'Home opens Step and repeat from another panel tab');
+      await q('panel-library').click(); await q('ptab-objects').click();
+      await q('cmd-echo').click(); await q('cmd-input').fill('sr'); await q('cmd-input').press('Enter');
+      assert.match(await p.locator('[data-tool=step]').getAttribute('class'), /on/);
+      assert.equal(await q('step-panel').isVisible(), true, 'sr opens Step and repeat from another panel tab');
+    } finally { await context.close(); }
+  });
   await step('TODO 110b: ribbon tab sets, Home actions, View toggles, folding, flyouts and remembered settings', async () => {
     const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -987,39 +1075,39 @@ try {
   await step('huge values: a sheet side over 100 000 mm, grippers wider than the sheet, a sheet narrower than its grippers: refused, the field reverts', async () => {
     const f = (k) => page.locator(`[data-key=${k}]`);
     const w0 = await f('sheetW').inputValue(), h0 = await f('sheetH').inputValue();
-    await f('sheetW').fill('1e308'); await f('sheetW').blur();
+    await layoutTab(); await f('sheetW').fill('1e308'); await f('sheetW').blur();
     assert.equal(await f('sheetW').inputValue(), w0);
     assert.match(await t('cmd-prompt').textContent(), /Width can be 100000 mm at most/);
-    await f('sheetH').fill('100001'); await f('sheetH').blur();
+    await layoutTab(); await f('sheetH').fill('100001'); await f('sheetH').blur();
     assert.equal(await f('sheetH').inputValue(), h0);
     const top0 = await grip('Top').inputValue();
-    await grip('Top').fill(String(Number(h0) + 1)); await grip('Top').blur();
+    await layoutTab(); await grip('Top').fill(String(Number(h0) + 1)); await grip('Top').blur();
     assert.equal(await grip('Top').inputValue(), top0);
     assert.match(await t('cmd-prompt').textContent(), /Top can be \d+ mm at most/);
-    await grip('Left').fill('10'); await grip('Right').fill('10');
-    await f('sheetW').fill('15'); await f('sheetW').blur();
+    await layoutTab(); await grip('Left').fill('10'); await layoutTab(); await grip('Right').fill('10');
+    await layoutTab(); await f('sheetW').fill('15'); await f('sheetW').blur();
     assert.equal(await f('sheetW').inputValue(), w0, 'narrower than Left + Right: refused');
     assert.match(await t('cmd-prompt').textContent(), /Width must be 20 mm or more/);
-    await grip('Left').fill('0'); await grip('Right').fill('0');
-    await f('sheetW').fill('2000'); await f('sheetW').blur();
+    await layoutTab(); await grip('Left').fill('0'); await layoutTab(); await grip('Right').fill('0');
+    await layoutTab(); await f('sheetW').fill('2000'); await f('sheetW').blur();
     assert.equal(await f('sheetW').inputValue(), '2000', 'a sane side is kept');
-    await f('sheetW').fill(w0); await f('sheetW').blur();
+    await layoutTab(); await f('sheetW').fill(w0); await f('sheetW').blur();
     assert.equal(await page.locator('svg [d*="e+"]').count(), 0, 'no 1e+… in a path');
   });
 
   await step('preset, gripper sides and top-left align: the count and the first position follow', async () => {
-    await t('preset').selectOption('a3');
+    await layoutTab(); await t('preset').selectOption('a3');
     assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '420');
     assert.equal((await readout()).count, stepRepeat({ ...base, sheetW: 420, sheetH: 297 }).count);
-    await t('preset').selectOption('screen');
-    await grip('Top').fill('30'); await grip('Bottom').fill('0');
+    await layoutTab(); await t('preset').selectOption('screen');
+    await layoutTab(); await grip('Top').fill('30'); await layoutTab(); await grip('Bottom').fill('0');
     await t('align').selectOption('topleft');
     const want = stepRepeat({ ...base, gripTop: 30, gripBottom: 0, align: 'topleft' });
     assert.equal((await readout()).count, want.count);
     assert.equal(await t('px').inputValue(), want.positions[0].x.toFixed(2));
     assert.equal(await t('py').inputValue(), (700 - want.positions[0].y - 80).toFixed(2), 'Y is from the sheet\'s bottom-left, like the cursor');
     assert.equal(await page.locator('.grip-band').count(), 1); assert.equal(await page.locator('.grip-band').getAttribute('data-edge'), 'top');
-    await grip('Top').fill('0'); await grip('Bottom').fill('30');
+    await layoutTab(); await grip('Top').fill('0'); await layoutTab(); await grip('Bottom').fill('30');
     await t('align').selectOption('centre');
     assert.equal((await readout()).count, N0);
   });
@@ -1087,9 +1175,9 @@ try {
     await page.locator('[data-gap=r3]').click({ force: true, position: { x: 30, y: 5 } }); await page.keyboard.type('10');
     await page.locator('[data-gap=c2]').click({ force: true, position: { x: 5, y: 30 } }); await page.keyboard.type('5');
     assert.equal(await t('gap-list').locator('.gaprow').count(), 2);
-    await t('preset').selectOption('a4');                                 // 2 × 2: no gap after row 3 or after column 2
+    await layoutTab(); await t('preset').selectOption('a4');                                 // 2 × 2: no gap after row 3 or after column 2
     assert.equal(await t('gap-list').locator('.gaprow').count(), 0);
-    await t('preset').selectOption('screen');
+    await layoutTab(); await t('preset').selectOption('screen');
     assert.equal(await t('gap-list').locator('.gaprow').count(), 0, 'they do not come back');
     await page.locator('[data-gap=r3]').click({ force: true, position: { x: 30, y: 5 } }); await page.keyboard.type('10');
     await page.locator('[data-gap-remove=r3]').click();
@@ -1101,11 +1189,11 @@ try {
   await step('crop / reg checkboxes and layer toggles', async () => {
     const marks = page.locator('[data-group=marks] circle');
     assert.equal(await marks.count(), 0, 'marks are off by default');
-    await page.locator('[data-key=crop]').check(); await page.locator('[data-key=reg]').check();
+    await layoutTab(); await page.locator('[data-key=crop]').check(); await layoutTab(); await page.locator('[data-key=reg]').check();
     assert.equal(await marks.count(), 4);
-    await page.locator('[data-key=reg]').uncheck();
+    await layoutTab(); await page.locator('[data-key=reg]').uncheck();
     assert.equal(await marks.count(), 0);
-    await page.locator('[data-key=reg]').check();
+    await layoutTab(); await page.locator('[data-key=reg]').check();
     await page.locator('[data-layer=parts]').click();
     assert.equal(await page.locator('[data-group=parts]').evaluate((g) => getComputedStyle(g).display), 'none');
     await page.locator('[data-layer=parts]').click();
@@ -1128,7 +1216,7 @@ try {
     await page.mouse.move(box.x + 300, box.y + 300);
     await page.mouse.down(); await page.mouse.move(box.x + 360, box.y + 340); await page.mouse.up();
     assert.notEqual(await page.locator('.canvas > svg').getAttribute('viewBox'), vb);
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     assert.equal(await t('zoom').textContent(), before);
     await page.mouse.move(box.x + 400, box.y + 300); await page.mouse.wheel(0, -300);
     assert.notEqual(await t('zoom').textContent(), before);
@@ -1336,7 +1424,7 @@ try {
   await step('screenshots 1440 × 900 with the applied layout, light and dark', async () => {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await inkedWhen((n) => n > 500);
     await page.screenshot({ path: dir + '/s3-light.png' });
     await menuItem('View', 'Theme: dark');
@@ -1802,7 +1890,7 @@ try {
     assert.ok((await tabs()).at(-1).includes('•'), 'unsaved');
     assert.match(await t('cmd-prompt').textContent(), /Kept 8, removed 7/);
     assert.ok((await inkedWhen((n) => n > 150)) > 150);
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await inkedWhen((n) => n > 150);
     await page.screenshot({ path: shotDir + '/s5-kept-light.png' });
     await menuItem('View', 'Theme: dark');
@@ -1968,8 +2056,8 @@ try {
     await waitSize('100', '60');
     await t('add-to-layout').click();
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
-    assert.equal(await vis('drawing-panel'), false); assert.equal(await vis('sheet-panel'), true); assert.equal(await vis('step-panel'), true); assert.equal(await vis('parts-panel'), true);
-    assert.equal(await vis('propbar'), true);
+    assert.equal(await vis('drawing-panel'), false); await layoutTab(); assert.equal(await vis('sheet-panel'), true); assert.equal(await vis('step-panel'), true); assert.equal(await vis('parts-panel'), true);
+    assert.equal(await t('propbar').count(), 0);
     assert.equal(await t('panel-main').textContent(), 'Layout');
     assert.equal(await partText(), 'outline · 100 × 60');
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Parts'));
@@ -2013,12 +2101,12 @@ try {
     assert.equal(await partText(), 'No parts yet');
     assert.match(await t('step-hint').textContent(), /Pick a part to repeat over the sheet, or add parts from the Parts library/);
     assert.equal(await t('apply').isDisabled(), true);
-    await t('preset').selectOption('a3');                                         // this layout's own sheet
+    await layoutTab(); await t('preset').selectOption('a3');                                         // this layout's own sheet
     assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '420');
     await menuItem('File', 'New layout');
     assert.match((await tabNames()).at(-1), /^Layout 2$/);
     assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '1000', 'the new layout has its own sheet');
-    await grip('Top').fill('12');
+    await layoutTab(); await grip('Top').fill('12');
     await page.locator('.tabs .dtab', { hasText: /^Layout 1/ }).click();
     assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '420');
     assert.equal(await grip('Top').inputValue(), '0');
@@ -2632,20 +2720,16 @@ try {
   await step('Add to sheet and a drag from the library: placed parts of different parts on one layout; the drop shows its position', async () => {
     await t('new-layout').click();
     assert.equal(await t('library').isVisible(), false, 'a new layout shows its own panel');
-    assert.equal(await t('placed-name').textContent(), 'Layout · Layout 1');
-    assert.equal(await t('placed-kind').textContent(), 'its own tab, not tied to one drawing');
-    assert.equal(await t('parts-from').textContent(), 'Parts from: none yet');
+    assert.equal(await page.locator('[data-ribbon-tab=Part]').count(), 0);
     assert.equal(await t('px').isVisible(), false, 'no part placed yet: the bar is about the layout');
     await t('panel-library').click();
-    assert.equal(await t('placed-name').textContent(), 'Parts library');
-    assert.equal(await t('placed-kind').textContent(), 'drag a part onto the sheet, or press Add to sheet');
+    assert.equal(await page.locator('[data-ribbon-tab=Part]').count(), 0);
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
     assert.match(await t('cmd-prompt').textContent(), /Plate A \(100\.00 × 60\.00 mm\) added to Layout 1/);
     await t('panel-main').click();
     assert.equal(await t('placed-name').textContent(), 'Plate A');
     assert.equal(await t('px').isVisible(), true);
     assert.deepEqual([await t('px').inputValue(), await t('py').inputValue(), await t('pw').inputValue(), await t('ph').inputValue(), await t('pa').inputValue()], ['450.00', '320.00', '100.00', '60.00', '0°']);
-    assert.equal(await t('placed-kind').textContent(), 'placed part');
     assert.ok((await inkedWhen((n) => n > 100)) > 100, 'the part is drawn');
     await t('panel-library').click();
     // drag the Dial card onto the sheet: the hint shows where it lands
@@ -2664,7 +2748,6 @@ try {
     assert.equal(await t('drop-hint').isVisible(), false);
     await t('panel-main').click();
     assert.equal(await t('placed-name').textContent(), 'Dial');
-    assert.equal(await t('parts-from').isVisible(), false);
     const mid = [Number(await t('px').inputValue()) + Number(await t('pw').inputValue()) / 2, Number(await t('py').inputValue()) + Number(await t('ph').inputValue()) / 2];
     assert.ok(Math.abs(mid[0] - hint[1]) <= 0.51 && Math.abs(mid[1] - hint[2]) <= 0.51, 'centred on the drop point the hint showed, to whole mm (TODO 45): ' + mid + ' vs ' + hint.slice(1));
     assert.ok(Number(await t('px').inputValue()) % 1 === 0 && Number(await t('py').inputValue()) % 1 === 0, 'the dropped part sits on whole mm');
@@ -2679,12 +2762,12 @@ try {
     await t('panel-main').click();
     // Keep this older oversized-grid flow unanchored; TODO 127 covers matching placed cells.
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
-    await t('px').fill('850'); await t('px').press('Enter');
-    await t('py').fill('550'); await t('py').press('Enter');
-    await t('pa').fill('180'); await t('pa').press('Enter');
+    await partTab(); await t('px').fill('850'); await t('px').press('Enter');
+    await partTab(); await t('py').fill('550'); await t('py').press('Enter');
+    await partTab(); await t('pa').fill('180'); await t('pa').press('Enter');
     await page.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true });
-    await t('px').fill('50'); await t('px').press('Enter');
-    await t('py').fill('550'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter');
+    await partTab(); await t('py').fill('550'); await t('py').press('Enter');
     await t('part').selectOption({ label: 'Plate A · 100 × 60' });
     const worked = gridOf(layoutFromRaw(readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text)));
     assert.equal(await t('count').textContent(), String(worked.count));
@@ -2737,11 +2820,11 @@ try {
 
   let saved = null;
   await step('Save a layout: a download with one INSERT per placed part and the settings in a hidden block; reopening it gives a layout tab with the same panel values and parts', async () => {
-    await t('preset').selectOption('a3');
-    await grip('Top').fill('12'); await grip('Left').fill('8');
+    await layoutTab(); await t('preset').selectOption('a3');
+    await layoutTab(); await grip('Top').fill('12'); await layoutTab(); await grip('Left').fill('8');
     await page.locator('[data-key=gapX]').fill('7'); await page.locator('[data-key=gapY]').fill('9');
     await t('rotate').selectOption('90'); await t('align').selectOption('topleft');
-    await page.locator('[data-key=crop]').uncheck(); await page.locator('[data-key=reg]').check();
+    await layoutTab(); await page.locator('[data-key=crop]').uncheck(); await layoutTab(); await page.locator('[data-key=reg]').check();
     const dialLabel = await t('part').locator('option').evaluateAll((o) => o.map((x) => x.textContent).find((x) => x.startsWith('Dial')));
     await t('part').selectOption({ label: dialLabel });
     await page.locator('[data-key=rows]').fill('2'); await page.locator('[data-key=cols]').fill('2');
@@ -3064,6 +3147,7 @@ try {
     const key = (k) => page.locator(`[data-key=${k}]`).first();
     await t('fit-switch').uncheck();
     for (const [k, v, re] of cases) {
+      if (/^(sheet|grip)/.test(k)) await layoutTab();
       const f = key(k), was = await f.inputValue();
       await t('cmd-prompt').evaluate((el) => { el.textContent = ''; });
       await f.fill(v); await f.press('Tab');
@@ -3096,8 +3180,9 @@ try {
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
     await t('panel-main').click();
     await t('part').selectOption({ index: 1 });                                        // Plate A fills the sheet as a grid
+    await layoutTab();
     for (const k of ['Top', 'Right', 'Bottom', 'Left']) await grip(k).fill('30');
-    await page.locator('[data-key=reg]').check();
+    await layoutTab(); await page.locator('[data-key=reg]').check();
     const marksBoxes = async () => page.locator('[data-group=marks] circle, [data-group=marks] path').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
     const labels = await page.locator('.grip-label').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { e: e.dataset.edge, x: r.x, y: r.y, width: r.width, height: r.height }; }));
     assert.equal(labels.length, 4);
@@ -3116,7 +3201,7 @@ try {
     await shotBoth('slot-width');
   });
 
-  await step('review: the read-only bar numbers (W, H) are not drawn as inputs; X, Y and Angle are, and say what they are', async () => {
+  await step('review: the read-only Part ribbon numbers (W, H) are not drawn as inputs; X, Y and Angle are, and say what they are', async () => {
     const bg = await t('pw').evaluate((e) => getComputedStyle(e).backgroundColor);
     assert.match(bg, /^rgba\(0, 0, 0, 0\)|^transparent/, 'no white input look: ' + bg);
     assert.match(await t('pw').getAttribute('title'), /Read-only: parts are scaled per drawing/);
@@ -3243,7 +3328,7 @@ try {
     await t('panel-main').click();
   };
 
-  await step('placing: a selected part shows the hint, size handles and the editable bar; Build B wording is gone', async () => {
+  await step('placing: a selected part shows the hint, size handles and the Part ribbon; Build B wording is gone', async () => {
     await freshLayoutWithPlate();
     assert.deepEqual(await pos(), [450, 320]);
     assert.equal(await t('hint-pill').isVisible(), true);
@@ -3257,7 +3342,7 @@ try {
     assert.equal(await t('nudge-step').inputValue(), '1.0');
     // the right panel: Selected part, Group and lock, Rotate, Mirror, Duplicate, Nudge, above the layout settings (Arrange only with 2+ parts selected)
     const heads = await page.locator('aside.panel > section:not([hidden]) h2.sec, aside.panel > .contents > section:not([hidden]) h2.sec').allTextContents();
-    assert.deepEqual(heads.slice(0, 7), ['Selected part', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge', 'Sheet']);
+    assert.deepEqual(heads.slice(0, 7), ['Selected part', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge', 'Guides']);
     assert.equal(await t('pp-name').textContent(), 'Plate A');
     assert.equal(await t('pp-size').textContent(), '100 × 60');
     assert.equal(await t('pp-x').inputValue(), '450.00');
@@ -3330,7 +3415,7 @@ try {
     await page.keyboard.press('Shift+ArrowDown');
     assert.deepEqual(await pos(), [p0[0] - 9, p0[1] - 9]);
     // the step: the bar and the panel are one value
-    await t('nudge-step').fill('2.5'); await t('nudge-step').press('Enter');
+    await partTab(); await t('nudge-step').fill('2.5'); await t('nudge-step').press('Enter');
     assert.equal(await t('nudge-step2').inputValue(), '2.5');
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-nudge')), '2.5');
     const p1 = await pos();
@@ -3344,7 +3429,7 @@ try {
     await t('nudge-step2').fill('abc'); await t('nudge-step2').press('Enter');
     assert.match(await prompt(), /The nudge step must be a number above 0 mm/);
     assert.equal(await t('nudge-step2').inputValue(), '2.5'); assert.equal(await t('nudge-step').inputValue(), '2.5');
-    await t('nudge-step').fill('0'); await t('nudge-step').press('Enter');
+    await partTab(); await t('nudge-step').fill('0'); await t('nudge-step').press('Enter');
     assert.equal(await t('nudge-step').inputValue(), '2.5');
     // held down: one undo step for the run
     await page.waitForTimeout(900);
@@ -3357,37 +3442,37 @@ try {
     assert.equal(await t('nudge-step').count(), 1);
     await t('panel-library').click(); await libCard('Plate A').locator('[data-testid=lib-add]').click(); await t('panel-main').click();
     assert.equal(await t('nudge-step').inputValue(), '2.5', 'remembered after a reload');
-    await t('nudge-step').fill('1'); await t('nudge-step').press('Enter');
+    await partTab(); await t('nudge-step').fill('1'); await t('nudge-step').press('Enter');
   });
 
   await step('placing: typed X, Y and Angle apply on Enter; bad input says so and snaps back; W and H stay read-only', async () => {
-    await t('px').fill('100'); await t('px').press('Enter');
-    await t('py').fill('50.5'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('100'); await t('px').press('Enter');
+    await partTab(); await t('py').fill('50.5'); await t('py').press('Enter');
     assert.deepEqual(await pos(), [100, 50.5]);
     assert.equal(await t('pp-x').inputValue(), '100.00');
     assert.match(await prompt(), /^Plate A moved to X 100\.00 Y 50\.50:?$/);
-    await t('px').fill('abc'); await t('px').press('Tab');
+    await partTab(); await t('px').fill('abc'); await t('px').press('Tab');
     assert.match(await prompt(), /X must be a number in mm/);
     assert.equal(await t('px').inputValue(), '100.00', 'snapped back');
-    await t('py').fill(''); await t('py').press('Tab');
+    await partTab(); await t('py').fill(''); await t('py').press('Tab');
     assert.match(await prompt(), /Y must be a number in mm/);
     await t('pp-x').fill('120,5'); await t('pp-x').press('Enter');
     assert.equal((await pos())[0], 120.5, 'a comma is a decimal point');
     // Angle: the part turns about its centre
     const cen = async () => { const [x, y] = await pos(); return [x + Number(await t('pw').inputValue()) / 2, y + Number(await t('ph').inputValue()) / 2]; };
     const c0 = await cen();
-    await t('pa').fill('30'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('30'); await t('pa').press('Enter');
     assert.equal(await t('pa').inputValue(), '30°');
     const c1 = await cen();
     approx(c1[0], c0[0], 0.02); approx(c1[1], c0[1], 0.02);
     approx(Number(await t('pw').inputValue()), 100 * Math.cos(Math.PI / 6) + 60 * Math.sin(Math.PI / 6), 0.02, 'the box of the turned part');
     assert.equal(await t('rot-angle').inputValue(), '30°');
-    await t('pa').fill('x'); await t('pa').press('Tab');
+    await partTab(); await t('pa').fill('x'); await t('pa').press('Tab');
     assert.match(await prompt(), /Angle must be a number in degrees/);
     assert.equal(await t('pa').inputValue(), '30°');
     await t('rot-angle').fill('-45'); await t('rot-angle').press('Enter');
     assert.equal(await t('pa').inputValue(), '315°', 'any angle is kept as 0 to 360');
-    await t('pa').fill('0'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('0'); await t('pa').press('Enter');
     assert.equal(await t('pa').inputValue(), '0°');
     const c2 = await cen();
     approx(c2[0], c0[0], 0.02); approx(c2[1], c0[1], 0.02);
@@ -3443,9 +3528,9 @@ try {
     // the Rotate section's pivot select
     await t('rot-pivot').selectOption('bl');
     assert.equal(await t('rot-px').isDisabled(), true);
-    await t('pa').fill('90'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');
     const corner = [Number(await t('rot-px').inputValue()), Number(await t('rot-py').inputValue())];
-    await t('pa').fill('120'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('120'); await t('pa').press('Enter');
     assert.deepEqual([Number(await t('rot-px').inputValue()), Number(await t('rot-py').inputValue())], corner, 'turned about its own lower-left corner: that corner stays put');
     await t('rot-pivot').selectOption('centre');
     // click once more: back to the plain selection (and Esc does the same)
@@ -3462,10 +3547,10 @@ try {
   });
 
   await step('placing: Mirror X flips left to right, Mirror Y top to bottom; twice is the start; the Rotate/Mirror sections do the same', async () => {
-    await t('pa').fill('0'); await t('pa').press('Enter');
-    await t('pa').fill('30'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('0'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('30'); await t('pa').press('Enter');
     const start = [await pos(), await angleNow(), Number(await t('pw').inputValue())];
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     assert.match(await prompt(), /^Plate A mirrored left to right \(X\)/);
     assert.equal(await angleNow(), 330, 'a mirror reverses the turn');
     assert.equal(Number(await t('pw').inputValue()), start[2], 'the box is the same size');
@@ -3474,13 +3559,13 @@ try {
     await t('mirror-y').click();
     assert.match(await prompt(), /mirrored top to bottom \(Y\)/);
     assert.equal(await angleNow(), 330);
-    await t('bar-mirror-y').click();
+    await partTab(); await t('bar-mirror-y').click();
     assert.deepEqual([await pos(), await angleNow()], [start[0], start[1]]);
     await page.keyboard.press('Control+z');
     assert.equal(await angleNow(), 330, 'undo takes back a mirror');
     await page.keyboard.press('Control+y');
     assert.equal(await angleNow(), 30);
-    await t('pa').fill('0'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('0'); await t('pa').press('Enter');
   });
 
   await step('exe review fixes: with no grid part the step footer is only its hint (no floating 0); Duplicate says when copies land on other parts', async () => {
@@ -3489,7 +3574,7 @@ try {
     assert.equal(await t('count').isVisible(), false, 'no big 0');
     assert.equal(await t('apply').isVisible(), false);
     assert.equal(await t('step-foot').evaluate((e) => getComputedStyle(e).position), 'static');
-    await t('px').fill('50'); await t('px').press('Enter'); await t('py').fill('100'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter'); await partTab(); await t('py').fill('100'); await t('py').press('Enter');
     await t('dup-count').fill('1'); await t('dup-count').press('Enter'); await t('dup-gap').fill('5'); await t('dup-gap').press('Enter');
     await t('dup-x').click(); await t('dup-go').click();
     assert.doesNotMatch(await prompt(), /on top of/);
@@ -3502,7 +3587,7 @@ try {
   await step('placing: Duplicate along X or Y (gap edge to edge), Copy once / Ctrl+D, Delete, off the sheet is tinted and said once', async () => {
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });      // markPixels looks for the light mark colour
     await freshLayoutWithPlate();
-    await t('px').fill('50'); await t('px').press('Enter'); await t('py').fill('100'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter'); await partTab(); await t('py').fill('100'); await t('py').press('Enter');
     assert.equal(await t('dup-x').getAttribute('aria-pressed'), 'true');
     assert.equal(await t('dup-gap').inputValue(), '5'); assert.equal(await t('dup-count').inputValue(), '3');
     await t('dup-go').click();
@@ -3556,9 +3641,9 @@ try {
     await page.keyboard.press('Control+z');
     assert.equal(await nParts(), 8);
     // moving one part off the sheet says so once, and a part back on the sheet loses the tint
-    await t('px').fill('950'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('950'); await t('px').press('Enter');
     assert.match(await prompt(), /Plate A moved to X 950\.00 Y \d+\.\d\d\. Plate A is off the sheet \(drawn in orange\)\. It is still placed:?$/);
-    await t('px').fill('900'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('900'); await t('px').press('Enter');
     assert.doesNotMatch(await prompt(), /off the sheet/);
   });
 
@@ -3570,8 +3655,7 @@ try {
     const n = Number(await t('count').textContent());
     assert.ok(n > 4);
     await page.locator('[data-group=parts] [data-i="3"] .part-hit').click({ force: true });
-    assert.equal(await t('placed-kind').textContent(), 'placed part · step and repeat');
-    await t('px').fill('5'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('5'); await t('px').press('Enter');
     assert.match(await prompt(), /The step and repeat grid became separate placed parts/);
     assert.equal(await t('count').textContent(), '0', 'the grid is cleared, as Apply does');
     assert.equal(await nParts(), n + 1);
@@ -3584,17 +3668,17 @@ try {
 
   await step('placing: saved with its rotation and mirror, reopened the same, the PDF draws it; screenshots light and dark', async () => {
     await freshLayoutWithPlate();
-    await t('px').fill('200'); await t('px').press('Enter'); await t('py').fill('300'); await t('py').press('Enter');
-    await t('pa').fill('33'); await t('pa').press('Enter');
-    await t('bar-mirror-x').click();
+    await partTab(); await t('px').fill('200'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
+    await partTab(); await t('pa').fill('33'); await t('pa').press('Enter');
+    await partTab(); await t('bar-mirror-x').click();
     const angle = await angleNow(), at1 = await pos(), box1 = [await t('pw').inputValue(), await t('ph').inputValue()];
     assert.equal(angle, 327);
     // a second part, turned, mirrored the other way, and a third on its own for the picture
-    await t('dup-one').click(); await t('px').fill('500'); await t('px').press('Enter'); await t('py').fill('250'); await t('py').press('Enter');
-    await t('bar-mirror-y').click(); await t('pa').fill('75'); await t('pa').press('Enter');
-    await t('dup-one').click(); await t('pa').fill('0'); await t('pa').press('Enter'); await t('px').fill('700'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await t('dup-one').click(); await partTab(); await t('px').fill('500'); await t('px').press('Enter'); await partTab(); await t('py').fill('250'); await t('py').press('Enter');
+    await partTab(); await t('bar-mirror-y').click(); await partTab(); await t('pa').fill('75'); await t('pa').press('Enter');
+    await t('dup-one').click(); await partTab(); await t('pa').fill('0'); await t('pa').press('Enter'); await partTab(); await t('px').fill('700'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     // the third part in rotate mode, for the picture
-    await t('px').fill('600'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('600'); await t('px').press('Enter');
     const q = await partPoint(0.5);
     await page.mouse.click(q.x, q.y);
     await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
@@ -3613,7 +3697,7 @@ try {
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     assert.equal(await angleNow(), angle, 'the angle came back');
     assert.deepEqual(await pos(), at1); assert.deepEqual([await t('pw').inputValue(), await t('ph').inputValue()], box1);
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     assert.equal(await angleNow(), 33, 'it was mirrored when saved: mirroring again gives the unmirrored 33°');
     await page.keyboard.press('Control+z');
     // the PDF of the layout draws the turned, mirrored parts where the sheet shows them
@@ -3627,12 +3711,16 @@ try {
     if (await t('pdf-dialog').count()) await page.locator('[data-testid=pdf-dialog] button', { hasText: /Close|Cancel/ }).first().click().catch(() => {});
     await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('placing-turned');
-    // the smallest window: the bar with a part selected still fits on one row
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    // At the smallest window the Part ribbon keeps its height and every control is reachable.
     await page.setViewportSize({ width: 1024, height: 700 });
     await page.waitForTimeout(200);
-    const bar = await rectOf(t('propbar')), kids = await t('propbar').locator('> *:not([hidden])').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
-    await page.screenshot({ path: `${shotDir}/s12-placing-1024-light.png` });
-    for (const r of kids) assert.ok(r.y + r.height <= bar.y + bar.height + 1 && r.x + r.width <= bar.x + bar.width + 1, 'the property bar overflows at 1024: ' + JSON.stringify([r, bar]));
+    await partTab();
+    assert.equal(await t('propbar').count(), 0);
+    const ribbonBox = await page.locator('.ribbon-body').boundingBox();
+    assert.equal(ribbonBox.height, 90);
+    await t('bar-lock').scrollIntoViewIfNeeded();
+    assert.equal(await t('bar-lock').isVisible(), true);
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
@@ -3649,21 +3737,21 @@ try {
   /** Three parts of different sizes at different heights: Plate A, Dial, Plate B. */
   const threeParts = async () => {
     await freshLayoutWithPlate();
-    await t('px').fill('100'); await t('px').press('Enter'); await t('py').fill('420'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('100'); await t('px').press('Enter'); await partTab(); await t('py').fill('420'); await t('py').press('Enter');
     await t('panel-library').click();
     await libCard('Dial').locator('[data-testid=lib-add]').click();
     await t('panel-main').click();
-    await t('px').fill('400'); await t('px').press('Enter'); await t('py').fill('300'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('400'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
     await t('panel-library').click();
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
     await t('panel-main').click();
-    await t('px').fill('700'); await t('py').fill('360'); await t('py').press('Enter'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('700'); await partTab(); await t('py').fill('360'); await t('py').press('Enter'); await t('px').press('Enter');
   };
   await step('TODO 36: Shift-click adds and removes parts; a rubber band selects the parts fully inside; the pick-order numbers, the box and its readout, the Arrange section', async () => {
     await threeParts();
     assert.equal(await t('pp-name').textContent(), 'Plate A');
     assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), false, 'one part selected: no Arrange section');
-    assert.equal(await t('bar-group').isVisible(), false);
+    assert.equal(await t('bar-group').isDisabled(), true);
     // Shift-click adds
     await click(150, 450, { shift: true });
     assert.equal(await t('pp-name').textContent(), '2 parts');
@@ -3698,14 +3786,15 @@ try {
     assert.equal(await t('pa').inputValue(), '0°');
     await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('arrange-three');
-    // the smallest window: the bar with several parts selected (Group, Lock) still fits on one row, with room to spare for CI's wider fonts
+    // The Part ribbon scrolls horizontally at the smallest window.
     await page.setViewportSize({ width: 1024, height: 700 });
     await page.waitForTimeout(200);
-    const bar = await rectOf(t('propbar')), kids = await t('propbar').locator('> *:not([hidden])').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
-    await page.screenshot({ path: `${shotDir}/s12-arrange-1024-light.png` });
-    for (const r of kids) assert.ok(r.y + r.height <= bar.y + bar.height + 1 && r.x + r.width <= bar.x + bar.width - 20, 'the property bar overflows or is too tight at 1024: ' + JSON.stringify([r, bar]));
-    const barInner = await t('propbar').evaluate((e) => [e.scrollWidth, e.clientWidth]);
-    assert.ok(barInner[0] <= barInner[1], 'no horizontal overflow ' + barInner);
+    await partTab();
+    assert.equal(await t('propbar').count(), 0);
+    const ribbonBox = await page.locator('.ribbon-body').boundingBox();
+    assert.equal(ribbonBox.height, 90);
+    await t('bar-lock').scrollIntoViewIfNeeded();
+    assert.equal(await t('bar-lock').isVisible(), true);
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
@@ -3828,17 +3917,17 @@ try {
     b = await selBoxes(); approx(b[0][0], before[0][0] - 9, 0.02);
     // typed X moves the selection's box: its lower-left lands there
     const ub = [Math.min(...before.map((q) => q[0])), Math.min(...before.map((q) => q[1]))];
-    await t('px').fill('50'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter');
     b = await selBoxes(); approx(Math.min(...b.map((q) => q[0])), 50, 0.02);
     // Mirror X: the whole selection flips left to right about its middle
     const m0 = await selBoxes(), lo = Math.min(...m0.map((q) => q[0])), hi = Math.max(...m0.map((q) => q[2]));
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     b = await selBoxes();
     b.forEach((x, i) => { approx(x[0], lo + hi - m0[i][2], 0.05, 'mirrored x0 ' + i); approx(x[1], m0[i][1], 0.05); });
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     b = await selBoxes(); b.forEach((x, i) => approx(x[0], m0[i][0], 0.05, 'twice is the start'));
     // Angle: a turn of the whole selection about its middle
-    await t('pa').fill('90'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');
     assert.match(await prompt(), /^3 parts turned by 90° about the middle of the selection/);
     await page.keyboard.press('Control+z');
     // Copy once / Ctrl+D duplicates all three, and selects the copies
@@ -3871,7 +3960,7 @@ try {
     await t('panel-library').click();
     await libCard('Dial').locator('[data-testid=lib-add]').click();
     await t('panel-main').click();
-    await t('px').fill('850'); await t('px').press('Enter'); await t('py').fill('600'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('850'); await t('px').press('Enter'); await partTab(); await t('py').fill('600'); await t('py').press('Enter');
   };
   await step('TODO 37: Ctrl+G groups the selected parts, a click on a member selects the group, "Group of N" in the bar, the panel and on the canvas; it moves as one; Ctrl+Shift+G ungroups', async () => {
     await fourParts();
@@ -3881,7 +3970,6 @@ try {
     await page.keyboard.press('Control+g');
     assert.match(await prompt(), /^Grouped 3 parts: a click on one selects the group, and it moves, turns and copies as one \(Ctrl\+Shift\+G ungroups\):?$/);
     assert.equal(await t('placed-name').textContent(), 'Group of 3');
-    assert.equal(await t('placed-kind').textContent(), 'group');
     assert.equal(await t('pp-name').textContent(), 'Group of 3');
     assert.equal(await page.locator('[data-testid=sec-part] h2').textContent(), 'Selected group');
     assert.equal(await t('bar-group').innerText(), 'Ungroup');
@@ -3950,10 +4038,10 @@ try {
     await freshLayoutWithPlate();
     assert.equal(await padlocks(), 0);
     const p0 = await pos();
-    await t('bar-lock').click();
+    await partTab(); await t('bar-lock').click();
     assert.match(await prompt(), /^Plate A locked: it cannot be moved, turned, mirrored or deleted until you unlock it:?$/);
     assert.equal(await padlocks(), 1);
-    assert.equal(await t('lock-chip').isVisible(), true); assert.equal(await t('pp-lock').isVisible(), true);
+    assert.equal(await t('bar-lock').innerText(), 'Unlock'); assert.equal(await t('pp-lock').isVisible(), true);
     assert.equal(await t('bar-lock').innerText(), 'Unlock');
     assert.equal(await t('px').isDisabled(), true); assert.equal(await t('py').isDisabled(), true); assert.equal(await t('pa').isDisabled(), true);
     assert.equal(await t('pp-x').isDisabled(), true); assert.equal(await t('rot-angle').isDisabled(), true);
@@ -3966,7 +4054,7 @@ try {
     await page.keyboard.press('ArrowRight');
     assert.deepEqual(await pos(), p0); assert.match(await prompt(), LOCKED_MSG);
     // mirror
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     assert.deepEqual(await pos(), p0); assert.match(await prompt(), LOCKED_MSG);
     assert.equal(await angleNow(), 0);
     // turning by hand: a click on the selected part does not start it
@@ -3980,7 +4068,7 @@ try {
     assert.equal(await nParts(), 1);
     // typed values
     await t('pa').evaluate((e) => { e.disabled = false; });
-    await t('pa').fill('45'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('45'); await t('pa').press('Enter');
     assert.equal(await angleNow(), 0);
     // the right-click menu
     await rightClickMm(p0[0] + 50, p0[1] + 30);
@@ -4009,7 +4097,7 @@ try {
     assert.equal(await padlocks(), 0);
     await t('grp-unlock').isDisabled().then((d) => assert.equal(d, true));
     // a copy of a locked part is not locked
-    await t('bar-lock').click();
+    await partTab(); await t('bar-lock').click();
     await page.keyboard.press('Control+d');
     assert.equal(await nParts(), 2); assert.equal(await padlocks(), 1, 'the original keeps its padlock, the copy has none');
     assert.equal(await t('bar-lock').innerText(), 'Lock', 'the copy is selected and free');
@@ -4021,7 +4109,7 @@ try {
     await page.keyboard.press('Control+g');
     await page.keyboard.press('Control+Shift+g');
     await page.keyboard.press('Control+g');                        // grouped again (the ungroup was in between)
-    await t('bar-lock').click();
+    await partTab(); await t('bar-lock').click();
     assert.equal(await padlocks(), 3);
     assert.equal(await t('pp-lock').isVisible(), true);
     assert.match(await prompt(), /^3 parts locked:/);
@@ -4051,7 +4139,7 @@ try {
     assert.equal(await t('bar-lock').innerText(), 'Unlock');
     await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('group-locked');
-    await t('bar-lock').click();                                   // unlock and the whole group moves again
+    await partTab(); await t('bar-lock').click();                                   // unlock and the whole group moves again
     assert.equal(await padlocks(), 0);
     await page.keyboard.press('Control+Shift+g');
     assert.equal(await t('pp-name').textContent(), '3 parts');
@@ -4128,8 +4216,7 @@ try {
     assert.match(await prompt(), /^Guides belong to a layout tab/);
     await closeTabs(/outline/);
     await t('new-layout').click();                                // nothing placed yet: the bar says where 0,0 is
-    assert.equal(await t('sheet-origin').isVisible(), true);
-    assert.equal(await t('sheet-origin').textContent(), "Sheet 1000 × 700 mm · Origin 0,0 at the sheet's bottom-left · Y points up · Rulers: mm");
+    assert.equal(await t('propbar').count(), 0);
   });
 
   await step('TODO 38: drag a guide out of a ruler (dashed line, readout, command line); Esc cancels; dropped back on the ruler it goes; moving one; undo', async () => {
@@ -4293,34 +4380,34 @@ try {
     approx((await pos())[0], 200, 0.01, 'the right edge (x + 100) is on the guide at 300');
     approx((await pos())[1], 240, 1.5);
     // the middle: centre x = x + 50 on the guide → x = 250
-    await t('px').fill('0'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('0'); await t('px').press('Enter');
     await dragMm([50, 270], [50 + 253, 270]);
     approx((await pos())[0], 250, 0.01, 'the middle on the guide');
     // far from any guide: no snap
-    await t('px').fill('600'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('600'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     await dragMm([650, 480], [670, 490]);
     approx((await pos())[0], 620, 1.2); approx((await pos())[1], 460, 1.2);
     // SNAP off: the exact point, even 2 mm from a guide (302 here)
     await t('tog-snap').click();
-    await t('px').fill('312'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('312'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     await dragMm([362, 480], [352, 480]);
     approx((await pos())[0], 302, 1.2, 'SNAP off: no snapping to guides');
     assert.notEqual((await pos())[0], 300);
     await t('tog-snap').click();
     // a straight (Shift) drag keeps its straight axis: only the other axis may snap
-    await t('px').fill('310'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('310'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     await dragMm([360, 480], [354, 478], ['Shift']);
     assert.equal((await pos())[1], 450, 'straight along X: Y did not change');
     assert.equal((await pos())[0], 300, 'X snapped to the guide');
     // hidden guides do not snap
     await ribbonToggle('Show guides').uncheck();
-    await t('px').fill('312'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('312'); await t('px').press('Enter');
     await dragMm([362, 480], [352, 480]);
     approx((await pos())[0], 302, 1.2);
     await ribbonToggle('Show guides').check();
     // View can disable guide snapping while the guides and global SNAP remain on.
     await ribbonToggle('Snap to guides').uncheck();
-    await t('px').fill('312'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('312'); await t('px').press('Enter');
     await dragMm([362, 480], [352, 480]);
     approx((await pos())[0], 302, 1.2);
     assert.equal(await page.locator('.guide').count() > 0, true);
@@ -6637,8 +6724,8 @@ try {
     await threeParts();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 0, 'not selected yet');
     assert.equal(await t('sheet-select').textContent(), 'Select sheet');
-    assert.match(await t('sheet-panel').textContent(), /Or click the sheet edge\. Drag a side handle to resize\./);
-    await t('sheet-select').click();
+    assert.match(await t('sheet-select').getAttribute('title'), /Or click the sheet edge\. Drag a side handle to resize\./);
+    await layoutTab(); await t('sheet-select').click();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 4);
     assert.deepEqual(await page.locator('[data-sheet-handle]').evaluateAll((g) => g.map((x) => x.dataset.sheetHandle).sort()), ['bottom', 'left', 'right', 'top']);
     assert.equal(await t('sheet-label').textContent(), 'Sheet selected · 1000 × 700 mm');
@@ -6658,7 +6745,7 @@ try {
   await step('Sheet resize: dragging the right handle shows the new outline (dashed), the added strip and "W … × H 700 mm" with "Whole mm only"; releasing sets the size, whole mm; the parts stay; one undo step', async () => {
     await threeParts();
     const before = await placedXY();
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     await dragSide('right', 1060.4, 350, { hold: true });
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
     const ro = await t('sheet-readout').textContent(), mw = /^W (\d+) × H 700 mm$/.exec(ro);
@@ -6684,7 +6771,7 @@ try {
   await step('Sheet resize: top, left and bottom handles; left and bottom keep the parts where they are on the screen (their sheet positions move); Esc cancels a drag; shrinking leaves parts off the sheet', async () => {
     await threeParts();
     const [x0, y0] = (await placedXY()).map(Number);
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     await dragSide('top', 500, 712);
     await sizeChanged('sheetH', 700);
     const H1 = (await sizeNum())[1]; near1(H1, 712, 'top');
@@ -6702,14 +6789,14 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-key=sheetW]').value === '1000' && document.querySelector('[data-key=sheetH]').value === '700');
     assert.deepEqual((await placedXY()).map(Number), [x0, y0], 'three undos put everything back');
     // Esc cancels
-    if (!(await page.locator('[data-testid=sheet-handle]').count())) await t('sheet-select').click();
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
     await dragSide('right', 1200, 350, { hold: true });
     await page.keyboard.press('Escape'); await page.mouse.up();
     await page.waitForFunction(() => !document.querySelector('[data-testid=sheet-readout]'));
     assert.deepEqual(await sheetSize(), ['1000', '700']);
     assert.match(await prompt(), /Sheet resize cancelled/);
     // shrinking: the part at x 700 is now off the sheet
-    if (!(await page.locator('[data-testid=sheet-handle]').count())) await t('sheet-select').click();
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
     await dragSide('right', 600, 350);
     await sizeChanged('sheetW', 1000);
     near1((await sizeNum())[0], 600, 'shrunk');
@@ -6720,7 +6807,7 @@ try {
 
   await step('Sheet resize: a click on a handle then a click at the new place does it too; typed Width and Height are whole mm', async () => {
     await threeParts();
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     const a = await handleAt('right'), b = await at(1080, 350);       // 1100 is past the canvas's right edge now that the command line no longer takes the bottom 64 px
     await page.mouse.click(a.x, a.y);
     assert.equal(await page.locator('[data-testid=sheet-handle-hot]').count(), 1, 'hot after one click');
@@ -6733,7 +6820,7 @@ try {
     await sizeChanged('sheetW', 1000);
     near1((await sizeNum())[0], 1080, 'set');
     assert.equal(await page.locator('[data-testid=sheet-handle-hot]').count(), 0);
-    await page.locator('[data-key=sheetW]').fill('1000.6'); await page.locator('[data-key=sheetW]').press('Enter');
+    await layoutTab(); await page.locator('[data-key=sheetW]').fill('1000.6'); await page.locator('[data-key=sheetW]').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-key=sheetW]').value === '1001');
     assert.match(await prompt(), /rounded to whole mm/);
     await page.keyboard.press('Escape');
@@ -6741,7 +6828,7 @@ try {
 
   await step('Sheet resize: screenshots, light and dark (sheet selected; the right side being dragged)', async () => {
     await threeParts();
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     await shotBoth('sheet-select', async () => { await wait(150); }, async () => {});
     await shotBoth('sheet-drag', async () => { await dragSide('right', 1120, 350, { hold: true }); await wait(150); }, async () => { await page.keyboard.press('Escape'); await page.mouse.up(); });
     await page.keyboard.press('Escape');
@@ -6852,7 +6939,7 @@ try {
 
   await step('Compare: dragging drawing 2 snaps its corner onto drawing 1\'s corner, with a marker and a name; SNAP off drops where released (TODO 112)', async () => {
     await t('cmp-lineup-manual').click();
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();     // both corners in view
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();     // both corners in view
     const drag = async (shot) => {                                      // drawing 2's bottom-left corner (0, 0) to drawing 1's bottom-right one (300, 0), 4 px short and 3 px high
       const a = await at(0, 0), z = await at(300, 0);
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x - 4, z.y - 3, { steps: 6 });
@@ -7465,7 +7552,7 @@ try {
   });
   await step('dimension types: screenshots, light and dark (all five kinds, the flyout open)', async () => {
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await t('dim-flyout').click();
     await page.mouse.move(5, 5);
     await page.screenshot({ path: shotDir + '/s12-dimtypes-light.png' });
@@ -7909,7 +7996,7 @@ try {
   await step('screenshots with the sample open, light and dark', async () => {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await page.screenshot({ path: dir + '/s2-light.png' });
     await page.locator('[data-menu=View]').click();
     await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
@@ -10789,7 +10876,7 @@ try {
     await page.locator('[data-tool=rect]').click();
     await typeCmd('40,100'); await typeCmd('100,60');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await page.getByRole('button', { name: 'Zoom out', exact: true }).click({ clickCount: 2 }); await frames();
     if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
     await t('decimals').selectOption('2');
@@ -10910,7 +10997,7 @@ try {
     const drawn = async () => Number(await t('drawing').getAttribute('data-drawn'));
     await t('picker').setInputFiles({ name: 'big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(N))) });
     await page.waitForFunction((n) => document.body.textContent.includes('Entities ' + n), N, { timeout: 60000 });
-    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
     const all = await drawn();
     assert.ok(all > N * 0.8, `fitted, nearly everything draws: ${all}`);
     const box = await t('canvas').boundingBox(), cx = box.x + box.width / 2, cy = box.y + box.height / 2;      // Fit centres the drawing
@@ -10936,7 +11023,7 @@ try {
     assert.ok(fps > 10, `panning keeps frames coming (${fps.toFixed(1)} fps; generous bound, machine dependent)`);
     await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
     assert.ok(await drawn() > 0, 'after the pan, what is in view is drawn in full again');
-    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
     assert.equal(await drawn(), all, 'Fit draws the same set as before');
     await closeTabs(/big/);
   });
