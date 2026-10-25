@@ -4,6 +4,7 @@ import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './d
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
+import { drawingPreviewBox } from './preview.js';
 import { outsideView, subPixel } from './perf.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
@@ -43,7 +44,7 @@ function trace(c, ops, origin) {
 /**
  * Paints into `canvas` (already sized to w*dpr by h*dpr). Returns how many items the main drawing painted.
  * o: { keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
- *       tint (one css colour to draw everything in: a part off the sheet),
+ *       tint (one css colour to draw everything in: a part off the sheet), previewBounds (optional callback with the flattened preview's CSS-pixel box),
  *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
  */
 export function paintDrawing(canvas, o) {
@@ -59,6 +60,7 @@ export function paintDrawing(canvas, o) {
     c.globalAlpha = 1;
   }
   if (!fl) return;
+  if (o.previewBounds) o.previewBounds(drawingPreviewBox(o));
   const k0 = scale * dpr, V = [k0, 0, 0, k0, -ox * k0, -oy * k0];
   const k = k0 * factor;                                   // pixels in one drawing unit
   c.lineJoin = 'round'; c.lineCap = 'round';

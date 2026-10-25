@@ -150,12 +150,23 @@ export function keyOpensBar(ev, { inField = false, dialog = false, active = fals
   return active && /^[-+@.,<]$/.test(ev.key) ? ev.key : null;
 }
 
-/** Where the bar goes: 20 px right of and below the cursor, flipped left / up when it would leave the canvas, then held inside it. → { x, y } */
-export function placeBar(cursor, size, area, gap = 20) {
+/** Without avoid ([left, top, right, bottom]), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above. */
+export function placeBar(cursor, size, area, gap = 20, avoid = null, corner = null) {
+  const clamp = (x, y) => ({ x: Math.max(0, Math.min(x, area.w - size.w)), y: Math.max(0, Math.min(y, area.h - size.h)) });
+  if (avoid) {
+    const candidates = [
+      [cursor.x + gap, cursor.y + gap], [cursor.x + gap, cursor.y - gap - size.h],
+      [cursor.x - gap - size.w, cursor.y + gap], [cursor.x - gap - size.w, cursor.y - gap - size.h],
+    ].map(([x, y], corner) => ({ ...clamp(x, y), corner }));
+    const overlap = (p) => Math.max(0, Math.min(p.x + size.w, avoid[2]) - Math.max(p.x, avoid[0]))
+      * Math.max(0, Math.min(p.y + size.h, avoid[3]) - Math.max(p.y, avoid[1]));
+    if (candidates[corner] && overlap(candidates[corner]) === 0) return candidates[corner];
+    return candidates.reduce((best, p) => overlap(p) < overlap(best) ? p : best);
+  }
   let x = cursor.x + gap, y = cursor.y + gap;
   if (x + size.w > area.w) x = cursor.x - gap - size.w;
   if (y + size.h > area.h) y = cursor.y - gap - size.h;
-  return { x: Math.max(0, Math.min(x, area.w - size.w)), y: Math.max(0, Math.min(y, area.h - size.h)) };
+  return clamp(x, y);
 }
 
 /** The history lines that contain the filter text (any case). */

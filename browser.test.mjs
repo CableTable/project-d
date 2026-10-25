@@ -12,7 +12,7 @@ import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
-import { COMMANDS } from './web/cmdbar.js';
+import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 
@@ -1939,6 +1939,8 @@ try {
   /** The client position of a drawing point (mm from the sheet's bottom-left, y up). */
   const at = async (x, y) => { const { b, sc, h: hh } = await sheetPx(); return { x: b.x + x * sc, y: b.y + (hh - y) * sc }; };
   const click = async (x, y, opts = {}) => {
+    await page.evaluate(() => { if (document.activeElement?.closest('.cbar')) document.activeElement.blur(); });
+    await t('cmd-bar').waitFor({ state: 'hidden' });
     const p = await at(x, y);
     if (opts.shift) await page.keyboard.down('Shift');
     try { await page.mouse.click(p.x, p.y); } finally { if (opts.shift) await page.keyboard.up('Shift'); }
@@ -6178,6 +6180,12 @@ try {
   const gripCount = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').count();
   const gripWhen = async (n) => { await page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip], [data-testid=grip-hot]').length === k, n, { timeout: 8000 }).catch(async () => { throw new Error(`waiting for ${n} grips, there are ${await gripCount()}; prompt: ${await prompt()}; hist: ${await t("cmd-hist").textContent()}`); }); };
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));       // the overlay repaints on the next frame
+  const hoverPreview = async (x, y) => {
+    await page.evaluate(() => { if (document.activeElement?.closest('.cbar')) document.activeElement.blur(); });
+    await t('cmd-bar').waitFor({ state: 'hidden' });
+    const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames();
+    await cmdLine().focus(); await frames();
+  };
   const gripBox = async (id) => {
     await frames();
     const p = await page.evaluate((g) => { const el = document.querySelector(`[data-grip="${g}"]`); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, id);
@@ -8600,7 +8608,7 @@ try {
       return canvas.getContext('2d').getImageData(x - 3, y - 3, 7, 7).data.some((v, i) => i % 4 === 3 && v > 0);
     }, ghost), 'rotated ghost is painted');
     await shotBoth('rotate', async () => {
-      await cmdLine().focus(); const p = await at(20, 70); await page.mouse.move(p.x, p.y); await frames();
+      await hoverPreview(20, 70);
     });
     await typeCmd('90');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
@@ -8704,7 +8712,7 @@ try {
       return canvas.getContext('2d').getImageData(x - 4, y - 4, 9, 9).data.some((v, i) => i % 4 === 3 && v > 0);
     }, ghost), 'scaled ghost is painted');
     await shotBoth('scale', async () => {
-      await cmdLine().focus(); const p = await at(22, 30); await page.mouse.move(p.x, p.y); await frames();
+      await hoverPreview(22, 30);
     });
     await typeCmd('2');
     let doc = await savedDoc(); assert.deepEqual(coords(doc.entities[0]), [20, 30, 100, 70]);
@@ -8764,7 +8772,7 @@ try {
     assert.equal(await page.locator('nav.rail [data-tool=extend]').count(), 0);
     await click(80, 30); await frames(); assert.equal(await t('trim-edge').count(), 1);
     await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line to extend. Enter or Esc ends:');
-    const hover = async () => { await cmdLine().focus(); const p = await at(38, 20); await page.mouse.move(p.x, p.y); await frames(); };
+    const hover = () => hoverPreview(38, 20);
     await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended line is previewed');
     await shotBoth('extend', hover);
     await click(38, 20);
@@ -8788,6 +8796,45 @@ try {
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
     await click(38, 20); assert.match(await histLine(), /nothing there/, 'a line on a locked layer is not extended');
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/extend/);
+  });
+
+  await step('TODO 146: command box clear of preview', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(38, 82, 40, 80), dxfLine(100, 0, 100, 120));
+    await openGrips(writeDxf(raw), 'preview-clear.dxf');
+    await typeCmd('ex'); await click(100, 70); await page.keyboard.press('Enter');
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      const cursor = await at(39.8, 80.2);
+      await page.mouse.move(cursor.x, cursor.y); await frames();
+      assert.equal(await t('mod-preview').count(), 1);
+      await page.keyboard.type('1'); await frames();
+      const box = await t('cmd-bar').boundingBox(), preview = await t('mod-preview').boundingBox(), canvas = await t('canvas').boundingBox();
+      const old = placeBar({ x: cursor.x - canvas.x, y: cursor.y - canvas.y }, { w: box.width, h: box.height }, { w: canvas.width, h: canvas.height });
+      assert.ok(overlap({ ...box, x: canvas.x + old.x, y: canvas.y + old.y }, preview) > 0, 'fixture would be covered by the old placement');
+      assert.equal(overlap(box, preview), 0, 'command box leaves the Extend preview clear');
+      assert.ok(box.y + box.height < cursor.y, 'box switches above the preview');
+      await t('cmd-input').hover(); await frames();
+      assert.deepEqual(await t('cmd-bar').boundingBox(), box, 'moving into the input keeps the box still and usable');
+      assert.deepEqual(await t('mod-preview').boundingBox(), preview, 'hovering the box does not move the preview');
+      const next = await at(39.7, 80.3); await page.mouse.move(next.x, next.y); await frames();
+      const moved = await t('cmd-bar').boundingBox();
+      assert.equal(overlap(moved, await t('mod-preview').boundingBox()), 0, 'clear while the cursor moves');
+      assert.ok(moved.y + moved.height < next.y, 'keeps its clear corner');
+    };
+    const hide = async () => { await page.locator('[data-testid=canvas]').click({ position: { x: 10, y: 10 } }); await frames(); };
+    await shotBoth('146-command-preview', show, hide);
+    const cursor = await at(39.8, 80.2); await page.mouse.move(cursor.x, cursor.y); await frames();
+    await typeCmd('nu');
+    assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge uses the same preview avoidance');
+    const nudge = await t('nudge-box').boundingBox(); await t('nudge-input').hover(); await frames();
+    assert.deepEqual(await t('nudge-box').boundingBox(), nudge, 'nudge stays still while using its input');
+    await t('nudge-input').fill('0'); await t('nudge-input').press('Enter');
+    assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge error text is reclamped without covering the preview');
+    await t('nudge-input').press('Escape');
+    await page.keyboard.press('Escape'); await closeTabs(/preview-clear/);
   });
 
   await step('TODO 66h: Extend with an arc boundary', async () => {
@@ -8823,7 +8870,7 @@ try {
     await click(40, 20); assert.match(await prompt(), /^Select the second line, arc or polyline segment/);
     const hover = await at(60, 40); await page.mouse.move(hover.x, hover.y); await frames();
     assert.equal(await t('mod-preview').count(), 3, 'two trimmed lines and the arc are previewed');
-    await shotBoth('fillet', async () => { await cmdLine().focus(); const p = await at(60, 40); await page.mouse.move(p.x, p.y); await frames(); });
+    await shotBoth('fillet', () => hoverPreview(60, 40));
     await click(60, 40);
     let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
     assert.deepEqual(coords(doc.entities[0]), [20, 20, 55, 20]); assert.deepEqual(coords(doc.entities[1]), [60, 25, 60, 60]);
@@ -8878,7 +8925,7 @@ try {
     await typeCmd('f'); await typeCmd('r'); await typeCmd('5');
     await click(130, 70); assert.match(await histLine(), /circles.*not supported/);
     await click(15, 40); assert.match(await prompt(), /^Select the second line, arc or polyline segment/);
-    const hover = async () => { await cmdLine().focus(); const p = await at(36, 28); await page.mouse.move(p.x, p.y); await frames(); };
+    const hover = () => hoverPreview(36, 28);
     await hover(); assert.equal(await t('mod-preview').count(), 3);
     await shotBoth('fillet-line-arc', hover);
     await click(36, 28);
@@ -8906,7 +8953,7 @@ try {
     addEntities(arcs, dxfArc(50, 50, 30, 0, 180), dxfArc(80, 50, 30, 0, 180));
     await openGrips(writeDxf(arcs), 'fillet-arc-arc.dxf'); const original = await savedDoc();
     await typeCmd('f'); await click(74, 68);
-    const arcHover = async () => { await cmdLine().focus(); const p = await at(56, 68); await page.mouse.move(p.x, p.y); await frames(); };
+    const arcHover = () => hoverPreview(56, 68);
     await arcHover(); assert.equal(await t('mod-preview').count(), 3);
     await shotBoth('fillet-arc-arc', arcHover); await click(56, 68);
     doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.equal(fieldOf(doc.entities[2], 40), 5);
@@ -8926,7 +8973,7 @@ try {
       assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the original polyline');
     };
     await typeCmd('f'); await typeCmd('r'); await typeCmd('10'); await click(60, 20);
-    const hover = async () => { await cmdLine().focus(); const p = await at(100, 65); await page.mouse.move(p.x, p.y); await frames(); };
+    const hover = () => hoverPreview(100, 65);
     await hover(); assert.equal(await t('mod-preview').count(), 1, 'the result previews as one polyline');
     assert.match(await t('mod-preview').getAttribute('d'), /A/);
     await shotBoth('fillet-polyline', hover); await click(100, 65);

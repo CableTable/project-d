@@ -3373,7 +3373,7 @@ function objMenu(e) {
 
 /** The command bar (cmdui.js): the log the app writes to, the floating bar, the fade, the F2 history and the echo button. */
 function buildCommand() {
-  ui.cmdUI = buildCmdUI({ commands: () => ownCommands, tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(ownCommands.find((x) => x.name === name)), canvas: () => ui.canvas, say: note });
+  ui.cmdUI = buildCmdUI({ commands: () => ownCommands, tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(ownCommands.find((x) => x.name === name)), canvas: () => ui.canvas, previewBounds, say: note });
   ui.hist = ui.cmdUI.hist; ui.prompt = ui.cmdUI.prompt; ui.cmd = ui.cmdUI.input;
   ui.keepMeas = h('button', { class: 'btn sm', type: 'button', hidden: true, 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
   ui.modAsk = h('span', { hidden: true, class: 'modask' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-yes', onclick: () => { if (modLive()) modAnswer(editable(), true); } }, 'Yes'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-no', onclick: () => { if (modLive()) modAnswer(editable(), false); } }, 'No'));
@@ -3776,6 +3776,18 @@ function hideNow(d) {
 }
 // the drawing canvas repaints once per frame, however often the view changes
 let paintQueued = 0;
+let canvasPreviewBounds = null;
+/** The shared preview layer: SVG tool paths plus the canvas ghost, all in canvas CSS pixels. */
+// shortcut: Dimension, Leader, Contour and Measure / Set length have no shared canvas bounds; include them when their renderer exposes a box.
+function previewBounds() {
+  const canvas = ui.canvas.getBoundingClientRect();
+  let bounds = canvasPreviewBounds;
+  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
+    const r = el.getBoundingClientRect();
+    if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
+  }
+  return bounds ? bounds.map((v, i) => v + (i < 2 ? -2 : 2)) : null;
+}
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
 function paintOverlay(gesture = false) {
@@ -3783,6 +3795,7 @@ function paintOverlay(gesture = false) {
   if (paintQueued) return;
   paintQueued = requestAnimationFrame(() => {
     paintQueued = 0;
+    canvasPreviewBounds = null;
     drawOvl();
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
@@ -3796,6 +3809,7 @@ function paintOverlay(gesture = false) {
       g.drawImage(snapCv, dx * dpr, dy * dpr, cw * r, chh * r);
       c.dataset.snap = '1';
       snapTimer = setTimeout(() => paintOverlay(), 120);
+      ui.cmdUI.place();
       return;
     }
     snap = null; c.dataset.snap = '';
@@ -3803,7 +3817,7 @@ function paintOverlay(gesture = false) {
     const d = curDoc();
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
-    if (d && d.cmp) { cmpPaint(c, d.cmp, base); return; }
+    if (d && d.cmp) { cmpPaint(c, d.cmp, base); ui.cmdUI.place(); return; }
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
@@ -3817,6 +3831,7 @@ function paintOverlay(gesture = false) {
           if (outside.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
+      ui.cmdUI.place();
       return;
     }
     const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur } : null);
@@ -3829,7 +3844,8 @@ function paintOverlay(gesture = false) {
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
     const move = state.entityDrag || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? state.mod.move : null);
-    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: move.slots, tint: cssVar('--selection', '#4f46e5') });
+    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+    ui.cmdUI.place();
     c.dataset.drawn = drawn || 0;
     if (heavy(performance.now() - t0, drawn || 0)) {
       snapCv = snapCv || document.createElement('canvas');

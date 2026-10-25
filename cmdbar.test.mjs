@@ -126,6 +126,28 @@ test('placeBar: 20 px right and below, flipped left / up at the edges, always in
   }
 });
 
+test('placeBar: avoidance tries corners in order, then the least overlap', () => {
+  const cursor = { x: 300, y: 300 }, size = { w: 100, h: 60 }, area = { w: 800, h: 600 };
+  const place = (avoid, corner = null) => CB.placeBar(cursor, size, area, 20, avoid, corner);
+  assert.deepEqual(place([0, 0, 50, 50]), { x: 320, y: 320, corner: 0 });
+  assert.deepEqual(place([310, 310, 500, 500]), { x: 320, y: 220, corner: 1 });
+  assert.deepEqual(place([310, 0, 500, 600]), { x: 180, y: 320, corner: 2 });
+  assert.deepEqual(place([250, 250, 600, 600]), { x: 180, y: 220, corner: 3 }, 'all overlap: left-above covers the least');
+  assert.deepEqual(place([0, 0, 340, 340]), { x: 320, y: 320, corner: 0 }, 'all overlap: right-below covers the least');
+  assert.equal(place([0, 0, 800, 600]).corner, 0, 'equal areas keep the specified order');
+  assert.equal(place([310, 310, 500, 500], 2).corner, 2, 'keep a clear sticky corner even when an earlier one is clear');
+  assert.equal(place([310, 310, 500, 500], 0).corner, 1, 'switch when the sticky corner overlaps');
+  assert.equal(place([0, 0, 50, 50], 3).corner, 3, 'a clear left-above corner stays');
+  assert.deepEqual(CB.placeBar(cursor, size, area, 20, null, 3), { x: 320, y: 320 }, 'no avoid ignores stickiness, preserving the old result');
+});
+
+test('placeBar: avoid candidates clamp at canvas edges, including an oversized box', () => {
+  const area = { w: 500, h: 300 }, avoid = [0, 0, 1, 1];
+  assert.deepEqual(CB.placeBar({ x: 495, y: 295 }, { w: 100, h: 60 }, area, 20, avoid), { x: 400, y: 240, corner: 0 });
+  assert.deepEqual(CB.placeBar({ x: 0, y: 0 }, { w: 100, h: 60 }, area, 20, [20, 20, 120, 80]), { x: 0, y: 0, corner: 3 }, 'least overlap is measured after clamping');
+  assert.deepEqual(CB.placeBar({ x: 5, y: 5 }, { w: 600, h: 400 }, area, 20, avoid), { x: 0, y: 0, corner: 0 });
+});
+
 test('history: filter, copy text, the last three fade', () => {
   const lines = [{ pre: 'Command:', ans: 'L', cls: 'cm' }, { pre: 'LINE Specify first point:', ans: '0,0' }, { pre: 'Opened a.dxf' }, { pre: 'Command:', ans: 'OFFSET', cls: 'cm' }];
   assert.equal(CB.filterLines(lines, 'line').length, 1);
