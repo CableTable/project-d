@@ -4566,7 +4566,16 @@ function deleteSelection() {
 }
 function undo(d) {
   if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }   // a Line with only its first point: nothing made to undo
-  const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; } restore(d, st); note('Undone'); if (state.draw) { renderCommand(); paintOverlay(); } }
+  const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
+  const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw.entities;
+  const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; }
+  restore(d, st);
+  if (m?.raw) {
+    if (copied && m.raw === raw && [...m.sel].every((i) => raw[i] === st.entities[i])) m.raw = d.raw.entities;
+    else { setTool('select'); note('Undone. Copy ended: drawing or source objects changed; start Copy again'); return; }
+  }
+  note('Undone'); if (state.draw) { renderCommand(); paintOverlay(); }
+}
 function redo(d) { const st = d.hist.redo(snapshotOf(d)); if (!st) { note('Nothing to redo'); return; } restore(d, st); note('Redone'); }
 
 /** Scales the whole drawing by s about the bottom-left of its extents, so it stays where it is on the sheet. */

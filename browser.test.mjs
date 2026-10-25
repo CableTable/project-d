@@ -8401,17 +8401,35 @@ try {
     assert.equal(await page.locator('nav.rail [data-tool=copy]').count(), 0);
     await typeCmd('0,0'); await typeCmd('10,-5');
     assert.match(await prompt(), /Target, dx,dy or distance:.*Enter ends/);
-    await typeCmd('20,15'); await page.keyboard.press('Enter');
-    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    await typeCmd('20,15');
     const twice = await savedDoc();
     assert.equal(twice.entities.length, 3, 'two placements add exactly two entities');
     assert.deepEqual(twice.entities[0], before.entities[0], 'the original stays unchanged');
     assert.deepEqual(twice.entities.slice(1).map(xy), [[30, 25], [40, 45]], 'both targets use the same base');
     assert.deepEqual((await histLabels()).slice(-2), ['Copy', 'Copy']);
     await blur(); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, twice.entities.slice(0, 2), 'Undo during Copy removes the last placement');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Copy');
+    assert.match(await prompt(), /Target, dx,dy or distance:/);
+    await click(60, 50);
+    const resumed = await savedDoc();
+    assert.equal(resumed.entities.length, 3, 'a click after Undo places another copy');
+    assert.deepEqual(resumed.entities.slice(0, 2), twice.entities.slice(0, 2));
+    assert.deepEqual(xy(resumed.entities[2]), [80, 80], 'Copy keeps the original base after Undo');
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    await blur(); await page.keyboard.press('Control+z');
     const once = await savedDoc();
     assert.deepEqual(once.entities, twice.entities.slice(0, 2), 'one Undo removes only the last copy');
     await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+
+    // Undo must end Copy if it removes one of this run's source objects.
+    await page.keyboard.press('Control+a'); await typeCmd('co'); await typeCmd('0,0'); await typeCmd('10,0');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await typeCmd('co'); await typeCmd('0,0'); await blur(); await page.keyboard.press('Control+z');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.match(await prompt(), /Copy ended: drawing or source objects changed/);
     assert.deepEqual((await savedDoc()).entities, before.entities);
 
     await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('0,0');
