@@ -3782,11 +3782,11 @@ let canvasPreviewBounds = null;
 function previewBounds() {
   const canvas = ui.canvas.getBoundingClientRect();
   let bounds = canvasPreviewBounds;
-  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
+  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-glow, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
-  return bounds ? bounds.map((v, i) => v + (i < 2 ? -2 : 2)) : null;
+  return bounds ? bounds.map((v, i) => v + (i < 2 ? -3 : 3)) : null;
 }
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
@@ -3957,6 +3957,9 @@ function attachCanvasEvents() {
     const mx = view.ox + p.x / view.scale, my = view.oy + p.y / view.scale;
     const [cx, cy] = cursorMm(mx, my, state.sheetH);
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
+  });
+  c.addEventListener('pointerleave', () => {
+    if (modLive() && state.mod.kind === 'trim') { state.mod.p = null; paintOverlay(); }
   });
   const end = () => { pan = null; c.classList.remove('panning'); };
   c.addEventListener('pointerup', (e) => {
@@ -5947,7 +5950,11 @@ function modOvl(d, out) {
     for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
     if (m.stage === 'cut' && m.p) {
       const e = modEntAt(d, m.p);
-      if (e && MD.canModify(e)) { addEnt(e, 'dr-guide'); const r = MD.trimEntity(e, trimEdges(d, m), m.p); if (r.ents) for (const k of r.ents) addEnt(k, 'dr-shape', 'mod-preview'); }
+      if (e && MD.canModify(e)) {
+        addEnt(e, 'dr-trim-glow', 'trim-glow');
+        const r = MD.trimEntity(e, trimEdges(d, m), m.p);
+        if (r.removed) addEnt(r.removed, 'dr-trim-cut', 'mod-preview');
+      }
     }
   } else if (m.stage === 'p1' || m.stage === 'p2' || m.stage === 'erase') {
     const a = m.p1, b = m.stage === 'erase' ? m.p2 : m.stage === 'p2' ? m.cur : null;

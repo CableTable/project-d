@@ -12,6 +12,7 @@ import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import * as GR from './web/grips.js';
+import { svgPath } from './web/draw.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
@@ -8286,7 +8287,7 @@ try {
     assert.match(await prompt(), /Click the part to cut away/);
     const mid = await at(120, 30);
     await page.mouse.move(mid.x, mid.y); await frames();
-    assert.equal(await t('mod-preview').count(), 2, 'the two pieces that stay show before the click');
+    assert.equal(await t('mod-preview').count(), 1, 'the piece that goes shows before the click');
     await click(120, 30);
     assert.equal(await entCount(), 4);
     let doc = await savedDoc();
@@ -8339,6 +8340,82 @@ try {
     assert.equal(doc.entities.filter((e) => e.type === 'CIRCLE').length, 0);
     await shotBoth('trim', async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=trim]').click(); await page.keyboard.press('Enter'); const p = await at(120, 30); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); });
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 78: Trim preview', async () => {
+    const workArea = async (name) => { await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frames(); };
+    await menuItem('View', 'Theme: light'); await workArea('Follow app');
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    const pale = { layer: 'Cut', tc: 0xd6dee6, lw: 5 };
+    addEntities(raw, dxfPoly([[20, 30], [120, 30], [220, 30]], pale),
+      dxfPoly([[80, 10], [160, 10], [160, 50], [80, 50]], { closed: true }), dxfLine(20, 70, 220, 70));
+    await openGrips(writeDxf(raw), 'trim-preview.dxf');
+    const before = await savedDoc(), h = (await sheetPx()).h;
+    const path = (ent) => svgPath(GR.shapeOf(ent, 1), h);
+    const hover = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const clear = async () => { assert.equal(await t('trim-glow').count(), 0); assert.equal(await t('mod-preview').count(), 0); };
+    await typeCmd('tr'); await click(80, 40); await hover(120, 30); await clear();
+    assert.equal(await t('trim-edge').evaluate((el) => getComputedStyle(el).strokeWidth), '4px');
+    await page.keyboard.press('Enter');
+    assert.match(await prompt(), /Click the part to cut away/);
+    const show = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' });
+      await hover(120, 30);
+      await page.keyboard.type('1'); await frames();
+      assert.equal(await t('trim-glow').count(), 1, 'hover picks the pale polyline; ' + await prompt());
+      assert.equal(await t('trim-glow').getAttribute('d'), path(before.entities[0]), 'the whole pale object glows');
+      assert.equal(await t('mod-preview').getAttribute('d'), path(dxfPoly([[80, 30], [120, 30], [160, 30]])), 'only the interval between the nearest edges is red');
+      const style = await t('mod-preview').evaluate((el) => {
+        const c = getComputedStyle(el), canvas = getComputedStyle(document.querySelector('[data-testid=canvas]'));
+        return { stroke: c.stroke, width: c.strokeWidth, hot: canvas.getPropertyValue('--hot').trim(), selection: canvas.getPropertyValue('--selection').trim(), edgeOpacity: String(Number(canvas.getPropertyValue('--edge-opacity'))), bg: canvas.backgroundColor };
+      });
+      const rgbHex = (s) => '#' + s.match(/\d+/g).slice(0, 3).map((v) => Number(v).toString(16).padStart(2, '0')).join('');
+      assert.equal(rgbHex(style.stroke), style.hot); assert.equal(style.width, '3.6px');
+      assert.ok(contrastRatio(style.hot, rgbHex(style.bg)) >= 3, 'red is readable against the work area');
+      assert.deepEqual(await t('trim-glow').evaluate((el) => { const c = getComputedStyle(el); return [c.strokeWidth, c.strokeOpacity]; }), ['5.4px', '0.35']);
+      const edge = await t('trim-edge').evaluate((el) => { const c = getComputedStyle(el); return [c.stroke, c.strokeWidth, c.strokeOpacity]; });
+      assert.deepEqual([rgbHex(edge[0]), ...edge.slice(1)], [style.selection, '4px', style.edgeOpacity], 'cutting edges keep their blue and thickness');
+      const box = await t('cmd-bar').boundingBox(), glow = await t('trim-glow').boundingBox();
+      assert.ok(box.y + box.height < glow.y - 3 || box.y > glow.y + glow.height + 3 || box.x + box.width < glow.x - 3 || box.x > glow.x + glow.width + 3, 'command box stays clear of the whole glow');
+    };
+    await shotBoth('78-trim-preview', show);
+    await workArea('Dark'); await show();
+    await workArea('Follow app');
+    await hover(120, 65); await clear();
+    await hover(120, 70); assert.equal(await t('trim-glow').count(), 1); assert.equal(await t('mod-preview').count(), 0, 'no crossing: glow only');
+    await hover(120, 30); await t('ptab-objects').hover(); await frames(); await clear();
+    await hover(120, 30); await page.keyboard.press('Escape'); await frames(); await clear();
+    await typeCmd('tr'); await click(80, 40); await page.keyboard.press('Enter'); await hover(120, 30);
+    await click(120, 30);
+    const after = await savedDoc();
+    assert.deepEqual(after.entities.filter((e) => e.layer === 'Cut').map(path),
+      [dxfPoly([[20, 30], [80, 30]]), dxfPoly([[160, 30], [220, 30]])].map(path), 'click removes exactly the red interval');
+    assert.equal((await histLabels()).at(-1), 'Trim');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await hover(120, 30); await clear(); await click(120, 30);
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'locked objects cannot be previewed or cut');
+    await page.keyboard.press('Escape');
+
+    // Enter alone (all edges), each supported path kind, and the actual kept geometry after the click.
+    for (const [source, edges, pick, removed, kept] of [
+      [dxfLine(20, 30, 220, 30), [dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50)], [120, 30], dxfLine(80, 30, 160, 30), [dxfLine(20, 30, 80, 30), dxfLine(160, 30, 220, 30)]],
+      [dxfLine(20, 30, 220, 30), [dxfLine(80, 10, 80, 50)], [40, 30], dxfLine(20, 30, 80, 30), [dxfLine(80, 30, 220, 30)]],
+      [dxfArc(100, 100, 20, 0, 180), [dxfLine(100, 70, 100, 130)], [116, 112], dxfArc(100, 100, 20, 0, 90), [dxfArc(100, 100, 20, 90, 180)]],
+      [dxfCircle(100, 100, 20), [dxfLine(70, 100, 130, 100)], [100, 80], dxfArc(100, 100, 20, 180, 0), [dxfArc(100, 100, 20, 0, 180)]],
+      [dxfPoly([[80, 60], [100, 60, 1], [100, 100]]), [dxfLine(80, 80, 140, 80)], [116, 92], dxfPoly([[120, 80, Math.tan(Math.PI / 8)], [100, 100]]), [dxfPoly([[80, 60], [100, 60, Math.tan(Math.PI / 8)], [120, 80]])]],
+    ]) {
+      const doc = newDoc(4); addEntities(doc, source, ...edges);
+      await openGrips(writeDxf(doc), 'trim-preview-kinds.dxf'); await typeCmd('tr'); await page.keyboard.press('Enter');
+      await hover(...pick);
+      const height = (await sheetPx()).h, svg = (e) => svgPath(GR.shapeOf(e, 1), height);
+      assert.equal(await t('mod-preview').getAttribute('d'), svg(removed), source.type + ' removed preview');
+      await click(...pick);
+      assert.deepEqual((await savedDoc()).entities.slice(0, kept.length).map(svg), kept.map(svg), source.type + ' click agrees');
+      await page.keyboard.press('Escape');
+    }
+    await closeTabs(/trim-preview/);
   });
 
   await step('TODO 66a: Move', async () => {

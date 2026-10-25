@@ -5,7 +5,7 @@
 //
 //   canModify(ent)                     → can Offset / Trim take this entity? (LINE, ARC, CIRCLE, LWPOLYLINE in the plane)
 //   offsetEntity(ent, d, at)           → { ent } | { error }   the copy d away on the side of the point `at`; a polyline is joined with mitres
-//   trimEntity(ent, edges, pick)       → { ents } | { error }  what is left of ent when the part nearest `pick` between the cutting edges goes
+//   trimEntity(ent, edges, pick)       → { ents, removed } | { error }  the kept pieces and the piece under `pick` that goes
 //   mirrorEntity(ent, p1, p2)          → { ent } | { skip }    the reflection in the line p1 → p2 (text keeps reading the right way)
 //   mirrorShape(sh, p1, p2) / offsetShape(sh, d, at) / trimShape(sh, edgeShapes, pick) are the same on shapes.
 import { shapeOf, hasGrips, num, at as atCode, get, withValues } from './grips.js';
@@ -361,7 +361,7 @@ export function shapeOfPiece(segs, srcType) {
 }
 
 /**
- * What is left of a shape when the part under `pick` is cut away between the cutting edges (shapes): { shapes } | { error }.
+ * The kept shapes and removed shape under `pick`, sharing the same cutting interval: { shapes, removed } | { error }.
  * An open shape loses the stretch between the two crossings round the pick (up to its end when there is only one); a circle or closed
  * polyline needs two crossings and keeps the rest as one open piece.
  */
@@ -378,19 +378,21 @@ export function trimShape(sh, edges, pick) {
   cs = cs.filter((u, i) => i === 0 || u - cs[i - 1] > 1e-7);
   if (!cs.length) return { error: 'Nothing crosses it here: pick a part between cutting edges' };
   const up = closest(P, pick).u;
-  let pieces;
+  let pieces, removed;
   if (!P.closed) {
     const lo = cs.filter((u) => u <= up).pop(), hi = cs.find((u) => u > up);
     pieces = [];
     if (lo != null) pieces.push(subPath(P, 0, lo));
     if (hi != null) pieces.push(subPath(P, hi, n));
+    removed = subPath(P, lo ?? 0, hi ?? n);
   } else {
     if (cs.length < 2) return { error: 'A closed shape needs two cutting edges to trim it' };
     const lo = cs.filter((u) => u <= up).pop() ?? cs[cs.length - 1], hi = cs.find((u) => u > up) ?? cs[0];
     pieces = [subPath(P, hi, lo >= hi ? lo : lo + n)];
+    removed = subPath(P, lo, hi > lo ? hi : hi + n);
   }
   const shapes = pieces.map((p) => shapeOfPiece(p, P.type)).filter(Boolean);
-  return { shapes };
+  return { shapes, removed: shapeOfPiece(removed, P.type) };
 }
 
 // ---------------------------------------------------------------- entities
@@ -405,10 +407,10 @@ export function offsetEntity(ent, d, at) {
   return r.error ? r : { ent: rebuilt(r.shape, ent) };
 }
 
-/** What is left of an entity after the part under `pick` is cut off at the edges (entities): { ents } | { error }. */
+/** The kept entities and removed preview entity after cutting at the edges: { ents, removed } | { error }. */
 export function trimEntity(ent, edges, pick) {
   if (!canModify(ent)) return { error: 'Trim takes a line, arc, circle or polyline' };
   const shapes = edges.filter((e) => e !== ent && canModify(e)).map((e) => shapeOf(e, 1));
   const r = trimShape(shapeOf(ent, 1), shapes, pick);
-  return r.error ? r : { ents: r.shapes.map((sh) => rebuilt(sh, ent)) };
+  return r.error ? r : { ents: r.shapes.map((sh) => rebuilt(sh, ent)), removed: r.removed ? rebuilt(r.removed, ent) : null };
 }
