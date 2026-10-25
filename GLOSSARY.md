@@ -35,6 +35,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Compare snapshot**: A copy of a drawing tab, Parts library part or disk file taken when added to Compare. Later edits to the source do not change it; remove and re-add to refresh it. The list lasts only for that Compare tab and is not saved with a drawing. Where: `web/compare-list.js`.
 
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
+**Extend tool**: Lengthens a drawing line to the nearest boundary edge ahead: pick the boundary edges (Enter alone = every line, arc, circle and polyline), then click near the end to move; the other end stays. One Undo per extend; repeats until Esc. Modify menu, Home / Modify ribbons, EX / EXTEND. Arcs and polylines follow in TODO 66i. Where: `web/extend.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
 
 **Copy tool**: Places repeated copies of selected drawing objects at targets measured from one base point, preserving their properties and originals. Each placement is one Undo; Enter or Esc ends. Modify menu, Home / Modify ribbons, CO / COPY. Where: `web/move.js`, `web/app.js`; `DECISIONS.md`, Copy tool (TODO 66b). Avoid: In-app clipboard (Ctrl+C).
 

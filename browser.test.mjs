@@ -351,11 +351,7 @@ try {
       await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
       await tab('Home').click();
       assert.equal(await rb.getByRole('button', { name: 'Rotate', exact: true }).isEnabled(), true);
-      for (const label of ['Scale', 'Fillet']) assert.equal(await rb.getByRole('button', { name: label, exact: true }).isEnabled(), true);
-      for (const label of ['Extend']) {
-        const b = rb.getByRole('button', { name: label, exact: true });
-        assert.equal(await b.isDisabled(), true); assert.match(await b.getAttribute('title'), /coming/);
-      }
+      for (const label of ['Scale', 'Fillet', 'Extend']) assert.equal(await rb.getByRole('button', { name: label, exact: true }).isEnabled(), true);
       const canvasTop = (await q('canvas').boundingBox()).y;
       await p.keyboard.press('Control+a');
       const selection = await q('sel-count').textContent();
@@ -8722,6 +8718,47 @@ try {
     await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
     await typeCmd('sc'); assert.match(await prompt(), /Layer Cut is locked/); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.deepEqual((await savedDoc()).entities, lockedBefore.entities); await closeTabs(/scale/);
+  });
+
+  await step('TODO 66h: Extend a line', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    addEntities(raw, dxfLine(20, 20, 40, 20, { layer: 'Cut' }), dxfLine(80, 0, 80, 60), dxfLine(20, 70, 40, 70), dxfCircle(0, 20, 5));
+    await openGrips(writeDxf(raw), 'extend.dxf');
+    const before = await savedDoc(), coords = (e) => [10, 20, 11, 21].map((c) => fieldOf(e, c));
+    const undo = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+    };
+    await typeCmd('ex');
+    assert.equal(await prompt(), 'Select boundary edges (click adds or takes out), Enter = all:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
+    assert.equal(await page.locator('nav.rail [data-tool=extend]').count(), 0);
+    await click(80, 30); await frames(); assert.equal(await t('trim-edge').count(), 1);
+    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line to extend. Enter or Esc ends:');
+    const hover = async () => { await cmdLine().focus(); const p = await at(38, 20); await page.mouse.move(p.x, p.y); await frames(); };
+    await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended line is previewed');
+    await shotBoth('extend', hover);
+    await click(38, 20);
+    let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
+    assert.deepEqual(coords(doc.entities[0]), [20, 20, 80, 20], 'the picked end reaches the boundary, the other stays');
+    assert.equal(doc.entities[0].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Extend');
+    assert.match(await prompt(), /^Click near the end of a line/, 'Extend repeats');
+    await click(38, 70); assert.match(await histLine(), /No boundary ahead/);
+    assert.equal((await savedDoc()).entities.length, 4); await undo();
+    await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Extend');
+    await typeCmd('ex'); await page.keyboard.press('Enter'); await click(22, 20);
+    doc = await savedDoc(); assert.deepEqual(coords(doc.entities[0]), [5, 20, 40, 20], 'Enter alone: every object is a boundary; the near end moves');
+    await undo(); await page.keyboard.press('Escape');
+    for (const tab of ['Home', 'Modify']) {
+      await page.locator(`[data-ribbon-tab=${tab}]`).click();
+      const button = page.locator('.ribbon [data-panel=Modify]').getByRole('button', { name: 'Extend', exact: true });
+      assert.equal(await button.isEnabled(), true); await button.click(); assert.match(await prompt(), /^Select boundary edges/); await page.keyboard.press('Escape');
+    }
+    await menuItem('Modify', 'Extend'); assert.match(await prompt(), /^Select boundary edges/);
+    await page.keyboard.press('Enter');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await click(38, 20); assert.match(await histLine(), /nothing there/, 'a line on a locked layer is not extended');
+    assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/extend/);
   });
 
   await step('TODO 66e: Fillet two lines', async () => {

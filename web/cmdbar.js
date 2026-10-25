@@ -26,6 +26,7 @@ const TABLE = [
   ['nudge', 'Edit', 'Set the arrow-key Nudge step in mm', ['nu'], ''],
   ['offset', 'Edit', 'A parallel copy at a distance', ['o'], 'draw'],
   ['trim', 'Edit', 'Cut objects back to cutting edges', ['tr'], 'draw'],
+  ['extend', 'Edit', 'Extend lines to boundary edges', ['ex'], 'draw'],
   ['mirror', 'Edit', 'Mirror objects about a line', ['mi'], 'draw'],
   ['contour', 'Edit', 'Offset a closed outline in steps', ['ct'], 'draw'],
   ['trace', 'Edit', 'Trace a picture into closed outlines', ['tb'], 'draw'],

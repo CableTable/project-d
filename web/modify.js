@@ -72,7 +72,7 @@ function arcFrac(g, p) {
 }
 
 /** The points where two segments cross: [{ fs, ft, p }] (fractions along each). */
-function segInter(s, t) {
+export function segInter(s, t) {
   const gs = geo(s), gt = geo(t), out = [];
   const E = 1e-9;
   if (gs.line && gt.line) {
