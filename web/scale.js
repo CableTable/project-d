@@ -32,7 +32,8 @@ export function scaleEntities(raw, selection, base, factor, copy = false) {
       done.add(name);
       const local = e.type !== 'DIMENSION';
       let entities = b.entities.map((e) => one(e, local ? [0, 0] : anchor));
-      if (e.type === 'DIMENSION' || DIM_BLOCK.test(name)) entities = relabel(entities, factor);
+      // shortcut: ordinate measurements stay unchanged, recompute when DXF ordinate origins are supported.
+      if (e.type === 'DIMENSION' ? ((+field(r, 70) || 0) & 7) !== 6 : DIM_BLOCK.test(name)) entities = relabel(entities, factor);
       blocks = { ...blocks, [name]: { ...b, base: local ? b.base.map((v) => v * factor) : b.base, entities } };
     }
     return { ...e, r, kids: e.kids?.map((kid) => scaleRecord(kid.type, kid, anchor, factor,
@@ -93,7 +94,7 @@ function scaleRecord(type, r, base, factor, flip) {
     for (let k = 0; k < r.c.length; k++) {
       const code = r.c[k];
       if (pts.includes(code) || vec.includes(code)) pair(k, vec.includes(code));
-      else if (lens.includes(code) && !(type === 'DIMENSION' && code === 42 && [2, 5].includes((+field(r, 70) || 0) & 7))) length(k);
+      else if (lens.includes(code) && !(type === 'DIMENSION' && code === 42 && [2, 5, 6].includes((+field(r, 70) || 0) & 7))) length(k);
     }
     if (type === 'INSERT' && !DIM_BLOCK.test(field(r, 2)) && !LDR_BLOCK.test(field(r, 2))) {
       for (const code of [41, 42, 43]) set(code, (+(field(r, code) || 1) || 1) * factor);

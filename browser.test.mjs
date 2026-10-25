@@ -7010,6 +7010,7 @@ try {
     await t('cmp-run').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=cmp-count]').textContent === '1 difference');
     assert.equal(await t('cmp-stale').isVisible(), false);
+    await t('cmp-glow').waitFor({ state: 'attached' });
     assert.equal(await t('cmp-glow').count(), 1);
     assert.match(await t('cmp-diff').textContent(), /0\.[56]\d mm/);
     assert.match(await t('cmd-hist').textContent(), /COMPARE.*plate-b\.dxf \(red\) vs plate-c\.dxf \(blue\).*tolerance 0\.1 mm.*1 difference/);
@@ -8660,8 +8661,12 @@ try {
     assert.equal(await page.locator('nav.rail [data-tool=scale]').count(), 0);
     await typeCmd('1,'); assert.match(await histLine(), /I do not understand/);
     await click(20.2, 30.2); assert.match(await prompt(), /^Scale factor:/);
-    for (const invalid of ['0', '-2', 'abc', 'NaN', 'Infinity']) {
+    for (const invalid of ['0', '-2', '1,', '1e309']) {
       await typeCmd(invalid); assert.match(await histLine(), /I do not understand.*number above 0/);
+      assert.match(await prompt(), /^Scale factor:/); assert.deepEqual((await savedDoc()).entities, before.entities);
+    }
+    for (const word of ['abc', 'NaN', 'Infinity']) {
+      await typeCmd(word); assert.match(await histLine(), /Unknown command:/);
       assert.match(await prompt(), /^Scale factor:/); assert.deepEqual((await savedDoc()).entities, before.entities);
     }
     await t('tog-snap').click();
@@ -8689,6 +8694,13 @@ try {
       await typeCmd('sc'); if (stage === 'factor') { await typeCmd('20,30'); await typeCmd('c'); }
       await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
       assert.deepEqual((await savedDoc()).entities, before.entities, `Esc at ${stage} makes no edit`);
+    }
+    for (const stage of ['base', 'factor']) for (const [word, tool] of [['L', 'Line'], ['MV', 'Move']]) {
+      await page.keyboard.press('Control+a'); await typeCmd('sc');
+      assert.equal(await prompt(), 'Base point:');
+      if (stage === 'factor') { await typeCmd('20,30'); assert.match(await prompt(), /^Scale factor:/); }
+      await typeCmd(word); assert.equal(await t('tool-chip').textContent(), `Tool: ${tool}`, `${word} starts ${tool} at the ${stage} prompt`);
+      assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape');
     }
     // Select after starting, then set the factor by its drawing-unit distance (3,4 gives 5).
     await page.keyboard.press('Escape'); await typeCmd('sc'); await page.keyboard.press('Enter'); assert.match(await histLine(), /pick at least one/);
@@ -8737,12 +8749,26 @@ try {
     assert.equal(doc.entities[3].type, 'ARC'); assert.deepEqual([10, 20, 40, 50, 51].map((c) => fieldOf(doc.entities[3], c)), [55, 25, 5, 270, 0]);
     assert.equal(doc.entities[1].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Fillet');
     assert.match(await prompt(), /^Select the first line or arc/, 'Fillet repeats'); await undo();
-    await page.mouse.move(0, 0); await click(40, 20); await click(60, 40, { shift: true });
+    await page.mouse.move(0, 0); await click(40, 20);
+    await page.keyboard.down('Shift'); await page.mouse.move(hover.x, hover.y); await frames();
+    assert.equal(await t('mod-preview').count(), 2, 'Shift previews two sharp lines, with no arc');
+    const sharpPreview = await t('mod-preview').evaluateAll((paths) => paths.map((p) => p.getAttribute('d')));
+    assert.ok(sharpPreview.every((d) => !/A/i.test(d)));
+    await page.keyboard.up('Shift'); await page.mouse.move(hover.x, hover.y + 1); await frames();
+    assert.equal(await t('mod-preview').count(), 3, 'releasing Shift restores the saved radius preview');
+    await click(60, 40, { shift: true });
     doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.deepEqual(coords(doc.entities[0]), [20, 20, 60, 20]); await undo();
     await click(40, 20); await click(40, 70); assert.match(await histLine(), /parallel/);
     await page.keyboard.press('Escape'); assert.match(await prompt(), /^Select the first line or arc/);
     await typeCmd('r'); await typeCmd('100'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /too big/);
     assert.deepEqual((await savedDoc()).entities, before.entities); assert.equal(await page.evaluate(() => localStorage.getItem('pd-fillet')), '100');
+    assert.equal(await t('mod-preview').count(), 0, 'oversized saved radius has no preview');
+    await page.keyboard.down('Shift'); await page.mouse.move(hover.x, hover.y + 1); await frames();
+    assert.deepEqual(await t('mod-preview').evaluateAll((paths) => paths.map((p) => p.getAttribute('d'))), sharpPreview, 'Shift still previews the sharp corner with an oversized saved radius');
+    await page.keyboard.up('Shift'); await click(60, 40, { shift: true });
+    doc = await savedDoc(); assert.equal(doc.entities.length, 3);
+    assert.deepEqual(coords(doc.entities[0]), [20, 20, 60, 20]); assert.deepEqual(coords(doc.entities[1]), [60, 20, 60, 60]);
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-fillet')), '100'); await undo();
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     await typeCmd('f'); await typeCmd('r'); assert.equal(await prompt(), 'Fillet radius <100>:', 'the radius is remembered'); await typeCmd('5');
     await page.keyboard.press('Escape');

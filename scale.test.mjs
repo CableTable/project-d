@@ -104,6 +104,21 @@ test('Scale every kept dimension style, text position and height; angles keep th
   }
 });
 
+test('Scale ordinate geometry without multiplying its coordinate measurement or label', () => {
+  for (const kind of [6, 38, 70, 102]) for (const s of [2, .5]) for (const copy of [false, true]) {
+    const raw = W.newDoc(); W.addBlock(raw, '*D1', [W.line(12, 14, 18, 20), W.text(12, 14, 3, '12.00')]);
+    W.addEntities(raw, make('DIMENSION', [[2, '*D1'], ...pts, [13, 12], [23, 14], [70, kind], [42, 12]]));
+    const before = structuredClone(raw), next = scaleEntities(raw, new Set([0]), base, s, copy), dim = next.entities[copy ? 1 : 0];
+    close(value(dim, 42), 12);
+    close(value(dim, 13), scaled([12, 14], s)[0]); close(value(dim, 23), scaled([12, 14], s)[1]);
+    const name = dim.r.v[dim.r.c.indexOf(2)], block = next.blocks[name];
+    assert.equal(block.entities[1].r.v[block.entities[1].r.c.indexOf(1)], '12.00');
+    close(value(block.entities[0], 10), scaled([12, 14], s)[0]); close(value(block.entities[1], 40), 3 * s);
+    assert.deepEqual(raw, before); assert.deepEqual(next.blocks['*D1'], before.blocks['*D1']);
+    if (copy) assert.deepEqual(next.entities[0], before.entities[0]);
+  }
+});
+
 test('Scale repeated points, missing y, reflected OCS, attributes, implicit insert factors and invalid input', () => {
   const raw = W.newDoc(); W.addEntities(raw, W.lwpoly([[12, 14, .5], [18, 20, -.25]]), make('POINT', [[10, 12]]), { ...W.arc(-12, 14, 8, 10, 50), flip: true }, W.insert('Part', 12, 14));
   raw.entities[3].kids = [make('ATTRIB', [...pts, [40, 5], [1, 'Attribute']]).r];

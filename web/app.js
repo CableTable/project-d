@@ -5661,6 +5661,7 @@ function modTyped(d, raw) {
       const factor = scaleFactor(raw);
       if (factor != null) { transformDo(d, factor); return true; }
     }
+    if (DR.parseInput(raw).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'a number above 0'}`); return true;
   }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
