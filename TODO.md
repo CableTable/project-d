@@ -140,7 +140,7 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
     67a. Snap a dragged part's edges and centre to the sheet's edges and centre with a thin alignment guide, reusing guide tolerances and testing placement, Esc and undo in unit and browser tests.
     67b. (after 67a) Snap dragged parts to other visible parts' edges and centres with alignment guides, deterministic candidate choice and unit / browser checks for rotated parts and existing guide interactions.
     67c. (after 67b) Show the relevant edge-to-edge gap in mm beside the active placement guide, with unit tests for gap calculations and browser checks for cleanup on drop or Esc.
-68. **Snap per type** (M): a popover on the SNAP chip with a tick box per type; add intersection and quadrant (perpendicular, tangent later); the type's name beside the marker (AutoCAD Object Snap).
+68. **Snap per type** (M): a popover on the SNAP chip with a tick box per type; add intersection and quadrant (perpendicular, tangent later); the type's name beside the marker (AutoCAD Object Snap). **S23 (his order 2026-10-25): second after 78; includes the perpendicular snap of ticket T56 (its grill answers in support/tickets.md T56), on by default.**
     68a. Filter the existing snap types through tick boxes on the SNAP chip and show the winning type beside its marker, preserving the master toggle with unit and keyboard / browser tests.
     68b. (after 68a) Add intersection snaps for line / polyline segments to the picker and marker, with crossing / parallel / visibility unit cases and a browser drawing flow.
     68c. (after 68b) Add line / arc and arc / arc intersection snaps, including circle and bulged-polyline segments, with tangent / finite-sweep unit cases and browser checks.
@@ -171,7 +171,7 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
 
 From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/Sp3eoq15FKgsVFQpxmpPd7; his picks):
 77. **Layer search box** (S): a small search box above the Layers list and the Objects tree; matches show, the rest hide (QCAD forum, 7 Oct 2026).
-78. **Trim preview** (M): while the pointer is over a segment in Trim, draw the part that would go in faint red; the preview must match the result (LibreCAD #2632, #2647).
+78. **Trim preview** (M): while the pointer is over a segment in Trim, draw the part that would go in faint red; the preview must match the result (LibreCAD #2632, #2647). **= ticket T54 (his grill answers there: red piece to cut, faint glow on the hovered line, cutting edges stay blue). S23: next after 144.**
     78a. Preview the portion of a hovered LINE that Trim would remove in faint red by sharing the trim calculation, with unit and browser checks for selected edges, all edges, no cut and locked layers.
     78b. (after 78a) Preview removed portions of arcs, circles and polylines through that same calculation, with geometry and browser checks for bulges, multiple intersections and click-to-result agreement.
     78c. (after 78b) Clear or recompute Trim's preview on pointer leave, Esc, boundary changes, pan / zoom and undo, with focused browser cases that prevent stale red geometry.
@@ -256,6 +256,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 144. **Ctrl+C on layout tabs** (his ask 2026-10-24, S, tab parity survey).
 145. ✅ **Exe test v0.1.95 leftovers** (S, bugs, Bishop-test 2026-10-25): (a) Guides clears its invalid border and aria-invalid when edited or cleared, in the panel and ribbon; (b) panel widths round to whole px for dragging, keyboard resizing and restored settings; browser check covers a fractional drag at 125% scaling, saved width and reload; (c) Move / Copy already sample the cursor synchronously on pointermove, before Enter uses it; browser checks now type "25", jump once to a different direction and press Enter without waiting for a frame. Rotate / Scale parse typed degrees / factor directly; (d) ✅ keep the Part context tab last, after Output, as AutoCAD context tabs (decision only). Report: `runs21/exe-report.txt`.
 146. ✅ **Floating command box covers the tool preview** (S, seen by both builders 2026-10-25 in the 66g / 66h light screenshots): the box that follows the cursor sits over the preview line of Extend / Fillet; offset it away from the preview or the pick point.
+147. **Contour on a layout part** (M, ticket T53; grill answers in support/tickets.md T53): select placed parts on a layout, run `contour` / `co`; outer outline only; each part its own contour, grouped with it. Running it again on a part replaces that part's contour (one undo). S23 order: after 68.
+148. **Colour tools** (L, ticket T55; grill answers in support/tickets.md T55), one ticket each, in order: (a) colour picker dialog (HSB / RGB / CMYK / hex), (b) swatch strip with the last 12 colours, (c) Fill tool and Eyedropper, (d) screen colour readout. S23 order: after 147.
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
