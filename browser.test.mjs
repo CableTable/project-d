@@ -8761,6 +8761,21 @@ try {
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/extend/);
   });
 
+  await step('TODO 66h: Extend with an arc boundary', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 50, 40, 50), dxfArc(80, 50, 20, 90, 270));
+    await openGrips(writeDxf(raw), 'extend-arc.dxf'); const before = await savedDoc();
+    await typeCmd('ex'); await click(60, 50); await page.keyboard.press('Enter'); await click(38, 50);
+    const doc = await savedDoc();
+    assert.deepEqual([10, 20, 11, 21].map((c) => fieldOf(doc.entities[0], c)), [20, 50, 60, 50]);
+    assert.deepEqual(doc.entities[1], before.entities[1], 'the arc boundary stays unchanged');
+    assert.equal((await histLabels()).at(-1), 'Extend');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the line');
+    await page.keyboard.press('Escape'); await closeTabs(/extend/);
+  });
+
   await step('TODO 66e: Fillet two lines', async () => {
     await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
     const raw = newDoc(4); addLayer(raw, 'Cut');
@@ -8893,12 +8908,20 @@ try {
     assert.ok(Math.abs(vs[1].b - Math.tan(Math.PI / 8)) < 1e-6, 'Save retains the inserted bulge and vertex count');
     await page.keyboard.press('Escape'); await shotBoth('fillet-polyline-result'); await typeCmd('f');
     assert.equal((await histLabels()).at(-1), 'Fillet'); await undo();
+    const history = await histLabels();
     await click(60, 20); await hover(); await page.keyboard.down('Shift'); await hover();
     assert.equal(await t('mod-preview').count(), 1); assert.doesNotMatch(await t('mod-preview').getAttribute('d'), /A/);
-    await page.keyboard.up('Shift'); await click(100, 65, { shift: true });
-    assert.deepEqual((await savedDoc()).entities, before.entities); await undo();
+    await page.keyboard.up('Shift'); await click(100, 90, { shift: true });
+    assert.match(await histLine(), /Already a sharp corner/);
+    assert.match(await prompt(), /^Select the first/);
+    assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'Shift fillet keeps the tab saved');
+    assert.deepEqual(await histLabels(), history, 'Shift fillet adds no Undo step');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
     await typeCmd('r'); await typeCmd('0'); await click(60, 20); await click(100, 65);
-    assert.deepEqual((await savedDoc()).entities, before.entities); await undo();
+    assert.match(await histLine(), /Already a sharp corner/);
+    assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'radius 0 fillet keeps the tab saved');
+    assert.deepEqual(await histLabels(), history, 'radius 0 fillet adds no Undo step');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
     await typeCmd('r'); await typeCmd('1000'); await click(60, 20); await click(100, 65);
     assert.match(await histLine(), /too big/); assert.equal(await t('mod-preview').count(), 0); assert.deepEqual((await savedDoc()).entities, before.entities);
     await page.keyboard.press('Escape'); await typeCmd('r'); await typeCmd('10');
@@ -8910,6 +8933,23 @@ try {
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
     await typeCmd('f'); await click(60, 20); assert.match(await histLine(), /nothing there/); assert.match(await prompt(), /^Select the first/);
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/fillet/);
+  });
+
+  await step('TODO 66g: Fillet a legacy POLYLINE corner', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4), poly = entity('POLYLINE', [[66, 1], [70, 0]], { layer: 'Cut' });
+    poly.kids = [[20, 20], [100, 20], [100, 100]].map(([x, y]) => entity('VERTEX', [[10, x], [20, y], [30, 0], [42, 0]]).r);
+    addEntities(raw, poly);
+    await openGrips(writeDxf(raw), 'fillet-legacy.dxf'); const before = await savedDoc();
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('10'); await click(60, 20); await click(100, 65);
+    const doc = await savedDoc(), e = doc.entities[0];
+    assert.equal(doc.entities.length, 1); assert.equal(e.type, 'POLYLINE'); assert.equal(e.layer, 'Cut');
+    assert.deepEqual(e.kids.map((v) => [10, 20].map((c) => +v.v[v.c.indexOf(c)])), [[20, 20], [90, 20], [100, 30], [100, 100]]);
+    assert.ok(Math.abs(+e.kids[1].v[e.kids[1].c.indexOf(42)] - Math.tan(Math.PI / 8)) < 1e-6, 'Save retains the tangent bulge');
+    assert.equal((await histLabels()).at(-1), 'Fillet');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the legacy polyline');
+    await page.keyboard.press('Escape'); await closeTabs(/fillet/);
   });
 
   await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {

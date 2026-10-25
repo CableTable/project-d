@@ -5855,6 +5855,10 @@ function filletDo(d, ent, p, sharp) {
   if (!ent) { note('Fillet: nothing there. Click the second line, arc or polyline segment'); return; }
   const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor);
   if (r.error) { note(r.error); return; }
+  if (r.ents.length === 1 && r.ents[0] === m.ent) {
+    m.stage = 'obj'; m.ent = null;
+    note('Already a sharp corner. Pick the next first line, arc or polyline segment, or Esc ends'); paintOverlay(); return;
+  }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
   view.fitted = false;
   commit(d, { entities: [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(2)], blocks: d.raw.blocks }, 'Fillet');
