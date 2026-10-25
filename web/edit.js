@@ -872,24 +872,103 @@ export function resizeAbout(raw, sx, sy, ax, ay, space = 0, selection = null) {
   return { entities, blocks: raw.blocks, skipped: {} };
 }
 
-/** Translate selected records; sizes, direction vectors and shared block definitions stay unchanged. */
-export function moveEntities(raw, selection, dx, dy) {
+/** Translate selected records; sizes, direction vectors and shared blocks stay unchanged. Copy also isolates unshared native dimension blocks. */
+export function moveEntities(raw, selection, dx, dy, copy = false) {
   if (![dx, dy].every(Number.isFinite)) throw new Error('Move needs finite distances');
   const record = (type, r, x) => {
-    const pts = SPEC[type]?.pts;
-    if (!pts || type === 'DIMENSION') throw new Error('Cannot move ' + type);
+    if (type === 'HATCH') return moveHatch(r, x, dy);
+    if (type === 'MLEADER' || type === 'MULTILEADER') return moveMleader(r, x, dy);
+    const pts = ['ACAD_TABLE', 'WIPEOUT', 'IMAGE', 'VIEWPORT'].includes(type) ? [10] : SPEC[type]?.pts;
+    if (!pts) throw new Error('Cannot move ' + type);
     return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
   };
-  return { entities: raw.entities.map((e, i) => {
-    if (!selection.has(i)) return e;
+  let blocks = raw.blocks, blockRefs;
+  const movedDims = new Map();
+  const countRefs = (entities) => {
+    for (const e of entities) if (['INSERT', 'DIMENSION', 'ACAD_TABLE'].includes(e.type)) {
+      const name = fieldOf(e.r, 2); blockRefs.set(name, (blockRefs.get(name) || 0) + 1);
+    }
+  };
+  const one = (e) => {
     const x = e.flip && OCS.has(e.type) ? -dx : dx;
-    return { ...e, r: record(e.type, e.r, x), kids: e.kids?.map((kid) => record(kid.type, kid, x)) };
-  }), blocks: raw.blocks };
+    let r = record(e.type, e.r, x);
+    if (e.type === 'DIMENSION') {
+      const name = fieldOf(e.r, 2), b = raw.blocks[name];
+      if (b && !b.xref) {
+        if (!blockRefs) {
+          blockRefs = new Map();
+          countRefs(raw.entities);
+          for (const block of Object.values(raw.blocks)) countRefs(block.entities);
+        }
+        let own = movedDims.get(name);
+        if (!own) {
+          own = name;
+          if (copy || blockRefs.get(name) > 1) {
+            let n = 1;
+            while (blocks['*D' + n]) n++;
+            own = '*D' + n;
+            countRefs(b.entities);       // The clone adds references before its nested dimensions move.
+          }
+          movedDims.set(name, own);
+          // Native dimensions draw their block in world coordinates; isolate shared blocks before moving it.
+          blocks = { ...blocks, [own]: b };
+          const entities = b.entities.map(one);
+          blocks = { ...blocks, [own]: { ...b, entities } };
+        }
+        r = { ...r, v: r.v.map((v, k) => r.c[k] === 2 ? own : v) };
+      }
+    }
+    return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, OCS.has(kid.type) ? (+fieldOf(kid, 230) < 0 ? -dx : dx) : x)) };
+  };
+  const entities = raw.entities.map((e, i) => selection.has(i) ? one(e) : e);
+  return { entities, blocks };
+}
+
+/** Boundary points and pattern origins move; ellipse axes, pattern spacing and radii stay. */
+function moveHatch(r, dx, dy) {
+  let stage = 'head', flags = 0, edge = 0;
+  const v = r.v.map((v, k) => {
+    const c = r.c[k];
+    if (c === 91 && stage === 'head') stage = 'paths';
+    else if (c === 75 && stage === 'paths') stage = 'pattern';
+    else if (c === 98) stage = 'seed';
+    else if (stage === 'paths') {
+      if (c === 92) { flags = +v; edge = 0; }
+      else if (c === 72 && !(flags & 2)) edge = +v;
+      else if (c === 10 || c === 11 && edge !== 3) return text(+v + dx);
+      else if (c === 20 || c === 21 && edge !== 3) return text(+v + dy);
+    } else if (stage === 'pattern') {
+      if (c === 43) return text(+v + dx);
+      if (c === 44) return text(+v + dy);
+    } else if (stage === 'seed') {
+      if (c === 10) return text(+v + dx);
+      if (c === 20) return text(+v + dy);
+    }
+    return v;
+  });
+  return { ...r, v };
+}
+
+function moveMleader(r, dx, dy) {
+  const stack = [];
+  return { ...r, v: r.v.map((v, k) => {
+    const c = r.c[k], s = v.trim();
+    if (c === 300 && s === 'CONTEXT_DATA{') stack.push('ctx');
+    else if (c === 302 && s === 'LEADER{') stack.push('leader');
+    else if (c === 304 && s === 'LEADER_LINE{') stack.push('line');
+    else if ([301, 303, 305].includes(c) && s === '}') stack.pop();
+    const where = stack.at(-1);
+    // DXF reuses point codes for directions in other MLeader sections.
+    const pts = where === 'ctx' ? [10, 12, 15, 110] : where === 'leader' ? [10, 12, 13] : where === 'line' ? [10, 11, 12] : [];
+    if (pts.includes(c)) return text(+v + dx);
+    if (pts.includes(c - 10)) return text(+v + dy);
+    return v;
+  }) };
 }
 
 /** Append translated copies in drawing order, leaving the originals and shared blocks intact; copied dimensions and leaders get their own blocks. */
 export function copyEntities(raw, selection, dx, dy) {
-  const moved = moveEntities(raw, selection, dx, dy);
+  const moved = moveEntities(raw, selection, dx, dy, true);
   let blocks = moved.blocks;
   const copies = moved.entities.filter((_, i) => selection.has(i)).map((e) => {
     const name = e.type === 'INSERT' ? fieldOf(e.r, 2) : '';

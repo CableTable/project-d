@@ -19,9 +19,20 @@ test('every name and alias is lower case, and no command repeats a word on the s
 test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('L').name, 'line');
   assert.equal(CB.resolve(' Offset ').name, 'offset');
+  assert.equal(CB.resolve('mv').name, 'move');
+  assert.equal(CB.resolve('move').where, 'draw');
+  assert.equal(CB.resolve('m').name, 'measure');
+  assert.equal(CB.resolve('ct').name, 'contour');
+  assert.equal(CB.resolve('contour').name, 'contour');
+  assert.equal(CB.resolve('co'), null);
+  for (const tab of ['draw', 'layout', 'compare']) {
+    assert.equal(CB.resolve('nu', tab).name, 'nudge');
+    assert.equal(CB.resolve('nudge', tab).where, '');
+  }
   assert.equal(CB.resolve('r', 'draw').name, 'rectangle');
   assert.equal(CB.resolve('r', 'layout').name, 'rotate');
   assert.equal(CB.resolve('a', 'layout').name, 'apply');
+  assert.equal(CB.resolve('sr', 'layout').name, 'step');
   assert.equal(CB.resolve('a', 'draw').name, 'arc');
   assert.equal(CB.resolve('zzz'), null);
   assert.equal(CB.resolve(''), null);

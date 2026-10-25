@@ -30,7 +30,7 @@ test('move selection translates PDF geometry and text without changing sizes, ve
   assert.equal(next.entities[5], raw.entities[5]); assert.equal(next.blocks, raw.blocks);
   assert.deepEqual(raw, before, 'the undo snapshot is unchanged');
   assert.throws(() => E.moveEntities(raw, selected, NaN, 0), /finite/);
-  assert.throws(() => E.moveEntities({ ...raw, entities: [W.entity('HATCH', [])] }, new Set([0]), 1, 2), /Cannot move/);
+  assert.throws(() => E.moveEntities({ ...raw, entities: [W.entity('UNSUPPORTED', [])] }, new Set([0]), 1, 2), /Cannot move/);
 });
 
 test('copy selection appends moved copies in drawing order, preserves sources and shared blocks, and undoes once', () => {
@@ -51,7 +51,115 @@ test('copy selection appends moved copies in drawing order, preserves sources an
   assert.deepEqual(hist.undo(next).entities, before.entities);
   assert.equal(hist.canUndo, false, 'copy is one undo step');
   assert.throws(() => E.copyEntities(raw, selected, Infinity, 0), /finite/);
-  assert.throws(() => E.copyEntities({ ...raw, entities: [W.entity('HATCH', [])] }, new Set([0]), 1, 2), /Cannot move/);
+  assert.throws(() => E.copyEntities({ ...raw, entities: [W.entity('UNSUPPORTED', [])] }, new Set([0]), 1, 2), /Cannot move/);
+});
+
+test('Move and copy translate flipped polylines in world coordinates, including native dimension blocks', () => {
+  const poly = W.entity('POLYLINE', [[70, 0], [210, 0], [220, 0], [230, -1]]);
+  poly.kids = [[10, 4], [20, 8]].map(([x, y]) => W.entity('VERTEX', [[10, x], [20, y]]).r);
+  const lw = W.entity('LWPOLYLINE', [[90, 2], [70, 0], [10, 10], [20, 4], [10, 20], [20, 8], [210, 0], [220, 0], [230, -1]]);
+  for (const source of [poly, lw]) for (const inDim of [false, true]) {
+    const doc = W.newDoc(4);
+    if (inDim) {
+      W.addBlock(doc, '*D1', [source]);
+      W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [10, 0], [20, 0], [70, 0]]));
+    } else W.addEntities(doc, source);
+    const raw = D.readDxf(W.writeDxf(doc)), before = structuredClone(raw);
+    const a = drawingBoxMm(D.flatten(raw), 1);
+    for (const edit of [E.moveEntities, E.copyEntities]) {
+      const next = edit(raw, new Set([0]), 7, -3);
+      const moved = { ...raw, ...next, entities: [next.entities.at(-1)] };
+      const b = drawingBoxMm(D.flatten(moved), 1);
+      a.forEach((v, k) => near(b[k], v + (k % 2 ? -3 : 7), `${source.type}, dimension=${inDim}, ${edit.name}`));
+      assert.deepEqual(raw, before, 'the undo snapshot stays intact');
+      if (edit === E.copyEntities) assert.deepEqual(drawingBoxMm(D.flatten({ ...raw, ...next, entities: [next.entities[0]] }), 1), a);
+    }
+  }
+});
+
+test('Move translates fixture entity types, hatches, native dimensions and table blocks without changing their shape', () => {
+  for (const name of ['sample.dxf', 'wireframe.dxf', 'outline.dxf', 'table.dxf']) {
+    const { raw } = load(name), before = structuredClone(raw);
+    for (let i = 0; i < raw.entities.length; i++) {
+      const e = raw.entities[i];
+      const next = E.moveEntities(raw, new Set([i]), 7, -3);
+      const box = (doc, ent) => drawingBoxMm(D.flatten({ ...doc, entities: [ent] }), 1);
+      const a = box(raw, e), b = box({ ...raw, ...next }, next.entities[i]);
+      if (a && b && !e.ps) for (let k = 0; k < 4; k++) near(b[k], a[k] + (k % 2 ? -3 : 7), `${name}: ${e.type} bound ${k}`);
+      for (let j = 0; j < raw.entities.length; j++) if (j !== i) assert.equal(next.entities[j], raw.entities[j]);
+    }
+    assert.deepEqual(raw, before, 'original records and shared blocks are intact');
+  }
+});
+
+test('Move isolates shared native dimension blocks and keeps measurement and the other reference intact through Save', () => {
+  const raw = W.newDoc(4);
+  W.addBlock(raw, '*D1', [W.line(0, 0, 10, 0), W.text(5, 1, 2, '10')]);
+  const dim = W.entity('DIMENSION', [[2, '*D1'], [10, 5], [20, 5], [11, 5], [21, 1], [70, 0], [13, 0], [23, 0], [14, 10], [24, 0], [42, 10]]);
+  W.addEntities(raw, [dim, structuredClone(dim)]);
+  const next = E.moveEntities(raw, new Set([0]), 7, -3), field = (e, c) => e.r.v[e.r.c.indexOf(c)];
+  assert.equal(next.blocks['*D1'], raw.blocks['*D1']);
+  assert.equal(next.entities[1], raw.entities[1]);
+  assert.notEqual(field(next.entities[0], 2), '*D1');
+  const saved = D.readDxf(W.writeDxf({ ...raw, ...next })), e = saved.entities[0];
+  near(+field(e, 42), 10); near(+field(e, 13), 7); near(+field(e, 23), -3);
+  near(+field(saved.blocks[field(e, 2)].entities[0], 10), 7);
+  const hist = E.createHistory(); hist.push(raw, 'Move');
+  assert.deepEqual(hist.undo(next), raw);
+});
+
+test('Move reuses an unshared native dimension block; copy and nested references keep the source block', () => {
+  const raw = W.newDoc(4);
+  W.addBlock(raw, '*D1', [W.line(0, 0, 10, 0)]);
+  W.addEntities(raw, W.entity('DIMENSION', [[2, '*D1'], [10, 0], [20, 0], [70, 0]]));
+  const before = structuredClone(raw), selected = new Set([0]), field = (e, c) => e.r.v[e.r.c.indexOf(c)];
+  let next = raw;
+  for (let i = 1; i <= 3; i++) {
+    next = { ...raw, ...E.moveEntities(next, selected, 7, -3) };
+    assert.deepEqual(Object.keys(next.blocks), ['*D1']);
+    near(+field(next.blocks['*D1'].entities[0], 10), 7 * i);
+  }
+  assert.deepEqual(Object.keys(D.readDxf(W.writeDxf(next)).blocks).filter((name) => /^\*D\d+$/.test(name)), ['*D1']);
+  const copied = E.copyEntities(raw, selected, 7, -3);
+  assert.equal(copied.blocks['*D1'], raw.blocks['*D1']);
+  assert.deepEqual(Object.keys(copied.blocks), ['*D1', '*D2']);
+  near(+field(copied.blocks['*D2'].entities[0], 10), 7);
+  assert.deepEqual(raw, before);
+  W.addBlock(raw, 'Part', [W.insert('*D1', 0, 0)]);
+  W.addEntities(raw, W.insert('Part', 0, 0));
+  const shared = E.moveEntities(raw, selected, 7, -3);
+  assert.equal(shared.blocks['*D1'], raw.blocks['*D1']);
+  assert.equal(shared.blocks.Part, raw.blocks.Part);
+  assert.ok(shared.blocks['*D2']);
+  delete raw.blocks.Part;
+  W.addBlock(raw, 'Outer', [raw.entities[0]]);
+  const outer = W.entity('DIMENSION', [[2, 'Outer'], [10, 0], [20, 0], [70, 0]]);
+  const nested = E.moveEntities({ ...raw, entities: [outer, structuredClone(outer)] }, selected, 7, -3);
+  assert.equal(nested.blocks.Outer, raw.blocks.Outer);
+  assert.equal(nested.blocks['*D1'], raw.blocks['*D1'], 'cloning Outer must also isolate its nested dimension');
+  const movedOuter = nested.blocks[field(nested.entities[0], 2)];
+  near(+field(nested.blocks[field(movedOuter.entities[0], 2)].entities[0], 10), 7);
+});
+
+test('Move keeps hatch ellipse axes and pattern spacing, multileader directions and wipeout vectors', () => {
+  const hatch = W.entity('HATCH', [[10, 0], [20, 0], [91, 1], [92, 1], [93, 1], [72, 3], [10, 5], [20, 6], [11, 3], [21, 4], [40, .5], [75, 0], [78, 1], [43, 1], [44, 2], [45, 3], [46, 4], [98, 1], [10, 5], [20, 6]]);
+  const ml = W.entity('MULTILEADER', [[300, 'CONTEXT_DATA{'], [10, 30], [20, 20], [304, 'NOTE'], [12, 31], [22, 22], [13, 1], [23, 0], [302, 'LEADER{'], [10, 30], [20, 20], [11, 1], [21, 0], [304, 'LEADER_LINE{'], [10, 10], [20, 5], [305, '}'], [303, '}'], [301, '}']]);
+  const wipe = W.entity('WIPEOUT', [[10, 5], [20, 6], [11, 3], [21, 0], [12, 0], [22, 4], [14, -.5], [24, -.5], [14, .5], [24, .5]]);
+  const ctxEnd = ml.r.c.indexOf(302);
+  ml.r.c.splice(ctxEnd, 0, 14, 24, 15, 25, 110, 120, 111, 121);
+  ml.r.v.splice(ctxEnd, 0, '0', '0', '7', '8', '1', '2', '1', '0');
+  const raw = { ...W.newDoc(4), entities: [hatch, ml, wipe] };
+  const next = E.moveEntities(raw, new Set([0, 1, 2]), 7, -3), f = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+  const h = next.entities[0];
+  near(f(h, 10), 0, 'hatch elevation stays'); near(f(h, 11), 3); near(f(h, 21), 4);
+  near(f(h, 43), 8); near(f(h, 44), -1); near(f(h, 45), 3); near(f(h, 46), 4);
+  for (const [code, expected] of [[12, 38], [22, 19], [13, 1], [23, 0], [11, 1], [21, 0], [14, 0], [24, 0], [15, 14], [25, 5], [110, 8], [120, -1], [111, 1], [121, 0]]) near(f(next.entities[1], code), expected);
+  near(f(next.entities[2], 10), 12); near(f(next.entities[2], 20), 3); near(f(next.entities[2], 11), 3); near(f(next.entities[2], 24), -.5);
+  for (const i of [1, 2]) {
+    const a = drawingBoxMm(D.flatten({ ...raw, entities: [raw.entities[i]] }), 1);
+    const b = drawingBoxMm(D.flatten({ ...raw, entities: [next.entities[i]] }), 1);
+    for (let k = 0; k < 4; k++) near(b[k], a[k] + (k % 2 ? -3 : 7));
+  }
 });
 
 test('flatten tells each item its entity (a block\'s contents: the INSERT)', () => {

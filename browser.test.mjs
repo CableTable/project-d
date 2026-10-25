@@ -16,6 +16,16 @@ import { COMMANDS } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 
+// WCAG relative luminance; opacity composites drawing feedback onto its background.
+function contrastRatio(foreground, background, opacity = 1) {
+  const rgb = (hex) => hex.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16) / 255);
+  const bg = rgb(background), fg = rgb(foreground).map((c, i) => c * opacity + bg[i] * (1 - opacity));
+  const luminance = (channels) => channels.map((c) => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4)
+    .reduce((sum, c, i) => sum + c * [.2126, .7152, .0722][i], 0);
+  const a = luminance(fg), b = luminance(bg);
+  return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+}
+
 const PORT = Number(process.env.TEST_PORT) || Number(process.argv[2]) || 5181;   // TEST_PORT or `npm run test:browser -- 5291`
 const URL_ = `http://localhost:${PORT}/`;
 const server = spawn(process.execPath, ['serve.mjs', String(PORT)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(PORT) } });
@@ -35,6 +45,32 @@ function chromePath() {
   if (process.env.CHROME) return process.env.CHROME;
   const local = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
   return existsSync(local) && !process.env.CI ? local : undefined;
+}
+
+// Older feature flows use controls now spread across docker tabs. Navigate with the UI
+// before an action; visibility assertions still inspect the current screen unchanged.
+function panelControl(page, locator) {
+  return new Proxy(locator, { get(target, key) {
+    if (['locator', 'first', 'last', 'nth', 'filter', 'getByRole', 'getByText'].includes(key)) return (...args) => panelControl(page, target[key](...args));
+    if (['click', 'fill', 'check', 'uncheck', 'selectOption', 'focus', 'press', 'waitFor'].includes(key)) return async (...args) => {
+      if (key === 'waitFor' && ['hidden', 'detached', 'attached'].includes(args[0]?.state)) return target[key](...args);
+      const { panel, pane } = await target.evaluate((el) => ({ panel: !!el.closest('aside.panel'), pane: el.closest('[data-docker]')?.dataset.docker }));
+      if (panel && await page.locator('[data-testid=panel-show]').isVisible()) await page.locator('[data-testid=panel-show]').click();
+      if (pane) {
+        const tab = page.locator(`[data-tab=${pane}]`);
+        if (await tab.getAttribute('aria-selected') !== 'true') await tab.click();
+        const sections = await target.evaluate((el) => {
+          const keys = [];
+          for (let p = el.parentElement; p; p = p.parentElement) if (p.classList.contains('docker-folded') && !p.querySelector('.section-toggle')?.contains(el)) keys.unshift(p.dataset.section);
+          return keys;
+        });
+        for (const section of sections) await page.locator(`[data-section="${section}"] .section-toggle`).first().click();
+      }
+      return target[key](...args);
+    };
+    const value = target[key];
+    return typeof value === 'function' ? value.bind(target) : value;
+  } });
 }
 
 const base = { sheetW: 1000, sheetH: 700, gripTop: 0, gripRight: 0, gripBottom: 30, gripLeft: 0, partW: 120, partH: 80, gapX: 5, gapY: 5, rotate: '0', align: 'centre' };
@@ -63,7 +99,16 @@ try {
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(URL_);
   await page.waitForSelector('[data-testid=count]', { state: 'attached' });
-  const t = (id) => page.locator(`[data-testid=${id}]`);
+  const t = (id) => panelControl(page, page.locator(`[data-testid=${id}]`));
+  const layoutTab = () => page.locator('[data-ribbon-tab=Layout]').click();
+  const partTab = () => page.locator('[data-ribbon-tab=Part]').click();
+  // Display toggles moved from the right panel to View in TODO 110b.
+  const ribbonToggle = (name) => {
+    const button = async () => { await page.locator('[data-ribbon-tab=View]').click(); return page.locator('.ribbon-body').getByRole('button', { name, exact: true }); };
+    const checked = async () => (await (await button()).getAttribute('aria-pressed')) === 'true';
+    const set = async (on) => { if (await checked() !== on) await (await button()).click(); };
+    return { isChecked: checked, check: () => set(true), uncheck: () => set(false) };
+  };
   // the command bar's input: a letter typed on the drawing or the echo button opens the bar; this opens it by the echo button when it is shut
   const cmdLine = () => { const i = t('cmd-input'), open = async () => { if (!(await i.isVisible())) { await t('cmd-echo').click(); await i.waitFor({ state: 'visible' }); } }; return { fill: async (v) => { await open(); await i.fill(v); }, press: async (k) => { await open(); await i.press(k); }, inputValue: () => i.inputValue(), focus: open }; };
   const typeCmd = async (text) => { await cmdLine().fill(text); await cmdLine().press('Enter'); };
@@ -71,6 +116,297 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 94/132: docker tabs, remembered folds, library first, resize, hide/show and typed Guides', async () => {
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 } });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const fold = (id) => q(id).locator('.section-toggle').first();
+    const savedPanel = (matches) => p.waitForFunction(async (matches) => {
+      const { idbStore } = await import('./idbstore.js');
+      const saved = (await idbStore('project-d-view', 'settings', '').all()).find((x) => x.id === 'docker');
+      return saved && Object.entries(matches).every(([key, value]) => key === 'fold' ? saved.folds[value] === false : saved[key] === value);
+    }, matches);
+    const width = () => p.locator('aside.panel').evaluate((el) => el.getBoundingClientRect().width);
+    const dragTo = async (wanted) => {
+      const r = await q('panel-resize').boundingBox(), before = await width();
+      await p.mouse.move(r.x + r.width / 2, r.y + 70); await p.mouse.down();
+      await p.mouse.move(r.x + r.width / 2 + before - wanted, r.y + 70, { steps: 5 }); await p.mouse.up();
+    };
+    const capture = async (name) => {
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click(); await p.locator('.ribbon-body').getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        await p.locator(`[data-ribbon-tab=${name === 'layout' ? 'Part' : 'Home'}]`).click();
+        await p.locator('.panel-scroll').evaluate((el) => { el.scrollTop = 0; });
+        await p.mouse.move(700, 700); await p.screenshot({ path: `${shotDir}/todo94-${name}-${theme}.png` });
+      }
+    };
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await q('drawing-panel').waitFor({ state: 'visible' });
+      assert.deepEqual(await p.locator('.ptab').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label'))), ['Properties', 'Objects', 'Layers', 'Parts library', 'Step and repeat']);
+      assert.deepEqual(await p.locator('.ptab-name:visible').allTextContents(), ['Properties']);
+      for (const button of await p.locator('.ptab').all()) assert.equal(await button.getAttribute('title'), await button.getAttribute('aria-label'));
+      await q('ptab-drawing').focus(); await p.keyboard.press('ArrowRight');
+      assert.equal(await q('ptab-objects').getAttribute('aria-selected'), 'true');
+      await p.keyboard.press('End'); assert.equal(await q('panel-library').getAttribute('aria-selected'), 'true', 'keyboard skips unavailable Step and repeat');
+      await p.keyboard.press('Home'); assert.equal(await q('ptab-drawing').getAttribute('aria-selected'), 'true');
+      await q('ptab-objects').click(); assert.equal(await q('objects-panel').isVisible(), true);
+      assert.equal(await q('props-panel').isVisible(), false);
+      await q('ptab-layers').click(); assert.equal(await q('layer-add').isVisible(), true);
+      await q('ptab-drawing').click();
+      assert.equal(await fold('drawing-panel').getAttribute('aria-expanded'), 'false');
+      await fold('drawing-panel').click();
+      await savedPanel({ fold: 'drawing-panel' });
+      await p.reload(); await q('count').waitFor({ state: 'attached' }); await q('picker').setInputFiles('fixtures/outline.dxf');
+      await q('drawing-panel').waitFor({ state: 'visible' });
+      assert.equal(await fold('drawing-panel').getAttribute('aria-expanded'), 'true', 'open fold survives reload');
+      await fold('drawing-panel').click();
+      await p.keyboard.press('Control+a'); await fold('outlines-panel').click(); await q('extract').click();
+      await q('name-input').fill('<R19 bracket>'); await q('name-ok').click();
+      await q('name-dialog').waitFor({ state: 'detached' }); await fold('outlines-panel').click();
+      await q('panel-library').click();
+      assert.deepEqual(await q('lib-list').locator('.cname').allTextContents(), ['<R19 bracket>'], 'part names stay literal text');
+      assert.deepEqual(await p.locator('[data-docker=library] > section').evaluateAll((els) => els.map((e) => e.querySelector('.section-title').textContent)), ['Parts', 'Drawing scale', 'Tiny gaps', 'Duplicates']);
+      for (const id of ['drawing-panel', 'tiny-panel', 'duplicates-panel']) assert.equal(await fold(id).getAttribute('aria-expanded'), 'false');
+      await capture('library');
+      await q('ptab-drawing').click(); await capture('drawing');
+      await dragTo(380); assert.equal(await width(), 380);
+      await savedPanel({ width: 380 });
+      await p.reload(); await q('count').waitFor({ state: 'attached' }); assert.equal(await width(), 380, 'width persists');
+      assert.equal(await fold('drawing-panel').getAttribute('aria-expanded'), 'false', 'closed fold survives reload');
+      await dragTo(100); assert.equal(await width(), 220);
+      await dragTo(700); assert.equal(await width(), 520);
+      await q('panel-resize').focus(); await p.keyboard.press('Home'); assert.equal(await width(), 220);
+      await p.keyboard.press('ArrowLeft'); assert.equal(await width(), 230);
+      await dragTo(290);
+      await q('panel-hide').click(); assert.equal(await p.locator('aside.panel').isVisible(), false);
+      assert.equal(await q('panel-show').evaluate((el) => document.activeElement === el), true, 'hide keeps keyboard focus reachable');
+      await savedPanel({ on: false });
+      await p.reload(); await q('count').waitFor({ state: 'attached' }); assert.equal(await q('panel-show').isVisible(), true, 'hidden persists');
+      await q('panel-show').click(); assert.equal(await width(), 290);
+      await savedPanel({ on: true }); await p.reload(); await q('count').waitFor({ state: 'attached' });
+      assert.equal(await p.locator('aside.panel').isVisible(), true, 'shown state persists');
+      const plate = newDoc(4); addEntities(plate, roundRect(0, 0, 130, 100, 8), dxfCircle(32, 32, 12));
+      const lay = newLayout('R19 layout'); lay.parts.plate = makePart('plate', 'L1-bracket', plate);
+      Object.assign(lay.s, { sheetW: 760, sheetH: 430, gripTop: 22, gridPart: null });
+      for (let row = 0; row < 2; row++) for (let col = 0; col < 4; col++) lay.placed.push({ partId: 'plate', x: 50 + col * 152, y: 50 + row * 120, rot: 0 });
+      await q('picker').setInputFiles({ name: 'R19 layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.locator('[data-ribbon-tab=Part]').waitFor(); await capture('layout');
+      await q('panel-library').click();
+      assert.deepEqual(await p.locator('[data-docker=library] > section:visible .section-title').allTextContents(), ['Parts', 'Drawing scale', 'Tiny gaps', 'Duplicates']);
+      assert.equal(await fold('drawing-panel').isDisabled(), true, 'scale needs an active drawing');
+      await q('ptab-drawing').click();
+      await q('ptab-step').click(); await capture('step'); await q('ptab-drawing').click();
+      await q('new-layout').click(); await fold('guides-panel').click();
+      await q('guide-position').fill('120'); await q('guide-add-h').click();
+      await q('guide-position').fill('-35'); await q('guide-add-v').click();
+      assert.deepEqual(await q('guide-pos').evaluateAll((els) => els.map((e) => e.value)), ['120.00', '-35.00']);
+      await q('guide-position').fill('bad'); await q('guide-add-h').click(); assert.equal(await q('guide-row').count(), 2);
+      await q('guide-position').fill('');
+      await capture('guides');
+      await fold('guides-panel').click(); await fold('parts-panel').click();
+      await q('ptab-step').click(); assert.equal(await q('step-panel').isVisible(), true); assert.equal(await q('parts-panel').isVisible(), false);
+      await q('ptab-drawing').click(); await p.locator('.rail [data-tool=step]').click();
+      assert.equal(await q('ptab-step').getAttribute('aria-selected'), 'true', 'rail opens Step and repeat');
+      await fold('step-panel').click(); assert.equal(await q('apply').isVisible(), false);
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.locator('.ribbon-body').getByRole('button', { name: 'Step and repeat', exact: true }).click();
+      assert.equal(await q('ptab-step').getAttribute('aria-selected'), 'true', 'ribbon entry opens Step and repeat');
+      assert.equal(await fold('step-panel').getAttribute('aria-expanded'), 'true', 'ribbon entry opens the section');
+      await p.locator('[data-ribbon-tab=View]').click(); await p.locator('.ribbon-body').getByRole('button', { name: 'Properties panel', exact: true }).click();
+      assert.equal(await q('panel-show').isVisible(), true); await p.keyboard.press('Control+1');
+      assert.equal(await q('panel-hide').isVisible(), true);
+    } finally { await context.close(); }
+  });
+  await step('TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab; sr', async () => {
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 } });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
+    const tab = (name) => p.locator(`[data-ribbon-tab=${name}]`), rb = p.locator('.ribbon-body');
+    const capture = async (names) => {
+      for (const theme of ['light', 'dark']) {
+        await tab('View').click(); await rb.getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        for (const name of names) {
+          await tab(name).click(); await p.locator('.panel-scroll').evaluate((el) => { el.scrollTop = 0; }); await p.mouse.move(780, 700);
+          await p.screenshot({ path: `${shotDir}/todo110c-${name.toLowerCase()}-${theme}.png` });
+          await q('ribbon').screenshot({ path: `${shotDir}/todo110c-${name.toLowerCase()}-ribbon-${theme}.png` });
+        }
+      }
+    };
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      for (const [name, labels] of [['Draw', ['Line', 'Polyline', 'Rectangle', 'Rounded rectangle', 'Circle', 'Ellipse', 'Arc', 'Text', 'Dimension', 'Leader', 'Balloon', 'Measure', 'Select', 'Pan']],
+        ['Modify', ['Move', 'Offset', 'Trim', 'Mirror', 'Explode', 'Break Apart', 'Contour', 'Text to outlines', 'Weld', 'Intersect', 'Simplify', 'Front minus back', 'Back minus front', 'Create boundary']],
+        ['Annotate', ['Text', 'Dimension', 'Leader', 'Balloon', 'Measure']]]) {
+        await tab(name).click();
+        for (const label of labels) assert.equal(await rb.getByRole('button', { name: label, exact: true }).first().isEnabled(), true, label);
+      }
+      await rb.getByRole('button', { name: 'Measure', exact: true }).click();
+      assert.match(await p.locator('[data-tool=measure]').getAttribute('class'), /on/);
+      await p.keyboard.press('Escape');
+      await rb.getByRole('button', { name: 'Dimension', exact: true }).locator('.flyout').click();
+      assert.deepEqual(await q('ctx-menu').getByRole('menuitem').locator('.mi-l').allTextContents(), ['Aligned', 'Linear', 'Radius', 'Diameter', 'Angle']);
+      await q('ctx-menu').getByRole('menuitem', { name: /^Radius/ }).click();
+      assert.match(await p.locator('[data-tool=dimension]').getAttribute('title'), /Radius/);
+      await p.keyboard.press('Escape');
+      await capture(['Draw', 'Modify', 'Annotate']);
+      await p.locator('[data-menu=File]').click();
+      await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await tab('Compare').click();
+      await rb.getByRole('button', { name: 'Centres', exact: true }).click();
+      assert.equal(await q('cmp-lineup-centre').getAttribute('aria-pressed'), 'true');
+      await rb.getByLabel('Ribbon tolerance, mm').fill('0.1'); await rb.getByLabel('Ribbon tolerance, mm').press('Tab');
+      assert.equal(await q('cmp-tol').inputValue(), '0.1');
+      await rb.getByLabel('Ribbon tolerance, mm').fill('-1'); await rb.getByLabel('Ribbon tolerance, mm').press('Tab');
+      assert.equal(await rb.getByLabel('Ribbon tolerance, mm').inputValue(), '0.1', 'invalid tolerance uses the panel validator');
+      await rb.getByRole('button', { name: 'Add tab', exact: true }).click();
+      await p.locator('.cmp-source-menu').getByRole('menuitem', { name: 'outline.dxf', exact: true }).click();
+      await rb.getByRole('button', { name: 'Compare', exact: true }).click();
+      assert.equal(await q('cmp-result').count(), 2);
+      await capture(['Compare']);
+      const raw = readDxf(readFileSync('fixtures/outline.dxf', 'utf8')), lay = newLayout('R19 layout');
+      lay.parts.p = makePart('p', '<R19 bracket>', raw, 1);
+      lay.placed.push({ partId: 'p', x: 84, y: 151.5, rot: 0 });
+      await q('picker').setInputFiles({ name: 'R19-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await tab('Part').waitFor(); assert.equal(await tab('Part').getAttribute('aria-selected'), 'true');
+      await tab('Layout').click(); await q('preset').selectOption('a3');
+      assert.deepEqual(await p.locator('[data-key=sheetW], [data-key=sheetH]').evaluateAll((els) => els.map((e) => e.value)), ['420', '297']);
+      assert.equal(await p.locator('aside [data-key=sheetW]').count(), 0);
+      assert.equal(await rb.getByRole('button', { name: 'Step and repeat', exact: true }).count(), 0);
+      await rb.getByLabel('Guide position in mm').fill('abc');
+      await rb.getByRole('button', { name: '+ Horizontal', exact: true }).click();
+      assert.equal(await rb.getByLabel('Guide position in mm').getAttribute('aria-invalid'), 'true');
+      await rb.getByLabel('Guide position in mm').fill('120');
+      await rb.getByRole('button', { name: '+ Horizontal', exact: true }).click();
+      assert.equal(await q('guide-list').locator('input').last().inputValue(), '120.00');
+      await p.locator('.rail [data-tool=select]').click(); await p.keyboard.press('Control+a');
+      assert.equal(await tab('Part').getAttribute('aria-selected'), 'true');
+      assert.equal(await q('placed-name').textContent(), '<R19 bracket>');
+      assert.equal(await q('propbar').count(), 0);
+      const before = await q('px').inputValue();
+      const partLeft = () => p.locator('[data-group=parts] .part-hit').first().evaluate((el) => Math.min(...el.getAttribute('points').split(' ').map((pt) => Number(pt.split(',')[0]))));
+      assert.equal(await partLeft(), 84);
+      await q('px').fill('92'); await q('px').press('Enter');
+      assert.equal(await q('px').inputValue(), '92.00');
+      assert.equal(await partLeft(), 92, 'X changes the actual placed part');
+      await p.keyboard.press('Control+z'); assert.equal(await q('px').inputValue(), before); assert.equal(await partLeft(), 84);
+      await q('px').fill('92'); await q('px').press('Enter');
+      await capture(['Layout', 'Part']);
+      await p.keyboard.press('Escape'); assert.equal(await tab('Part').count(), 0);
+      await q('panel-library').click(); await q('ptab-objects').click();
+      await tab('Home').click(); await rb.getByRole('button', { name: 'Step and repeat', exact: true }).click();
+      assert.equal(await q('step-panel').isVisible(), true, 'Home opens Step and repeat from another panel tab');
+      await q('panel-library').click(); await q('ptab-objects').click();
+      await q('cmd-echo').click(); await q('cmd-input').fill('sr'); await q('cmd-input').press('Enter');
+      assert.match(await p.locator('[data-tool=step]').getAttribute('class'), /on/);
+      assert.equal(await q('step-panel').isVisible(), true, 'sr opens Step and repeat from another panel tab');
+    } finally { await context.close(); }
+  });
+  await step('TODO 110b: ribbon tab sets, Home actions, View toggles, folding, flyouts and remembered settings', async () => {
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const rb = p.locator('.ribbon-body'), tab = (name) => p.locator(`[data-ribbon-tab=${name}]`);
+    let foldStep = 0;
+    const fold = async (mode) => assert.equal(await q('ribbon').getAttribute('data-fold'), mode, 'fold check ' + ++foldStep);
+    const labels = () => p.locator('[data-ribbon-tab]').allTextContents();
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      assert.deepEqual(await labels(), ['Home', 'Draw', 'Modify', 'Annotate', 'View', 'Output']);
+      await tab('Home').focus(); await p.keyboard.press('ArrowRight');
+      assert.equal(await tab('Draw').getAttribute('aria-selected'), 'true');
+      await p.keyboard.press('Home');
+      assert.equal(await tab('Home').getAttribute('aria-selected'), 'true');
+      await rb.getByRole('button', { name: 'Line', exact: true }).click();
+      assert.match(await p.locator('.rail [data-tool=line]').getAttribute('class'), /on/);
+      await p.keyboard.press('Escape');
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await rb.getByRole('button', { name: 'Move', exact: true }).click();
+      assert.equal(await p.locator('.rail [data-tool=move]').getAttribute('class'), 'tool on');
+      await p.keyboard.press('Escape');
+      await tab('View').click();
+      await rb.getByRole('button', { name: 'Show rulers', exact: true }).click();
+      assert.equal(await q('ruler-top').isVisible(), false);
+      await rb.getByRole('button', { name: 'Show rulers', exact: true }).click();
+      assert.equal(await q('ruler-top').isVisible(), true);
+      await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
+      assert.equal(await p.locator('.rail').isVisible(), false);
+      await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
+      await tab('Home').click();
+      for (const label of ['Rotate', 'Scale', 'Fillet', 'Extend']) {
+        const b = rb.getByRole('button', { name: label, exact: true });
+        assert.equal(await b.isDisabled(), true); assert.match(await b.getAttribute('title'), /coming/);
+      }
+      const canvasTop = (await q('canvas').boundingBox()).y;
+      await p.keyboard.press('Control+a');
+      const selection = await q('sel-count').textContent();
+      await tab('Home').dblclick(); await fold('tabs');
+      assert.equal(await rb.isVisible(), false);
+      const foldedTop = (await q('canvas').boundingBox()).y;
+      assert.ok(foldedTop < canvasTop - 80);
+      await tab('Home').click(); assert.equal(await rb.isVisible(), true);
+      assert.equal((await q('canvas').boundingBox()).y, foldedTop, 'flyout overlays the canvas');
+      await p.keyboard.press('Escape'); assert.equal(await rb.isVisible(), false);
+      assert.equal(await q('sel-count').textContent(), selection, 'closing a flyout preserves selection');
+      await tab('Home').dblclick(); await fold('full');
+      await q('ribbon-cycle').click(); await fold('titles');
+      await p.locator('.ribbon-titles').getByRole('button', { name: 'Modify' }).click();
+      assert.equal(await rb.locator('section:visible').count(), 1);
+      assert.equal(await rb.locator('section:visible').getAttribute('aria-label'), 'Modify');
+      await p.keyboard.press('Escape');
+      await tab('Home').dblclick(); await fold('tabs');
+      await tab('Home').dblclick(); await fold('titles');
+      await q('ribbon-cycle').click(); await fold('tabs');
+      await p.waitForFunction(() => new Promise((resolve) => {
+        const open = indexedDB.open('project-d-view');
+        open.onsuccess = () => {
+          const db = open.result, r = db.transaction('settings').objectStore('settings').get('ribbon');
+          r.onsuccess = () => { resolve(r.result?.mode === 'tabs'); db.close(); };
+        };
+      }));
+      await p.reload(); await q('count').waitFor({ state: 'attached' }); await fold('tabs');
+      assert.equal(await rb.isVisible(), false);
+      await q('ribbon-cycle').click(); await fold('full');
+      await q('new-layout').click();
+      assert.deepEqual(await labels(), ['Home', 'Layout', 'View', 'Output']);
+      await p.locator('[data-menu=File]').click();
+      await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      assert.deepEqual(await labels(), ['Home', 'Compare', 'View', 'Output']);
+      await tab('Compare').click();
+      await p.locator('.tabs .dtab').filter({ hasText: 'Layout' }).first().click();
+      assert.equal(await tab('Home').getAttribute('aria-selected'), 'true', 'unavailable tab falls back to Home');
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+      await p.keyboard.press('Control+a');
+      await rb.getByLabel('Ribbon line width').selectOption('0.25');
+      await p.keyboard.press('Control+1');
+      assert.equal(await q('prop-width').locator('[data-width="0.25"]').getAttribute('aria-pressed'), 'true');
+      await rb.getByRole('button', { name: 'Copy', exact: true }).first().click();
+      assert.equal(await rb.getByRole('button', { name: 'Paste', exact: true }).isEnabled(), true);
+      await rb.getByRole('button', { name: 'Cut', exact: true }).click();
+      await p.keyboard.press('Control+z');
+      await p.keyboard.press('Control+a');
+      for (const theme of ['light', 'dark']) {
+        await tab('View').click(); await rb.getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        for (const name of ['Home', 'View', 'Output']) {
+          await tab(name).click(); await p.mouse.move(780, 700);
+          await p.screenshot({ path: `${shotDir}/todo110b-${name.toLowerCase()}-${theme}.png` });
+        }
+      }
+      const hostile = '<img src=x onerror=alert(1)>', raw = newDoc(4);
+      addLayer(raw, hostile); addEntities(raw, [dxfLine(0, 0, 10, 10, { layer: hostile })]);
+      await q('picker').setInputFiles({ name: 'layer-text.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'layer-text.dxf');
+      await tab('Home').click();
+      await rb.getByLabel('Current layer', { exact: true }).selectOption(hostile);
+      assert.equal(await rb.getByLabel('Current layer', { exact: true }).inputValue(), hostile);
+      assert.equal(await rb.locator('img').count(), 0, 'file names remain text');
+    } finally { await context.close(); }
+  });
   const tabNames = () => page.locator('.tabs .dtab:not([aria-label]) .tname').allTextContents();
   // closes (accepting "close without saving?") every tab whose name matches
   const closeTabs = async (re) => {
@@ -88,7 +424,7 @@ try {
   };
   await step('TODO 141: Save keeps table lines as named blocks, reports conversions and dropped types, and reopens the saved drawing', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
     p.on('pageerror', (e) => errors.push(String(e)));
     const saved = async (expected) => {
       const [dl] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
@@ -151,7 +487,7 @@ try {
 
   await step('TODO 117: PDF sheets keep edits and Undo without warning; close lists and saves dirty sheets; Delete sheet removes its balloons and keeps PDF numbers', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
-    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
     p.on('pageerror', (e) => errors.push(String(e)));
     await p.addInitScript(() => {
       window.__destroyed = 0;
@@ -591,7 +927,7 @@ try {
       await view.click();
       for (const active of ['follow system', 'light', 'dark', 'follow system']) {
         const rows = await themes.evaluateAll((els) => els.map((el) => [el.textContent.trim(), el.getAttribute('aria-checked')]));
-        assert.deepEqual(rows, ['follow system', 'light', 'dark'].map((mode) => [(mode === active ? '✓ ' : '') + 'Theme: ' + mode, String(mode === active)]));
+        assert.deepEqual(rows, ['follow system', 'light', 'dark'].map((mode) => [(mode === active ? '✓ ' : '') + 'Theme: ' + mode + (mode === 'light' ? ' (CorelDRAW-like)' : mode === 'dark' ? ' (AutoCAD-like)' : ''), String(mode === active)]));
         for (const group of ['Work area:', 'Theme:']) {
           const items = p.getByRole('menuitemcheckbox', { name: new RegExp(group) });
           const geometry = await items.evaluateAll((els) => els.map((el) => {
@@ -625,6 +961,66 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 110a: R19 palette, AA panel / selected / button text, explicit and system themes', async () => {
+    const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
+    const theme = async (name) => {
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '\\b') }).click();
+    };
+    const tokens = () => p.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      return Object.fromEntries(['app', 'panel', 'ribbon', 'line', 'line2', 'text', 'muted', 'accent', 'accentink', 'accenttext', 'sel', 'canvas', 'ctx']
+        .map((name) => [name, css.getPropertyValue('--' + name).trim()]));
+    });
+    const checkText = async (selector) => {
+      const pairs = await p.locator(selector).evaluateAll((els) => els.filter((el) => el.checkVisibility()).map((el) => {
+        const css = getComputedStyle(el);
+        let parent = el, bg;
+        do { bg = getComputedStyle(parent).backgroundColor; parent = parent.parentElement; } while (bg === 'rgba(0, 0, 0, 0)' && parent);
+        const hex = (value) => '#' + value.match(/\d+/g).slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+        return [el.textContent.trim().slice(0, 40), hex(css.color), hex(bg)];
+      }));
+      assert.ok(pairs.length, selector + ' has visible text');
+      for (const [label, fg, bg] of pairs) assert.ok(contrastRatio(fg, bg) >= 4.5, `${label}: ${fg} on ${bg} meets AA`);
+    };
+    const layoutFixture = newLayout('R19 layout'), plate = newDoc(4);
+    addEntities(plate, roundRect(0, 0, 130, 100, 8));
+    layoutFixture.parts.plate = makePart('plate', 'L1-bracket', plate);
+    Object.assign(layoutFixture.s, { sheetW: 760, sheetH: 430, gripTop: 22, gripBottom: 0, gridPart: 'plate', rows: 2, cols: 4, fit: false, gapX: 22, gapY: 20 });
+    try {
+      await p.goto(URL_); await q('new-tab').waitFor();
+      await q('picker').setInputFiles('fixtures/outline.dxf');
+      await q('ptab-layers').click(); await p.locator('.layer.current').waitFor(); await q('ptab-drawing').click();
+      for (const mode of ['light', 'dark']) {
+        await theme(mode);
+        const c = await tokens();
+        assert.deepEqual([c.app, c.panel, c.ribbon, c.line, c.line2, c.text, c.muted, c.accent, c.sel, c.canvas, c.ctx], mode === 'light'
+          ? ['#e6e6e6', '#f2f2f2', '#f6f6f6', '#cfcfcf', '#dedede', '#262626', '#6b6b6b', '#2f7bd0', '#d6e6f7', '#e9e9e9', '#2f9e6f']
+          : ['#262a31', '#2b2f36', '#3b4048', '#1c1f24', '#4b515b', '#e6e8eb', '#9ba2ac', '#0696d7', '#14516e', '#212830', '#2fb7a3']);
+        for (const bg of ['app', 'panel', 'ribbon', 'sel']) {
+          assert.ok(contrastRatio(c.text, c[bg]) >= 4.5, `body text on ${bg}`);
+          assert.ok(contrastRatio(c.accenttext, c[bg]) >= 4.5, `blue text on ${bg}`);
+        }
+        assert.ok(contrastRatio(c.muted, c.panel) >= 4.5, 'muted panel text');
+        assert.ok(contrastRatio(c.accentink, c.accent) >= 4.5, 'accent button text');
+        await checkText('.panel .sec, .panel .lbl, .layer.current .nm, .layer.current .lbl, .ptab.on, .status .lbl');
+        await p.screenshot({ path: `${shotDir}/todo110a-drawing-${mode}.png` });
+        await q('picker').setInputFiles({ name: 'R19 layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(layoutFixture)), 'latin1') });
+        await q('apply').waitFor({ state: 'visible' });
+        await checkText('.layer.on .nm, .layer.on .lbl, .stepbox .sec, .stepbox .field, .stepbox .lbl, .stepfoot .btn.primary:not(:disabled), .stepfoot .lbl');
+        await p.screenshot({ path: `${shotDir}/todo110a-layout-${mode}.png` });
+        await p.locator('.tabs .dtab', { hasText: 'outline.dxf' }).click();
+        await p.emulateMedia({ colorScheme: mode === 'light' ? 'dark' : 'light' });
+        assert.deepEqual(await tokens(), c, 'explicit theme overrides system preference');
+        await theme('follow system'); await p.emulateMedia({ colorScheme: mode });
+        assert.deepEqual(await tokens(), c, 'system theme has identical tokens');
+      }
+      await theme('light'); await p.reload(); await q('new-tab').waitFor();
+      assert.equal(await p.evaluate(() => document.documentElement.dataset.theme), 'light', 'explicit theme persists');
+    } finally { await context.close(); }
+  });
+
   const partText = () => t('part').evaluate((s) => s.selectedOptions[0].textContent);
   await step('start state: one empty "Drawing 1", no sample data, Apply disabled with its hint', async () => {
     assert.deepEqual(await tabNames(), ['Drawing 1']);
@@ -640,10 +1036,10 @@ try {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
     await page.screenshot({ path: dir + '/s4-start-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     await page.waitForTimeout(150);
     await page.screenshot({ path: dir + '/s4-start-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
   });
 
   await step('× on the only tab leaves a fresh "Drawing 1"; + adds "Drawing 2"; × closes any tab', async () => {
@@ -697,7 +1093,7 @@ try {
     try {
       const p2 = await c2.newPage();
       await p2.goto(URL_); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
-      for (let i = 1; i < 17; i++) await p2.locator('[data-testid=new-tab]').click();
+      for (let i = 1; i < 17; i++) await panelControl(p2, p2.locator('[data-testid=new-tab]')).click();
       const docs = p2.locator('.tabs .dtab[data-kind]');
       assert.equal(await docs.count(), 17);
       const fits = async () => {
@@ -735,6 +1131,7 @@ try {
     await t('picker').setInputFiles('fixtures/overlay.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
     assert.deepEqual(await tabNames(), ['overlay.dxf']);
+    await t('ptab-drawing').click();
     assert.equal(await t('drawing-panel').isVisible(), true);
     assert.equal(await t('sheet-panel').isVisible(), false);
     await t('add-to-layout').click();
@@ -754,7 +1151,8 @@ try {
   await step('layout: menu bar, rail tools in order, layers', async () => {
     assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools', 'Help']);
     const labels = await page.locator('nav[aria-label=Tools] button').evaluateAll((b) => b.map((x) => x.getAttribute('aria-label')));
-    assert.equal(labels.length, 20); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
+    assert.equal(labels.length, 21); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
+    assert.equal(labels[labels.indexOf('Offset') - 1], 'Move');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['Parts', 'Marks', 'Dimensions']);
   });
 
@@ -769,11 +1167,11 @@ try {
     });
     return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'latin1') };
   };
-  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); };
-  const grip = (side) => page.locator(`[data-key=grip${side}]`);
+  const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '\\b') : item, exact: true }).click(); };
+  const grip = (side) => panelControl(page, page.locator(`[data-key=grip${side}]`));
   await step('gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px', async () => {
-    assert.equal(await page.locator('[data-key=margin]').count(), 0, 'no margin field');
-    assert.equal(await page.locator('[data-key=gripper]').count(), 0);
+    assert.equal(await panelControl(page, page.locator('[data-key=margin]')).count(), 0, 'no margin field');
+    assert.equal(await panelControl(page, page.locator('[data-key=gripper]')).count(), 0);
     assert.deepEqual(await Promise.all(['Top', 'Right', 'Bottom', 'Left'].map((x) => grip(x).inputValue())), ['0', '0', '30', '0']);
     const band = page.locator('.grip-band');
     assert.equal(await band.count(), 1, 'only the bottom gripper is set');
@@ -786,12 +1184,12 @@ try {
   await page.screenshot({ path: shotDir + '/a-light.png' });
 
   await step('Gap X 20 changes the count', async () => {
-    await page.locator('[data-key=gapX]').fill('20');
+    await panelControl(page, page.locator('[data-key=gapX]')).fill('20');
     const want = stepRepeat({ ...base, gapX: 20 }).count;
     assert.notEqual(want, N0);
     assert.equal((await readout()).count, want);
     assert.equal(await page.locator('[data-group=parts] .part-hit').count(), want);
-    await page.locator('[data-key=gapX]').fill('5');
+    await panelControl(page, page.locator('[data-key=gapX]')).fill('5');
     assert.equal((await readout()).count, N0);
   });
 
@@ -805,41 +1203,41 @@ try {
   });
 
   await step('huge values: a sheet side over 100 000 mm, grippers wider than the sheet, a sheet narrower than its grippers: refused, the field reverts', async () => {
-    const f = (k) => page.locator(`[data-key=${k}]`);
+    const f = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
     const w0 = await f('sheetW').inputValue(), h0 = await f('sheetH').inputValue();
-    await f('sheetW').fill('1e308'); await f('sheetW').blur();
+    await layoutTab(); await f('sheetW').fill('1e308'); await f('sheetW').blur();
     assert.equal(await f('sheetW').inputValue(), w0);
     assert.match(await t('cmd-prompt').textContent(), /Width can be 100000 mm at most/);
-    await f('sheetH').fill('100001'); await f('sheetH').blur();
+    await layoutTab(); await f('sheetH').fill('100001'); await f('sheetH').blur();
     assert.equal(await f('sheetH').inputValue(), h0);
     const top0 = await grip('Top').inputValue();
-    await grip('Top').fill(String(Number(h0) + 1)); await grip('Top').blur();
+    await layoutTab(); await grip('Top').fill(String(Number(h0) + 1)); await grip('Top').blur();
     assert.equal(await grip('Top').inputValue(), top0);
     assert.match(await t('cmd-prompt').textContent(), /Top can be \d+ mm at most/);
-    await grip('Left').fill('10'); await grip('Right').fill('10');
-    await f('sheetW').fill('15'); await f('sheetW').blur();
+    await layoutTab(); await grip('Left').fill('10'); await layoutTab(); await grip('Right').fill('10');
+    await layoutTab(); await f('sheetW').fill('15'); await f('sheetW').blur();
     assert.equal(await f('sheetW').inputValue(), w0, 'narrower than Left + Right: refused');
     assert.match(await t('cmd-prompt').textContent(), /Width must be 20 mm or more/);
-    await grip('Left').fill('0'); await grip('Right').fill('0');
-    await f('sheetW').fill('2000'); await f('sheetW').blur();
+    await layoutTab(); await grip('Left').fill('0'); await layoutTab(); await grip('Right').fill('0');
+    await layoutTab(); await f('sheetW').fill('2000'); await f('sheetW').blur();
     assert.equal(await f('sheetW').inputValue(), '2000', 'a sane side is kept');
-    await f('sheetW').fill(w0); await f('sheetW').blur();
+    await layoutTab(); await f('sheetW').fill(w0); await f('sheetW').blur();
     assert.equal(await page.locator('svg [d*="e+"]').count(), 0, 'no 1e+… in a path');
   });
 
   await step('preset, gripper sides and top-left align: the count and the first position follow', async () => {
-    await t('preset').selectOption('a3');
-    assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '420');
+    await layoutTab(); await t('preset').selectOption('a3');
+    assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
     assert.equal((await readout()).count, stepRepeat({ ...base, sheetW: 420, sheetH: 297 }).count);
-    await t('preset').selectOption('screen');
-    await grip('Top').fill('30'); await grip('Bottom').fill('0');
+    await layoutTab(); await t('preset').selectOption('screen');
+    await layoutTab(); await grip('Top').fill('30'); await layoutTab(); await grip('Bottom').fill('0');
     await t('align').selectOption('topleft');
     const want = stepRepeat({ ...base, gripTop: 30, gripBottom: 0, align: 'topleft' });
     assert.equal((await readout()).count, want.count);
     assert.equal(await t('px').inputValue(), want.positions[0].x.toFixed(2));
     assert.equal(await t('py').inputValue(), (700 - want.positions[0].y - 80).toFixed(2), 'Y is from the sheet\'s bottom-left, like the cursor');
     assert.equal(await page.locator('.grip-band').count(), 1); assert.equal(await page.locator('.grip-band').getAttribute('data-edge'), 'top');
-    await grip('Top').fill('0'); await grip('Bottom').fill('30');
+    await layoutTab(); await grip('Top').fill('0'); await layoutTab(); await grip('Bottom').fill('30');
     await t('align').selectOption('centre');
     assert.equal((await readout()).count, N0);
   });
@@ -907,9 +1305,9 @@ try {
     await page.locator('[data-gap=r3]').click({ force: true, position: { x: 30, y: 5 } }); await page.keyboard.type('10');
     await page.locator('[data-gap=c2]').click({ force: true, position: { x: 5, y: 30 } }); await page.keyboard.type('5');
     assert.equal(await t('gap-list').locator('.gaprow').count(), 2);
-    await t('preset').selectOption('a4');                                 // 2 × 2: no gap after row 3 or after column 2
+    await layoutTab(); await t('preset').selectOption('a4');                                 // 2 × 2: no gap after row 3 or after column 2
     assert.equal(await t('gap-list').locator('.gaprow').count(), 0);
-    await t('preset').selectOption('screen');
+    await layoutTab(); await t('preset').selectOption('screen');
     assert.equal(await t('gap-list').locator('.gaprow').count(), 0, 'they do not come back');
     await page.locator('[data-gap=r3]').click({ force: true, position: { x: 30, y: 5 } }); await page.keyboard.type('10');
     await page.locator('[data-gap-remove=r3]').click();
@@ -921,14 +1319,14 @@ try {
   await step('crop / reg checkboxes and layer toggles', async () => {
     const marks = page.locator('[data-group=marks] circle');
     assert.equal(await marks.count(), 0, 'marks are off by default');
-    await page.locator('[data-key=crop]').check(); await page.locator('[data-key=reg]').check();
+    await layoutTab(); await panelControl(page, page.locator('[data-key=crop]')).check(); await layoutTab(); await panelControl(page, page.locator('[data-key=reg]')).check();
     assert.equal(await marks.count(), 4);
-    await page.locator('[data-key=reg]').uncheck();
+    await layoutTab(); await panelControl(page, page.locator('[data-key=reg]')).uncheck();
     assert.equal(await marks.count(), 0);
-    await page.locator('[data-key=reg]').check();
-    await page.locator('[data-layer=parts]').click();
+    await layoutTab(); await panelControl(page, page.locator('[data-key=reg]')).check();
+    await panelControl(page, page.locator('[data-layer=parts]')).click();
     assert.equal(await page.locator('[data-group=parts]').evaluate((g) => getComputedStyle(g).display), 'none');
-    await page.locator('[data-layer=parts]').click();
+    await panelControl(page, page.locator('[data-layer=parts]')).click();
     assert.notEqual(await page.locator('[data-group=parts]').evaluate((g) => getComputedStyle(g).display), 'none');
   });
 
@@ -948,7 +1346,7 @@ try {
     await page.mouse.move(box.x + 300, box.y + 300);
     await page.mouse.down(); await page.mouse.move(box.x + 360, box.y + 340); await page.mouse.up();
     assert.notEqual(await page.locator('.canvas > svg').getAttribute('viewBox'), vb);
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     assert.equal(await t('zoom').textContent(), before);
     await page.mouse.move(box.x + 400, box.y + 300); await page.mouse.wheel(0, -300);
     assert.notEqual(await t('zoom').textContent(), before);
@@ -1015,6 +1413,7 @@ try {
   });
 
   await step('layers panel lists the file\'s layers; toggling one hides it', async () => {
+    await t('ptab-layers').click();
     assert.deepEqual((await page.locator('.layer .nm').allTextContents()).includes('Parts'), false, 'a drawing tab: only the file\'s layers');
     const names = await page.locator('.layer .nm').allTextContents();
     for (const n of ['OUTLINE', 'HOLES', 'CENTRE', 'NOTES', 'DIMS', 'HATCH']) assert.ok(names.includes(n), n);
@@ -1085,6 +1484,7 @@ try {
   });
 
   await step('many layers: the panel still fits, only the layers list scrolls', async () => {
+    await t('ptab-layers').click();
     await t('picker').setInputFiles('fixtures/many-layers.dxf');
     await page.waitForSelector('.tabs .dtab:has-text("many-layers.dxf")');
     await page.waitForFunction(() => document.querySelectorAll('.layer').length >= 30);
@@ -1156,7 +1556,7 @@ try {
   await step('screenshots 1440 × 900 with the applied layout, light and dark', async () => {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await inkedWhen((n) => n > 500);
     await page.screenshot({ path: dir + '/s3-light.png' });
     await menuItem('View', 'Theme: dark');
@@ -1307,7 +1707,7 @@ try {
   await step('TODO 101 / T18: editable title block, off frees the strip, Reset, per-tab settings saved and reopened', async () => {
     const titleCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const titlePage = await titleCtx.newPage();
-    const q = (id) => titlePage.locator(`[data-testid=${id}]`);
+    const q = (id) => panelControl(titlePage, titlePage.locator(`[data-testid=${id}]`));
     const open = async () => { await q('pdf-open').click(); await q('pdf-dialog').waitFor(); };
     const saveDownload = async (action) => {
       const pending = titlePage.waitForEvent('download'); await action();
@@ -1462,7 +1862,7 @@ try {
 
   await step('closing a tab with unsaved changes asks first; Keep it open keeps it, closing discards', async () => {
     await t('new-layout').click();                                                    // a second layout tab, changed and not saved
-    await page.locator('[data-key=gapX]').fill('6');
+    await panelControl(page, page.locator('[data-key=gapX]')).fill('6');
     await page.waitForFunction(() => /•/.test(document.querySelector('.tabs .dtab.on').textContent));
     const n = (await tabs()).length;
     const closeBtn = () => page.locator('.tabs .dtab.on .x');
@@ -1493,7 +1893,7 @@ try {
   // ---- editing: pick the outline by its chain, Keep only, size, Set length, undo, Save, Apply (fixtures/outline.dxf: a 100 × 60 plate)
   const sheetPx = async () => {
     const b = await page.locator('rect.sheet').boundingBox();
-    const w = Number(await page.locator('[data-key=sheetW]').inputValue()), hh = Number(await page.locator('[data-key=sheetH]').inputValue());
+    const w = Number(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue()), hh = Number(await panelControl(page, page.locator('[data-key=sheetH]')).inputValue());
     return { b, sc: b.width / w, h: hh };
   };
   /** The client position of a drawing point (mm from the sheet's bottom-left, y up). */
@@ -1622,7 +2022,7 @@ try {
     assert.ok((await tabs()).at(-1).includes('•'), 'unsaved');
     assert.match(await t('cmd-prompt').textContent(), /Kept 8, removed 7/);
     assert.ok((await inkedWhen((n) => n > 150)) > 150);
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await inkedWhen((n) => n > 150);
     await page.screenshot({ path: shotDir + '/s5-kept-light.png' });
     await menuItem('View', 'Theme: dark');
@@ -1704,11 +2104,11 @@ try {
     };
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-light.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     await page.waitForTimeout(150);
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-dark.png' });
-    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
     await t('unit-down').click(); await waitSize('62.5', '37.5');
     assert.match(await t('cmd-prompt').textContent(), /Unit fix ÷25\.4 · 1587\.50 × 952\.50 → 62\.50 × 37\.50 mm/);
     await page.keyboard.press('Control+z'); await waitSize('1587.5', '952.5');        // one undo step each
@@ -1768,7 +2168,7 @@ try {
     assert.equal(await page.locator('rect.sheet').evaluate((r) => getComputedStyle(r.ownerSVGElement).visibility), 'hidden', 'no sheet outline');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['0']);
     assert.equal(await page.locator('[data-tool=select]').getAttribute('class'), 'tool on', 'Select is the tool on a drawing');
-    assert.equal(await page.locator('[data-testid=panel-main]').textContent(), 'Drawing');
+    assert.equal(await t('ptab-drawing').getAttribute('aria-label'), 'Properties');
     assert.ok(await fitsPanel(), 'panel fits on a drawing tab');
     // the drawing is fitted to the view: the 136 mm wide drawing fills most of the canvas
     const w = await t('canvas').boundingBox();
@@ -1788,9 +2188,11 @@ try {
     await waitSize('100', '60');
     await t('add-to-layout').click();
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
-    assert.equal(await vis('drawing-panel'), false); assert.equal(await vis('sheet-panel'), true); assert.equal(await vis('step-panel'), true); assert.equal(await vis('parts-panel'), true);
-    assert.equal(await vis('propbar'), true);
-    assert.equal(await t('panel-main').textContent(), 'Layout');
+    assert.equal(await vis('drawing-panel'), false); await layoutTab(); assert.equal(await vis('sheet-panel'), true);
+    await t('ptab-step').click(); assert.equal(await vis('step-panel'), true); assert.equal(await vis('parts-panel'), false);
+    await t('ptab-drawing').click(); assert.equal(await vis('parts-panel'), true);
+    assert.equal(await t('propbar').count(), 0);
+    assert.equal(await t('ptab-drawing').getAttribute('aria-label'), 'Properties');
     assert.equal(await partText(), 'outline · 100 × 60');
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Parts'));
     assert.equal(await page.locator('[data-tool=step]').getAttribute('class'), 'tool on');
@@ -1833,14 +2235,14 @@ try {
     assert.equal(await partText(), 'No parts yet');
     assert.match(await t('step-hint').textContent(), /Pick a part to repeat over the sheet, or add parts from the Parts library/);
     assert.equal(await t('apply').isDisabled(), true);
-    await t('preset').selectOption('a3');                                         // this layout's own sheet
-    assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '420');
+    await layoutTab(); await t('preset').selectOption('a3');                                         // this layout's own sheet
+    assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
     await menuItem('File', 'New layout');
     assert.match((await tabNames()).at(-1), /^Layout 2$/);
-    assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '1000', 'the new layout has its own sheet');
-    await grip('Top').fill('12');
+    assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '1000', 'the new layout has its own sheet');
+    await layoutTab(); await grip('Top').fill('12');
     await page.locator('.tabs .dtab', { hasText: /^Layout 1/ }).click();
-    assert.equal(await page.locator('[data-key=sheetW]').inputValue(), '420');
+    assert.equal(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), '420');
     assert.equal(await grip('Top').inputValue(), '0');
     assert.equal(await t('preset').inputValue(), 'a3');
     assert.equal(await page.locator('rect.sheet').getAttribute('width'), '420');
@@ -1933,7 +2335,7 @@ try {
     // dimmed: the picture's red border is drawn faintly; the layer's eye hides it
     const ink = await inkedWhen((n) => n > 200);
     await t('drawing').evaluate(() => {});
-    const eye = page.locator('[data-layer=bg]');
+    const eye = panelControl(page, page.locator('[data-layer=bg]'));
     await eye.click();
     assert.ok((await inkedWhen((n) => n < ink)) < ink, 'hidden: less ink');
     await eye.click();
@@ -2452,20 +2854,16 @@ try {
   await step('Add to sheet and a drag from the library: placed parts of different parts on one layout; the drop shows its position', async () => {
     await t('new-layout').click();
     assert.equal(await t('library').isVisible(), false, 'a new layout shows its own panel');
-    assert.equal(await t('placed-name').textContent(), 'Layout · Layout 1');
-    assert.equal(await t('placed-kind').textContent(), 'its own tab, not tied to one drawing');
-    assert.equal(await t('parts-from').textContent(), 'Parts from: none yet');
+    assert.equal(await page.locator('[data-ribbon-tab=Part]').count(), 0);
     assert.equal(await t('px').isVisible(), false, 'no part placed yet: the bar is about the layout');
     await t('panel-library').click();
-    assert.equal(await t('placed-name').textContent(), 'Parts library');
-    assert.equal(await t('placed-kind').textContent(), 'drag a part onto the sheet, or press Add to sheet');
+    assert.equal(await page.locator('[data-ribbon-tab=Part]').count(), 0);
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
     assert.match(await t('cmd-prompt').textContent(), /Plate A \(100\.00 × 60\.00 mm\) added to Layout 1/);
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     assert.equal(await t('placed-name').textContent(), 'Plate A');
     assert.equal(await t('px').isVisible(), true);
     assert.deepEqual([await t('px').inputValue(), await t('py').inputValue(), await t('pw').inputValue(), await t('ph').inputValue(), await t('pa').inputValue()], ['450.00', '320.00', '100.00', '60.00', '0°']);
-    assert.equal(await t('placed-kind').textContent(), 'placed part');
     assert.ok((await inkedWhen((n) => n > 100)) > 100, 'the part is drawn');
     await t('panel-library').click();
     // drag the Dial card onto the sheet: the hint shows where it lands
@@ -2482,9 +2880,8 @@ try {
     await fire('drop');
     assert.match(await t('cmd-prompt').textContent(), /on whole mm. Shift-drag keeps it straight/);
     assert.equal(await t('drop-hint').isVisible(), false);
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     assert.equal(await t('placed-name').textContent(), 'Dial');
-    assert.equal(await t('parts-from').isVisible(), false);
     const mid = [Number(await t('px').inputValue()) + Number(await t('pw').inputValue()) / 2, Number(await t('py').inputValue()) + Number(await t('ph').inputValue()) / 2];
     assert.ok(Math.abs(mid[0] - hint[1]) <= 0.51 && Math.abs(mid[1] - hint[2]) <= 0.51, 'centred on the drop point the hint showed, to whole mm (TODO 45): ' + mid + ' vs ' + hint.slice(1));
     assert.ok(Number(await t('px').inputValue()) % 1 === 0 && Number(await t('py').inputValue()) % 1 === 0, 'the dropped part sits on whole mm');
@@ -2496,20 +2893,20 @@ try {
   });
 
   await step('step and repeat per layout: pick the part; Fit to sheet on works out rows × columns, off lets them be typed (it may not fit, and says so); Apply makes them placed parts', async () => {
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     // Keep this older oversized-grid flow unanchored; TODO 127 covers matching placed cells.
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
-    await t('px').fill('850'); await t('px').press('Enter');
-    await t('py').fill('550'); await t('py').press('Enter');
-    await t('pa').fill('180'); await t('pa').press('Enter');
+    await partTab(); await t('px').fill('850'); await t('px').press('Enter');
+    await partTab(); await t('py').fill('550'); await t('py').press('Enter');
+    await partTab(); await t('pa').fill('180'); await t('pa').press('Enter');
     await page.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true });
-    await t('px').fill('50'); await t('px').press('Enter');
-    await t('py').fill('550'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter');
+    await partTab(); await t('py').fill('550'); await t('py').press('Enter');
     await t('part').selectOption({ label: 'Plate A · 100 × 60' });
     const worked = gridOf(layoutFromRaw(readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text)));
     assert.equal(await t('count').textContent(), String(worked.count));
     assert.equal(await t('fit-switch').isChecked(), true); assert.equal(await t('fit-state').textContent(), 'On');
-    const rows = page.locator('[data-key=rows]'), cols = page.locator('[data-key=cols]');
+    const rows = panelControl(page, page.locator('[data-key=rows]')), cols = panelControl(page, page.locator('[data-key=cols]'));
     assert.equal(await rows.evaluate((e) => e.readOnly), true);
     assert.equal(await rows.inputValue(), String(worked.rows)); assert.equal(await cols.inputValue(), String(worked.cols));
     assert.equal(await rows.locator('xpath=..').textContent().then((x) => x.trim()), 'Rows');
@@ -2557,14 +2954,14 @@ try {
 
   let saved = null;
   await step('Save a layout: a download with one INSERT per placed part and the settings in a hidden block; reopening it gives a layout tab with the same panel values and parts', async () => {
-    await t('preset').selectOption('a3');
-    await grip('Top').fill('12'); await grip('Left').fill('8');
-    await page.locator('[data-key=gapX]').fill('7'); await page.locator('[data-key=gapY]').fill('9');
+    await layoutTab(); await t('preset').selectOption('a3');
+    await layoutTab(); await grip('Top').fill('12'); await layoutTab(); await grip('Left').fill('8');
+    await panelControl(page, page.locator('[data-key=gapX]')).fill('7'); await panelControl(page, page.locator('[data-key=gapY]')).fill('9');
     await t('rotate').selectOption('90'); await t('align').selectOption('topleft');
-    await page.locator('[data-key=crop]').uncheck(); await page.locator('[data-key=reg]').check();
+    await layoutTab(); await panelControl(page, page.locator('[data-key=crop]')).uncheck(); await layoutTab(); await panelControl(page, page.locator('[data-key=reg]')).check();
     const dialLabel = await t('part').locator('option').evaluateAll((o) => o.map((x) => x.textContent).find((x) => x.startsWith('Dial')));
     await t('part').selectOption({ label: dialLabel });
-    await page.locator('[data-key=rows]').fill('2'); await page.locator('[data-key=cols]').fill('2');
+    await panelControl(page, page.locator('[data-key=rows]')).fill('2'); await panelControl(page, page.locator('[data-key=cols]')).fill('2');
     assert.equal(await t('count').textContent(), '4');
     assert.equal(await t('fit-switch').isChecked(), false);
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
@@ -2590,12 +2987,12 @@ try {
     assert.deepEqual(await tabNames(), ['Layout 1.dxf'], 'the empty tab was used up');
     assert.match(await t('cmd-prompt').textContent(), /Opened Layout 1\.dxf as a layout: 12 placed parts, 2 parts, its sheet and settings as saved/);
     assert.ok(!(await tabs()).some((x) => x.includes('•')), 'just opened: no dot');
-    await t('panel-main').click();
-    const val = (k) => page.locator(`[data-key=${k}]`).inputValue();
+    await t('ptab-drawing').click();
+    const val = (k) => panelControl(page, page.locator(`[data-key=${k}]`)).inputValue();
     assert.equal(await t('preset').inputValue(), 'a3');
     assert.deepEqual(await Promise.all(['sheetW', 'sheetH', 'gripTop', 'gripRight', 'gripBottom', 'gripLeft', 'gapX', 'gapY', 'rows', 'cols'].map(val)), ['420', '297', '12', '0', '30', '8', '7', '9', '2', '2']);
     assert.equal(await t('rotate').inputValue(), '90'); assert.equal(await t('align').inputValue(), 'topleft');
-    assert.equal(await page.locator('[data-key=crop]').isChecked(), false); assert.equal(await page.locator('[data-key=reg]').isChecked(), true);
+    assert.equal(await panelControl(page, page.locator('[data-key=crop]')).isChecked(), false); assert.equal(await panelControl(page, page.locator('[data-key=reg]')).isChecked(), true);
     assert.equal(await t('fit-switch').isChecked(), false);
     assert.equal(await t('count').textContent(), '4'); assert.equal(await t('grid').textContent(), 'placed · 2 × 2 · 90°');
     assert.match(await partText(), /^Dial · /);
@@ -2608,7 +3005,7 @@ try {
     await t('panel-library').click();
     await page.waitForFunction(() => document.querySelectorAll('[data-testid=lib-list] .card').length === 2);
     assert.deepEqual((await libNames()).sort(), ['Dial', 'Plate A']);
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     await shotBoth('reopen');
     // a file opened is never overwritten: the first Save of it is a Save As
     const again = await downloaded(() => page.keyboard.press('Control+s'));
@@ -2619,20 +3016,20 @@ try {
     const bg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
     const light = await bg();
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     const dark = await bg();
-    assert.notEqual(light, dark); assert.equal(dark, 'rgb(11, 11, 13)');
+    assert.notEqual(light, dark); assert.equal(dark, 'rgb(38, 42, 49)');
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     await page.screenshot({ path: shotDir + '/a-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
     assert.equal(await bg(), light);
   });
 
   await step('prefers-color-scheme: dark is followed', async () => {
     const p2 = await (await browser.newContext({ colorScheme: 'dark' })).newPage();
     await p2.goto(URL_);
-    assert.equal(await p2.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(11, 11, 13)');
+    assert.equal(await p2.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(38, 42, 49)');
   });
 
   await step('Parts library with no storage (private mode, blocked): a part is still kept in memory and the app says so; nothing breaks', async () => {
@@ -2643,17 +3040,17 @@ try {
     p2.on('pageerror', (e) => errs2.push(String(e)));
     p2.on('console', (m) => { if (m.type() === 'error') errs2.push(m.text()); });
     await p2.goto(URL_);
-    await p2.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+    await panelControl(p2, p2.locator('[data-testid=picker]')).setInputFiles('fixtures/outline.dxf');
     await p2.waitForFunction(() => document.querySelectorAll('[data-testid=outlines] .orow').length > 0);
-    await p2.locator('[data-testid=outlines] .orow').first().click();
-    await p2.locator('[data-testid=bar-extract]').click();
+    await panelControl(p2, p2.locator('[data-testid=outlines] .orow')).first().click();
+    await panelControl(p2, p2.locator('[data-testid=bar-extract]')).click();
     await p2.keyboard.type('Mem part'); await p2.keyboard.press('Enter');
     await p2.waitForFunction(() => /Part Mem part saved to the Parts library/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
-    assert.match(await p2.locator('[data-testid=cmd-prompt]').textContent(), /storage is not available: it stays until the app is closed/);
-    await p2.locator('[data-testid=panel-library]').click();
-    assert.deepEqual(await p2.locator('[data-testid=lib-list] .card .cname').allTextContents(), ['Mem part']);
-    assert.match(await p2.locator('[data-testid=lib-foot]').textContent(), /storage is not available here, so parts last until the app is closed/);
-    await p2.locator('[data-testid=lib-add]').click();                                         // Add to sheet still works: a new layout tab
+    assert.match(await panelControl(p2, p2.locator('[data-testid=cmd-prompt]')).textContent(), /storage is not available: it stays until the app is closed/);
+    await panelControl(p2, p2.locator('[data-testid=panel-library]')).click();
+    assert.deepEqual(await panelControl(p2, p2.locator('[data-testid=lib-list] .card .cname')).allTextContents(), ['Mem part']);
+    assert.match(await panelControl(p2, p2.locator('[data-testid=lib-foot]')).textContent(), /storage is not available here, so parts last until the app is closed/);
+    await panelControl(p2, p2.locator('[data-testid=lib-add]')).click();                                         // Add to sheet still works: a new layout tab
     assert.equal(await p2.locator('.tabs .dtab.on').getAttribute('data-kind'), 'layout');
     assert.deepEqual(errs2, []);
     await ctx2.close();
@@ -2754,7 +3151,7 @@ try {
     assert.equal(await hint('Line'), 'L'); assert.equal(await hint('Text'), 'T');
     await page.keyboard.press('Escape');
     await page.locator('[data-menu=Edit]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'PasteCtrl+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.textContent)), ['UndoCtrl+Z', 'RedoCtrl+Y', 'CopyCtrl+C', 'Cut', 'PasteCtrl+V', 'Undo history…', 'Select allCtrl+A', 'DeleteDel']);
     assert.equal(await page.getByRole('menuitem', { name: 'Undo', exact: true }).isDisabled(), true, 'nothing to undo yet');
     assert.equal(await page.getByRole('menuitem', { name: 'Delete', exact: true }).isDisabled(), true, 'nothing selected');
     await page.keyboard.press('Escape');
@@ -2831,6 +3228,7 @@ try {
     // Apply and the count are in the panel's visible part with the panel scrolled to the top
     await page.setViewportSize({ width: 1440, height: 600 });
     await page.waitForTimeout(200);
+    await t('ptab-step').click();
     const panel = await rectOf(page.locator('aside.panel'));
     assert.equal(await page.locator('aside.panel').evaluate((e) => e.scrollTop), 0);
     const apply = await rectOf(t('apply')), count = await rectOf(t('count'));
@@ -2859,7 +3257,7 @@ try {
     await t('apply').click();                                                         // the grid becomes placed parts, so a new grid can be picked
     await t('part').selectOption({ index: 1 });
     await t('fit-switch').uncheck();
-    const rows = page.locator('[data-key=rows]');
+    const rows = panelControl(page, page.locator('[data-key=rows]'));
     for (const v of ['0', '-3', 'abc']) {
       await rows.fill(v);
       assert.match(await t('cmd-prompt').textContent(), /Rows must be 1 or more/, v);
@@ -2871,7 +3269,7 @@ try {
     await rows.fill(''); await rows.press('Tab');
     assert.match(await t('cmd-prompt').textContent(), /Rows must be 1 or more/);
     assert.equal(await rows.inputValue(), '3', 'it snaps back, and said why');
-    const cols = page.locator('[data-key=cols]');
+    const cols = panelControl(page, page.locator('[data-key=cols]'));
     await cols.fill('1000'); await cols.press('Tab');
     assert.match(await t('cmd-prompt').textContent(), /Columns: 1000 will not fit/);
     assert.notEqual(await cols.inputValue(), '1000');
@@ -2881,9 +3279,10 @@ try {
   await step('invalid numbers (text, negative, 0 rows) get a message naming the allowed range, a red mark on the field, and the old value back', async () => {
     const cases = [['rows', '0', /Rows must be 1 or more \(up to 200\)/], ['rows', 'abc', /Rows must be 1 or more/], ['gapX', 'abc', /Gap X must be a number in mm: 0 or more/], ['gapY', '-4', /Gap Y must be 0 mm or more/],
       ['sheetW', 'abc', /Width must be a number in mm: \d+ to 100000/], ['sheetH', '0', /Height must be \d+ mm or more/], ['gripLeft', '-5', /Left must be 0 mm or more/]];
-    const key = (k) => page.locator(`[data-key=${k}]`).first();
+    const key = (k) => panelControl(page, page.locator(`[data-key=${k}]`)).first();
     await t('fit-switch').uncheck();
     for (const [k, v, re] of cases) {
+      if (/^(sheet|grip)/.test(k)) await layoutTab();
       const f = key(k), was = await f.inputValue();
       await t('cmd-prompt').evaluate((el) => { el.textContent = ''; });
       await f.fill(v); await f.press('Tab');
@@ -2914,10 +3313,11 @@ try {
     await page.locator('[data-testid=lib-search]').fill('');
     assert.equal(await page.locator('[data-testid=lib-menu]').first().getAttribute('title'), 'Open as drawing, Rename, Export, Delete');
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     await t('part').selectOption({ index: 1 });                                        // Plate A fills the sheet as a grid
+    await layoutTab();
     for (const k of ['Top', 'Right', 'Bottom', 'Left']) await grip(k).fill('30');
-    await page.locator('[data-key=reg]').check();
+    await layoutTab(); await panelControl(page, page.locator('[data-key=reg]')).check();
     const marksBoxes = async () => page.locator('[data-group=marks] circle, [data-group=marks] path').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
     const labels = await page.locator('.grip-label').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { e: e.dataset.edge, x: r.x, y: r.y, width: r.width, height: r.height }; }));
     assert.equal(labels.length, 4);
@@ -2936,7 +3336,7 @@ try {
     await shotBoth('slot-width');
   });
 
-  await step('review: the read-only bar numbers (W, H) are not drawn as inputs; X, Y and Angle are, and say what they are', async () => {
+  await step('review: the read-only Part ribbon numbers (W, H) are not drawn as inputs; X, Y and Angle are, and say what they are', async () => {
     const bg = await t('pw').evaluate((e) => getComputedStyle(e).backgroundColor);
     assert.match(bg, /^rgba\(0, 0, 0, 0\)|^transparent/, 'no white input look: ' + bg);
     assert.match(await t('pw').getAttribute('title'), /Read-only: parts are scaled per drawing/);
@@ -2975,11 +3375,11 @@ try {
       return { scrolls: n.scrollHeight > n.clientHeight + 1, all: bs.every((b) => b.top >= r.top - 0.5 && b.bottom <= r.bottom + 0.5 && b.left >= r.left - 0.5 && b.right <= r.right + 0.5), n: bs.length };
     });
     const lay = await rail();
-    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 20], 'layout: ' + JSON.stringify(lay));
+    assert.deepEqual([lay.scrolls, lay.all, lay.n], [false, true, 21], 'layout: ' + JSON.stringify(lay));
     await shotBoth('small-layout');
     await drawingTab().click(); await click(50, 0);
     const dr = await rail();
-    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 20], 'drawing: ' + JSON.stringify(dr));
+    assert.deepEqual([dr.scrolls, dr.all, dr.n], [false, true, 21], 'drawing: ' + JSON.stringify(dr));
     await shotBoth('small-drawing');
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForTimeout(150);
@@ -3060,10 +3460,10 @@ try {
     await t('new-layout').click();
     await t('panel-library').click();
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
   };
 
-  await step('placing: a selected part shows the hint, size handles and the editable bar; Build B wording is gone', async () => {
+  await step('placing: a selected part shows the hint, size handles and the Part ribbon; Build B wording is gone', async () => {
     await freshLayoutWithPlate();
     assert.deepEqual(await pos(), [450, 320]);
     assert.equal(await t('hint-pill').isVisible(), true);
@@ -3076,8 +3476,8 @@ try {
     assert.equal(await t('bar-mirror-x').textContent(), 'Mirror X'); assert.equal(await t('bar-mirror-y').textContent(), 'Mirror Y');
     assert.equal(await t('nudge-step').inputValue(), '1.0');
     // the right panel: Selected part, Group and lock, Rotate, Mirror, Duplicate, Nudge, above the layout settings (Arrange only with 2+ parts selected)
-    const heads = await page.locator('aside.panel > section:not([hidden]) h2.sec, aside.panel > .contents > section:not([hidden]) h2.sec').allTextContents();
-    assert.deepEqual(heads.slice(0, 7), ['Selected part', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge', 'Sheet']);
+    const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
+    assert.deepEqual(heads, ['Selected part', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
     assert.equal(await t('pp-name').textContent(), 'Plate A');
     assert.equal(await t('pp-size').textContent(), '100 × 60');
     assert.equal(await t('pp-x').inputValue(), '450.00');
@@ -3150,7 +3550,7 @@ try {
     await page.keyboard.press('Shift+ArrowDown');
     assert.deepEqual(await pos(), [p0[0] - 9, p0[1] - 9]);
     // the step: the bar and the panel are one value
-    await t('nudge-step').fill('2.5'); await t('nudge-step').press('Enter');
+    await partTab(); await t('nudge-step').fill('2.5'); await t('nudge-step').press('Enter');
     assert.equal(await t('nudge-step2').inputValue(), '2.5');
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-nudge')), '2.5');
     const p1 = await pos();
@@ -3164,7 +3564,7 @@ try {
     await t('nudge-step2').fill('abc'); await t('nudge-step2').press('Enter');
     assert.match(await prompt(), /The nudge step must be a number above 0 mm/);
     assert.equal(await t('nudge-step2').inputValue(), '2.5'); assert.equal(await t('nudge-step').inputValue(), '2.5');
-    await t('nudge-step').fill('0'); await t('nudge-step').press('Enter');
+    await partTab(); await t('nudge-step').fill('0'); await t('nudge-step').press('Enter');
     assert.equal(await t('nudge-step').inputValue(), '2.5');
     // held down: one undo step for the run
     await page.waitForTimeout(900);
@@ -3175,39 +3575,39 @@ try {
     await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
     await t('new-layout').click();
     assert.equal(await t('nudge-step').count(), 1);
-    await t('panel-library').click(); await libCard('Plate A').locator('[data-testid=lib-add]').click(); await t('panel-main').click();
+    await t('panel-library').click(); await libCard('Plate A').locator('[data-testid=lib-add]').click(); await t('ptab-drawing').click();
     assert.equal(await t('nudge-step').inputValue(), '2.5', 'remembered after a reload');
-    await t('nudge-step').fill('1'); await t('nudge-step').press('Enter');
+    await partTab(); await t('nudge-step').fill('1'); await t('nudge-step').press('Enter');
   });
 
   await step('placing: typed X, Y and Angle apply on Enter; bad input says so and snaps back; W and H stay read-only', async () => {
-    await t('px').fill('100'); await t('px').press('Enter');
-    await t('py').fill('50.5'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('100'); await t('px').press('Enter');
+    await partTab(); await t('py').fill('50.5'); await t('py').press('Enter');
     assert.deepEqual(await pos(), [100, 50.5]);
     assert.equal(await t('pp-x').inputValue(), '100.00');
     assert.match(await prompt(), /^Plate A moved to X 100\.00 Y 50\.50:?$/);
-    await t('px').fill('abc'); await t('px').press('Tab');
+    await partTab(); await t('px').fill('abc'); await t('px').press('Tab');
     assert.match(await prompt(), /X must be a number in mm/);
     assert.equal(await t('px').inputValue(), '100.00', 'snapped back');
-    await t('py').fill(''); await t('py').press('Tab');
+    await partTab(); await t('py').fill(''); await t('py').press('Tab');
     assert.match(await prompt(), /Y must be a number in mm/);
     await t('pp-x').fill('120,5'); await t('pp-x').press('Enter');
     assert.equal((await pos())[0], 120.5, 'a comma is a decimal point');
     // Angle: the part turns about its centre
     const cen = async () => { const [x, y] = await pos(); return [x + Number(await t('pw').inputValue()) / 2, y + Number(await t('ph').inputValue()) / 2]; };
     const c0 = await cen();
-    await t('pa').fill('30'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('30'); await t('pa').press('Enter');
     assert.equal(await t('pa').inputValue(), '30°');
     const c1 = await cen();
     approx(c1[0], c0[0], 0.02); approx(c1[1], c0[1], 0.02);
     approx(Number(await t('pw').inputValue()), 100 * Math.cos(Math.PI / 6) + 60 * Math.sin(Math.PI / 6), 0.02, 'the box of the turned part');
     assert.equal(await t('rot-angle').inputValue(), '30°');
-    await t('pa').fill('x'); await t('pa').press('Tab');
+    await partTab(); await t('pa').fill('x'); await t('pa').press('Tab');
     assert.match(await prompt(), /Angle must be a number in degrees/);
     assert.equal(await t('pa').inputValue(), '30°');
     await t('rot-angle').fill('-45'); await t('rot-angle').press('Enter');
     assert.equal(await t('pa').inputValue(), '315°', 'any angle is kept as 0 to 360');
-    await t('pa').fill('0'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('0'); await t('pa').press('Enter');
     assert.equal(await t('pa').inputValue(), '0°');
     const c2 = await cen();
     approx(c2[0], c0[0], 0.02); approx(c2[1], c0[1], 0.02);
@@ -3263,9 +3663,9 @@ try {
     // the Rotate section's pivot select
     await t('rot-pivot').selectOption('bl');
     assert.equal(await t('rot-px').isDisabled(), true);
-    await t('pa').fill('90'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');
     const corner = [Number(await t('rot-px').inputValue()), Number(await t('rot-py').inputValue())];
-    await t('pa').fill('120'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('120'); await t('pa').press('Enter');
     assert.deepEqual([Number(await t('rot-px').inputValue()), Number(await t('rot-py').inputValue())], corner, 'turned about its own lower-left corner: that corner stays put');
     await t('rot-pivot').selectOption('centre');
     // click once more: back to the plain selection (and Esc does the same)
@@ -3282,10 +3682,10 @@ try {
   });
 
   await step('placing: Mirror X flips left to right, Mirror Y top to bottom; twice is the start; the Rotate/Mirror sections do the same', async () => {
-    await t('pa').fill('0'); await t('pa').press('Enter');
-    await t('pa').fill('30'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('0'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('30'); await t('pa').press('Enter');
     const start = [await pos(), await angleNow(), Number(await t('pw').inputValue())];
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     assert.match(await prompt(), /^Plate A mirrored left to right \(X\)/);
     assert.equal(await angleNow(), 330, 'a mirror reverses the turn');
     assert.equal(Number(await t('pw').inputValue()), start[2], 'the box is the same size');
@@ -3294,13 +3694,13 @@ try {
     await t('mirror-y').click();
     assert.match(await prompt(), /mirrored top to bottom \(Y\)/);
     assert.equal(await angleNow(), 330);
-    await t('bar-mirror-y').click();
+    await partTab(); await t('bar-mirror-y').click();
     assert.deepEqual([await pos(), await angleNow()], [start[0], start[1]]);
     await page.keyboard.press('Control+z');
     assert.equal(await angleNow(), 330, 'undo takes back a mirror');
     await page.keyboard.press('Control+y');
     assert.equal(await angleNow(), 30);
-    await t('pa').fill('0'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('0'); await t('pa').press('Enter');
   });
 
   await step('exe review fixes: with no grid part the step footer is only its hint (no floating 0); Duplicate says when copies land on other parts', async () => {
@@ -3309,7 +3709,7 @@ try {
     assert.equal(await t('count').isVisible(), false, 'no big 0');
     assert.equal(await t('apply').isVisible(), false);
     assert.equal(await t('step-foot').evaluate((e) => getComputedStyle(e).position), 'static');
-    await t('px').fill('50'); await t('px').press('Enter'); await t('py').fill('100'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter'); await partTab(); await t('py').fill('100'); await t('py').press('Enter');
     await t('dup-count').fill('1'); await t('dup-count').press('Enter'); await t('dup-gap').fill('5'); await t('dup-gap').press('Enter');
     await t('dup-x').click(); await t('dup-go').click();
     assert.doesNotMatch(await prompt(), /on top of/);
@@ -3322,7 +3722,7 @@ try {
   await step('placing: Duplicate along X or Y (gap edge to edge), Copy once / Ctrl+D, Delete, off the sheet is tinted and said once', async () => {
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });      // markPixels looks for the light mark colour
     await freshLayoutWithPlate();
-    await t('px').fill('50'); await t('px').press('Enter'); await t('py').fill('100'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter'); await partTab(); await t('py').fill('100'); await t('py').press('Enter');
     assert.equal(await t('dup-x').getAttribute('aria-pressed'), 'true');
     assert.equal(await t('dup-gap').inputValue(), '5'); assert.equal(await t('dup-count').inputValue(), '3');
     await t('dup-go').click();
@@ -3376,22 +3776,21 @@ try {
     await page.keyboard.press('Control+z');
     assert.equal(await nParts(), 8);
     // moving one part off the sheet says so once, and a part back on the sheet loses the tint
-    await t('px').fill('950'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('950'); await t('px').press('Enter');
     assert.match(await prompt(), /Plate A moved to X 950\.00 Y \d+\.\d\d\. Plate A is off the sheet \(drawn in orange\)\. It is still placed:?$/);
-    await t('px').fill('900'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('900'); await t('px').press('Enter');
     assert.doesNotMatch(await prompt(), /off the sheet/);
   });
 
   await step('placing: a part of the step and repeat grid becomes a placed part of its own when it is changed', async () => {
     await t('new-layout').click();
-    await t('panel-library').click(); await libCard('Plate A').locator('[data-testid=lib-add]').click(); await t('panel-main').click();
+    await t('panel-library').click(); await libCard('Plate A').locator('[data-testid=lib-add]').click(); await t('ptab-drawing').click();
     await t('apply').isDisabled();
     await t('part').selectOption({ index: 1 });
     const n = Number(await t('count').textContent());
     assert.ok(n > 4);
     await page.locator('[data-group=parts] [data-i="3"] .part-hit').click({ force: true });
-    assert.equal(await t('placed-kind').textContent(), 'placed part · step and repeat');
-    await t('px').fill('5'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('5'); await t('px').press('Enter');
     assert.match(await prompt(), /The step and repeat grid became separate placed parts/);
     assert.equal(await t('count').textContent(), '0', 'the grid is cleared, as Apply does');
     assert.equal(await nParts(), n + 1);
@@ -3404,20 +3803,20 @@ try {
 
   await step('placing: saved with its rotation and mirror, reopened the same, the PDF draws it; screenshots light and dark', async () => {
     await freshLayoutWithPlate();
-    await t('px').fill('200'); await t('px').press('Enter'); await t('py').fill('300'); await t('py').press('Enter');
-    await t('pa').fill('33'); await t('pa').press('Enter');
-    await t('bar-mirror-x').click();
+    await partTab(); await t('px').fill('200'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
+    await partTab(); await t('pa').fill('33'); await t('pa').press('Enter');
+    await partTab(); await t('bar-mirror-x').click();
     const angle = await angleNow(), at1 = await pos(), box1 = [await t('pw').inputValue(), await t('ph').inputValue()];
     assert.equal(angle, 327);
     // a second part, turned, mirrored the other way, and a third on its own for the picture
-    await t('dup-one').click(); await t('px').fill('500'); await t('px').press('Enter'); await t('py').fill('250'); await t('py').press('Enter');
-    await t('bar-mirror-y').click(); await t('pa').fill('75'); await t('pa').press('Enter');
-    await t('dup-one').click(); await t('pa').fill('0'); await t('pa').press('Enter'); await t('px').fill('700'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await t('dup-one').click(); await partTab(); await t('px').fill('500'); await t('px').press('Enter'); await partTab(); await t('py').fill('250'); await t('py').press('Enter');
+    await partTab(); await t('bar-mirror-y').click(); await partTab(); await t('pa').fill('75'); await t('pa').press('Enter');
+    await t('dup-one').click(); await partTab(); await t('pa').fill('0'); await t('pa').press('Enter'); await partTab(); await t('px').fill('700'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     // the third part in rotate mode, for the picture
-    await t('px').fill('600'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('600'); await t('px').press('Enter');
     const q = await partPoint(0.5);
     await page.mouse.click(q.x, q.y);
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('placing-rotate');
     await page.keyboard.press('Escape');
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
@@ -3433,7 +3832,7 @@ try {
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     assert.equal(await angleNow(), angle, 'the angle came back');
     assert.deepEqual(await pos(), at1); assert.deepEqual([await t('pw').inputValue(), await t('ph').inputValue()], box1);
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     assert.equal(await angleNow(), 33, 'it was mirrored when saved: mirroring again gives the unmirrored 33°');
     await page.keyboard.press('Control+z');
     // the PDF of the layout draws the turned, mirrored parts where the sheet shows them
@@ -3445,14 +3844,18 @@ try {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(100);
     if (await t('pdf-dialog').count()) await page.locator('[data-testid=pdf-dialog] button', { hasText: /Close|Cancel/ }).first().click().catch(() => {});
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('placing-turned');
-    // the smallest window: the bar with a part selected still fits on one row
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    // At the smallest window the Part ribbon keeps its height and every control is reachable.
     await page.setViewportSize({ width: 1024, height: 700 });
     await page.waitForTimeout(200);
-    const bar = await rectOf(t('propbar')), kids = await t('propbar').locator('> *:not([hidden])').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
-    await page.screenshot({ path: `${shotDir}/s12-placing-1024-light.png` });
-    for (const r of kids) assert.ok(r.y + r.height <= bar.y + bar.height + 1 && r.x + r.width <= bar.x + bar.width + 1, 'the property bar overflows at 1024: ' + JSON.stringify([r, bar]));
+    await partTab();
+    assert.equal(await t('propbar').count(), 0);
+    const ribbonBox = await page.locator('.ribbon-body').boundingBox();
+    assert.equal(ribbonBox.height, 90);
+    await t('bar-lock').scrollIntoViewIfNeeded();
+    assert.equal(await t('bar-lock').isVisible(), true);
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
@@ -3469,21 +3872,21 @@ try {
   /** Three parts of different sizes at different heights: Plate A, Dial, Plate B. */
   const threeParts = async () => {
     await freshLayoutWithPlate();
-    await t('px').fill('100'); await t('px').press('Enter'); await t('py').fill('420'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('100'); await t('px').press('Enter'); await partTab(); await t('py').fill('420'); await t('py').press('Enter');
     await t('panel-library').click();
     await libCard('Dial').locator('[data-testid=lib-add]').click();
-    await t('panel-main').click();
-    await t('px').fill('400'); await t('px').press('Enter'); await t('py').fill('300'); await t('py').press('Enter');
+    await t('ptab-drawing').click();
+    await partTab(); await t('px').fill('400'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
     await t('panel-library').click();
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
-    await t('panel-main').click();
-    await t('px').fill('700'); await t('py').fill('360'); await t('py').press('Enter'); await t('px').press('Enter');
+    await t('ptab-drawing').click();
+    await partTab(); await t('px').fill('700'); await partTab(); await t('py').fill('360'); await t('py').press('Enter'); await t('px').press('Enter');
   };
   await step('TODO 36: Shift-click adds and removes parts; a rubber band selects the parts fully inside; the pick-order numbers, the box and its readout, the Arrange section', async () => {
     await threeParts();
     assert.equal(await t('pp-name').textContent(), 'Plate A');
     assert.equal(await page.locator('[data-testid=sec-arrange]').isVisible(), false, 'one part selected: no Arrange section');
-    assert.equal(await t('bar-group').isVisible(), false);
+    assert.equal(await t('bar-group').isDisabled(), true);
     // Shift-click adds
     await click(150, 450, { shift: true });
     assert.equal(await t('pp-name').textContent(), '2 parts');
@@ -3507,25 +3910,26 @@ try {
     assert.equal(await page.locator('[data-group=tools] .grip-sq rect').count(), 8);
     assert.equal(await t('members').locator('li').count(), 3);
     assert.equal(await t('hint-pill').textContent(), 'Rubber-band or Shift-click to select several parts · the number is the pick order');
-    const heads = await page.locator('aside.panel > .contents > section:not([hidden]) h2.sec').allTextContents();
+    const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
     assert.deepEqual(heads.slice(0, 7), ['Selected parts', 'Arrange', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge']);
-    assert.deepEqual(await page.locator('[data-testid=sec-arrange] button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
+    assert.deepEqual(await page.locator('[data-testid=sec-arrange] .section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
       ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically']);
     assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'Sheet', 'First selected']);
     assert.equal(await t('arrange-rel').inputValue(), 'selection');
     // the bar and the panel say what is selected
     assert.equal(await t('placed-name').textContent(), '3 parts selected');
     assert.equal(await t('pa').inputValue(), '0°');
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('arrange-three');
-    // the smallest window: the bar with several parts selected (Group, Lock) still fits on one row, with room to spare for CI's wider fonts
+    // The Part ribbon scrolls horizontally at the smallest window.
     await page.setViewportSize({ width: 1024, height: 700 });
     await page.waitForTimeout(200);
-    const bar = await rectOf(t('propbar')), kids = await t('propbar').locator('> *:not([hidden])').evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height }; }));
-    await page.screenshot({ path: `${shotDir}/s12-arrange-1024-light.png` });
-    for (const r of kids) assert.ok(r.y + r.height <= bar.y + bar.height + 1 && r.x + r.width <= bar.x + bar.width - 20, 'the property bar overflows or is too tight at 1024: ' + JSON.stringify([r, bar]));
-    const barInner = await t('propbar').evaluate((e) => [e.scrollWidth, e.clientWidth]);
-    assert.ok(barInner[0] <= barInner[1], 'no horizontal overflow ' + barInner);
+    await partTab();
+    assert.equal(await t('propbar').count(), 0);
+    const ribbonBox = await page.locator('.ribbon-body').boundingBox();
+    assert.equal(ribbonBox.height, 90);
+    await t('bar-lock').scrollIntoViewIfNeeded();
+    assert.equal(await t('bar-lock').isVisible(), true);
     await page.setViewportSize({ width: 1440, height: 900 });
   });
 
@@ -3544,6 +3948,16 @@ try {
     await page.keyboard.press('Control+z');
     await page.keyboard.press('Control+a');
     assert.equal(await t('pp-name').textContent(), '3 parts', 'all three are back');
+  });
+
+  await step('TODO 110c: the Part ribbon Rotate 90° turns a multi-selection by 90° whatever the main part\'s angle; Nudge moves it', async () => {
+    const rb = page.locator('.ribbon-body');
+    await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');         // the main part is now at 90°
+    await partTab(); await rb.getByRole('button', { name: 'Rotate 90°', exact: true }).click();
+    assert.match(await prompt(), /^3 parts turned by 90° about the middle of the selection/);
+    await rb.getByRole('button', { name: 'Right', exact: true }).click();
+    assert.match(await prompt(), /^3 parts moved .* mm right/);
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
   });
 
   await step('TODO 36: Align left / centre / right / top / middle / bottom, relative to the selection, the sheet and the first selected', async () => {
@@ -3648,17 +4062,17 @@ try {
     b = await selBoxes(); approx(b[0][0], before[0][0] - 9, 0.02);
     // typed X moves the selection's box: its lower-left lands there
     const ub = [Math.min(...before.map((q) => q[0])), Math.min(...before.map((q) => q[1]))];
-    await t('px').fill('50'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('50'); await t('px').press('Enter');
     b = await selBoxes(); approx(Math.min(...b.map((q) => q[0])), 50, 0.02);
     // Mirror X: the whole selection flips left to right about its middle
     const m0 = await selBoxes(), lo = Math.min(...m0.map((q) => q[0])), hi = Math.max(...m0.map((q) => q[2]));
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     b = await selBoxes();
     b.forEach((x, i) => { approx(x[0], lo + hi - m0[i][2], 0.05, 'mirrored x0 ' + i); approx(x[1], m0[i][1], 0.05); });
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     b = await selBoxes(); b.forEach((x, i) => approx(x[0], m0[i][0], 0.05, 'twice is the start'));
     // Angle: a turn of the whole selection about its middle
-    await t('pa').fill('90'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');
     assert.match(await prompt(), /^3 parts turned by 90° about the middle of the selection/);
     await page.keyboard.press('Control+z');
     // Copy once / Ctrl+D duplicates all three, and selects the copies
@@ -3690,8 +4104,8 @@ try {
     await threeParts();
     await t('panel-library').click();
     await libCard('Dial').locator('[data-testid=lib-add]').click();
-    await t('panel-main').click();
-    await t('px').fill('850'); await t('px').press('Enter'); await t('py').fill('600'); await t('py').press('Enter');
+    await t('ptab-drawing').click();
+    await partTab(); await t('px').fill('850'); await t('px').press('Enter'); await partTab(); await t('py').fill('600'); await t('py').press('Enter');
   };
   await step('TODO 37: Ctrl+G groups the selected parts, a click on a member selects the group, "Group of N" in the bar, the panel and on the canvas; it moves as one; Ctrl+Shift+G ungroups', async () => {
     await fourParts();
@@ -3701,7 +4115,6 @@ try {
     await page.keyboard.press('Control+g');
     assert.match(await prompt(), /^Grouped 3 parts: a click on one selects the group, and it moves, turns and copies as one \(Ctrl\+Shift\+G ungroups\):?$/);
     assert.equal(await t('placed-name').textContent(), 'Group of 3');
-    assert.equal(await t('placed-kind').textContent(), 'group');
     assert.equal(await t('pp-name').textContent(), 'Group of 3');
     assert.equal(await page.locator('[data-testid=sec-part] h2').textContent(), 'Selected group');
     assert.equal(await t('bar-group').innerText(), 'Ungroup');
@@ -3711,7 +4124,7 @@ try {
     assert.equal(await t('members').locator('li').count(), 3);
     assert.match(await t('cmd-hist').textContent(), /^Command: SELECT {3}Group of 3 /);
     assert.equal(await t('hint-pill').textContent(), 'A group moves, turns and copies as one part · Ctrl+Shift+G ungroups');
-    const heads = await page.locator('aside.panel > .contents > section:not([hidden]) h2.sec').allTextContents();
+    const heads = await page.locator('[data-docker=drawing] > section.placedsec:not([hidden]) h2.sec').allTextContents();
     assert.deepEqual(heads.slice(0, 3), ['Selected group', 'Arrange', 'Group and lock']);
     assert.equal(await t('grp-group').isDisabled(), true); assert.equal(await t('grp-ungroup').isDisabled(), false);
     assert.equal(await t('grp-lock').isDisabled(), false); assert.equal(await t('grp-unlock').isDisabled(), true);
@@ -3770,10 +4183,10 @@ try {
     await freshLayoutWithPlate();
     assert.equal(await padlocks(), 0);
     const p0 = await pos();
-    await t('bar-lock').click();
+    await partTab(); await t('bar-lock').click();
     assert.match(await prompt(), /^Plate A locked: it cannot be moved, turned, mirrored or deleted until you unlock it:?$/);
     assert.equal(await padlocks(), 1);
-    assert.equal(await t('lock-chip').isVisible(), true); assert.equal(await t('pp-lock').isVisible(), true);
+    assert.equal(await t('bar-lock').innerText(), 'Unlock'); assert.equal(await t('pp-lock').isVisible(), true);
     assert.equal(await t('bar-lock').innerText(), 'Unlock');
     assert.equal(await t('px').isDisabled(), true); assert.equal(await t('py').isDisabled(), true); assert.equal(await t('pa').isDisabled(), true);
     assert.equal(await t('pp-x').isDisabled(), true); assert.equal(await t('rot-angle').isDisabled(), true);
@@ -3786,7 +4199,7 @@ try {
     await page.keyboard.press('ArrowRight');
     assert.deepEqual(await pos(), p0); assert.match(await prompt(), LOCKED_MSG);
     // mirror
-    await t('bar-mirror-x').click();
+    await partTab(); await t('bar-mirror-x').click();
     assert.deepEqual(await pos(), p0); assert.match(await prompt(), LOCKED_MSG);
     assert.equal(await angleNow(), 0);
     // turning by hand: a click on the selected part does not start it
@@ -3800,7 +4213,7 @@ try {
     assert.equal(await nParts(), 1);
     // typed values
     await t('pa').evaluate((e) => { e.disabled = false; });
-    await t('pa').fill('45'); await t('pa').press('Enter');
+    await partTab(); await t('pa').fill('45'); await t('pa').press('Enter');
     assert.equal(await angleNow(), 0);
     // the right-click menu
     await rightClickMm(p0[0] + 50, p0[1] + 30);
@@ -3829,7 +4242,7 @@ try {
     assert.equal(await padlocks(), 0);
     await t('grp-unlock').isDisabled().then((d) => assert.equal(d, true));
     // a copy of a locked part is not locked
-    await t('bar-lock').click();
+    await partTab(); await t('bar-lock').click();
     await page.keyboard.press('Control+d');
     assert.equal(await nParts(), 2); assert.equal(await padlocks(), 1, 'the original keeps its padlock, the copy has none');
     assert.equal(await t('bar-lock').innerText(), 'Lock', 'the copy is selected and free');
@@ -3841,7 +4254,7 @@ try {
     await page.keyboard.press('Control+g');
     await page.keyboard.press('Control+Shift+g');
     await page.keyboard.press('Control+g');                        // grouped again (the ungroup was in between)
-    await t('bar-lock').click();
+    await partTab(); await t('bar-lock').click();
     assert.equal(await padlocks(), 3);
     assert.equal(await t('pp-lock').isVisible(), true);
     assert.match(await prompt(), /^3 parts locked:/);
@@ -3869,13 +4282,13 @@ try {
     await click(150, 450);
     assert.equal(await t('pp-name').textContent(), 'Group of 3', 'the group came back');
     assert.equal(await t('bar-lock').innerText(), 'Unlock');
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('group-locked');
-    await t('bar-lock').click();                                   // unlock and the whole group moves again
+    await partTab(); await t('bar-lock').click();                                   // unlock and the whole group moves again
     assert.equal(await padlocks(), 0);
     await page.keyboard.press('Control+Shift+g');
     assert.equal(await t('pp-name').textContent(), '3 parts');
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
   });
 
   await step('TODO 37: Group / Ungroup / Lock are in the Layout menu; group and lock are named in Undo history; screenshots of a group', async () => {
@@ -3893,7 +4306,7 @@ try {
     const rows = await page.locator('[data-testid=hist-row] > span:last-child').allTextContents();
     assert.ok(rows.some((r) => /Group 3 parts/.test(r)) && rows.some((r) => /Lock 3 parts/.test(r)) && rows.some((r) => /Unlock 3 parts/.test(r)), rows.join(' | '));
     await page.keyboard.press('Escape');
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('group');
   });
 
@@ -3923,17 +4336,17 @@ try {
     const topLabels = (await t('ruler-top').locator('text').allTextContents()).map(Number), leftLabels = (await t('ruler-left').locator('text').allTextContents()).map(Number);
     assert.ok(topLabels.includes(0) && topLabels.includes(500) && topLabels.includes(1000) || topLabels.includes(100), 'numbers along the top: ' + topLabels);
     assert.ok(leftLabels.includes(0) && leftLabels.some((v) => v > 0), 'numbers up the left: ' + leftLabels);
-    assert.equal(await t('rulers-show').isChecked(), true);
-    assert.equal(await page.locator('[data-testid=rulers-panel] .lbl').textContent(), "Millimetres. Zero is the sheet's bottom-left corner; Y counts up, like the X / Y in the status bar.");
+    assert.equal(await ribbonToggle('Show rulers').isChecked(), true);
+    assert.equal(await t('rulers-panel').count(), 0, 'ruler switch moved to View');
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['  Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['Clear all guides', true], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light', false], ['  Theme: dark', false]]);
+      [['Fit to window', false], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
-    assert.equal(await t('rulers-show').isChecked(), false);
+    assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-rulers')), '0', 'remembered on this PC');
-    await t('rulers-show').check();
+    await ribbonToggle('Show rulers').check();
     assert.equal(await t('ruler-top').isVisible(), true);
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-rulers')), '1');
     // drawing tabs have them too
@@ -3948,8 +4361,7 @@ try {
     assert.match(await prompt(), /^Guides belong to a layout tab/);
     await closeTabs(/outline/);
     await t('new-layout').click();                                // nothing placed yet: the bar says where 0,0 is
-    assert.equal(await t('sheet-origin').isVisible(), true);
-    assert.equal(await t('sheet-origin').textContent(), "Sheet 1000 × 700 mm · Origin 0,0 at the sheet's bottom-left · Y points up · Rulers: mm");
+    assert.equal(await t('propbar').count(), 0);
   });
 
   await step('TODO 38: drag a guide out of a ruler (dashed line, readout, command line); Esc cancels; dropped back on the ruler it goes; moving one; undo', async () => {
@@ -4012,7 +4424,7 @@ try {
 
   await step('TODO 38: the Guides section: a position field and a delete button per guide, + Horizontal / + Vertical, Show, Lock, Clear all; View menu; right-click a guide', async () => {
     await freshLayoutWithPlate();
-    assert.equal(await t('guide-clear').isDisabled(), true);
+    await t('ptab-drawing').click();
     assert.equal(await page.locator('[data-testid=guides-panel] h2').textContent(), 'Guides');
     await t('guide-add-h').click();
     assert.deepEqual(await guideVals(), [['y', 350]]);
@@ -4035,12 +4447,12 @@ try {
     assert.match(await prompt(), /^A guide's position must be a number in mm:?$/);
     assert.deepEqual(await guideVals(), [['y', 600], ['x', 250]]);
     // Show / Lock switches and Clear all
-    assert.equal(await t('guides-show').isChecked(), true); assert.equal(await t('guides-lock').isChecked(), false);
-    await t('guides-show').uncheck();
+    assert.equal(await ribbonToggle('Show guides').isChecked(), true); assert.equal(await ribbonToggle('Lock guides').isChecked(), false);
+    await ribbonToggle('Show guides').uncheck();
     assert.equal(await guideLines(), 0, 'hidden guides are not drawn'); assert.equal((await guideVals()).length, 2, 'but still listed');
-    await t('guides-show').check();
+    await ribbonToggle('Show guides').check();
     assert.equal(await guideLines(), 2);
-    await t('guides-lock').check();
+    await ribbonToggle('Lock guides').check();
     assert.equal(await page.locator('[data-group=guides] .guide-hit.locked').count(), 2);
     const lp = await at(60, 600);
     await page.mouse.move(lp.x, lp.y); await page.mouse.down(); await page.mouse.move(lp.x, lp.y + 50, { steps: 3 }); await page.mouse.up();
@@ -4056,7 +4468,7 @@ try {
     await dragMm([pp[0], pp[1]], [pp[0] + 30, pp[1] + 30]);
     approx((await pos())[0], at0[0] + 30, 1.2, 'the part under the locked guide was dragged'); approx((await pos())[1], at0[1] + 30, 1.2);
     await page.keyboard.press('Control+z');
-    await t('guides-lock').uncheck();
+    await ribbonToggle('Lock guides').uncheck();
     // right-click a guide: Delete guide, Lock guides, Hide guides
     const gp = await at(60, pp[1]);
     await page.mouse.click(gp.x, gp.y, { button: 'right' });
@@ -4067,24 +4479,24 @@ try {
     const gx = await at(250, 600);
     await page.mouse.click(gx.x, gx.y, { button: 'right' });
     await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Lock guides' }).click();
-    assert.equal(await t('guides-lock').isChecked(), true);
+    assert.equal(await ribbonToggle('Lock guides').isChecked(), true);
     await page.mouse.click(gx.x, gx.y, { button: 'right' });
     assert.deepEqual(await ctxItems(), ['Delete guide', 'Unlock guides', 'Hide guides']);
     assert.equal(await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Delete guide' }).isDisabled(), true);
     await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Hide guides' }).click();
-    assert.equal(await guideLines(), 0); assert.equal(await t('guides-show').isChecked(), false);
+    assert.equal(await guideLines(), 0); assert.equal(await ribbonToggle('Show guides').isChecked(), false);
     // View menu: Guides, Lock guides, Clear all guides
     await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 7)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', 'Clear all guides']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 8)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
     await page.getByRole('menuitem', { name: /Guides/ }).click();
-    assert.equal(await guideLines(), 1); assert.equal(await t('guides-show').isChecked(), true);
+    assert.equal(await guideLines(), 1); assert.equal(await ribbonToggle('Show guides').isChecked(), true);
     await menuItem('View', 'Clear all guides');
     assert.equal((await guideVals()).length, 0);
     assert.match(await prompt(), /^1 guide cleared\. Ctrl\+Z brings it back:?$/);
     await page.keyboard.press('Control+z');
     assert.equal((await guideVals()).length, 1);
-    await t('guides-lock').uncheck();
-    await t('guide-clear').click();
+    await ribbonToggle('Lock guides').uncheck();
+    await page.locator('[data-ribbon-tab=View]').click(); await page.locator('.ribbon-body').getByRole('button', { name: 'Clear all guides', exact: true }).click();
     assert.equal((await guideVals()).length, 0);
     await t('guide-del').count().then((n) => assert.equal(n, 0));
     // delete from the panel
@@ -4113,31 +4525,38 @@ try {
     approx((await pos())[0], 200, 0.01, 'the right edge (x + 100) is on the guide at 300');
     approx((await pos())[1], 240, 1.5);
     // the middle: centre x = x + 50 on the guide → x = 250
-    await t('px').fill('0'); await t('px').press('Enter');
+    await partTab(); await t('px').fill('0'); await t('px').press('Enter');
     await dragMm([50, 270], [50 + 253, 270]);
     approx((await pos())[0], 250, 0.01, 'the middle on the guide');
     // far from any guide: no snap
-    await t('px').fill('600'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('600'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     await dragMm([650, 480], [670, 490]);
     approx((await pos())[0], 620, 1.2); approx((await pos())[1], 460, 1.2);
     // SNAP off: the exact point, even 2 mm from a guide (302 here)
     await t('tog-snap').click();
-    await t('px').fill('312'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('312'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     await dragMm([362, 480], [352, 480]);
     approx((await pos())[0], 302, 1.2, 'SNAP off: no snapping to guides');
     assert.notEqual((await pos())[0], 300);
     await t('tog-snap').click();
     // a straight (Shift) drag keeps its straight axis: only the other axis may snap
-    await t('px').fill('310'); await t('px').press('Enter'); await t('py').fill('450'); await t('py').press('Enter');
+    await partTab(); await t('px').fill('310'); await t('px').press('Enter'); await partTab(); await t('py').fill('450'); await t('py').press('Enter');
     await dragMm([360, 480], [354, 478], ['Shift']);
     assert.equal((await pos())[1], 450, 'straight along X: Y did not change');
     assert.equal((await pos())[0], 300, 'X snapped to the guide');
     // hidden guides do not snap
-    await t('guides-show').uncheck();
-    await t('px').fill('312'); await t('px').press('Enter');
+    await ribbonToggle('Show guides').uncheck();
+    await partTab(); await t('px').fill('312'); await t('px').press('Enter');
     await dragMm([362, 480], [352, 480]);
     approx((await pos())[0], 302, 1.2);
-    await t('guides-show').check();
+    await ribbonToggle('Show guides').check();
+    // View can disable guide snapping while the guides and global SNAP remain on.
+    await ribbonToggle('Snap to guides').uncheck();
+    await partTab(); await t('px').fill('312'); await t('px').press('Enter');
+    await dragMm([362, 480], [352, 480]);
+    approx((await pos())[0], 302, 1.2);
+    assert.equal(await page.locator('.guide').count() > 0, true);
+    await ribbonToggle('Snap to guides').check();
   });
 
   await step('TODO 38: guides are saved in the layout file (settings block) and reopen, with Show and Lock; screenshots light and dark', async () => {
@@ -4145,10 +4564,10 @@ try {
     await t('guide-add-h').click(); await t('guide-pos').fill('600'); await t('guide-pos').press('Enter');
     await t('guide-add-v').click(); await t('guide-pos').nth(1).fill('250'); await t('guide-pos').nth(1).press('Enter');
     await page.keyboard.press('Escape');
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
     await page.locator('[data-testid=guides-panel]').scrollIntoViewIfNeeded();
     await shotBoth('guides');
-    await t('guides-lock').check();
+    await ribbonToggle('Lock guides').check();
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const m = readMeta(readDxf(dl.text));
     assert.deepEqual(m.s.guides, [{ axis: 'y', mm: 600 }, { axis: 'x', mm: 250 }]);
@@ -4157,7 +4576,7 @@ try {
     await t('picker').setInputFiles({ name: 'Guided.dxf', mimeType: 'text/plain', buffer: Buffer.from(dl.text, 'latin1') });
     await page.waitForFunction(() => { const b = document.querySelector('.tabs .dtab.on'); return b && b.dataset.kind === 'layout' && b.textContent.startsWith('Guided.dxf'); });
     assert.deepEqual(await guideVals(), [['y', 600], ['x', 250]], 'the guides came back');
-    assert.equal(await t('guides-lock').isChecked(), true); assert.equal(await t('guides-show').isChecked(), true);
+    assert.equal(await ribbonToggle('Lock guides').isChecked(), true); assert.equal(await ribbonToggle('Show guides').isChecked(), true);
     assert.equal(await guideLines(), 2);
     // each layout has its own guides
     await t('new-layout').click();
@@ -4190,7 +4609,7 @@ try {
     // the rail: Contour sits after Offset
     const order = await page.locator('nav.rail .tool').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label')));
     assert.equal(order[order.indexOf('Offset') + 1], 'Contour');
-    assert.equal(await page.locator('[data-tool=contour]').getAttribute('title'), 'Contour (CO)');
+    assert.equal(await page.locator('[data-tool=contour]').getAttribute('title'), 'Contour (CT)');
     assert.equal(await t('contour-panel').isVisible(), false);
     await page.locator('[data-tool=contour]').click();
     assert.equal(await t('contour-panel').isVisible(), true);
@@ -4255,12 +4674,12 @@ try {
     const p2 = await ctx.newPage();
     await p2.goto(URL_); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
     assert.deepEqual(await p2.evaluate(() => JSON.parse(localStorage.getItem('pd-contour'))), { dir: 'outside', dist: 10, steps: 3, corners: 'rounded', colour: 'bylayer', lt: 'BYLAYER' });
-    await p2.locator('[data-testid=picker]').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
+    await panelControl(p2, p2.locator('[data-testid=picker]')).setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await p2.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
     await p2.locator('[data-tool=contour]').click();
-    assert.equal(await p2.locator('[data-testid=contour-dist]').inputValue(), '10.0'); assert.equal(await p2.locator('[data-testid=contour-steps]').inputValue(), '3');
-    assert.equal(await p2.locator('[data-testid=contour-panel] [data-testid=contour-rounded]').getAttribute('aria-pressed'), 'true');
-    assert.equal(await p2.locator('[data-testid=contour-panel] [data-testid=contour-outside]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await panelControl(p2, p2.locator('[data-testid=contour-dist]')).inputValue(), '10.0'); assert.equal(await panelControl(p2, p2.locator('[data-testid=contour-steps]')).inputValue(), '3');
+    assert.equal(await panelControl(p2, p2.locator('[data-testid=contour-panel] [data-testid=contour-rounded]')).getAttribute('aria-pressed'), 'true');
+    assert.equal(await panelControl(p2, p2.locator('[data-testid=contour-panel] [data-testid=contour-outside]')).getAttribute('aria-pressed'), 'true');
     await p2.close();
     // the panel is floating: it is dragged by its title bar, and it does not catch a click meant for the drawing
     const box0 = await rectOf(t('contour-panel')), head = await rectOf(t('contour-panel').locator('.cthead'));
@@ -4298,7 +4717,7 @@ try {
     await page.locator('[data-tool=contour]').click();
     await click(150, 100); await waitSel('1 selected');
     assert.equal(await t('contour-dist').inputValue(), '10.0');   // remembered from the last step
-    await page.locator('aside.panel').evaluate((e) => { e.scrollTop = 0; });
+    await page.locator('.panel-scroll').evaluate((e) => { e.scrollTop = 0; });
     await shotBoth('contour', async () => { await page.waitForTimeout(100); }, async () => {});
     // Inside, 10 mm, 3 steps, rounded: the third would close the 60 mm tall plate up
     await ctPanel('contour-inside').click();
@@ -4566,7 +4985,7 @@ try {
     const errs = [];
     p.on('pageerror', (e) => errs.push(String(e))); p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
     p.on('dialog', (d) => d.accept().catch(() => {}));                                  // "close without saving?"
-    const u = URL_ + '?autosave=300', tp = (id) => p.locator(`[data-testid=${id}]`);
+    const u = URL_ + '?autosave=300', tp = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
     const copies = () => p.evaluate(() => new Promise((res) => {
       const r = indexedDB.open('project-d-recovery', 1);
       r.onupgradeneeded = () => r.result.createObjectStore('copies', { keyPath: 'id' });
@@ -4763,7 +5182,7 @@ try {
       await libCard(name).waitFor({ state: 'detached' });
     }
     await t('lib-search').fill('');
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     await closeTabs(/./);
   });
   await step('TODO 111b: PDF layout paste remembers the base name and copied sheet after switching sheets and closing the source', async () => {
@@ -4786,7 +5205,7 @@ try {
     page.once('dialog', (d) => d.accept());
     await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
     await libCard(name).waitFor({ state: 'detached' });
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     await closeTabs(/./);
   });
   await step('TODO 115 / T32: PDF invisible search text stays out; visible text becomes outlines once, with one Undo', async () => {
@@ -4856,14 +5275,15 @@ try {
       assert.deepEqual((await savedDoc()).entities, before.entities, 'Ctrl-click creates no copies');
     }
     await t('ptab-objects').click();
-    await page.locator('.or.layer[data-layer="0"]').click();
+    const layer = page.locator('.or.layer[data-layer="0"]');
+    if (await layer.getAttribute('aria-expanded') !== 'true') await layer.click();
     const row = page.locator('.or[data-e="0"]');
     await row.click({ modifiers: ['Control'] }); await waitSel('0 selected');
     await row.click({ modifiers: ['Control'] }); await waitSel('1 selected');
     await t('ptab-drawing').click();
     await closeTabs(/ctrl-drag/);
   });
-  await step('TODO 135b: Ctrl+Shift-drag copies straight on either axis; plain Shift-drag still selects a box', async () => {
+  await step('TODO 135b / 66a2: Ctrl+Shift-drag copies straight on either axis; Shift-drag moves selected objects straight', async () => {
     await closeTabs(/./);
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
@@ -4900,10 +5320,22 @@ try {
     const start = await at(30, 20), end = await at(45, 30);
     await page.keyboard.down('Shift');
     await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(end.x, end.y, { steps: 5 });
-    assert.equal(await t('rubber').isVisible(), true, 'plain Shift-drag keeps its box');
+    assert.equal(await t('rubber').isVisible(), false, 'Shift-drag of selected objects moves straight');
     await page.mouse.up(); await page.keyboard.up('Shift');
     await waitSel('2 selected');
-    assert.deepEqual((await savedDoc()).entities, before.entities, 'plain Shift-drag does not move or copy');
+    const straight = await savedDoc();
+    assert.equal(straight.entities.length, 2);
+    for (let i = 0; i < 2; i++) for (const code of [10, 11, 20, 21]) {
+      assert.ok(Math.abs(fieldOf(straight.entities[i], code) - fieldOf(before.entities[i], code) - (code < 20 ? 15 : 0)) < .05);
+    }
+    await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+    const empty = await at(10, 10), corner = await at(70, 50);
+    await page.keyboard.down('Shift');
+    await page.mouse.move(empty.x, empty.y); await page.mouse.down(); await page.mouse.move(corner.x, corner.y, { steps: 5 });
+    assert.equal(await t('rubber').isVisible(), true, 'Shift-drag from empty space keeps box selection');
+    await page.mouse.up(); await page.keyboard.up('Shift');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
     await closeTabs(/straight-copy/);
   });
   await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
@@ -4922,7 +5354,7 @@ try {
     await page.getByRole('tab', { name: 'Objects', exact: true }).click();
     assert.match(await t('obj-filter-locked').textContent(), /Locked 0/, 'PDF imports open unlocked');
     assert.equal(await t('bg-name').textContent(), '', 'File Open creates drawing entities without a background picture');
-    await page.getByRole('tab', { name: 'Drawing', exact: true }).click();
+    await page.getByRole('tab', { name: 'Properties', exact: true }).click();
     if (await t('tog-snap').getAttribute('aria-pressed') === 'true') await t('tog-snap').click();
     const before = await savedDoc();
     const boxA = await at(18, 18), boxB = await at(42, 52);
@@ -5215,7 +5647,7 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
     assert.equal(await page.locator('[data-testid=layer-current]').count(), 1);
     assert.equal(await page.locator('.layer.current .nm').textContent(), '0');
-    await page.locator('.layer', { hasText: 'Open' }).click();
+    await t('ptab-layers').click(); await page.locator('.layer', { hasText: 'Open' }).click();
     assert.equal(await page.locator('.layer.current .nm').textContent(), 'Open');
     assert.match((await t('cmd-hist').textContent()) + (await prompt()), /Current layer: Open/);
     await page.locator('[data-tool=circle]').click();
@@ -5631,7 +6063,7 @@ try {
     await closeTabs(/./);
     await t('picker').setInputFiles({ name: 'shapes.dxf', mimeType: 'text/plain', buffer: Buffer.from(shapesDoc(), 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'shapes.dxf');
-    await page.locator('.layer', { hasText: 'Open' }).click();
+    await t('ptab-layers').click(); await page.locator('.layer', { hasText: 'Open' }).click();
     await page.locator('[data-tool=text]').click();
     await typeCmd('height 8');
     assert.match(await t('cmd-hist').textContent(), /^Command: TEXT   Height 8\.00 · Standard · Left · layer Open/);
@@ -5969,28 +6401,17 @@ try {
   };
   const propsOpen = async () => { await openGrips(propsDoc(), 'props.dxf'); };
   const propVal = (key) => page.locator(`[data-prop=${key}]`).inputValue();
-  const propsOnNow = async () => { if (!(await t('props-panel').isVisible())) await page.keyboard.press('Control+1'); await t('props-panel').waitFor(); };
-  await step('Properties: View → Properties (Ctrl+1) toggles a section at the top of the Drawing panel (not a tab); it asks for a selection; the choice is remembered', async () => {
-    await propsOpen();
-    assert.equal(await t('props-panel').isVisible(), false, 'off until switched on');
-    await page.locator('[data-menu=View]').click();
-    const items = await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.querySelector('.hint') && b.querySelector('.hint').textContent]));
-    assert.deepEqual(items[1], ['  Properties', 'Ctrl+1']);
-    await page.getByRole('menuitem', { name: /Properties/ }).click();
-    await t('props-panel').waitFor();
+  const propsOnNow = async () => { await t('ptab-drawing').click(); const button = t('props-panel').locator('.section-toggle'); if (await button.getAttribute('aria-expanded') === 'false') await button.click(); await t('props-panel').waitFor(); };
+  await step('Properties: View / Ctrl+1 toggle the whole docker; the Properties tab asks for a selection', async () => {
+    await propsOpen(); await propsOnNow();
     assert.equal(await t('prop-empty').isVisible(), true);
     assert.match(await t('prop-empty').textContent(), /Select something/);
-    assert.deepEqual(await page.locator('.panelsw .seg').allTextContents(), ['Drawing', 'Parts library'], 'not a third panel tab');
-    const tops = await page.evaluate(() => ['props-panel', 'drawing-panel'].map((id) => document.querySelector(`[data-testid=${id}]`).getBoundingClientRect().top));
-    assert.ok(tops[0] < tops[1], 'Properties sits above the Drawing scale section');
     await page.locator('[data-menu=View]').click();
     assert.equal(await page.locator('.dropdown button').nth(1).evaluate((b) => b.firstChild.textContent), '✓ Properties');
-    await page.keyboard.press('Escape');
-    await page.keyboard.press('Control+1'); await t('props-panel').waitFor({ state: 'hidden' });
+    await page.getByRole('menuitem', { name: /Properties/ }).click();
+    assert.equal(await t('panel-show').isVisible(), true);
     await page.keyboard.press('Control+1'); await t('props-panel').waitFor();
-    await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
-    await propsOpen();
-    assert.equal(await t('props-panel').isVisible(), true, 'remembered on this PC');
+    assert.equal(await t('ptab-drawing').getAttribute('aria-selected'), 'true');
   });
 
   await step('Properties: a line shows its layer, colour, line type and length; the ends are read only; a new length is one labelled undo step', async () => {
@@ -6421,7 +6842,7 @@ try {
   });
 
   // ---- TODO 23: resize the sheet on a layout (R5c, right pane): select the sheet, drag a side handle, whole mm, the parts stay where they are ----
-  const sheetSize = async () => [await page.locator('[data-key=sheetW]').inputValue(), await page.locator('[data-key=sheetH]').inputValue()];
+  const sheetSize = async () => [await panelControl(page, page.locator('[data-key=sheetW]')).inputValue(), await panelControl(page, page.locator('[data-key=sheetH]')).inputValue()];
   const sizeNum = async () => (await sheetSize()).map(Number);
   const near1 = (v, want, m) => assert.ok(Math.abs(v - want) <= 1.5, `${m}: ${v} is not within 1.5 of ${want}`);       // a pointer position is a pixel, and a pixel is more than a millimetre
   const handleAt = async (side) => { const b = await page.locator(`[data-sheet-handle=${side}] .ssel-h`).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
@@ -6438,8 +6859,8 @@ try {
     await threeParts();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 0, 'not selected yet');
     assert.equal(await t('sheet-select').textContent(), 'Select sheet');
-    assert.match(await t('sheet-panel').textContent(), /Or click the sheet edge\. Drag a side handle to resize\./);
-    await t('sheet-select').click();
+    assert.match(await t('sheet-select').getAttribute('title'), /Or click the sheet edge\. Drag a side handle to resize\./);
+    await layoutTab(); await t('sheet-select').click();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 4);
     assert.deepEqual(await page.locator('[data-sheet-handle]').evaluateAll((g) => g.map((x) => x.dataset.sheetHandle).sort()), ['bottom', 'left', 'right', 'top']);
     assert.equal(await t('sheet-label').textContent(), 'Sheet selected · 1000 × 700 mm');
@@ -6459,7 +6880,7 @@ try {
   await step('Sheet resize: dragging the right handle shows the new outline (dashed), the added strip and "W … × H 700 mm" with "Whole mm only"; releasing sets the size, whole mm; the parts stay; one undo step', async () => {
     await threeParts();
     const before = await placedXY();
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     await dragSide('right', 1060.4, 350, { hold: true });
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-readout]'));
     const ro = await t('sheet-readout').textContent(), mw = /^W (\d+) × H 700 mm$/.exec(ro);
@@ -6485,7 +6906,7 @@ try {
   await step('Sheet resize: top, left and bottom handles; left and bottom keep the parts where they are on the screen (their sheet positions move); Esc cancels a drag; shrinking leaves parts off the sheet', async () => {
     await threeParts();
     const [x0, y0] = (await placedXY()).map(Number);
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     await dragSide('top', 500, 712);
     await sizeChanged('sheetH', 700);
     const H1 = (await sizeNum())[1]; near1(H1, 712, 'top');
@@ -6503,14 +6924,14 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-key=sheetW]').value === '1000' && document.querySelector('[data-key=sheetH]').value === '700');
     assert.deepEqual((await placedXY()).map(Number), [x0, y0], 'three undos put everything back');
     // Esc cancels
-    if (!(await page.locator('[data-testid=sheet-handle]').count())) await t('sheet-select').click();
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
     await dragSide('right', 1200, 350, { hold: true });
     await page.keyboard.press('Escape'); await page.mouse.up();
     await page.waitForFunction(() => !document.querySelector('[data-testid=sheet-readout]'));
     assert.deepEqual(await sheetSize(), ['1000', '700']);
     assert.match(await prompt(), /Sheet resize cancelled/);
     // shrinking: the part at x 700 is now off the sheet
-    if (!(await page.locator('[data-testid=sheet-handle]').count())) await t('sheet-select').click();
+    if (!(await page.locator('[data-testid=sheet-handle]').count())) { await layoutTab(); await t('sheet-select').click(); }
     await dragSide('right', 600, 350);
     await sizeChanged('sheetW', 1000);
     near1((await sizeNum())[0], 600, 'shrunk');
@@ -6521,7 +6942,7 @@ try {
 
   await step('Sheet resize: a click on a handle then a click at the new place does it too; typed Width and Height are whole mm', async () => {
     await threeParts();
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     const a = await handleAt('right'), b = await at(1080, 350);       // 1100 is past the canvas's right edge now that the command line no longer takes the bottom 64 px
     await page.mouse.click(a.x, a.y);
     assert.equal(await page.locator('[data-testid=sheet-handle-hot]').count(), 1, 'hot after one click');
@@ -6534,7 +6955,7 @@ try {
     await sizeChanged('sheetW', 1000);
     near1((await sizeNum())[0], 1080, 'set');
     assert.equal(await page.locator('[data-testid=sheet-handle-hot]').count(), 0);
-    await page.locator('[data-key=sheetW]').fill('1000.6'); await page.locator('[data-key=sheetW]').press('Enter');
+    await layoutTab(); await panelControl(page, page.locator('[data-key=sheetW]')).fill('1000.6'); await panelControl(page, page.locator('[data-key=sheetW]')).press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-key=sheetW]').value === '1001');
     assert.match(await prompt(), /rounded to whole mm/);
     await page.keyboard.press('Escape');
@@ -6542,7 +6963,7 @@ try {
 
   await step('Sheet resize: screenshots, light and dark (sheet selected; the right side being dragged)', async () => {
     await threeParts();
-    await t('sheet-select').click();
+    await layoutTab(); await t('sheet-select').click();
     await shotBoth('sheet-select', async () => { await wait(150); }, async () => {});
     await shotBoth('sheet-drag', async () => { await dragSide('right', 1120, 350, { hold: true }); await wait(150); }, async () => { await page.keyboard.press('Escape'); await page.mouse.up(); });
     await page.keyboard.press('Escape');
@@ -6653,7 +7074,7 @@ try {
 
   await step('Compare: dragging drawing 2 snaps its corner onto drawing 1\'s corner, with a marker and a name; SNAP off drops where released (TODO 112)', async () => {
     await t('cmp-lineup-manual').click();
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();     // both corners in view
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();     // both corners in view
     const drag = async (shot) => {                                      // drawing 2's bottom-left corner (0, 0) to drawing 1's bottom-right one (300, 0), 4 px short and 3 px high
       const a = await at(0, 0), z = await at(300, 0);
       await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(z.x - 4, z.y - 3, { steps: 6 });
@@ -6758,7 +7179,7 @@ try {
     const partName = '<b>Compare part</b>';
     await t('panel-library').click();
     const id = await libCard(partName).getAttribute('data-part-id');
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     const fire = (type, target) => page.evaluate(([ty, tg, pid]) => {
       const dt = new DataTransfer(); dt.setData('application/x-pd-part', pid); dt.setData('text/plain', 'part');
       document.querySelector(`[data-testid=${tg}]`).dispatchEvent(new DragEvent(ty, { dataTransfer: dt, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
@@ -6812,7 +7233,7 @@ try {
     await closeTabs(/./);
     await t('panel-library').click();
     const id = await libCard('T50 part').getAttribute('data-part-id');
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     const fire = (type, x, y) => page.evaluate(([ty, cx, cy, pid]) => {
       const dt = new DataTransfer(); dt.setData('application/x-pd-part', pid); dt.setData('text/plain', 'T50 part');
       document.querySelector('[data-testid=canvas]').dispatchEvent(new DragEvent(ty, { dataTransfer: dt, clientX: cx, clientY: cy, bubbles: true, cancelable: true }));
@@ -6871,7 +7292,7 @@ try {
     await libCard('T50 part').locator('[data-testid=lib-menu]').click();
     await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
     await libCard('T50 part').waitFor({ state: 'detached' });
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
   });
 
   await step('TODO 116: menu, double-click and tab-strip drop open independent drawing copies named after the library part; Save asks where', async () => {
@@ -6906,7 +7327,7 @@ try {
       await t('save').click();
       assert.deepEqual(await page.evaluate(() => window.__partSave), { asked: [name + '.dxf'], wrote: [] }, 'Save asks for a destination; cancelling writes nothing');
     } finally { await page.evaluate(() => { delete window.__TAURI__; delete window.__partSave; }); }
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
     assert.equal(await entCount(), 0, 'the first copy was edited');
     await t('panel-library').click();
@@ -6924,7 +7345,7 @@ try {
     page.once('dialog', (d) => d.accept());
     await openMenu(); await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
     await libCard(name).waitFor({ state: 'detached' });
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
   });
 
   // ---- polar and object-snap tracking (track.js; mock-up R7a, Option A) ----
@@ -6936,16 +7357,16 @@ try {
     const c2 = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p2 = await c2.newPage();
     await p2.goto(URL_); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
-    const on2 = async (id) => (await p2.locator(`[data-testid=${id}]`).getAttribute('aria-pressed')) === 'true';
+    const on2 = async (id) => (await panelControl(p2, p2.locator(`[data-testid=${id}]`)).getAttribute('aria-pressed')) === 'true';
     assert.deepEqual([await on2('tog-polar'), await on2('tog-otrack'), await on2('tog-ortho')], [true, true, false], 'a fresh profile: POLAR and OTRACK on, ORTHO off');
-    await p2.locator('[data-testid=tog-otrack]').click();
-    await p2.locator('[data-testid=tog-polar]').click({ button: 'right' });
+    await panelControl(p2, p2.locator('[data-testid=tog-otrack]')).click();
+    await panelControl(p2, p2.locator('[data-testid=tog-polar]')).click({ button: 'right' });
     await p2.locator('[data-testid=ctx-menu] .mi', { hasText: '22.5°' }).click();
-    assert.match(await p2.locator('[data-testid=cmd-prompt]').textContent(), /^Polar on \(22\.5°\)$/);
+    assert.match(await panelControl(p2, p2.locator('[data-testid=cmd-prompt]')).textContent(), /^Polar on \(22\.5°\)$/);
     await p2.reload(); await p2.waitForSelector('[data-testid=count]', { state: 'attached' });
     assert.deepEqual([await on2('tog-polar'), await on2('tog-otrack')], [true, false], 'remembered on this PC');
-    await p2.locator('[data-testid=tog-polar]').click({ button: 'right' });
-    assert.deepEqual(await p2.locator('[data-testid=ctx-menu] .mi').allTextContents(), ['90°', '45°', '30°', '22.5°●', '15°', '10°', '5°'], 'the saved increment is ticked');
+    await panelControl(p2, p2.locator('[data-testid=tog-polar]')).click({ button: 'right' });
+    assert.deepEqual(await panelControl(p2, p2.locator('[data-testid=ctx-menu] .mi')).allTextContents(), ['90°', '45°', '30°', '22.5°●', '15°', '10°', '5°'], 'the saved increment is ticked');
     await c2.close();
 
     assert.equal(await chipOn('tog-polar'), false, 'the test page starts with tracking off');
@@ -7266,7 +7687,7 @@ try {
   });
   await step('dimension types: screenshots, light and dark (all five kinds, the flyout open)', async () => {
     await page.keyboard.press('Escape');
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await t('dim-flyout').click();
     await page.mouse.move(5, 5);
     await page.screenshot({ path: shotDir + '/s12-dimtypes-light.png' });
@@ -7681,7 +8102,7 @@ try {
     await page.locator('[data-tool=balloon]').click();
     assert.equal(await t('bal-picture-only').isVisible(), true);
     // a picture tab's sheet is sized to the page: the scale is read from its height
-    const pic = async (x, y) => { const b = await page.locator('rect.sheet').boundingBox(), sc = b.height / Number(await page.locator('[data-key=sheetH]').inputValue()); await page.mouse.click(b.x + x * sc, b.y + b.height - y * sc); };
+    const pic = async (x, y) => { const b = await page.locator('rect.sheet').boundingBox(), sc = b.height / Number(await panelControl(page, page.locator('[data-key=sheetH]')).inputValue()); await page.mouse.click(b.x + x * sc, b.y + b.height - y * sc); };
     await pic(50, 50); await pic(90, 80);
     assert.deepEqual(await balNums(), ['1']);
     await page.locator('[data-tool=select]').click();
@@ -7710,14 +8131,14 @@ try {
   await step('screenshots with the sample open, light and dark', async () => {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await page.screenshot({ path: dir + '/s2-light.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     await page.waitForTimeout(100);
     await page.screenshot({ path: dir + '/s2-dark.png' });
     await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light' + '$') }).click();
+    await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: light\\b') }).click();
   });
 
   // ---- Next sessions 6: Offset, Trim and Mirror (modify.js) ----
@@ -7871,6 +8292,191 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 66a: Move', async () => {
+    await menuItem('View', 'Theme: light');
+    const raw = newDoc(4);
+    addBlock(raw, 'Part', [dxfCircle(0, 0, 8)]);
+    addEntities(raw, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfCircle(100, 80, 10), dxfText(30, 10, 5, 'MOVE'), dxfInsert('Part', 140, 60));
+    Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [20, 30], b: [60, 50], offset: 15, textH: 3 }, 1, 'PD_DIM_1')));
+    await openGrips(writeDxf(raw), 'move.dxf');
+    const before = await savedDoc(), blur = () => page.evaluate(() => document.activeElement?.blur());
+    const undoMove = async () => {
+      await blur(); await page.keyboard.press('Control+z');
+      const back = await savedDoc();
+      assert.deepEqual(back.entities, before.entities); assert.deepEqual(back.blocks, before.blocks);
+      await page.keyboard.press('Control+a');
+    };
+    await page.keyboard.press('Control+a'); await waitSel('5 selected');
+    await typeCmd('mv'); assert.match(await prompt(), /Base point or x,y:/);
+    await typeCmd('1,'); assert.match(await histLine(), /I do not understand/);
+    await click(20, 30); assert.match(await prompt(), /Target, dx,dy or distance:/);
+    const target = await at(50, 50); await page.mouse.move(target.x, target.y); await frames();
+    assert.equal(await t('mod-line').count(), 1);
+    // A ghost of the block is painted at the cursor displacement, not only grippable lines.
+    const ghost = await at(178, 80);
+    assert.ok(await t('drawing').evaluate((canvas, p) => {
+      const b = canvas.getBoundingClientRect(), x = Math.round((p.x - b.x) * canvas.width / b.width), y = Math.round((p.y - b.y) * canvas.height / b.height);
+      return canvas.getContext('2d').getImageData(x - 3, y - 3, 7, 7).data.some((v, i) => i % 4 === 3 && v > 0);
+    }, ghost), 'the block ghost is drawn');
+    await shotBoth('move', async () => { const p = await at(50, 50); await page.mouse.move(p.x, p.y); await frames(); });
+    await typeCmd('bad'); assert.match(await histLine(), /Unknown command/);
+    await typeCmd('10,-5');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select'); await waitSel('5 selected');
+    const moved = await savedDoc();
+    assert.deepEqual([10, 20, 11, 21].map((c) => fieldOf(moved.entities[0], c)), [30, 25, 70, 45]);
+    assert.deepEqual([fieldOf(moved.entities[2], 10), fieldOf(moved.entities[2], 20)], [40, 5]);
+    assert.deepEqual([fieldOf(moved.entities[3], 10), fieldOf(moved.entities[3], 20)], [150, 55]);
+    assert.equal(fieldOf(moved.entities[2], 40), 5);
+    assert.equal((await histLabels()).at(-1), 'Move'); await undoMove();
+    // A single length follows the cursor; the base can be typed.
+    await typeCmd('move'); await typeCmd('0,0');
+    const direction = await at(100, 75); await page.mouse.move(direction.x, direction.y); await frames();
+    await typeCmd('25');
+    const direct = await savedDoc(), dx = fieldOf(direct.entities[0], 10) - 20, dy = fieldOf(direct.entities[0], 20) - 30;
+    assert.ok(Math.abs(Math.hypot(dx, dy) - 25) < 1e-5, `direct distance: dx=${dx}, dy=${dy}, hist=${await histLine()}`); assert.ok(Math.abs(dx / dy - 4 / 3) < .03);
+    await undoMove();
+    // A typed command replaces Move at either point prompt without editing the drawing.
+    for (const [stage, alias, tool] of [['base', 'l', 'Line'], ['target', 'o', 'Offset']]) {
+      await typeCmd('mv'); if (stage === 'target') await typeCmd('0,0');
+      await typeCmd(alias);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: ' + tool);
+      await page.keyboard.press('Escape');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+    }
+    // Esc at selection, base and target makes no edit.
+    for (const stage of ['base', 'target']) {
+      await typeCmd('mv'); if (stage === 'target') await typeCmd('0,0');
+      await page.keyboard.press('Escape');
+      await t('mod-line').waitFor({ state: 'detached' });
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+    }
+    await page.keyboard.press('Escape'); await typeCmd('mv');
+    assert.match(await prompt(), /Select objects/); await page.keyboard.press('Enter');
+    assert.match(await histLine(), /pick at least one/);
+    await page.keyboard.press('Escape');
+    // Pick after starting Move, then Enter; linked dimensions follow even when not selected.
+    await typeCmd('mv'); await click(40, 40); await page.keyboard.press('Enter');
+    await typeCmd('0,0'); await typeCmd('10,5');
+    const linked = await savedDoc(), params = dimParams(linked.blocks.PD_DIM_1);
+    for (const [key, expected] of [['a', [30, 35]], ['b', [70, 55]]]) params[key].forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-5));
+    await undoMove();
+    // The menu and rail work too; Shift and ORTHO keep clicked targets straight.
+    for (const ortho of [false, true]) {
+      if (ortho) await t('tog-ortho').click();
+      if (ortho) await page.locator('[data-tool=move]').click(); else await menuItem('Modify', 'Move');
+      await typeCmd('0,0'); await click(30, 7, { shift: !ortho });
+      const straight = await savedDoc(); assert.equal(fieldOf(straight.entities[0], 20), 30);
+      assert.ok(Math.abs(fieldOf(straight.entities[0], 10) - 50) < 1); await undoMove();
+      if (ortho) await t('tog-ortho').click();
+    }
+    // A selected locked object refuses the entire move, including unlocked objects in the selection.
+    const locked = newDoc(4);
+    addLayer(locked, 'Cut');
+    addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
+    await openGrips(writeDxf(locked), 'move-locked.dxf'); const lockedBefore = await savedDoc();
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await typeCmd('mv');
+    assert.match(await prompt(), /Layer Cut is locked/); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual((await savedDoc()).entities, lockedBefore.entities);
+    await typeCmd('ct'); assert.equal(await t('contour-panel').isVisible(), true);
+    await page.keyboard.press('Escape'); await typeCmd('m'); assert.equal(await t('tool-chip').textContent(), 'Tool: Measure');
+    await page.keyboard.press('Escape'); await closeTabs(/move-locked/);
+    await t('new-layout').click(); await typeCmd('mv'); assert.match(await prompt(), /Move works on a drawing tab/);
+    await closeTabs(/Layout/);
+  });
+
+  await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfCircle(130, 80, 10));
+    Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [20, 30], b: [60, 50], offset: 15, textH: 3 }, 1, 'PD_DIM_1')));
+    await openGrips(writeDxf(raw), 'nudge.dxf');
+    const before = await savedDoc(), xy = (doc) => [10, 20].map((c) => fieldOf(doc.entities[0], c));
+    const blur = () => page.evaluate(() => document.activeElement?.blur());
+    await click(35, 37.5); await waitSel('1 selected');
+    await typeCmd('nu');
+    await t('nudge-input').fill('1'); await t('nudge-input').press('Enter');
+    await page.keyboard.press('ArrowRight'); await page.keyboard.press('ArrowRight'); await page.keyboard.press('Shift+ArrowUp');
+    let doc = await savedDoc(); assert.deepEqual(xy(doc), [22, 40]);
+    dimParams(doc.blocks.PD_DIM_1).a.forEach((v, i) => assert.ok(Math.abs(v - [22, 40][i]) < 1e-5, 'linked dimension follows nudge'));
+    for (const expected of [[22, 30], [21, 30], [20, 30]]) {
+      await page.keyboard.press('Control+z'); assert.deepEqual(xy(await savedDoc()), expected, 'one Undo per press');
+    }
+    await click(35, 37.5); await waitSel('1 selected');
+    await typeCmd('nudge');
+    assert.equal(await t('nudge-input').evaluate((el) => el.selectionEnd - el.selectionStart), 1);
+    await t('nudge-input').fill('2.5'); await t('nudge-input').press('Enter');
+    await page.keyboard.press('ArrowLeft'); await page.keyboard.press('ArrowDown');
+    assert.deepEqual(xy(await savedDoc()), [17.5, 27.5]);
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    await click(35, 37.5); await waitSel('1 selected');
+    await typeCmd('nu'); await t('nudge-input').fill('99'); await t('nudge-input').press('Escape');
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-nudge')), '2.5');
+    await typeCmd('nu');
+    for (const invalid of ['0', '-2', 'text']) {
+      await t('nudge-input').fill(invalid); await t('nudge-input').press('Enter');
+      assert.equal(await t('nudge-box').isVisible(), true); assert.match(await prompt(), /must be a number above 0 mm/);
+      assert.equal(await page.evaluate(() => localStorage.getItem('pd-nudge')), '2.5');
+    }
+    await t('nudge-input').press('ArrowLeft');
+    assert.deepEqual(xy(await savedDoc()), [20, 30], 'arrows in a field do not move the drawing');
+    await t('nudge-input').press('Escape');
+    await shotBoth('66a2-nudge-box', () => typeCmd('nu'), () => t('nudge-input').press('Escape'));
+    // Hold Shift before pickup too; ORTHO and Ctrl+Shift copy use the same drag path.
+    for (const mode of ['shift', 'ortho', 'copy']) {
+      if (mode === 'ortho') await t('tog-ortho').click(); else await page.keyboard.down('Shift');
+      if (mode === 'copy') await page.keyboard.down('Control');
+      const from = await at(35, 37.5), to = await at(65, 46.5);
+      await page.mouse.move(from.x, from.y); await page.mouse.down(); await page.mouse.move(to.x, to.y, { steps: 5 }); await page.mouse.up();
+      await page.keyboard.up('Shift'); await page.keyboard.up('Control');
+      if (mode === 'ortho') await t('tog-ortho').click();
+      doc = await savedDoc();
+      const moved = mode === 'copy' ? doc.entities.at(-1) : doc.entities[0];
+      assert.equal(fieldOf(moved, 20), 30, `${mode} keeps Y unchanged`);
+      assert.ok(Math.abs(fieldOf(moved, 10) - 50) < .1, `${mode} moves along X`);
+      if (mode === 'copy') assert.deepEqual(doc.entities.slice(0, before.entities.length), before.entities);
+      await blur(); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+      await click(35, 37.5);
+    }
+    await page.keyboard.press('Control+c');
+    await t('new-layout').click(); await page.keyboard.press('Control+v'); await typeCmd('nu');
+    assert.equal(await t('nudge-input').inputValue(), '2.5');
+    await t('nudge-input').fill('3'); await t('nudge-input').press('Enter');
+    assert.equal(await t('nudge-step').inputValue(), '3.0');
+    assert.equal(await t('nudge-step2').inputValue(), '3.0');
+    await closeTabs(/Layout/);
+    await menuItem('File', 'Compare drawings…'); await t('compare-panel').waitFor({ state: 'visible' });
+    await typeCmd('nu'); await t('nudge-input').fill('2.5'); await t('nudge-input').press('Enter');
+    await t('cmp-lineup-centre').click();
+    const canvas = await t('canvas').boundingBox();
+    await page.mouse.click(canvas.x + 400, canvas.y + 300);
+    assert.equal(await t('cmp-lineup-centre').getAttribute('aria-pressed'), 'true', 'a click keeps Auto');
+    const oldX = await cmpOffX();
+    await page.mouse.move(canvas.x + 400, canvas.y + 300); await page.mouse.down();
+    await page.mouse.move(canvas.x + 460, canvas.y + 310, { steps: 5 }); await page.mouse.up();
+    assert.equal(await t('cmp-lineup-manual').getAttribute('aria-pressed'), 'true');
+    assert.match(await prompt(), /Line-up set to Manual/); assert.ok(await cmpOffX() > oldX);
+    await shotBoth('66a2-compare-manual');
+    await t('cmp-lineup-bl').click(); await page.keyboard.press('Shift+ArrowUp');
+    assert.equal(await t('cmp-lineup-manual').getAttribute('aria-pressed'), 'true');
+    assert.match(await cmpHint(), /Y 25\.00 mm/); assert.match(await prompt(), /Line-up set to Manual/);
+    // Connected outlines can contain a locked-layer object: refuse the entire nudge.
+    const locked = newDoc(4); addLayer(locked, 'Cut');
+    addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
+    await openGrips(writeDxf(locked), 'nudge-locked.dxf'); const lockedBefore = await savedDoc();
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await page.keyboard.press('ArrowRight'); assert.match(await prompt(), /Layer Cut is locked/);
+    assert.deepEqual((await savedDoc()).entities, lockedBefore.entities);
+    const inches = newDoc(1); addEntities(inches, dxfLine(1, 1, 3, 2));
+    await openGrips(writeDxf(inches), 'nudge-inches.dxf'); await page.keyboard.press('Control+a');
+    await page.keyboard.press('ArrowRight');
+    assert.ok(Math.abs(fieldOf((await savedDoc()).entities[0], 10) - (1 + 2.5 / 25.4)) < 1e-6, 'step stays in mm on inch drawings');
+    await typeCmd('nu'); await t('nudge-input').fill('1'); await t('nudge-input').press('Enter');
+  });
+
   await step('Mirror: the selection (or the objects picked, then Enter), two points, Erase Yes / No (default No); text keeps reading the same way; one undo step "Mirror"', async () => {
     const doc0 = newDoc(4);
     addEntities(doc0, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfCircle(100, 80, 10, { layer: 'Cut' }), dxfText(30, 10, 5, 'ABC', { layer: 'Cut' }));
@@ -7965,7 +8571,7 @@ try {
     await t('panel-library').click();
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
     await libCard('Dial').locator('[data-testid=lib-add]').click();
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     await t('part').selectOption({ index: 0 });
   };
   await step('Auto-nest: the button and the n command open the dialog on a layout tab only; the dialog lists the parts with counts, the rotations (default Every 90°), the gap, and nothing is placed until Apply', async () => {
@@ -8086,19 +8692,19 @@ try {
     p2.on('pageerror', (e) => errs2.push(String(e)));
     await p2.goto(URL_);
     const close = () => p2.evaluate(() => { window.__prevented = false; return window.__onClose({ preventDefault() { window.__prevented = true; } }).then(() => window.__prevented); });
-    const dlg = p2.locator('[data-testid=close-dialog]'), destroyed = () => p2.evaluate(() => window.__destroyed);
+    const dlg = panelControl(p2, p2.locator('[data-testid=close-dialog]')), destroyed = () => p2.evaluate(() => window.__destroyed);
     assert.equal(await close(), true, 'the exe window is always held until the answer is in');
     assert.equal(await destroyed(), 1, 'nothing unsaved: it closes without a question');
     assert.equal(await p2.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), false, 'a browser unload is not warned when nothing is unsaved');
-    await p2.locator('[data-testid=layer-add]').click();             // a change: the tab gets its dot
+    await panelControl(p2, p2.locator('[data-testid=layer-add]')).click();             // a change: the tab gets its dot
     assert.equal(await p2.locator('.tabs .dtab.on .dot').count(), 1);
     assert.equal(await p2.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; }), true, 'a browser unload is warned');
     // Cancel keeps the window
     const pending = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
     await dlg.waitFor();
-    assert.equal(await p2.locator('[data-testid=close-dialog] strong').textContent(), 'Save changes to "Drawing 1"?');
+    assert.equal(await panelControl(p2, p2.locator('[data-testid=close-dialog] strong')).textContent(), 'Save changes to "Drawing 1"?');
     for (const th of ['light', 'dark']) { await p2.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await p2.screenshot({ path: `${shotDir}/s16-closeprompt-${th}.png` }); }
-    await p2.locator('[data-testid=close-cancel]').click(); await pending;
+    await panelControl(p2, p2.locator('[data-testid=close-cancel]')).click(); await pending;
     assert.equal(await destroyed(), 1, 'Cancel: still open'); assert.equal(await p2.locator('.tabs .dtab[data-kind]').count(), 1);
     // Esc is Cancel too
     const pending2 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
@@ -8108,15 +8714,15 @@ try {
     for (const [key, ctrl] of [['F5', false], ['r', true], ['R', true]]) {
       assert.equal(await p2.evaluate(([k, c]) => { const e = new KeyboardEvent('keydown', { key: k, ctrlKey: c, cancelable: true, bubbles: true }); document.dispatchEvent(e); return e.defaultPrevented; }, [key, ctrl]), true, key);
     }
-    assert.match(await p2.locator('[data-testid=cmd-prompt]').textContent(), /Reload is off/);
+    assert.match(await panelControl(p2, p2.locator('[data-testid=cmd-prompt]')).textContent(), /Reload is off/);
     // Don't save closes at once
     const pending3 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
-    await dlg.waitFor(); await p2.locator('[data-testid=close-discard]').click(); await pending3;
+    await dlg.waitFor(); await panelControl(p2, p2.locator('[data-testid=close-discard]')).click(); await pending3;
     assert.equal(await destroyed(), 2);
     // Save goes through the usual Save (here a download), and then the window closes
     const [dl] = await Promise.all([p2.waitForEvent('download'), (async () => {
       const pending4 = p2.evaluate(() => window.__onClose({ preventDefault() {} }));
-      await dlg.waitFor(); await p2.locator('[data-testid=close-save]').click(); await pending4;
+      await dlg.waitFor(); await panelControl(p2, p2.locator('[data-testid=close-save]')).click(); await pending4;
     })()]);
     assert.match(dl.suggestedFilename(), /.dxf$/);
     assert.equal(await destroyed(), 3);
@@ -8142,14 +8748,14 @@ try {
     for (const answer of ['close-discard', 'close-save']) {
       await p3.goto(u3);
       await p3.waitForSelector('[data-testid=count]', { state: 'attached' });
-      await p3.locator('[data-testid=layer-add]').click();
+      await panelControl(p3, p3.locator('[data-testid=layer-add]')).click();
       await waitCopy();
       const pending = p3.evaluate(() => window.__onClose({ preventDefault() {} }));
-      await p3.locator('[data-testid=close-dialog]').waitFor();
-      await p3.locator(`[data-testid=${answer}]`).click(); await pending;
+      await panelControl(p3, p3.locator('[data-testid=close-dialog]')).waitFor();
+      await panelControl(p3, p3.locator(`[data-testid=${answer}]`)).click(); await pending;
       assert.equal(await copyCount(), 0, answer + ': the copy is gone before the window closes');
       await p3.reload(); await p3.waitForSelector('[data-testid=count]', { state: 'attached' }); await p3.waitForTimeout(500);
-      assert.equal(await p3.locator('[data-testid=recover-dialog]').count(), 0, answer + ': nothing to recover');
+      assert.equal(await panelControl(p3, p3.locator('[data-testid=recover-dialog]')).count(), 0, answer + ': nothing to recover');
     }
     await c3.close();
   });
@@ -8164,13 +8770,13 @@ try {
     }));
     await p4.goto(URL_ + '?autosave=300');
     await p4.waitForSelector('[data-testid=count]', { state: 'attached' });
-    await p4.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+    await panelControl(p4, p4.locator('[data-testid=picker]')).setInputFiles('fixtures/outline.dxf');
     await p4.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent === '2');
-    await p4.locator('[data-testid=gap-join]').click();
+    await panelControl(p4, p4.locator('[data-testid=gap-join]')).click();
     for (let i = 0; i < 60 && (await dxfs()).length < 1; i++) await p4.waitForTimeout(150);
     assert.equal((await dxfs()).length, 1, 'the first copy');
     assert.ok(!/\nLayer1\r?\n/.test((await dxfs())[0]));
-    await p4.locator('[data-testid=layer-add]').click();
+    await panelControl(p4, p4.locator('[data-testid=layer-add]')).click();
     let has = false;
     for (let i = 0; i < 60 && !has; i++) { has = /\nLayer1\r?\n/.test((await dxfs())[0]); if (!has) await p4.waitForTimeout(150); }
     assert.ok(has, 'the copy has the new layer');
@@ -8187,9 +8793,9 @@ try {
     }));
     await a.goto(URL_ + '?autosave=300');
     await a.waitForSelector('[data-testid=count]', { state: 'attached' });
-    await a.locator('[data-testid=picker]').setInputFiles('fixtures/outline.dxf');
+    await panelControl(a, a.locator('[data-testid=picker]')).setInputFiles('fixtures/outline.dxf');
     await a.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent === '2');
-    await a.locator('[data-testid=gap-join]').click();
+    await panelControl(a, a.locator('[data-testid=gap-join]')).click();
     for (let i = 0; i < 60 && await count() < 1; i++) await a.waitForTimeout(150);
     assert.equal(await count(), 1);
     const b = await c5.newPage();                                    // the exe started a second time
@@ -8218,10 +8824,11 @@ try {
   const isDim = (loc) => loc.evaluate((e) => e.classList.contains('dim'));
   const openObjects = async () => { await openGrips(objDoc(), 'objects.dxf'); await t('ptab-objects').click(); await t('objects-panel').waitFor(); };
 
-  await step('Objects tab: two tabs on the right panel; Objects lists the layers and, for the open one, its objects with short labels; the footer counts', async () => {
+  await step('Objects tab: five docker tabs; Objects lists the layers and, for the open one, its objects with short labels; the footer counts', async () => {
     await openGrips(objDoc(), 'objects.dxf');
     assert.equal(await t('objects-panel').isVisible(), false, 'Drawing is the tab at first');
-    assert.equal(await page.locator('.layers-rows').isVisible(), true);
+    assert.equal(await page.locator('.layers-rows').isVisible(), false, 'Layers has its own tab');
+    await t('ptab-layers').click(); assert.equal(await page.locator('.layers-rows').isVisible(), true);
     await t('ptab-objects').click(); await t('objects-panel').waitFor();
     assert.equal(await t('ptab-objects').getAttribute('aria-selected'), 'true'); assert.equal(await t('ptab-drawing').getAttribute('aria-selected'), 'false');
     assert.equal(await page.locator('.layers-rows').isVisible(), false, 'the Drawing sections are not shown');
@@ -8241,7 +8848,7 @@ try {
     await oLayer('Cut').dblclick();
     assert.equal(await page.locator('[data-testid=obj-tree] .or.layer.cur').getAttribute('data-layer'), 'Cut');
     await t('ptab-drawing').click();
-    assert.equal(await page.locator('.layers-rows').isVisible(), true);
+    assert.equal(await page.locator('.layers-rows').isVisible(), false);
   });
 
   await step('Counts agree: sample.dxf has the same layer counts in the Layers panel and the Objects tab, and the same total in the status bar and the footer', async () => {
@@ -8484,7 +9091,7 @@ try {
     await t('panel-library').click();
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
     await libCard('Dial').locator('[data-testid=lib-add]').click();
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     assert.equal(await t('members').isVisible(), false, 'layout B does not inherit the selection of A');
     await closeTabs(/./);
     await nestLayout();
@@ -8496,7 +9103,7 @@ try {
     await dragMm(from, [from[0] + 50, from[1] + 30], [], async () => { await page.keyboard.press('Escape'); });
     assert.deepEqual(await pos(), p0, 'the part is back');
     assert.equal((await tabs()).some((x) => x.includes('•')), false, 'Esc on a drag leaves the saved tab clean');
-    const gap = page.locator('[data-key=gapX]');
+    const gap = panelControl(page, page.locator('[data-key=gapX]'));
     await gap.fill('9'); await gap.evaluate((e) => e.blur());
     assert.equal(await gap.inputValue(), '9');
     await page.keyboard.press('Control+z');
@@ -8750,7 +9357,7 @@ try {
     await t('picker').setInputFiles('fixtures/text-only.pdf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('text-only.pdf'), null, { timeout: 60000 });
     await page.locator('[data-tool=balloon]').click();
-    const b = await page.locator('rect.sheet').boundingBox(), sc = b.height / Number(await page.locator('[data-key=sheetH]').inputValue());
+    const b = await page.locator('rect.sheet').boundingBox(), sc = b.height / Number(await panelControl(page, page.locator('[data-key=sheetH]')).inputValue());
     for (const [x, y] of [[50, 50], [90, 80]]) await page.mouse.click(b.x + x * sc, b.y + b.height - y * sc);
     assert.deepEqual(await balNums(), ['1']);
     await page.evaluate(() => {
@@ -8875,7 +9482,7 @@ try {
       await open(); assert.equal(await alias('Contour').inputValue(), 'co, ww', 'Cancel leaves saved settings alone');
       await dialog.getByRole('button', { name: 'Reset all', exact: true }).click(); await save(); await dialog.waitFor({ state: 'hidden' });
       await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' }); await open();
-      assert.equal(await alias('Contour').inputValue(), 'co'); assert.equal(await key('Contour').textContent(), 'Press keys…');
+      assert.equal(await alias('Contour').inputValue(), 'ct'); assert.equal(await key('Contour').textContent(), 'Press keys…');
     } finally { await scCtx.close(); }
   });
 
@@ -8960,10 +9567,10 @@ try {
 
   await step('TODO 54 Wireframe: menu, chip and F9; fills, pictures, selection, snaps, persistence, all tabs; PDF and DXF unchanged', async () => {
     const c = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
-    const p = await c.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const p = await c.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
     p.on('pageerror', (e) => errors.push(String(e)));
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '$') : item, exact: true }).click(); await frame(); };
+    const menu = async (item) => { await p.locator('[data-menu=View]').click(); await p.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '\\b') : item, exact: true }).click(); await frame(); };
     const download = async (act) => { const [dl] = await Promise.all([p.waitForEvent('download'), act()]); return readFileSync(await dl.path()); };
     const pdf = async () => {
       await q('pdf-open').click(); await q('pdf-dialog').waitFor(); await frame();
@@ -9053,7 +9660,7 @@ try {
       await q('new-layout').click();
       await q('panel-library').click();
       await p.locator('[data-testid=lib-list] .card[data-name="Plate A"] [data-testid=lib-add]').click();
-      await q('panel-main').click();
+      await q('ptab-drawing').click();
       await q('px').fill('950'); await q('px').press('Enter');
       await waitTinted('r > 150 && r - g > 40 && g - b > 40', 'a part off the sheet keeps the mark colour in Wireframe');
       await q('new-tab').click();
@@ -9623,6 +10230,7 @@ try {
       const resizedHandle = await t('bal-drag').boundingBox(), resizedHeight = (await t('bal-dock').boundingBox()).height;
       await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2); await page.mouse.down();
       await page.mouse.move(resizedHandle.x + resizedHandle.width / 2, resizedHandle.y + resizedHandle.height / 2 + resizedHeight - dockHeight); await page.mouse.up();
+      approx((await t('bal-dock').boundingBox()).height, dockHeight, 1, 'dock resizes from its visible height after reaching the canvas limit');
       await page.setViewportSize({ width: 1440, height: 900 });
       await page.locator('[data-tool=select]').click();
       await closeTabs(/./);
@@ -9804,10 +10412,10 @@ try {
 
   await step('TODO 96: independent work area, cycle and checked menu, ACI 7, feedback, persistence and unchanged paper / PDF', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
-    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
     p.on('pageerror', (e) => errors.push(String(e)));
     const frame = () => p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
-    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '$') }).click(); await frame(); };
+    const theme = async (name) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + name + '\\b') }).click(); await frame(); };
     const work = async (name) => {
       await p.locator('[data-menu=View]').click();
       await p.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frame();
@@ -9844,8 +10452,8 @@ try {
         assert.equal(await q('work-area').getAttribute('title'), 'Work area: ' + name);
       }
       for (const [app, area, background, ink, selection, mark] of [
-        ['light', 'Dark', 'rgb(0, 0, 0)', 'e8e8ec', '60a5fa', 'fb923c'],
-        ['dark', 'Light', 'rgb(255, 255, 255)', '1b1d22', '4f46e5', 'c2410c'],
+        ['light', 'Dark', 'rgb(33, 40, 48)', 'e8e8ec', '60a5fa', 'fb923c'],
+        ['dark', 'Light', 'rgb(255, 255, 255)', '1b1d22', '2f7bd0', 'c2410c'],
       ]) {
         await theme(app); const originalPdf = await pdf();
         const appBg = await p.locator('body').evaluate((el) => getComputedStyle(el).backgroundColor);
@@ -9866,13 +10474,13 @@ try {
         await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a'); await frame();
         assert.ok(await pixels(selection) > 400, 'selected lines follow the work area');
         const grip = q('grip').first(); await grip.waitFor();
-        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(96, 165, 250)' : 'rgb(79, 70, 229)');
+        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(96, 165, 250)' : 'rgb(47, 123, 208)');
         const hover = await p.evaluate(() => {
           const svg = document.querySelector('.ovl svg'), edge = document.createElementNS(svg.namespaceURI, 'path');
           edge.setAttribute('class', 'dr-edge'); svg.append(edge);
           const cs = getComputedStyle(edge), result = [cs.stroke, cs.strokeOpacity]; edge.remove(); return result;
         });
-        assert.deepEqual(hover, area === 'Dark' ? ['rgb(96, 165, 250)', '0.8'] : ['rgb(79, 70, 229)', '0.35']);
+        assert.deepEqual(hover, area === 'Dark' ? ['rgb(96, 165, 250)', '0.8'] : ['rgb(47, 123, 208)', '0.35']);
         await p.screenshot({ path: `${shotDir}/s15-96-app-${app}-work-${area.toLowerCase()}.png` });
         const endpoint = await grip.boundingBox();
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
@@ -9882,7 +10490,7 @@ try {
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await q('new-layout').click(); await frame();
         assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), undefined, 'layout tabs follow the app theme entirely');
-        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(0, 0, 0)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
+        assert.equal(await p.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), app === 'dark' ? 'rgb(33, 40, 48)' : 'rgb(255, 255, 255)', 'sheet paper keeps its app appearance');
         await p.reload(); await q('work-area').waitFor(); await frame();
         assert.equal(await q('work-area').getAttribute('aria-label'), 'Work area: ' + area, 'remembered after reload');
         await open();
@@ -9891,16 +10499,16 @@ try {
         await work('Follow app');
       }
       await p.emulateMedia({ colorScheme: 'dark' }); await theme('follow system');
-      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
+      assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(33, 40, 48)');
       await p.emulateMedia({ colorScheme: 'light' }); await frame();
       assert.equal(await q('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
     } finally { await context.close(); }
   });
 
-  await step('TODO 90: black dark drawing area, contrasting selection / hover / grips / snaps, light and PDF unchanged', async () => {
+  await step('TODO 90 / 110a: R19 model space, contrasting selection / hover / grips / snaps and unchanged PDF', async () => {
     const doc = newDoc(4);
     addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 60, 120, 60));
-    await openGrips(writeDxf(doc), 'black-canvas.dxf');
+    await openGrips(writeDxf(doc), 'r19-canvas.dxf');
     await click(70, 30); await gripWhen(3);
     const colours = () => page.evaluate(() => {
       const root = getComputedStyle(document.documentElement), token = (n) => root.getPropertyValue(n).trim();
@@ -9910,12 +10518,6 @@ try {
         hot: token('--hot'), mark: token('--mark'), muted: token('--muted'), guide: token('--guide'),
         grip: getComputedStyle(document.querySelector('[data-testid=grip]')).fill };
     });
-    // WCAG relative luminance against #000, including translucent feedback composited on black.
-    const contrast = (hex, opacity = 1) => {
-      const rgb = hex.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16) / 255 * opacity);
-      const linear = rgb.map((c) => c <= .04045 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4);
-      return (linear[0] * .2126 + linear[1] * .7152 + linear[2] * .0722 + .05) / .05;
-    };
     let lightPdf;
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme); await frames();
@@ -9923,15 +10525,15 @@ try {
       if (theme === 'light') {
         assert.equal(c.background, 'rgb(255, 255, 255)');
         assert.deepEqual([c.surround, c.sheet, c.part, c.selection, c.accent, c.panel, c.paper],
-          ['#ececef', '#ffffff', '#ffffff', '#4f46e5', '#4f46e5', '#ffffff', '#ffffff']);
-        assert.equal(c.grip, 'rgb(79, 70, 229)');
+          ['#e9e9e9', '#ffffff', '#ffffff', '#2f7bd0', '#2f7bd0', '#f2f2f2', '#ffffff']);
+        assert.equal(c.grip, 'rgb(47, 123, 208)');
       } else {
-        assert.equal(c.background, 'rgb(0, 0, 0)');
-        assert.deepEqual([c.surround, c.sheet, c.part], ['#000000', '#000000', '#000000']);
-        assert.deepEqual([c.accent, c.panel, c.paper], ['#8a8fff', '#131316', '#f4f5f6'], 'UI and PDF preview tokens stay as before');
+        assert.equal(c.background, 'rgb(33, 40, 48)');
+        assert.deepEqual([c.surround, c.sheet, c.part], ['#212830', '#212830', '#212830']);
+        assert.deepEqual([c.accent, c.panel, c.paper], ['#0696d7', '#2b2f36', '#f4f5f6'], 'R19 UI and unchanged PDF preview paper');
         assert.equal(c.grip, 'rgb(96, 165, 250)');
         for (const name of ['selection', 'hot', 'mark', 'muted', 'guide']) {
-          assert.ok(contrast(c[name]) >= 4.5, `${name} ${c[name]} contrasts at least 4.5:1 with black`);
+          assert.ok(contrastRatio(c[name], '#212830') >= 4.5, `${name} ${c[name]} contrasts at least 4.5:1 with model space`);
         }
         const hover = await page.evaluate(() => {
           const svg = document.querySelector('.ovl svg'), edge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -9940,7 +10542,7 @@ try {
           edge.remove(); return result;
         });
         assert.equal(hover.colour, c.grip, 'hover and grips use the drawing selection colour');
-        assert.ok(contrast(c.selection, hover.opacity) >= 4.5, 'translucent hover contrasts at least 4.5:1 on black');
+        assert.ok(contrastRatio(c.selection, '#212830', hover.opacity) >= 3, 'translucent graphical hover contrasts at least 3:1 on model space');
       }
       assert.ok(await accentWhen((n) => n > 100) > 100, 'selected line is painted in the selection token');
       await page.screenshot({ path: `${shotDir}/s14-90-${theme}.png` });
@@ -9958,14 +10560,14 @@ try {
     }
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.evaluate(() => { delete document.documentElement.dataset.theme; }); await frames();
-    assert.equal((await colours()).background, 'rgb(0, 0, 0)', 'Windows dark theme also uses black');
+    assert.equal((await colours()).background, 'rgb(33, 40, 48)', 'Windows dark theme also uses model space');
     assert.equal((await colours()).selection, '#60a5fa');
     await menuItem('View', 'Theme: dark');
     await t('new-layout').click(); await frames();
-    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)', 'layout surround is black too');
-    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 0, 0)', 'layout sheet is black too');
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(33, 40, 48)', 'layout surround uses model space too');
+    assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(33, 40, 48)', 'layout sheet uses model space too');
     await menuItem('View', 'Theme: light'); await frames();
-    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(236, 236, 239)');
+    assert.equal(await t('canvas').evaluate((el) => getComputedStyle(el).backgroundColor), 'rgb(233, 233, 233)');
     assert.equal(await page.locator('rect.sheet').evaluate((el) => getComputedStyle(el).fill), 'rgb(255, 255, 255)');
     await page.emulateMedia({ colorScheme: 'light' });
     await closeTabs(/./);
@@ -10038,7 +10640,7 @@ try {
     if (placed) lay.placed.push({ partId: obstacle ? 'other' : 'fit', x: 0, y: 200, rot: 0, mirrorX: false, mirrorY: false });
     await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
     await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
   };
   await step('TODO 86: Fit skips placed parts, reports skipped cells, and Apply keeps them clear (light then dark)', async () => {
     for (const theme of ['light', 'dark']) {
@@ -10073,11 +10675,11 @@ try {
     lay.placed.push({ partId: 'fit', x: 150, y: 100, rot: 0 }, { partId: 'other', x: 250, y: 100, rot: 0 });
     await t('picker').setInputFiles({ name: 'matching-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'matching-grid.dxf');
-    await t('panel-main').click();
+    await t('ptab-drawing').click();
     await t('fit-switch').uncheck();
-    await page.locator('[data-key=cols]').fill('3');
-    await page.locator('[data-key=rows]').fill('2');
-    await page.locator('[data-key=rows]').press('Tab');
+    await panelControl(page, page.locator('[data-key=cols]')).fill('3');
+    await panelControl(page, page.locator('[data-key=rows]')).fill('2');
+    await panelControl(page, page.locator('[data-key=rows]')).press('Tab');
     const note = '3 × 2: 1 cell skipped, 2 off the sheet';
     assert.equal(await t('step-hint').textContent(), note);
     assert.ok((await prompt()).includes(note), 'command status reports both counts');
@@ -10112,7 +10714,7 @@ try {
     lay.placed.push({ partId: 'fit', x: 150, y: 100, rot: 0 });
     await t('picker').setInputFiles({ name: 'dropped-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dropped-grid.dxf');
-    await t('panel-main').click();
+    await t('ptab-step').click();
     assert.equal(await t('step-hint').textContent(), '3 × 2: 2 off the sheet');
     assert.equal(await t('count').textContent(), '3');
     assert.equal(await sheetParts(), 4);
@@ -10159,14 +10761,14 @@ try {
 
   await step('TODO 88: compact remembered Balloons dock and faster toasts at 1024x768 (light then dark)', async () => {
     const small = await browser.newContext({ viewport: { width: 1024, height: 768 } });
-    const p = await small.newPage(), q = (id) => p.locator('[data-testid=' + id + ']');
+    const p = await small.newPage(), q = (id) => panelControl(p, p.locator('[data-testid=' + id + ']'));
     try {
       await p.goto(URL_); await q('picker').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
       for (const theme of ['light', 'dark']) {
         await q('picker').setInputFiles('fixtures/outline.dxf');
         await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
         await p.locator('[data-tool=balloon]').click();
         assert.equal((await q('bal-dock').boundingBox()).height, 140);
         assert.ok((await q('canvas').boundingBox()).height > 350, 'canvas keeps room at 1024?768');
@@ -10192,7 +10794,7 @@ try {
 
   await step('TODO 92: tiny gaps skip annotations, require Show per drawing and cap rings at 50 (light then dark)', async () => {
     const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-    const p = await isolated.newPage(), q = (id) => p.locator('[data-testid=' + id + ']');
+    const p = await isolated.newPage(), q = (id) => panelControl(p, p.locator('[data-testid=' + id + ']'));
     await p.addInitScript(() => {
       const proto = CanvasRenderingContext2D.prototype, clear = proto.clearRect, arc = proto.arc;
       proto.clearRect = function (...args) { if (this.canvas.dataset.testid === 'drawing') window.__gapRings = 0; return clear.apply(this, args); };
@@ -10220,7 +10822,7 @@ try {
     try {
       await p.goto(URL_); await q('new-tab').waitFor();
       for (const theme of ['light', 'dark']) {
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
         await open(50);
         assert.equal(await q('gap-show').getAttribute('aria-pressed'), 'false');
         assert.equal(await p.evaluate(() => window.__gapRings), 0, 'import does not mark gaps');
@@ -10250,7 +10852,7 @@ try {
 
   await step('TODO 103: 1000 px/mm and back; widths, text, arrows, grips, snaps, background and precise panning', async () => {
     const isolated = await browser.newContext({ viewport: { width: 1440, height: 900 } }), p = await isolated.newPage();
-    const q = (id) => p.locator(`[data-testid="${id}"]`), faults = [];
+    const q = (id) => panelControl(p, p.locator(`[data-testid="${id}"]`)), faults = [];
     p.on('pageerror', (e) => faults.push(String(e)));
     p.on('console', (m) => { if (m.type() === 'error') faults.push(m.text()); });
     await p.addInitScript(() => {
@@ -10316,7 +10918,7 @@ try {
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
       for (const theme of ['light', 'dark']) {
-        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '$') }).click();
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
         await p.screenshot({ path: shotDir + '/s16-103-zoom-' + theme + '.png' });
       }
       const background = await p.evaluate(async () => {
@@ -10410,7 +11012,7 @@ try {
     await page.locator('[data-tool=rect]').click();
     await typeCmd('40,100'); await typeCmd('100,60');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
-    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
     await page.getByRole('button', { name: 'Zoom out', exact: true }).click({ clickCount: 2 }); await frames();
     if (await t('tog-snap').getAttribute('aria-pressed') !== 'true') await t('tog-snap').click();
     await t('decimals').selectOption('2');
@@ -10531,7 +11133,7 @@ try {
     const drawn = async () => Number(await t('drawing').getAttribute('data-drawn'));
     await t('picker').setInputFiles({ name: 'big.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(bigDoc(N))) });
     await page.waitForFunction((n) => document.body.textContent.includes('Entities ' + n), N, { timeout: 60000 });
-    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
     const all = await drawn();
     assert.ok(all > N * 0.8, `fitted, nearly everything draws: ${all}`);
     const box = await t('canvas').boundingBox(), cx = box.x + box.width / 2, cy = box.y + box.height / 2;      // Fit centres the drawing
@@ -10557,7 +11159,7 @@ try {
     assert.ok(fps > 10, `panning keeps frames coming (${fps.toFixed(1)} fps; generous bound, machine dependent)`);
     await page.waitForFunction(() => document.querySelector('[data-testid=drawing]').dataset.snap === '', null, { timeout: 5000 });
     assert.ok(await drawn() > 0, 'after the pan, what is in view is drawn in full again');
-    await page.getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
     assert.equal(await drawn(), all, 'Fit draws the same set as before');
     await closeTabs(/big/);
   });

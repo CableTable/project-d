@@ -4,6 +4,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 ## App
 
+**Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
+
+**Docker tab**: One of Properties, Objects, Layers, Parts library and Step and repeat across the right panel. Only the active tab shows its name; its sections fold. The panel can be resized or hidden, with settings remembered on this PC. Where: `web/app.js`, `web/docker.js`; `DECISIONS.md`, R19 pick: Option A.
+
 **Add to layout**: Takes the prepared drawing into a layout as a part at its true size. Where: `web/app.js`.
 
 **Apply**: Commits the current preview, which in Step and repeat turns the grid into separate placed parts. Where: `web/app.js`. Avoid: Save.
@@ -15,6 +19,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Background picture**: A dimmed, locked JPG, PNG or rendered PDF page beneath a drawing that can be scaled and measured but is left out of DXF Save and part PDF output. Where: `DECISIONS.md`, Background, Part PDF and Autosave and recovery.
 
 **Balloon**: A numbered inspection callout placed by hand on a drawing, PDF or picture, with its data saved in a separate balloon file. Where: `DECISIONS.md`, Inspection balloons. Avoid: Dimension.
+
+**Base point**: The reference point from which Move measures displacement to its target. Click it with snaps or type absolute x,y in mm; a typed target pair is dx,dy from this point. Where: `DECISIONS.md`, Move tool (TODO 66a).
 
 **Break Apart**: Separates one selected layout group into ungrouped outlines, or an outline-only drawing block into its members one level down, keeping their placement and layers. Results stay selected; one Undo restores the object and selection. Modify menu, Ctrl+K or `BREAKAPART`. Where: `web/breakapart.js`, `web/app.js`. Avoid: Explode, which also splits polylines into lines and arcs.
 
@@ -82,7 +88,9 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Nest**: The packed arrangement of parts produced by Auto-nest, also the command name that opens its dialog. Where: `DECISIONS.md`, Auto-nest method and UI.
 
-**Nudge**: Moves selected placed parts with the arrow keys by a chosen mm step, or ten times that step with Shift. Where: `DECISIONS.md`, Nudge.
+**Nudge**: Moves selected placed parts, drawing objects or Compare snapshots with the arrow keys by a chosen mm step, or ten times that step with Shift. Where: `DECISIONS.md`, Nudge.
+
+**Nudge step**: The shared positive distance in mm used by arrow keys on drawings, layouts and Compare, remembered on this PC. Set it in the Part tab / panel or with `NU` / `NUDGE` at the command bar. Where: `DECISIONS.md`, Nudge command.
 
 **Objects tab**: The right-panel tree of layers and objects, or parts and their placements on a layout, used to find, select, hide and lock things. Where: `DECISIONS.md`, Objects tab. Avoid: A separate drawing tab; Object Manager is the older feature name.
 
@@ -92,11 +100,15 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Parts library**: The local collection of named parts with previews and sizes, stored inside the app for reuse and exported to DXF only when asked. Where: `TODO.md`, item 19; `web/partstore.js`. Avoid: A folder of source files; cloud storage.
 
+**Part tab**: The ribbon context tab that appears and selects itself when placed parts are selected on a layout. It holds their name, position, size, angle, mirror, nudge, group and lock controls. Where: `DECISIONS.md`, Ribbon; `web/app.js`.
+
 **Placed part**: One positioned, rotated or mirrored copy of a part on a layout sheet. Where: `DECISIONS.md`, Placed part: X, Y, W, H, Angle. Avoid: The library part itself.
 
 **Preflight**: An optional drawing check for duplicates, open cut paths, tiny gaps, off-sheet parts, wide lines and live text that warns without blocking export. Where: `DECISIONS.md`, Cleanup / Preflight placement and Preflight: warn, not block.
 
 **Properties**: The panel for inspecting or changing selected objects' layer, colour, line type, outline width and supported shape values. Where: `TODO.md`, item 24; `DECISIONS.md`, Line width.
+
+**Ribbon**: The grouped commands below the menu and document tabs. Its tabs follow the active document kind. Full shows icons and labels; Panel titles shows group names; Tab names shows only tabs. Folded commands open over the canvas. Where: `web/ribbon.js`, `web/app.js`; `DECISIONS.md`, R19 pick: Option A.
 
 **Recovery**: Offers local copies of unsaved tabs after an interrupted run, with copies removed after a successful save or clean close. Where: `DECISIONS.md`, Autosave and recovery and Recovery after a clean close. Avoid: A backup of original files.
 

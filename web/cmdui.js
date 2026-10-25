@@ -105,6 +105,32 @@ export function buildCmdUI(hooks) {
     fadeUp();
   }
 
+  function openNudge(step, apply) {
+    close();
+    const field = h('input', { type: 'text', inputmode: 'decimal', 'aria-label': 'Nudge step in mm', 'data-testid': 'nudge-input', value: step });
+    const error = h('div', { class: 'cb-prompt', role: 'status', hidden: true });
+    const box = h('div', { class: 'cbar nudgebox', role: 'dialog', 'aria-label': 'Nudge step', 'data-testid': 'nudge-box' },
+      h('label', { class: 'cb-in' }, h('span', { class: 'cb-lab' }, 'Nudge (mm)'), field, h('kbd', null, 'Esc')), error);
+    const finish = () => { field.removeEventListener('blur', finish); box.remove(); };
+    const canvas = hooks.canvas(), r = canvas.getBoundingClientRect();
+    canvas.append(box);
+    const p = CB.placeBar(ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 },
+      { w: box.offsetWidth, h: box.offsetHeight }, { w: r.width, h: r.height });
+    box.style.left = p.x + 'px'; box.style.top = p.y + 'px';
+    for (const ev of ['pointerdown', 'wheel', 'dblclick', 'contextmenu']) box.addEventListener(ev, (e) => e.stopPropagation());
+    field.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== 'Escape') return;
+      e.preventDefault(); e.stopPropagation();
+      if (e.key === 'Escape') { finish(); return; }
+      const why = apply(field.value);
+      if (!why) { finish(); return; }
+      hooks.say(why); error.textContent = why; error.hidden = false;
+      field.setAttribute('aria-invalid', 'true'); field.select();
+    });
+    field.addEventListener('blur', finish);
+    field.focus(); field.select();
+  }
+
   function addLine(pre, ans, cls, run) {
     if (!cls && /cancel|unknown|must |cannot|can't|failed/i.test(pre)) cls = 'er';
     lines.push({ pre, ans: ans || '', cls: cls || '', run: run || '' });
@@ -191,7 +217,7 @@ export function buildCmdUI(hooks) {
 
   return {
     hist, prompt, log, input, bar, fade, drawer, acts, echo, hint,
-    open, close, toggleHistory, go,
+    open, close, openNudge, toggleHistory, go,
     isOpen: () => !bar.hidden, historyOpen: () => !drawer.hidden,
     /** A command ran (by its name): Space on an empty bar repeats it. */
     ran: (name) => { lastName = name; },

@@ -94,7 +94,7 @@ test('only differences persist and runtime lookup, suggestions and Space use own
   assert.equal(CB.resolve('co', 'draw', cmds), null);
   assert.equal(CB.suggest('ww', 'draw', 6, cmds)[0].cmd.name, 'contour');
   assert.equal(CB.spaceIsEnter('ww', '', 'draw', cmds), true);
-  assert.equal(CB.resolve('co', 'draw').name, 'contour');
+  assert.equal(CB.resolve('ct', 'draw').name, 'contour');
   assert.equal(CB.resolve('shortcuts').name, 'shortcuts');
   assert.deepEqual(SC.bindings({ contour: { alias: 123, key: null }, missing: {} }), SC.bindings());
 });

@@ -126,7 +126,8 @@ From the v0.1.30 exe test (Pip-test, 2026-10-20):
 
 From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/VPxPFSo6u1vonP7QdBetXE; his ask: all of it):
 66. **More Modify tools** (S–L): Move and Copy (base point, then target or typed distance) first, then Rotate and Scale, then Fillet and Extend; in the Modify menu and the command bar (AutoCAD M, CO, RO, SC, F, EX).
-    66a. Move selected drawing objects from a base point to a clicked or typed target through Modify and M, respecting layer locks and supporting preview, Esc and one-step undo, with unit and browser tests.
+    66a. ✅ (built, 2026-10-24) Move selected drawing objects from a clicked or typed base point to a snapped target, typed dx,dy or direct distance (mm) through Modify and MV / MOVE. Layer locks, live ghosts, Shift / ORTHO, Esc, selection retained and one-step undo; pure and browser tests. M stays Measure; CT / CONTOUR opens Contour; CO stays free for Copy (66b).
+      66a2. ✅ (built, 2026-10-24) Arrow-key nudge on drawings with linked dimensions, layer locks and one Undo per press; Shift / ORTHO straight selection drag and Ctrl-drag copy; Compare automatic Line up switches to Manual on drag / nudge; NU / NUDGE opens the shared Nudge step box on all three tab kinds, with Enter, Esc and invalid-number checks.
     66b. (after 66a) Copy selected drawing objects using the same base-point / target flow through Modify and CO, preserving the originals and properties with unit and browser undo tests.
     66c. (after 66a) Rotate selected drawing objects about a chosen pivot by a clicked or typed angle through Modify and RO, with preview, Esc, undo and unit / browser tests.
     66d. (after 66a) Scale selected drawing objects about a base point by a positive typed factor through Modify and SC, preserving widths and refusing unsupported transforms with unit and browser tests.
@@ -189,7 +190,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 92. ✅ (built, session 15) **Tiny gaps rings clutter imported drawings** (S, his report 2026-10-21): an imported drawing shows hundreds of orange Tiny-gaps rings on letters, scale marks and arrows. Check whether they show without pressing Show; skip text, dimensions and annotation layers; consider a cap or a count-only summary when there are many.
 90. ✅ (built, session 14) **Pure black drawing area in dark theme** (S, his ask 2026-10-21): the canvas background in the dark theme is #000; selection / highlight colours still read clearly on it.
 93. ✅ (built, session 17) **Open a .dxf from Explorer** (S–M, bug, T12): with Project D as the default app, double-clicking a .dxf starts the app with no file. Read the launch path and open it in its own tab (as File → Open, fs scope granted as in 82); decide the already-running case (single-instance → new tab).
-94. **Tidy the layout Drawing tab, CorelDRAW way** (M, ask, T13): the right panel is one long scroll; Parts on this layout and Step and repeat sit below the fold. First Knight researches how CorelDRAW really does page setup, rulers, guidelines and docker sections (official docs); then Rook picks the split (sheet setup in a bar or folded section, rulers / guides as View toggles, panel keeps parts + step and repeat). As-built board update.
+94. ✅ (built, Knight; session 21) **Tidy the layout Drawing tab, CorelDRAW way** (M, ask, T13): the right panel is one long scroll; Parts on this layout and Step and repeat sit below the fold. First Knight researches how CorelDRAW really does page setup, rulers, guidelines and docker sections (official docs); then Rook picks the split (sheet setup in a bar or folded section, rulers / guides as View toggles, panel keeps parts + step and repeat). As-built board update.
 95. ✅ (built, session 15) **Usage page: Usage | TODO | Tickets tabs, new look** (M, ask, T14): Project R look (his call 2026-10-21, no mock-up), phone bottom tabs / desktop segmented tabs, remembered last tab; whole TODO; Tickets from support/tickets.md with status chips, tag filters and expandable notes. Usage keeps its existing content and adds the three-agent daily token chart (14 days, IST; cache reads excluded).
 96. ✅ (built, session 15) **Work area light / dark toggle** (S, ask, T15): canvas background light or dark independent of the app theme (plus "follow app theme"), remembered; selection / layer colours still read on both. As-built board update.
 97. **Group / Ungroup on drawing tabs, and more edit tools** (L, ask, T16): Group (G, Ctrl+G) / Ungroup are layout-only now; make them work on drawing tabs, one undo step, saved in the DXF. Then ask him which extra tools first: Stretch, Break, Join, Chamfer, Lengthen, Align / Distribute, Weld / Intersect / Trim shapes, Reverse, Divide / Measure (66a–i, 75, 91 already listed).
@@ -207,6 +208,10 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
 109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
+    110a. ✅ Theme: AutoCAD dark, CorelDRAW light (built, session 21).
+    110b. ✅ Ribbon frame: Option A, per-kind tabs, remembered fold states, Home / View / Output (built, Knight).
+    110c. ✅ Remaining tab contents (Draw, Modify, Annotate, Layout, Compare) and the contextual Part tab.
+    110d. ✅ (built, Knight; session 21) Right panel: Option A docker tabs, folding sections, resize / hide, Parts library order (94, 132).
 111. **Copy and paste between files, and from other programs (photos)** (L, ask, T28): see T28 in support/tickets.md. Grill first.
     111a. ✅ (his call 2026-10-24, queued after 117) Ctrl+C / Ctrl+V of drawing objects inside the app: between drawing tabs and between the sheets of a PDF tab; a paste lands at the same position, one Undo. Not from other programs (rest of 111 later).
     111b. ✅ (built, Knight; his call 2026-10-24, grilled) Ctrl+V on a layout tab: the copied objects become a new Parts library part "<source tab> paste" (numbered on a clash), placed at the same mm position on the layout sheet, selected; one Undo removes the placement, the library part stays.
@@ -232,13 +237,13 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     129a. ✅ Linked dimensions for aligned and linear: link on placing, follow grip drag / Move / Scale, unlink on replace / delete.
     129b. ✅ Radius, diameter and angle dimensions follow their circle, arc or lines (exact centre + radius, or exact lines through the vertex; Move, Scale, grip drag).
     129c. ✅ Links come back when a drawing opens: matching is good to 2e-6 drawing units (the DXF holds 6 decimals), tested by save → reopen → follow (`linked-dimensions.test.mjs`). AutoCAD-made DIMENSION entities are not Project D dimensions and stay as they are.
-130. **Move line width out of Properties into the top ribbon (with T27)** (S, ask, T40): see T40 in support/tickets.md. Grill first.
+130. ✅ **Line width in the Home ribbon and still in Properties** (T40, R19 Option A; built with 110b / 110c).
 131. **Measure: Keep stores all 3 values; keep / preview next to the measured line; unkept measure vanishes** (M, ask, T41): see T41 in support/tickets.md. Grill first.
-132. **Parts library sits at the bottom of the right panel: scroll to reach it** (S, ask, T42): see T42 in support/tickets.md. Grill first.
+132. ✅ (built, Knight; session 21) **Parts library sits at the bottom of the right panel: scroll to reach it** (S, ask, T42): see T42 in support/tickets.md. Grill first.
 133. **Dotted rubber-band line from the pointer when a tool starts (line thickness?)** (S, ask, T43): see T43 in support/tickets.md. Grill first.
 134. **Extra Alt shortcuts for locked / fixed ones (Delete, Save, Save as)** (M, ask, T44): see T44 in support/tickets.md. Grill first.
 135. ✅ **Ctrl + drag: copy and drag the copy does not work** (M, bug, T45): see T45 in support/tickets.md. Grilled 2026-10-24: on drawing tabs, Ctrl+drag copies the selection and drags the copy (original stays, one Undo step, hint "Ctrl-drag = copy"), as layouts already do (`web/app.js:1973`); today drawing tabs just move (`web/app.js:3490`, `moveSelectionTo` 4025).
-    135b. ✅ (built, Knight; review finding 2026-10-24) Ctrl+Shift-drag on a drawing tab copies straight along X or Y (as layouts, DECISIONS "Move and copy by dragging"). Plain Shift-drag keeps box selection. Browser checks both axes, one Undo, unchanged originals, and refusal of Ctrl-drag / Ctrl+Shift-drag on a locked layer.
+    135b. ✅ (built, Knight; review finding 2026-10-24) Ctrl+Shift-drag on a drawing tab copies straight along X or Y (as layouts, DECISIONS "Move and copy by dragging"). Updated by 66a2: plain Shift-drag moves selected objects straight; from empty space it keeps box selection. Browser checks both axes, one Undo, unchanged originals, and refusal of Ctrl-drag / Ctrl+Shift-drag on a locked layer.
 136. **Start page with recent files and pinned / favourite drawings instead of an empty sheet** (M, ask, T46): see T46 in support/tickets.md. Grill first.
 137. **Zoom level at bottom right: type a custom zoom** (S, ask, T47): see T47 in support/tickets.md. Grill first.
 138. **Open .tif / .tiff files (as a background picture and for Trace bitmap)** (M, ask, T48): see T48 in support/tickets.md. Grill first.
@@ -246,6 +251,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 140. **Pen tool (CorelDRAW): draw lines and Bezier curves** (M, ask, T52): see T52 in support/tickets.md. Grill first.
 141. ✅ **Save drops AutoCAD tables without a word** (S–M, bug, found by Bishop-review 2026-10-24): `web/dxf-write.js:16` has no ACAD_TABLE in its save list, so open a DXF with a table, Save, reopen: the table is gone (its *T block is still written, unused). Write ACAD_TABLE back as read, or save it as a plain block reference, and note anything dropped. Grill first.
 142. **Session 20 review leftovers** (S, Bishop-review 2026-10-24, for Knight): (a) `web/app.js:4061` paste on a layout uses the old `unwritable()` note; use `writeDxfWithReport` + `saveReportNote` like Extract part; (b) TODO 111b's text still says "<source tab> paste": match its DECISIONS row (base name, sheet number); (c) Extract stores `source: d.name` with .dxf while paste stores the base name: one way.
+
+143. **Measure on layout tabs** (his ask 2026-10-24, S, tab parity survey).
+144. **Ctrl+C on layout tabs** (his ask 2026-10-24, S, tab parity survey).
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
@@ -272,4 +280,4 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 1. IBM Plex fonts are not bundled, so the system font is used. Bundle them locally if he wants the mock-up's look.
 2. A per-user .dxf file association, with no admin rights.
 3. A "keep settings next to the exe" switch.
-4. Drawing selection drag refuses HATCH and DIMENSION entities (`moveEntities`); add their move support.
+4. ✅ (built, TODO 66a) Drawing selection drag now moves HATCH and native DIMENSION entities through the shared translation code.
