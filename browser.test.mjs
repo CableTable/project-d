@@ -338,8 +338,8 @@ try {
       await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
       await tab('Home').click();
       assert.equal(await rb.getByRole('button', { name: 'Rotate', exact: true }).isEnabled(), true);
-      assert.equal(await rb.getByRole('button', { name: 'Scale', exact: true }).isEnabled(), true);
-      for (const label of ['Fillet', 'Extend']) {
+      for (const label of ['Scale', 'Fillet']) assert.equal(await rb.getByRole('button', { name: label, exact: true }).isEnabled(), true);
+      for (const label of ['Extend']) {
         const b = rb.getByRole('button', { name: label, exact: true });
         assert.equal(await b.isDisabled(), true); assert.match(await b.getAttribute('title'), /coming/);
       }
@@ -8693,6 +8693,52 @@ try {
     await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
     await typeCmd('sc'); assert.match(await prompt(), /Layer Cut is locked/); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.deepEqual((await savedDoc()).entities, lockedBefore.entities); await closeTabs(/scale/);
+  });
+
+  await step('TODO 66e: Fillet two lines', async () => {
+    await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    addEntities(raw, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(20, 70, 60, 70));
+    await openGrips(writeDxf(raw), 'fillet.dxf');
+    const before = await savedDoc(), coords = (e) => [10, 20, 11, 21].map((c) => fieldOf(e, c));
+    const undo = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+    };
+    await typeCmd('f');
+    assert.equal(await prompt(), 'Select the first line [Radius / Esc] (Shift = sharp corner):'); assert.equal(await t('tool-chip').textContent(), 'Tool: Fillet');
+    assert.equal(await page.locator('nav.rail [data-tool=fillet]').count(), 0);
+    await typeCmd('r'); assert.equal(await prompt(), 'Fillet radius <5>:');
+    await typeCmd('-1'); assert.match(await histLine(), /I do not understand.*0 or more/); await typeCmd('5');
+    await click(40, 20); assert.match(await prompt(), /^Select the second line/);
+    const hover = await at(60, 40); await page.mouse.move(hover.x, hover.y); await frames();
+    assert.equal(await t('mod-preview').count(), 3, 'two trimmed lines and the arc are previewed');
+    await shotBoth('fillet', async () => { await cmdLine().focus(); const p = await at(60, 40); await page.mouse.move(p.x, p.y); await frames(); });
+    await click(60, 40);
+    let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
+    assert.deepEqual(coords(doc.entities[0]), [20, 20, 55, 20]); assert.deepEqual(coords(doc.entities[1]), [60, 25, 60, 60]);
+    assert.equal(doc.entities[3].type, 'ARC'); assert.deepEqual([10, 20, 40, 50, 51].map((c) => fieldOf(doc.entities[3], c)), [55, 25, 5, 270, 0]);
+    assert.equal(doc.entities[1].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Fillet');
+    assert.match(await prompt(), /^Select the first line/, 'Fillet repeats'); await undo();
+    await page.mouse.move(0, 0); await click(40, 20); await click(60, 40, { shift: true });
+    doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.deepEqual(coords(doc.entities[0]), [20, 20, 60, 20]); await undo();
+    await click(40, 20); await click(40, 70); assert.match(await histLine(), /parallel/);
+    await page.keyboard.press('Escape'); assert.match(await prompt(), /^Select the first line/);
+    await typeCmd('r'); await typeCmd('100'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /too big/);
+    assert.deepEqual((await savedDoc()).entities, before.entities); assert.equal(await page.evaluate(() => localStorage.getItem('pd-fillet')), '100');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    await typeCmd('f'); await typeCmd('r'); assert.equal(await prompt(), 'Fillet radius <100>:', 'the radius is remembered'); await typeCmd('5');
+    await page.keyboard.press('Escape');
+    for (const tab of ['Home', 'Modify']) {
+      await page.locator(`[data-ribbon-tab=${tab}]`).click();
+      const button = page.locator('.ribbon [data-panel=Modify]').getByRole('button', { name: 'Fillet', exact: true });
+      assert.equal(await button.isEnabled(), true); await button.click(); assert.match(await prompt(), /^Select the first line/); await page.keyboard.press('Escape');
+    }
+    await menuItem('Modify', 'Fillet'); assert.match(await prompt(), /^Select the first line/);
+    await page.keyboard.press('Escape');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await typeCmd('f'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /nothing there/);
+    assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/fillet/);
   });
 
   await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {

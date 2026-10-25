@@ -42,6 +42,7 @@ const TABLE = [
   ['extract', 'Layout', 'Save the selected outline as a part', ['e'], ''],
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
   ['scale', 'Edit', 'Scale drawing objects uniformly about a base point', ['sc'], 'draw'],
+  ['fillet', 'Edit', 'Round the corner between two lines with a radius', ['f'], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],

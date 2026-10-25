@@ -32,6 +32,7 @@ import * as MD from './modify.js';
 import { movePoint } from './move.js';
 import { rotateEntities, rotationAngle, rotationMatrix } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './scale.js';
+import { filletEntities } from './fillet.js';
 import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import * as LD from './layoutdoc.js';
@@ -123,6 +124,7 @@ const TOOLS = [
   { id: 'copy', label: 'Copy', title: 'Copy (CO)', svg: '<rect x="4" y="8" width="11" height="12" rx="1.5"/><path d="M9 8V4h11v12h-5"/>' },
   { id: 'rotate', label: 'Rotate', title: 'Rotate (RO)', svg: '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>' },
   { id: 'scale', label: 'Scale', title: 'Scale (SC)', svg: '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>' },
+  { id: 'fillet', label: 'Fillet', title: 'Fillet (F)', svg: '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>' },
   { id: 'offset', label: 'Offset', title: 'Offset (O)', svg: '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>' },
   { id: 'contour', label: 'Contour', title: 'Contour (CT)', svg: '<rect x="3" y="3" width="18" height="18" rx="5"/><rect x="6.5" y="6.5" width="11" height="11" rx="3"/><rect x="10" y="10" width="4" height="4" rx="1"/>' },
   { id: 'trim', label: 'Trim', title: 'Trim (TR)', cap: 'round', svg: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.5L20 17M8.2 15.5L20 7"/>' },
@@ -132,7 +134,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', title: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', title: 'Measure (M)', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'rotate', 'scale', 'offset', 'trim', 'mirror', 'nest', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['aligned', 'Aligned', 'D', '<path d="M3 15L13 5M3 15l3-1M3 15l1-3M13 5l-3 1M13 5l1 3"/>', 'DIMALIGNED'],
@@ -407,7 +409,7 @@ function buildMenus() {
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
-  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
+  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
@@ -550,7 +552,7 @@ function ribbonContents(kind) {
   const toolIcon = (id) => TOOLS.find((t) => t.id === id).svg;
   const convert = (label, action, svg, small = false) => btn(label, svg, action, { small, enabled: () => !!editable() });
   const coming = (label, svg) => btn(label, svg, () => {}, { small: true, enabled: () => false, title: label + ' · coming' });
-  const filletIcon = '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>', extendIcon = '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>',
+  const extendIcon = '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>',
     outlinesIcon = '<path d="M5 5h14M12 5v14" stroke-dasharray="2 1.5"/><path d="M8 19h8"/>';
   if (ribbon.tab === 'Draw') return [
     group('Draw', ...['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
@@ -560,7 +562,7 @@ function ribbonContents(kind) {
   if (ribbon.tab === 'Modify') return [
     group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
-      stack(coming('Fillet', filletIcon), coming('Extend', extendIcon), ribbonTool('trim', true))),
+      stack(ribbonTool('fillet', true), coming('Extend', extendIcon), ribbonTool('trim', true))),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>'),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon)),
     group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
@@ -599,7 +601,7 @@ function ribbonContents(kind) {
     groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
-      stack(coming('Fillet', filletIcon), coming('Extend', extendIcon), ribbonTool('trim', true))));
+      stack(ribbonTool('fillet', true), coming('Extend', extendIcon), ribbonTool('trim', true))));
   }
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
     const d = editable(); if (!d) return;
@@ -1112,7 +1114,7 @@ function buildSelbar() {
 
 function buildRail() {
   ui.toolBtns = {};
-  const items = TOOLS.filter((t) => !['copy', 'rotate', 'scale'].includes(t.id)).map((t) => {
+  const items = TOOLS.filter((t) => !['copy', 'rotate', 'scale', 'fillet'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : t.title, 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
@@ -5569,17 +5571,18 @@ function drawKey(e, k) {
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
-const MOD_KINDS = ['move', 'copy', 'rotate', 'scale', 'offset', 'trim', 'mirror'], OFFSET_SAVED = 'pd-offset';
+const MOD_KINDS = ['move', 'copy', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet';
+const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
 /** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => ({ kind, stage: kind === 'offset' ? 'obj' : kind === 'trim' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: false, objs: [], p1: null, p2: null, p: null, cur: null });
+const newMod = (kind) => ({ kind, stage: kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: false, objs: [], p1: null, p2: null, p: null, cur: null });
 const modLive = () => !!(state.mod && state.modDoc === curDoc() && editable());
 const offDistU = (d) => state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
 /** Drops what an undo took away (the object Offset was holding, edges that are gone). */
 function modSync(d) {
   const m = state.mod, have = new Set(d.raw.entities);
-  if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side') m.stage = 'obj'; }
+  if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side' || m.stage === 'second') m.stage = 'obj'; }
   // an undone Trim brings the original entity back, not the pieces it made: an edge that is gone is swapped for the object it was cut from
   const back = (e) => { for (let k = 0; e && !have.has(e) && k < 1000; k++) e = m.was.get(e); return e; };
   m.edges = [...new Set(m.edges.map(back).filter(Boolean))];
@@ -5592,6 +5595,7 @@ const trimEdges = (d, m) => (m.all ? edIndex(d).shown.map((i) => d.raw.entities[
 function modStart(id) {
   const m = state.mod, d = editable();
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
+  else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line (radius ${mmText(state.filR)} mm; R changes it)`; }
   else if (id === 'offset') { state.offDist = loadOffsetDist(); state.msg = 'Offset: pick an object, or type the distance first'; }
   else if (id === 'trim') state.msg = 'Trim: pick the cutting edges, then Enter (Enter alone = all)';
   else if (d.sel.size) { m.objs = [...d.sel].map((i) => d.raw.entities[i]); m.stage = 'p1'; state.msg = `${d.sel.size} selected: click the first point of the mirror line`; }
@@ -5602,6 +5606,7 @@ function modPrompt(d) {
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Esc] (positive number or click):` };
   if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point or x,y:' : 'Target, dx,dy or distance:' + (m.kind === 'copy' ? ' Enter ends:' : '') };
+  if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line [Radius / Esc] (Shift = sharp corner):` };
   if (m.kind === 'offset') return { status: `Command: OFFSET   Distance <${mmText(state.offDist)}> mm`, prompt: m.stage === 'obj' ? `Select the object to offset, or type the distance <${mmText(state.offDist)}>:` : `Click the side to offset to (or type a new distance <${mmText(state.offDist)}>):` };
   if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all:' : 'Click the part to cut away. Enter or Esc ends:' };
   const objs = m.objs.length;
@@ -5612,6 +5617,7 @@ function modPrompt(d) {
 function modEsc(d) {
   const m = state.mod;
   if (m.kind === 'offset' && m.stage === 'side') { m.stage = 'obj'; m.ent = null; note('Offset: pick an object'); paintOverlay(); return; }
+  if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line'); paintOverlay(); return; }
   if (m.kind === 'trim' && m.stage === 'edges' && (m.edges.length || m.all)) { m.edges = []; m.all = false; note('Cutting edges cleared'); paintOverlay(); return; }
   if (m.kind === 'mirror' && m.stage === 'pick' && d.sel.size) { setSel(d, new Set()); renderCommand(); return; }
   const was = m.kind;
@@ -5620,7 +5626,7 @@ function modEsc(d) {
 function modEnter(d) {
   const m = state.mod;
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) { if (m.stage === 'pick') moveTake(d); else if (m.kind === 'copy') modEsc(d); else note(modPrompt(d).prompt); return; }
-  if (m.kind === 'offset') { modEsc(d); return; }
+  if (m.kind === 'offset' || m.kind === 'fillet') { modEsc(d); return; }
   if (m.kind === 'trim') {
     if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a cutting edge. Click the part to cut away' : `${m.edges.length} cutting edge${m.edges.length === 1 ? '' : 's'}. Click the part to cut away`); paintOverlay(); }
     else modEsc(d);
@@ -5636,6 +5642,16 @@ function modEnter(d) {
 function modTyped(d, raw) {
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (m.kind === 'fillet') {
+    if (!m.askR && (c === 'r' || c === 'radius')) { m.askR = true; note(`Fillet radius <${mmText(state.filR)}> mm: type it`); return true; }
+    const v = Number(c);
+    if (m.askR && Number.isFinite(v) && v >= 0) {
+      state.filR = v; m.askR = false; try { localStorage.setItem(FILLET_SAVED, String(v)); } catch { /* ignore */ }
+      note(`Fillet radius ${mmText(v)} mm. Pick the ${m.stage === 'obj' ? 'first' : 'second'} line`); return true;
+    }
+    if (!m.askR && DR.parseInput(raw).kind === 'word') return false;
+    note(`I do not understand "${raw.trim()}". ${m.askR ? 'Type a radius of 0 or more' : 'Type R to change the radius'}`); return true;
+  }
   if (m.kind === 'scale' && m.stage !== 'pick') {
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Scale a copy: on' : 'Scale a copy: off'); return true; }
     if (m.stage === 'p1') {
@@ -5718,6 +5734,13 @@ function modUp(d, was, p, shift) {
       if (!MD.canModify(ent)) { note('Offset takes a line, arc, circle or polyline'); return; }
       m.ent = ent; m.stage = 'side'; m.p = was.p; note('Click the side to offset to'); paintOverlay();
     } else offsetDo(d, was.p);
+  } else if (m.kind === 'fillet') {
+    const ent = modEntAt(d, was.p);
+    if (m.stage === 'obj') {
+      if (!ent) { note('Fillet: nothing there. Click a line'); return; }
+      if (ent.type !== 'LINE') { note('Fillet takes two lines'); return; }
+      m.ent = ent; m.p0 = was.p; m.askR = false; m.stage = 'second'; note('Fillet: pick the second line (Shift = sharp corner)'); paintOverlay();
+    } else filletDo(d, ent, was.p, shift || was.shift);
   } else if (m.kind === 'trim') {
     if (m.stage === 'edges') {
       const ent = modEntAt(d, was.p);
@@ -5811,6 +5834,18 @@ function offsetDo(d, p) {
   m.stage = 'obj'; m.ent = null;
   note(`Offset ${mmText(state.offDist)} mm made on layer ${r.ent.layer}. Pick another object, or Esc ends. Ctrl+Z takes it back`);
 }
+/** Fillet: both lines trimmed or extended and the arc added, one undo step; Shift = radius 0 this once. Then the next corner. */
+function filletDo(d, ent, p, sharp) {
+  const m = state.mod;
+  if (!ent) { note('Fillet: nothing there. Click the second line'); return; }
+  const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor);
+  if (r.error) { note(r.error); return; }
+  const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
+  view.fitted = false;
+  commit(d, { entities: [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(2)], blocks: d.raw.blocks }, 'Fillet');
+  m.stage = 'obj'; m.ent = null;
+  note(`${r.ents.length > 2 ? `Filleted, radius ${mmText(state.filR)} mm` : 'Corner made'}. Pick the next first line, or Esc ends. Ctrl+Z takes it back`);
+}
 function trimDo(d, p, shift) {
   const m = state.mod, idx = hitAt(d, p);
   if (idx < 0) { note('Trim: nothing there. Click the part to cut away'); return; }
@@ -5851,6 +5886,10 @@ function modOvl(d, out) {
   } else if (m.kind === 'offset') {
     if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canModify(e)) addEnt(e, 'dr-guide'); }
     else if (m.ent) { addEnt(m.ent, 'dr-guide'); const r = m.p ? MD.offsetEntity(m.ent, offDistU(d), m.p) : null; if (r && r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
+  } else if (m.kind === 'fillet') {
+    if (m.ent) addEnt(m.ent, 'dr-guide');
+    const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, state.filR / f) : null;
+    if (r?.ents) for (const k of r.ents) addEnt(k, 'dr-shape', 'mod-preview');
   } else if (m.kind === 'trim') {
     for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
     if (m.stage === 'cut' && m.p) {
