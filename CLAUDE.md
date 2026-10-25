@@ -30,6 +30,8 @@ up to five (114, T49), drag parts onto drawings (T50), PDF title block editor (1
 Session 19 (2026-10-24): step and repeat grid cell (127), linked dimensions (129), tab keys (118), Ctrl+drag copy (135),
 open a library part as a drawing (116), Clean up greyed buttons (128). Session 20 (2026-10-24, PR #15): PDF sheets keep edits + Delete sheet (117), copy / paste between tabs, sheets and layouts (111a, 111b), tables saved as blocks (141). **Next:** 142 (review leftovers), then open bugs,
 then TODO.md "Rakshith's list".
+Session 21 (2026-10-24/25, PR #16, v0.1.95): Move (66a), nudge / nu box (66a2), ribbon + CorelDRAW-style panel + AutoCAD / CorelDRAW theme (110a-d, 94, 132; mock-up R19 Option A). **Next:** 66b Copy, then 66c-66h (decided, DECISIONS row "Copy, Rotate, Scale, Fillet, Extend"), TODO 145, 142, then the rest of "Rakshith's list".
+Session 22 (2026-10-25, PR #17): Copy (66b), Rotate (66c), Scale (66d), Fillet lines / arcs / polylines (66e-66g), Extend lines (66h), exe leftovers (145), each reviewed and fixed. **Next:** 146 (command box over the preview), 142, 143-144, 66i (Extend arcs), then the rest of "Rakshith's list".
 Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare, theme "Modern SaaS", Offset / Trim /
 Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close
 prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). Session 8

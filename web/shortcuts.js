@@ -1,5 +1,5 @@
 // Own bindings and PGP interchange. Pure; defaults live in cmdbar.js TABLE.
-import { COMMANDS } from './cmdbar.js';
+import { COMMANDS, aliasScope } from './cmdbar.js';
 
 export const RESERVED = {
   'Ctrl+S': 'Reserved for Save, so saving a drawing stays available.',
@@ -83,7 +83,10 @@ export function clashes(draft) {
     }
     if (b.key && b.key !== c.key && keyReason(b.key)) out.push({ name: c.name, field: 'key', value: b.key, reason: keyReason(b.key) });
     for (const d of COMMANDS.slice(i + 1)) {
-      if (!c.where || !d.where || c.where === d.where) for (const a of b.alias.filter((a) => draft[d.name].alias.includes(a))) out.push({ name: c.name, other: d.name, field: 'alias', value: a });
+      for (const a of b.alias.filter((a) => draft[d.name].alias.includes(a))) {
+        const cw = aliasScope(c, a), dw = aliasScope(d, a);
+        if (!cw || !dw || cw === dw) out.push({ name: c.name, other: d.name, field: 'alias', value: a });
+      }
       if (b.key && b.key === draft[d.name].key) out.push({ name: c.name, other: d.name, field: 'key', value: b.key });
     }
   }

@@ -72,7 +72,7 @@ function arcFrac(g, p) {
 }
 
 /** The points where two segments cross: [{ fs, ft, p }] (fractions along each). */
-function segInter(s, t) {
+export function segInter(s, t) {
   const gs = geo(s), gt = geo(t), out = [];
   const E = 1e-9;
   if (gs.line && gt.line) {
@@ -188,9 +188,9 @@ function sideOf(s, g, p) {
   return (g.sw > 0) === inside ? 1 : -1;               // anticlockwise: the centre is on the left
 }
 
-/** The nearest point of a path to p: { u (segment index + fraction), d }. */
-function closest(P, p) {
-  let best = { u: 0, d: Infinity };
+/** The nearest point of a path to p: { u (segment index + fraction), d, index }. */
+export function closest(P, p) {
+  let best = { u: 0, d: Infinity, index: 0 };
   P.segs.forEach((s, i) => {
     const g = geo(s);
     let f;
@@ -200,7 +200,7 @@ function closest(P, p) {
       f = fa != null ? fa : (dist(p, s.a) <= dist(p, s.b) ? 0 : 1);
     }
     const d = dist(p, pointAt(g, f));
-    if (d < best.d - 1e-12) best = { u: i + f, d };
+    if (d < best.d - 1e-12) best = { u: i + f, d, index: i };
   });
   return best;
 }

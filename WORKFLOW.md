@@ -12,7 +12,7 @@ briefs, reading short reports and merging.
 | Role | Runs on | Model, effort | Does |
 |---|---|---|---|
 | Lead | main account (this session) | Opus | Plans, picks TODO items, writes briefs, reads reports (never whole diffs, logs or files), publishes mock-ups, merges. |
-| Lookup | claude2 | Haiku | Reading TODO / code / logs / CI, quick questions. Replies in a few lines. |
+| Lookup | claude2 | Haiku | Broad surveys across many files. Small lookups (one grep, one file section, one web page) Rook does itself (his OK, 2026-10-24). Replies in a few lines. |
 | Builder (**Knight**) | Codex CLI (his ChatGPT Go plan) | gpt-6.1-sol, high | Builder when its weekly usage is lower than Bishop's (his call, 2026-10-22; no default builder): features and fixes, code, tests, commit. Rook pushes (no git credentials in its sandbox). |
 | Builder (Bishop) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark), and builds when its weekly usage is lower than Knight's, or a second build runs at once: code, tests, commit, push. |
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
@@ -263,6 +263,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 
 ## Every brief says
 
+- **Report shape** (his OK, 2026-10-25): every report (build, fix, review, test, lookup) has the same 4 parts, a few lines each: **Result** (done / not done, commit id), **Tests** (what ran, pass / fail), **Findings** (or "none"), **Not checked**.
 - "You ARE the claude2 builder / reviewer: do the work yourself, never launch claude2 or Agent subagents."
   (Without it, claude2 reads CLAUDE.md's builder rule and tries to start claude2 itself.)
 - Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.

@@ -1,4 +1,4 @@
-// Move's typed coordinates and direct distance, in mm. No DOM.
+// Move and Copy's typed coordinates and direct distance, in mm. No DOM.
 import { parseInput } from './draw.js';
 
 /** A base point is absolute; a target pair is displacement from base. A distance follows cursor. */

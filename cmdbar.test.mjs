@@ -9,6 +9,7 @@ test('every name and alias is lower case, and no command repeats a word on the s
   for (const tab of ['draw', 'layout']) {
     const seen = new Map();
     for (const c of CB.COMMANDS.filter((x) => !x.where || x.where === tab)) for (const w of [c.name, ...c.alias]) {
+      if (CB.aliasScope(c, w) && CB.aliasScope(c, w) !== tab) continue;
       assert.equal(w, w.toLowerCase());
       assert.ok(!seen.has(w), `${w} is both ${seen.get(w)} and ${c.name} on a ${tab} tab`);
       seen.set(w, c.name);
@@ -24,13 +25,18 @@ test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('m').name, 'measure');
   assert.equal(CB.resolve('ct').name, 'contour');
   assert.equal(CB.resolve('contour').name, 'contour');
-  assert.equal(CB.resolve('co'), null);
+  assert.equal(CB.resolve('co').name, 'copy');
+  for (const word of ['f', 'fillet']) assert.equal(CB.resolve(word, 'draw').name, 'fillet');
+  for (const word of ['sc', 'scale']) { assert.equal(CB.resolve(word, 'draw').name, 'scale'); assert.equal(CB.resolve(word, 'draw').where, 'draw'); }
+  assert.equal(CB.resolve('copy').where, 'draw');
   for (const tab of ['draw', 'layout', 'compare']) {
     assert.equal(CB.resolve('nu', tab).name, 'nudge');
     assert.equal(CB.resolve('nudge', tab).where, '');
   }
   assert.equal(CB.resolve('r', 'draw').name, 'rectangle');
   assert.equal(CB.resolve('r', 'layout').name, 'rotate');
+  for (const tab of ['draw', 'layout']) for (const word of ['ro', 'rotate']) assert.equal(CB.resolve(word, tab).name, 'rotate');
+  assert.equal(CB.COMMANDS.filter((c) => c.name === 'rotate').length, 1);
   assert.equal(CB.resolve('a', 'layout').name, 'apply');
   assert.equal(CB.resolve('sr', 'layout').name, 'step');
   assert.equal(CB.resolve('a', 'draw').name, 'arc');
@@ -43,6 +49,7 @@ test('suggest: an exact alias first, then names that start with the text, with h
   assert.equal(s[0].cmd.name, 'rotate');
   assert.equal(s[0].hit, 2);
   assert.equal(CB.suggest('l', 'draw')[0].cmd.name, 'line');
+  assert.equal(CB.suggest('r', 'draw')[0].cmd.name, 'rectangle');
   assert.deepEqual(CB.suggest('o', 'draw').map((x) => x.cmd.name).slice(0, 2), ['offset', 'open']);
   assert.deepEqual(CB.suggest('', 'draw'), []);
   assert.deepEqual(CB.suggest('12', 'draw'), [], 'a number is not a command');
