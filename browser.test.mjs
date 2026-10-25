@@ -5182,6 +5182,26 @@ try {
     assert.deepEqual((await savedDoc()).entities, sheet1.entities, 'sheet 2 paste and Undo leave sheet 1 alone');
     await closeTabs(/./);
   });
+  await step('TODO 142c: reopening a layout adds missing library parts with the plain file name as source', async () => {
+    await closeTabs(/./);
+    const lay = newLayout('nest'), raw = newDoc(4), name = '142c reopened part';
+    addEntities(raw, dxfCircle(20, 30, 5));
+    lay.parts['142c-reopened'] = makePart('142c-reopened', name, raw);
+    lay.s.gridPart = '142c-reopened';
+    await t('picker').setInputFiles({ name: 'nest.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'nest.dxf');
+    await menuItem('Layout', 'Parts library');
+    assert.equal(await libCard(name).locator('span.lbl:not(.mono)').textContent(), 'nest');
+    assert.match(await libCard(name).getAttribute('title'), /^nest\n/);
+    await page.waitForFunction(async () => (await (await import('./partstore.js')).loadParts()).some((p) => p.name === '142c reopened part' && p.source === 'nest'));
+    await shotBoth('todo142c-reopened-library');
+    await libCard(name).locator('[data-testid=lib-menu]').click();
+    page.once('dialog', (d) => d.accept());
+    await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+    await libCard(name).waitFor({ state: 'detached' });
+    await t('ptab-drawing').click();
+    await closeTabs(/./);
+  });
   await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
     await closeTabs(/./);
     const name = '111b <img src=x>.dxf', base = '111b <img src=x>', first = `${base} paste`, second = `${first} 2`;
@@ -5230,20 +5250,25 @@ try {
   });
   await step('TODO 111b: PDF layout paste remembers the base name and copied sheet after switching sheets and closing the source', async () => {
     await closeTabs(/./);
-    await t('picker').setInputFiles('fixtures/three-sheets.pdf'); await t('bal-sheets').waitFor();
+    await t('picker').setInputFiles({ name: 'x.pdf', mimeType: 'application/pdf', buffer: readFileSync('fixtures/three-sheets.pdf') }); await t('bal-sheets').waitFor();
     await page.locator('[data-sheet="2"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
     await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
     await page.locator('[data-sheet="1"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 3');
     await typeCmd('newlayout'); await page.keyboard.press('Escape');
-    await closeTabs(/three-sheets/);
+    await closeTabs(/^x\./);
     await page.keyboard.press('Control+v');
-    const name = 'three-sheets sheet 2 paste';
+    const name = 'x sheet 2 paste';
     await page.waitForFunction((nm) => document.querySelector('[data-testid=placed-name]').textContent === nm, name);
     const lay = layoutFromRaw(await savedDoc());
     assert.equal(lay.parts[lay.placed[0].partId].name, name);
+    assert.equal(lay.parts[lay.placed[0].partId].src, 'x');
     await menuItem('Layout', 'Parts library');
+    assert.equal(await libCard(name).locator('span.lbl:not(.mono)').textContent(), 'x');
+    assert.match(await libCard(name).getAttribute('title'), /^x\n/);
+    await page.waitForFunction(async () => (await (await import('./partstore.js')).loadParts()).some((p) => p.name === 'x sheet 2 paste' && p.source === 'x'));
+    await shotBoth('todo142c-pdf-library');
     await libCard(name).locator('[data-testid=lib-menu]').click();
     page.once('dialog', (d) => d.accept());
     await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();

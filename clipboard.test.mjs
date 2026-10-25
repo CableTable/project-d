@@ -12,16 +12,25 @@ const copyAll = (raw, factor = 1) => copySnapshot(raw, new Set(raw.entities.map(
 
 test('a layout paste keeps the copied source name, gets an unused library name, and owns its extracted drawing', () => {
   const raw = newDoc(1); addEntities(raw, circle(2.25, 3.5, 0.5));
-  const snapshot = copySnapshot(raw, new Set([0]), 25.4, 'Source <b>.dxf'), before = structuredClone(snapshot);
+  const snapshot = copySnapshot(raw, new Set([0]), 25.4, 'Source <b>'), before = structuredClone(snapshot);
   const first = partFromSnapshot(snapshot, 'one', []);
-  assert.equal(first.name, 'Source <b>.dxf paste'); assert.equal(first.src, 'Source <b>.dxf');
+  assert.equal(first.name, 'Source <b> paste'); assert.equal(first.src, 'Source <b>');
   assert.equal(first.factor, 25.4); assert.deepEqual(first.box, [1.75, 3, 2.75, 4]);
   assert.equal(first.w, 25.4); assert.equal(first.h, 25.4);
-  const second = partFromSnapshot(snapshot, 'two', ['SOURCE <B>.DXF PASTE']);
-  assert.equal(second.name, 'Source <b>.dxf paste 2');
-  assert.equal(partFromSnapshot(snapshot, 'three', [first.name, second.name]).name, 'Source <b>.dxf paste 3');
+  const second = partFromSnapshot(snapshot, 'two', ['SOURCE <B> PASTE']);
+  assert.equal(second.name, 'Source <b> paste 2');
+  assert.equal(partFromSnapshot(snapshot, 'three', [first.name, second.name]).name, 'Source <b> paste 3');
   first.raw.entities[0].r.v[0] = 'changed';
   assert.deepEqual(snapshot, before); assert.deepEqual(second.raw.entities, snapshot.raw.entities);
+});
+
+test('PDF layout paste keeps the sheet in the part name and the plain drawing name as its source', () => {
+  const raw = newDoc(4); addEntities(raw, circle(20, 30, 5));
+  const snapshot = copySnapshot(raw, new Set([0]), 1, 'x sheet 2', 'x');
+  const part = partFromSnapshot(snapshot, 'pdf', []);
+  assert.equal(part.name, 'x sheet 2 paste'); assert.equal(part.src, 'x');
+  const drawing = partFromSnapshot(copySnapshot(raw, new Set([0]), 1, 'x sheet 2'), 'drawing', []);
+  assert.equal(drawing.src, 'x sheet 2', 'a real drawing name ending in a sheet number stays intact');
 });
 
 test('layout paste follows extraction: kept dimensions are excluded; a dimension-only clipboard has no part', () => {

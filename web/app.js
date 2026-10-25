@@ -1528,7 +1528,7 @@ function openLayoutFile(lay, name, path, fontNote, titleBlock) {
   note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
-  for (const p of Object.values(lay.parts)) libKeep(p, name);          // a part the library does not have yet is added to it
+  for (const p of Object.values(lay.parts)) libKeep(p, baseName(name));          // a part the library does not have yet is added to it
 }
 const SHIFT_HINT = 'Shift-drag keeps it straight';
 /** Puts a loose copy of the part on the layout, centred on `at` ([x, y] sheet mm, y up) or near the sheet's centre; its index in lay.placed. */
@@ -4414,7 +4414,7 @@ function copySelection() {
   const d = editable();
   if (!d?.sel.size) { note('Nothing selected to copy'); return; }
   const name = baseName(d.name) + (d.pdf && PS.sheetNumbers(d.pdf).length > 1 ? ` sheet ${d.pdf.page}` : '');
-  clipboard = copySnapshot(d.raw, d.sel, d.factor, name);
+  clipboard = copySnapshot(d.raw, d.sel, d.factor, name, baseName(d.name));
   renderRibbon();
   note(`Copied ${d.sel.size} drawing object${d.sel.size === 1 ? '' : 's'}`);
 }

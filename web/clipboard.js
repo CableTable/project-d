@@ -3,9 +3,9 @@ import { blocksUsed, extractRaw, makePart } from './layoutdoc.js';
 import { dropPart } from './dropin.js';
 import { relabelDims, DIM_BLOCK, LDR_BLOCK } from './edit.js';
 
-export function copySnapshot(raw, selection, factor, name) {
+export function copySnapshot(raw, selection, factor, name, source = name) {
   const entities = raw.entities.filter((_, i) => selection.has(i));
-  return structuredClone({ raw: { ...raw, entities, blocks: blocksUsed(raw.blocks, entities) }, factor, name });
+  return structuredClone({ raw: { ...raw, entities, blocks: blocksUsed(raw.blocks, entities) }, factor, name, source });
 }
 
 /** The clipboard as a new extracted part, with its source name and an unused library name. */
@@ -14,7 +14,7 @@ export function partFromSnapshot(snapshot, id, taken) {
   let name = base;
   for (let n = 2; names.has(name.toLowerCase()); n++) name = `${base} ${n}`;
   const raw = extractRaw(structuredClone(snapshot.raw), null);
-  return raw && makePart(id, name, raw, snapshot.factor, snapshot.name);
+  return raw && makePart(id, name, raw, snapshot.factor, snapshot.source);
 }
 
 export function pasteSnapshot(snapshot, target) {
