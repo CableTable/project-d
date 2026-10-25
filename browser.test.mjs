@@ -8723,11 +8723,11 @@ try {
       assert.deepEqual((await savedDoc()).entities, before.entities);
     };
     await typeCmd('f');
-    assert.equal(await prompt(), 'Select the first line [Radius / Esc] (Shift = sharp corner):'); assert.equal(await t('tool-chip').textContent(), 'Tool: Fillet');
+    assert.equal(await prompt(), 'Select the first line or arc [Radius / Esc] (Shift = sharp corner):'); assert.equal(await t('tool-chip').textContent(), 'Tool: Fillet');
     assert.equal(await page.locator('nav.rail [data-tool=fillet]').count(), 0);
     await typeCmd('r'); assert.equal(await prompt(), 'Fillet radius <5>:');
     await typeCmd('-1'); assert.match(await histLine(), /I do not understand.*0 or more/); await typeCmd('5');
-    await click(40, 20); assert.match(await prompt(), /^Select the second line/);
+    await click(40, 20); assert.match(await prompt(), /^Select the second line or arc/);
     const hover = await at(60, 40); await page.mouse.move(hover.x, hover.y); await frames();
     assert.equal(await t('mod-preview').count(), 3, 'two trimmed lines and the arc are previewed');
     await shotBoth('fillet', async () => { await cmdLine().focus(); const p = await at(60, 40); await page.mouse.move(p.x, p.y); await frames(); });
@@ -8736,11 +8736,11 @@ try {
     assert.deepEqual(coords(doc.entities[0]), [20, 20, 55, 20]); assert.deepEqual(coords(doc.entities[1]), [60, 25, 60, 60]);
     assert.equal(doc.entities[3].type, 'ARC'); assert.deepEqual([10, 20, 40, 50, 51].map((c) => fieldOf(doc.entities[3], c)), [55, 25, 5, 270, 0]);
     assert.equal(doc.entities[1].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Fillet');
-    assert.match(await prompt(), /^Select the first line/, 'Fillet repeats'); await undo();
+    assert.match(await prompt(), /^Select the first line or arc/, 'Fillet repeats'); await undo();
     await page.mouse.move(0, 0); await click(40, 20); await click(60, 40, { shift: true });
     doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.deepEqual(coords(doc.entities[0]), [20, 20, 60, 20]); await undo();
     await click(40, 20); await click(40, 70); assert.match(await histLine(), /parallel/);
-    await page.keyboard.press('Escape'); assert.match(await prompt(), /^Select the first line/);
+    await page.keyboard.press('Escape'); assert.match(await prompt(), /^Select the first line or arc/);
     await typeCmd('r'); await typeCmd('100'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /too big/);
     assert.deepEqual((await savedDoc()).entities, before.entities); assert.equal(await page.evaluate(() => localStorage.getItem('pd-fillet')), '100');
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
@@ -8749,13 +8749,64 @@ try {
     for (const tab of ['Home', 'Modify']) {
       await page.locator(`[data-ribbon-tab=${tab}]`).click();
       const button = page.locator('.ribbon [data-panel=Modify]').getByRole('button', { name: 'Fillet', exact: true });
-      assert.equal(await button.isEnabled(), true); await button.click(); assert.match(await prompt(), /^Select the first line/); await page.keyboard.press('Escape');
+      assert.equal(await button.isEnabled(), true); await button.click(); assert.match(await prompt(), /^Select the first line or arc/); await page.keyboard.press('Escape');
     }
-    await menuItem('Modify', 'Fillet'); assert.match(await prompt(), /^Select the first line/);
+    await menuItem('Modify', 'Fillet'); assert.match(await prompt(), /^Select the first line or arc/);
     await page.keyboard.press('Escape');
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
     await typeCmd('f'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /nothing there/);
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/fillet/);
+  });
+
+  await step('TODO 66f: Fillet line/arc', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    addEntities(raw, dxfLine(10, 40, 110, 40), dxfArc(60, 60, 40, 180, 360, { layer: 'Cut' }), dxfCircle(130, 60, 10));
+    await openGrips(writeDxf(raw), 'fillet-line-arc.dxf');
+    const before = await savedDoc();
+    const undo = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities);
+    };
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('5');
+    await click(130, 70); assert.match(await histLine(), /circles.*not supported/);
+    await click(15, 40); assert.match(await prompt(), /^Select the second line or arc/);
+    const hover = async () => { await cmdLine().focus(); const p = await at(36, 28); await page.mouse.move(p.x, p.y); await frames(); };
+    await hover(); assert.equal(await t('mod-preview').count(), 3);
+    await shotBoth('fillet-line-arc', hover);
+    await click(36, 28);
+    let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
+    assert.equal(doc.entities[0].type, 'LINE'); assert.ok(fieldOf(doc.entities[0], 11) < 26);
+    assert.equal(doc.entities[1].type, 'ARC'); assert.equal(doc.entities[1].layer, 'Cut');
+    assert.ok(fieldOf(doc.entities[1], 50) > 210); assert.equal(fieldOf(doc.entities[1], 51), 360);
+    assert.equal(fieldOf(doc.entities[3], 40), 5); assert.equal(doc.entities[3].layer, '0');
+    assert.equal((await histLabels()).at(-1), 'Fillet'); await undo();
+    await click(15, 40); await page.keyboard.down('Shift');
+    const sharpHover = await at(36, 28); await page.mouse.move(sharpHover.x, sharpHover.y); await frames();
+    assert.equal(await t('mod-preview').count(), 2, 'Shift previews the sharp corner');
+    await page.keyboard.up('Shift'); await click(36, 28, { shift: true });
+    doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.equal(fieldOf(doc.entities[1], 50), 210); await undo();
+    await typeCmd('r'); await typeCmd('1000'); await click(15, 40); await click(36, 28);
+    assert.match(await histLine(), /No tangent.*swallow/); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('5'); await click(36, 28); assert.match(await histLine(), /nothing there/);
+    await click(15, 40); await click(36, 28); assert.match(await histLine(), /nothing there/);
+    assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/fillet/);
+
+    const arcs = newDoc(4);
+    addEntities(arcs, dxfArc(50, 50, 30, 0, 180), dxfArc(80, 50, 30, 0, 180));
+    await openGrips(writeDxf(arcs), 'fillet-arc-arc.dxf'); const original = await savedDoc();
+    await typeCmd('f'); await click(74, 68);
+    const arcHover = async () => { await cmdLine().focus(); const p = await at(56, 68); await page.mouse.move(p.x, p.y); await frames(); };
+    await arcHover(); assert.equal(await t('mod-preview').count(), 3);
+    await shotBoth('fillet-arc-arc', arcHover); await click(56, 68);
+    doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.equal(fieldOf(doc.entities[2], 40), 5);
+    assert.ok(fieldOf(doc.entities[0], 51) < 60); assert.ok(fieldOf(doc.entities[1], 50) > 120);
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, original.entities);
+    await page.keyboard.press('Escape'); await closeTabs(/fillet/);
   });
 
   await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {
