@@ -10,6 +10,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
+import { SNAP_NAME, snapTypes } from './snap.js';
 import * as UF from './unitfix.js';
 import * as CL from './cleanup.js';
 import * as DM from './dims.js';
@@ -188,6 +189,7 @@ const state = {
   hidden: { parts: false, marks: false, dims: false },
   docs: [], doc: 0,
   snap: true,                      // the SNAP toggle in the status bar (kept for the session)
+  snapTypes: snapTypes(),          // per-type ticks, remembered on this PC
   ortho: false,                    // the ORTHO toggle: a sticky Shift (picks kept straight along X or Y from the first point)
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
@@ -3468,11 +3470,41 @@ function runCommand(cmd) {
   ui.cmdUI.ran(n);
 }
 
+function buildSnapTypes() {
+  try { state.snapTypes = snapTypes(JSON.parse(localStorage.getItem('pd-snap-types'))); } catch { /* defaults if storage is blocked or invalid */ }
+  const pop = h('div', { id: 'snap-types', popover: 'auto', class: 'snap-types', role: 'group', 'aria-label': 'Snap types', 'data-testid': 'snap-types' },
+    h('strong', {}, 'Snap types'), Object.entries(SNAP_NAME).map(([kind, name]) => {
+      const input = h('input', { type: 'checkbox', checked: state.snapTypes[kind], 'data-testid': 'snap-type-' + kind });
+      input.addEventListener('change', () => {
+        state.snapTypes[kind] = input.checked;
+        try { localStorage.setItem('pd-snap-types', JSON.stringify(state.snapTypes)); } catch { /* storage may be blocked */ }
+      });
+      return h('label', {}, input, name);
+    }), ['intersection', 'quadrant', 'perpendicular'].map((name) => h('label', {}, h('input', { type: 'checkbox', disabled: true, checked: true }), name + ' (soon)')));
+  const arrow = h('button', { type: 'button', class: 'tog snap-arrow', popovertarget: pop.id, 'aria-label': 'Snap types', 'aria-expanded': 'false', 'aria-controls': pop.id, 'data-testid': 'snap-types-open', title: 'Snap types' }, '▾');
+  pop.addEventListener('toggle', () => {
+    const open = pop.matches(':popover-open');
+    arrow.setAttribute('aria-expanded', String(open));
+    if (!open) return;
+    const r = ui.tog.SNAP.getBoundingClientRect();
+    pop.style.left = Math.max(4, Math.min(r.left, window.innerWidth - pop.offsetWidth - 4)) + 'px';
+    pop.style.top = Math.max(4, r.top - pop.offsetHeight - 4) + 'px';
+    pop.querySelector('input').focus();
+  });
+  ui.tog.SNAP.addEventListener('contextmenu', (e) => { e.preventDefault(); pop.showPopover(); });
+  pop.addEventListener('keydown', (e) => e.stopPropagation());
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !pop.matches(':popover-open')) return;
+    e.preventDefault(); e.stopPropagation(); pop.hidePopover(); arrow.focus();
+  }, true);
+  return h('span', { class: 'snap-control' }, ui.tog.SNAP, arrow, pop);
+}
+
 function buildStatus() {
   ui.coords = h('span', { class: 'mono coords', 'data-testid': 'coords', style: 'white-space:pre' }, 'X 0.00   Y 0.00 mm');
   // GRID is not built: greyed, never "on". SNAP, ORTHO, POLAR (F10) and OTRACK (F11) work.
   loadTrack();
-  const TITLES = { SNAP: 'Snap to ends, middles and centres', GRID: 'Not built yet', ORTHO: 'Keep picked points straight along X or Y from the first point (Shift does it for one pick)',
+  const TITLES = { SNAP: 'Snap on/off. Right-click: snap types', GRID: 'Not built yet', ORTHO: 'Keep picked points straight along X or Y from the first point (Shift does it for one pick)',
     POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it' };
   ui.tog = {};
   const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['OTRACK', state.otrack]].map(([t, on]) => {
@@ -3484,7 +3516,7 @@ function buildStatus() {
       if (t === 'OTRACK') { otrackSet(!state.otrack); return; }
       chip(t, !b.classList.contains('on'));
       const clear = () => { for (const a of [state.setlen, state.meas, state.dim, state.ldr]) if (a) a.hover = null; paintOverlay(); };
-      if (t === 'SNAP') { state.snap = b.classList.contains('on'); clear(); note(state.snap ? 'Snap on: ends, middles, centres and the nearest point on a line' : 'Snap off: the exact point you click'); }
+      if (t === 'SNAP') { state.snap = b.classList.contains('on'); clear(); note(state.snap ? 'Snap on: ticked snap types' : 'Snap off: the exact point you click'); }
       if (t === 'ORTHO') {
         state.ortho = b.classList.contains('on');
         if (state.ortho && state.polar.on) { state.polar.on = false; chip('POLAR', false); }          // ORTHO and POLAR turn each other off
@@ -3493,6 +3525,7 @@ function buildStatus() {
     });
     return b;
   });
+  toggles[0] = buildSnapTypes();
   ui.tog.POLAR.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const r = ui.tog.POLAR.getBoundingClientRect();
@@ -4467,7 +4500,7 @@ function toDrawing(d, cx, cy) {
 }
 const pickTol = (d) => 7 / (view.scale * d.factor);
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
-const snapPoint = (d, p, skip) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
+const snapPoint = (d, p, skip, extra) => { const sn = Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip, state.snapTypes, extra); return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]]; };
 /** A Measure / Dimension / Leader pick: the snaps (any kind, Nearest too), then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point (a snapped point is never bent). */
 function pickPoint(d, p, pts, shift, hover = false) {
   const q = snapPoint(d, p), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
@@ -5492,9 +5525,7 @@ const drawLive = () => !!(state.draw && state.drawDoc === curDoc() && editable()
 /** The point for a pick (mm, y up, with its snap kind): the drawing's snaps, the tool's own points, then Shift / ORTHO along X or Y. */
 function drawPick(d, cx, cy, shift, hover) {
   const T = state.draw, f = d.factor, p = toDrawing(d, cx, cy);
-  let q = null;
-  if (state.snap) for (const o of T.pts) if (Math.hypot(o[0] / f - p[0], o[1] / f - p[1]) <= pickTol(d)) { q = [o[0] / f, o[1] / f, 'end']; break; }
-  if (!q) q = snapPoint(d, p);
+  let q = snapPoint(d, p, -1, T.pts.map((o) => ({ x: o[0] / f, y: o[1] / f, kind: 'end' })));
   const ref = DR.toolRef(T), base = ref && DR.orthoApplies(T) ? [ref[0] / f, ref[1] / f] : null, straight = !!((shift || state.ortho) && base);
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return [tq[0] * f, tq[1] * f, null];
@@ -7635,7 +7666,7 @@ function cmpGlow(c, out) {
 const cmpSnapEd = (sd) => sd.sn || (sd.sn = { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1), items: sd.fl.items, vis: Uint8Array.from(sd.fl.items, (it) => (itemVisible(it, sd.off) ? 1 : 0)) });
 /** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
 function cmpSnap(sd, o, p) {
-  const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap);
+  const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap, -1, state.snapTypes);
   return sn && { x: sn.x * f + o[0], y: sn.y * f + o[1], kind: sn.kind };
 }
 /** Move the selected snapshot with the editor's snaps, without calculating differences. */

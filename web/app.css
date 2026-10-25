@@ -166,6 +166,14 @@ select.fld { font-family: var(--sans); }
 .zoombox .pct { font-size: 12px; min-width: 40px; text-align: center; }
 .tog { height: 22px; padding: 0 8px; border: 0; border-radius: var(--r); background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }
 .tog.on { color: var(--accenttext); background: var(--sel); }
+.snap-control { display: inline-flex; align-items: center; }
+.snap-arrow { padding: 0 4px; }
+.snap-types { margin: 0; padding: 10px; min-width: 174px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel); color: var(--text); box-shadow: 0 4px 16px var(--shadow); font: 12px var(--sans); }
+.snap-types strong { display: block; margin-bottom: 6px; }
+.snap-types label { display: flex; align-items: center; gap: 8px; min-height: 28px; cursor: pointer; }
+.snap-types label:has(:disabled) { color: var(--muted); cursor: default; }
+.snap-types input { accent-color: var(--accent); }
+.snap-control button:focus-visible, .snap-types input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* svg drawing */
 .sheet-shadow { fill: var(--shadow); }

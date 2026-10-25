@@ -239,6 +239,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
+**Snap types**: The tick list beside SNAP: end, middle, centre, point and nearest can each be switched off. All default on; ticks are remembered on this PC, outside drawing files. Intersection, quadrant and perpendicular show as “(soon)” until built. Where: `TODO.md`, item 68; `web/snap.js`.
+
 **SOLID / TRACE**: DXF filled shapes handled together by the reader and left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`. Avoid: Bitmap tracing for TRACE.
 
 **SPLINE**: A DXF curve defined by control data and approximated by a polyline for cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.

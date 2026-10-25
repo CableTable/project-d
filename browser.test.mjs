@@ -117,6 +117,73 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 68a: snap per type', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      const fillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'centre', 'point', 'nearest'].includes(text)) window.__snapLabel = text;
+        return fillText.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    const list = q('snap-types'), arrow = q('snap-types-open'), end = q('snap-type-end');
+    const open = async () => { await arrow.click(); await list.waitFor({ state: 'visible' }); };
+    const closed = () => list.waitFor({ state: 'hidden' });
+    try {
+      await p.goto(URL_); await arrow.waitFor();
+      await arrow.focus(); await p.keyboard.press('Enter'); await list.waitFor({ state: 'visible' });
+      assert.equal(await list.locator('input:checked').count(), 8, 'all current and future types default on');
+      assert.equal(await list.locator('input:disabled').count(), 3, 'future types are labelled soon');
+      await end.focus(); await p.keyboard.press('Space');
+      assert.equal(await end.isChecked(), false, 'keyboard toggles a tick');
+      await p.keyboard.press('Escape'); await closed();
+      assert.equal(await arrow.evaluate((el) => el === document.activeElement), true, 'Esc restores keyboard focus');
+      await p.reload(); await arrow.waitFor(); await open();
+      assert.equal(await end.isChecked(), false, 'reload keeps end unticked');
+      assert.equal(await q('snap-type-near').isChecked(), true, 'other ticks stay on');
+      await arrow.click(); await closed();
+      await q('tog-snap').click({ button: 'right' }); await list.waitFor({ state: 'visible' });
+      assert.equal(await q('tog-snap').getAttribute('aria-pressed'), 'true', 'right-click does not toggle SNAP');
+      await p.locator('.coords').click(); await closed();
+      await q('tog-snap').click();
+      assert.equal(await q('tog-snap').getAttribute('aria-pressed'), 'false', 'left-click still toggles SNAP');
+      await q('tog-snap').click();
+
+      const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 80, 120, 80));
+      await q('picker').setInputFiles({ name: 'snap-types.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-types.dxf');
+      const pick = async (label) => {
+        await p.locator('[data-tool=line]').click();
+        const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+        const x = r.x + 20 * r.scale + 3, y = r.y + (r.h - 30) * r.scale - 1;
+        await p.evaluate(() => { window.__snapLabel = ''; });
+        await p.mouse.move(x, y);
+        await p.waitForFunction((want) => window.__snapLabel === want, label);
+        await p.mouse.click(x, y);
+        await p.mouse.move(x + 50, y - 50);
+        const path = await q('draw-preview').getAttribute('d'), start = path.match(/-?\d+(?:\.\d+)?/g).slice(0, 2).map(Number);
+        assert.ok(Math.abs(start[0] - (label === 'end' ? 20 : 20 + 3 / r.scale)) < .02, 'picked start uses ' + label + ': ' + path);
+        assert.ok(Math.abs(start[1] - (r.h - 30)) < .02, 'picked start lies on the line');
+        await p.keyboard.press('Escape');
+      };
+      await pick('nearest');
+      await open(); await end.check(); await p.keyboard.press('Escape'); await closed();
+      await pick('end');
+      await p.reload(); await arrow.waitFor(); await open();
+      assert.equal(await end.isChecked(), true, 'reload also keeps end ticked again');
+      await p.keyboard.press('Escape');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await open(); await end.uncheck();
+        await p.screenshot({ path: `${shotDir}/todo68a-snap-types-${theme}.png` });
+        await p.keyboard.press('Escape');
+      }
+    } finally { await context.close(); }
+  });
   await step('TODO 94/132: docker tabs, remembered folds, library first, resize, hide/show and typed Guides', async () => {
     const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, deviceScaleFactor: 1.25 });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);

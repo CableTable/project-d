@@ -7,11 +7,32 @@ const W = await import('./web/dxf-write.js');
 const E = await import('./web/edit.js');
 const { ink } = await import('./web/render.js');
 const { unitFactor, drawingBoxMm } = await import('./web/doc.js');
+const SNAP = await import('./web/snap.js');
 
 const load = (f) => { const raw = D.readDxf(D.decodeDxf(fs.readFileSync('fixtures/' + f))); return { raw, fl: D.flatten(raw) }; };
 const near = (a, b, m, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * (1 + Math.abs(b)), `${m || ''} ${a} !~ ${b}`);
 const types = (raw, list) => list.map((i) => raw.entities[i].type);
 const asc = (a) => [...a].sort((x, y) => x - y);
+
+test('TODO 68a: snap index filters every type, respects SNAP off and filters unfinished tool ends too', () => {
+  const { snapTypes } = SNAP;
+  const { raw, fl } = load('outline.dxf'), ed = E.makeIndex(raw, fl);
+  for (const [kind, x, y] of [['end', 100.2, 10.1], ['mid', 50.2, .3], ['centre', 30.2, 30.1], ['near', 65, .4]]) {
+    assert.equal(E.snapPick(ed, x, y, .5).kind, kind);
+    const sn = E.snapPick(ed, x, y, .5, true, -1, snapTypes({ [kind]: false }));
+    assert.ok(!sn || sn.kind !== kind, kind + ' disabled');
+  }
+  assert.equal(E.snapPick(ed, 100.2, 10.1, .5, true, -1, snapTypes({ end: false })).kind, 'near');
+  const doc = W.newDoc(4);
+  W.addEntities(doc, W.entity('POINT', [[10, 5], [20, 5]]));
+  const pointRaw = D.readDxf(W.writeDxf(doc)), pointEd = E.makeIndex(pointRaw, D.flatten(pointRaw));
+  assert.equal(E.snapPick(pointEd, 5.1, 5.1, .5).kind, 'node');
+  assert.equal(E.snapPick(pointEd, 5.1, 5.1, .5, true, -1, snapTypes({ node: false })), null);
+  const extra = [{ x: 5, y: 5, kind: 'end' }], emptyRaw = W.newDoc(4), empty = E.makeIndex(emptyRaw, D.flatten(emptyRaw));
+  assert.deepEqual(E.snapPick(empty, 5.1, 5.1, .5, true, -1, snapTypes(), extra), extra[0]);
+  assert.equal(E.snapPick(empty, 5.1, 5.1, .5, true, -1, snapTypes({ end: false }), extra), null);
+  assert.equal(E.snapPick(ed, 100.2, 10.1, .5, false, -1, snapTypes(), extra), null);
+});
 
 test('move selection translates PDF geometry and text without changing sizes, vectors or other entities', () => {
   const raw = W.newDoc(4);
