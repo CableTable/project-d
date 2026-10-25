@@ -8376,7 +8376,7 @@ try {
     addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
     await openGrips(writeDxf(locked), 'move-locked.dxf'); const lockedBefore = await savedDoc();
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
-    await t('ptab-drawing').click(); await page.locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
     await typeCmd('mv');
     assert.match(await prompt(), /Layer Cut is locked/); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.deepEqual((await savedDoc()).entities, lockedBefore.entities);
@@ -8385,6 +8385,132 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/move-locked/);
     await t('new-layout').click(); await typeCmd('mv'); assert.match(await prompt(), /Move works on a drawing tab/);
     await closeTabs(/Layout/);
+  });
+
+  await step('TODO 66b: Copy', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 60, 50, { layer: 'Cut', colour: 3 }));
+    await openGrips(writeDxf(raw), 'copy.dxf');
+    const before = await savedDoc(), blur = () => page.evaluate(() => document.activeElement?.blur());
+    const xy = (e) => [fieldOf(e, 10), fieldOf(e, 20)];
+    await page.keyboard.press('Control+a');
+    await typeCmd('co'); assert.match(await prompt(), /Base point or x,y:/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Copy');
+    assert.equal(await page.locator('nav.rail [data-tool=copy]').count(), 0);
+    await typeCmd('0,0'); await typeCmd('10,-5');
+    assert.match(await prompt(), /Target, dx,dy or distance:.*Enter ends/);
+    await typeCmd('20,15'); await page.keyboard.press('Enter');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    const twice = await savedDoc();
+    assert.equal(twice.entities.length, 3, 'two placements add exactly two entities');
+    assert.deepEqual(twice.entities[0], before.entities[0], 'the original stays unchanged');
+    assert.deepEqual(twice.entities.slice(1).map(xy), [[30, 25], [40, 45]], 'both targets use the same base');
+    assert.deepEqual((await histLabels()).slice(-2), ['Copy', 'Copy']);
+    await blur(); await page.keyboard.press('Control+z');
+    const once = await savedDoc();
+    assert.deepEqual(once.entities, twice.entities.slice(0, 2), 'one Undo removes only the last copy');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+
+    await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('0,0');
+    const direction = await at(100, 75); await page.mouse.move(direction.x, direction.y); await frames();
+    await typeCmd('25');
+    const direct = (await savedDoc()).entities.at(-1), dx = xy(direct)[0] - 20, dy = xy(direct)[1] - 30;
+    assert.ok(Math.abs(Math.hypot(dx, dy) - 25) < 1e-5);
+    assert.ok(Math.abs(dx / dy - 4 / 3) < .03, 'direct distance follows the cursor');
+    const target = await at(80, 60); await page.mouse.move(target.x, target.y); await frames();
+    await page.keyboard.press('Escape'); await t('mod-line').waitFor({ state: 'detached' });
+    assert.equal((await savedDoc()).entities.length, 2, 'Esc discards only the preview, keeping the placed copy');
+    await blur(); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+
+    // Pick after starting; snapped clicks, Shift and ORTHO share Move's flow.
+    await page.keyboard.press('Escape'); await typeCmd('co'); assert.match(await prompt(), /Select objects/);
+    await page.keyboard.press('Enter'); assert.match(await histLine(), /pick at least one/);
+    await click(40, 40); await page.keyboard.press('Enter');
+    await click(20, 30); await click(60, 50); await page.keyboard.press('Enter');
+    let doc = await savedDoc();
+    assert.deepEqual(xy(doc.entities.at(-1)), [60, 50], 'base and target snap to endpoints');
+    await blur(); await page.keyboard.press('Control+z');
+    for (const ortho of [false, true]) {
+      await page.keyboard.press('Control+a');
+      if (ortho) await t('tog-ortho').click();
+      await menuItem('Modify', 'Copy'); await typeCmd('0,0'); await click(30, 7, { shift: !ortho });
+      await page.keyboard.press('Enter'); doc = await savedDoc();
+      assert.equal(fieldOf(doc.entities.at(-1), 20), 30);
+      assert.ok(Math.abs(fieldOf(doc.entities.at(-1), 10) - 50) < 1);
+      await blur(); await page.keyboard.press('Control+z');
+      if (ortho) await t('tog-ortho').click();
+    }
+    for (const stage of ['selection', 'base', 'target']) {
+      await page.keyboard.press('Escape');
+      if (stage !== 'selection') await page.keyboard.press('Control+a');
+      await typeCmd('co'); if (stage === 'target') await typeCmd('0,0');
+      await page.keyboard.press('Escape');
+      assert.deepEqual((await savedDoc()).entities, before.entities, `Esc at ${stage} leaves no edit`);
+    }
+
+    // Mixed objects retain their blocks and attributes; the ghosts include block members.
+    const mixed = newDoc(4);
+    addBlock(mixed, 'Part', [dxfCircle(0, 0, 8)]);
+    addEntities(mixed, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfText(30, 10, 5, 'COPY'), dxfInsert('Part', 140, 60));
+    Object.assign(mixed, addDimension(mixed, buildDim('aligned', { a: [20, 30], b: [60, 50], offset: 15, textH: 3 }, 1, 'PD_DIM_1')));
+    addEntities(mixed, entity('HATCH', [[10, 0], [20, 0], [30, 0], [2, 'SOLID'], [70, 1], [71, 0], [91, 1],
+      [92, 2], [72, 0], [73, 1], [93, 4], [10, 80], [20, 20], [10, 90], [20, 20], [10, 90], [20, 25], [10, 80], [20, 25],
+      [97, 0], [75, 0], [76, 1], [98, 0]]));
+    await openGrips(writeDxf(mixed), 'copy-mixed.dxf'); const mixedBefore = await savedDoc();
+    await page.keyboard.press('Control+a'); await menuItem('Modify', 'Copy');
+    await typeCmd('1,'); assert.match(await histLine(), /I do not understand/);
+    await typeCmd('0,0');
+    await shotBoth('copy', async () => { const p = await at(20, 10); await page.mouse.move(p.x, p.y); await cmdLine().focus(); await frames(); });
+    assert.equal(await t('mod-line').count(), 1);
+    const ghost = await at(168, 70);
+    assert.ok(await t('drawing').evaluate((canvas, p) => {
+      const b = canvas.getBoundingClientRect(), x = Math.round((p.x - b.x) * canvas.width / b.width), y = Math.round((p.y - b.y) * canvas.height / b.height);
+      return canvas.getContext('2d').getImageData(x - 3, y - 3, 7, 7).data.some((v, i) => i % 4 === 3 && v > 0);
+    }, ghost), 'block ghost is drawn');
+    await typeCmd('10,-5'); await typeCmd('20,15'); await page.keyboard.press('Enter');
+    doc = await savedDoc();
+    assert.equal(doc.entities.length, mixedBefore.entities.length * 3);
+    const withoutHandles = (ents) => ents.map((e) => ({ ...e, r: { c: e.r.c.filter((c) => c !== 5), v: e.r.v.filter((_, i) => e.r.c[i] !== 5) } }));
+    assert.deepEqual(withoutHandles(doc.entities.slice(0, mixedBefore.entities.length)), withoutHandles(mixedBefore.entities));
+    for (const name of ['Part', 'PD_DIM_1']) {
+      assert.deepEqual({ ...doc.blocks[name], entities: withoutHandles(doc.blocks[name].entities) },
+        { ...mixedBefore.blocks[name], entities: withoutHandles(mixedBefore.blocks[name].entities) });
+    }
+    for (const [index, offset] of [[mixedBefore.entities.length, [10, -5]], [mixedBefore.entities.length * 2, [20, 15]]]) {
+      assert.deepEqual(xy(doc.entities[index + 1]), [30 + offset[0], 10 + offset[1]]);
+      assert.equal(fieldOf(doc.entities[index + 1], 40), 5, 'copied text keeps its height');
+      assert.deepEqual(xy(doc.entities[index + 2]), [140 + offset[0], 60 + offset[1]]);
+      const name = doc.entities[index + 3].r.v[doc.entities[index + 3].r.c.indexOf(2)];
+      assert.notEqual(name, 'PD_DIM_1', 'each dimension owns a separate block');
+      const origin = xy(doc.entities[index + 3]), a = dimParams(doc.blocks[name]).a;
+      a.forEach((v, k) => assert.ok(Math.abs(v + origin[k] - ([20, 30][k] + offset[k])) < 1e-5));
+      const hatch = doc.entities[index + 4];
+      assert.equal(hatch.type, 'HATCH');
+      for (const [code, delta] of [[10, offset[0]], [20, offset[1]]]) {
+        const values = (e) => e.r.v.filter((_, k) => e.r.c[k] === code).map(Number);
+        assert.deepEqual(values(hatch).slice(1), values(mixedBefore.entities[4]).slice(1).map((v) => v + delta));
+      }
+    }
+    const rb = page.locator('.ribbon');
+    for (const tab of ['Home', 'Modify']) {
+      await page.locator(`[data-ribbon-tab=${tab}]`).click();
+      const button = rb.locator('[data-panel=Modify]').getByRole('button', { name: 'Copy', exact: true });
+      assert.equal(await button.isEnabled(), true); await button.click();
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Copy'); await page.keyboard.press('Escape');
+    }
+
+    const locked = newDoc(4); addLayer(locked, 'Cut');
+    addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
+    await openGrips(writeDxf(locked), 'copy-locked.dxf'); const lockedBefore = await savedDoc();
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await typeCmd('co');
+    assert.match(await prompt(), /Layer Cut is locked/); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual((await savedDoc()).entities, lockedBefore.entities, 'a locked member refuses the entire copy');
+    await closeTabs(/copy/);
   });
 
   await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {
@@ -9407,14 +9533,14 @@ try {
       await dialog.getByRole('searchbox').fill(''); await dialog.getByLabel('Category', { exact: true }).selectOption('File');
       assert.equal(await dialog.locator('tr[data-command]:visible').count(), COMMANDS.filter((c) => c.cat === 'File').length);
       await dialog.getByLabel('Category', { exact: true }).selectOption('');
-      await alias('Contour').fill('co, ww');
+      await alias('Contour').fill('cx, ww');
       await key('Contour').click(); await p.keyboard.press('Control+Alt+w');
       assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
       await key('Contour').click(); await p.keyboard.press('Escape');
       assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W', 'capture Esc keeps old key and leaves dialog open');
       assert.equal(await dialog.locator('.sc-edited').count(), 1);
       await shot('A');
-      await alias('Contour').fill('co, mi'); await key('Contour').click(); await p.keyboard.press('Control+g');
+      await alias('Contour').fill('cx, mi'); await key('Contour').click(); await p.keyboard.press('Control+g');
       assert.match(await dialog.textContent(), /Alias “mi” is used by Mirror/);
       assert.match(await dialog.textContent(), /Key “Ctrl\+G” is used by Group/);
       assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), true);
@@ -9423,20 +9549,20 @@ try {
       assert.equal(await key('Contour').textContent(), 'Ctrl+G');
       await shot('C');
       await dialog.getByRole('button', { name: 'Swap alias clash' }).click();
-      assert.equal(await alias('Contour').inputValue(), 'mi'); assert.equal(await alias('Mirror').inputValue(), 'co, ww');
+      assert.equal(await alias('Contour').inputValue(), 'mi'); assert.equal(await alias('Mirror').inputValue(), 'cx, ww');
       await dialog.getByRole('button', { name: 'Swap key clash' }).click();
       assert.equal(await key('Contour').textContent(), 'Ctrl+G'); assert.equal(await key('Group').textContent(), 'Ctrl+Alt+W');
       assert.equal(await dialog.getByRole('button', { name: 'Save', exact: true }).isDisabled(), false);
       await dialog.getByRole('button', { name: 'Reset Mirror', exact: true }).click();
       await dialog.getByRole('button', { name: 'Cancel alias clash' }).click();
-      assert.equal(await alias('Mirror').inputValue(), 'co, ww', 'Cancel undoes a row reset that clashes with another own alias');
+      assert.equal(await alias('Mirror').inputValue(), 'cx, ww', 'Cancel undoes a row reset that clashes with another own alias');
       await dialog.getByRole('button', { name: 'Reset Group', exact: true }).click();
       await dialog.getByRole('button', { name: 'Cancel key clash' }).click();
       assert.equal(await key('Group').textContent(), 'Ctrl+Alt+W', 'Cancel restores the reset key, keeping the other command alone');
       await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
-      await alias('Contour').fill('co, ww'); await key('Contour').click(); await p.keyboard.press('Control+Alt+w');
-      await alias('Contour').fill('co, mi'); await dialog.getByRole('button', { name: 'Cancel alias clash' }).click();
-      assert.equal(await alias('Contour').inputValue(), 'co, ww', 'Cancel restores previous alias cell');
+      await alias('Contour').fill('cx, ww'); await key('Contour').click(); await p.keyboard.press('Control+Alt+w');
+      await alias('Contour').fill('cx, mi'); await dialog.getByRole('button', { name: 'Cancel alias clash' }).click();
+      assert.equal(await alias('Contour').inputValue(), 'cx, ww', 'Cancel restores previous alias cell');
       await key('Contour').click(); await p.keyboard.press('w');
       assert.match(await dialog.locator('.sc-status').textContent(), /typing and drawing/);
       assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
@@ -9468,18 +9594,18 @@ try {
       await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
       await dialog.getByRole('button', { name: 'Import .pgp', exact: true }).click();
       await dialog.getByRole('status').filter({ hasText: '2 lines skipped' }).waitFor();
-      assert.equal(await alias('Contour').inputValue(), 'co, ww'); assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
+      assert.equal(await alias('Contour').inputValue(), 'cx, ww'); assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
       assert.deepEqual(await p.evaluate(() => window.__scFiles.open[0].filters[0].extensions), ['pgp']);
       await save(); await dialog.waitFor({ state: 'hidden' });
       await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
-      await open(); assert.equal(await alias('Contour').inputValue(), 'co, ww'); assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
+      await open(); assert.equal(await alias('Contour').inputValue(), 'cx, ww'); assert.equal(await key('Contour').textContent(), 'Ctrl+Alt+W');
       const stored = await p.evaluate(async () => {
         const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-shortcuts', 'settings', 'test').all();
       });
-      assert.deepEqual(stored, [{ id: 'own', overrides: { contour: { alias: ['co', 'ww'], key: 'Ctrl+Alt+W' } } }]);
+      assert.deepEqual(stored, [{ id: 'own', overrides: { contour: { alias: ['cx', 'ww'], key: 'Ctrl+Alt+W' } } }]);
       await dialog.getByRole('button', { name: 'Reset all', exact: true }).click();
       await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
-      await open(); assert.equal(await alias('Contour').inputValue(), 'co, ww', 'Cancel leaves saved settings alone');
+      await open(); assert.equal(await alias('Contour').inputValue(), 'cx, ww', 'Cancel leaves saved settings alone');
       await dialog.getByRole('button', { name: 'Reset all', exact: true }).click(); await save(); await dialog.waitFor({ state: 'hidden' });
       await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' }); await open();
       assert.equal(await alias('Contour').inputValue(), 'ct'); assert.equal(await key('Contour').textContent(), 'Press keys…');

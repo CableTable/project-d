@@ -77,6 +77,27 @@ test('Move and copy translate flipped polylines in world coordinates, including 
   }
 });
 
+test('repeated Copy uses the original selection and preserves every non-position field, one Undo per placement', () => {
+  const raw = W.newDoc(4);
+  W.addEntities(raw, W.entity('LINE', [[8, 'Cut'], [62, 3], [6, 'DASHED'], [370, 25], [48, 2],
+    [10, 20], [20, 30], [11, 60], [21, 50], [1001, 'CUSTOM'], [1000, 'kept']]));
+  const selection = new Set([0]), hist = E.createHistory(), before = structuredClone(raw);
+  hist.push(raw, 'Copy');
+  const first = { ...raw, ...E.copyEntities(raw, selection, 10, -5) };
+  hist.push(first, 'Copy');
+  const second = E.copyEntities(first, selection, 20, 15);
+  assert.equal(second.entities.length, 3);
+  assert.deepEqual(second.entities[0], before.entities[0]);
+  for (const [i, dx, dy] of [[1, 10, -5], [2, 20, 15]]) {
+    assert.deepEqual(second.entities[i].r.v, raw.entities[0].r.v.map((v, k) => {
+      const c = raw.entities[0].r.c[k];
+      return [10, 11].includes(c) ? String(+v + dx) : [20, 21].includes(c) ? String(+v + dy) : v;
+    }));
+  }
+  assert.deepEqual(hist.undo(second), first);
+  assert.deepEqual(hist.undo(first), before);
+});
+
 test('Move translates fixture entity types, hatches, native dimensions and table blocks without changing their shape', () => {
   for (const name of ['sample.dxf', 'wireframe.dxf', 'outline.dxf', 'table.dxf']) {
     const { raw } = load(name), before = structuredClone(raw);

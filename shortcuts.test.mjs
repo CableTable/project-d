@@ -57,10 +57,10 @@ test('Copy / Paste stay fixed and clear older conflicting own keys, including ta
 
 test('Swap exchanges complete cells using the previous edited cell, leaving no duplicate binding', () => {
   const b = SC.bindings();
-  b.contour.alias = ['co', 'mi']; b.contour.key = 'Ctrl+G';
-  let swapped = SC.swap(b, 'contour', 'mirror', 'alias', ['co', 'ww']);
+  b.contour.alias = ['cx', 'mi']; b.contour.key = 'Ctrl+G';
+  let swapped = SC.swap(b, 'contour', 'mirror', 'alias', ['cx', 'ww']);
   swapped = SC.swap(swapped, 'contour', 'group', 'key', 'Ctrl+Alt+W');
-  assert.deepEqual(swapped.contour.alias, ['mi']); assert.deepEqual(swapped.mirror.alias, ['co', 'ww']);
+  assert.deepEqual(swapped.contour.alias, ['mi']); assert.deepEqual(swapped.mirror.alias, ['cx', 'ww']);
   assert.equal(swapped.contour.key, 'Ctrl+G'); assert.equal(swapped.group.key, 'Ctrl+Alt+W');
   assert.deepEqual(SC.clashes(swapped), []);
   assert.deepEqual(b.mirror.alias, ['mi'], 'pure: input is unchanged');
@@ -77,7 +77,7 @@ test('PGP parses aliases and KEY comments, ignores ordinary comments, counts unk
 
 test('PGP round trip includes keys, no aliases, removed default keys, and all default bindings', () => {
   const b = SC.bindings();
-  b.contour.alias = ['co', 'ww']; b.contour.key = 'Ctrl+Alt+W'; b.line.alias = []; b.fit.key = '';
+  b.contour.alias = ['cx', 'ww']; b.contour.key = 'Ctrl+Alt+W'; b.line.alias = []; b.fit.key = '';
   const text = SC.writePgp(b), imported = SC.parsePgp(text);
   assert.match(text, /WW,        \*CONTOUR\r\n/);
   assert.match(text, /;KEY CONTOUR, Ctrl\+Alt\+W/);
@@ -91,7 +91,7 @@ test('only differences persist and runtime lookup, suggestions and Space use own
   assert.deepEqual(SC.bindings(diff), b);
   assert.deepEqual(SC.differences(SC.bindings()), {});
   assert.equal(CB.resolve('ww', 'draw', cmds).name, 'contour');
-  assert.equal(CB.resolve('co', 'draw', cmds), null);
+  assert.equal(CB.resolve('co', 'draw', cmds).name, 'copy');
   assert.equal(CB.suggest('ww', 'draw', 6, cmds)[0].cmd.name, 'contour');
   assert.equal(CB.spaceIsEnter('ww', '', 'draw', cmds), true);
   assert.equal(CB.resolve('ct', 'draw').name, 'contour');

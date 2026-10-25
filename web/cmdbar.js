@@ -62,7 +62,7 @@ const TABLE = [
   ['compare', 'File', 'Compare drawings', ['cmp'], ''],
   ['undo', 'Edit', 'Take back the last step', [], '', 'Ctrl+Z'],
   ['redo', 'Edit', 'Bring back the step taken back', [], '', 'Ctrl+Y / Ctrl+Shift+Z'],
-  ['copy', 'Edit', 'Copy selected drawing objects inside the app', [], '', 'Ctrl+C'],
+  ['copy', 'Edit', 'Copy objects repeatedly from a base point to targets (Ctrl+C: clipboard)', ['co'], 'draw', 'Ctrl+C'],
   ['paste', 'Edit', 'Paste drawing objects at the same coordinates', [], '', 'Ctrl+V'],
   ['history', 'Edit', 'Undo history: go back to any step', ['uh'], ''],
   ['selectall', 'Edit', 'Select everything', ['all'], '', 'Ctrl+A'],

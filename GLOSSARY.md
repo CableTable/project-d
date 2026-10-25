@@ -36,6 +36,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
 
+**Copy tool**: Places repeated copies of selected drawing objects at targets measured from one base point, preserving their properties and originals. Each placement is one Undo; Enter or Esc ends. Modify menu, Home / Modify ribbons, CO / COPY. Where: `web/move.js`, `web/app.js`; `DECISIONS.md`, Copy tool (TODO 66b). Avoid: In-app clipboard (Ctrl+C).
+
 **Cutter export (Export for cutter)**: Writes a separate DXF copy containing only LINE, ARC and LWPOLYLINE, flattening curves to a chosen tolerance and leaving out text, fills and other unsupported objects. Where: `DECISIONS.md`, Cutter-safe DXF. Avoid: Normal Save.
 
 **Dimension**: A saved measurement callout with lines, arrows and a value that does not count toward a part's size. Where: `DECISIONS.md`, Kept dimensions and sizes and More dimension types. Avoid: Driving constraint.
