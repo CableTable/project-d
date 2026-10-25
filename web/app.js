@@ -1078,7 +1078,7 @@ function buildPartRibbon() {
     ribbonGroup('Position', ribbonStack(ribbonField('Name', ui.partName), ribbonField('X mm', ui.px), ribbonField('Y mm', ui.py)),
       ribbonStack(propField('W', 'pw'), propField('H', 'ph'))),
     ribbonGroup('Rotate', ribbonStack(ribbonField('Angle', ui.pa), ribbonField('Pivot', ui.partPivot = select([['centre', 'Centre'], ['bl', 'Bottom-left'], ['custom', 'Custom']], 'centre', setPivotKind, { 'aria-label': 'Part pivot' })),
-      ribbonButton('Rotate 90°', '<path d="M20 12a8 8 0 1 1-3-6M20 4v5h-5"/>', () => setAngleText(String((selectedPlaced()?.p.rot || 0) + 90)), { small: true, enabled: () => !selItems().some((x) => x.p.lock) }))),
+      ribbonButton('Rotate 90°', '<path d="M20 12a8 8 0 1 1-3-6M20 4v5h-5"/>', () => setAngleText(selItems().length > 1 ? '90' : String((selectedPlaced()?.p.rot || 0) + 90)), { small: true, enabled: () => !selItems().some((x) => x.p.lock) }))),
     ribbonGroup('Mirror', mirror('x', 'bar-mirror-x'), mirror('y', 'bar-mirror-y')),
     ribbonGroup('Nudge', ...[['left', 'Left', 'M19 12H5m6-6-6 6 6 6'], ['up', 'Up', 'M12 19V5m-6 6 6-6 6 6'], ['down', 'Down', 'M12 5v14m-6-6 6 6 6-6'], ['right', 'Right', 'M5 12h14m-6-6 6 6-6 6']].map(([dir, label, path]) => ribbonButton(label, '<path d="' + path + '"/>', () => nudgeSel(dir), { enabled: () => !selItems().some((x) => x.p.lock) })), ribbonStack(ribbonField('Step mm', ui.barNudge))),
     ribbonGroup('Arrange', gbtn('bar-group', 'Group', ICONS.group, () => (wholeGroup() ? ungroupSel() : groupSel())),

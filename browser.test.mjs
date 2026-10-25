@@ -3950,6 +3950,16 @@ try {
     assert.equal(await t('pp-name').textContent(), '3 parts', 'all three are back');
   });
 
+  await step('TODO 110c: the Part ribbon Rotate 90° turns a multi-selection by 90° whatever the main part\'s angle; Nudge moves it', async () => {
+    const rb = page.locator('.ribbon-body');
+    await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');         // the main part is now at 90°
+    await partTab(); await rb.getByRole('button', { name: 'Rotate 90°', exact: true }).click();
+    assert.match(await prompt(), /^3 parts turned by 90° about the middle of the selection/);
+    await rb.getByRole('button', { name: 'Right', exact: true }).click();
+    assert.match(await prompt(), /^3 parts moved .* mm right/);
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+  });
+
   await step('TODO 36: Align left / centre / right / top / middle / bottom, relative to the selection, the sheet and the first selected', async () => {
     const before = await selBoxes();
     const w = (b) => b[2] - b[0], hh = (b) => b[3] - b[1];
