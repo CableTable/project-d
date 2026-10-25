@@ -338,7 +338,8 @@ try {
       await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
       await tab('Home').click();
       assert.equal(await rb.getByRole('button', { name: 'Rotate', exact: true }).isEnabled(), true);
-      for (const label of ['Scale', 'Fillet', 'Extend']) {
+      assert.equal(await rb.getByRole('button', { name: 'Scale', exact: true }).isEnabled(), true);
+      for (const label of ['Fillet', 'Extend']) {
         const b = rb.getByRole('button', { name: label, exact: true });
         assert.equal(await b.isDisabled(), true); assert.match(await b.getAttribute('title'), /coming/);
       }
@@ -8620,6 +8621,78 @@ try {
     await typeCmd('ro'); assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Esc\]:?$/);
     await typeCmd('90'); assert.equal(await t('rot-angle').inputValue(), '90°');
     await page.keyboard.press('Escape'); await closeTabs(/rotate-layout/);
+  });
+
+  await step('TODO 66d: Scale', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 60, 50, { layer: 'Cut', colour: 3 }), dxfText(30, 45, 5, 'Scale'));
+    await openGrips(writeDxf(raw), 'scale.dxf');
+    const before = await savedDoc(), coords = (e) => [10, 20, 11, 21].map((c) => fieldOf(e, c));
+    const cursorFactor = async () => {
+      const [x, y, xx, yy] = (await t('mod-line').getAttribute('d')).match(/-?[\d.]+/g).map(Number);
+      return Math.hypot(xx - x, yy - y);
+    };
+    const undoScale = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      const doc = await savedDoc(); assert.deepEqual(doc.entities, before.entities); assert.deepEqual(doc.blocks, before.blocks);
+      await page.keyboard.press('Control+a');
+    };
+    await page.keyboard.press('Control+a'); await typeCmd('sc');
+    assert.equal(await prompt(), 'Base point:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Scale');
+    assert.equal(await page.locator('nav.rail [data-tool=scale]').count(), 0);
+    await typeCmd('1,'); assert.match(await histLine(), /I do not understand/);
+    await click(20.2, 30.2); assert.match(await prompt(), /^Scale factor:/);
+    for (const invalid of ['0', '-2', 'abc', 'NaN', 'Infinity']) {
+      await typeCmd(invalid); assert.match(await histLine(), /I do not understand.*number above 0/);
+      assert.match(await prompt(), /^Scale factor:/); assert.deepEqual((await savedDoc()).entities, before.entities);
+    }
+    await t('tog-snap').click();
+    const cursor = await at(22, 30); await page.mouse.move(cursor.x, cursor.y); await frames();
+    assert.equal(await t('mod-line').count(), 1);
+    const previewFactor = await cursorFactor();
+    const ghost = await at(20 + 40 * previewFactor, 30 + 20 * previewFactor);
+    assert.ok(await t('drawing').evaluate((canvas, p) => {
+      const b = canvas.getBoundingClientRect(), x = Math.round((p.x - b.x) * canvas.width / b.width), y = Math.round((p.y - b.y) * canvas.height / b.height);
+      return canvas.getContext('2d').getImageData(x - 4, y - 4, 9, 9).data.some((v, i) => i % 4 === 3 && v > 0);
+    }, ghost), 'scaled ghost is painted');
+    await shotBoth('scale', async () => {
+      await cmdLine().focus(); const p = await at(22, 30); await page.mouse.move(p.x, p.y); await frames();
+    });
+    await typeCmd('2');
+    let doc = await savedDoc(); assert.deepEqual(coords(doc.entities[0]), [20, 30, 100, 70]);
+    assert.equal(fieldOf(doc.entities[1], 10), 40); assert.equal(fieldOf(doc.entities[1], 20), 60); assert.equal(fieldOf(doc.entities[1], 40), 10);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select'); assert.equal((await histLabels()).at(-1), 'Scale'); await undoScale();
+    await typeCmd('scale'); await typeCmd('20,30'); await typeCmd('c'); assert.match(await prompt(), /Scale factor: Copy on/);
+    await typeCmd('c'); assert.doesNotMatch(await prompt(), /Copy on/); await typeCmd('c'); await typeCmd('.5');
+    doc = await savedDoc(); assert.equal(doc.entities.length, 4); assert.deepEqual(doc.entities.slice(0, 2), before.entities);
+    assert.deepEqual(coords(doc.entities[2]), [20, 30, 40, 40]); assert.equal(fieldOf(doc.entities[3], 40), 2.5); await undoScale();
+    for (const stage of ['selection', 'base', 'factor']) {
+      await page.keyboard.press('Escape'); if (stage !== 'selection') await page.keyboard.press('Control+a');
+      await typeCmd('sc'); if (stage === 'factor') { await typeCmd('20,30'); await typeCmd('c'); }
+      await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+      assert.deepEqual((await savedDoc()).entities, before.entities, `Esc at ${stage} makes no edit`);
+    }
+    // Select after starting, then set the factor by its drawing-unit distance (3,4 gives 5).
+    await page.keyboard.press('Escape'); await typeCmd('sc'); await page.keyboard.press('Enter'); assert.match(await histLine(), /pick at least one/);
+    await click(40, 40); await page.keyboard.press('Enter'); await typeCmd('20,30');
+    const target = await at(23, 34); await page.mouse.move(target.x, target.y); await frames(); const clickedFactor = await cursorFactor();
+    assert.ok(clickedFactor > 4 && clickedFactor < 6); await page.mouse.click(target.x, target.y);
+    doc = await savedDoc(); assert.ok(Math.abs(fieldOf(doc.entities[0], 11) - (20 + 40 * clickedFactor)) < .1); assert.ok(Math.abs(fieldOf(doc.entities[0], 21) - (30 + 20 * clickedFactor)) < .1);
+    assert.deepEqual(doc.entities[1], before.entities[1]); await undoScale(); await t('tog-snap').click();
+    for (const tab of ['Home', 'Modify']) {
+      await page.locator(`[data-ribbon-tab=${tab}]`).click();
+      const button = page.locator('.ribbon [data-panel=Modify]').getByRole('button', { name: 'Scale', exact: true });
+      assert.equal(await button.isEnabled(), true); await button.click(); assert.equal(await prompt(), 'Base point:'); await page.keyboard.press('Escape');
+    }
+    await menuItem('Modify', 'Scale'); assert.equal(await prompt(), 'Base point:'); await page.keyboard.press('Escape');
+    const locked = newDoc(4); addLayer(locked, 'Cut');
+    addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
+    await openGrips(writeDxf(locked), 'scale-locked.dxf'); const lockedBefore = await savedDoc();
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await typeCmd('sc'); assert.match(await prompt(), /Layer Cut is locked/); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual((await savedDoc()).entities, lockedBefore.entities); await closeTabs(/scale/);
   });
 
   await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {

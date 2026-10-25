@@ -792,7 +792,7 @@ export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return 
 export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
 /** A scaled dimension's text says its new length: the old number times s, with as many decimals as it had (an angle keeps its value). */
-function relabel(ents, s) {
+export function relabel(ents, s) {
   return ents.map((e) => {
     if (e.type !== 'TEXT') return e;
     const k = e.r.c.indexOf(1), m = k < 0 ? null : /^([RØ]?)(-?\d+(?:\.\d+)?)(["°]?)$/.exec(unesc(e.r.v[k]));

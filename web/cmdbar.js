@@ -41,6 +41,7 @@ const TABLE = [
   ['boundary', 'Edit', 'Shaping: add the union on the current layer; originals stay', [], 'draw'],
   ['extract', 'Layout', 'Save the selected outline as a part', ['e'], ''],
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
+  ['scale', 'Edit', 'Scale drawing objects uniformly about a base point', ['sc'], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],

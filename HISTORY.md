@@ -190,3 +190,5 @@ shutdown early (cancelled; now greps Codex's ERROR line); a reviewer's final sum
 all its text. New rules: small lookups Rook does itself; every report has Result / Tests / Findings / Not checked.
 
 **2026-10-25 (Knight, TODO 66c).** Drawing Rotate uses Move / Copy's selection, snaps, command box, preview painter, layer locks and undo flow: pivot then angle, Shift = 15°, C turns a copy, Esc cancels. RO / ROTATE dispatch by tab; layout Rotate and the drawing R / Rectangle alias remain. Added the Modify menu item and enabled both ribbons, with pure geometry and browser coverage and light / dark as-built screenshots.
+
+**2026-10-25 (TODO 66d, Knight).** Built drawing-object Scale (SC / SCALE): snapped or typed base, positive typed factor or clicked drawing-unit distance, copy toggle, live preview, Esc and one-step Undo. Added Modify / Home ribbon entry points without a rail button; text and dimensions scale, linked dimensions follow, widths stay. Pure tests cover every Rotate kind at 2 and 0.5; browser flow and local light / dark as-built board.
