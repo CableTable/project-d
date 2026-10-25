@@ -143,8 +143,9 @@ test('placeBar: avoidance tries corners in order, then the least overlap', () =>
 
 test('placeBar: avoid candidates clamp at canvas edges, including an oversized box', () => {
   const area = { w: 500, h: 300 }, avoid = [0, 0, 1, 1];
-  assert.deepEqual(CB.placeBar({ x: 495, y: 295 }, { w: 100, h: 60 }, area, 20, avoid), { x: 400, y: 240, corner: 0 });
-  assert.deepEqual(CB.placeBar({ x: 0, y: 0 }, { w: 100, h: 60 }, area, 20, [20, 20, 120, 80]), { x: 0, y: 0, corner: 3 }, 'least overlap is measured after clamping');
+  assert.deepEqual(CB.placeBar({ x: 495, y: 295 }, { w: 100, h: 60 }, area, 20, avoid), { x: 400, y: 215, corner: 1 }, 'the clamped right-below corner would sit on the cursor');
+  assert.deepEqual(CB.placeBar({ x: 850, y: 560 }, { w: 300, h: 70 }, { w: 900, h: 600 }, 20, avoid), { x: 600, y: 470, corner: 1 }, 'near the bottom-right edge the box stays off the cursor');
+  assert.deepEqual(CB.placeBar({ x: 0, y: 0 }, { w: 100, h: 60 }, area, 20, [20, 20, 120, 80]), { x: 20, y: 0, corner: 1 }, 'least overlap is measured after clamping, among corners off the cursor');
   assert.deepEqual(CB.placeBar({ x: 5, y: 5 }, { w: 600, h: 400 }, area, 20, avoid), { x: 0, y: 0, corner: 0 });
 });
 

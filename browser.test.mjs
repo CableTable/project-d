@@ -2007,8 +2007,6 @@ try {
   /** The client position of a drawing point (mm from the sheet's bottom-left, y up). */
   const at = async (x, y) => { const { b, sc, h: hh } = await sheetPx(); return { x: b.x + x * sc, y: b.y + (hh - y) * sc }; };
   const click = async (x, y, opts = {}) => {
-    await page.evaluate(() => { if (document.activeElement?.closest('.cbar')) document.activeElement.blur(); });
-    await t('cmd-bar').waitFor({ state: 'hidden' });
     const p = await at(x, y);
     if (opts.shift) await page.keyboard.down('Shift');
     try { await page.mouse.click(p.x, p.y); } finally { if (opts.shift) await page.keyboard.up('Shift'); }
@@ -9006,6 +9004,43 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/preview-clear/);
   });
 
+  await step('TODO 146: the box stays put while the mouse walks to its chip', async () => {
+    await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60));
+    await openGrips(writeDxf(raw), 'chip-walk.dxf');
+    await typeCmd('f'); await click(40, 20);
+    await hoverPreview(60, 40);
+    assert.equal(await t('mod-preview').count(), 3, 'the fillet is previewed under the open box');
+    const box = await t('cmd-bar').boundingBox(), chip = await t('cmd-chip').first().boundingBox();
+    const from = await at(60, 40);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2, { steps: 15 }); await frames();
+    assert.deepEqual(await t('cmd-bar').boundingBox(), box, 'the box did not run away from the mouse');
+    await page.mouse.click(chip.x + chip.width / 2, chip.y + chip.height / 2);
+    assert.equal(await prompt(), 'Fillet radius <5>:', 'the chip was clicked');
+    await page.keyboard.press('Escape'); await closeTabs(/chip-walk/);
+  });
+
+  await step('TODO 146: the box clears a Dimension preview at the bottom-right edge', async () => {
+    await blankTab();
+    await page.locator('[data-tool=dimension]').click();
+    const cv = await t('canvas').boundingBox(), px = (dx, dy) => ({ x: cv.x + cv.width - dx, y: cv.y + cv.height - dy });
+    for (const [dx, dy] of [[260, 120], [100, 120]]) { const p = px(dx, dy); await page.mouse.click(p.x, p.y); }
+    const hover = px(40, 36);
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.mouse.move(hover.x, hover.y); await frames();
+      await cmdLine().focus(); await frames();
+      const box = await t('cmd-bar').boundingBox();
+      assert.equal(overlap(box, { x: hover.x - 20, y: hover.y - 20, width: 40, height: 40 }), 0, 'the box leaves the cursor free');
+      assert.equal(overlap(box, { x: px(260, 0).x, y: hover.y - 6, width: 160, height: 12 }), 0, 'the box leaves the dimension line clear');
+    };
+    const hide = async () => { await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' }); };
+    await shotBoth('146-dimension-preview', show, hide);
+    await page.keyboard.press('Escape');
+  });
+
   await step('TODO 66h: Extend with an arc boundary', async () => {
     await closeTabs(/./);
     const raw = newDoc(4);
@@ -9156,7 +9191,8 @@ try {
     const history = await histLabels();
     await click(60, 20); await hover(); await page.keyboard.down('Shift'); await hover();
     assert.equal(await t('mod-preview').count(), 1); assert.doesNotMatch(await t('mod-preview').getAttribute('d'), /A/);
-    await page.keyboard.up('Shift'); await click(100, 90, { shift: true });
+    await page.keyboard.up('Shift'); await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' });       // the hover opened the bar, which now sits where the preview left room
+    await click(100, 90, { shift: true });
     assert.match(await histLine(), /Already a sharp corner/);
     assert.match(await prompt(), /^Select the first/);
     assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'Shift fillet keeps the tab saved');

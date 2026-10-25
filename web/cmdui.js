@@ -27,7 +27,7 @@ export function buildCmdUI(hooks) {
   const resolve = (text, tab = '') => CB.resolve(text, tab, hooks.commands());
   const suggest = (text, tab = '') => CB.suggest(text, tab, 6, hooks.commands());
   const lines = [], typed = [];                // the session's command lines { pre, ans, cls, run } (not saved), and what was typed at the bar
-  let lastName = '', echoName = '', echoAns = [], hi = 0, sugg = [], recall = -1, ptr = null, anchor = { x: 0, y: 0 }, idle = 0;
+  let lastName = '', echoName = '', echoAns = [], hi = 0, sugg = [], recall = -1, ptr = null, anchor = { x: 0, y: 0 }, cur = anchor, idle = 0;
   let corner = null, nudge = null;
 
   // the log the rest of the app writes to (tests and screen readers read these two); the sight of them is the fade and the drawer
@@ -64,9 +64,11 @@ export function buildCmdUI(hooks) {
   const hiName = () => (sugg[hi] ? sugg[hi].cmd.name : '');
   const labelOf = (name) => name.toUpperCase();
 
+  /** A box stays where it opened; only a tool preview that starts to cover it sends it to the first clear corner round the cursor now. */
   function placeBox(box, previous) {
-    const r = hooks.canvas().getBoundingClientRect();
-    const p = CB.placeBar(anchor, { w: box.offsetWidth, h: box.offsetHeight }, { w: r.width, h: r.height }, 20, hooks.previewBounds(), previous);
+    const r = hooks.canvas().getBoundingClientRect(), size = { w: box.offsetWidth, h: box.offsetHeight }, area = { w: r.width, h: r.height }, avoid = hooks.previewBounds();
+    let p = CB.placeBar(anchor, size, area, 20, avoid, previous);
+    if (avoid && previous != null && p.corner !== previous) { anchor = cur; p = CB.placeBar(anchor, size, area, 20, avoid); }
     box.style.left = p.x + 'px'; box.style.top = p.y + 'px';
     return p.corner;
   }
@@ -99,7 +101,7 @@ export function buildCmdUI(hooks) {
 
   function open(seed = '') {
     const r = hooks.canvas().getBoundingClientRect();
-    anchor = ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 };
+    anchor = cur = ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 };
     corner = null;
     bar.hidden = false; input.value = seed; hi = 0; recall = -1;
     update(); input.focus(); input.setSelectionRange(seed.length, seed.length);
@@ -121,7 +123,7 @@ export function buildCmdUI(hooks) {
     const finish = () => { field.removeEventListener('blur', finish); box.remove(); nudge = null; };
     const canvas = hooks.canvas(), r = canvas.getBoundingClientRect();
     canvas.append(box);
-    anchor = ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 };
+    anchor = cur = ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 };
     nudge = { box, corner: null }; place();
     for (const ev of ['pointerdown', 'pointermove', 'wheel', 'dblclick', 'contextmenu']) box.addEventListener(ev, (e) => e.stopPropagation());
     field.addEventListener('keydown', (e) => {
@@ -233,7 +235,7 @@ export function buildCmdUI(hooks) {
       ptr = { x, y };
       if (!bar.hidden || nudge) {
         const r = hooks.canvas().getBoundingClientRect();
-        anchor = { x: x - r.left, y: y - r.top };
+        cur = { x: x - r.left, y: y - r.top };
       }
     },
     /** Space on the drawing with the bar shut: the last command again. */

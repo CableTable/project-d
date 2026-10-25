@@ -150,18 +150,25 @@ export function keyOpensBar(ev, { inField = false, dialog = false, active = fals
   return active && /^[-+@.,<]$/.test(ev.key) ? ev.key : null;
 }
 
-/** Without avoid ([left, top, right, bottom]), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above. */
+/** The area two boxes ([left, top, right, bottom]) share. */
+export const overlapArea = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+
+/** Without avoid ([left, top, right, bottom]), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above; a corner covering the cursor (the box ± gap round it) always loses to one that does not. */
 export function placeBar(cursor, size, area, gap = 20, avoid = null, corner = null) {
   const clamp = (x, y) => ({ x: Math.max(0, Math.min(x, area.w - size.w)), y: Math.max(0, Math.min(y, area.h - size.h)) });
   if (avoid) {
+    const zone = [cursor.x - gap, cursor.y - gap, cursor.x + gap, cursor.y + gap];
     const candidates = [
       [cursor.x + gap, cursor.y + gap], [cursor.x + gap, cursor.y - gap - size.h],
       [cursor.x - gap - size.w, cursor.y + gap], [cursor.x - gap - size.w, cursor.y - gap - size.h],
-    ].map(([x, y], corner) => ({ ...clamp(x, y), corner }));
-    const overlap = (p) => Math.max(0, Math.min(p.x + size.w, avoid[2]) - Math.max(p.x, avoid[0]))
-      * Math.max(0, Math.min(p.y + size.h, avoid[3]) - Math.max(p.y, avoid[1]));
-    if (candidates[corner] && overlap(candidates[corner]) === 0) return candidates[corner];
-    return candidates.reduce((best, p) => overlap(p) < overlap(best) ? p : best);
+    ].map(([x, y], corner) => {
+      const p = clamp(x, y), r = [p.x, p.y, p.x + size.w, p.y + size.h];
+      return { ...p, corner, covers: overlapArea(r, zone) > 0, hit: overlapArea(r, avoid) };
+    });
+    const kept = candidates[corner];
+    const best = kept && !kept.covers && !kept.hit ? kept
+      : candidates.reduce((q, p) => (p.covers !== q.covers ? !p.covers : p.hit < q.hit) ? p : q);
+    return { x: best.x, y: best.y, corner: best.corner };
   }
   let x = cursor.x + gap, y = cursor.y + gap;
   if (x + size.w > area.w) x = cursor.x - gap - size.w;

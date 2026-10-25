@@ -3811,7 +3811,6 @@ function hideNow(d) {
 let paintQueued = 0;
 let canvasPreviewBounds = null;
 /** The shared preview layer: SVG tool paths plus the canvas ghost, all in canvas CSS pixels. */
-// shortcut: Dimension, Leader, Contour and Measure / Set length have no shared canvas bounds; include them when their renderer exposes a box.
 function previewBounds() {
   const canvas = ui.canvas.getBoundingClientRect();
   let bounds = canvasPreviewBounds;
@@ -3875,7 +3874,7 @@ function paintOverlay(gesture = false) {
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'),
-      dimCol: cssVar('--dim', '#0f766e') });
+      dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
     const move = state.entityDrag || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? state.mod.move : null);
     if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
     ui.cmdUI.place();

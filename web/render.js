@@ -4,7 +4,7 @@ import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './d
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
-import { drawingPreviewBox } from './preview.js';
+import { drawingPreviewBox, overlayBox } from './preview.js';
 import { outsideView, subPixel } from './perf.js';
 import { SNAP_NAME } from './snap.js';
 
@@ -61,7 +61,7 @@ export function paintDrawing(canvas, o) {
     c.globalAlpha = 1;
   }
   if (!fl) return;
-  if (o.previewBounds) o.previewBounds(drawingPreviewBox(o));
+  if (o.previewBounds && o.keep) o.previewBounds(drawingPreviewBox(o));       // a kept pass is a ghost: the whole flattened preview
   const k0 = scale * dpr, V = [k0, 0, 0, k0, -ox * k0, -oy * k0];
   const k = k0 * factor;                                   // pixels in one drawing unit
   c.lineJoin = 'round'; c.lineCap = 'round';
@@ -92,6 +92,7 @@ export function paintDrawing(canvas, o) {
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
   if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#00ff00', o.contourDash || []);
+  if (o.previewBounds && !o.keep) { const box = overlayBox(o, T, dpr); if (box) o.previewBounds(box); }
   return drawn;
 }
 
