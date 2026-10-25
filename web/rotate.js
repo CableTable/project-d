@@ -69,7 +69,13 @@ function rotateRecord(type, r, pivot, degrees, flip) {
         if (code === 92) { flags = +r.v[k]; edge = 0; }
         else if (code === 72 && !(flags & 2)) edge = +r.v[k];
         else if ([10, 11, 12, 13].includes(code)) pair(k, edge === 3 && code === 11 || edge === 4 && code >= 12);
-        else if (edge === 2 && [50, 51].includes(code)) angle(k);
+        else if (edge === 2 && [50, 51].includes(code)) {
+          let j = k + 1;
+          while (j < r.c.length && ![73, 72, 92, 97, 75, 98].includes(r.c[j])) j++;
+          // The reader negates stored angles for clockwise hatch arc edges.
+          const direction = r.c[j] === 73 && +r.v[j] === 0 ? -1 : 1;
+          v[k] = text(+r.v[k] + direction * a * 180 / Math.PI);
+        }
       } else if (stage === 'pattern') {
         if (code === 43 || code === 45) pair(k, code === 45, 1);
         else if (code === 52 || code === 53) angle(k);

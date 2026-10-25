@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
-import { flatten, mapply } from './web/drawing.js';
+import { flatten, mapply, readDxf } from './web/drawing.js';
 import { rotateEntities, rotationAngle, rotationMatrix } from './web/rotate.js';
 import { addDimension, buildDim } from './web/edit.js';
 
@@ -87,6 +87,44 @@ test('Rotate hatches: polyline and arc boundaries, ellipse vectors, pattern orig
     xs.slice(1).forEach((x, i) => close(x, turned(i === 1 ? [18, 20] : [12, 14], a)[0]));
     const angles = r.r.v.filter((_, i) => r.r.c[i] === 50).map(Number);
     assert.deepEqual(angles, [10 + a, 10], 'ellipse parameter angles stay local');
+  }
+});
+
+test('Rotate hatch arc endpoints stay joined to their boundary line in either direction', () => {
+  for (const ccw of [0, 1, undefined]) for (const copy of [false, true]) {
+    const e = make('HATCH', [[70, 1], [91, 1], [92, 0], [93, 2], [72, 2],
+      [10, 12], [20, 14], [40, 8], [50, 0], [51, 180], ...(ccw == null ? [] : [[73, ccw]]),
+      [72, 1], [10, 4], [20, 14], [11, 20], [21, 14], [97, 0], [75, 0], [98, 0]]);
+    const raw = { ...W.newDoc(), entities: [e] }, before = structuredClone(raw);
+    const next = rotateEntities(raw, new Set([0]), pivot, 90, copy);
+    const { items } = flatten({ ...raw, ...next, entities: [next.entities.at(-1)] });
+    const ops = items[0].ops;
+    assert.deepEqual([ops[0], ops[3], ops[10], ops[13], ops[16]], [0, 2, 1, 1, 9]);
+    for (const [angle, line, original] of [[ops[7], 14, [20, 14]], [ops[8], 11, [4, 14]]]) {
+      const endpoint = [ops[4] + ops[6] * Math.cos(angle), ops[5] + ops[6] * Math.sin(angle)];
+      endpoint.forEach((v, i) => { close(v, ops[line + i]); close(v, turned(original, 90)[i]); });
+    }
+    assert.equal(ops[9], ccw === 0 ? 1 : 0);
+    assert.deepEqual(raw, before);
+    if (copy) assert.equal(next.entities[0], e);
+  }
+});
+
+test('Rotate an ARC read with extrusion -Z places its centre and endpoints in world coordinates', () => {
+  const doc = W.newDoc();
+  W.addEntities(doc, make('ARC', [[10, -12], [20, 14], [40, 8], [50, 10], [51, 50], [210, 0], [220, 0], [230, -1]]));
+  const raw = readDxf(W.writeDxf(doc));
+  assert.equal(raw.entities[0].flip, true);
+  for (const degrees of [90, -90]) for (const copy of [false, true]) {
+    const next = rotateEntities(raw, new Set([0]), pivot, degrees, copy);
+    const fl = flatten({ ...raw, ...next, entities: [next.entities.at(-1)] }), it = fl.items[0];
+    const world = (x, y) => mapply(fl.mats[it.m], x, y);
+    const check = (point, original) => point.forEach((v, i) => close(v, turned(original, degrees)[i]));
+    check(world(it.ops[4], it.ops[5]), [12, 14]);
+    for (const [index, angle] of [[7, 10], [8, 50]]) {
+      check(world(it.ops[4] + it.ops[6] * Math.cos(it.ops[index]), it.ops[5] + it.ops[6] * Math.sin(it.ops[index])),
+        [12 - 8 * Math.cos(angle * Math.PI / 180), 14 + 8 * Math.sin(angle * Math.PI / 180)]);
+    }
   }
 });
 
