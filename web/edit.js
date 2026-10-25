@@ -706,7 +706,7 @@ export function keepOnly(raw, keep) {
 const num = (v) => { const n = +v; return Number.isFinite(n) && String(v).trim() !== '' ? n : null; };
 const text = (n) => String(+n.toPrecision(15));
 // per type: the x codes that are points (moved about the anchor) and vectors (only scaled), and the codes that are lengths
-const SPEC = {
+export const SPEC = {
   LINE: { pts: [10, 11] }, POINT: { pts: [10] }, CIRCLE: { pts: [10], len: [39, 40] }, ARC: { pts: [10], len: [39, 40] },
   ELLIPSE: { pts: [10], vec: [11] }, LWPOLYLINE: { pts: [10], len: [38, 39, 40, 41, 43] }, POLYLINE: { pts: [], len: [39, 40, 41], z: [30] },
   VERTEX: { pts: [10], len: [40, 41] }, SPLINE: { pts: [10, 11] }, SOLID: { pts: [10, 11, 12, 13], len: [39] }, TRACE: { pts: [10, 11, 12, 13], len: [39] },
@@ -714,7 +714,7 @@ const SPEC = {
   MTEXT: { pts: [10], len: [40, 41, 42, 43] }, INSERT: { pts: [10], len: [44, 45] },
   DIMENSION: { pts: [10, 11, 12, 13, 14, 15, 16], len: [40, 42] }, LEADER: { pts: [10], len: [40, 41] }, HATCH: {}
 };
-const OCS = new Set(['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'TEXT', 'ATTRIB', 'INSERT', 'SOLID', 'TRACE', 'HATCH']);
+export const OCS = new Set(['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'TEXT', 'ATTRIB', 'INSERT', 'SOLID', 'TRACE', 'HATCH']);
 
 /** Scales one record's pairs (codes are shared, values are new). a: the anchor [x, y] in this record's own coordinates. */
 function scaleRecord(type, r, s, a) {

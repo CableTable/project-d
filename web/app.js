@@ -18,7 +18,7 @@ import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
-import { flatten, unionBox, CAP, ACI, mapply, pickIndex } from './drawing.js';
+import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -30,6 +30,7 @@ import * as GR from './grips.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import { movePoint } from './move.js';
+import { rotateEntities, rotationAngle, rotationMatrix } from './rotate.js';
 import * as PR from './props.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import * as LD from './layoutdoc.js';
@@ -119,6 +120,7 @@ const TOOLS = [
   { sep: true },
   { id: 'move', label: 'Move', title: 'Move (MV)', svg: '<path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>' },
   { id: 'copy', label: 'Copy', title: 'Copy (CO)', svg: '<rect x="4" y="8" width="11" height="12" rx="1.5"/><path d="M9 8V4h11v12h-5"/>' },
+  { id: 'rotate', label: 'Rotate', title: 'Rotate (RO)', svg: '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>' },
   { id: 'offset', label: 'Offset', title: 'Offset (O)', svg: '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>' },
   { id: 'contour', label: 'Contour', title: 'Contour (CT)', svg: '<rect x="3" y="3" width="18" height="18" rx="5"/><rect x="6.5" y="6.5" width="11" height="11" rx="3"/><rect x="10" y="10" width="4" height="4" rx="1"/>' },
   { id: 'trim', label: 'Trim', title: 'Trim (TR)', cap: 'round', svg: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.5L20 17M8.2 15.5L20 7"/>' },
@@ -128,7 +130,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', title: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', title: 'Measure (M)', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'offset', 'trim', 'mirror', 'nest', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'rotate', 'offset', 'trim', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['aligned', 'Aligned', 'D', '<path d="M3 15L13 5M3 15l3-1M3 15l1-3M13 5l-3 1M13 5l1 3"/>', 'DIMALIGNED'],
@@ -403,7 +405,7 @@ function buildMenus() {
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
-  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
+  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Rotate', 'rotate', 'RO'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
@@ -546,8 +548,7 @@ function ribbonContents(kind) {
   const toolIcon = (id) => TOOLS.find((t) => t.id === id).svg;
   const convert = (label, action, svg, small = false) => btn(label, svg, action, { small, enabled: () => !!editable() });
   const coming = (label, svg) => btn(label, svg, () => {}, { small: true, enabled: () => false, title: label + ' · coming' });
-  const rotateIcon = '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>',
-    scaleIcon = '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>',
+  const scaleIcon = '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>',
     filletIcon = '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>', extendIcon = '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>',
     outlinesIcon = '<path d="M5 5h14M12 5v14" stroke-dasharray="2 1.5"/><path d="M8 19h8"/>';
   if (ribbon.tab === 'Draw') return [
@@ -556,7 +557,7 @@ function ribbonContents(kind) {
     group('Annotate', ...['dimension', 'leader', 'balloon', 'measure'].map((id) => ribbonTool(id))),
     group('Tools', ribbonTool('select'), ribbonTool('pan'))];
   if (ribbon.tab === 'Modify') return [
-    group('Modify', stack(ribbonTool('move', true), coming('Rotate', rotateIcon), ribbonTool('mirror', true)),
+    group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), coming('Scale', scaleIcon), ribbonTool('offset', true)),
       stack(coming('Fillet', filletIcon), coming('Extend', extendIcon), ribbonTool('trim', true))),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>'),
@@ -595,7 +596,7 @@ function ribbonContents(kind) {
     group('Step and repeat', ribbonTool('step'), ribbonTool('nest'))];
   if (kind === 'drawing') {
     groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
-    groups.push(group('Modify', stack(ribbonTool('move', true), coming('Rotate', rotateIcon), ribbonTool('mirror', true)),
+    groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), coming('Scale', scaleIcon), ribbonTool('offset', true)),
       stack(coming('Fillet', filletIcon), coming('Extend', extendIcon), ribbonTool('trim', true))));
   }
@@ -1110,7 +1111,7 @@ function buildSelbar() {
 
 function buildRail() {
   ui.toolBtns = {};
-  const items = TOOLS.filter((t) => t.id !== 'copy').map((t) => {
+  const items = TOOLS.filter((t) => !['copy', 'rotate'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : t.title, 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
@@ -3433,6 +3434,7 @@ const DO = {
   breakapart: () => breakApartSelected(),
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
+    if (!curLay()) { setTool('rotate'); return; }
     const sp = selectedPlaced();
     if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
     const order = ['best', '0', '90'];
@@ -3814,7 +3816,7 @@ function paintOverlay(gesture = false) {
       }
       return;
     }
-    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur } : null);
+    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur } : null);
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
     const drawn = paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
       bg: d && d.bg, hl: d ? (state.entityDrag?.items ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
@@ -3823,8 +3825,8 @@ function paintOverlay(gesture = false) {
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'),
       dimCol: cssVar('--dim', '#0f766e') });
-    const move = state.entityDrag || (modLive() && ['move', 'copy'].includes(state.mod.kind) ? state.mod.move : null);
-    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, tint: cssVar('--selection', '#4f46e5') });
+    const move = state.entityDrag || (modLive() && ['move', 'copy', 'rotate'].includes(state.mod.kind) ? state.mod.move : null);
+    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: move.slots, tint: cssVar('--selection', '#4f46e5') });
     c.dataset.drawn = drawn || 0;
     if (heavy(performance.now() - t0, drawn || 0)) {
       snapCv = snapCv || document.createElement('canvas');
@@ -3921,7 +3923,7 @@ function attachCanvasEvents() {
     if (state.text.drag) textDragMove(e);
     if (state.grip) gripMove(e);
     if (state.balDrag) balMove(e);
-    const picking = (modLive() && !(['move', 'copy', 'mirror'].includes(state.mod.kind) && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
+    const picking = (modLive() && !(['move', 'copy', 'rotate', 'mirror'].includes(state.mod.kind) && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
     if (drag && !picking && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
     if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
     else if (drag?.moved && drag.move) {
@@ -5557,7 +5559,7 @@ function drawKey(e, k) {
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
-const MOD_KINDS = ['move', 'copy', 'offset', 'trim', 'mirror'], OFFSET_SAVED = 'pd-offset';
+const MOD_KINDS = ['move', 'copy', 'rotate', 'offset', 'trim', 'mirror'], OFFSET_SAVED = 'pd-offset';
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
 /** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
 const newMod = (kind) => ({ kind, stage: kind === 'offset' ? 'obj' : kind === 'trim' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: false, objs: [], p1: null, p2: null, p: null, cur: null });
@@ -5579,7 +5581,7 @@ const trimEdges = (d, m) => (m.all ? edIndex(d).shown.map((i) => d.raw.entities[
 /** A modify tool just chosen: Offset reads its remembered distance; Mirror takes the selection if there is one. */
 function modStart(id) {
   const m = state.mod, d = editable();
-  if (['move', 'copy'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${id === 'copy' ? 'Copy' : 'Move'}: select the objects, then press Enter`; }
+  if (['move', 'copy', 'rotate'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'offset') { state.offDist = loadOffsetDist(); state.msg = 'Offset: pick an object, or type the distance first'; }
   else if (id === 'trim') state.msg = 'Trim: pick the cutting edges, then Enter (Enter alone = all)';
   else if (d.sel.size) { m.objs = [...d.sel].map((i) => d.raw.entities[i]); m.stage = 'p1'; state.msg = `${d.sel.size} selected: click the first point of the mirror line`; }
@@ -5587,6 +5589,7 @@ function modStart(id) {
 }
 function modPrompt(d) {
   const m = state.mod, n = m.kind === 'trim' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
+  if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point or x,y:' : 'Target, dx,dy or distance:' + (m.kind === 'copy' ? ' Enter ends:' : '') };
   if (m.kind === 'offset') return { status: `Command: OFFSET   Distance <${mmText(state.offDist)}> mm`, prompt: m.stage === 'obj' ? `Select the object to offset, or type the distance <${mmText(state.offDist)}>:` : `Click the side to offset to (or type a new distance <${mmText(state.offDist)}>):` };
   if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all:' : 'Click the part to cut away. Enter or Esc ends:' };
@@ -5605,7 +5608,7 @@ function modEsc(d) {
 }
 function modEnter(d) {
   const m = state.mod;
-  if (['move', 'copy'].includes(m.kind)) { if (m.stage === 'pick') moveTake(d); else if (m.kind === 'copy') modEsc(d); else note(modPrompt(d).prompt); return; }
+  if (['move', 'copy', 'rotate'].includes(m.kind)) { if (m.stage === 'pick') moveTake(d); else if (m.kind === 'copy') modEsc(d); else note(modPrompt(d).prompt); return; }
   if (m.kind === 'offset') { modEsc(d); return; }
   if (m.kind === 'trim') {
     if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a cutting edge. Click the part to cut away' : `${m.edges.length} cutting edge${m.edges.length === 1 ? '' : 's'}. Click the part to cut away`); paintOverlay(); }
@@ -5622,6 +5625,18 @@ function modEnter(d) {
 function modTyped(d, raw) {
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (m.kind === 'rotate' && m.stage !== 'pick') {
+    if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
+    if (m.stage === 'p1') {
+      const q = movePoint(raw);
+      if (q) { rotatePivot(d, q.map((v) => v / d.factor)); return true; }
+    } else {
+      const a = PL.parseAngle(raw);
+      if (a != null) { rotateDo(d, a); return true; }
+    }
+    if (DR.parseInput(raw).kind === 'word') return false;
+    note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'degrees'}`); return true;
+  }
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     const mm = (p) => p && p.slice(0, 2).map((v) => v * d.factor);
     const q = movePoint(raw, mm(m.p1), mm(m.cur));
@@ -5651,13 +5666,24 @@ function modHover(d, cx, cy, shift) {
     m.cur = movePick(d, p, shift, true);
     if (m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
   }
+  if (m.kind === 'rotate' && m.stage !== 'pick') {
+    m.cur = snapPoint(d, p);
+    if (m.p1) {
+      m.angle = rotationAngle(m.p1, m.cur, shift);
+      if (shift) {
+        const r = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]), a = m.angle * Math.PI / 180;
+        m.cur = [m.p1[0] + r * Math.cos(a), m.p1[1] + r * Math.sin(a)];
+      }
+      m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], rotationMatrix(m.p1, m.angle))];
+    }
+  }
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
   paintOverlay();
 }
 function modUp(d, was, p, shift) {
   const m = state.mod;
   modSync(d);
-  if (['move', 'copy', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
+  if (['move', 'copy', 'rotate', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (was.moved) return;
   if (m.kind === 'offset') {
     if (m.stage === 'obj') {
@@ -5676,6 +5702,11 @@ function modUp(d, was, p, shift) {
     } else trimDo(d, was.p, shift || was.shift);
   } else if (['move', 'copy'].includes(m.kind)) {
     moveTo(d, movePick(d, was.p, shift || was.shift));
+  } else if (m.kind === 'rotate') {
+    const q = snapPoint(d, was.p);
+    if (m.stage === 'p1') rotatePivot(d, q);
+    else if (Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) < 1e-9) note('Click a point away from the pivot');
+    else rotateDo(d, rotationAngle(m.p1, q, shift || was.shift));
   } else {
     const q = pickPoint(d, was.p, m.stage === 'p2' ? [m.p1] : [], shift || was.shift);
     if (m.stage === 'p1') { m.p1 = [q[0], q[1]]; m.stage = 'p2'; note('Click the second point of the mirror line'); paintOverlay(); }
@@ -5687,16 +5718,36 @@ function modUp(d, was, p, shift) {
 }
 
 function moveTake(d) {
-  const label = state.mod.kind === 'copy' ? 'Copy' : 'Move';
+  const label = TOOLS.find((t) => t.id === state.mod.kind).label;
   if (!d.sel.size) { note(`${label}: pick at least one object first`); return; }
   if (moveLocked(d, d.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   const m = state.mod;
   m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = 'p1';
-  state.msg = `${label}: base point or x,y`; renderCommand(); paintOverlay();
+  state.msg = `${label}: ${m.kind === 'rotate' ? 'pivot' : 'base point'} or x,y`; renderCommand(); paintOverlay();
 }
 function movePick(d, p, shift, hover = false) {
   const m = state.mod, q = pickPoint(d, p, m.p1 ? [m.p1] : [], shift, hover);
   return m.p1 && (shift || state.ortho) ? Ed.orthoLock(m.p1, q) : q;
+}
+function rotatePivot(d, q) {
+  const m = state.mod;
+  m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
+  const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
+  m.move = { preview, items: preview.items, dx: 0, dy: 0 };
+  note('Rotate: angle in degrees or click. Shift = 15°; C toggles a copy'); paintOverlay();
+}
+function rotateDo(d, angle) {
+  const m = state.mod;
+  if (m.raw !== d.raw.entities) { setTool('select'); note('Drawing changed: start Rotate again'); return; }
+  if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
+  try {
+    const next = rotateEntities(d.raw, m.sel, m.p1, angle, m.copy);
+    const sel = m.copy ? new Set(next.entities.map((_, i) => i).slice(d.raw.entities.length)) : m.sel;
+    view.fitted = false;
+    commit(d, m.copy ? next : followDimensions(d.raw, next, d.factor), 'Rotate');
+    setTool('select'); setSel(d, sel);
+    note(`Selection rotated${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`);
+  } catch (err) { note(err.message); }
 }
 function moveTo(d, q) {
   const m = state.mod, copy = m.kind === 'copy', label = copy ? 'Copy' : 'Move';
@@ -5762,7 +5813,7 @@ function modOvl(d, out) {
   modSync(d);
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, d: DR.svgPath(shape, H), 'data-testid': tid || null }));
   const addEnt = (ent, cls, tid) => { if (ent && GR.hasGrips(ent)) add(GR.shapeOf(ent, f), cls, tid); };
-  if (['move', 'copy'].includes(m.kind)) {
+  if (['move', 'copy', 'rotate'].includes(m.kind)) {
     if (m.p1 && m.cur) add({ t: 'line', a: m.p1.map((v) => v * f), b: m.cur.slice(0, 2).map((v) => v * f) }, 'dr-guide', 'mod-line');
   } else if (m.kind === 'offset') {
     if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canModify(e)) addEnt(e, 'dr-guide'); }

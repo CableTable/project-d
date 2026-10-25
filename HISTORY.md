@@ -188,3 +188,5 @@ panel; Bishop drew mock-up R19 and he picked Option A: an AutoCAD-style ribbon (
 Bishop-test (4 of 4 parts; leftovers in TODO 145). Lessons: a usage-limit grep matched the brief's own words and fired the
 shutdown early (cancelled; now greps Codex's ERROR line); a reviewer's final summary can drop findings, so fix briefs get
 all its text. New rules: small lookups Rook does itself; every report has Result / Tests / Findings / Not checked.
+
+**2026-10-25 (Knight, TODO 66c).** Drawing Rotate uses Move / Copy's selection, snaps, command box, preview painter, layer locks and undo flow: pivot then angle, Shift = 15°, C turns a copy, Esc cancels. RO / ROTATE dispatch by tab; layout Rotate and the drawing R / Rectangle alias remain. Added the Modify menu item and enabled both ribbons, with pure geometry and browser coverage and light / dark as-built screenshots.

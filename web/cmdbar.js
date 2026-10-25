@@ -41,7 +41,7 @@ const TABLE = [
   ['boundary', 'Edit', 'Shaping: add the union on the current layer; originals stay', [], 'draw'],
   ['extract', 'Layout', 'Save the selected outline as a part', ['e'], ''],
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
-  ['rotate', 'Layout', 'Turn the selected part about a pivot', ['r', 'ro'], 'layout'],
+  ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
   ['group', 'Layout', 'Group the selected parts', ['g'], 'layout', 'Ctrl+G'],
@@ -76,6 +76,9 @@ const TABLE = [
 
 export const COMMANDS = TABLE.map(([name, cat, desc, alias, where, key = '']) => ({ name, cat, desc, alias, where, key }));
 
+// R stays Rectangle on drawings and Rotate on layouts; RO / ROTATE work on both.
+export const aliasScope = (c, word) => c.name === 'rotate' && word === 'r' ? 'layout' : c.where;
+
 const fits = (c, tab) => !c.where || !tab || c.where === tab;     // tab: 'draw' | 'layout' | '' (unknown)
 
 /** The command a typed word means (its name or an alias, any case), the ones for the open tab first. → a command or null */
@@ -83,7 +86,7 @@ export function resolve(text, tab = '', commands = COMMANDS) {
   const w = String(text || '').trim().toLowerCase();
   if (!w) return null;
   const all = commands.filter((c) => c.name === w || c.alias.includes(w));
-  return all.find((c) => fits(c, tab)) || all[0] || null;
+  return all.find((c) => fits({ where: aliasScope(c, w) }, tab)) || all[0] || null;
 }
 
 /** Autocomplete: commands whose name or alias starts with the text, then words inside the name or description. → [{ cmd, alias, hit }] (hit = how many letters of the name are typed) */
@@ -101,7 +104,7 @@ export function suggest(text, tab = '', limit = 6, commands = COMMANDS) {
     else if (c.name.includes(t)) rank = 5;
     else if (c.desc.toLowerCase().split(/\W+/).some((w) => w.startsWith(t))) rank = 7;
     else continue;
-    out.push({ cmd: c, alias: aliasStart || c.alias[0] || '', hit: c.name.startsWith(t) ? t.length : 0, rank: rank + (fits(c, tab) ? 0 : 10) });
+    out.push({ cmd: c, alias: aliasStart || c.alias[0] || '', hit: c.name.startsWith(t) ? t.length : 0, rank: rank + (fits({ where: aliasScope(c, t) }, tab) ? 0 : 10) });
   }
   out.sort((a, b) => a.rank - b.rank || a.cmd.name.length - b.cmd.name.length || (a.cmd.name < b.cmd.name ? -1 : 1));
   return out.slice(0, limit).map(({ cmd, alias, hit }) => ({ cmd, alias, hit }));

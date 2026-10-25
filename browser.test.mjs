@@ -337,7 +337,8 @@ try {
       assert.equal(await p.locator('.rail').isVisible(), false);
       await rb.getByRole('button', { name: 'Tool rail', exact: true }).click();
       await tab('Home').click();
-      for (const label of ['Rotate', 'Scale', 'Fillet', 'Extend']) {
+      assert.equal(await rb.getByRole('button', { name: 'Rotate', exact: true }).isEnabled(), true);
+      for (const label of ['Scale', 'Fillet', 'Extend']) {
         const b = rb.getByRole('button', { name: label, exact: true });
         assert.equal(await b.isDisabled(), true); assert.match(await b.getAttribute('title'), /coming/);
       }
@@ -8511,6 +8512,96 @@ try {
     assert.match(await prompt(), /Layer Cut is locked/); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.deepEqual((await savedDoc()).entities, lockedBefore.entities, 'a locked member refuses the entire copy');
     await closeTabs(/copy/);
+  });
+
+  await step('TODO 66c: Rotate', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 60, 50, { layer: 'Cut', colour: 3 }));
+    await openGrips(writeDxf(raw), 'rotate.dxf');
+    const before = await savedDoc(), coords = (e) => [10, 20, 11, 21].map((c) => fieldOf(e, c));
+    const undoRotate = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores originals');
+      await page.keyboard.press('Control+a');
+    };
+    await page.keyboard.press('Control+a'); await typeCmd('ro');
+    assert.equal(await prompt(), 'Pivot:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Rotate');
+    assert.equal(await page.locator('nav.rail [data-tool=rotate]').count(), 0);
+    await typeCmd('1,'); assert.match(await histLine(), /I do not understand/);
+    await click(20.2, 30.2); assert.match(await prompt(), /^Angle:/);
+    const p = await at(20, 70); await page.mouse.move(p.x, p.y); await frames();
+    assert.equal(await t('mod-line').count(), 1);
+    // The ghost reaches (0,70), the 90-degree rotation of the far endpoint about (20,30).
+    const ghost = await at(0, 70);
+    assert.ok(await t('drawing').evaluate((canvas, p) => {
+      const b = canvas.getBoundingClientRect(), x = Math.round((p.x - b.x) * canvas.width / b.width), y = Math.round((p.y - b.y) * canvas.height / b.height);
+      return canvas.getContext('2d').getImageData(x - 3, y - 3, 7, 7).data.some((v, i) => i % 4 === 3 && v > 0);
+    }, ghost), 'rotated ghost is painted');
+    await shotBoth('rotate', async () => {
+      await cmdLine().focus(); const p = await at(20, 70); await page.mouse.move(p.x, p.y); await frames();
+    });
+    await typeCmd('90');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual(coords((await savedDoc()).entities[0]), [20, 30, 0, 70]);
+    assert.equal((await histLabels()).at(-1), 'Rotate'); await undoRotate();
+
+    await typeCmd('rotate'); await typeCmd('20,30'); await typeCmd('c');
+    assert.match(await prompt(), /Angle: Copy on/);
+    await typeCmd('c'); assert.doesNotMatch(await prompt(), /Copy on/);
+    await typeCmd('c'); await typeCmd('90');
+    const copied = await savedDoc(); assert.equal(copied.entities.length, 2);
+    assert.deepEqual(copied.entities[0], before.entities[0]);
+    assert.deepEqual(coords(copied.entities[1]), [20, 30, 0, 70]);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select'); await undoRotate();
+
+    for (const stage of ['selection', 'pivot', 'angle']) {
+      await page.keyboard.press('Escape');
+      if (stage !== 'selection') await page.keyboard.press('Control+a');
+      await typeCmd('ro'); if (stage === 'angle') { await typeCmd('20,30'); await typeCmd('c'); }
+      await page.keyboard.press('Escape');
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+      assert.deepEqual((await savedDoc()).entities, before.entities, `Esc at ${stage} makes no edit`);
+    }
+    // Select after starting, click an angle, and Shift snaps to fifteen degrees (even with ORTHO on).
+    await page.keyboard.press('Escape'); await typeCmd('ro'); await page.keyboard.press('Enter'); assert.match(await histLine(), /pick at least one/);
+    await click(40, 40); await page.keyboard.press('Enter'); await typeCmd('20,30');
+    await click(50, 60);
+    let e = (await savedDoc()).entities[0];
+    assert.ok(Math.abs(fieldOf(e, 11) - (20 + 20 * Math.SQRT1_2)) < .5, `clicked angle: ${coords(e)}`);
+    assert.ok(Math.abs(fieldOf(e, 21) - (30 + 60 * Math.SQRT1_2)) < .5); await undoRotate();
+    await t('tog-ortho').click();
+    await typeCmd('ro'); await typeCmd('20,30'); await click(80, 48, { shift: true });
+    e = (await savedDoc()).entities[0];
+    assert.ok(Math.abs(fieldOf(e, 11) - (20 + 40 * Math.cos(Math.PI / 12) - 20 * Math.sin(Math.PI / 12))) < 1e-5);
+    await undoRotate(); await t('tog-ortho').click();
+    for (const tab of ['Home', 'Modify']) {
+      await page.locator(`[data-ribbon-tab=${tab}]`).click();
+      const button = page.locator('.ribbon [data-panel=Modify]').getByRole('button', { name: 'Rotate', exact: true });
+      assert.equal(await button.isEnabled(), true); await button.click();
+      assert.equal(await prompt(), 'Pivot:'); await page.keyboard.press('Escape');
+    }
+    await menuItem('Modify', 'Rotate'); assert.equal(await prompt(), 'Pivot:'); await page.keyboard.press('Escape');
+
+    const locked = newDoc(4); addLayer(locked, 'Cut');
+    addEntities(locked, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60, { layer: 'Cut' }), dxfLine(60, 60, 20, 60), dxfLine(20, 60, 20, 20));
+    await openGrips(writeDxf(locked), 'rotate-locked.dxf'); const lockedBefore = await savedDoc();
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await typeCmd('ro'); assert.match(await prompt(), /Layer Cut is locked/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual((await savedDoc()).entities, lockedBefore.entities);
+    await closeTabs(/rotate/);
+
+    const lay = newLayout('Rotate layout'), partDoc = newDoc(4);
+    addEntities(partDoc, dxfPoly([[0, 0], [40, 0], [40, 20], [0, 20]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', partDoc);
+    lay.placed = [{ partId: 'plate', x: 100, y: 100, rot: 0 }];
+    await t('picker').setInputFiles({ name: 'rotate-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.locator('.dtab.on .tname').filter({ hasText: 'rotate-layout.dxf' }).waitFor();
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    await typeCmd('ro'); assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Esc\]:?$/);
+    await typeCmd('90'); assert.equal(await t('rot-angle').inputValue(), '90°');
+    await page.keyboard.press('Escape'); await closeTabs(/rotate-layout/);
   });
 
   await step('TODO 66a2: drawing nudge, straight drag, Nudge box and Compare Auto to Manual', async () => {
