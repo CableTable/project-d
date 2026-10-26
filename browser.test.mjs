@@ -12977,6 +12977,233 @@ try {
     await closeTabs(/./);
   });
 
+  // Each point prompt runs all three existing coordinate forms through the command bar.
+  const forms70 = ['relative', 'polar', 'relative polar'];
+  const point70 = (p, last, form) => {
+    const [x, y] = form === 'polar' ? p : p.map((v, i) => v - (last?.[i] || 0));
+    return form === 'relative' ? `@${x},${y}` : `${form === 'relative polar' ? '@' : ''}${Math.hypot(x, y)}<${Math.atan2(y, x) * 180 / Math.PI}`;
+  };
+  const near70 = (actual, expected) => {
+    assert.equal(actual.length, expected.length);
+    actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-5, `${actual} != ${expected}`));
+  };
+  const line70 = (e) => [10, 20, 11, 21].map((c) => fieldOf(e, c));
+  const open70 = async (entities = [dxfLine(100, 100, 120, 100)], units = 4) => {
+    const doc = newDoc(units); addEntities(doc, ...entities);
+    await openGrips(writeDxf(doc), 'typed-points70.dxf');
+    if (await t('tog-ortho').getAttribute('aria-pressed') === 'true') await t('tog-ortho').click();
+  };
+  const draw70 = [
+    { tool: 'line', prompts: ['first point', 'next point'], pts: [[20, 30], [60, 30]], check: (e) => near70(line70(e), [20, 30, 60, 30]) },
+    { tool: 'polyline', prompts: ['first point', 'next point', 'following point'], pts: [[20, 30], [60, 30], [60, 50]], check: (e) => near70(GR.lwVertices(e.r).flatMap((p) => [p.x, p.y]), [20, 30, 60, 30, 60, 50]) },
+    { tool: 'rect', prompts: ['first corner', 'other corner'], pts: [[20, 30], [60, 50]], check: (e) => near70(GR.lwVertices(e.r).flatMap((p) => [p.x, p.y]), [20, 30, 60, 30, 60, 50, 20, 50]) },
+    { tool: 'rrect', prompts: ['first corner', 'other corner'], pts: [[20, 30], [60, 50]], check: (e) => {
+      near70(GR.lwVertices(e.r).flatMap((p) => [p.x, p.y]), [25, 30, 55, 30, 60, 35, 60, 45, 55, 50, 25, 50, 20, 45, 20, 35]);
+      assert.equal(GR.lwVertices(e.r).filter((p) => p.b > 0).length, 4);
+    } },
+    { tool: 'circle', prompts: ['centre', 'radius point'], pts: [[20, 30], [30, 30]], check: (e) => near70([10, 20, 40].map((c) => fieldOf(e, c)), [20, 30, 10]) },
+    { tool: 'circle', option: 'd', prompts: ['centre', 'diameter point'], pts: [[20, 30], [30, 30]], check: (e) => near70([10, 20, 40].map((c) => fieldOf(e, c)), [20, 30, 5]) },
+    { tool: 'ellipse', prompts: ['centre', 'axis 1 end', 'axis 2 point'], pts: [[20, 30], [40, 30], [20, 35]], check: (e) => near70([10, 20, 11, 21, 40].map((c) => fieldOf(e, c)), [20, 30, 20, 0, .25]) },
+    { tool: 'arc', prompts: ['start point', 'second point', 'end point'], pts: [[30, 30], [20, 40], [10, 30]], check: (e) => near70([10, 20, 40, 50, 51].map((c) => fieldOf(e, c)), [20, 30, 10, 0, 180]) },
+  ];
+  for (const test of draw70) for (const [index, promptName] of test.prompts.entries()) {
+    await step(`TODO 70: ${test.tool}${test.option ? ' diameter' : ''} ${promptName}`, async () => {
+      for (const form of forms70) {
+        await open70(); await page.locator(`[data-tool=${test.tool}]`).click();
+        if (test.tool === 'rrect') await typeCmd('5');
+        for (const [i, p] of test.pts.entries()) {
+          if (i === 1 && test.option) await typeCmd(test.option);
+          await typeCmd(point70(p, test.pts[i - 1], i === index ? form : 'relative'));
+        }
+        if (test.tool === 'polyline') await typeCmd('');
+        const doc = await savedDoc(); assert.equal(doc.entities.length, 2, form);
+        test.check(doc.entities.at(-1));
+      }
+    });
+  }
+  for (const tool of ['move', 'copy', 'rotate', 'scale']) for (const index of [0, 1]) {
+    await step(`TODO 70: ${tool} ${index ? 'second point' : 'base point'}`, async () => {
+      for (const form of forms70) {
+        await open70([dxfLine(20, 30, 60, 50)]);
+        await page.keyboard.press('Control+a'); await typeCmd(tool);
+        const pts = [[20, 30], tool === 'rotate' ? [20, 40] : tool === 'scale' ? [22, 30] : [25, 40]];
+        for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+        const doc = await savedDoc();
+        assert.equal(doc.entities.length, tool === 'copy' ? 2 : 1);
+        near70(line70(doc.entities.at(-1)), tool === 'rotate' ? [20, 30, 0, 70] : tool === 'scale' ? [20, 30, 100, 70] : [25, 40, 65, 60]);
+      }
+    });
+  }
+  await step('TODO 70: Copy relative targets follow the last typed or clicked target; bare pairs keep base displacement', async () => {
+    await open70([dxfLine(20, 30, 60, 50)]);
+    await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('20,30');
+    for (const point of ['@5,10', '@5,0', '@10<90', '50<0', '5,10']) await typeCmd(point);
+    let doc = await savedDoc();
+    const starts = doc.entities.map((e) => line70(e).slice(0, 2)).flat();
+    near70(starts, [20, 30, 25, 40, 30, 40, 30, 50, 50, 0, 25, 40]);
+    await click(60, 50); await typeCmd('@5,0');
+    doc = await savedDoc(); near70(line70(doc.entities.at(-1)), [65, 50, 105, 70]);
+  });
+  for (const layout of [false, true]) for (const index of [0, 1]) {
+    await step(`TODO 70: Measure ${layout ? 'layout' : 'drawing'} ${index ? 'second' : 'first'} point`, async () => {
+      for (const form of forms70) {
+        await open70();
+        if (layout) {
+          const lay = newLayout('Typed points');
+          await t('picker').setInputFiles({ name: 'typed-layout70.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+          await page.locator('.dtab.on .tname').filter({ hasText: 'typed-layout70.dxf' }).waitFor();
+        }
+        await typeCmd('measure');
+        const pts = [[20, 30], [60, 60]];
+        for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+        assert.match(await prompt(), /Distance 50 mm\s+ΔX 40\s+ΔY 30\s+Angle 36\.87/);
+        // A third point continues relative to the second even though it starts a new measure.
+        await typeCmd('@10,10'); await typeCmd('@3,4');
+        assert.match(await prompt(), /Distance 5 mm\s+ΔX 3\s+ΔY 4/);
+        if (!layout) {
+          await t('meas-keep').click();
+          const doc = await savedDoc(), dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+          near70(dim.params.a.slice(0, 2), [70, 70]); near70(dim.params.b.slice(0, 2), [73, 74]);
+        }
+      }
+    });
+  }
+  for (const command of ['dimension', 'dimlinear']) for (const index of [0, 1, 2]) {
+    await step(`TODO 70: ${command} ${['first point', 'second point', 'line location'][index]}`, async () => {
+      for (const form of forms70) {
+        await open70(); await typeCmd(command);
+        const pts = [[20, 30], [60, 30], [60, 50]];
+        for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+        const doc = await savedDoc(), dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+        assert.equal(dim.kind, command === 'dimension' ? 'aligned' : 'linear');
+        near70(dim.params.a.slice(0, 2), pts[0]); near70(dim.params.b.slice(0, 2), pts[1]);
+        near70([dim.params.offset], [20]);
+      }
+    });
+  }
+  for (const command of ['dimradius', 'dimdiameter', 'dimangular']) {
+    await step(`TODO 70: ${command} callout location after object picks`, async () => {
+      for (const form of forms70) {
+        await open70(command === 'dimangular' ? [dxfLine(20, 30, 60, 30), dxfLine(20, 30, 20, 70)] : [dxfCircle(20, 30, 10)]);
+        await typeCmd(command);
+        if (command === 'dimangular') { await typeCmd('40,30'); await typeCmd('20,50'); }
+        else await typeCmd('30,30');
+        await typeCmd(point70([40, 50], command === 'dimangular' ? [20, 50] : [30, 30], form));
+        const doc = await savedDoc(), dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+        assert.ok(dim, 'callout was committed');
+        if (command === 'dimangular') { assert.equal(dim.kind, 'angle'); near70(dim.params.v, [20, 30]); near70([dim.params.r], [Math.hypot(20, 20)]); }
+        else if (command === 'dimradius') { assert.equal(dim.kind, 'radius'); near70(dim.params.c, [20, 30]); near70(dim.params.p, [40, 50]); }
+        else { assert.equal(dim.kind, 'diameter'); near70(dim.params.a, [20 - Math.SQRT1_2 * 10, 30 - Math.SQRT1_2 * 10]); near70(dim.params.b, [20 + Math.SQRT1_2 * 10, 30 + Math.SQRT1_2 * 10]); }
+      }
+    });
+  }
+  for (const index of [0, 1, 2]) await step(`TODO 70: Leader ${['arrowhead', 'second point', 'third point'][index]}`, async () => {
+    for (const form of forms70) {
+      await open70(); await typeCmd('leader');
+      const pts = [[20, 30], [40, 50], [60, 50]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      await typeNote('Typed leader');
+      const { list } = await ldrBlocks(); assert.equal(list.length, 1);
+      near70(list[0].model.pts.flat(), pts.flat());
+    }
+  });
+  await step('TODO 70: Text insertion point and continued relative placement', async () => {
+    for (const form of forms70) {
+      await open70(); await typeCmd('text'); await typeCmd(point70([20, 30], null, form)); await typeNote('First');
+      await typeCmd('@10<90'); await typeNote('Second');
+      const doc = await savedDoc(), texts = doc.entities.filter((e) => e.type === 'TEXT');
+      assert.equal(texts.length, 2);
+      near70(texts.flatMap((e) => [fieldOf(e, 10), fieldOf(e, 20)]), [20, 30, 20, 40]);
+    }
+  });
+  for (const index of [0, 1]) await step(`TODO 70: Mirror ${index ? 'second' : 'first'} point`, async () => {
+    for (const form of forms70) {
+      await open70([dxfLine(20, 30, 60, 50)]); await page.keyboard.press('Control+a'); await typeCmd('mirror');
+      const pts = [[20, 30], [20, 50]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      await typeCmd('n');
+      const doc = await savedDoc(); assert.equal(doc.entities.length, 2);
+      near70(line70(doc.entities.at(-1)), [20, 30, -20, 50]);
+    }
+  });
+  for (const index of [0, 1]) await step(`TODO 70: Set length ${index ? 'second' : 'first'} point`, async () => {
+    for (const form of forms70) {
+      await open70([dxfLine(20, 30, 60, 50)]); await t('set-length').click();
+      const pts = [[20, 30], [60, 60]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      assert.match(await t('measured').textContent(), /50(?:\.00)?/);
+      await t('real-length').fill('100'); await t('real-length').press('Enter');
+      near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+    }
+  });
+  await step('TODO 70: Set length replaces active drawing, modify and Text point prompts', async () => {
+    for (const tool of ['line', 'move', 'text']) {
+      await open70([dxfLine(20, 30, 60, 50)]);
+      await page.keyboard.press('Control+a'); await typeCmd(tool);
+      if (tool !== 'text') await typeCmd('200,300');
+      await t('set-length').click();
+      assert.match(await prompt(), /Set length: click the first point/);
+      await cmdLine().fill('@20,30');
+      assert.match(await t('cmd-bar').textContent(), /Set length: click the first point/);
+      if (tool === 'line') await shotBoth('typed-set-length70', () => cmdLine().fill('@20,30'));
+      await typeCmd('@20,30'); await typeCmd('@50<0');
+      assert.match(await t('measured').textContent(), /50(?:\.00)?/);
+      await t('real-length').fill('100'); await t('real-length').press('Enter');
+      near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+    }
+  });
+  for (const index of [0, 1]) await step(`TODO 70: Balloon ${index ? 'centre' : 'arrow tip'} point`, async () => {
+    for (const form of forms70) {
+      await open70(); await typeCmd('balloon');
+      const pts = [[20, 30], [60, 50]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      const files = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
+      const data = JSON.parse(files.find((f) => f.name.endsWith('.json')).text);
+      near70(data.items[0].tip, pts[0]); near70(data.items[0].c, pts[1]);
+    }
+  });
+  await step('TODO 70: non-finite typed grip points are refused and a valid retry works', async () => {
+    await open70([dxfLine(20, 30, 60, 30)]); await page.keyboard.press('Control+a'); await gripWhen(3);
+    const p = await gripBox('0:b'); await page.mouse.click(p.x, p.y);
+    await typeCmd('9'.repeat(310) + ',0');
+    assert.match(await t('cmd-hist').textContent(), /Point coordinates must be finite/);
+    assert.equal(await t('grip-hot').count(), 1, 'invalid input keeps the grip hot');
+    await typeCmd('@5,0');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 65, 30]);
+  });
+  await step('TODO 70: exact typed points override snaps and ORTHO; inch conversion; Enter and Space repeat', async () => {
+    await open70([dxfLine(20, 30, 60, 30)]); await typeCmd('measure');
+    await typeCmd('@20.1,30.2'); await typeCmd('@3,4'); await t('meas-keep').click();
+    const exact = await savedDoc(), kept = Object.entries(exact.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+    near70(kept.params.a.slice(0, 2), [20.1, 30.2]); near70(kept.params.b.slice(0, 2), [23.1, 34.2]);
+    for (const tool of ['move', 'copy', 'rotate', 'scale', 'measure', 'dimension', 'leader', 'text', 'mirror']) {
+      await open70([dxfLine(1, 1, 3, 1)], 1);
+      await t('tog-ortho').click(); await page.keyboard.press('Control+a'); await typeCmd(tool);
+      await typeCmd('@25.4,25.4');
+      if (tool === 'text') { await typeNote('Inches'); }
+      else if (tool === 'rotate' || tool === 'mirror') { await typeCmd('@25.4<90'); if (tool === 'mirror') await typeCmd('n'); }
+      else if (tool === 'scale') await typeCmd('@50.8<0');
+      else { await typeCmd('@25.4,50.8'); if (tool === 'dimension') await typeCmd('@0,25.4'); if (tool === 'leader') { await typeCmd('@25.4<0'); await typeNote('Inches'); } }
+      if (tool === 'measure') { assert.match(await prompt(), /ΔX 25\.4\s+ΔY 50\.8/); continue; }
+      const doc = await savedDoc();
+      if (tool === 'text') near70([fieldOf(doc.entities.at(-1), 10), fieldOf(doc.entities.at(-1), 20)], [1, 1]);
+      else if (tool === 'leader') near70(readLeader('PD_LDR_1', doc.blocks.PD_LDR_1).pts.flat(), [1, 1, 2, 3, 3, 3]);
+      else if (tool === 'dimension') {
+        const dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+        assert.equal(dim.kind, 'aligned'); near70(dim.params.a.slice(0, 2), [1, 1]); near70(dim.params.b.slice(0, 2), [2, 3]);
+      } else near70(line70(doc.entities.at(-1)), tool === 'rotate' ? [1, 1, 1, 3] : tool === 'scale' ? [1, 1, 5, 1] : tool === 'mirror' ? [1, 1, -1, 1] : [2, 3, 4, 3]);
+    }
+    await open70(); await typeCmd('dimension'); await typeCmd('@20,30'); await typeCmd('@40,0');
+    await shotBoth('typed-points70', () => cmdLine().fill('@0,20'));
+    await cmdLine().press('Enter');
+    for (const key of ['Enter', 'Space']) {
+      await page.locator('[data-tool=select]').click();
+      await cmdLine().fill(''); await cmdLine().press(key);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', `${key} repeats the last command`);
+    }
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

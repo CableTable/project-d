@@ -8,7 +8,7 @@ test('Move: absolute base, relative target, signed decimals and direct distance 
   assert.deepEqual(movePoint('25', [10, 20], [13, 24]), [25, 40]);
   assert.deepEqual(movePoint('5', [10, 20], [0, 20]), [5, 20]);
   assert.deepEqual(movePoint('5', [10, 20], [10, 0]), [10, 15]);
-  for (const text of ['', '1,', ',2', '1,2,3', 'NaN,2', 'Infinity', '12mm', '1foo', '@1,2', '5<30']) {
+  for (const text of ['', '1,', ',2', '1,2,3', 'NaN,2', 'Infinity', '12mm', '1foo']) {
     assert.equal(movePoint(text), null, text);
     assert.equal(movePoint(text, [0, 0], [3, 4]), null, text);
   }
@@ -17,4 +17,16 @@ test('Move: absolute base, relative target, signed decimals and direct distance 
   assert.equal(movePoint('5', [0, 0], [0, 0]), null, 'no direction yet');
   assert.equal(movePoint('5', [0, 0]), null);
   assert.equal(movePoint('9'.repeat(310) + ',0'), null, 'overflow');
+});
+
+test('Move / Copy reuse typed points: relative Cartesian and polar, absolute polar, last target', () => {
+  assert.deepEqual(movePoint('@1,2'), [1, 2]);
+  assert.deepEqual(movePoint('@1,2', [20, 30]), [21, 32]);
+  assert.deepEqual(movePoint('@1,2', [20, 30], null, [40, 50]), [41, 52]);
+  assert.deepEqual(movePoint('1,2', [20, 30], null, [40, 50]), [21, 32], 'bare pair retains base displacement');
+  const near = (actual, expected) => actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-9));
+  near(movePoint('10<90', [20, 30]), [0, 10]);
+  near(movePoint('@10<90', [20, 30]), [20, 40]);
+  near(movePoint('@10<90', [20, 30], null, [40, 50]), [40, 60]);
+  near(movePoint('@10<-90'), [0, -10]);
 });

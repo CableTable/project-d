@@ -847,6 +847,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  if (state.pointDoc !== curDoc()) { state.pointLast = null; state.pointDoc = curDoc(); }
   ui.fontNote.hidden = true;
   state.entityDrag = null;
   state.sel = 0;                          // a tab opens with its first part selected; an explicit deselection stays empty
@@ -1176,6 +1177,8 @@ function setTool(id) {
   if (state.draw && DR.toolBusy(state.draw) && drawId) drawApply(DR.toolFinish(state.draw));      // a line or polyline in progress ends (and keeps what it has)
   if (id === 'step' && !curLay()) { note('Step and repeat is on a layout tab: New layout, or Add to layout'); return; }
   state.tool = id;
+  state.pointLast = null;
+  state.pointDoc = curDoc();
   for (const [k, b] of Object.entries(ui.toolBtns)) b.classList.toggle('on', k === id);
   ui.canvas.classList.toggle('pan', id === 'pan');
 
@@ -3405,10 +3408,10 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
-  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
+  const on = !['select', 'pan', 'step'].includes(state.tool) || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
-  return { label: m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
+  return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
 }
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
@@ -3417,6 +3420,19 @@ function cmdEnter(raw) {
   if (drawLive()) { drawTyped(raw); return; }
   if (modLive() && modTyped(editable(), raw)) return;
   if (state.tool === 'text' && editable() && !textEditing()) { textTyped(raw); return; }
+  const d = state.tool === 'measure' ? measureTarget() : editable();
+  const pointAction = state.setlen ? lengthPoint : state.tool === 'measure' ? measurePoint
+    : state.dim ? dimensionPoint : state.ldr && !textEditing() ? ldrPoint
+      : state.bal ? balClick : modLive() && state.mod.kind === 'mirror' && ['p1', 'p2'].includes(state.mod.stage) ? mirrorPoint : null;
+  if (d && pointAction) {
+    const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw);
+    if (inp.kind === 'xy' || inp.kind === 'polar') {
+      const p = DR.typedPoint(inp, state.pointLast?.map((v) => v * f));
+      if (p) { trackStop(); pointAction(d, p.map((v) => v / f), false, true); }
+      else note('Point coordinates must be finite');
+      return;
+    }
+  }
   const c = raw.trim().toLowerCase();
   if (state.txoWait) { state.txoWait = false; if (!c) { textToOutlines(); return; } }          // "Select text": Enter runs it, a typed command replaces it
   if (!c) return;
@@ -4820,16 +4836,18 @@ function startSetlen() {
   const d = editable(), sb = d && sizeBox(d);
   if (!d || !sb) return;
   if (state.setlen) { cancelSetlen(); return; }
+  setTool('select');
   state.setlen = { pts: [], hover: null, measured: null };
   note('Set length: click the first point (it snaps to ends and centres)');
   renderEdit(); paintOverlay();
 }
 /** Measure: two clicks (snapping to ends and centres); a third starts again. */
-function measurePoint(d, p, shift = false) {
+function measurePoint(d, p, shift = false, typed = false) {
   const M = state.meas;
   if (!M) return;
   if (M.pts.length >= 2) M.pts = [];
-  M.pts.push(pickPoint(d, p, M.pts, shift)); M.hover = null;
+  M.pts.push(typed ? p : pickPoint(d, p, M.pts, shift)); M.hover = null;
+  state.pointLast = M.pts.at(-1).slice(0, 2);
   if (M.pts.length === 1) note('Measure: now the second point');
   else {
     M.result = Ed.measureTwo(M.pts[0], M.pts[1], d.lay ? 1 : d.factor);
@@ -4850,7 +4868,7 @@ function keepMeasure() {
 // same with the pointer choosing a horizontal or a vertical line. Radius and diameter: pick a circle or an arc, then place it. Angle: pick two lines, then the arc.
 const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null });
 const dimBusy = (D) => D.pts.length > 0 || !!D.obj || D.lines.length > 0;
-function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.lines = []; D.force = null; }
+function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.lines = []; D.force = null; D.typed = false; }
 /** What the command line asks for next. */
 function dimPrompt() {
   const D = state.dim, type = state.dimType;
@@ -4871,7 +4889,7 @@ function dimDraft(at) {
     if (D.pts.length === 1 && D.hover) return { kind: 'aligned', params: { a: D.pts[0], b: D.hover, offset: 0 } };
     if (D.pts.length !== 2 || !at) return null;
     const [a, b] = D.pts;
-    const lin = type === 'linear' || b.length === 2 && (state.ortho || D.shift); // a snapped second point keeps Aligned
+    const lin = type === 'linear' || b.length === 2 && !D.typed && (state.ortho || D.shift); // an exact second point keeps Aligned
     if (!lin) return { kind: 'aligned', params: { a, b, offset: Ed.dimOffsetAt(a, b, at) } };
     const axis = D.force || Ed.linearAxis(a, b, at);
     return { kind: 'linear', params: { a, b, axis, offset: Ed.dimOffsetAt(a, b, at, axis) } };
@@ -4905,12 +4923,13 @@ function dimPlace(d, m) {
   dimClear(state.dim);
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
   note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
+  return true;
 }
-function dimensionPoint(d, p, shift = false) {
+function dimensionPoint(d, p, shift = false, typed = false) {
   const D = state.dim, type = state.dimType;
   if (!D || !editable()) return;
   if (type === 'radius' || type === 'diameter' || type === 'angle') {
-    if (D.obj || D.lines.length === 2) { dimPlace(d, dimDraft(p)); return; }
+    if (D.obj || D.lines.length === 2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
     const ent = d.raw.entities[Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d))];
     if (type === 'angle') {
       const l = Ed.lineOf(ent);
@@ -4921,12 +4940,13 @@ function dimensionPoint(d, p, shift = false) {
       D.obj = Ed.circleOf(ent);
       if (!D.obj) { note('Select an arc or a circle: click on one'); return; }
     }
-    D.cursor = p; note(dimPrompt()); paintOverlay();
+    state.pointLast = p.slice(0, 2); D.cursor = p; note(dimPrompt()); paintOverlay();
     return;
   }
-  if (D.pts.length === 2) { D.shift = shift; dimPlace(d, dimDraft(p)); return; }
-  const q = pickPoint(d, p, D.pts, shift);
+  if (D.pts.length === 2) { D.shift = shift; if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
+  const q = typed ? p : pickPoint(d, p, D.pts, shift);
   if (D.pts.length === 1 && Math.hypot(q[0] - D.pts[0][0], q[1] - D.pts[0][1]) < 1e-9) { note('Dimension: that is the first point again, pick another'); return; }
+  D.typed = typed; state.pointLast = q.slice(0, 2);
   D.pts.push(q); D.hover = null; D.cursor = p;
   note(dimPrompt());
   paintOverlay();
@@ -5125,10 +5145,11 @@ function balHover(d, p, shift) {
   const q = B.tip ? (shift || state.ortho ? Ed.orthoLock([B.tip[0] / f, B.tip[1] / f], p) : p) : snapPoint(d, p);
   B.hover = [q[0] * f, q[1] * f]; paintOverlay();
 }
-function balClick(d, p, shift) {
+function balClick(d, p, shift, typed = false) {
   const B = state.bal, f = d.factor;
   if (!B) return;
-  const q = B.tip ? (shift || state.ortho ? Ed.orthoLock([B.tip[0] / f, B.tip[1] / f], p) : p) : snapPoint(d, p), mm = [q[0] * f, q[1] * f];
+  const q = typed ? p : B.tip ? (shift || state.ortho ? Ed.orthoLock([B.tip[0] / f, B.tip[1] / f], p) : p) : snapPoint(d, p), mm = [q[0] * f, q[1] * f];
+  state.pointLast = q.slice(0, 2);
   if (!B.tip) { B.tip = mm; B.hover = null; state.msg = balPrompt(); renderCommand(); paintOverlay(); return; }
   const set = BAL.add(balOf(d), { tip: B.tip, c: mm, sheet: sheetOf(d) }), it = set.items[set.items.length - 1];
   B.tip = null; B.hover = null;
@@ -5514,12 +5535,13 @@ function ldrHover(d, p, shift) {
   L.cursor = p; L.hover = pickPoint(d, p, L.pts, shift, true);
   paintOverlay();
 }
-function ldrPoint(d, p, shift = false) {
+function ldrPoint(d, p, shift = false, typed = false) {
   const L = state.ldr;
   if (!L || !editable()) return;
-  const q = pickPoint(d, p, L.pts, shift), last = L.pts[L.pts.length - 1];
+  const q = typed ? p : pickPoint(d, p, L.pts, shift), last = L.pts[L.pts.length - 1];
   if (last && Math.hypot(q[0] - last[0], q[1] - last[1]) < 1e-9) { note('Leader: that is the same point again, pick another'); return; }
   L.pts.push([q[0], q[1]]); L.hover = null;
+  state.pointLast = q.slice(0, 2);
   if (L.pts.length === 3) { ldrNoteOpen(d); return; }
   note(ldrPrompt()); paintOverlay();
 }
@@ -5581,10 +5603,11 @@ function ldrFieldTyped(which) {
   if (ldrReplace(d, sl.e, m, label)) note(`${label}. Ctrl+Z takes it back`);
 }
 function cancelSetlen() { state.setlen = null; note('Set length cancelled'); renderEdit(); paintOverlay(); }
-function lengthPoint(d, p, shift = false) {
+function lengthPoint(d, p, shift = false, typed = false) {
   const L = state.setlen;
   if (L.pts.length >= 2) return;
-  L.pts.push(pickPoint(d, p, L.pts, shift)); L.hover = null;
+  L.pts.push(typed ? p : pickPoint(d, p, L.pts, shift)); L.hover = null;
+  state.pointLast = L.pts.at(-1).slice(0, 2);
   if (L.pts.length === 1) note('Set length: now the second point');
   else {
     L.measured = Math.hypot(L.pts[1][0] - L.pts[0][0], L.pts[1][1] - L.pts[0][1]) * d.factor;
@@ -5833,9 +5856,15 @@ function modTyped(d, raw) {
   if (m.kind === 'scale' && m.stage !== 'pick') {
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Scale a copy: on' : 'Scale a copy: off'); return true; }
     if (m.stage === 'p1') {
-      const q = movePoint(raw);
+      const q = DR.typedPoint(DR.parseInput(raw), null);
       if (q) { transformBase(d, q.map((v) => v / d.factor)); return true; }
     } else {
+      const q = DR.typedPoint(DR.parseInput(raw), m.p1.map((v) => v * d.factor));
+      if (q) {
+        const factor = scaleDistance(m.p1, q.map((v) => v / d.factor));
+        if (factor > 0) transformDo(d, factor); else note('I do not understand "0". Type a number above 0');
+        return true;
+      }
       const factor = scaleFactor(raw);
       if (factor != null) { transformDo(d, factor); return true; }
     }
@@ -5845,9 +5874,15 @@ function modTyped(d, raw) {
   if (m.kind === 'rotate' && m.stage !== 'pick') {
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
     if (m.stage === 'p1') {
-      const q = movePoint(raw);
+      const q = DR.typedPoint(DR.parseInput(raw), null);
       if (q) { transformBase(d, q.map((v) => v / d.factor)); return true; }
     } else {
+      const q = DR.typedPoint(DR.parseInput(raw), m.p1.map((v) => v * d.factor));
+      if (q) {
+        const p = q.map((v) => v / d.factor);
+        if (DR.dist(m.p1, p) > 1e-9) transformDo(d, rotationAngle(m.p1, p)); else note('Click a point away from the pivot');
+        return true;
+      }
       const a = PL.parseAngle(raw);
       if (a != null) { transformDo(d, a); return true; }
     }
@@ -5856,7 +5891,7 @@ function modTyped(d, raw) {
   }
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     const mm = (p) => p && p.slice(0, 2).map((v) => v * d.factor);
-    const q = movePoint(raw, mm(m.p1), mm(m.cur));
+    const q = movePoint(raw, mm(m.p1), mm(m.cur), mm(state.pointLast));
     if (!q && DR.parseInput(raw).kind === 'word') return false;
     if (q) moveTo(d, q.map((v) => v / d.factor));
     else note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'dx,dy or a positive distance toward the cursor'}`);
@@ -5951,13 +5986,17 @@ function modUp(d, was, p, shift) {
     else if (Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) < 1e-9) note('Click a point away from the pivot');
     else transformDo(d, rotationAngle(m.p1, q, shift || was.shift));
   } else {
-    const q = pickPoint(d, was.p, m.stage === 'p2' ? [m.p1] : [], shift || was.shift);
-    if (m.stage === 'p1') { m.p1 = [q[0], q[1]]; m.stage = 'p2'; note('Click the second point of the mirror line'); paintOverlay(); }
-    else if (m.stage === 'p2') {
-      if (Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) < 1e-9) { note('The two points are the same: click a different second point'); return; }
-      m.p2 = [q[0], q[1]]; m.stage = 'erase'; note('Erase source objects? Type Yes or No, or click a button (Enter = No)'); paintOverlay();
-    }
+    mirrorPoint(d, was.p, shift || was.shift);
   }
+}
+
+function mirrorPoint(d, p, shift = false, typed = false) {
+  const m = state.mod, q = typed ? p : pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift);
+  if (m.stage === 'p2' && DR.dist(q, m.p1) < 1e-9) { note('The two points are the same: click a different second point'); return; }
+  state.pointLast = q.slice(0, 2);
+  if (m.stage === 'p1') { m.p1 = q.slice(0, 2); m.stage = 'p2'; note('Click the second point of the mirror line'); }
+  else if (m.stage === 'p2') { m.p2 = q.slice(0, 2); m.stage = 'erase'; note('Erase source objects? Type Yes or No, or click a button (Enter = No)'); }
+  paintOverlay();
 }
 
 function moveTake(d) {
@@ -5998,6 +6037,7 @@ function moveTo(d, q) {
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   if (m.stage === 'p1') {
     m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
+    state.pointLast = m.p1;
     const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
     m.move = { preview, items: preview.items, dx: 0, dy: 0 };
     note(`${label}: target, dx,dy or distance${copy ? '. Enter or Esc ends' : ''}`); paintOverlay(); return;
@@ -6007,6 +6047,7 @@ function moveTo(d, q) {
     const next = (copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, m.sel, dx, dy);
     view.fitted = false;
     if (copy || dx || dy) commit(d, copy ? next : followDimensions(d.raw, next, d.factor), label);
+    state.pointLast = q.slice(0, 2);
     if (copy) m.raw = d.raw.entities; else setTool('select');
     setSel(d, m.sel);
     note(copy ? 'Copy placed. Next target from the same base; Enter or Esc ends. Ctrl+Z removes the last copy' : 'Selection moved. Ctrl+Z takes it back');
@@ -6213,6 +6254,7 @@ function textOpen(d, p, e = null, ldr = null) {
   if (ldr) { m = { ...LR.geometry(ldr.model).text }; e = ldr.e; }                 // a leader's note: where it lands, in the leader's text height
   else if (e != null) { orig = TX.decode(d.raw.entities[e]); m = { ...orig }; setSel(d, new Set([e])); }
   else m = { type: 'TEXT', x: p[0], y: p[1], h: c.h / d.factor, lines: [''], angle: c.angle || 0, ha: c.ha, font: c.font, styleName: c.font, bold: c.bold };
+  if (p && e == null && !ldr) state.pointLast = p.slice(0, 2);
   state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model };
   ui.textArea.value = m.lines.join('\n');
   ui.textEd.hidden = false;
@@ -6413,7 +6455,8 @@ function textTyped(raw) {
   if (m) { textProp({ font: { standard: 'Standard', arial: 'Arial', mono: 'Mono' }[m[1]] }); return; }
   if (c === 'bold' || c === 'b') { textProp({ bold: !c0.bold }); return; }
   const inp = DR.parseInput(raw);
-  if (inp.kind === 'xy' && !inp.rel) { const f = d.factor; textOpen(d, [inp.x / f, inp.y / f]); return; }
+  const p = DR.typedPoint(inp, state.pointLast?.map((v) => v * d.factor));
+  if (p) { textOpen(d, p.map((v) => v / d.factor)); return; }
   if (/^(height|justify|style)$/.test(c)) { note('Type it with a value: Height 12, Justify Centre, Style Mono'); return; }
   const cmd = CB.resolve(c, 'draw', ownCommands);
   if (cmd && cmd.name !== 'text') { runCommand(cmd); return; }
@@ -6584,6 +6627,7 @@ function gripTyped(raw) {
     mm = DR.directDistance(refMm, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [refMm[0] + inp.v, refMm[1]] : null);
     if (!mm) { note('Move the pointer the way you want it to go, then type the length'); return; }
   } else mm = DR.typedPoint(inp, origMm);
+  if (!mm || !mm.every(Number.isFinite)) { note('Point coordinates must be finite'); return; }
   gripAim(g, [mm[0] / f, mm[1] / f]);
   gripCommit();
 }
