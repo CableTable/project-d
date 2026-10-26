@@ -239,7 +239,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
-**Snap types**: The tick list beside SNAP: end, middle, centre, point and nearest can each be switched off. All default on; ticks are remembered on this PC, outside drawing files. Intersection, quadrant and perpendicular show as “(soon)” until built. Where: `TODO.md`, item 68; `web/snap.js`.
+**Snap types**: The tick list beside SNAP: end, middle, centre, point, nearest, intersection and quadrant can each be switched off. All default on; ticks are remembered on this PC, outside drawing files. Perpendicular shows as “(soon)” until built. Where: `TODO.md`, item 68; `web/snap.js`.
+
+**Intersection snap**: A real crossing or tangent touch of finite lines, arcs, circles or straight / bulged polyline segments, shown with an X. Candidates come from geometry within the cursor's pick tolerance; extended lines and flattened ellipse / spline curves are excluded. Where: `web/modify.js`, `web/edit.js`.
+
+**Quadrant snap**: A circle's 0 / 90 / 180 / 270 degree points, restricted to the sweep for arcs and bulged polyline segments, shown with a diamond. Ellipses retain their axis ends as quadrant points. Where: `web/drawing.js`.
 
 **SOLID / TRACE**: DXF filled shapes handled together by the reader and left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`. Avoid: Bitmap tracing for TRACE.
 

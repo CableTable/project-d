@@ -749,7 +749,7 @@ export function pickIndex(fl, paper) {
     let cur = null, first = null, justMoved = false, closed = false;
     const seg = (a, b) => {
       if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-12) return;
-      pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1] });
+      pieces.push({ t: 's', it: idx, x1: a[0], y1: a[1], x2: b[0], y2: b[1], curve });
       if (!curve) snaps.push({ x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid', it: idx });
     };
     for (let i = 0; i < ops.length; justMoved = ops[i] === 0, i += ops[i] === 2 ? 7 : ops[i] === 9 ? 1 : 3) {
@@ -768,12 +768,20 @@ export function pickIndex(fl, paper) {
           const pm = on(s + sw / 2), from = on(flipped ? s + sw : s);       // a mirror turns the arc round
           const ws = Math.atan2(from[1] - c[1], from[0] - c[0]);
           pieces.push({ t: 'a', it: idx, cx: c[0], cy: c[1], r: R, s: ws, sw, full });
+          for (let j = 0; j < 4; j++) {
+            const t = j * TAU / 4, rel = ((t - ws) % TAU + TAU) % TAU;
+            if (full || rel <= sw + 1e-9 || rel >= TAU - 1e-9) snaps.push({ x: c[0] + R * Math.cos(t), y: c[1] + R * Math.sin(t), kind: 'quadrant', it: idx });
+          }
           snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
           if (!full) { snaps.push({ x: pm[0], y: pm[1], kind: 'mid', it: idx }); snaps.push({ x: ps[0], y: ps[1], kind: 'end', it: idx }, { x: pe[0], y: pe[1], kind: 'end', it: idx }); }
         } else {                                                     // stretched by its block: an ellipse, in pieces
           const steps = Math.max(8, Math.ceil(48 * sw / TAU));
           let p = mapply(m, cx + r * Math.cos(s), cy + r * Math.sin(s));
-          for (let j = 1; j <= steps; j++) { const t = s + sw * j / steps, q = mapply(m, cx + r * Math.cos(t), cy + r * Math.sin(t)); pieces.push({ t: 's', it: idx, x1: p[0], y1: p[1], x2: q[0], y2: q[1] }); p = q; }
+          for (let j = 1; j <= steps; j++) { const t = s + sw * j / steps, q = mapply(m, cx + r * Math.cos(t), cy + r * Math.sin(t)); pieces.push({ t: 's', it: idx, x1: p[0], y1: p[1], x2: q[0], y2: q[1], curve: true }); p = q; }
+          for (let j = Math.ceil((s - 1e-9) / (TAU / 4)); j * TAU / 4 <= s + sw + 1e-9; j++) {
+            const t = j * TAU / 4, q = mapply(m, cx + r * Math.cos(t), cy + r * Math.sin(t));
+            snaps.push({ x: q[0], y: q[1], kind: 'quadrant', it: idx });
+          }
           const c = mapply(m, cx, cy); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
         }
         cur = pe;
@@ -782,7 +790,7 @@ export function pickIndex(fl, paper) {
     if (curve) { if (closed) snaps.splice(s0, 1); else if (cur) snaps.push({ x: cur[0], y: cur[1], kind: 'end', it: idx }); }   // a closed curve has no end; an open one, its last point
     if (it.ell) {
       const c = mapply(m, it.ell[0], it.ell[1]); snaps.push({ x: c[0], y: c[1], kind: 'centre', it: idx });
-      for (const q of it.ell[2]) { const p = mapply(m, q[0], q[1]); snaps.push({ x: p[0], y: p[1], kind: 'end', it: idx }); }
+      for (const q of it.ell[2]) { const p = mapply(m, q[0], q[1]); snaps.push({ x: p[0], y: p[1], kind: 'quadrant', it: idx }); }
     }
   });
   // the grid
@@ -820,6 +828,22 @@ function nearOn(p, x, y) {
   const e1 = [p.cx + p.r * Math.cos(p.s), p.cy + p.r * Math.sin(p.s)], e2 = [p.cx + p.r * Math.cos(p.s + p.sw), p.cy + p.r * Math.sin(p.s + p.sw)];
   const d1 = Math.hypot(x - e1[0], y - e1[1]), d2 = Math.hypot(x - e2[0], y - e2[1]);
   return d1 < d2 ? { q: e1, d: d1 } : { q: e2, d: d2 };
+}
+
+/** Visible pieces within the pick aperture, using the grid (including pieces spanning many cells). */
+export function piecesNear(ix, x, y, tol, visible = () => true) {
+  if (!ix.G) return [];
+  const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
+  const i0 = at((x - tol - ix.x0) / ix.cell), i1 = at((x + tol - ix.x0) / ix.cell), j0 = at((y - tol - ix.y0) / ix.cell), j1 = at((y + tol - ix.y0) / ix.cell);
+  const seen = new Set(ix.wide), out = [];
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const n of ix.pc.get(i * 4096 + j) || []) seen.add(n);
+  for (const n of seen) {
+    const ent = ix.pieces[n];
+    if (!visible(ent.it)) continue;
+    const { q, d } = nearOn(ent, x, y);
+    if (d <= tol) out.push({ ent, near: q, d });
+  }
+  return out;
 }
 
 /**

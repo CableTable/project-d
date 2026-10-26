@@ -38,7 +38,7 @@ test('sheet corners and midpoints beat nearest edges; part features beat nearer 
 
 test('layout snap ticks filter part and sheet candidates before choosing their shared priority', () => {
   const placed = [{ partId: 'p', x: 150, y: 100, rot: 90 }];
-  const pick = (ps, x, y, saved) => layoutSnap(parts, ps, 400, 300, x, y, 0.5, snapTypes(saved));
+  const pick = (ps, x, y, saved) => layoutSnap(parts, ps, 400, 300, x, y, 0.5, snapTypes({ intersection: false, quadrant: false, ...saved }));
   at(pick(placed, 110.1, 179.9, { end: false }), 110, 179.9, 'near');
   assert.equal(pick(placed, 110.1, 179.9, { end: false, near: false }), null);
   assert.equal(pick(placed, 130.1, 139.9, { centre: false }), null);

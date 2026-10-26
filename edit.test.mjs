@@ -22,7 +22,7 @@ test('TODO 68a: snap index filters every type, respects SNAP off and filters unf
     const sn = E.snapPick(ed, x, y, .5, true, -1, snapTypes({ [kind]: false }));
     assert.ok(!sn || sn.kind !== kind, kind + ' disabled');
   }
-  assert.equal(E.snapPick(ed, 100.2, 10.1, .5, true, -1, snapTypes({ end: false })).kind, 'near');
+  assert.equal(E.snapPick(ed, 100.2, 10.1, .5, true, -1, snapTypes({ end: false, intersection: false, quadrant: false })).kind, 'near');
   const doc = W.newDoc(4);
   W.addEntities(doc, W.entity('POINT', [[10, 5], [20, 5]]));
   const pointRaw = D.readDxf(W.writeDxf(doc)), pointEd = E.makeIndex(pointRaw, D.flatten(pointRaw));
@@ -550,7 +550,7 @@ test('Nearest snap (TODO 89): the closest point on a line, arc, circle, ellipse,
   const k = (x, y, tol = 1) => E.snapPick(ed, x, y, tol, true);
   let n = k(30, 0.6); assert.equal(n.kind, 'near'); near(n.x, 30); near(n.y, 0);
   n = k(50 + 20 * Math.cos(0.7) * 1.03, 50 + 20 * Math.sin(0.7) * 1.03, 1); assert.equal(n.kind, 'near', 'arc'); near(Math.hypot(n.x - 50, n.y - 50), 20); near(Math.atan2(n.y - 50, n.x - 50), 0.7, 'on the pointer\'s ray', 1e-6);
-  n = k(200 - 10.5, 50); assert.equal(n.kind, 'near', 'circle'); near(n.x, 190); near(n.y, 50);
+  n = E.snapPick(ed, 200 - 10.5, 50, 1, true, -1, SNAP.snapTypes({ quadrant: false })); assert.equal(n.kind, 'near', 'circle with quadrant off'); near(n.x, 190); near(n.y, 50);
   n = k(316.684, 55.888); assert.equal(n.kind, 'near', 'ellipse'); assert.ok(Math.hypot(n.x - 316.507, n.y - 55.646) < 0.05, 'the point of the ellipse at t = 0.6 (flattened, so a hair off)');
   n = k(440 + 20.4 * Math.cos(0.5), 20 + 20.4 * Math.sin(0.5)); assert.equal(n.kind, 'near', 'polyline bulge'); near(n.x, 440 + 20 * Math.cos(0.5), 'on the half circle', 1e-3); near(n.y, 20 + 20 * Math.sin(0.5), '', 1e-3);
   n = k(405, -0.5); assert.equal(n.kind, 'near', 'polyline line'); near(n.x, 405); near(n.y, 0);

@@ -10,7 +10,7 @@ test('snap ticks default on; only stored booleans are accepted, missing types st
 const choose = (candidates, ticks = DEFAULT_TYPES, tol = 5) => candidates.reduce((best, sn) => preferSnap(best, sn, 0, 0, tol, ticks), null);
 test('every feature beats nearest in either order; among features the closest wins', () => {
   const near = { x: 0, y: .1, kind: 'near' };
-  for (const kind of ['end', 'mid', 'centre', 'node']) {
+  for (const kind of ['end', 'mid', 'centre', 'node', 'intersection', 'quadrant']) {
     const feature = { x: 4, y: 0, kind };
     assert.equal(choose([near, feature]), feature);
     assert.equal(choose([feature, near]), feature);
@@ -21,6 +21,13 @@ test('every feature beats nearest in either order; among features the closest wi
   assert.equal(choose([{ ...end, x: 6 }, near]), near, 'outside tolerance cannot win');
   assert.equal(choose([{ ...end, x: 5 }]).kind, 'end', 'tolerance boundary is included');
   assert.equal(choose([{ ...mid, x: 4 }, end]), end, 'ends keep the existing exact-tie priority');
+});
+
+test('end wins a coincident intersection tie in either candidate order', () => {
+  const end = { x: 1, y: 2, kind: 'end' }, intersection = { ...end, kind: 'intersection' };
+  assert.equal(choose([intersection, end]), end);
+  assert.equal(choose([end, intersection]), end);
+  assert.equal(choose([end, intersection], snapTypes({ end: false })), intersection);
 });
 
 test('each unticked type is excluded; an unticked feature falls back to nearest, all off returns null', () => {

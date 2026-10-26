@@ -73,7 +73,11 @@ function arcFrac(g, p) {
 
 /** The points where two segments cross: [{ fs, ft, p }] (fractions along each). */
 export function segInter(s, t) {
-  const gs = geo(s), gt = geo(t), out = [];
+  return geoInter(geo(s), geo(t));
+}
+
+function geoInter(gs, gt) {
+  const s = gs, t = gt, out = [];
   const E = 1e-9;
   if (gs.line && gt.line) {
     const d1 = sub(s.b, s.a), d2 = sub(t.b, t.a), den = cross(d1, d2);
@@ -105,6 +109,14 @@ export function segInter(s, t) {
     if (fs != null && ft != null) out.push({ fs, ft, p });
   }
   return out;
+}
+
+/** Exact finite intersections of drawing-index lines / arcs / circles; flattened curves have no exact solver. */
+export function pieceInter(a, b) {
+  if (a.curve || b.curve) return [];
+  const geometry = (p) => p.t === 's' ? geo({ a: [p.x1, p.y1], b: [p.x2, p.y2] })
+    : { line: false, c: [p.cx, p.cy], r: p.r, a0: p.s, sw: p.full ? TAU : p.sw };
+  return geoInter(geometry(a), geometry(b)).map((hit) => hit.p);
 }
 
 // ---------------------------------------------------------------- Mirror
