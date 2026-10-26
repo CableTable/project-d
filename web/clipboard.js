@@ -17,7 +17,8 @@ export function copyPlacedSnapshot(parts, placed) {
 
 function drawingFromPlaced(snapshot) {
   const { doc } = buildLayoutDoc({ ...snapshot, sheetW: 0, sheetH: 0 });
-  doc.entities = doc.entities.slice(1);
+  // Inserts go to layer 0 so exploding keeps layer-0 geometry on 0 instead of the layout's "Parts" layer.
+  doc.entities = doc.entities.slice(1).map((e) => ({ ...e, layer: '0' }));
   // Members that cannot safely explode stay in ordinary drawing blocks, preserving their geometry.
   const { entities, blocks } = explodeSelection(doc, new Set(doc.entities.map((_, i) => i)));
   return { raw: { ...doc, entities, blocks: blocksUsed(blocks, entities) }, factor: 1 };

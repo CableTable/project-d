@@ -34,6 +34,14 @@ test('placed snapshot keeps only selected linked parts and survives source edits
   }
 });
 
+test('placed paste keeps part geometry on its own layers; layer 0 stays 0 and no Parts layer appears', () => {
+  const raw = newDoc(4); addLayer(raw, 'Cut', { aci: 1 });
+  addEntities(raw, line(0, 0, 10, 0), line(0, 5, 10, 5, { layer: 'Cut' }));
+  const part = makePart('p', 'part', raw, 1), r = pasteSnapshot(copyPlacedSnapshot({ p: part }, [{ partId: 'p', x: 30, y: 40 }]), target());
+  assert.deepEqual(r.entities.map((e) => e.layer).sort(), ['0', 'Cut']);
+  assert.deepEqual(r.made, ['Cut']); assert.equal(r.layers.Parts, undefined);
+});
+
 test('placed drawing paste retains independent nested blocks and layer definitions', () => {
   const raw = newDoc(4);
   addLayer(raw, 'CUT', { aci: 1 }); addBlock(raw, 'B', [circle(10, 20, 5, { layer: 'CUT' })]);
