@@ -4782,7 +4782,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
+      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
@@ -6971,7 +6971,7 @@ try {
     assert.equal(await t('prop-empty').isVisible(), true);
     assert.match(await t('prop-empty').textContent(), /Select something/);
     await page.locator('[data-menu=View]').click();
-    assert.equal(await page.locator('.dropdown button').nth(1).evaluate((b) => b.firstChild.textContent), '✓ Properties');
+    assert.equal(await page.locator('.dropdown button').nth(4).evaluate((b) => b.firstChild.textContent), '✓ Properties');
     await page.getByRole('menuitem', { name: /Properties/ }).click();
     assert.equal(await t('panel-show').isVisible(), true);
     await page.keyboard.press('Control+1'); await t('props-panel').waitFor();
@@ -11565,7 +11565,7 @@ try {
 
   await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
-    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Zoom Window': 'zoomwindow', 'Zoom Selection': 'zoomselection', 'Zoom Previous': 'zoomprevious', 'Save As…': 'saveas', 'Select all': 'selectall' };
     const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
