@@ -132,10 +132,32 @@ try {
       const downloading = p.waitForEvent('download'); await p.keyboard.press('Control+s');
       return readFileSync(await (await downloading).path(), 'utf8');
     };
+    const history = async () => {
+      await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo history…', exact: true }).click();
+      await q('hist-dialog').waitFor();
+      const rows = await p.locator('[data-testid=hist-row] > span:last-child').allTextContents();
+      await q('hist-close').click();
+      return rows;
+    };
     const values = async (group, count) => Promise.all(Array.from({ length: count }, (_, i) => q(`colour-${group}-${i}`).inputValue().then(Number)));
     try {
       const doc = newDoc(); addEntities(doc, dxfPoly([[10, 10], [110, 10], [110, 110], [10, 110]], { closed: true }));
-      await p.goto(URL_); await open(writeDxf(doc), 'picker.dxf');
+      await p.goto(URL_);
+      for (const aci of [7, 256]) {
+        const unchanged = newDoc(); addEntities(unchanged, dxfLine(10, 10, 110, 110, { aci }));
+        await open(writeDxf(unchanged), `unchanged-${aci}.dxf`);
+        const before = readDxf(await save()), steps = await history();
+        await q('prop-swatch').click();
+        assert.equal(await q('colour-hex').inputValue(), '#000000', 'ACI 7 opens as black in Properties');
+        await q('colour-ok').click();
+        assert.equal(await q('prop-colour').inputValue(), aci === 7 ? 'aci:7' : 'bylayer');
+        assert.deepEqual(readDxf(await save()).entities, before.entities, 'unchanged OK preserves the object colour');
+        assert.deepEqual(await history(), steps, 'unchanged object colour adds no Undo step');
+        await q('layer-colour').first().click(); await q('colour-ok').click();
+        assert.deepEqual(readDxf(await save()).layers, before.layers, 'unchanged OK preserves the ACI 7 layer');
+        assert.deepEqual(await history(), steps, 'unchanged layer colour adds no Undo step');
+      }
+      await open(writeDxf(doc), 'picker.dxf');
       await q('prop-swatch').click(); await q('colour-dialog').waitFor();
       for (const key of ['Control+w', 'Control+Tab']) {
         await p.keyboard.press(key);
@@ -157,6 +179,10 @@ try {
       assert.notEqual(await q('colour-hex').inputValue(), '#01cc33');
       await q('colour-hue').focus(); await p.keyboard.press('Home');
       assert.equal(Number(await q('colour-hsb-0').inputValue()), 0, 'hue strip supports the keyboard');
+      const hueColour = await q('colour-hex').inputValue();
+      await p.keyboard.press('Enter');
+      assert.equal(await q('colour-dialog').isVisible(), true, 'Enter on the hue slider does not accept the draft');
+      assert.equal(await q('colour-hex').inputValue(), hueColour, 'Enter on the hue slider leaves the colour alone');
       await q('colour-hex').fill('#3399cc');
       for (const theme of ['light', 'dark']) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
