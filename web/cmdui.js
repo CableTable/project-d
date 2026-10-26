@@ -21,7 +21,7 @@ function svg(name, size = 14) {
 
 /**
  * hooks: tab() → 'draw' | 'layout', active() → { label, prompt } | null (a command is on), submit(text) (the text goes to the command that is on, or
- * starts one), runName(name) (start a command by its name), canvas() → the canvas element, previewBounds() → a canvas-pixel box or null, say(text).
+ * starts one), runName(name) (start a command by its name), canvas() → the canvas element, previewBounds() → a list of canvas-pixel boxes, say(text).
  */
 export function buildCmdUI(hooks) {
   const resolve = (text, tab = '') => CB.resolve(text, tab, hooks.commands());

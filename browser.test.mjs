@@ -9702,6 +9702,35 @@ try {
     await shotBoth('146-growing-preview', show, async () => { await page.keyboard.press('Escape'); });
   });
 
+  await step('TODO 146: an up-left Line and its readout leave a clear, stationary command box', async () => {
+    await blankTab();
+    if (await chipOn('tog-polar')) await t('tog-polar').click();
+    const cv = await t('canvas').boundingBox(), cursor = { x: cv.x + 400, y: cv.y + 300 };
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.locator('[data-tool=line]').click();
+      await page.mouse.click(cursor.x - 30, cursor.y - 30);
+      await page.mouse.move(cursor.x, cursor.y); await frames();
+      assert.ok(await t('draw-tip').isVisible(), 'the Line readout is showing');
+      await page.keyboard.type('1'); await frames();
+      const box = await t('cmd-bar').boundingBox();
+      assert.equal(box.x, cursor.x + 20, 'the box takes the first clear corner, right-above');
+      assert.equal(box.y + box.height, cursor.y - 20);
+      const clear = async () => {
+        assert.equal(overlap(box, await t('draw-preview').boundingBox()), 0, 'the box clears the Line');
+        assert.equal(overlap(box, await t('draw-tip').boundingBox()), 0, 'the box clears the readout');
+      };
+      await clear();
+      for (const delta of [2, 5]) {
+        await page.mouse.move(cursor.x + delta, cursor.y + delta); await frames();
+        assert.deepEqual(await t('cmd-bar').boundingBox(), box, 'the clear box stays at its anchor');
+        await clear();
+      }
+    };
+    await shotBoth('146-line-readout', show, async () => { await page.keyboard.press('Escape'); });
+  });
+
   await step('TODO 146: the command box clears the Circle readout', async () => {
     await blankTab();
     if (await chipOn('tog-polar')) await t('tog-polar').click();

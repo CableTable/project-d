@@ -165,18 +165,18 @@ const barCorner = (cursor, size, area, gap, corner) => clampBar(
 export function placeBox(anchor, cursor, size, area, avoid, corner = null) {
   if (avoid && corner != null) {
     const p = barCorner(anchor, size, area, 20, corner);
-    if (overlapArea([p.x, p.y, p.x + size.w, p.y + size.h], avoid)) { anchor = cursor; corner = null; }
+    if (avoid.reduce((sum, box) => sum + overlapArea([p.x, p.y, p.x + size.w, p.y + size.h], box), 0)) { anchor = cursor; corner = null; }
   }
   return { ...placeBar(anchor, size, area, 20, avoid, corner), anchor };
 }
 
-/** Without avoid ([left, top, right, bottom]), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above; a corner covering the cursor (the box ± gap round it) always loses to one that does not. */
+/** Without avoid (a list of [left, top, right, bottom] boxes), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above; a corner covering the cursor (the box ± gap round it) always loses to one that does not. */
 export function placeBar(cursor, size, area, gap = 20, avoid = null, corner = null) {
   if (avoid) {
     const zone = [cursor.x - gap, cursor.y - gap, cursor.x + gap, cursor.y + gap];
     const candidates = [0, 1, 2, 3].map((corner) => {
       const p = barCorner(cursor, size, area, gap, corner), r = [p.x, p.y, p.x + size.w, p.y + size.h];
-      return { ...p, corner, covers: overlapArea(r, zone) > 0, hit: overlapArea(r, avoid) };
+      return { ...p, corner, covers: overlapArea(r, zone) > 0, hit: avoid.reduce((sum, box) => sum + overlapArea(r, box), 0) };
     });
     const kept = candidates[corner];
     const best = kept && !kept.covers && !kept.hit ? kept

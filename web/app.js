@@ -3835,15 +3835,17 @@ function hideNow(d) {
 // the drawing canvas repaints once per frame, however often the view changes
 let paintQueued = 0;
 let canvasPreviewBounds = null;
-/** The shared preview layer: SVG tool paths plus the canvas ghost, all in canvas CSS pixels. */
+/** Separate preview and readout boxes in canvas CSS pixels, so empty space between them stays clear. */
 function previewBounds() {
   const canvas = ui.canvas.getBoundingClientRect();
   let bounds = canvasPreviewBounds;
-  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-glow, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new, .drawtip')) {
+  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-glow, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
-  return bounds ? bounds.map((v, i) => v + (i < 2 ? -3 : 3)) : null;
+  const boxes = bounds ? [bounds] : [], tip = ui.tip.getBoundingClientRect();
+  if (tip.width || tip.height) boxes.push([tip.left - canvas.left, tip.top - canvas.top, tip.right - canvas.left, tip.bottom - canvas.top]);
+  return boxes.map((box) => box.map((v, i) => v + (i < 2 ? -3 : 3)));
 }
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
