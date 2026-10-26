@@ -12859,6 +12859,25 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
   });
 
+  await step('fix72: Shift+right-click Cancel keeps a pending polyline and returns to Select; one Undo removes it', async () => {
+    await openGrips();
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50); await click(70, 70); await click(100, 50);
+    assert.equal(await entCount(), 4, 'the polyline is still pending');
+    await shiftRight(110, 60);
+    await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.equal(await entCount(), 5, 'Cancel keeps the polyline');
+    const poly = (await savedDoc()).entities.at(-1);
+    assert.equal(poly.type, 'LWPOLYLINE');
+    assert.equal(fieldOf(poly, 90), 3);
+    assert.equal(fieldOf(poly, 70) & 1, 0, 'Cancel keeps the polyline open');
+    assert.equal((await histLabels()).at(-1), 'Polyline');
+    await shotBoth('fix72-cancel-polyline');
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 4, 'one Undo removes the kept polyline');
+  });
+
   await step('TODO 72: the menu in Move, Measure and Dimension has Cancel and the snap types; a snap row ticks the type and the Snap types list follows', async () => {
     await openGrips();
     await click(70, 30); await waitSel('1 selected');
@@ -12888,6 +12907,29 @@ try {
   const said = async () => (await histLine()) + ' ' + (await prompt());
   const viewBox = async () => (await page.locator('[data-testid=canvas] > svg').first().getAttribute('viewBox')).split(' ').map(Number);
   const viewItemOff = async (name) => { await page.locator('[data-menu=View]').click(); const off = await page.getByRole('menuitem', { name, exact: true }).isDisabled(); await page.locator('[data-menu=View]').click(); return off; };
+
+  await step('fix72: Esc during a Zoom Window drag cancels only the zoom and keeps the pending polyline', async () => {
+    await openGrips();
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50); await click(70, 70);
+    const before = await viewBox();
+    await menuItem('View', 'Zoom Window');
+    const a = await at(30, 40), b = await at(130, 90);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 });
+    assert.equal(await t('rubber').isVisible(), true);
+    await page.keyboard.press('Escape');
+    assert.match(await said(), /Zoom Window cancelled/);
+    assert.equal(await t('rubber').isVisible(), false);
+    await page.mouse.up();
+    assert.deepEqual(await viewBox(), before, 'releasing the cancelled drag does not zoom');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Polyline');
+    assert.equal(await entCount(), 4, 'Esc did not finish the polyline');
+    await click(100, 50); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 5);
+    const poly = (await savedDoc()).entities.at(-1);
+    assert.equal(poly.type, 'LWPOLYLINE');
+    assert.equal(fieldOf(poly, 90), 3, 'the polyline continued from its original points');
+  });
 
   await step('TODO 74: Zoom Window drags a box (Esc cancels); Zoom Selection fits the selection and is greyed with none; Zoom Previous goes back twice', async () => {
     await openGrips();
