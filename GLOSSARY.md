@@ -334,3 +334,15 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.
 
 **Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).
+
+**Swatch**: One square colour box. Left click sets the selected objects' line colour, right click their fill colour.
+
+**Swatch strip**: The column of swatches at the right edge of the window: default colours on top, the last 12 colours used at the bottom.
+
+**Fill**: A solid colour inside a closed outline, part of that outline.
+
+**Fill tool**: The tool that puts a fill inside a closed outline.
+
+**Eyedropper**: The tool that picks a colour from an object and applies it to the others you click.
+
+**Colour readout**: The tool that shows the R G B, C M Y K and hex of whatever is under the cursor inside the app; a click copies the hex.
