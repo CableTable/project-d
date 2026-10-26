@@ -60,6 +60,12 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Fit**: Changes the view so the drawing or sheet fits in the window. Where: `TODO.md`, item 42. Avoid: Scaling the drawing; Fit to sheet.
 
+**Zoom Window**: Fills the view with a box dragged on the canvas. Where: `DECISIONS.md`, More zooms (TODO 74).
+
+**Zoom Selection**: Fills the view with what is selected. Where: `DECISIONS.md`, More zooms (TODO 74). Avoid: Zoom to (the panel menu for one item).
+
+**Zoom Previous**: Goes back to the view before the last pan or zoom on this tab. Where: `DECISIONS.md`, More zooms (TODO 74).
+
 **Fit to sheet**: Works out repeat rows and columns from the usable sheet area instead of using typed counts. Where: `TODO.md`, items 7 and 8; `web/layout.js`.
 
 **Gap**: The edge-to-edge space between neighbouring parts in a repeat grid or nest. Where: `web/layout.js`, `DECISIONS.md`, Auto-nest UI. Avoid: Gripper.
