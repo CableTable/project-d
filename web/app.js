@@ -7243,7 +7243,7 @@ function buildContourPanel() {
   ui.ctCustomColour = h('button', { class: 'cs', type: 'button', 'aria-label': 'Pick Contour colour', 'data-testid': 'contour-colour', onclick: async () => {
     const d = editable() || curDoc(); if (!d) return;
     const rgb = await pickColour(parseHex(contourColour(d)) || [0, 255, 0]);
-    if (rgb) { cfg.colour = rgbKey(rgb); saveContourCfg(); renderContour(); }
+    if (rgb && rgbKey(rgb) !== cfg.colour) { cfg.colour = rgbKey(rgb); saveContourCfg(); renderContour(); }
   } });
   ui.ctStyles = CT_STYLES.map(({ key, label, dash }) => h('button', {
     class: 'ctstyle', type: 'button', 'aria-pressed': 'false',

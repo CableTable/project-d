@@ -15,7 +15,7 @@ export function pickColour(current) {
       document.removeEventListener('keydown', key, true);
       dialog.close(); dialog.remove();
       if (previous?.isConnected) previous.focus();
-      resolve(value && value.every((n, i) => n === current[i]) ? null : value);
+      resolve(value);
     };
     const key = (e) => {
       if (picking) return;

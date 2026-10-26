@@ -143,19 +143,49 @@ try {
     try {
       const doc = newDoc(); addEntities(doc, dxfPoly([[10, 10], [110, 10], [110, 110], [10, 110]], { closed: true }));
       await p.goto(URL_);
-      for (const aci of [7, 256]) {
-        const unchanged = newDoc(); addEntities(unchanged, dxfLine(10, 10, 110, 110, { aci }));
-        await open(writeDxf(unchanged), `unchanged-${aci}.dxf`);
+      for (const colour of [{ aci: 1 }, { aci: 7, tc: 0 }]) {
+        const unchanged = newDoc(); addLayer(unchanged, '0', colour);
+        addEntities(unchanged, dxfLine(10, 10, 110, 110, colour));
+        await open(writeDxf(unchanged), `unchanged-${colour.aci}.dxf`);
         const before = readDxf(await save()), steps = await history();
         await q('prop-swatch').click();
-        assert.equal(await q('colour-hex').inputValue(), '#000000', 'ACI 7 opens as black in Properties');
+        assert.equal(await q('colour-hex').inputValue(), colour.tc === 0 ? '#000000' : '#ff0000');
         await q('colour-ok').click();
-        assert.equal(await q('prop-colour').inputValue(), aci === 7 ? 'aci:7' : 'bylayer');
+        assert.equal(await q('prop-colour').inputValue(), colour.tc === 0 ? 'tc:0' : 'aci:1');
         assert.deepEqual(readDxf(await save()).entities, before.entities, 'unchanged OK preserves the object colour');
         assert.deepEqual(await history(), steps, 'unchanged object colour adds no Undo step');
         await q('layer-colour').first().click(); await q('colour-ok').click();
-        assert.deepEqual(readDxf(await save()).layers, before.layers, 'unchanged OK preserves the ACI 7 layer');
+        assert.deepEqual(readDxf(await save()).layers, before.layers, 'unchanged OK preserves the layer colour');
         assert.deepEqual(await history(), steps, 'unchanged layer colour adds no Undo step');
+      }
+      for (const entry of ['Properties swatch', 'Properties picker', 'Ribbon swatch', 'Ribbon picker']) {
+        const mixed = newDoc();
+        addEntities(mixed, dxfLine(10, 10, 110, 10, { aci: 1 }), dxfLine(10, 30, 110, 30, { aci: 5 }));
+        await open(writeDxf(mixed), `mixed-${entry}.dxf`);
+        const before = readDxf(await save());
+        assert.equal(await q('prop-colour').inputValue(), '', 'mixed colours show varies');
+        if (entry === 'Properties swatch') await q('prop-swatch').click();
+        else if (entry === 'Properties picker') await q('prop-colour').selectOption('custom');
+        else {
+          await p.locator('[data-ribbon-tab=Home]').click();
+          if (entry === 'Ribbon swatch') await p.getByRole('button', { name: 'Pick ribbon colour', exact: true }).click();
+          else await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).selectOption('custom');
+        }
+        assert.equal(await q('colour-hex').inputValue(), '#ff0000');
+        await q('colour-ok').click();
+        const changed = readDxf(await save());
+        assert.deepEqual(changed.entities.map((e) => [e.aci, e.tc]), [[1, null], [1, null]], `${entry}: OK makes both objects red`);
+        await p.keyboard.press('Control+z');
+        assert.deepEqual(readDxf(await save()).entities, before.entities, `${entry}: one Undo restores both colours`);
+      }
+      for (const [text, tc] of [['0,0,0', 0], ['255,255,255', 0xffffff]]) {
+        const indexed = newDoc(); addEntities(indexed, dxfLine(10, 10, 110, 110, { aci: 7 }));
+        await open(writeDxf(indexed), `true-colour-${tc}.dxf`);
+        await q('prop-swatch').click(); await q('colour-hex').fill(text); await q('colour-ok').click();
+        assert.equal(await q('prop-colour').inputValue(), 'tc:' + tc, 'explicit black / white differs from ACI 7');
+        assert.equal(readDxf(await save()).entities[0].tc, tc);
+        await q('layer-colour').first().click(); await q('colour-hex').fill(text); await q('colour-ok').click();
+        assert.equal(readDxf(await save()).layers['0'].tc, tc, 'ACI 7 layers also accept true black / white');
       }
       await open(writeDxf(doc), 'picker.dxf');
       await q('prop-swatch').click(); await q('colour-dialog').waitFor();
@@ -232,6 +262,9 @@ try {
       await p.locator('[data-tool=contour]').click();
       await q('contour-colour').click(); await q('colour-hex').fill('3399cd'); await q('colour-ok').click();
       assert.equal(await q('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)');
+      const contourBefore = await p.evaluate(() => localStorage.getItem('pd-contour'));
+      await q('contour-colour').click(); await q('colour-ok').click();
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), contourBefore, 'unchanged Contour OK keeps its colour key');
       await p.reload(); await q('picker').waitFor({ state: 'attached' });
       const stored = await p.evaluate(async () => {
         const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-swatches', 'swatches', 'swatches').all();

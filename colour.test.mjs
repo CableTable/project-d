@@ -54,6 +54,7 @@ test('nearest ACI maps greys to grey indices and aci:7 opens as black', () => {
   assert.equal(nearestAci([128, 128, 128]), 8);
   assert.equal(nearestAci([5, 6, 4]), 250);
   assert.deepEqual(keyRgb('aci:7'), [0, 0, 0]);
+  assert.equal(rgbKey([0, 0, 0]), 'tc:0');
   assert.equal(rgbKey([255, 255, 255]), 'tc:' + 0xffffff);
   assert.deepEqual(keyRgb(rgbKey([255, 255, 255])), [255, 255, 255]);
 });
