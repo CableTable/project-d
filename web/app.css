@@ -770,12 +770,13 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .btn.danger { border-color: var(--mark); color: var(--mark); font-weight: 600; }
 .nestdlg { width: min(1000px, 100%); height: min(700px, 100%); }
 .nestdlg .pd-left { width: 340px; gap: 10px; }
+.nestdlg .pd-left > * { flex-shrink: 0; }   /* a long parts list scrolls (see .nlist) instead of squashing the rows after it */
 .nestdlg .pd-right { overflow-y: auto; }
 .nestdlg .lbl.sub { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; margin-top: 2px; }
 .nestdlg .ib { border: 0; background: none; color: var(--text); cursor: pointer; border-radius: var(--r); }
 .nestdlg .stp .ib { border: 1px solid var(--line); background: var(--field); width: 24px; height: 24px; }
 .nestdlg .ib:disabled { opacity: .45; cursor: default; }
-.nlist { display: flex; flex-direction: column; gap: 5px; }
+.nlist { display: flex; flex-direction: column; gap: 5px; max-height: 264px; overflow-y: auto; }
 .nrow { display: flex; align-items: center; gap: 8px; padding: 4px 6px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); }
 .nrow.dim { opacity: .55; }
 .nth { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; color: var(--text); flex-shrink: 0; }

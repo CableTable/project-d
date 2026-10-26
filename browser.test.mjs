@@ -10329,6 +10329,31 @@ try {
     await t('nest-cancel').click();
   });
 
+  await step('Auto-nest: with 2 or 12 library parts every row keeps its height; the parts list scrolls inside a max height', async () => {
+    const rowH = () => page.evaluate(() => {
+      const hs = (sel) => [...document.querySelectorAll(`.nestdlg ${sel}`)].map((e) => Math.round(e.getBoundingClientRect().height));
+      const list = document.querySelector('.nestdlg .nlist');
+      return { rows: hs('.nrow'), list: list.getBoundingClientRect().height, scroll: list.scrollHeight, rot: hs('.mode')[0], pd: hs('.pd-row'), subs: hs('.lbl.sub') };
+    });
+    const open = (n) => page.evaluate((k) => import('./nestdlg.js').then((m) => m.openNest({
+      layName: 'Layout 1', sheetW: 1000, sheetH: 700, area: { x: 0, y: 0, w: 1000, h: 670 }, grips: { top: 0, right: 0, bottom: 30, left: 0 }, gap: 5, fixed: [],
+      parts: Array.from({ length: k }, (_, i) => ({ id: 'p' + i, name: 'Part ' + (i + 1), w: 100, h: 60, thumb: '', count: 1, outline: () => [[0, 0], [100, 0], [100, 60], [0, 60]] })),
+    })), n);
+    await open(2);
+    const two = await rowH();
+    await nestShot('rows-2');
+    await t('nest-cancel').click();
+    await open(12);
+    const twelve = await rowH();
+    await nestShot('rows-12');
+    await t('nest-cancel').click();
+    assert.ok(two.rows.every((x) => x >= 36), 'rows with 2 parts: ' + two.rows);
+    assert.deepEqual(twelve.rows, Array(12).fill(two.rows[0]), 'no part row is squashed with 12 parts');
+    assert.ok(twelve.list <= 264 && twelve.scroll > twelve.list, 'the list scrolls inside its max height: ' + JSON.stringify(twelve));
+    assert.equal(twelve.rot, two.rot, 'the Rotations row keeps its height');
+    assert.deepEqual(twelve.pd, two.pd); assert.deepEqual(twelve.subs, two.subs);
+  });
+
   await step("Closing with unsaved tabs: the exe's close request asks Save / Don't save / Cancel; a browser unload is warned; F5 and Ctrl+R are off in the exe", async () => {
     const ctx2 = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p2 = await ctx2.newPage();
