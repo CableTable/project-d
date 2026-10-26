@@ -11,6 +11,8 @@ assert.equal(drawingPreviewBox({ ...options, fl: { boxes: { model: null, paper: 
 const T = [2, 0, 0, 2, 10, 20];
 assert.equal(overlayBox({}, T, 1), null);
 assert.deepEqual(overlayBox({ dim: { lines: [[0, 0, 10, 5]], arrows: [[[0, 0], [1, 1], [1, -1]]] } }, T, 2), [5, 9, 15, 15], 'a dimension: points through T, then divided by dpr');
-assert.deepEqual(overlayBox({ marks: [[10, 10, 'end', true]] }, T, 1), [18, 28, 42, 52], 'a mark is padded by its cross');
+assert.deepEqual(overlayBox({ marks: [[10, 10]] }, T, 1), [18, 28, 42, 52], 'a placed mark is padded by its cross');
+assert.deepEqual(overlayBox({ marks: [[10, 10, '', true]] }, T, 1), [18, 28, 42, 52], 'an unnamed hover mark needs no label bounds');
+assert.deepEqual(overlayBox({ marks: [[10, 10, 'end', true]] }, T, 2), [3, 4, 95, 32], 'a named hover mark includes its label right and above in CSS pixels');
 assert.deepEqual(overlayBox({ contour: [[[0, 0], [5, 0], [5, 5]]] }, T, 1), [10, 20, 20, 30]);
 console.log('ok shared canvas preview bounds');

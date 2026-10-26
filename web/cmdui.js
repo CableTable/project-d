@@ -67,8 +67,8 @@ export function buildCmdUI(hooks) {
   /** A box stays where it opened; only a tool preview that starts to cover it sends it to the first clear corner round the cursor now. */
   function placeBox(box, previous) {
     const r = hooks.canvas().getBoundingClientRect(), size = { w: box.offsetWidth, h: box.offsetHeight }, area = { w: r.width, h: r.height }, avoid = hooks.previewBounds();
-    let p = CB.placeBar(anchor, size, area, 20, avoid, previous);
-    if (avoid && previous != null && p.corner !== previous) { anchor = cur; p = CB.placeBar(anchor, size, area, 20, avoid); }
+    const p = CB.placeBox(anchor, cur, size, area, avoid, previous);
+    anchor = p.anchor;
     box.style.left = p.x + 'px'; box.style.top = p.y + 'px';
     return p.corner;
   }

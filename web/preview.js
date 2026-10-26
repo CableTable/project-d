@@ -29,7 +29,13 @@ export function overlayBox(o, T, dpr) {
     for (const tri of g.arrows) for (const q of tri) add(q[0], q[1]);
     if (g.text) { const px = g.text.h * Math.hypot(T[0], T[1]) / dpr; add(g.text.x, g.text.y, Math.max(px, g.text.label.length * px * 0.3)); }
   }
-  for (const m of o.marks || []) add(m[0], m[1], 12);
+  for (const m of o.marks || []) {
+    add(m[0], m[1], 12);
+    if (m[3] && m[2]) {
+      const [px, py] = mapply(T, m[0], m[1]);
+      bounds = unionBox(bounds, [px / dpr, py / dpr - 16, px / dpr + 80, py / dpr]);
+    }
+  }
   for (const loop of o.contour || []) for (const q of loop) add(q[0], q[1]);
   return bounds;
 }

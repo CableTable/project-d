@@ -9017,6 +9017,30 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/preview-clear/);
   });
 
+  await step('TODO 146: a growing preview moves the kept box without reopening it', async () => {
+    await blankTab();
+    if (await chipOn('tog-polar')) await t('tog-polar').click();
+    const cv = await t('canvas').boundingBox(), centre = { x: cv.x + cv.width * .4, y: cv.y + cv.height * .5 };
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.locator('[data-tool=circle]').click();
+      await page.mouse.click(centre.x, centre.y);
+      await page.mouse.move(centre.x + 10, centre.y); await frames();
+      await cmdLine().focus(); await frames();
+      const kept = await t('cmd-bar').boundingBox();
+      assert.equal(overlap(kept, await t('draw-preview').boundingBox()), 0, 'the initial preview leaves the kept box clear');
+      await t('cmd-bar').evaluate((box) => { box.dataset.reopened = 'false'; new MutationObserver(() => { if (box.hidden) box.dataset.reopened = 'true'; }).observe(box, { attributes: true, attributeFilter: ['hidden'] }); });
+      await page.mouse.move(centre.x + 200, centre.y); await frames();
+      const preview = await t('draw-preview').boundingBox(), moved = await t('cmd-bar').boundingBox();
+      assert.ok(overlap(kept, preview) > 0, 'the growing preview covers the old box position');
+      assert.notDeepEqual(moved, kept, 'the box moves when its kept corner overlaps');
+      assert.equal(overlap(moved, preview), 0, 'the new corner round the current cursor is clear');
+      assert.equal(await t('cmd-bar').getAttribute('data-reopened'), 'false', 'the box stayed open between preview sizes');
+    };
+    await shotBoth('146-growing-preview', show, async () => { await page.keyboard.press('Escape'); });
+  });
+
   await step('TODO 146: the box stays put while the mouse walks to its chip', async () => {
     await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
     const raw = newDoc(4);

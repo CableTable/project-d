@@ -153,16 +153,26 @@ export function keyOpensBar(ev, { inField = false, dialog = false, active = fals
 /** The area two boxes ([left, top, right, bottom]) share. */
 export const overlapArea = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
 
+const clampBar = (x, y, size, area) => ({ x: Math.max(0, Math.min(x, area.w - size.w)), y: Math.max(0, Math.min(y, area.h - size.h)) });
+const barCorner = (cursor, size, area, gap, corner) => clampBar(
+  corner < 2 ? cursor.x + gap : cursor.x - gap - size.w,
+  corner % 2 === 0 ? cursor.y + gap : cursor.y - gap - size.h, size, area);
+
+/** Keep the anchor until its kept corner overlaps the preview; then try corners round the current cursor. */
+export function placeBox(anchor, cursor, size, area, avoid, corner = null) {
+  if (avoid && corner != null) {
+    const p = barCorner(anchor, size, area, 20, corner);
+    if (overlapArea([p.x, p.y, p.x + size.w, p.y + size.h], avoid)) { anchor = cursor; corner = null; }
+  }
+  return { ...placeBar(anchor, size, area, 20, avoid, corner), anchor };
+}
+
 /** Without avoid ([left, top, right, bottom]), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above; a corner covering the cursor (the box ± gap round it) always loses to one that does not. */
 export function placeBar(cursor, size, area, gap = 20, avoid = null, corner = null) {
-  const clamp = (x, y) => ({ x: Math.max(0, Math.min(x, area.w - size.w)), y: Math.max(0, Math.min(y, area.h - size.h)) });
   if (avoid) {
     const zone = [cursor.x - gap, cursor.y - gap, cursor.x + gap, cursor.y + gap];
-    const candidates = [
-      [cursor.x + gap, cursor.y + gap], [cursor.x + gap, cursor.y - gap - size.h],
-      [cursor.x - gap - size.w, cursor.y + gap], [cursor.x - gap - size.w, cursor.y - gap - size.h],
-    ].map(([x, y], corner) => {
-      const p = clamp(x, y), r = [p.x, p.y, p.x + size.w, p.y + size.h];
+    const candidates = [0, 1, 2, 3].map((corner) => {
+      const p = barCorner(cursor, size, area, gap, corner), r = [p.x, p.y, p.x + size.w, p.y + size.h];
       return { ...p, corner, covers: overlapArea(r, zone) > 0, hit: overlapArea(r, avoid) };
     });
     const kept = candidates[corner];
@@ -173,7 +183,7 @@ export function placeBar(cursor, size, area, gap = 20, avoid = null, corner = nu
   let x = cursor.x + gap, y = cursor.y + gap;
   if (x + size.w > area.w) x = cursor.x - gap - size.w;
   if (y + size.h > area.h) y = cursor.y - gap - size.h;
-  return clamp(x, y);
+  return clampBar(x, y, size, area);
 }
 
 /** The history lines that contain the filter text (any case). */
