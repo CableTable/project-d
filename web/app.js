@@ -49,7 +49,7 @@ import * as C from './compare.js';
 import * as CMP from './compare-list.js';
 import * as TK from './track.js';
 import { loadParts, savePart, removePart } from './partstore.js';
-import { saveDefault, withExt } from './savepath.js';
+import { baseName, saveDefault, withExt } from './savepath.js';
 import * as RC from './recovery.js';
 import { openExport } from './export.js';
 import { openNest } from './nestdlg.js';
@@ -1499,7 +1499,6 @@ function syncFields() {
 }
 
 // ---- layouts: a tab of their own, with their own sheet, parts and step and repeat ----
-const baseName = (n) => n.replace(/\.[^.\\/]*$/, '');
 /** The layout tab that Add to layout and Add to sheet put parts on: the open one, else the last one still open. */
 function targetLayout() {
   const d = curDoc();
@@ -1530,7 +1529,7 @@ function openLayoutFile(lay, name, path, fontNote, titleBlock) {
   note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
-  for (const p of Object.values(lay.parts)) libKeep(p, baseName(name));          // a part the library does not have yet is added to it
+  for (const p of Object.values(lay.parts)) libKeep(p, baseName(p.src || name)); // a part the library does not have yet is added to it
 }
 const SHIFT_HINT = 'Shift-drag keeps it straight';
 /** Puts a loose copy of the part on the layout, centred on `at` ([x, y] sheet mm, y up) or near the sheet's centre; its index in lay.placed. */
@@ -1569,7 +1568,7 @@ function showLayoutTab(t, isNew) {
 function addToLayout() {
   const d = editable();
   if (!d) { note('Add to layout: open a drawing first'); return; }
-  const raw = LD.extractRaw(d.raw, null), part = raw && LD.makePart(uid(), baseName(d.name), raw, d.factor, d.name);
+  const raw = LD.extractRaw(d.raw, null), part = raw && LD.makePart(uid(), baseName(d.name), raw, d.factor, baseName(d.name));
   if (!part) { note('Add to layout: this drawing has nothing with a size to lay out'); return; }
   state.panel = 'main';
   const existing = targetLayout(), t = existing || freshLayout(baseName(d.name) + ' layout'), lay = t.lay;

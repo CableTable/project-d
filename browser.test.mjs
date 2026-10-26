@@ -5247,23 +5247,36 @@ try {
     assert.deepEqual((await savedDoc()).entities, sheet1.entities, 'sheet 2 paste and Undo leave sheet 1 alone');
     await closeTabs(/./);
   });
-  await step('TODO 142c: reopening a layout adds missing library parts with the plain file name as source', async () => {
+  await step('TODO 142c: Add to layout saves the plain drawing source; reopening uses it, or the plain layout name when unknown', async () => {
     await closeTabs(/./);
-    const lay = newLayout('nest'), raw = newDoc(4), name = '142c reopened part';
+    const raw = newDoc(4), name = '142c reopened part';
     addEntities(raw, dxfCircle(20, 30, 5));
+    await t('picker').setInputFiles({ name: 'Bracket 1.5.DXF', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'Bracket 1.5.DXF');
+    await t('add-to-layout').click();
+    const lay = layoutFromRaw(await savedDoc());
+    assert.equal(lay.parts[lay.s.gridPart].name, 'Bracket 1.5');
+    assert.equal(lay.parts[lay.s.gridPart].src, 'Bracket 1.5', 'the saved layout keeps the plain drawing source');
     lay.parts['142c-reopened'] = makePart('142c-reopened', name, raw);
-    lay.s.gridPart = '142c-reopened';
-    await t('picker').setInputFiles({ name: 'nest.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'nest.dxf');
+    lay.parts['142c-legacy'] = makePart('142c-legacy', '142c legacy source', raw, 1, 'original 1.5.DwG');
+    lay.placed.push({ partId: '142c-reopened', x: 0, y: 0, rot: 0 }, { partId: '142c-legacy', x: 20, y: 0, rot: 0 });
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'nest 1.5.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'nest 1.5.dxf');
     await menuItem('Layout', 'Parts library');
-    assert.equal(await libCard(name).locator('span.lbl:not(.mono)').textContent(), 'nest');
-    assert.match(await libCard(name).getAttribute('title'), /^nest\n/);
-    await page.waitForFunction(async () => (await (await import('./partstore.js')).loadParts()).some((p) => p.name === '142c reopened part' && p.source === 'nest'));
+    const expected = [['Bracket 1.5', 'Bracket 1.5'], [name, 'nest 1.5'], ['142c legacy source', 'original 1.5']];
+    for (const [partName, source] of expected) {
+      assert.equal(await libCard(partName).locator('span.lbl:not(.mono)').textContent(), source);
+      assert.ok((await libCard(partName).getAttribute('title')).startsWith(source + '\n'));
+      await page.waitForFunction(async ([name, source]) => (await (await import('./partstore.js')).loadParts()).some((p) => p.name === name && p.source === source), [partName, source]);
+    }
     await shotBoth('todo142c-reopened-library');
-    await libCard(name).locator('[data-testid=lib-menu]').click();
-    page.once('dialog', (d) => d.accept());
-    await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
-    await libCard(name).waitFor({ state: 'detached' });
+    for (const [partName] of expected) {
+      await libCard(partName).locator('[data-testid=lib-menu]').click();
+      page.once('dialog', (d) => d.accept());
+      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+      await libCard(partName).waitFor({ state: 'detached' });
+    }
     await t('ptab-drawing').click();
     await closeTabs(/./);
   });

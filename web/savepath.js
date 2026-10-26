@@ -3,6 +3,9 @@
 //
 //   withExt(t, path, ext) → the path, or null when the person says no (t: window.__TAURI__)
 
+/** Plain drawing name: keep decimal suffixes and strip only known file extensions. */
+export const baseName = (n) => n.replace(/\.(dxf|dwg|pdf|cdr|svg|png|jpg|tif)$/i, '');
+
 /** Suggest the source folder; a name alone lets the native dialog keep its last-used folder, as Save As does. */
 export function saveDefault(name, sourcePath) {
   return sourcePath ? sourcePath.replace(/[^\\/]*$/, () => name) : name;
