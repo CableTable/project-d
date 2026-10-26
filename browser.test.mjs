@@ -11818,8 +11818,8 @@ try {
     await closeTabs(/./);
   });
 
-  // ---- TODO 89: the Nearest snap (hourglass) and a snap beats ORTHO; with ORTHO on a Dimension is linear ----
-  await step('Nearest snap (89): with ORTHO on, Measure and Dimension land on the arc where it was picked, a free pick is still bent straight, and the dimension is linear (only the X or the Y distance)', async () => {
+  // ---- TODO 89 / 68c review: Nearest beats ORTHO and keeps a snapped Dimension aligned ----
+  await step('Nearest snap (89): with ORTHO on, Measure and Dimension land on the arc where it was picked, a free pick is still bent straight, and a snapped dimension stays aligned', async () => {
     await openGrips(dimDoc(), 'dims-89.dxf');
     const arcPt = (r) => [200 + r * Math.cos(Math.PI / 4), 150 + r * Math.sin(Math.PI / 4)];      // 45° on the arc (centre 200, 150, R20), r a bit outside it
     const dx = 200 + 20 * Math.cos(Math.PI / 4) - 60, dy = 150 + 20 * Math.sin(Math.PI / 4) - 20;   // from the line at (60, 20) to that point on the arc
@@ -11847,24 +11847,24 @@ try {
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; }); await page.waitForTimeout(150);
     await click(...arcPt(20.4));
     assert.match(await prompt(), /Dimension: move the line up or down and click to place it/);
-    await click(140, 5);                                                          // the line below both points (on screen, as the Linear step's): horizontal
+    await click(140, 5);
     const placed = async () => { const m = (await prompt()).match(/Dimension placed: ([\d.]+)("| mm)/); if (!m) throw new Error('no dimension placed, the prompt says: ' + await prompt()); return Number(m[1]) * (m[2] === '"' ? 25.4 : 1); };       // (an earlier step may have left the Inch style on)
     const startD = async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.locator('[data-tool=dimension]').click(); await typeCmd('d'); };
-    assert.ok(Math.abs(await placed() - dx) < 3, 'the X distance only: ' + await prompt());
+    assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'the true distance: ' + await prompt());
     const onArc = (p) => Math.abs(Math.hypot(p.b[0] - 200, p.b[1] - 150) - 20) < 0.01 && Math.abs(p.a[1] - 20) < 1e-6 && p.b[1] > 150;       // the 2nd point on the arc, the 1st on the line
-    const d1 = (await dimBlocks()).PD_DIM_H1;
-    assert.deepEqual([d1.kind, d1.params.axis], ['linear', 'h'], 'kept as a linear dimension: ' + JSON.stringify(d1));
+    const d1 = (await dimBlocks()).PD_DIM_1;
+    assert.equal(d1.kind, 'aligned', 'a snapped second point keeps Aligned: ' + JSON.stringify(d1));
     assert.ok(onArc(d1.params), 'the 2nd point is on the arc, the 1st on the line: ' + JSON.stringify(d1.params));
-    await page.screenshot({ path: shotDir + '/s14-89-linear-light.png' });
+    await page.screenshot({ path: shotDir + '/s14-89-aligned-light.png' });
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+z');          // (its extension lines would snap the next picks)
-    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(35, 90);       // the line to the left (the right-hand corner of the canvas holds the zoom box): vertical
-    assert.ok(Math.abs(await placed() - dy) < 3, 'the Y distance only: ' + await prompt());
-    const d2 = (await dimBlocks()).PD_DIM_V1;
-    assert.deepEqual([d2.kind, d2.params.axis], ['linear', 'v']);
+    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(35, 90);
+    assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned regardless of placement: ' + await prompt());
+    const d2 = (await dimBlocks()).PD_DIM_1;
+    assert.equal(d2.kind, 'aligned');
     assert.ok(onArc(d2.params), JSON.stringify(d2.params));
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
     await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(150);
-    await page.screenshot({ path: shotDir + '/s14-89-linear-dark.png' });
+    await page.screenshot({ path: shotDir + '/s14-89-aligned-dark.png' });
     await menuItem('View', 'Theme: light');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Control+z');
@@ -11872,6 +11872,37 @@ try {
     await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(140, 5);        // without ORTHO it stays aligned
     assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned: the true distance ' + await prompt());
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await closeTabs(/./);
+  });
+
+  await step('fix68c: ORTHO / Shift keep perpendicular dimension snaps aligned on a slanted line and constrain free picks', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 140, 90), entity('POINT', [[10, 60], [20, 110]]));
+    for (const mode of ['ortho', 'shift']) for (const snapped of [true, false]) {
+      await openGrips(writeDxf(raw), 'dim-snap-68c.dxf');
+      if ((await t('tog-ortho').getAttribute('aria-pressed') === 'true') !== (mode === 'ortho')) await t('tog-ortho').click();
+      await page.locator('[data-tool=dimension]').click(); await typeCmd('d');
+      await click(60, 110);
+      const shift = { shift: mode === 'shift' };
+      await click(...(snapped ? [84, 62] : [100, 100]), shift);
+      await click(80, 80, shift);
+      const text = await prompt(), label = text.match(/Dimension placed: ([\d.]+)("| mm)/);
+      assert.ok(label, text);
+      const mm = Number(label[1]) * (label[2] === '"' ? 25.4 : 1);
+      const [dim] = Object.values(await dimBlocks());
+      if (snapped) {
+        assert.equal(dim.kind, 'aligned', mode);
+        assert.ok(Math.hypot(dim.params.b[0] - 84, dim.params.b[1] - 62) < 1e-5, 'the exact perpendicular foot');
+        assert.ok(Math.abs(mm - Math.hypot(24, 48)) < .03, 'the 90 degree distance: ' + text);
+        await shotBoth('fix68c-dimension-' + mode);
+      } else {
+        assert.equal(dim.kind, 'linear', mode);
+        assert.equal(dim.params.axis, 'h');
+        assert.ok(Math.abs(dim.params.b[1] - 110) < 1e-5, 'free second point stays horizontal');
+        assert.ok(Math.abs(mm - 40) < 3, 'the constrained distance: ' + text);
+      }
+      await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    }
+    if (await t('tog-ortho').getAttribute('aria-pressed') === 'true') await t('tog-ortho').click();
     await closeTabs(/./);
   });
 

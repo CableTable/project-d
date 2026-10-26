@@ -4799,10 +4799,10 @@ function dimDraft(at) {
   const D = state.dim, type = state.dimType;
   if (!D) return null;
   if (type === 'aligned' || type === 'linear') {
-    const lin = type === 'linear' || state.ortho || D.shift;               // ORTHO / Shift: AutoCAD's DIMLINEAR, only the X or the Y distance
     if (D.pts.length === 1 && D.hover) return { kind: 'aligned', params: { a: D.pts[0], b: D.hover, offset: 0 } };
     if (D.pts.length !== 2 || !at) return null;
     const [a, b] = D.pts;
+    const lin = type === 'linear' || b.length === 2 && (state.ortho || D.shift); // a snapped second point keeps Aligned
     if (!lin) return { kind: 'aligned', params: { a, b, offset: Ed.dimOffsetAt(a, b, at) } };
     const axis = D.force || Ed.linearAxis(a, b, at);
     return { kind: 'linear', params: { a, b, axis, offset: Ed.dimOffsetAt(a, b, at, axis) } };
