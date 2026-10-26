@@ -15,7 +15,7 @@
 import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
-import { DEFAULT_TYPES, preferSnap } from './snap.js';
+import { DEFAULT_TYPES, perpFoot, preferSnap } from './snap.js';
 import { pieceInter } from './modify.js';
 
 // ---------------------------------------------------------------- the index
@@ -215,8 +215,9 @@ export function snapEnd(ed, x, y, tol) {
  * → { x, y, kind } or null.
  * on: false → null (the exact clicked point is used). skip: an entity index left out (the one a grip is dragging).
  * types: enabled ticks. extra: the current drawing tool's own points, subject to the same filter and priority.
+ * from: the last picked point [x, y] (drawing units), for the perpendicular foot on a straight piece.
  */
-export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TYPES, extra = []) {
+export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TYPES, extra = [], from = null) {
   if (!on) return null;
   let best = null;
   for (const sn of extra) best = preferSnap(best, sn, x, y, tol, types);
@@ -229,10 +230,15 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
     if (!ed.vis[sn.it] || ed.items[sn.it].e === skip) continue;
     best = preferSnap(best, sn, x, y, tol, types);
   }
-  if (types.intersection !== false) {
+  const perp = from && types.perpendicular !== false;
+  if (types.intersection !== false || perp) {
     const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).map((p) => p.ent).filter((p) => !p.curve);
-    for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
+    if (types.intersection !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
       for (const [px, py] of pieceInter(pieces[i], pieces[j])) best = preferSnap(best, { x: px, y: py, kind: 'intersection' }, x, y, tol, types);
+    }
+    if (perp) for (const p of pieces) {
+      const foot = p.t === 's' && perpFoot(from, [p.x1, p.y1], [p.x2, p.y2]);
+      if (foot) best = preferSnap(best, { x: foot[0], y: foot[1], kind: 'perpendicular' }, x, y, tol, types);
     }
   }
   if (best) return { x: best.x, y: best.y, kind: best.kind };

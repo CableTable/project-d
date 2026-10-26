@@ -136,7 +136,7 @@ try {
       await p.goto(URL_); await arrow.waitFor();
       await arrow.focus(); await p.keyboard.press('Enter'); await list.waitFor({ state: 'visible' });
       assert.equal(await list.locator('input:checked').count(), 8, 'all current and future types default on');
-      assert.equal(await list.locator('input:disabled').count(), 1, 'only perpendicular is still labelled soon');
+      assert.equal(await list.locator('input:disabled').count(), 0, 'every type is live');
       await end.focus(); await p.keyboard.press('Space');
       assert.equal(await end.isChecked(), false, 'keyboard toggles a tick');
       await p.keyboard.press('Escape'); await closed();
@@ -231,6 +231,66 @@ try {
       await p.keyboard.press('Escape');
       const pos = await hover('nearest', 65, 50);
       await pick(pos, 65 + 3 / pos.r.scale, 50);
+    } finally { await context.close(); }
+  });
+  await step('TODO 68c: perpendicular snap from the last picked point (Line, Dimension point-to-line, tick off)', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      const fillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['perpendicular', 'nearest'].includes(text)) window.__snapLabel = text;
+        return fillText.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    try {
+      await p.goto(URL_); await q('snap-types-open').waitFor();
+      const doc = newDoc(4);
+      addEntities(doc, dxfLine(20, 30, 140, 30));
+      await q('picker').setInputFiles({ name: 'snap-perp.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-perp.dxf');
+      const sheet = () => p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+      const px = (r, wx, wy, dx = 0) => [r.x + wx * r.scale + dx, r.y + (r.h - wy) * r.scale];
+      const hover = async (label, wx, wy, dx) => {
+        const r = await sheet(), [x, y] = px(r, wx, wy, dx);
+        await p.evaluate(() => { window.__snapLabel = ''; });
+        await p.mouse.move(x + 30, y - 30); await p.mouse.move(x, y);
+        await p.waitForFunction((want) => window.__snapLabel === want, label, { timeout: 3000 }).catch(async (e) => { throw new Error(`${label} never shown (saw "${await p.evaluate(() => window.__snapLabel)}", prompt "${await q('cmd-prompt').textContent()}")`, { cause: e }); });
+        return [x, y];
+      };
+      const prompt = () => q('cmd-prompt').textContent();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await p.locator('[data-tool=line]').click();
+        await p.waitForFunction(() => /first point/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        const wx = theme === 'light' ? 40 : 70, r = await sheet(), [x0, y0] = px(r, wx, 70);       // a new x each time: the first line stays in the drawing
+        await p.mouse.move(x0, y0); await p.mouse.click(x0, y0);
+        await p.waitForFunction(() => !/first point/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        const [x1, y1] = await hover('perpendicular', wx, 30, 4);
+        await p.screenshot({ path: `${shotDir}/todo68c-perpendicular-${theme}.png` });        await p.mouse.click(x1, y1); await p.mouse.move(x1 + 60, y1 - 40);
+        const n = (await q('draw-preview').getAttribute('d')).match(/-?\d+(?:\.\d+)?/g).map(Number);
+        assert.ok(Math.abs(n[0] - wx) < .02 && Math.abs(n[1] - (r.h - 30)) < .02, 'the line ends at the foot of the perpendicular (the next segment starts there): ' + n);
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+        await p.locator('[data-tool=select]').click();
+      }
+      const dimension = async (label, wx, wantText) => {
+        await p.locator('[data-tool=dimension]').click();
+        const r = await sheet();
+        await p.mouse.click(...px(r, wx, 70));
+        const [x, y] = await hover(label, wx, 30, 6);
+        await p.mouse.click(x, y);
+        await p.mouse.click(...px(r, 100, 50));
+        assert.match(await prompt(), wantText);
+        await p.keyboard.press('Escape');
+      };
+      await dimension('perpendicular', 125, /Dimension placed: 40\.00 mm/);
+      await q('snap-types-open').click();
+      await q('snap-type-perpendicular').uncheck();
+      await p.keyboard.press('Escape');
+      await dimension('nearest', 55, /Dimension placed: 40\.0[1-9] mm/);
     } finally { await context.close(); }
   });
   await step('TODO 94/132: docker tabs, remembered folds, library first, resize, hide/show and typed Guides', async () => {

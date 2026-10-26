@@ -216,6 +216,7 @@ export function drawMarks(c, pts, T, dpr, accent) {
     else if (k === 'mid') { c.moveTo(x, y - h); c.lineTo(x + h, y + h); c.lineTo(x - h, y + h); c.closePath(); }
     else if (k === 'node' || k === 'quadrant') { c.moveTo(x - h, y); c.lineTo(x, y - h); c.lineTo(x + h, y); c.lineTo(x, y + h); c.closePath(); }
     else if (k === 'intersection') { c.moveTo(x - h, y - h); c.lineTo(x + h, y + h); c.moveTo(x - h, y + h); c.lineTo(x + h, y - h); }
+    else if (k === 'perpendicular') { c.moveTo(x - h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.moveTo(x - h, y); c.lineTo(x, y); c.lineTo(x, y + h); }       // the right-angle symbol
     else if (k === 'near') { c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.closePath(); }       // AutoCAD's hourglass
     else { c.moveTo(x - h, y); c.lineTo(x + h, y); c.moveTo(x, y - h); c.lineTo(x, y + h); }
     c.stroke();

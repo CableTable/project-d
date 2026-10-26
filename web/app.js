@@ -3483,7 +3483,7 @@ function buildSnapTypes() {
         try { localStorage.setItem('pd-snap-types', JSON.stringify(state.snapTypes)); } catch { /* storage may be blocked */ }
       });
       return h('label', {}, input, name);
-    }), h('label', {}, h('input', { type: 'checkbox', disabled: true, checked: true }), 'perpendicular (soon)'));
+    }));
   const arrow = h('button', { type: 'button', class: 'tog snap-arrow', popovertarget: pop.id, 'aria-label': 'Snap types', 'aria-expanded': 'false', 'aria-controls': pop.id, 'data-testid': 'snap-types-open', title: 'Snap types' }, '▾');
   pop.addEventListener('toggle', () => {
     const open = pop.matches(':popover-open');
@@ -4531,14 +4531,14 @@ function toDrawing(d, cx, cy) {
 }
 const pickTol = (d) => 7 / (view.scale * (d.lay ? 1 : d.factor));
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
-const snapPoint = (d, p, skip, extra) => {
-  const sn = d.lay ? state.snap && layoutSnap(d.lay.parts, state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl)), state.sheetW, state.sheetH, p[0], p[1], pickTol(d), state.snapTypes)
-    : Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip, state.snapTypes, extra);
+const snapPoint = (d, p, skip, extra, from) => {
+  const sn = d.lay ? state.snap && layoutSnap(d.lay.parts, state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl)), state.sheetW, state.sheetH, p[0], p[1], pickTol(d), state.snapTypes, from)
+    : Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip, state.snapTypes, extra, from);
   return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]];
 };
 /** A Measure / Dimension / Leader pick: the snaps (any kind, Nearest too), then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point (a snapped point is never bent). */
 function pickPoint(d, p, pts, shift, hover = false) {
-  const q = snapPoint(d, p), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
+  const q = snapPoint(d, p, undefined, undefined, pts[pts.length - 1]), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
   const tq = !d.lay && editable() === d ? trackPick(d, p, q, base, straight, hover) : null;
   return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
@@ -5560,7 +5560,8 @@ const drawLive = () => !!(state.draw && state.drawDoc === curDoc() && editable()
 /** The point for a pick (mm, y up, with its snap kind): the drawing's snaps, the tool's own points, then Shift / ORTHO along X or Y. */
 function drawPick(d, cx, cy, shift, hover) {
   const T = state.draw, f = d.factor, p = toDrawing(d, cx, cy);
-  let q = snapPoint(d, p, -1, T.pts.map((o) => ({ x: o[0] / f, y: o[1] / f, kind: 'end' })));
+  const last = T.pts[T.pts.length - 1];
+  let q = snapPoint(d, p, -1, T.pts.map((o) => ({ x: o[0] / f, y: o[1] / f, kind: 'end' })), last && [last[0] / f, last[1] / f]);
   const ref = DR.toolRef(T), base = ref && DR.orthoApplies(T) ? [ref[0] / f, ref[1] / f] : null, straight = !!((shift || state.ortho) && base);
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return [tq[0] * f, tq[1] * f, null];
@@ -5798,7 +5799,7 @@ function modHover(d, cx, cy, shift) {
     if (m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
   }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
-    m.cur = snapPoint(d, p);
+    m.cur = snapPoint(d, p, undefined, undefined, m.p1);
     if (m.p1) {
       m.angle = rotationAngle(m.p1, m.cur, shift);
       if (shift) {
@@ -5809,7 +5810,7 @@ function modHover(d, cx, cy, shift) {
     }
   }
   if (m.kind === 'scale' && m.stage !== 'pick') {
-    m.cur = snapPoint(d, p);
+    m.cur = snapPoint(d, p, undefined, undefined, m.p1);
     if (m.p1) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], scaleMatrix(m.p1, scaleDistance(m.p1, m.cur)))];
   }
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
@@ -5852,14 +5853,14 @@ function modUp(d, was, p, shift) {
   } else if (['move', 'copy'].includes(m.kind)) {
     moveTo(d, movePick(d, was.p, shift || was.shift));
   } else if (m.kind === 'scale') {
-    const q = snapPoint(d, was.p);
+    const q = snapPoint(d, was.p, undefined, undefined, m.p1);
     if (m.stage === 'p1') transformBase(d, q);
     else {
       const factor = scaleDistance(m.p1, q);
       if (factor > 0) transformDo(d, factor); else note('I do not understand "0". Type a number above 0');
     }
   } else if (m.kind === 'rotate') {
-    const q = snapPoint(d, was.p);
+    const q = snapPoint(d, was.p, undefined, undefined, m.p1);
     if (m.stage === 'p1') transformBase(d, q);
     else if (Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) < 1e-9) note('Click a point away from the pivot');
     else transformDo(d, rotationAngle(m.p1, q, shift || was.shift));

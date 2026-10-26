@@ -85,6 +85,22 @@ test('TODO 68b: a shared segment corner is an intersection; its end name wins wh
   }
 });
 
+test('TODO 68c: perpendicular foot on a line / polyline segment from the last point, ticks, aperture and skip', () => {
+  const ed = index(W.line(0, 0, 100, 0), W.lwpoly([[0, 50], [100, 50], [100, 100]]), W.line(5, 5, 5, 5));
+  const from = [30, 20], on = (x, y, types = snapTypes(), skip = -1, f = from) => snapPick(ed, x, y, .5, true, skip, types, [], f);
+  assert.deepEqual(on(30.2, .2), { x: 30, y: 0, kind: 'perpendicular' });
+  assert.deepEqual(on(30.2, 50.2), { x: 30, y: 50, kind: 'perpendicular' }, 'a polyline segment');
+  assert.equal(on(30.2, .2, snapTypes({ perpendicular: false })).kind, 'near', 'the tick turns it off');
+  assert.equal(on(30.2, .2, snapTypes(), -1, null).kind, 'near', 'no last point: no perpendicular');
+  assert.equal(on(60.2, .2).kind, 'near', 'cursor away from the foot');
+  assert.equal(on(130, .2, snapTypes(), -1, [130, 20]), null, 'the foot would be past the end of the line');
+  assert.equal(on(100.2, 80.2, snapTypes(), -1, [30, 80]).kind, 'perpendicular', 'a vertical segment');
+  assert.deepEqual(on(100.2, .2, snapTypes(), -1, [100, 20]), { x: 100, y: 0, kind: 'end' }, 'a foot at an end keeps the end name');
+  assert.equal(on(5.2, 5.2).kind, 'end', 'a zero-length line gives no perpendicular');
+  ed.vis[0] = 0;
+  assert.equal(on(30.2, .2), null, 'hidden geometry is skipped');
+});
+
 test('TODO 68b: quadrant points respect circle / arc / bulge sweeps and ticks', () => {
   const quads = (ed) => ed.ix.snaps.filter((s) => s.kind === 'quadrant').map((s) => [s.x, s.y]);
   const circle = index(W.circle(0, 0, 10));
