@@ -3483,7 +3483,7 @@ function buildSnapTypes() {
         try { localStorage.setItem('pd-snap-types', JSON.stringify(state.snapTypes)); } catch { /* storage may be blocked */ }
       });
       return h('label', {}, input, name);
-    }), h('label', {}, h('input', { type: 'checkbox', disabled: true, checked: true }), 'perpendicular (soon)'));
+    }), ['intersection', 'quadrant', 'perpendicular'].map((name) => h('label', {}, h('input', { type: 'checkbox', disabled: true, checked: true }), name + ' (soon)')));
   const arrow = h('button', { type: 'button', class: 'tog snap-arrow', popovertarget: pop.id, 'aria-label': 'Snap types', 'aria-expanded': 'false', 'aria-controls': pop.id, 'data-testid': 'snap-types-open', title: 'Snap types' }, '▾');
   pop.addEventListener('toggle', () => {
     const open = pop.matches(':popover-open');

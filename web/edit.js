@@ -12,11 +12,10 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt } from './drawing.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, preferSnap } from './snap.js';
-import { pieceInter } from './modify.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -211,8 +210,8 @@ export function snapEnd(ed, x, y, tol) {
 }
 
 /**
- * The closest enabled feature under (x, y) within tol (ends win a tie), else the nearest point on a line or arc.
- * → { x, y, kind } or null.
+ * The snap under (x, y) within tol: an end, centre, midpoint or point first (the nearest; ends win a tie), else the nearest
+ * point on a line or arc ('near'). → { x, y, kind: 'end' | 'centre' | 'mid' | 'node' | 'near' } or null.
  * on: false → null (the exact clicked point is used). skip: an entity index left out (the one a grip is dragging).
  * types: enabled ticks. extra: the current drawing tool's own points, subject to the same filter and priority.
  */
@@ -228,12 +227,6 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
     const sn = ix.snaps[k];
     if (!ed.vis[sn.it] || ed.items[sn.it].e === skip) continue;
     best = preferSnap(best, sn, x, y, tol, types);
-  }
-  if (types.intersection !== false) {
-    const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).map((p) => p.ent).filter((p) => !p.curve);
-    for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
-      for (const [px, py] of pieceInter(pieces[i], pieces[j])) best = preferSnap(best, { x: px, y: py, kind: 'intersection' }, x, y, tol, types);
-    }
   }
   if (best) return { x: best.x, y: best.y, kind: best.kind };
   if (types.near === false) return null;
