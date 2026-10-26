@@ -3094,7 +3094,6 @@ function addedSwatch(d, l) {
       const def = d.raw.layers[l.name] || { aci: 7, tc: null }, rgb = await pickColour(parseHex(layerCss(def)));
       if (!rgb) return;
       const next = PR.withColour(def, rgbKey(rgb));
-      if (next.aci === def.aci && next.tc === def.tc) return;
       const keep = new Set(d.sel);
       commit(d, { ...snapshotOf(d), layers: { ...d.raw.layers, [l.name]: next } }, 'Layer colour → ' + l.name);
       setSel(d, keep);
@@ -6986,7 +6985,8 @@ const layerMap = (d) => d.raw.layers || {};
 async function pickPropColour() {
   const d = editable(), ent = d && propEnts(d)[0]?.[1];
   if (!ent) return;
-  const rgb = await pickColour(keyRgb(PR.effectiveColour(ent, layerMap(d))));
+  const mixed = new Set(propEnts(d).map((x) => PR.colourKey(x[1]))).size > 1;
+  const rgb = await pickColour(keyRgb(PR.effectiveColour(ent, layerMap(d))), mixed);
   if (rgb) propSet('colour', rgbKey(rgb));
   else renderEdit();
 }
@@ -7208,10 +7208,8 @@ function matchClick(d, p) {
 const CONTOUR_LAYER = 'Contour';
 const CT_STYLES = [{ key: 'BYLAYER', label: 'Solid', dash: [] }, { key: 'DASHED', label: 'Dashed', dash: [7, 4] }, { key: 'DOT', label: 'Dotted', dash: [0, 4] }];
 const contourStyle = () => CT_STYLES.find((st) => st.key === state.contourCfg.lt);
-const contourColour = (d) => {
-  const key = PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYER }, state.contourCfg.colour), { [CONTOUR_LAYER]: (d && d.raw && d.raw.layers[CONTOUR_LAYER]) || { aci: 3 } });
-  return colourCss(key);
-};
+const contourKey = (d) => PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYER }, state.contourCfg.colour), { [CONTOUR_LAYER]: (d && d.raw && d.raw.layers[CONTOUR_LAYER]) || { aci: 3 } });
+const contourColour = (d) => colourCss(contourKey(d));
 const CT_SAVED = 'pd-contour';
 const loadContourCfg = () => {
   const cfg = { dir: 'outside', dist: 5, steps: 1, corners: 'sharp', colour: 'bylayer', lt: 'BYLAYER', live: true };
@@ -7242,8 +7240,8 @@ function buildContourPanel() {
   }, key === 'bylayer' ? label : null));
   ui.ctCustomColour = h('button', { class: 'cs', type: 'button', 'aria-label': 'Pick Contour colour', 'data-testid': 'contour-colour', onclick: async () => {
     const d = editable() || curDoc(); if (!d) return;
-    const rgb = await pickColour(parseHex(contourColour(d)) || [0, 255, 0]);
-    if (rgb && rgbKey(rgb) !== cfg.colour) { cfg.colour = rgbKey(rgb); saveContourCfg(); renderContour(); }
+    const rgb = await pickColour(keyRgb(contourKey(d)));
+    if (rgb) { cfg.colour = rgbKey(rgb); saveContourCfg(); renderContour(); }
   } });
   ui.ctStyles = CT_STYLES.map(({ key, label, dash }) => h('button', {
     class: 'ctstyle', type: 'button', 'aria-pressed': 'false',

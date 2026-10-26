@@ -143,15 +143,17 @@ try {
     try {
       const doc = newDoc(); addEntities(doc, dxfPoly([[10, 10], [110, 10], [110, 110], [10, 110]], { closed: true }));
       await p.goto(URL_);
-      for (const colour of [{ aci: 1 }, { aci: 7, tc: 0 }]) {
-        const unchanged = newDoc(); addLayer(unchanged, '0', colour);
-        addEntities(unchanged, dxfLine(10, 10, 110, 110, colour));
-        await open(writeDxf(unchanged), `unchanged-${colour.aci}.dxf`);
+      // OK without an edit changes nothing: plain ACI 7 and ByLayer included.
+      for (const [layer, ent, hex, key] of [[{ aci: 1 }, { aci: 1 }, '#ff0000', 'aci:1'], [{ aci: 7 }, { aci: 7 }, '#000000', 'aci:7'],
+        [{ aci: 7 }, {}, '#000000', 'bylayer'], [{ aci: 1 }, {}, '#ff0000', 'bylayer']]) {
+        const unchanged = newDoc(); addLayer(unchanged, '0', layer);
+        addEntities(unchanged, dxfLine(10, 10, 110, 110, ent));
+        await open(writeDxf(unchanged), `unchanged-${layer.aci}-${key}.dxf`);
         const before = readDxf(await save()), steps = await history();
         await q('prop-swatch').click();
-        assert.equal(await q('colour-hex').inputValue(), colour.tc === 0 ? '#000000' : '#ff0000');
+        assert.equal(await q('colour-hex').inputValue(), hex);
         await q('colour-ok').click();
-        assert.equal(await q('prop-colour').inputValue(), colour.tc === 0 ? 'tc:0' : 'aci:1');
+        assert.equal(await q('prop-colour').inputValue(), key);
         assert.deepEqual(readDxf(await save()).entities, before.entities, 'unchanged OK preserves the object colour');
         assert.deepEqual(await history(), steps, 'unchanged object colour adds no Undo step');
         await q('layer-colour').first().click(); await q('colour-ok').click();
@@ -260,6 +262,12 @@ try {
       assert.equal(await layerCss(), layerAfter, 'Redo redraws the new layer colour');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       await p.locator('[data-tool=contour]').click();
+      const byLayer = await p.evaluate(() => localStorage.getItem('pd-contour'));
+      await q('contour-colour').click(); await q('colour-ok').click();
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), byLayer, 'unchanged OK keeps Contour ByLayer');
+      await p.locator('button.cs[aria-label=Black]').click(); await q('contour-colour').click();
+      assert.equal(await q('colour-hex').inputValue(), '#000000', 'the ACI 7 preset opens the picker on a real colour');
+      await q('colour-cancel').click();
       await q('contour-colour').click(); await q('colour-hex').fill('3399cd'); await q('colour-ok').click();
       assert.equal(await q('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)');
       const contourBefore = await p.evaluate(() => localStorage.getItem('pd-contour'));

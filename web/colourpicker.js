@@ -4,8 +4,9 @@ import { parseHex, rgbHex, rgbHsb, hsbRgb, rgbCmyk, cmykRgb } from './colour.js'
 
 const swatches = idbStore('project-d-swatches', 'swatches', 'swatches');
 
-/** A draft colour: only OK returns a colour to the caller. Swatches belong to this PC. */
-export function pickColour(current) {
+/** A draft colour: only OK after an edit returns a colour; OK untouched returns null (no change).
+ * `edited` starts the draft as a change, e.g. for a mixed selection. Swatches belong to this PC. */
+export function pickColour(current, edited = false) {
   if (document.querySelector('.colour-picker')) return Promise.resolve(null);
   return new Promise((resolve) => {
     const previous = document.activeElement;
@@ -24,7 +25,7 @@ export function pickColour(current) {
       if (e.key === 'Escape' || e.key === 'Enter') {
         e.preventDefault(); e.stopImmediatePropagation();
         if (e.key === 'Escape') finish();
-        else if (!ok.disabled) finish(rgb);
+        else if (!ok.disabled) finish(edited ? rgb : null);
       }
     };
     const valid = () => {
@@ -32,7 +33,9 @@ export function pickColour(current) {
       ok.disabled = bad; add.disabled = bad || saving;
     };
     const mark = (input, bad) => { input.classList.toggle('invalid', bad); input.setAttribute('aria-invalid', String(bad)); };
-    const sync = (source = '') => {
+    // Every sync after the first follows a user edit (fields, square, hue, hex, screen pick).
+    const sync = (source = '', user = true) => {
+      edited ||= user;
       const values = { hsb, rgb, cmyk: rgbCmyk(rgb), hex: [rgbHex(rgb)] };
       for (const [group, inputs] of Object.entries(fields)) if (group !== source) inputs.forEach((el, i) => {
         el.value = group === 'hex' ? values[group][i] : String(+values[group][i].toFixed(2)); mark(el, false);
@@ -76,7 +79,7 @@ export function pickColour(current) {
     const fresh = h('div', { class: 'colour-preview', 'data-testid': 'colour-new' });
     const preview = h('div', { class: 'colour-previews' }, h('span', {}, 'New'), fresh,
       h('div', { class: 'colour-preview', style: `background:${rgbHex(current)}`, 'data-testid': 'colour-current' }), h('span', {}, 'Current'));
-    const ok = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'colour-ok', onclick: () => finish(rgb) }, 'OK');
+    const ok = h('button', { class: 'btn primary', type: 'button', 'data-testid': 'colour-ok', onclick: () => finish(edited ? rgb : null) }, 'OK');
     const cancel = h('button', { class: 'btn', type: 'button', 'data-testid': 'colour-cancel', onclick: () => finish() }, 'Cancel');
     const status = h('div', { class: 'lbl colour-status', role: 'status', 'data-testid': 'colour-status' });
     const add = h('button', { class: 'btn', type: 'button', 'data-testid': 'colour-add', onclick: async () => {
@@ -103,7 +106,7 @@ export function pickColour(current) {
       h('h2', {}, 'Colour picker'), h('div', { class: 'colour-body' }, h('div', { class: 'colour-controls' },
         h('div', { class: 'colour-gradient' }, square, hue), h('label', { class: 'colour-hex' }, 'Hex', hex), screen),
       h('div', { class: 'colour-values' }, h('div', { class: 'colour-summary' }, preview, h('div', { class: 'colour-actions' }, ok, cancel, add)), groups)), status);
-    document.body.append(dialog); sync(); dialog.showModal(); hex.focus(); hex.select();
+    document.body.append(dialog); sync('', false); dialog.showModal(); hex.focus(); hex.select();
     document.addEventListener('keydown', key, true);
   });
 }
