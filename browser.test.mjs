@@ -13162,6 +13162,18 @@ try {
       }
     });
   }
+  await step('TODO 70: Scale point on the base explains how to retry', async () => {
+    await open70([dxfLine(20, 30, 60, 50)]);
+    await page.keyboard.press('Control+a'); await typeCmd('scale'); await typeCmd('20,30');
+    for (const point of ['@0,0', '20,30', '@0<0']) {
+      await typeCmd(point);
+      assert.match(await histLine(), /Pick a point away from the base/);
+      assert.match(await prompt(), /Scale factor/);
+    }
+    await shotBoth('typed-scale-base70');
+    await typeCmd('@2,0');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+  });
   await step('TODO 70: Copy relative targets follow the last typed or clicked target; bare pairs keep base displacement', async () => {
     await open70([dxfLine(20, 30, 60, 50)]);
     await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('20,30');
@@ -13263,6 +13275,18 @@ try {
       await t('real-length').fill('100'); await t('real-length').press('Enter');
       near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
     }
+  });
+  await step('TODO 70: Set length extra typed point asks for the new length', async () => {
+    await open70([dxfLine(20, 30, 60, 50)]); await t('set-length').click();
+    await typeCmd('20,30'); await typeCmd('@40,30');
+    for (const point of ['@10,0', '10<0']) {
+      await typeCmd(point);
+      assert.match(await prompt(), /Set length: type the new length/);
+      assert.match(await t('measured').textContent(), /50(?:\.00)?/);
+    }
+    await shotBoth('typed-set-length-extra70');
+    await t('real-length').fill('100'); await t('real-length').press('Enter');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
   });
   await step('TODO 70: Set length replaces active drawing, modify and Text point prompts', async () => {
     for (const tool of ['line', 'move', 'text']) {

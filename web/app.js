@@ -5606,7 +5606,7 @@ function ldrFieldTyped(which) {
 function cancelSetlen() { state.setlen = null; note('Set length cancelled'); renderEdit(); paintOverlay(); }
 function lengthPoint(d, p, shift = false, typed = false) {
   const L = state.setlen;
-  if (L.pts.length >= 2) return;
+  if (L.pts.length >= 2) { note('Set length: type the new length'); return; }
   L.pts.push(typed ? p : pickPoint(d, p, L.pts, shift)); L.hover = null;
   state.pointLast = L.pts.at(-1).slice(0, 2);
   if (L.pts.length === 1) note('Set length: now the second point');
@@ -5863,7 +5863,7 @@ function modTyped(d, raw) {
       const q = DR.typedPoint(DR.parseInput(raw), m.p1.map((v) => v * d.factor));
       if (q) {
         const factor = scaleDistance(m.p1, q.map((v) => v / d.factor));
-        if (factor > 0) transformDo(d, factor); else note('I do not understand "0". Type a number above 0');
+        if (factor > 0) transformDo(d, factor); else note('Pick a point away from the base');
         return true;
       }
       const factor = scaleFactor(raw);
@@ -5979,7 +5979,7 @@ function modUp(d, was, p, shift) {
     if (m.stage === 'p1') transformBase(d, q);
     else {
       const factor = scaleDistance(m.p1, q);
-      if (factor > 0) transformDo(d, factor); else note('I do not understand "0". Type a number above 0');
+      if (factor > 0) transformDo(d, factor); else note('Pick a point away from the base');
     }
   } else if (m.kind === 'rotate') {
     const q = snapPoint(d, was.p, undefined, undefined, m.p1);
