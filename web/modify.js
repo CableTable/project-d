@@ -91,7 +91,8 @@ function geoInter(gs, gt) {
     const w = sub(line.a, arc.c), A2 = dot(d, d), B = 2 * dot(d, w), C = dot(w, w) - arc.r * arc.r, disc = B * B - 4 * A2 * C;
     if (A2 < 1e-18 || disc < -1e-12 * (B * B + 1)) return out;
     const root = Math.sqrt(Math.max(0, disc));
-    for (const f of (root < 1e-9 ? [-B / (2 * A2)] : [(-B - root) / (2 * A2), (-B + root) / (2 * A2)])) {
+    // Tangent roots split through cancellation; compare at the quadratic's scale.
+    for (const f of (root <= 1e-7 * Math.max(Math.abs(B), 2 * Math.sqrt(A2) * arc.r) ? [-B / (2 * A2)] : [(-B - root) / (2 * A2), (-B + root) / (2 * A2)])) {
       if (f < -E || f > 1 + E) continue;
       const p = [line.a[0] + d[0] * f, line.a[1] + d[1] * f], fa = arcFrac(arc, p);
       if (fa == null) continue;

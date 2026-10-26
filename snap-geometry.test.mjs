@@ -100,6 +100,33 @@ test('TODO 68b: 1000 lines through one point still snap (only the 200 nearest ar
   assert.ok(near([got.x, got.y], [0, 0]));
 });
 
+test('fix68b2: fractional and seeded random slot corners keep the end at every hover', () => {
+  let seed = 68;
+  const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32);
+  const slots = [[.3, .7, 3.7, .61, 0], ...Array.from({ length: 200 }, () =>
+    [random() * 100 - 50, random() * 100 - 50, .5 + random() * 100, .1 + random() * 10, random() * Math.PI * 2])];
+  for (const [x, y, length, radius, angle] of slots) {
+    const corners = [[0, 0], [length, 0], [length, 2 * radius], [0, 2 * radius]].map(([a, b]) =>
+      [x + a * Math.cos(angle) - b * Math.sin(angle), y + a * Math.sin(angle) + b * Math.cos(angle)]);
+    const ed = index(W.lwpoly(corners.map((p, i) => [...p, i % 2]), { closed: true }));
+    const tol = Math.min(length, radius) / 4;
+    const types = snapTypes({ quadrant: angle === 0 }); // Rotated quadrants can legitimately sit closer than the corner.
+    for (const [cx, cy] of corners) for (let a = 0; a < 360; a += 3) for (const r of [.1, .4, .9]) {
+      const got = snapPick(ed, cx + tol * r * Math.cos(a * Math.PI / 180), cy + tol * r * Math.sin(a * Math.PI / 180), tol, true, -1, types);
+      assert.equal(got?.kind, 'end', `slot ${[x, y, length, radius, angle]} corner ${cx},${cy} hover ${a},${r}`);
+    }
+  }
+});
+
+test('fix68b2: relative tangent tolerance preserves two real near-tangent crossings across scales', () => {
+  for (const r of [.001, 1, 1000]) {
+    const ed = index(W.line(-2 * r, r * (1 - 1e-10), 2 * r, r * (1 - 1e-10)), W.circle(0, 0, r));
+    const [line, circle] = ed.ix.pieces, hits = pieceInter(line, circle);
+    assert.equal(hits.length, 2);
+    assert.ok(hits[0][0] < 0 && hits[1][0] > 0);
+  }
+});
+
 test('TODO 68c: perpendicular foot on a line / polyline segment from the last point, ticks, aperture and skip', () => {
   const ed = index(W.line(0, 0, 100, 0), W.lwpoly([[0, 50], [100, 50], [100, 100]]), W.line(5, 5, 5, 5));
   const from = [30, 20], on = (x, y, types = snapTypes(), skip = -1, f = from) => snapPick(ed, x, y, .5, true, skip, types, [], f);
