@@ -159,6 +159,16 @@ test('placeBox: stays at its anchor while the kept corner is clear', () => {
   assert.deepEqual(CB.placeBox(anchor, cursor, size, area, [250, 100, 650, 500], 0), { x: 670, y: 320, corner: 0, anchor: cursor }, 'Circle: all old corners overlap and the kept corner is least covered, but the cursor has a clear corner');
 });
 
+test('placeBox: when all four corners overlap, follows the cursor with the least overlap', () => {
+  const anchor = { x: 300, y: 300 }, cursor = { x: 350, y: 320 };
+  const size = { w: 100, h: 60 }, area = { w: 800, h: 600 }, avoid = [250, 250, 600, 600];
+  const placed = CB.placeBox(anchor, cursor, size, area, avoid, 0);
+  assert.deepEqual(placed, { x: 230, y: 240, corner: 3, anchor: cursor }, 'left-above has the least overlap at the new cursor');
+  const next = { x: 360, y: 330 };
+  assert.deepEqual(CB.placeBox(placed.anchor, next, size, area, avoid, placed.corner),
+    { x: 240, y: 350, corner: 2, anchor: next }, 'an overlapping box follows the cursor, breaking equal-overlap ties in corner order');
+});
+
 test('history: filter, copy text, the last three fade', () => {
   const lines = [{ pre: 'Command:', ans: 'L', cls: 'cm' }, { pre: 'LINE Specify first point:', ans: '0,0' }, { pre: 'Opened a.dxf' }, { pre: 'Command:', ans: 'OFFSET', cls: 'cm' }];
   assert.equal(CB.filterLines(lines, 'line').length, 1);

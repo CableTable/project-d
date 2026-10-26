@@ -9352,6 +9352,28 @@ try {
     await shotBoth('146-growing-preview', show, async () => { await page.keyboard.press('Escape'); });
   });
 
+  await step('TODO 146: the command box clears the Circle readout', async () => {
+    await blankTab();
+    if (await chipOn('tog-polar')) await t('tog-polar').click();
+    const cv = await t('canvas').boundingBox(), centre = { x: cv.x + cv.width * .4, y: cv.y + cv.height * .5 };
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.locator('[data-tool=circle]').click();
+      await page.mouse.click(centre.x, centre.y);
+      const cursor = { x: centre.x + 10, y: centre.y };
+      await page.mouse.move(cursor.x, cursor.y); await frames();
+      assert.match(await t('draw-tip').textContent(), /^R /);
+      await page.keyboard.type('1'); await frames();
+      const box = await t('cmd-bar').boundingBox(), tip = await page.locator('.drawtip').boundingBox();
+      const rightBelow = { ...box, x: cursor.x + 20, y: cursor.y + 20 };
+      assert.equal(overlap(rightBelow, await t('draw-preview').boundingBox()), 0, 'the Circle alone leaves right-below clear');
+      assert.ok(overlap(rightBelow, tip) > 0, 'right-below would cover the blue readout');
+      assert.equal(overlap(box, tip), 0, 'the command box leaves the readout clear');
+    };
+    await shotBoth('146-circle-readout', show, async () => { await page.keyboard.press('Escape'); });
+  });
+
   await step('TODO 146: the box stays put while the mouse walks to its chip', async () => {
     await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
     const raw = newDoc(4);

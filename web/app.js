@@ -3817,7 +3817,7 @@ let canvasPreviewBounds = null;
 function previewBounds() {
   const canvas = ui.canvas.getBoundingClientRect();
   let bounds = canvasPreviewBounds;
-  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-glow, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
+  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-glow, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new, .drawtip')) {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
