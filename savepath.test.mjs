@@ -1,6 +1,6 @@
 // savepath.js — the Save dialog's path with its extension, asking before a file is replaced.   node savepath.test.mjs
 import assert from 'node:assert/strict';
-import { saveDefault, withExt } from './web/savepath.js';
+import { baseName, saveDefault, withExt } from './web/savepath.js';
 
 let n = 0;
 async function test(name, fn) { await fn(); n++; console.log('ok', name); }
@@ -8,6 +8,22 @@ const fake = (files, answer) => {
   const asked = [];
   return { asked, fs: { exists: async (p) => files.includes(p) }, dialog: { ask: async (m) => { asked.push(m); return answer; } } };
 };
+
+await test('plain names strip only known extensions, case-insensitively, keeping decimal and unknown suffixes', () => {
+  for (const ext of ['dxf', 'dwg', 'pdf', 'cdr', 'svg', 'png', 'jpg', 'tif']) {
+    for (const suffix of [ext, ext.toUpperCase(), ext[0].toUpperCase() + ext.slice(1)]) {
+      assert.equal(baseName('Bracket 1.5.' + suffix), 'Bracket 1.5');
+    }
+  }
+  for (const name of ['Bracket 1.5', 'Bracket', 'Bracket.other', 'Bracket.', 'Bracket.dxf.backup', '']) {
+    assert.equal(baseName(name), name);
+  }
+});
+
+await test('PDF names keep decimal suffixes and remove known uppercase extensions', () => {
+  assert.equal(baseName('Bracket 1.5') + '.pdf', 'Bracket 1.5.pdf');
+  assert.equal(baseName('plate.DXF') + '.pdf', 'plate.pdf');
+});
 
 await test('save suggestions use the source folder and preserve literal names, or leave the native last folder alone', () => {
   for (const [path, want] of [

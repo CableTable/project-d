@@ -35,6 +35,36 @@ test('typedPoint and directDistance', () => {
   nearPt(DR.directDistance([5, 5], [5, -50], 2), [5, 3]);
   assert.equal(DR.directDistance([5, 5], [5, 5], 2), null, 'the pointer is on the last point: no direction');
   assert.equal(DR.directDistance([5, 5], null, 2), null);
+  for (const text of ['9'.repeat(310) + ',0', '@' + '9'.repeat(310) + '<90', '1<' + '9'.repeat(310)]) {
+    assert.equal(DR.typedPoint(DR.parseInput(text), [1, 2]), null, 'non-finite point rejected');
+  }
+});
+
+test('rectangle sizes reject non-finite points and keep the first corner for a retry', () => {
+  for (const kind of ['rect', 'rrect']) {
+    const T = DR.createTool(kind);
+    DR.toolClick(T, [20, 30]);
+    for (const prefix of ['', '@']) {
+      assert.equal(DR.toolType(T, prefix + '9'.repeat(310) + ',10').made, null);
+      nearPt(T.last, [20, 30]);
+    }
+    assert.ok(DR.toolType(T, '@40,20').made);
+  }
+});
+
+test('relative points retain the last accepted pick across shapes and Undo, never a refused point', () => {
+  const T = DR.createTool('circle');
+  DR.toolType(T, '@20,30'); DR.toolType(T, '@10<0');
+  DR.toolType(T, '@5,5');
+  nearPt(T.pts[0], [35, 35]);
+  DR.toolType(T, '@0,0');
+  nearPt(T.last, [35, 35]);
+  DR.toolType(T, 'u');
+  assert.equal(T.last, null);
+  const L = DR.createTool('line');
+  DR.toolType(L, '20,30'); DR.toolType(L, '@10,0');
+  DR.toolUndoSeg(L); DR.toolType(L, '@0,10');
+  nearPt(L.pts[0], [20, 40]);
 });
 
 test('arcThrough3: centre, radius and the ends of the anticlockwise arc', () => {

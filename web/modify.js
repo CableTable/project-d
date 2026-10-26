@@ -5,7 +5,7 @@
 //
 //   canModify(ent)                     → can Offset / Trim take this entity? (LINE, ARC, CIRCLE, LWPOLYLINE in the plane)
 //   offsetEntity(ent, d, at)           → { ent } | { error }   the copy d away on the side of the point `at`; a polyline is joined with mitres
-//   trimEntity(ent, edges, pick)       → { ents } | { error }  what is left of ent when the part nearest `pick` between the cutting edges goes
+//   trimEntity(ent, edges, pick)       → { ents, removed } | { error }  the kept pieces and the piece under `pick` that goes
 //   mirrorEntity(ent, p1, p2)          → { ent } | { skip }    the reflection in the line p1 → p2 (text keeps reading the right way)
 //   mirrorShape(sh, p1, p2) / offsetShape(sh, d, at) / trimShape(sh, edgeShapes, pick) are the same on shapes.
 import { shapeOf, hasGrips, num, at as atCode, get, withValues } from './grips.js';
@@ -73,7 +73,11 @@ function arcFrac(g, p) {
 
 /** The points where two segments cross: [{ fs, ft, p }] (fractions along each). */
 export function segInter(s, t) {
-  const gs = geo(s), gt = geo(t), out = [];
+  return geoInter(geo(s), geo(t));
+}
+
+function geoInter(gs, gt) {
+  const s = gs, t = gt, out = [];
   const E = 1e-9;
   if (gs.line && gt.line) {
     const d1 = sub(s.b, s.a), d2 = sub(t.b, t.a), den = cross(d1, d2);
@@ -87,7 +91,8 @@ export function segInter(s, t) {
     const w = sub(line.a, arc.c), A2 = dot(d, d), B = 2 * dot(d, w), C = dot(w, w) - arc.r * arc.r, disc = B * B - 4 * A2 * C;
     if (A2 < 1e-18 || disc < -1e-12 * (B * B + 1)) return out;
     const root = Math.sqrt(Math.max(0, disc));
-    for (const f of (root < 1e-9 ? [-B / (2 * A2)] : [(-B - root) / (2 * A2), (-B + root) / (2 * A2)])) {
+    // Tangent roots split through cancellation; compare at the quadratic's scale.
+    for (const f of (root <= 1e-7 * Math.max(Math.abs(B), 2 * Math.sqrt(A2) * arc.r) ? [-B / (2 * A2)] : [(-B - root) / (2 * A2), (-B + root) / (2 * A2)])) {
       if (f < -E || f > 1 + E) continue;
       const p = [line.a[0] + d[0] * f, line.a[1] + d[1] * f], fa = arcFrac(arc, p);
       if (fa == null) continue;
@@ -105,6 +110,14 @@ export function segInter(s, t) {
     if (fs != null && ft != null) out.push({ fs, ft, p });
   }
   return out;
+}
+
+/** Exact finite intersections of drawing-index lines / arcs / circles; flattened curves have no exact solver. */
+export function pieceInter(a, b) {
+  if (a.curve || b.curve) return [];
+  const geometry = (p) => p.t === 's' ? geo({ a: [p.x1, p.y1], b: [p.x2, p.y2] })
+    : { line: false, c: [p.cx, p.cy], r: p.r, a0: p.s, sw: p.full ? TAU : p.sw };
+  return geoInter(geometry(a), geometry(b)).map((hit) => hit.p);
 }
 
 // ---------------------------------------------------------------- Mirror
@@ -361,7 +374,7 @@ export function shapeOfPiece(segs, srcType) {
 }
 
 /**
- * What is left of a shape when the part under `pick` is cut away between the cutting edges (shapes): { shapes } | { error }.
+ * The kept shapes and removed shape under `pick`, sharing the same cutting interval: { shapes, removed } | { error }.
  * An open shape loses the stretch between the two crossings round the pick (up to its end when there is only one); a circle or closed
  * polyline needs two crossings and keeps the rest as one open piece.
  */
@@ -378,19 +391,21 @@ export function trimShape(sh, edges, pick) {
   cs = cs.filter((u, i) => i === 0 || u - cs[i - 1] > 1e-7);
   if (!cs.length) return { error: 'Nothing crosses it here: pick a part between cutting edges' };
   const up = closest(P, pick).u;
-  let pieces;
+  let pieces, removed;
   if (!P.closed) {
     const lo = cs.filter((u) => u <= up).pop(), hi = cs.find((u) => u > up);
     pieces = [];
     if (lo != null) pieces.push(subPath(P, 0, lo));
     if (hi != null) pieces.push(subPath(P, hi, n));
+    removed = subPath(P, lo ?? 0, hi ?? n);
   } else {
     if (cs.length < 2) return { error: 'A closed shape needs two cutting edges to trim it' };
     const lo = cs.filter((u) => u <= up).pop() ?? cs[cs.length - 1], hi = cs.find((u) => u > up) ?? cs[0];
     pieces = [subPath(P, hi, lo >= hi ? lo : lo + n)];
+    removed = subPath(P, lo, hi > lo ? hi : hi + n);
   }
   const shapes = pieces.map((p) => shapeOfPiece(p, P.type)).filter(Boolean);
-  return { shapes };
+  return { shapes, removed: shapeOfPiece(removed, P.type) };
 }
 
 // ---------------------------------------------------------------- entities
@@ -405,10 +420,10 @@ export function offsetEntity(ent, d, at) {
   return r.error ? r : { ent: rebuilt(r.shape, ent) };
 }
 
-/** What is left of an entity after the part under `pick` is cut off at the edges (entities): { ents } | { error }. */
+/** The kept entities and removed preview entity after cutting at the edges: { ents, removed } | { error }. */
 export function trimEntity(ent, edges, pick) {
   if (!canModify(ent)) return { error: 'Trim takes a line, arc, circle or polyline' };
   const shapes = edges.filter((e) => e !== ent && canModify(e)).map((e) => shapeOf(e, 1));
   const r = trimShape(shapeOf(ent, 1), shapes, pick);
-  return r.error ? r : { ents: r.shapes.map((sh) => rebuilt(sh, ent)) };
+  return r.error ? r : { ents: r.shapes.map((sh) => rebuilt(sh, ent)), removed: r.removed ? rebuilt(r.removed, ent) : null };
 }

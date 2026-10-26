@@ -20,7 +20,7 @@ const TABLE = [
   ['balloon', 'Annotate', 'Numbered balloon for a feature', ['b'], 'draw'],
   ['dimstyle', 'Annotate', 'Dimension style: arrows, text, units', [], ''],
   ['select', 'Edit', 'Pick objects or parts', ['s'], ''],
-  ['measure', 'Edit', 'Distance between two points', ['m'], 'draw'],
+  ['measure', 'Edit', 'Distance between two points', ['m', 'mea'], ''],
   ['pan', 'View', 'Drag the view around', [], ''],
   ['move', 'Edit', 'Move objects from a base point to a target', ['mv'], 'draw'],
   ['nudge', 'Edit', 'Set the arrow-key Nudge step in mm', ['nu'], ''],
@@ -28,7 +28,7 @@ const TABLE = [
   ['trim', 'Edit', 'Cut objects back to cutting edges', ['tr'], 'draw'],
   ['extend', 'Edit', 'Extend lines to boundary edges', ['ex'], 'draw'],
   ['mirror', 'Edit', 'Mirror objects about a line', ['mi'], 'draw'],
-  ['contour', 'Edit', 'Offset a closed outline in steps', ['ct'], 'draw'],
+  ['contour', 'Edit', 'Offset a closed outline in steps', ['ct'], ''],
   ['trace', 'Edit', 'Trace a picture into closed outlines', ['tb'], 'draw'],
   ['textoutlines', 'Edit', 'Turn the selected text into closed outlines', ['txo'], 'draw'],
   ['weld', 'Edit', 'Shaping: join the selected closed outlines into one', [], 'draw'],
@@ -71,6 +71,9 @@ const TABLE = [
   ['selectall', 'Edit', 'Select everything', ['all'], '', 'Ctrl+A'],
   ['delete', 'Edit', 'Delete the selection', ['del', 'erase'], '', 'Delete'],
   ['fit', 'View', 'Fit the view to the window', ['z', 'zoom', 'ze'], '', 'Ctrl+0'],
+  ['zoomwindow', 'View', 'Zoom into a box you drag', ['zw'], ''],
+  ['zoomselection', 'View', 'Zoom to the selected shapes or parts', ['zs'], ''],
+  ['zoomprevious', 'View', 'Back to the previous view (the last 10)', ['zp'], ''],
   ['rulers', 'View', 'Show or hide the rulers', [], ''],
   ['wireframe', 'View', 'Outline-only view; PDF / Print keeps fills', [], '', 'F9'],
   ['properties', 'View', 'Show or hide the Properties bar', ['props'], '', 'Ctrl+1'],
@@ -150,12 +153,40 @@ export function keyOpensBar(ev, { inField = false, dialog = false, active = fals
   return active && /^[-+@.,<]$/.test(ev.key) ? ev.key : null;
 }
 
-/** Where the bar goes: 20 px right of and below the cursor, flipped left / up when it would leave the canvas, then held inside it. → { x, y } */
-export function placeBar(cursor, size, area, gap = 20) {
+/** The area two boxes ([left, top, right, bottom]) share. */
+export const overlapArea = (a, b) => Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0])) * Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+
+const clampBar = (x, y, size, area) => ({ x: Math.max(0, Math.min(x, area.w - size.w)), y: Math.max(0, Math.min(y, area.h - size.h)) });
+const barCorner = (cursor, size, area, gap, corner) => clampBar(
+  corner < 2 ? cursor.x + gap : cursor.x - gap - size.w,
+  corner % 2 === 0 ? cursor.y + gap : cursor.y - gap - size.h, size, area);
+
+/** Keep the anchor until its kept corner overlaps the preview; then try corners round the current cursor. */
+export function placeBox(anchor, cursor, size, area, avoid, corner = null) {
+  if (avoid && corner != null) {
+    const p = barCorner(anchor, size, area, 20, corner);
+    if (avoid.reduce((sum, box) => sum + overlapArea([p.x, p.y, p.x + size.w, p.y + size.h], box), 0)) { anchor = cursor; corner = null; }
+  }
+  return { ...placeBar(anchor, size, area, 20, avoid, corner), anchor };
+}
+
+/** Without avoid (a list of [left, top, right, bottom] boxes), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above; a corner covering the cursor (the box ± gap round it) always loses to one that does not. */
+export function placeBar(cursor, size, area, gap = 20, avoid = null, corner = null) {
+  if (avoid) {
+    const zone = [cursor.x - gap, cursor.y - gap, cursor.x + gap, cursor.y + gap];
+    const candidates = [0, 1, 2, 3].map((corner) => {
+      const p = barCorner(cursor, size, area, gap, corner), r = [p.x, p.y, p.x + size.w, p.y + size.h];
+      return { ...p, corner, covers: overlapArea(r, zone) > 0, hit: avoid.reduce((sum, box) => sum + overlapArea(r, box), 0) };
+    });
+    const kept = candidates[corner];
+    const best = kept && !kept.covers && !kept.hit ? kept
+      : candidates.reduce((q, p) => (p.covers !== q.covers ? !p.covers : p.hit < q.hit) ? p : q);
+    return { x: best.x, y: best.y, corner: best.corner };
+  }
   let x = cursor.x + gap, y = cursor.y + gap;
   if (x + size.w > area.w) x = cursor.x - gap - size.w;
   if (y + size.h > area.h) y = cursor.y - gap - size.h;
-  return { x: Math.max(0, Math.min(x, area.w - size.w)), y: Math.max(0, Math.min(y, area.h - size.h)) };
+  return clampBar(x, y, size, area);
 }
 
 /** The history lines that contain the filter text (any case). */

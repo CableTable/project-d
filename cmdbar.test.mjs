@@ -23,6 +23,8 @@ test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('mv').name, 'move');
   assert.equal(CB.resolve('move').where, 'draw');
   assert.equal(CB.resolve('m').name, 'measure');
+  assert.equal(CB.resolve('m', 'draw').name, 'measure');
+  for (const tab of ['draw', 'layout']) for (const word of ['measure', 'mea']) assert.equal(CB.resolve(word, tab).name, 'measure');
   assert.equal(CB.resolve('ct').name, 'contour');
   assert.equal(CB.resolve('contour').name, 'contour');
   assert.equal(CB.resolve('co').name, 'copy');
@@ -124,6 +126,59 @@ test('placeBar: 20 px right and below, flipped left / up at the edges, always in
     const p = CB.placeBar({ x, y }, size, area);
     assert.ok(p.x >= 0 && p.y >= 0 && p.x + size.w <= area.w && p.y + size.h <= area.h, `(${x},${y}) → ${p.x},${p.y}`);
   }
+});
+
+test('placeBox: separate up-left Line and readout bounds leave a clear, stationary corner', () => {
+  const cursor = { x: 400, y: 300 }, size = { w: 300, h: 60 }, area = { w: 1000, h: 600 };
+  const avoid = [[367, 267, 403, 303], [413, 313, 509, 343]];
+  const placed = CB.placeBox(cursor, cursor, size, area, avoid);
+  assert.deepEqual(placed, { x: 420, y: 220, corner: 1, anchor: cursor }, 'right-above is the first corner that clears both rectangles');
+  assert.equal(CB.placeBar(cursor, size, area, 20, avoid, 2).corner, 2, 'left-below is also clear and can stay there');
+  const next = { x: 405, y: 305 }, moved = [[367, 267, 408, 308], [418, 318, 514, 348]];
+  assert.deepEqual(CB.placeBox(placed.anchor, next, size, area, moved, placed.corner), placed, 'a clear box keeps its original anchor');
+});
+
+test('placeBar: avoidance tries corners in order, then the least overlap', () => {
+  const cursor = { x: 300, y: 300 }, size = { w: 100, h: 60 }, area = { w: 800, h: 600 };
+  const place = (avoid, corner = null) => CB.placeBar(cursor, size, area, 20, avoid, corner);
+  assert.deepEqual(place([]), { x: 320, y: 320, corner: 0 });
+  assert.deepEqual(place([[0, 0, 50, 50]]), { x: 320, y: 320, corner: 0 });
+  assert.deepEqual(place([[310, 310, 500, 500]]), { x: 320, y: 220, corner: 1 });
+  assert.deepEqual(place([[310, 0, 500, 600]]), { x: 180, y: 320, corner: 2 });
+  assert.deepEqual(place([[250, 250, 600, 600]]), { x: 180, y: 220, corner: 3 }, 'all overlap: left-above covers the least');
+  assert.deepEqual(place([[250, 250, 600, 600], [200, 200, 250, 250]]), { x: 180, y: 320, corner: 2 }, 'all overlap: sum the covered area across both rectangles');
+  assert.deepEqual(place([[0, 0, 340, 340]]), { x: 320, y: 320, corner: 0 }, 'all overlap: right-below covers the least');
+  assert.equal(place([[0, 0, 800, 600]]).corner, 0, 'equal areas keep the specified order');
+  assert.equal(place([[310, 310, 500, 500]], 2).corner, 2, 'keep a clear sticky corner even when an earlier one is clear');
+  assert.equal(place([[310, 310, 500, 500]], 0).corner, 1, 'switch when the sticky corner overlaps');
+  assert.equal(place([[0, 0, 50, 50]], 3).corner, 3, 'a clear left-above corner stays');
+  assert.deepEqual(CB.placeBar(cursor, size, area, 20, null, 3), { x: 320, y: 320 }, 'no avoid ignores stickiness, preserving the old result');
+});
+
+test('placeBar: avoid candidates clamp at canvas edges, including an oversized box', () => {
+  const area = { w: 500, h: 300 }, avoid = [[0, 0, 1, 1]];
+  assert.deepEqual(CB.placeBar({ x: 495, y: 295 }, { w: 100, h: 60 }, area, 20, avoid), { x: 400, y: 215, corner: 1 }, 'the clamped right-below corner would sit on the cursor');
+  assert.deepEqual(CB.placeBar({ x: 850, y: 560 }, { w: 300, h: 70 }, { w: 900, h: 600 }, 20, avoid), { x: 600, y: 470, corner: 1 }, 'near the bottom-right edge the box stays off the cursor');
+  assert.deepEqual(CB.placeBar({ x: 0, y: 0 }, { w: 100, h: 60 }, area, 20, [[20, 20, 120, 80]]), { x: 20, y: 0, corner: 1 }, 'least overlap is measured after clamping, among corners off the cursor');
+  assert.deepEqual(CB.placeBar({ x: 5, y: 5 }, { w: 600, h: 400 }, area, 20, avoid), { x: 0, y: 0, corner: 0 });
+});
+
+test('placeBox: stays at its anchor while the kept corner is clear', () => {
+  const anchor = { x: 460, y: 300 }, cursor = { x: 650, y: 300 };
+  const size = { w: 300, h: 70 }, area = { w: 1400, h: 800 };
+  assert.deepEqual(CB.placeBox(anchor, cursor, size, area, [[250, 100, 450, 500]], 0), { x: 480, y: 320, corner: 0, anchor });
+  assert.deepEqual(CB.placeBox(anchor, cursor, size, area, [[480, 320, 780, 390]], 0), { x: 670, y: 210, corner: 1, anchor: cursor }, 'an overlapping kept corner re-anchors before choosing a corner');
+  assert.deepEqual(CB.placeBox(anchor, cursor, size, area, [[250, 100, 650, 500]], 0), { x: 670, y: 320, corner: 0, anchor: cursor }, 'Circle: all old corners overlap and the kept corner is least covered, but the cursor has a clear corner');
+});
+
+test('placeBox: when all four corners overlap, follows the cursor with the least overlap', () => {
+  const anchor = { x: 300, y: 300 }, cursor = { x: 350, y: 320 };
+  const size = { w: 100, h: 60 }, area = { w: 800, h: 600 }, avoid = [[250, 250, 600, 600]];
+  const placed = CB.placeBox(anchor, cursor, size, area, avoid, 0);
+  assert.deepEqual(placed, { x: 230, y: 240, corner: 3, anchor: cursor }, 'left-above has the least overlap at the new cursor');
+  const next = { x: 360, y: 330 };
+  assert.deepEqual(CB.placeBox(placed.anchor, next, size, area, avoid, placed.corner),
+    { x: 240, y: 350, corner: 2, anchor: next }, 'an overlapping box follows the cursor, breaking equal-overlap ties in corner order');
 });
 
 test('history: filter, copy text, the last three fade', () => {

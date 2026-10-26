@@ -13,6 +13,7 @@
 // Handles, owners, reactors, extension dictionaries and xdata are not kept: the writer makes its own handles.
 
 import { flatten } from './drawing.js';
+import { nearestAci, unpack420 } from './colour.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
@@ -290,6 +291,11 @@ export function writeDxfWithReport(doc, opts = {}) {
 
 function writePreparedDxf(doc, opts) {
   const esc = !!opts.escapeUnicode;
+  const colourFallbacks = new Map();
+  const fallbackAci = (tc) => {
+    if (!colourFallbacks.has(tc)) colourFallbacks.set(tc, nearestAci(unpack420(tc)));
+    return colourFallbacks.get(tc);
+  };
   let hnext = 0x20;
   const handle = () => (hnext++).toString(16).toUpperCase();
   const H = { BLOCK_RECORD: '1', LAYER: '2', STYLE: '3', LTYPE: '5', VIEW: '6', UCS: '7', VPORT: '8', APPID: '9', DIMSTYLE: 'A', ROOT: 'C' };
@@ -343,7 +349,8 @@ function writePreparedDxf(doc, opts) {
     if (p.ps) o.p(67, 1);
     o.s(8, p.layer);
     if (p.lt) o.s(6, p.lt);
-    if (p.aci !== 256 && p.aci != null) o.p(62, p.aci);
+    if (p.tc != null) o.p(62, fallbackAci(p.tc));
+    else if (p.aci !== 256 && p.aci != null) o.p(62, p.aci);
     if (p.lw !== -1 && p.lw != null) o.p(370, p.lw);
     if (p.lts !== 1 && p.lts != null) o.p(48, p.lts);
     if (p.hidden) o.p(60, 1);
@@ -368,7 +375,8 @@ function writePreparedDxf(doc, opts) {
     if (p.ps) o.p(67, 1);
     o.s(8, p.layer);
     if (p.lt) o.s(6, p.lt);
-    if (p.aci !== 256) o.p(62, p.aci);
+    if (p.tc != null) o.p(62, fallbackAci(p.tc));
+    else if (p.aci !== 256) o.p(62, p.aci);
     if (p.lw !== -1) o.p(370, p.lw);
     if (p.tc != null) o.p(420, p.tc);
     for (const [c, v] of specific(kid, flags)) { if (c === 100) o.s(100, v); else o.p(c, v); }
@@ -434,9 +442,9 @@ function writePreparedDxf(doc, opts) {
     });
     table('LAYER', layerNames.size, () => {
       for (const name of layerNames) {
-        const l = doc.layers?.[name] || layerDef();
+        const l = doc.layers?.[name] || layerDef(), aci = l.tc != null ? fallbackAci(l.tc) : l.aci || 7;
         rhead('LAYER', name, 'AcDbLayerTableRecord', 'LAYER');
-        o.p(70, ((l.flags || 0) & 6) | (l.frozen ? 1 : 0)).p(62, l.off ? -(l.aci || 7) : (l.aci || 7));
+        o.p(70, ((l.flags || 0) & 6) | (l.frozen ? 1 : 0)).p(62, l.off ? -aci : aci);
         if (l.tc != null) o.p(420, l.tc);
         o.s(6, l.lt || 'CONTINUOUS');
         if (l.plot === false) o.p(290, 0);                                      // "No plot": helper lines must not print or cut

@@ -31,7 +31,7 @@ Session 19 (2026-10-24): step and repeat grid cell (127), linked dimensions (129
 open a library part as a drawing (116), Clean up greyed buttons (128). Session 20 (2026-10-24, PR #15): PDF sheets keep edits + Delete sheet (117), copy / paste between tabs, sheets and layouts (111a, 111b), tables saved as blocks (141). **Next:** 142 (review leftovers), then open bugs,
 then TODO.md "Rakshith's list".
 Session 21 (2026-10-24/25, PR #16, v0.1.95): Move (66a), nudge / nu box (66a2), ribbon + CorelDRAW-style panel + AutoCAD / CorelDRAW theme (110a-d, 94, 132; mock-up R19 Option A). **Next:** 66b Copy, then 66c-66h (decided, DECISIONS row "Copy, Rotate, Scale, Fillet, Extend"), TODO 145, 142, then the rest of "Rakshith's list".
-Session 22 (2026-10-25, PR #17): Copy (66b), Rotate (66c), Scale (66d), Fillet lines / arcs / polylines (66e-66g), Extend lines (66h), exe leftovers (145), each reviewed and fixed. **Next:** 146 (command box over the preview), 142, 143-144, 66i (Extend arcs), then the rest of "Rakshith's list".
+Session 22 (2026-10-25, PR #17): Copy (66b), Rotate (66c), Scale (66d), Fillet lines / arcs / polylines (66e-66g), Extend lines (66h), exe leftovers (145), each reviewed and fixed. **Next:** 146 (command box over the preview), 142, 143-144, 66i (Extend arcs), then the rest of "Rakshith's list". Session 23 (2026-10-25/26, PR #18 open): 142, 146, 78, 68a in; 143 rebase, fix146b, fix142b waiting; **Next:** see `runs23/resume-rook-2.txt`.
 Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare, theme "Modern SaaS", Offset / Trim /
 Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close
 prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). Session 8
@@ -111,8 +111,8 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   (`claude2`): Bishop-build (Sonnet high, a FRESH session per build or fix round, capped with
   `--max-budget-usd`), Bishop-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
   build gets one), Bishop-look (Haiku), Bishop-test (the exe on his PC). **Knight** (Codex, his ChatGPT Go
-  plan) builds (it commits, Rook pushes) and does web research, never reviews. **No default builder** (his call,
-  2026-10-22): each build goes to whichever of Knight and Bishop-build has the lower weekly usage; Bishop also takes
+  plan) builds (it commits, Rook pushes) and does web research, never reviews. **Knight builds** (his call,
+  2026-10-26): Bishop-build only when Knight is at 100% (5-hour or weekly) or he says to use Bishop; Bishop also takes
   mock-ups and screenshots. **Pawn** (Antigravity) only quick lookups.
   Bishop never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
   **Bishop's budget:** at most 14% of its weekly limit per day (above only with his OK). No usage report after a merge: the band and the usage page show it (his call, 2026-10-21).

@@ -11,8 +11,10 @@ import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { placedBox } from './web/apply.js';
 import * as GR from './web/grips.js';
-import { COMMANDS } from './web/cmdbar.js';
+import { svgPath } from './web/draw.js';
+import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
 import { bigDoc } from './tools/gen-big-dxf.mjs';
 
@@ -97,9 +99,18 @@ try {
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto(URL_);
+  // Autosave off for this page (a day): its tabs stay dirty for the whole run, and the default 2-minute timer would write recovery copies
+  // mid-run, so a later reload on a slow runner shows the Recover dialog over the page.
+  await page.goto(URL_ + '?autosave=86400000');
   await page.waitForSelector('[data-testid=count]', { state: 'attached' });
-  const t = (id) => panelControl(page, page.locator(`[data-testid=${id}]`));
+  // After a FAILED step, no modal may stay open (it would fail every later step 30 s each): Esc, then a reload as the last resort.
+  const closeModals = async () => {
+    const open = () => page.locator('.pop-back, .pdlg-back, dialog[open]').count();
+    for (let i = 0; i < 3 && await open(); i++) await page.keyboard.press('Escape');
+    if (await open()) { await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' }); }
+  };
+  afterStep = closeModals;
+  const t =(id) => panelControl(page, page.locator(`[data-testid=${id}]`));
   const layoutTab = () => page.locator('[data-ribbon-tab=Layout]').click();
   const partTab = () => page.locator('[data-ribbon-tab=Part]').click();
   // Display toggles moved from the right panel to View in TODO 110b.
@@ -116,6 +127,366 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 148a: colour picker fields, Properties, Cancel, swatches, screen pick, layers, Contour and exact DXF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => { window.EyeDropper = undefined; });
+    const open = async (text, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+    };
+    let saveNumber = 0;
+    const save = async () => {
+      const number = ++saveNumber;
+      try {
+        // renderStatus() exposes the active drawing's parsed fl; openBytes() sets raw alongside it before addTab().
+        await p.waitForFunction(() => !document.querySelector('.pop-back, .pdlg-back, dialog[open]') &&
+          !!document.querySelector('.dtab.on[data-kind=drawing]') && /^Entities \d+$/.test(document.querySelector('[data-testid=entities]')?.textContent));
+        const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+        return readFileSync(await dl.path(), 'utf8');
+      } catch (e) {
+        const seen = await p.evaluate(() => ({
+          dialog: !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'),
+          focus: { tag: document.activeElement?.tagName, id: document.activeElement?.id, testid: document.activeElement?.getAttribute('data-testid') },
+          docLoaded: !!document.querySelector('.dtab.on[data-kind=drawing]') && /^Entities \d+$/.test(document.querySelector('[data-testid=entities]')?.textContent),
+          tab: document.querySelector('.dtab.on .tname')?.textContent,
+        })).catch(() => ({}));
+        throw new Error(`TODO 148a save #${number}: ${e.message} | page: ${JSON.stringify(seen)}`);
+      }
+    };
+    const history = async () => {
+      await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo history…', exact: true }).click();
+      await q('hist-dialog').waitFor();
+      const rows = await p.locator('[data-testid=hist-row] > span:last-child').allTextContents();
+      await q('hist-close').click();
+      return rows;
+    };
+    const values = async (group, count) => Promise.all(Array.from({ length: count }, (_, i) => q(`colour-${group}-${i}`).inputValue().then(Number)));
+    try {
+      const doc = newDoc(); addEntities(doc, dxfPoly([[10, 10], [110, 10], [110, 110], [10, 110]], { closed: true }));
+      await p.goto(URL_);
+      // OK without an edit changes nothing: plain ACI 7 and ByLayer included.
+      for (const [layer, ent, hex, key] of [[{ aci: 1 }, { aci: 1 }, '#ff0000', 'aci:1'], [{ aci: 7 }, { aci: 7 }, '#000000', 'aci:7'],
+        [{ aci: 7 }, {}, '#000000', 'bylayer'], [{ aci: 1 }, {}, '#ff0000', 'bylayer']]) {
+        const unchanged = newDoc(); addLayer(unchanged, '0', layer);
+        addEntities(unchanged, dxfLine(10, 10, 110, 110, ent));
+        await open(writeDxf(unchanged), `unchanged-${layer.aci}-${key}.dxf`);
+        const before = readDxf(await save()), steps = await history();
+        await q('prop-swatch').click();
+        assert.equal(await q('colour-hex').inputValue(), hex);
+        await q('colour-ok').click();
+        assert.equal(await q('prop-colour').inputValue(), key);
+        assert.deepEqual(readDxf(await save()).entities, before.entities, 'unchanged OK preserves the object colour');
+        assert.deepEqual(await history(), steps, 'unchanged object colour adds no Undo step');
+        await q('layer-colour').first().click(); await q('colour-ok').click();
+        assert.deepEqual(readDxf(await save()).layers, before.layers, 'unchanged OK preserves the layer colour');
+        assert.deepEqual(await history(), steps, 'unchanged layer colour adds no Undo step');
+      }
+      for (const entry of ['Properties swatch', 'Properties picker', 'Ribbon swatch', 'Ribbon picker']) {
+        const mixed = newDoc();
+        addEntities(mixed, dxfLine(10, 10, 110, 10, { aci: 1 }), dxfLine(10, 30, 110, 30, { aci: 5 }));
+        await open(writeDxf(mixed), `mixed-${entry}.dxf`);
+        const before = readDxf(await save());
+        assert.equal(await q('prop-colour').inputValue(), '', 'mixed colours show varies');
+        if (entry === 'Properties swatch') await q('prop-swatch').click();
+        else if (entry === 'Properties picker') await q('prop-colour').selectOption('custom');
+        else {
+          await p.locator('[data-ribbon-tab=Home]').click();
+          if (entry === 'Ribbon swatch') await p.getByRole('button', { name: 'Pick ribbon colour', exact: true }).click();
+          else await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).selectOption('custom');
+        }
+        assert.equal(await q('colour-hex').inputValue(), '#ff0000');
+        await q('colour-ok').click();
+        const changed = readDxf(await save());
+        assert.deepEqual(changed.entities.map((e) => [e.aci, e.tc]), [[1, null], [1, null]], `${entry}: OK makes both objects red`);
+        await p.keyboard.press('Control+z');
+        assert.deepEqual(readDxf(await save()).entities, before.entities, `${entry}: one Undo restores both colours`);
+      }
+      for (const [text, tc] of [['0,0,0', 0], ['255,255,255', 0xffffff]]) {
+        const indexed = newDoc(); addEntities(indexed, dxfLine(10, 10, 110, 110, { aci: 7 }));
+        await open(writeDxf(indexed), `true-colour-${tc}.dxf`);
+        await q('prop-swatch').click(); await q('colour-hex').fill(text); await q('colour-ok').click();
+        assert.equal(await q('prop-colour').inputValue(), 'tc:' + tc, 'explicit black / white differs from ACI 7');
+        assert.equal(readDxf(await save()).entities[0].tc, tc);
+        await q('layer-colour').first().click(); await q('colour-hex').fill(text); await q('colour-ok').click();
+        assert.equal(readDxf(await save()).layers['0'].tc, tc, 'ACI 7 layers also accept true black / white');
+      }
+      await open(writeDxf(doc), 'picker.dxf');
+      await q('prop-swatch').click(); await q('colour-dialog').waitFor();
+      for (const key of ['Control+w', 'Control+Tab']) {
+        await p.keyboard.press(key);
+        assert.equal(await p.locator('.dtab.on .tname').textContent(), 'picker.dxf', 'tab shortcuts wait while the picker is open');
+        assert.equal(await q('colour-dialog').isVisible(), true);
+      }
+      assert.equal(await q('colour-screen').isVisible(), false, 'unavailable EyeDropper is hidden');
+      await q('colour-hex').fill('51,153,204');
+      assert.deepEqual(await values('rgb', 3), [51, 153, 204]);
+      assert.deepEqual(await values('hsb', 3), [200, 75, 80]);
+      assert.deepEqual(await values('cmyk', 4), [75, 25, 0, 20]);
+      await q('colour-cmyk-3').fill('100'); assert.equal(await q('colour-hex').inputValue(), '#000000');
+      await q('colour-cmyk-3').fill('20'); assert.equal(await q('colour-hex').inputValue(), '#3399cc');
+      await q('colour-hsb-0').fill('120'); assert.deepEqual(await values('rgb', 3), [51, 204, 51]);
+      await q('colour-rgb-0').fill('1'); assert.equal(await q('colour-hex').inputValue(), '#01cc33');
+      await q('colour-rgb-0').fill('256'); assert.equal(await q('colour-ok').isDisabled(), true);
+      await q('colour-rgb-0').fill('1'); assert.equal(await q('colour-ok').isEnabled(), true);
+      await q('colour-square').click({ position: { x: 80, y: 80 } });
+      assert.notEqual(await q('colour-hex').inputValue(), '#01cc33');
+      await q('colour-hue').focus(); await p.keyboard.press('Home');
+      assert.equal(Number(await q('colour-hsb-0').inputValue()), 0, 'hue strip supports the keyboard');
+      const hueColour = await q('colour-hex').inputValue();
+      await p.keyboard.press('Enter');
+      assert.equal(await q('colour-dialog').isVisible(), true, 'Enter on the hue slider does not accept the draft');
+      assert.equal(await q('colour-hex').inputValue(), hueColour, 'Enter on the hue slider leaves the colour alone');
+      await q('colour-hex').fill('#3399cc');
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo148a-colour-picker-${theme}.png` });
+      }
+      await q('colour-add').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=colour-status]').textContent === 'Added to Swatches');
+      await q('colour-ok').click();
+      assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc);
+      await q('prop-swatch').click(); await q('colour-hex').fill('abcdef'); await q('colour-cancel').click();
+      assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc, 'Cancel keeps the current colour');
+      await q('prop-swatch').click(); await q('colour-hex').fill('abcdef'); await q('colour-cancel').focus(); await p.keyboard.press('Enter');
+      assert.equal(await q('colour-dialog').count(), 0, 'Enter on Cancel presses Cancel');
+      assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc, 'Enter on Cancel keeps the current colour');
+      await q('prop-swatch').click(); await q('colour-hex').fill('bad hex');
+      assert.equal(await q('colour-hex').getAttribute('aria-invalid'), 'true');
+      assert.equal(await q('colour-hex').evaluate((el) => getComputedStyle(el).borderTopColor), 'rgb(223, 51, 69)', 'invalid hex stays red');
+      assert.equal(await q('colour-ok').isDisabled(), true);
+      assert.equal(await q('colour-add').isDisabled(), true);
+      await p.keyboard.press('Enter'); assert.equal(await q('colour-dialog').isVisible(), true);
+      await p.keyboard.press('Escape'); assert.equal(await q('colour-dialog').count(), 0);
+      // The ribbon's colour box opens the same draft; Enter commits it.
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.getByRole('button', { name: 'Pick ribbon colour', exact: true }).click();
+      await q('colour-hex').fill('3399cc'); await p.keyboard.press('Enter');
+      const saved = await save(); assert.equal(readDxf(saved).entities[0].tc, 0x3399cc);
+      await open(saved, 'picker-reopened.dxf');
+      await q('prop-swatch').click(); assert.equal(await q('colour-hex').inputValue(), '#3399cc');
+      // Exercise the optional API through a deterministic screen pick and a cancelled pick.
+      await q('colour-cancel').click();
+      await p.evaluate(() => { window.EyeDropper = class { async open() { return { sRGBHex: '#123456' }; } }; });
+      await q('prop-swatch').click(); await q('colour-screen').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=colour-hex]').value === '#123456');
+      await p.evaluate(() => { window.EyeDropper = class { async open() { throw new DOMException('Cancelled', 'AbortError'); } }; });
+      await q('colour-screen').click(); assert.equal(await q('colour-hex').inputValue(), '#123456');
+      await q('colour-cancel').click();
+      const layerCss = () => q('layer-colour').first().evaluate((el) => el.style.backgroundColor), layerBefore = await layerCss();
+      await q('layer-colour').first().click(); await q('colour-hex').fill('123456'); await q('colour-ok').click();
+      assert.equal(readDxf(await save()).layers['0'].tc, 0x123456);
+      const layerAfter = await layerCss();
+      assert.notEqual(layerAfter, layerBefore, 'layer list redraws from the changed layer table, using its theme tint');
+      await p.keyboard.press('Control+z'); assert.equal(readDxf(await save()).layers['0'].tc, null, 'layer colour has one Undo');
+      assert.equal(await layerCss(), layerBefore, 'Undo redraws the old layer colour');
+      await p.keyboard.press('Control+y'); assert.equal(readDxf(await save()).layers['0'].tc, 0x123456, 'Redo restores the colour');
+      assert.equal(await layerCss(), layerAfter, 'Redo redraws the new layer colour');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await p.locator('[data-tool=contour]').click();
+      const byLayer = await p.evaluate(() => localStorage.getItem('pd-contour'));
+      await q('contour-colour').click(); await q('colour-ok').click();
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), byLayer, 'unchanged OK keeps Contour ByLayer');
+      await p.locator('button.cs[aria-label=Black]').click(); await q('contour-colour').click();
+      assert.equal(await q('colour-hex').inputValue(), '#000000', 'the ACI 7 preset opens the picker on a real colour');
+      await q('colour-cancel').click();
+      await q('contour-colour').click(); await q('colour-hex').fill('3399cd'); await q('colour-ok').click();
+      assert.equal(await q('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)');
+      const contourBefore = await p.evaluate(() => localStorage.getItem('pd-contour'));
+      await q('contour-colour').click(); await q('colour-ok').click();
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), contourBefore, 'unchanged Contour OK keeps its colour key');
+      await p.reload(); await q('picker').waitFor({ state: 'attached' });
+      const stored = await p.evaluate(async () => {
+        const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-swatches', 'swatches', 'swatches').all();
+      });
+      assert.deepEqual(stored, [{ id: '#3399cc', rgb: [51, 153, 204] }], 'swatch survives reload on this PC');
+      await open(saved, 'contour-reload.dxf'); await p.locator('[data-tool=contour]').click();
+      assert.equal(await q('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)', 'custom Contour colour survives reload');
+      const untabled = '0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nUntabled\n10\n0\n20\n0\n11\n100\n21\n100\n0\nENDSEC\n0\nEOF\n';
+      await open(untabled, 'untabled.dxf');
+      await panelControl(p, p.locator('.layer[data-layer-name=Untabled] [data-testid=layer-colour]')).click();
+      await q('colour-hex').fill('#123456'); await q('colour-ok').click();
+      assert.equal(readDxf(await save()).layers.Untabled.tc, 0x123456, 'layers missing from an imported table still accept a colour');
+    } finally { await context.close(); }
+  });
+  await step('TODO 68a: snap per type', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      const fillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'centre', 'point', 'nearest'].includes(text)) window.__snapLabel = text;
+        return fillText.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    const list = q('snap-types'), arrow = q('snap-types-open'), end = q('snap-type-end');
+    const open = async () => { await arrow.click(); await list.waitFor({ state: 'visible' }); };
+    const closed = () => list.waitFor({ state: 'hidden' });
+    try {
+      await p.goto(URL_); await arrow.waitFor();
+      await arrow.focus(); await p.keyboard.press('Enter'); await list.waitFor({ state: 'visible' });
+      assert.equal(await list.locator('input:checked').count(), 8, 'all current and future types default on');
+      assert.equal(await list.locator('input:disabled').count(), 0, 'every type is live');
+      await end.focus(); await p.keyboard.press('Space');
+      assert.equal(await end.isChecked(), false, 'keyboard toggles a tick');
+      await p.keyboard.press('Escape'); await closed();
+      assert.equal(await arrow.evaluate((el) => el === document.activeElement), true, 'Esc restores keyboard focus');
+      await p.reload(); await arrow.waitFor(); await open();
+      assert.equal(await end.isChecked(), false, 'reload keeps end unticked');
+      assert.equal(await q('snap-type-near').isChecked(), true, 'other ticks stay on');
+      await arrow.click(); await closed();
+      await q('tog-snap').click({ button: 'right' }); await list.waitFor({ state: 'visible' });
+      assert.equal(await q('tog-snap').getAttribute('aria-pressed'), 'true', 'right-click does not toggle SNAP');
+      await p.locator('.coords').click(); await closed();
+      await q('tog-snap').click();
+      assert.equal(await q('tog-snap').getAttribute('aria-pressed'), 'false', 'left-click still toggles SNAP');
+      await q('tog-snap').click();
+
+      const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 80, 120, 80));
+      await q('picker').setInputFiles({ name: 'snap-types.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-types.dxf');
+      const pick = async (label) => {
+        await p.locator('[data-tool=line]').click();
+        const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+        const x = r.x + 20 * r.scale + 3, y = r.y + (r.h - 30) * r.scale - 1;
+        await p.evaluate(() => { window.__snapLabel = ''; });
+        await p.mouse.move(x, y);
+        await p.waitForFunction((want) => window.__snapLabel === want, label);
+        await p.mouse.click(x, y);
+        await p.mouse.move(x + 50, y - 50);
+        const path = await q('draw-preview').getAttribute('d'), start = path.match(/-?\d+(?:\.\d+)?/g).slice(0, 2).map(Number);
+        assert.ok(Math.abs(start[0] - (label === 'end' ? 20 : 20 + 3 / r.scale)) < .02, 'picked start uses ' + label + ': ' + path);
+        assert.ok(Math.abs(start[1] - (r.h - 30)) < .02, 'picked start lies on the line');
+        await p.keyboard.press('Escape');
+      };
+      await pick('nearest');
+      await open(); await end.check(); await p.keyboard.press('Escape'); await closed();
+      await pick('end');
+      await p.reload(); await arrow.waitFor(); await open();
+      assert.equal(await end.isChecked(), true, 'reload also keeps end ticked again');
+      await p.keyboard.press('Escape');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await open(); await end.uncheck();
+        await p.screenshot({ path: `${shotDir}/todo68a-snap-types-${theme}.png` });
+        await p.keyboard.press('Escape');
+      }
+    } finally { await context.close(); }
+  });
+  await step('TODO 68b: intersection and quadrant', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      const fillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['intersection', 'quadrant', 'nearest'].includes(text)) window.__snapLabel = text;
+        return fillText.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    try {
+      await p.goto(URL_); await q('snap-types-open').waitFor();
+      const doc = newDoc(4);
+      addEntities(doc, dxfLine(20, 50, 140, 50), dxfLine(65, 20, 65, 120), dxfCircle(220, 70, 30));
+      await q('picker').setInputFiles({ name: 'snap-crossings.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-crossings.dxf');
+      const hover = async (label, wx, wy) => {
+        await p.locator('[data-tool=line]').click();
+        const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+        const x = r.x + wx * r.scale + 3, y = r.y + (r.h - wy) * r.scale - 2;
+        await p.evaluate(() => { window.__snapLabel = ''; });
+        await p.mouse.move(x, y);
+        await p.waitForFunction((want) => window.__snapLabel === want, label);
+        return { x, y, r };
+      };
+      const pick = async ({ x, y, r }, wx, wy) => {
+        await p.mouse.click(x, y); await p.mouse.move(x + 50, y - 50);
+        const path = await q('draw-preview').getAttribute('d'), start = path.match(/-?\d+(?:\.\d+)?/g).slice(0, 2).map(Number);
+        assert.ok(Math.abs(start[0] - wx) < .02 && Math.abs(start[1] - (r.h - wy)) < .02, 'picked point uses the named snap: ' + path);
+        await p.keyboard.press('Escape');
+      };
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        for (const [kind, x, y] of [['intersection', 65, 50], ['quadrant', 220, 100]]) {
+          const pos = await hover(kind, x, y);
+          await p.screenshot({ path: `${shotDir}/todo68b-${kind}-${theme}.png` });
+          await pick(pos, x, y);
+        }
+      }
+      await q('snap-types-open').click();
+      await q('snap-type-intersection').uncheck();
+      await p.keyboard.press('Escape');
+      const pos = await hover('nearest', 65, 50);
+      await pick(pos, 65 + 3 / pos.r.scale, 50);
+    } finally { await context.close(); }
+  });
+  await step('TODO 68c: perpendicular snap from the last picked point (Line, Dimension point-to-line, tick off)', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      const fillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['perpendicular', 'nearest'].includes(text)) window.__snapLabel = text;
+        return fillText.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    try {
+      await p.goto(URL_); await q('snap-types-open').waitFor();
+      const doc = newDoc(4);
+      addEntities(doc, dxfLine(20, 30, 140, 30));
+      await q('picker').setInputFiles({ name: 'snap-perp.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-perp.dxf');
+      const sheet = () => p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+      const px = (r, wx, wy, dx = 0) => [r.x + wx * r.scale + dx, r.y + (r.h - wy) * r.scale];
+      const hover = async (label, wx, wy, dx) => {
+        const r = await sheet(), [x, y] = px(r, wx, wy, dx);
+        await p.evaluate(() => { window.__snapLabel = ''; });
+        await p.mouse.move(x + 30, y - 30); await p.mouse.move(x, y);
+        await p.waitForFunction((want) => window.__snapLabel === want, label, { timeout: 3000 }).catch(async (e) => { throw new Error(`${label} never shown (saw "${await p.evaluate(() => window.__snapLabel)}", prompt "${await q('cmd-prompt').textContent()}")`, { cause: e }); });
+        return [x, y];
+      };
+      const prompt = () => q('cmd-prompt').textContent();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        await p.locator('[data-tool=line]').click();
+        await p.waitForFunction(() => /first point/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        const wx = theme === 'light' ? 40 : 70, r = await sheet(), [x0, y0] = px(r, wx, 70);       // a new x each time: the first line stays in the drawing
+        await p.mouse.move(x0, y0); await p.mouse.click(x0, y0);
+        await p.waitForFunction(() => !/first point/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+        const [x1, y1] = await hover('perpendicular', wx, 30, 4);
+        await p.screenshot({ path: `${shotDir}/todo68c-perpendicular-${theme}.png` });        await p.mouse.click(x1, y1); await p.mouse.move(x1 + 60, y1 - 40);
+        const n = (await q('draw-preview').getAttribute('d')).match(/-?\d+(?:\.\d+)?/g).map(Number);
+        assert.ok(Math.abs(n[0] - wx) < .02 && Math.abs(n[1] - (r.h - 30)) < .02, 'the line ends at the foot of the perpendicular (the next segment starts there): ' + n);
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+        await p.locator('[data-tool=select]').click();
+      }
+      const dimension = async (label, wx, wantText) => {
+        await p.locator('[data-tool=dimension]').click();
+        const r = await sheet();
+        await p.mouse.click(...px(r, wx, 70));
+        const [x, y] = await hover(label, wx, 30, 6);
+        await p.mouse.click(x, y);
+        await p.mouse.click(...px(r, 100, 50));
+        assert.match(await prompt(), wantText);
+        await p.keyboard.press('Escape');
+      };
+      await dimension('perpendicular', 125, /Dimension placed: 40\.00 mm/);
+      await q('snap-types-open').click();
+      await q('snap-type-perpendicular').uncheck();
+      await p.keyboard.press('Escape');
+      await dimension('nearest', 55, /Dimension placed: 40\.0[1-9] mm/);
+    } finally { await context.close(); }
+  });
   await step('TODO 94/132: docker tabs, remembered folds, library first, resize, hide/show and typed Guides', async () => {
     const context = await browser.newContext({ viewport: { width: 1180, height: 760 }, deviceScaleFactor: 1.25 });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -433,7 +804,7 @@ try {
       }
     } finally { page.off('dialog', accept); }
   };
-  await step('TODO 141: Save keeps table lines as named blocks, reports conversions and dropped types, and reopens the saved drawing', async () => {
+  await step('TODO 141 / 142: Save and layout paste report table conversions and dropped types; Extract shows the source base name; saved tables reopen', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
     p.on('pageerror', (e) => errors.push(String(e)));
@@ -461,7 +832,12 @@ try {
       assert.equal(readDxf(single.text).entities[0].type, 'INSERT');
       // Saving again still converts a table: Save must not replace the open document's entity.
       await saved(singleNote);
+      const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
+      const lossyPart = fixture.replace('0\nENDBLK\n', '0\nIMAGE\n8\n0\n0\nENDBLK\n');
+      await q('picker').setInputFiles({ name: 'plate.dxf', mimeType: 'application/dxf', buffer: Buffer.from(lossyPart) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'plate.dxf');
       await p.keyboard.press('Control+a');
+      await p.keyboard.press('Control+c');
       await q('bar-extract').click();
       await q('name-input').fill('Extracted table'); await q('name-ok').click();
       await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent.includes('Part Extracted table saved to the Parts library:') && document.querySelector('[data-testid=cmd-prompt]').textContent.includes(text), singleNote);
@@ -470,7 +846,31 @@ try {
         await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
         await p.screenshot({ path: `${shotDir}/todo141-extract-${theme}.png` });
       }
-      const fixture = readFileSync('fixtures/table.dxf', 'utf8').replace(/\r/g, '');
+      await p.locator('[data-tab=library]').click();
+      const extracted = p.locator('[data-testid=lib-list] .card[data-name="Extracted table"]');
+      assert.equal(await extracted.locator(':scope > .lbl:not(.mono)').textContent(), 'plate', 'the extracted card shows the source without its extension');
+      assert.equal((await extracted.getAttribute('title')).split('\n')[0], 'plate', 'the compact card exposes the source in its tooltip');
+      assert.equal((await p.evaluate(async () => (await import('./partstore.js')).loadParts())).find((r) => r.name === 'Extracted table').source, 'plate');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo142-source-${theme}.png` });
+      }
+      if (!(await q('cmd-input').isVisible())) await q('cmd-echo').click();
+      await q('cmd-input').fill('newlayout'); await q('cmd-input').press('Enter'); await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+v');
+      const pasteNote = `Part plate paste saved to the Parts library and placed at the same coordinates. Ctrl+Z removes the placement. ${singleNote}; 1 object not saved: IMAGE x1`;
+      await p.waitForFunction((text) => document.querySelector('[data-testid=cmd-prompt]').textContent === text, pasteNote);
+      const pasteMessage = p.locator('.cb-fade-rows > div').filter({ hasText: pasteNote });
+      await pasteMessage.waitFor({ state: 'visible' });
+      assert.equal(await pasteMessage.getAttribute('title'), pasteNote, 'the full paste report is available on hover');
+      const pasted = (await p.evaluate(async () => (await import('./partstore.js')).loadParts())).find((r) => r.name === 'plate paste');
+      assert.equal(pasted.source, 'plate');
+      assert.equal(readDxf(pasted.dxf).entities[0].type, 'INSERT');
+      assert.ok(!pasted.dxf.includes('\nIMAGE\r\n'), 'the saved part omits the reported unsupported object');
+      for (const theme of ['light', 'dark']) {
+        await p.emulateMedia({ colorScheme: theme }); await p.waitForTimeout(150);
+        await p.screenshot({ path: `${shotDir}/todo142-paste-${theme}.png` });
+      }
       const end = fixture.lastIndexOf('0\nENDSEC\n');
       const table = fixture.slice(fixture.indexOf('0\nACAD_TABLE\n'), end).replace('10\n100\n', '10\n150\n');
       const extra = table + '0\nIMAGE\n8\n0\n0\nIMAGE\n8\n0\n0\nWIPEOUT\n8\n0\n';
@@ -1584,7 +1984,8 @@ try {
   const dialog = page.locator('[data-testid=pdf-dialog]');
   const openPdf = async () => { await t('pdf-open').click(); await dialog.waitFor(); await page.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
   afterStep = async () => {
-    const v = page.viewportSize();                                  // a failed small-window step must not leave the window small
+    await closeModals();
+    const v = page.viewportSize();                                // a failed small-window step must not leave the window small
     if (!v || v.width !== 1440 || v.height !== 900) await page.setViewportSize({ width: 1440, height: 900 });
     if (await page.locator('[data-testid=pdf-back]').count()) await closePdf();
   };   // after a FAILED step, a still-open PDF dialog is closed so it does not block the steps after it
@@ -1713,6 +2114,32 @@ try {
     const a3 = boxes(pdfText(await downloaded(() => t('pdf-go').click())))[0];
     assert.ok(Math.abs(a3[0] - 420) < 0.01 && Math.abs(a3[1] - 297) < 0.01, `${a3}`);
     await openPdf(); await t('pdf-page-sheet').check(); await closePdf();
+  });
+
+  await step('TODO 149: PDF export keeps decimal names and strips known uppercase extensions', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const raw = newDoc(); addEntities(raw, dxfCircle(20, 20, 10));
+    try {
+      await p.goto(URL_);
+      for (const [name, want] of [['Bracket 1.5', 'Bracket 1.5.pdf'], ['plate.DXF', 'plate.pdf']]) {
+        await p.evaluate(async ({ name, fl }) => {
+          const { openExport } = await import('./export.js');
+          openExport({ source: () => ({ name, fl, factor: 1, off: new Set(), sheetW: 100, sheetH: 100, hide: [] }), setTitleBlock: () => {}, note: () => {} });
+        }, { name, fl: flatten(raw) });
+        assert.equal(await q('pdf-foot').textContent(), want);
+        await q('pdf-page-check').check();
+        assert.equal(await q('pdf-title-file').inputValue(), want.slice(0, -4));
+        if (name === 'Bracket 1.5') {
+          for (const theme of ['light', 'dark']) {
+            await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+            await p.screenshot({ path: `${shotDir}/todo149-pdf-name-${theme}.png` });
+          }
+        }
+        const pending = p.waitForEvent('download'); await q('pdf-go').click();
+        assert.equal((await pending).suggestedFilename(), want);
+      }
+    } finally { await ctx.close(); }
   });
 
   await step('TODO 101 / T18: editable title block, off frees the strip, Reset, per-tab settings saved and reopened', async () => {
@@ -2290,12 +2717,110 @@ try {
     await page.keyboard.press('Escape');
     assert.match(await t('cmd-prompt').textContent(), /Measure cleared/);
     assert.equal(await accentWhen((n) => n === 0), 0, 'the measure is gone from the canvas');
-    // a layout tab has no drawing to measure: it says so
+    // Measure stays available when switching to a layout.
     await page.locator('.tabs .dtab[data-kind=layout]').first().click();
+    assert.match(await page.locator('[data-tool=measure]').getAttribute('class'), /on/);
+    assert.match(await t('cmd-prompt').textContent(), /Measure: click the first point/);
     await page.locator('[data-tool=measure]').click();
-    assert.match(await t('cmd-prompt').textContent(), /Measure: open a drawing tab first/);
+    assert.match(await t('cmd-prompt').textContent(), /Measure: click the first point/);
     await drawingTab().click();
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 143: Measure on a layout', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const raw = newDoc(4);
+    addEntities(raw, [dxfPoly([[10, 20], [50, 20], [50, 40], [10, 40]], true), dxfCircle(30, 30, 4)]);
+    const lay = newLayout('Measure layout');
+    Object.assign(lay.s, { sheetW: 400, sheetH: 300 });
+    lay.parts.p = makePart('p', 'Plate', raw, 1);
+    lay.placed = [{ partId: 'p', x: 80, y: 80, rot: 90, lock: true }, { partId: 'p', x: 240, y: 100, mirrorX: true }];
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect();
+      const sc = b.width / +sheet.getAttribute('width'), H = +sheet.getAttribute('height');
+      return { x: b.x + x * sc, y: b.y + (H - y) * sc };
+    }, [x, y]);
+    const clickAt = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const readout = () => q('cmd-prompt').textContent();
+    const dirty = () => p.locator('.dtab.on').getAttribute('class');
+    try {
+      await p.goto(URL_); await q('picker').setInputFiles({ name: 'measure-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on').dataset.kind === 'layout');
+      const clean = await dirty();
+      let ribbonMeasures = 0;
+      for (const tab of ['Home', 'Layout', 'View', 'Output']) {
+        await p.locator(`[data-ribbon-tab=${tab}]`).click();
+        const buttons = p.locator('.ribbon-body').getByRole('button', { name: 'Measure', exact: true });
+        for (const b of await buttons.all()) { assert.equal(await b.isEnabled(), true); ribbonMeasures++; }
+      }
+      assert.ok(ribbonMeasures > 0);
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.keyboard.press('Control+a');          // Esc in Measure must work with several parts selected.
+      await command('measure');
+      await clickAt(60.2, 120.2); await clickAt(199.8, 120.2);
+      assert.equal((await readout()).trim(), 'Distance 140 mm   ΔX 140   ΔY 0   Angle 0°');
+      assert.equal(await q('meas-keep').isVisible(), false);
+      await p.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').textContent.includes('Distance 140 mm'));
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        await p.locator('[data-ribbon-tab=Layout]').click();
+        await p.mouse.move(900, 700);
+        await p.screenshot({ path: `${shotDir}/todo143-measure-${theme}.png` });
+      }
+      const cursor = await point(50, 150), a = await point(60, 120), b = await point(200, 120);
+      await p.mouse.move(cursor.x, cursor.y); await p.keyboard.type('measure');
+      await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      const bar = await q('cmd-bar').boundingBox();
+      assert.ok(bar.x + bar.width <= a.x - 15 || bar.x >= b.x + 15 || bar.y + bar.height <= a.y - 15 || bar.y >= a.y + 15,
+        'the command box leaves layout Measure marks clear, like drawing Measure');
+      await q('cmd-input').press('Enter');
+      await clickAt(0.2, 0.2); await clickAt(60.2, 120.2);
+      assert.match(await readout(), /Distance 134\.16 mm   ΔX 60   ΔY 120/);
+      await p.keyboard.press('Escape'); assert.match(await readout(), /Measure cleared/);
+      await p.keyboard.press('Escape'); assert.match(await p.locator('[data-tool=select]').getAttribute('class'), /on/);
+      await command('mea');
+      await clickAt(100, 200);
+      await p.keyboard.down('Shift'); await clickAt(150, 210); await p.keyboard.up('Shift');
+      assert.match(await readout(), /ΔY 0   Angle 0°/);
+      await q('tog-ortho').click();
+      await clickAt(100, 200); await clickAt(110, 250);
+      assert.match(await readout(), /ΔX 0   ΔY [\d.]+   Angle 90°/);
+      await q('tog-ortho').click();
+      await q('tog-snap').click();
+      await clickAt(0.2, 0.2); await clickAt(60, 120);
+      assert.match(await readout(), /ΔX 59\.8   ΔY 119\.8/);
+      await q('tog-snap').click();
+      await q('snap-types-open').click();
+      for (const kind of ['end', 'mid', 'near', 'intersection', 'quadrant']) await q('snap-type-' + kind).uncheck();
+      await p.keyboard.press('Escape');
+      await clickAt(0.2, 0.2); await clickAt(199.8, 120.2);
+      assert.match(await readout(), /ΔX 199\.6   ΔY 120/, 'layout picks respect disabled part and sheet snap types');
+      await clickAt(70.1, 100.1); await clickAt(199.8, 120.2);
+      assert.match(await readout(), /ΔX 129\.8   ΔY 20\.2/, 'the enabled transformed centre still snaps');
+      await q('snap-types-open').click();
+      for (const kind of ['end', 'mid', 'near', 'intersection', 'quadrant']) await q('snap-type-' + kind).check();
+      await p.keyboard.press('Escape');
+      const corner = await point(200, 120);
+      await p.mouse.click(corner.x, corner.y, { button: 'right' });
+      await p.getByRole('menuitem', { name: 'Measure from here', exact: true }).click();
+      await clickAt(0.2, 0.2);
+      assert.match(await readout(), /Distance 233\.24 mm   ΔX -200   ΔY -120/);
+      assert.equal(await dirty(), clean, 'Measure leaves the tab clean');
+      await p.locator('[data-menu=Edit]').click();
+      assert.equal(await p.getByRole('menuitem', { name: 'Undo', exact: true }).isEnabled(), false, 'Measure adds no undo step');
+      await p.keyboard.press('Escape');
+      const download = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      const saved = await download, reopened = layoutFromRaw(readDxf(readFileSync(await saved.path(), 'utf8')));
+      assert.deepEqual(reopened.placed, layoutFromRaw(layoutRaw(lay)).placed, 'placements stay unchanged');
+      assert.deepEqual(reopened.s, lay.s, 'sheet and grid stay unchanged');
+    } finally { await context.close(); }
   });
 
   await step('snap toggle: Off measures the exact clicked point, On snaps to ends again; the state is shown', async () => {
@@ -2824,7 +3349,7 @@ try {
     assert.deepEqual(await page.locator('[data-testid=lib-list] .card img.thumb').evaluateAll((im) => im.map((i) => [i.src.slice(0, 22), i.naturalWidth > 0])), [['data:image/png;base64,', true], ['data:image/png;base64,', true], ['data:image/png;base64,', true]]);
     assert.match(await t('lib-foot').textContent(), /^3 parts · saved inside the app\. Drag a card onto the sheet, or Add to sheet\.$/);
     assert.deepEqual(await libCard('Plate A').locator('.btn, .tog').allTextContents(), ['Add to sheet', '⋯']);
-    assert.equal(await libCard('Plate A').locator('.lbl').last().textContent(), 'outline.dxf');
+    assert.equal(await libCard('Plate A').locator('.lbl').last().textContent(), 'outline');
     await t('lib-search').fill('PLATE'); assert.deepEqual(await libNames(), ['Plate A', 'Plate B']);
     await t('lib-search').fill('zzz'); assert.deepEqual(await libNames(), []);
     await t('lib-search').fill(''); assert.equal((await libNames()).length, 3);
@@ -3994,7 +4519,8 @@ try {
     await t('align-bottom').click(); b = await selBoxes();
     for (const x of b) near(x[1], Math.min(...before.map((q) => q[1])), 'bottom edges meet');
     await page.keyboard.press('Control+z');
-    await t('align-middle').click(); b = await selBoxes();
+    await cmdLine().fill('m'); await page.keyboard.press('Enter'); b = await selBoxes();
+    assert.match(await prompt(), /^3 parts aligned middle to the selection:?$/, 'M remains contextual Middle on layouts');
     const cy = (Math.min(...before.map((q) => q[1])) + Math.max(...before.map((q) => q[3]))) / 2;
     for (const x of b) near((x[1] + x[3]) / 2, cy, 'middles meet');
     await page.keyboard.press('Control+z');
@@ -4229,9 +4755,9 @@ try {
     // the right-click menu
     await rightClickMm(p0[0] + 50, p0[1] + 30);
     await page.waitForSelector('[data-testid=ctx-menu]');
-    assert.deepEqual(await ctxItems(), ['DuplicateCtrl+D', 'Mirror XMX', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Lock', 'Unlock', 'DeleteDel']);
+    assert.deepEqual(await ctxItems(), ['DuplicateCtrl+D', 'Mirror XMX', 'GroupCtrl+G', 'UngroupCtrl+Shift+G', 'Lock', 'Unlock', 'Measure from here', 'DeleteDel']);
     const enabled = await page.locator('[data-testid=ctx-menu] .mi').evaluateAll((bs) => bs.map((b) => !b.disabled));
-    assert.deepEqual(enabled, [true, true, false, false, false, true, true], 'Group / Ungroup / Lock are greyed on one locked part');
+    assert.deepEqual(enabled, [true, true, false, false, false, true, true, true], 'Group / Ungroup / Lock are greyed on one locked part; Measure stays available');
     await shotBoth('locked', async () => { if (!(await t('ctx-menu').count())) await rightClickMm(p0[0] + 50, p0[1] + 30); await page.waitForSelector('[data-testid=ctx-menu]'); }, async () => { await page.keyboard.press('Escape'); });
     await rightClickMm(p0[0] + 50, p0[1] + 30); await page.waitForSelector('[data-testid=ctx-menu]');
     await page.locator('[data-testid=ctx-menu] .mi', { hasText: 'Unlock' }).click();
@@ -4352,7 +4878,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
+      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
@@ -4498,7 +5024,7 @@ try {
     assert.equal(await guideLines(), 0); assert.equal(await ribbonToggle('Show guides').isChecked(), false);
     // View menu: Guides, Lock guides, Clear all guides
     await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(2, 8)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(5, 11)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
     await page.getByRole('menuitem', { name: /Guides/ }).click();
     assert.equal(await guideLines(), 1); assert.equal(await ribbonToggle('Show guides').isChecked(), true);
     await menuItem('View', 'Clear all guides');
@@ -4713,11 +5239,15 @@ try {
     await page.keyboard.press('Escape');                          // clears the selection
     await page.keyboard.press('Escape');                          // nothing selected: back to Select
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
-    // on a layout tab it is not available
+    // on a layout tab it works on placed parts (TODO 147): with nothing selected the panel says what to do
     await t('new-layout').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent === 'Tool: Step and repeat');
     await page.locator('[data-tool=contour]').click();
-    assert.match(await prompt(), /^Contour works on a drawing tab/);
-    assert.equal(await t('contour-panel').isVisible(), false);
+    await page.waitForFunction(() => document.querySelector('[data-testid=contour-panel]') && !document.querySelector('[data-testid=contour-panel]').hidden);
+    assert.equal(await t('contour-panel').isVisible(), true);
+    assert.match(await t('contour-hint').textContent(), /^Select placed parts/);
+    assert.equal(await t('contour-apply').isDisabled(), true);
+    await t('contour-close').click();
     await closeTabs(/Layout/);
     await page.locator('.tabs .dtab', { hasText: 'shapes.dxf' }).click();
   });
@@ -4813,7 +5343,7 @@ try {
     await page.locator('[data-tool=contour]').click(); await click(150, 100); await waitSel('1 selected');
     const colours = t('contour-panel').getByRole('group', { name: 'Colour', exact: true });
     const styles = t('contour-panel').getByRole('group', { name: 'Line style', exact: true });
-    assert.deepEqual(await colours.locator('button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))), ['ByLayer', 'Red', 'Blue', 'Green', 'Black']);
+    assert.deepEqual(await colours.locator('button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))), ['ByLayer', 'Red', 'Blue', 'Green', 'Black', 'Pick Contour colour']);
     assert.deepEqual(await styles.locator('button').allTextContents(), ['Solid', 'Dashed', 'Dotted']);
     assert.equal(await colours.getByRole('button', { name: 'ByLayer', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await styles.getByRole('button', { name: 'Solid', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -5150,6 +5680,314 @@ try {
     assert.deepEqual((await savedDoc()).entities, sheet1.entities, 'sheet 2 paste and Undo leave sheet 1 alone');
     await closeTabs(/./);
   });
+  await step('TODO 144: copy on a layout', async () => {
+    await closeTabs(/./);
+    const open = async (name, raw) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    };
+    const parts = () => page.evaluate(async () => (await import('./partstore.js')).loadParts());
+    const rawA = newDoc(4), rawB = newDoc(4), source = newLayout('144 source');
+    addEntities(rawA, dxfLine(10, 20, 50, 20), dxfLine(50, 20, 50, 40));
+    addEntities(rawB, dxfCircle(15, 25, 5));
+    source.parts['144-a'] = makePart('144-a', '144 bracket', rawA, 1, 'bracket');
+    source.parts['144-b'] = makePart('144-b', '144 circle', rawB, 1, 'circle');
+    source.placed = [
+      { partId: '144-a', x: 100.25, y: 80.5, rot: 90, mirrorX: true, mirrorY: false },
+      { partId: '144-b', x: 200.75, y: 160.25, rot: 0, mirrorX: false, mirrorY: true },
+    ];
+    await open('144 source.dxf', layoutRaw(source));
+    await page.waitForFunction(async () => (await (await import('./partstore.js')).loadParts()).filter((p) => p.id.startsWith('144-')).length === 2);
+    const library = await parts(), original = layoutFromRaw(await savedDoc());
+    assert.deepEqual(library.filter((p) => p.id.startsWith('144-')).map((p) => p.source).sort(), ['bracket', 'circle']);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    const nothing = await prompt();
+    await page.keyboard.press('Control+c'); assert.equal(await prompt(), nothing, 'empty layout copy leaves the message alone');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    assert.equal(await prompt(), 'Copied 2 placed parts');
+    await shotBoth('todo144-copy', () => page.locator('[data-menu=Edit]').click(), () => page.keyboard.press('Escape'));
+    await page.keyboard.press('Control+a');
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Copy', exact: true }).isDisabled(), false);
+    await page.getByRole('menuitem', { name: 'Copy', exact: true }).click();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    const cleared = await prompt();
+    await page.keyboard.press('Control+c'); assert.equal(await prompt(), cleared);
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Copy', exact: true }).isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+v');
+    let lay = layoutFromRaw(await savedDoc());
+    assert.deepEqual(lay.placed.slice(2), original.placed, 'same-layout paste overlaps at the same coordinates and keeps the ids');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(layoutFromRaw(await savedDoc()).placed, original.placed);
+    await typeCmd('newlayout'); await page.keyboard.press('Escape');
+    await closeTabs(/144 source/);
+    await menuItem('Edit', 'Paste');
+    lay = layoutFromRaw(await savedDoc());
+    assert.deepEqual(lay.placed, original.placed, 'two placements link to the same library ids on another layout');
+    assert.deepEqual(Object.keys(lay.parts).sort(), ['144-a', '144-b']);
+    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 2, 'both pasted parts are selected');
+    await shotBoth('todo144-layout');
+    await page.keyboard.press('Control+z');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 0, 'one Undo removes both parts');
+    await page.keyboard.press('Control+y');
+    assert.deepEqual(layoutFromRaw(await savedDoc()).placed, original.placed, 'Redo restores both linked parts');
+    const target = newDoc(4); addEntities(target, dxfLine(300, 300, 320, 320));
+    await open('144 drawing.dxf', target);
+    const before = await savedDoc();
+    await page.keyboard.press('Control+v'); await waitSel('3 selected');
+    const drawing = await savedDoc(), pasted = drawing.entities.slice(before.entities.length);
+    assert.deepEqual(pasted.map((e) => e.type), ['LINE', 'LINE', 'CIRCLE']);
+    const field = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+    const expected = [[100.25, 80.5, 100.25, 40.5], [100.25, 40.5, 80.25, 40.5]];
+    pasted.slice(0, 2).forEach((e, i) => [10, 20, 11, 21].forEach((c, j) => assert.ok(Math.abs(field(e, c) - expected[i][j]) < 1e-6)));
+    assert.deepEqual([10, 20, 40].map((c) => field(pasted[2], c)), [205.75, 155.25, 5]);
+    assert.deepEqual(drawing.blocks, before.blocks, 'plain drawing objects have no enclosing layout blocks');
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
+    await shotBoth('todo144-drawing');
+    await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities, before.entities);
+    assert.deepEqual(await parts(), library, 'pastes and Undo create no new library entries or source names');
+    await menuItem('Layout', 'Parts library');
+    for (const name of ['144 bracket', '144 circle']) {
+      await libCard(name).locator('[data-testid=lib-menu]').click();
+      page.once('dialog', (d) => d.accept());
+      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+      await libCard(name).waitFor({ state: 'detached' });
+    }
+    await t('ptab-drawing').click(); await closeTabs(/./);
+  });
+  await step('TODO 142c: Add to layout saves the plain drawing source; reopening uses it, or the plain layout name when unknown', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4), name = '142c reopened part';
+    addEntities(raw, dxfCircle(20, 30, 5));
+    await t('picker').setInputFiles({ name: 'Bracket 1.5.DXF', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'Bracket 1.5.DXF');
+    await t('add-to-layout').click();
+    const lay = layoutFromRaw(await savedDoc());
+    assert.equal(lay.parts[lay.s.gridPart].name, 'Bracket 1.5');
+    assert.equal(lay.parts[lay.s.gridPart].src, 'Bracket 1.5', 'the saved layout keeps the plain drawing source');
+    lay.parts['142c-reopened'] = makePart('142c-reopened', name, raw);
+    lay.parts['142c-legacy'] = makePart('142c-legacy', '142c legacy source', raw, 1, 'original 1.5.DwG');
+    lay.placed.push({ partId: '142c-reopened', x: 0, y: 0, rot: 0 }, { partId: '142c-legacy', x: 20, y: 0, rot: 0 });
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'nest 1.5.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'nest 1.5.dxf');
+    await menuItem('Layout', 'Parts library');
+    const expected = [['Bracket 1.5', 'Bracket 1.5'], [name, 'nest 1.5'], ['142c legacy source', 'original 1.5']];
+    for (const [partName, source] of expected) {
+      assert.equal(await libCard(partName).locator('span.lbl:not(.mono)').textContent(), source);
+      assert.ok((await libCard(partName).getAttribute('title')).startsWith(source + '\n'));
+      await page.waitForFunction(async ([name, source]) => (await (await import('./partstore.js')).loadParts()).some((p) => p.name === name && p.source === source), [partName, source]);
+    }
+    await shotBoth('todo142c-reopened-library');
+    for (const [partName] of expected) {
+      await libCard(partName).locator('[data-testid=lib-menu]').click();
+      page.once('dialog', (d) => d.accept());
+      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+      await libCard(partName).waitFor({ state: 'detached' });
+    }
+    await t('ptab-drawing').click();
+    await closeTabs(/./);
+  });
+  await step('TODO 147 / T53: Contour on layout parts: one outline each, attached (a group), run again replaces, one Undo per run, moves with the part, saved and reopened; light and dark', async () => {
+    await closeTabs(/./);
+    const open = async (name, text) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text, 'latin1') });
+      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    };
+    const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('147 source');
+    addEntities(rawA, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q)), dxfCircle(50, 30, 10));
+    addEntities(rawB, ...[[0, 0, 80, 0], [80, 0, 80, 80], [80, 80, 0, 80], [0, 80, 0, 0]].map((q) => dxfLine(...q)));
+    src.parts['147-a'] = makePart('147-a', 'Plate', rawA, 1); src.parts['147-b'] = makePart('147-b', 'Block', rawB, 1);
+    src.placed = [{ partId: '147-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '147-b', x: 400, y: 300, rot: 90, mirrorX: false, mirrorY: false }];
+    await open('147 source.dxf', writeDxf(layoutRaw(src)));
+    const state = async () => {
+      const lay = layoutFromRaw(await savedDoc()), name = (p) => lay.parts[p.partId].name;
+      return { lay, name, ct: lay.placed.filter((p) => p.ct), src: lay.placed.filter((p) => !p.ct) };
+    };
+    const size = (s, word) => { const p = s.lay.parts[s.ct.find((c) => s.name(c).startsWith(word)).partId]; return [Math.round(p.w), Math.round(p.h)]; };
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    assert.equal(await nParts(), 2);
+    // the ribbon has Contour on a layout; the command box starts it; both parts are selected, nothing is made yet
+    await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await page.locator('.ribbon-body').getByRole('button', { name: 'Contour', exact: true }).isEnabled(), true);
+    await typeCmd('contour');
+    assert.equal(await t('contour-panel').isVisible(), true);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Contour');
+    await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');      // earlier Contour steps leave their values behind
+    await t('contour-outside').click(); await t('contour-sharp').click();
+    assert.match(await t('contour-hint').textContent(), /^Apply adds a contour \(2 outlines\) to 2 parts/);
+    assert.equal(await nParts(), 2, 'the preview is not a part');
+    await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+    await shotBoth('todo147-preview');
+    await t('contour-apply').click();
+    assert.equal(await nParts(), 4, 'one contour per part, the hole is left alone');
+    assert.match(await prompt(), /^Contour: 2 parts got an outline on the layer Contour, attached to them/);
+    let s = await state();
+    assert.deepEqual(s.ct.map((p) => s.name(p)).sort(), ['Block - contour 1', 'Plate - contour 1']);
+    assert.deepEqual(size(s, 'Plate'), [120, 80]); assert.deepEqual(size(s, 'Block'), [100, 100]);
+    assert.equal(new Set(s.lay.placed.map((p) => p.g)).size, 2, 'two groups: each part with its own contour');
+    for (const c of s.ct) assert.ok(s.src.some((p) => p.cid === c.ct && p.g === c.g), 'the contour is linked to its part');
+    // run it again with another distance: replaces, no third part, the new size is in the file
+    await page.keyboard.press('Control+a');
+    await t('contour-dist').fill('15'); await t('contour-dist').press('Enter');
+    await t('contour-apply').click();
+    assert.equal(await nParts(), 4, 'replaced, not added');
+    assert.match(await prompt(), /old contour was replaced/);
+    s = await state();
+    assert.deepEqual(Object.values(s.lay.parts).map((p) => p.name).sort(), ['Block', 'Block - contour 1', 'Plate', 'Plate - contour 1'], 'the old contour parts are gone');
+    assert.deepEqual(size(s, 'Plate'), [130, 90]);
+    // one Undo goes back one run; a second takes the contours away; Redo brings them back
+    await page.keyboard.press('Control+z');
+    s = await state(); assert.equal(s.ct.length, 2); assert.deepEqual(size(s, 'Plate'), [120, 80], 'the first run is back');
+    await page.keyboard.press('Control+z');
+    assert.equal(await nParts(), 2); s = await state(); assert.equal(s.ct.length, 0); assert.ok(s.src.every((p) => !p.g));
+    await page.keyboard.press('Control+y'); await page.keyboard.press('Control+y');
+    assert.equal(await nParts(), 4);
+    // a part and its contour move together
+    await page.locator('[data-tool=select]').click();
+    s = await state();
+    const key = (p) => p.cid || p.ct, at0 = new Map(s.lay.placed.map((p) => [key(p) + (p.ct ? 'c' : 's'), [p.x, p.y]]));
+    await click(800, 100); await click(150, 330);                    // one part's click picks its whole group
+    assert.equal(await t('pp-name').textContent(), 'Group of 2');
+    await dragMm([150, 330], [250, 380]);
+    s = await state();
+    const d = s.lay.placed.map((p) => [key(p), p.ct ? 'c' : 's', Math.round((p.x - at0.get(key(p) + (p.ct ? 'c' : 's'))[0]) * 100) / 100, Math.round((p.y - at0.get(key(p) + (p.ct ? 'c' : 's'))[1]) * 100) / 100]);
+    const moving = d.filter((q) => q[2] !== 0 || q[3] !== 0);
+    assert.equal(moving.length, 2, 'the dragged group moved, the other did not');
+    assert.deepEqual(new Set(moving.map((q) => q[0])).size, 1, 'the part and its own contour');
+    assert.equal(moving[0][2], moving[1][2]); assert.equal(moving[0][3], moving[1][3]);
+    // save, close, reopen: the contours and their links come back, and running it again still replaces
+    const dl = await downloaded(() => page.keyboard.press('Control+s'));
+    await closeTabs(/./);
+    await open('147 again.dxf', dl.text);
+    assert.equal(await nParts(), 4);
+    await click(260, 380);
+    assert.equal(await t('pp-name').textContent(), 'Group of 2', 'the group came back');
+    await page.keyboard.press('Control+a');
+    await page.locator('[data-tool=contour]').click();
+    await t('contour-apply').click();
+    assert.equal(await nParts(), 4, 'after reopening, running it again still replaces');
+    await t('contour-close').click();
+    await shotBoth('todo147-applied');
+    // reopening adds the parts but no contour cards to the shared Parts library; leave it as it was (the Auto-nest dialog lists every part and runs out of room with more)
+    await menuItem('Layout', 'Parts library');
+    try {
+      assert.deepEqual((await libNames()).filter((n) => / - contour/.test(n)), [], 'a contour belongs to its part, not to the library');
+    } finally {
+      for (const name of ['Plate', 'Block']) {
+        if (!await libCard(name).count()) continue;
+        await libCard(name).locator('[data-testid=lib-menu]').click();
+        page.once('dialog', (d) => d.accept());
+        await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+        await libCard(name).waitFor({ state: 'detached' });
+      }
+      await t('ptab-drawing').click(); await closeTabs(/./);
+    }
+  });
+  await step('TODO 147 review fixes: Pick colour, Ungroup, copies, turns, contour-free placement lists, and Parts list removal with one Undo', async () => {
+    await closeTabs(/./);
+    const errs0 = errors.length;
+    const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('147 fixes');
+    addEntities(rawA, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q)));
+    addEntities(rawB, ...[[0, 0, 80, 0], [80, 0, 80, 80], [80, 80, 0, 80], [0, 80, 0, 0]].map((q) => dxfLine(...q)));
+    src.parts['147f-a'] = makePart('147f-a', 'Plate F', rawA, 1); src.parts['147f-b'] = makePart('147f-b', 'Block F', rawB, 1);
+    src.placed = [{ partId: '147f-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '147f-b', x: 400, y: 300, rot: 90, mirrorX: false, mirrorY: false }];
+    await t('picker').setInputFiles({ name: '147 fixes.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '147 fixes.dxf');
+    try {
+      const state = async () => {
+        const lay = layoutFromRaw(await savedDoc()), name = (p) => lay.parts[p.partId].name;
+        return { lay, name, ct: lay.placed.filter((p) => p.ct), src: lay.placed.filter((p) => !p.ct) };
+      };
+      const ctSizes = (s, word) => s.ct.filter((c) => s.name(c).startsWith(word)).map((c) => [Math.round(s.lay.parts[c.partId].w), Math.round(s.lay.parts[c.partId].h)]).sort((a, b) => a[0] - b[0]);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await typeCmd('contour');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      await t('contour-outside').click(); await t('contour-sharp').click();
+      await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+      assert.match(await t('contour-hint').textContent(), /^Apply adds a contour \(2 outlines\) to 2 parts/, 'the layout hint, not the drawing one');
+      // Pick colour opens on a layout and the swatch follows it; put ByLayer back for the other steps
+      await t('contour-colour').click(); await t('colour-hex').fill('3399cd'); await t('colour-ok').click();
+      assert.equal(await t('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)');
+      await t('contour-panel').getByRole('button', { name: 'ByLayer', exact: true }).click();
+      await t('contour-apply').click();
+      assert.equal(await nParts(), 4);
+      await t('contour-close').click();
+      // a turned part: its contour is its box grown by the distance on every side
+      let s = await state();
+      for (const c of s.ct) {
+        const own = s.src.find((p) => p.cid === c.ct), pb = placedBox(s.lay.parts[own.partId], own), cb = placedBox(s.lay.parts[c.partId], c);
+        pb.forEach((v, i) => approx(cb[i], v + (i < 2 ? -10 : 10), 0.05, `contour box ${i} of ${s.name(own)} (turn ${own.rot})`));
+      }
+      // Ungroup the Plate, run it on everything again: still one contour each
+      await click(150, 330);
+      assert.equal(await t('pp-name').textContent(), 'Group of 2');
+      await page.keyboard.press('Control+Shift+g');
+      await page.keyboard.press('Control+a');
+      await typeCmd('contour');
+      await t('contour-dist').fill('15'); await t('contour-dist').press('Enter');
+      await t('contour-apply').click();
+      assert.equal(await nParts(), 4, 'after Ungroup the old contour is still replaced');
+      s = await state();
+      assert.deepEqual(ctSizes(s, 'Plate F'), [[130, 90]]); assert.deepEqual(ctSizes(s, 'Block F'), [[110, 110]]);
+      await t('contour-close').click();
+      // a copy has a contour of its own: running Contour on the copy leaves the original's alone
+      await click(150, 330);
+      assert.equal(await t('pp-name').textContent(), 'Group of 2');
+      await page.keyboard.press('Control+d');
+      assert.equal(await nParts(), 6);
+      s = await state();
+      const plates = s.src.filter((p) => s.name(p) === 'Plate F');
+      assert.equal(plates.length, 2); assert.notEqual(plates[0].cid, plates[1].cid, 'the copy has its own link');
+      assert.equal(s.ct.filter((c) => s.name(c).startsWith('Plate F')).length, 2);
+      await typeCmd('contour');
+      await t('contour-dist').fill('20'); await t('contour-dist').press('Enter');
+      await t('contour-apply').click();
+      assert.equal(await nParts(), 6, 'the copy got a new contour; nothing else was added or taken');
+      s = await state();
+      assert.deepEqual(ctSizes(s, 'Plate F'), [[130, 90], [140, 100]], 'the original keeps 15 mm, the copy has 20 mm');
+      await t('contour-close').click();
+      const choices = await t('part').locator('option').allTextContents();
+      assert.deepEqual(choices.filter((n) => / - contour/.test(n)), [], 'Step and repeat never offers linked contour parts');
+      assert.ok(choices.some((n) => n.startsWith('Plate F ·')) && choices.some((n) => n.startsWith('Block F ·')), 'normal parts are still offered');
+      await t('part').focus();
+      await shotBoth('todo147b-step');
+      await t('nest').click();
+      const nestNames = await t('nest-dialog').locator('.nnm').allTextContents();
+      assert.deepEqual(nestNames.filter((n) => / - contour/.test(n)), [], 'Auto-nest never offers linked contour parts');
+      assert.ok(nestNames.includes('Plate F') && nestNames.includes('Block F'), 'normal parts are still offered');
+      await t('nest-cancel').click();
+      await shotBoth('todo147b-nest', () => t('nest').click(), () => t('nest-cancel').click());
+      const beforeRemoval = s.lay;
+      await panelControl(page, page.locator('[data-part-remove="147f-a"]')).click();
+      assert.equal(await nParts(), 2, 'both copies of Plate F and their contours leave the sheet');
+      s = await state();
+      assert.deepEqual(s.src.map(s.name), ['Block F']);
+      assert.deepEqual(s.ct.map(s.name), ['Block F - contour 1'], 'the other part keeps its contour');
+      assert.deepEqual(Object.values(s.lay.parts).map((p) => p.name).sort(), ['Block F', 'Block F - contour 1'], 'unused contour parts cannot reappear in placement lists');
+      await shotBoth('todo147b-removed');
+      await page.keyboard.press('Control+z');
+      assert.equal(await nParts(), 6, 'one Undo brings both copies and their contours back');
+      s = await state();
+      assert.deepEqual(s.lay.placed, beforeRemoval.placed, 'Undo restores placements and contour links');
+      assert.deepEqual(Object.keys(s.lay.parts).sort(), Object.keys(beforeRemoval.parts).sort());
+      assert.deepEqual(errors.slice(errs0), [], 'no errors while using Contour on a layout');
+    } finally {
+      await menuItem('Layout', 'Parts library');
+      for (const name of ['Plate F', 'Block F']) {
+        if (!await libCard(name).count()) continue;
+        await libCard(name).locator('[data-testid=lib-menu]').click();
+        page.once('dialog', (d) => d.accept());
+        await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+        await libCard(name).waitFor({ state: 'detached' });
+      }
+      await t('ptab-drawing').click(); await closeTabs(/./);
+    }
+  });
+
   await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
     await closeTabs(/./);
     const name = '111b <img src=x>.dxf', base = '111b <img src=x>', first = `${base} paste`, second = `${first} 2`;
@@ -5198,20 +6036,25 @@ try {
   });
   await step('TODO 111b: PDF layout paste remembers the base name and copied sheet after switching sheets and closing the source', async () => {
     await closeTabs(/./);
-    await t('picker').setInputFiles('fixtures/three-sheets.pdf'); await t('bal-sheets').waitFor();
+    await t('picker').setInputFiles({ name: 'x.pdf', mimeType: 'application/pdf', buffer: readFileSync('fixtures/three-sheets.pdf') }); await t('bal-sheets').waitFor();
     await page.locator('[data-sheet="2"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 2 / 3');
     await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
     await page.locator('[data-sheet="1"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 3');
     await typeCmd('newlayout'); await page.keyboard.press('Escape');
-    await closeTabs(/three-sheets/);
+    await closeTabs(/^x\./);
     await page.keyboard.press('Control+v');
-    const name = 'three-sheets sheet 2 paste';
+    const name = 'x sheet 2 paste';
     await page.waitForFunction((nm) => document.querySelector('[data-testid=placed-name]').textContent === nm, name);
     const lay = layoutFromRaw(await savedDoc());
     assert.equal(lay.parts[lay.placed[0].partId].name, name);
+    assert.equal(lay.parts[lay.placed[0].partId].src, 'x');
     await menuItem('Layout', 'Parts library');
+    assert.equal(await libCard(name).locator('span.lbl:not(.mono)').textContent(), 'x');
+    assert.match(await libCard(name).getAttribute('title'), /^x\n/);
+    await page.waitForFunction(async () => (await (await import('./partstore.js')).loadParts()).some((p) => p.name === 'x sheet 2 paste' && p.source === 'x'));
+    await shotBoth('todo142c-pdf-library');
     await libCard(name).locator('[data-testid=lib-menu]').click();
     page.once('dialog', (d) => d.accept());
     await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
@@ -5701,7 +6544,8 @@ try {
     assert.match(await prompt(), /can't hold/);
     await l2.fill('Cut line'); await l2.press('Enter');
     assert.match(await prompt(), /Layer renamed to Cut line/);
-    await t('layer-colour').last().fill('#ff0000');
+    await t('layer-colour').last().click();
+    await t('colour-hex').fill('#ff0000'); await t('colour-ok').click();
     assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Cut line');
     for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `${shotDir}/s15-addlayer-${th}.png` }); }
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
@@ -5710,7 +6554,7 @@ try {
     await typeCmd('700,150'); await typeCmd('15');
     const doc = await savedDoc();
     assert.equal(doc.entities.at(-1).layer, 'Cut line');
-    assert.equal(doc.layers['Cut line'].tc, 0xff0000);
+    assert.equal(doc.layers['Cut line'].aci, 1); assert.equal(doc.layers['Cut line'].tc, null);
     assert.ok(doc.layers.Layer1, 'the empty layer is in the file too');
     await page.locator('[data-tool=select]').click();
   });
@@ -6149,6 +6993,12 @@ try {
   const gripCount = () => page.locator('[data-testid=grip], [data-testid=grip-hot]').count();
   const gripWhen = async (n) => { await page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip], [data-testid=grip-hot]').length === k, n, { timeout: 8000 }).catch(async () => { throw new Error(`waiting for ${n} grips, there are ${await gripCount()}; prompt: ${await prompt()}; hist: ${await t("cmd-hist").textContent()}`); }); };
   const frames = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));       // the overlay repaints on the next frame
+  const hoverPreview = async (x, y) => {
+    await page.evaluate(() => { if (document.activeElement?.closest('.cbar')) document.activeElement.blur(); });
+    await t('cmd-bar').waitFor({ state: 'hidden' });
+    const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames();
+    await cmdLine().focus(); await frames();
+  };
   const gripBox = async (id) => {
     await frames();
     const p = await page.evaluate((g) => { const el = document.querySelector(`[data-grip="${g}"]`); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }, id);
@@ -6418,7 +7268,7 @@ try {
     assert.equal(await t('prop-empty').isVisible(), true);
     assert.match(await t('prop-empty').textContent(), /Select something/);
     await page.locator('[data-menu=View]').click();
-    assert.equal(await page.locator('.dropdown button').nth(1).evaluate((b) => b.firstChild.textContent), '✓ Properties');
+    assert.equal(await page.locator('.dropdown button').nth(4).evaluate((b) => b.firstChild.textContent), '✓ Properties');
     await page.getByRole('menuitem', { name: /Properties/ }).click();
     assert.equal(await t('panel-show').isVisible(), true);
     await page.keyboard.press('Control+1'); await t('props-panel').waitFor();
@@ -7560,7 +8410,7 @@ try {
     await closeTabs(/./);
     await t('new-layout').click();
     await page.locator('[data-tool=measure]').click();
-    assert.match(await prompt(), /Measure: open a drawing tab first/);
+    assert.match(await prompt(), /Measure: click the first point/);
     await page.mouse.move(700, 450); await page.mouse.move(720, 460);
     await page.waitForTimeout(200);
     for (const c of ['trk-line', 'trk-polar', 'trk-x', 'trk-plus']) assert.equal(await trkN(c), 0, c);
@@ -8249,7 +9099,7 @@ try {
     assert.match(await prompt(), /Click the part to cut away/);
     const mid = await at(120, 30);
     await page.mouse.move(mid.x, mid.y); await frames();
-    assert.equal(await t('mod-preview').count(), 2, 'the two pieces that stay show before the click');
+    assert.equal(await t('mod-preview').count(), 1, 'the piece that goes shows before the click');
     await click(120, 30);
     assert.equal(await entCount(), 4);
     let doc = await savedDoc();
@@ -8302,6 +9152,149 @@ try {
     assert.equal(doc.entities.filter((e) => e.type === 'CIRCLE').length, 0);
     await shotBoth('trim', async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=trim]').click(); await page.keyboard.press('Enter'); const p = await at(120, 30); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); });
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 78: Trim preview', async () => {
+    const workArea = async (name) => { await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frames(); };
+    await menuItem('View', 'Theme: light'); await workArea('Follow app');
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    const pale = { layer: 'Cut', tc: 0xd6dee6, lw: 5 };
+    addEntities(raw, dxfPoly([[20, 30], [120, 30], [220, 30]], pale),
+      dxfPoly([[80, 10], [160, 10], [160, 50], [80, 50]], { closed: true }), dxfLine(20, 70, 220, 70));
+    await openGrips(writeDxf(raw), 'trim-preview.dxf');
+    const before = await savedDoc(), h = (await sheetPx()).h;
+    const path = (ent) => svgPath(GR.shapeOf(ent, 1), h);
+    const hover = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const clear = async () => { assert.equal(await t('trim-glow').count(), 0); assert.equal(await t('mod-preview').count(), 0); };
+    await typeCmd('tr'); await click(80, 40); await hover(120, 30); await clear();
+    assert.equal(await t('trim-edge').evaluate((el) => getComputedStyle(el).strokeWidth), '4px');
+    await page.keyboard.press('Enter');
+    assert.match(await prompt(), /Click the part to cut away/);
+    const show = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' });
+      await hover(120, 30);
+      await page.keyboard.type('1'); await frames();
+      assert.equal(await t('trim-glow').count(), 1, 'hover picks the pale polyline; ' + await prompt());
+      assert.equal(await t('trim-glow').getAttribute('d'), path(before.entities[0]), 'the whole pale object glows');
+      assert.equal(await t('mod-preview').getAttribute('d'), path(dxfPoly([[80, 30], [120, 30], [160, 30]])), 'only the interval between the nearest edges is red');
+      const style = await t('mod-preview').evaluate((el) => {
+        const c = getComputedStyle(el), canvas = getComputedStyle(document.querySelector('[data-testid=canvas]'));
+        return { stroke: c.stroke, width: c.strokeWidth, hot: canvas.getPropertyValue('--hot').trim(), selection: canvas.getPropertyValue('--selection').trim(), edgeOpacity: String(Number(canvas.getPropertyValue('--edge-opacity'))), bg: canvas.backgroundColor };
+      });
+      const rgbHex = (s) => '#' + s.match(/\d+/g).slice(0, 3).map((v) => Number(v).toString(16).padStart(2, '0')).join('');
+      assert.equal(rgbHex(style.stroke), style.hot); assert.equal(style.width, '3.6px');
+      assert.ok(contrastRatio(style.hot, rgbHex(style.bg)) >= 3, 'red is readable against the work area');
+      assert.deepEqual(await t('trim-glow').evaluate((el) => { const c = getComputedStyle(el); return [c.strokeWidth, c.strokeOpacity]; }), ['5.4px', '0.35']);
+      const edge = await t('trim-edge').evaluate((el) => { const c = getComputedStyle(el); return [c.stroke, c.strokeWidth, c.strokeOpacity]; });
+      assert.deepEqual([rgbHex(edge[0]), ...edge.slice(1)], [style.selection, '4px', style.edgeOpacity], 'cutting edges keep their blue and thickness');
+      const box = await t('cmd-bar').boundingBox(), glow = await t('trim-glow').boundingBox();
+      assert.ok(box.y + box.height < glow.y - 3 || box.y > glow.y + glow.height + 3 || box.x + box.width < glow.x - 3 || box.x > glow.x + glow.width + 3, 'command box stays clear of the whole glow');
+    };
+    await shotBoth('78-trim-preview', show);
+    await workArea('Dark'); await show();
+    await workArea('Follow app');
+    await hover(120, 65); await clear();
+    await hover(120, 70); assert.equal(await t('trim-glow').count(), 1); assert.equal(await t('mod-preview').count(), 0, 'no crossing: glow only');
+    await hover(120, 30); await t('ptab-objects').hover(); await frames(); await clear();
+    await hover(120, 30); await page.keyboard.press('Escape'); await frames(); await clear();
+    await typeCmd('tr'); await click(80, 40); await page.keyboard.press('Enter'); await hover(120, 30);
+    await click(120, 30);
+    const after = await savedDoc();
+    assert.deepEqual(after.entities.filter((e) => e.layer === 'Cut').map(path),
+      [dxfPoly([[20, 30], [80, 30]]), dxfPoly([[160, 30], [220, 30]])].map(path), 'click removes exactly the red interval');
+    assert.equal((await histLabels()).at(-1), 'Trim');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await hover(120, 30); await clear(); await click(120, 30);
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'locked objects cannot be previewed or cut');
+    await page.keyboard.press('Escape');
+
+    // Enter alone (all edges), each supported path kind, and the actual kept geometry after the click.
+    for (const [source, edges, pick, removed, kept] of [
+      [dxfLine(20, 30, 220, 30), [dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50)], [120, 30], dxfLine(80, 30, 160, 30), [dxfLine(20, 30, 80, 30), dxfLine(160, 30, 220, 30)]],
+      [dxfLine(20, 30, 220, 30), [dxfLine(80, 10, 80, 50)], [40, 30], dxfLine(20, 30, 80, 30), [dxfLine(80, 30, 220, 30)]],
+      [dxfArc(100, 100, 20, 0, 180), [dxfLine(100, 70, 100, 130)], [116, 112], dxfArc(100, 100, 20, 0, 90), [dxfArc(100, 100, 20, 90, 180)]],
+      [dxfCircle(100, 100, 20), [dxfLine(70, 100, 130, 100)], [100, 80], dxfArc(100, 100, 20, 180, 0), [dxfArc(100, 100, 20, 0, 180)]],
+      [dxfPoly([[80, 60], [100, 60, 1], [100, 100]]), [dxfLine(80, 80, 140, 80)], [116, 92], dxfPoly([[120, 80, Math.tan(Math.PI / 8)], [100, 100]]), [dxfPoly([[80, 60], [100, 60, Math.tan(Math.PI / 8)], [120, 80]])]],
+    ]) {
+      const doc = newDoc(4); addEntities(doc, source, ...edges);
+      await openGrips(writeDxf(doc), 'trim-preview-kinds.dxf'); await typeCmd('tr'); await page.keyboard.press('Enter');
+      await hover(...pick);
+      const height = (await sheetPx()).h, svg = (e) => svgPath(GR.shapeOf(e, 1), height);
+      assert.equal(await t('mod-preview').getAttribute('d'), svg(removed), source.type + ' removed preview');
+      await click(...pick);
+      assert.deepEqual((await savedDoc()).entities.slice(0, kept.length).map(svg), kept.map(svg), source.type + ' click agrees');
+      await page.keyboard.press('Escape');
+    }
+    await closeTabs(/trim-preview/);
+  });
+
+  await step('TODO 78c: Trim preview invalidation', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 90));
+    await openGrips(writeDxf(raw), 'trim-invalidation.dxf');
+    // A newly drawn cutting edge lets Undo / Redo change the boundary set under a stationary cursor.
+    await typeCmd('l'); await typeCmd('160,10'); await typeCmd('160,90'); await page.keyboard.press('Escape');
+    const h = (await sheetPx()).h, path = (e) => svgPath(GR.shapeOf(e, 1), h);
+    const interval = path(dxfLine(80, 30, 160, 30)), tail = path(dxfLine(80, 30, 220, 30));
+    const hover = async (x = 120, y = 30) => {
+      await page.evaluate(() => document.activeElement?.blur());
+      await t('cmd-bar').waitFor({ state: 'hidden' });
+      const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); return p;
+    };
+    const clear = async (why) => {
+      await frames();
+      assert.equal(await t('mod-preview').count(), 0, why + ': no red piece');
+      assert.equal(await t('trim-glow').count(), 0, why + ': no object glow');
+    };
+    const red = async (expected, why) => {
+      await frames();
+      assert.equal(await t('mod-preview').count(), 1, why);
+      assert.equal(await t('mod-preview').getAttribute('d'), expected, why);
+      assert.equal(await t('trim-glow').count(), 1, why);
+    };
+    const start = async () => { await typeCmd('tr'); await page.keyboard.press('Enter'); await hover(); await red(interval, 'fresh preview'); };
+    await start();
+    await t('ptab-objects').hover(); await clear('pointer leave');
+    await hover(); await red(interval, 'pointer re-entry');
+    await page.keyboard.press('Escape'); await clear('Esc');
+    assert.equal(await t('trim-edge').count(), 0, 'Esc clears cutting edges too');
+
+    // Adding / taking out selected boundaries must not carry a preview from the previous run.
+    await typeCmd('tr'); await click(80, 60); await click(160, 60); await click(160, 60);
+    await hover(); await clear('boundary selection');
+    await page.keyboard.press('Enter'); await red(tail, 'only the remaining selected boundary cuts');
+    await page.keyboard.press('Escape'); await start();
+
+    // Invoke the existing zoom control without moving the pointer away from the object first.
+    const pct = await page.getByLabel('Zoom in', { exact: true }).evaluate((el) => {
+      const before = document.querySelector('.zoombox').textContent; el.click(); return before;
+    });
+    assert.notEqual(await page.locator('.zoombox').textContent(), pct, 'the view zoomed');
+    await clear('zoom moves the object away from the stationary cursor');
+    await hover(); await red(interval, 'hover at the new view');
+    await page.mouse.wheel(0, -150); await frames();
+    await red(interval, 'wheel zoom keeps the object beneath its anchor');
+
+    const p = await hover(), beforePan = await t('mod-preview').boundingBox();
+    await page.mouse.down({ button: 'middle' }); await page.mouse.move(p.x + 35, p.y + 25); await frames();
+    await red(interval, 'pan keeps the current piece under the cursor');
+    const afterPan = await t('mod-preview').boundingBox();
+    assert.ok(Math.abs(afterPan.x - beforePan.x - 35) < 1 && Math.abs(afterPan.y - beforePan.y - 25) < 1, 'preview follows the panned view');
+    // Pointer capture continues delivering moves outside the canvas during a pan.
+    const canvas = await t('canvas').boundingBox();
+    await page.mouse.move(canvas.x + canvas.width + 20, p.y + 25); await clear('pan outside canvas');
+    await page.mouse.up({ button: 'middle' });
+    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await hover(); await red(interval, 'hover after pan');
+
+    await page.keyboard.press('Control+z'); await red(tail, 'Undo removes a cutting edge');
+    await page.keyboard.press('Control+y'); await red(interval, 'Redo restores the cutting edge');
+    await click(120, 30); await clear('trim removes the hovered interval');
+    await page.keyboard.press('Control+z'); await red(interval, 'Undo restores the hovered interval');
+    await page.keyboard.press('Control+y'); await clear('Redo removes the hovered interval');
+    await page.keyboard.press('Escape'); await closeTabs(/trim-invalidation/);
   });
 
   await step('TODO 66a: Move', async () => {
@@ -8571,7 +9564,7 @@ try {
       return canvas.getContext('2d').getImageData(x - 3, y - 3, 7, 7).data.some((v, i) => i % 4 === 3 && v > 0);
     }, ghost), 'rotated ghost is painted');
     await shotBoth('rotate', async () => {
-      await cmdLine().focus(); const p = await at(20, 70); await page.mouse.move(p.x, p.y); await frames();
+      await hoverPreview(20, 70);
     });
     await typeCmd('90');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
@@ -8675,7 +9668,7 @@ try {
       return canvas.getContext('2d').getImageData(x - 4, y - 4, 9, 9).data.some((v, i) => i % 4 === 3 && v > 0);
     }, ghost), 'scaled ghost is painted');
     await shotBoth('scale', async () => {
-      await cmdLine().focus(); const p = await at(22, 30); await page.mouse.move(p.x, p.y); await frames();
+      await hoverPreview(22, 30);
     });
     await typeCmd('2');
     let doc = await savedDoc(); assert.deepEqual(coords(doc.entities[0]), [20, 30, 100, 70]);
@@ -8734,19 +9727,22 @@ try {
     assert.equal(await prompt(), 'Select boundary edges (click adds or takes out), Enter = all:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
     assert.equal(await page.locator('nav.rail [data-tool=extend]').count(), 0);
     await click(80, 30); await frames(); assert.equal(await t('trim-edge').count(), 1);
-    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line to extend. Enter or Esc ends:');
-    const hover = async () => { await cmdLine().focus(); const p = await at(38, 20); await page.mouse.move(p.x, p.y); await frames(); };
+    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line, arc or open polyline to extend. Enter or Esc ends:');
+    assert.match(await histLine(), /1 boundary edge\. Click near the end of a line, arc or open polyline to extend$/);
+    const hover = () => hoverPreview(38, 20);
     await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended line is previewed');
     await shotBoth('extend', hover);
     await click(38, 20);
     let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
     assert.deepEqual(coords(doc.entities[0]), [20, 20, 80, 20], 'the picked end reaches the boundary, the other stays');
     assert.equal(doc.entities[0].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Extend');
-    assert.match(await prompt(), /^Click near the end of a line/, 'Extend repeats');
+    assert.match(await prompt(), /^Click near the end of a line, arc or open polyline to extend/, 'Extend repeats');
     await click(38, 70); assert.match(await histLine(), /No boundary ahead/);
     assert.equal((await savedDoc()).entities.length, 4); await undo();
     await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Extend');
-    await typeCmd('ex'); await page.keyboard.press('Enter'); await click(22, 20);
+    await typeCmd('ex'); await page.keyboard.press('Enter');
+    assert.match(await histLine(), /Every line, arc, circle and polyline is a boundary edge\. Click near the end of a line, arc or open polyline to extend$/);
+    await click(22, 20);
     doc = await savedDoc(); assert.deepEqual(coords(doc.entities[0]), [5, 20, 40, 20], 'Enter alone: every object is a boundary; the near end moves');
     await undo(); await page.keyboard.press('Escape');
     for (const tab of ['Home', 'Modify']) {
@@ -8757,8 +9753,159 @@ try {
     await menuItem('Modify', 'Extend'); assert.match(await prompt(), /^Select boundary edges/);
     await page.keyboard.press('Enter');
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
-    await click(38, 20); assert.match(await histLine(), /nothing there/, 'a line on a locked layer is not extended');
+    await click(38, 20); assert.match(await histLine(), /Extend: nothing there\. Click near the end of a line, arc or open polyline$/, 'a line on a locked layer is not extended');
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/extend/);
+  });
+
+  await step('TODO 146: command box clear of preview', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(38, 82, 40, 80), dxfLine(100, 0, 100, 120));
+    await openGrips(writeDxf(raw), 'preview-clear.dxf');
+    await typeCmd('ex'); await click(100, 70); await page.keyboard.press('Enter');
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      const cursor = await at(39.8, 80.2);
+      await page.mouse.move(cursor.x, cursor.y); await frames();
+      assert.equal(await t('mod-preview').count(), 1);
+      await page.keyboard.type('1'); await frames();
+      const box = await t('cmd-bar').boundingBox(), preview = await t('mod-preview').boundingBox(), canvas = await t('canvas').boundingBox();
+      const old = placeBar({ x: cursor.x - canvas.x, y: cursor.y - canvas.y }, { w: box.width, h: box.height }, { w: canvas.width, h: canvas.height });
+      assert.ok(overlap({ ...box, x: canvas.x + old.x, y: canvas.y + old.y }, preview) > 0, 'fixture would be covered by the old placement');
+      assert.equal(overlap(box, preview), 0, 'command box leaves the Extend preview clear');
+      assert.ok(box.y + box.height < cursor.y, 'box switches above the preview');
+      await t('cmd-input').hover(); await frames();
+      assert.deepEqual(await t('cmd-bar').boundingBox(), box, 'moving into the input keeps the box still and usable');
+      assert.deepEqual(await t('mod-preview').boundingBox(), preview, 'hovering the box does not move the preview');
+      const next = await at(39.7, 80.3); await page.mouse.move(next.x, next.y); await frames();
+      const moved = await t('cmd-bar').boundingBox();
+      assert.equal(overlap(moved, await t('mod-preview').boundingBox()), 0, 'clear while the cursor moves');
+      assert.ok(moved.y + moved.height < next.y, 'keeps its clear corner');
+    };
+    const hide = async () => { await page.locator('[data-testid=canvas]').click({ position: { x: 10, y: 10 } }); await frames(); };
+    await shotBoth('146-command-preview', show, hide);
+    const cursor = await at(39.8, 80.2); await page.mouse.move(cursor.x, cursor.y); await frames();
+    await typeCmd('nu');
+    assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge uses the same preview avoidance');
+    const nudge = await t('nudge-box').boundingBox(); await t('nudge-input').hover(); await frames();
+    assert.deepEqual(await t('nudge-box').boundingBox(), nudge, 'nudge stays still while using its input');
+    await t('nudge-input').fill('0'); await t('nudge-input').press('Enter');
+    assert.equal(overlap(await t('nudge-box').boundingBox(), await t('mod-preview').boundingBox()), 0, 'nudge error text is reclamped without covering the preview');
+    await t('nudge-input').press('Escape');
+    await page.keyboard.press('Escape'); await closeTabs(/preview-clear/);
+  });
+
+  await step('TODO 146: a growing preview moves the kept box without reopening it', async () => {
+    await blankTab();
+    if (await chipOn('tog-polar')) await t('tog-polar').click();
+    const cv = await t('canvas').boundingBox(), centre = { x: cv.x + cv.width * .4, y: cv.y + cv.height * .5 };
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.locator('[data-tool=circle]').click();
+      await page.mouse.click(centre.x, centre.y);
+      await page.mouse.move(centre.x + 10, centre.y); await frames();
+      await cmdLine().focus(); await frames();
+      const kept = await t('cmd-bar').boundingBox();
+      assert.equal(overlap(kept, await t('draw-preview').boundingBox()), 0, 'the initial preview leaves the kept box clear');
+      await t('cmd-bar').evaluate((box) => { box.dataset.reopened = 'false'; new MutationObserver(() => { if (box.hidden) box.dataset.reopened = 'true'; }).observe(box, { attributes: true, attributeFilter: ['hidden'] }); });
+      await page.mouse.move(centre.x + 200, centre.y); await frames();
+      const preview = await t('draw-preview').boundingBox(), moved = await t('cmd-bar').boundingBox();
+      assert.ok(overlap(kept, preview) > 0, 'the growing preview covers the old box position');
+      assert.notDeepEqual(moved, kept, 'the box moves when its kept corner overlaps');
+      assert.equal(overlap(moved, preview), 0, 'the new corner round the current cursor is clear');
+      assert.equal(await t('cmd-bar').getAttribute('data-reopened'), 'false', 'the box stayed open between preview sizes');
+    };
+    await shotBoth('146-growing-preview', show, async () => { await page.keyboard.press('Escape'); });
+  });
+
+  await step('TODO 146: an up-left Line and its readout leave a clear, stationary command box', async () => {
+    await blankTab();
+    if (await chipOn('tog-polar')) await t('tog-polar').click();
+    const cv = await t('canvas').boundingBox(), cursor = { x: cv.x + 400, y: cv.y + 300 };
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.locator('[data-tool=line]').click();
+      await page.mouse.click(cursor.x - 30, cursor.y - 30);
+      await page.mouse.move(cursor.x, cursor.y); await frames();
+      assert.ok(await t('draw-tip').isVisible(), 'the Line readout is showing');
+      await page.keyboard.type('1'); await frames();
+      const box = await t('cmd-bar').boundingBox();
+      assert.equal(box.x, cursor.x + 20, 'the box takes the first clear corner, right-above');
+      assert.equal(box.y + box.height, cursor.y - 20);
+      const clear = async () => {
+        assert.equal(overlap(box, await t('draw-preview').boundingBox()), 0, 'the box clears the Line');
+        assert.equal(overlap(box, await t('draw-tip').boundingBox()), 0, 'the box clears the readout');
+      };
+      await clear();
+      for (const delta of [2, 5]) {
+        await page.mouse.move(cursor.x + delta, cursor.y + delta); await frames();
+        assert.deepEqual(await t('cmd-bar').boundingBox(), box, 'the clear box stays at its anchor');
+        await clear();
+      }
+    };
+    await shotBoth('146-line-readout', show, async () => { await page.keyboard.press('Escape'); });
+  });
+
+  await step('TODO 146: the command box clears the Circle readout', async () => {
+    await blankTab();
+    if (await chipOn('tog-polar')) await t('tog-polar').click();
+    const cv = await t('canvas').boundingBox(), centre = { x: cv.x + cv.width * .4, y: cv.y + cv.height * .5 };
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
+      * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.locator('[data-tool=circle]').click();
+      await page.mouse.click(centre.x, centre.y);
+      const cursor = { x: centre.x + 10, y: centre.y };
+      await page.mouse.move(cursor.x, cursor.y); await frames();
+      assert.match(await t('draw-tip').textContent(), /^R /);
+      await page.keyboard.type('1'); await frames();
+      const box = await t('cmd-bar').boundingBox(), tip = await page.locator('.drawtip').boundingBox();
+      const rightBelow = { ...box, x: cursor.x + 20, y: cursor.y + 20 };
+      assert.equal(overlap(rightBelow, await t('draw-preview').boundingBox()), 0, 'the Circle alone leaves right-below clear');
+      assert.ok(overlap(rightBelow, tip) > 0, 'right-below would cover the blue readout');
+      assert.equal(overlap(box, tip), 0, 'the command box leaves the readout clear');
+    };
+    await shotBoth('146-circle-readout', show, async () => { await page.keyboard.press('Escape'); });
+  });
+
+  await step('TODO 146: the box stays put while the mouse walks to its chip', async () => {
+    await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60));
+    await openGrips(writeDxf(raw), 'chip-walk.dxf');
+    await typeCmd('f'); await click(40, 20);
+    await hoverPreview(60, 40);
+    assert.equal(await t('mod-preview').count(), 3, 'the fillet is previewed under the open box');
+    const box = await t('cmd-bar').boundingBox(), chip = await t('cmd-chip').first().boundingBox();
+    const from = await at(60, 40);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2, { steps: 15 }); await frames();
+    assert.deepEqual(await t('cmd-bar').boundingBox(), box, 'the box did not run away from the mouse');
+    await page.mouse.click(chip.x + chip.width / 2, chip.y + chip.height / 2);
+    assert.equal(await prompt(), 'Fillet radius <5>:', 'the chip was clicked');
+    await page.keyboard.press('Escape'); await closeTabs(/chip-walk/);
+  });
+
+  await step('TODO 146: the box clears a Dimension preview at the bottom-right edge', async () => {
+    await blankTab();
+    await page.locator('[data-tool=dimension]').click();
+    const cv = await t('canvas').boundingBox(), px = (dx, dy) => ({ x: cv.x + cv.width - dx, y: cv.y + cv.height - dy });
+    for (const [dx, dy] of [[260, 120], [100, 120]]) { const p = px(dx, dy); await page.mouse.click(p.x, p.y); }
+    const hover = px(40, 36);
+    const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+    const show = async () => {
+      await page.mouse.move(hover.x, hover.y); await frames();
+      await cmdLine().focus(); await frames();
+      const box = await t('cmd-bar').boundingBox();
+      assert.equal(overlap(box, { x: hover.x - 20, y: hover.y - 20, width: 40, height: 40 }), 0, 'the box leaves the cursor free');
+      assert.equal(overlap(box, { x: px(260, 0).x, y: hover.y - 6, width: 160, height: 12 }), 0, 'the box leaves the dimension line clear');
+    };
+    const hide = async () => { await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' }); };
+    await shotBoth('146-dimension-preview', show, hide);
+    await page.keyboard.press('Escape');
   });
 
   await step('TODO 66h: Extend with an arc boundary', async () => {
@@ -8774,6 +9921,35 @@ try {
     await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
     assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the line');
     await page.keyboard.press('Escape'); await closeTabs(/extend/);
+  });
+
+  await step('TODO 66i: Extend an arc and an open polyline to a line; Undo restores; Save and reopen keep the geometry', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 0, 20, 100), dxfArc(40, 40, 20, 0, 90), dxfPoly([[100, 20], [120, 20], [120, 40]], { width: 2 }), dxfLine(90, 80, 140, 80), dxfCircle(200, 100, 10));
+    await openGrips(writeDxf(raw), 'extend-arc-poly.dxf'); const before = await savedDoc();
+    const verts = (e) => e.r.c.flatMap((c, i) => (c === 10 || c === 20 ? [+e.r.v[i]] : []));
+    const undo = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores it');
+    };
+    await typeCmd('ex'); await page.keyboard.press('Enter');
+    await click(40, 60);
+    let doc = await savedDoc();
+    assert.deepEqual([40, 50, 51].map((c) => fieldOf(doc.entities[1], c)), [20, 0, 180], 'the arc end grows along its circle to the line, the start stays');
+    assert.equal((await histLabels()).at(-1), 'Extend'); await undo();
+    await click(120, 40);
+    doc = await savedDoc();
+    assert.deepEqual(verts(doc.entities[2]), [100, 20, 120, 20, 120, 80], 'the polyline end runs on to the line');
+    assert.equal(fieldOf(doc.entities[2], 43), 2, 'the width stays'); await undo();
+    await click(40, 60); await click(120, 40);
+    await click(200, 110); assert.match(await histLine(), /closed shape/, 'a circle is refused');
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await page.keyboard.press('Escape'); await closeTabs(/./);
+    await openGrips(text, 'extend-arc-poly-reopened.dxf'); doc = await savedDoc();
+    assert.equal(fieldOf(doc.entities[1], 51), 180, 'the saved arc reopens extended');
+    assert.deepEqual(verts(doc.entities[2]), [100, 20, 120, 20, 120, 80], 'the saved polyline reopens extended');
+    await closeTabs(/extend/);
   });
 
   await step('TODO 66e: Fillet two lines', async () => {
@@ -8794,7 +9970,7 @@ try {
     await click(40, 20); assert.match(await prompt(), /^Select the second line, arc or polyline segment/);
     const hover = await at(60, 40); await page.mouse.move(hover.x, hover.y); await frames();
     assert.equal(await t('mod-preview').count(), 3, 'two trimmed lines and the arc are previewed');
-    await shotBoth('fillet', async () => { await cmdLine().focus(); const p = await at(60, 40); await page.mouse.move(p.x, p.y); await frames(); });
+    await shotBoth('fillet', () => hoverPreview(60, 40));
     await click(60, 40);
     let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
     assert.deepEqual(coords(doc.entities[0]), [20, 20, 55, 20]); assert.deepEqual(coords(doc.entities[1]), [60, 25, 60, 60]);
@@ -8849,7 +10025,7 @@ try {
     await typeCmd('f'); await typeCmd('r'); await typeCmd('5');
     await click(130, 70); assert.match(await histLine(), /circles.*not supported/);
     await click(15, 40); assert.match(await prompt(), /^Select the second line, arc or polyline segment/);
-    const hover = async () => { await cmdLine().focus(); const p = await at(36, 28); await page.mouse.move(p.x, p.y); await frames(); };
+    const hover = () => hoverPreview(36, 28);
     await hover(); assert.equal(await t('mod-preview').count(), 3);
     await shotBoth('fillet-line-arc', hover);
     await click(36, 28);
@@ -8877,7 +10053,7 @@ try {
     addEntities(arcs, dxfArc(50, 50, 30, 0, 180), dxfArc(80, 50, 30, 0, 180));
     await openGrips(writeDxf(arcs), 'fillet-arc-arc.dxf'); const original = await savedDoc();
     await typeCmd('f'); await click(74, 68);
-    const arcHover = async () => { await cmdLine().focus(); const p = await at(56, 68); await page.mouse.move(p.x, p.y); await frames(); };
+    const arcHover = () => hoverPreview(56, 68);
     await arcHover(); assert.equal(await t('mod-preview').count(), 3);
     await shotBoth('fillet-arc-arc', arcHover); await click(56, 68);
     doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.equal(fieldOf(doc.entities[2], 40), 5);
@@ -8897,7 +10073,7 @@ try {
       assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the original polyline');
     };
     await typeCmd('f'); await typeCmd('r'); await typeCmd('10'); await click(60, 20);
-    const hover = async () => { await cmdLine().focus(); const p = await at(100, 65); await page.mouse.move(p.x, p.y); await frames(); };
+    const hover = () => hoverPreview(100, 65);
     await hover(); assert.equal(await t('mod-preview').count(), 1, 'the result previews as one polyline');
     assert.match(await t('mod-preview').getAttribute('d'), /A/);
     await shotBoth('fillet-polyline', hover); await click(100, 65);
@@ -8911,7 +10087,8 @@ try {
     const history = await histLabels();
     await click(60, 20); await hover(); await page.keyboard.down('Shift'); await hover();
     assert.equal(await t('mod-preview').count(), 1); assert.doesNotMatch(await t('mod-preview').getAttribute('d'), /A/);
-    await page.keyboard.up('Shift'); await click(100, 90, { shift: true });
+    await page.keyboard.up('Shift'); await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' });       // the hover opened the bar, which now sits where the preview left room
+    await click(100, 90, { shift: true });
     assert.match(await histLine(), /Already a sharp corner/);
     assert.match(await prompt(), /^Select the first/);
     assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'Shift fillet keeps the tab saved');
@@ -9244,6 +10421,31 @@ try {
     await t('nest-stop').click(); await nestDone();
     assert.match(await t('nest-placed').textContent(), /^\d+ of 1020 placed( \(stopped\))?$/);
     await t('nest-cancel').click();
+  });
+
+  await step('Auto-nest: with 2 or 12 library parts every row keeps its height; the parts list scrolls inside a max height', async () => {
+    const rowH = () => page.evaluate(() => {
+      const hs = (sel) => [...document.querySelectorAll(`.nestdlg ${sel}`)].map((e) => Math.round(e.getBoundingClientRect().height));
+      const list = document.querySelector('.nestdlg .nlist');
+      return { rows: hs('.nrow'), list: list.getBoundingClientRect().height, scroll: list.scrollHeight, rot: hs('.mode')[0], pd: hs('.pd-row'), subs: hs('.lbl.sub') };
+    });
+    const open = (n) => page.evaluate((k) => import('./nestdlg.js').then((m) => m.openNest({
+      layName: 'Layout 1', sheetW: 1000, sheetH: 700, area: { x: 0, y: 0, w: 1000, h: 670 }, grips: { top: 0, right: 0, bottom: 30, left: 0 }, gap: 5, fixed: [],
+      parts: Array.from({ length: k }, (_, i) => ({ id: 'p' + i, name: 'Part ' + (i + 1), w: 100, h: 60, thumb: '', count: 1, outline: () => [[0, 0], [100, 0], [100, 60], [0, 60]] })),
+    })), n);
+    await open(2);
+    const two = await rowH();
+    await nestShot('rows-2');
+    await t('nest-cancel').click();
+    await open(12);
+    const twelve = await rowH();
+    await nestShot('rows-12');
+    await t('nest-cancel').click();
+    assert.ok(two.rows.every((x) => x >= 36), 'rows with 2 parts: ' + two.rows);
+    assert.deepEqual(twelve.rows, Array(12).fill(two.rows[0]), 'no part row is squashed with 12 parts');
+    assert.ok(twelve.list <= 264 && twelve.scroll > twelve.list, 'the list scrolls inside its max height: ' + JSON.stringify(twelve));
+    assert.equal(twelve.rot, two.rot, 'the Rotations row keeps its height');
+    assert.deepEqual(twelve.pd, two.pd); assert.deepEqual(twelve.subs, two.subs);
   });
 
   await step("Closing with unsaved tabs: the exe's close request asks Save / Don't save / Cancel; a browser unload is warned; F5 and Ctrl+R are off in the exe", async () => {
@@ -10717,7 +11919,7 @@ try {
 
   await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
-    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Zoom Window': 'zoomwindow', 'Zoom Selection': 'zoomselection', 'Zoom Previous': 'zoomprevious', 'Save As…': 'saveas', 'Select all': 'selectall' };
     const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
@@ -11138,8 +12340,8 @@ try {
     await closeTabs(/./);
   });
 
-  // ---- TODO 89: the Nearest snap (hourglass) and a snap beats ORTHO; with ORTHO on a Dimension is linear ----
-  await step('Nearest snap (89): with ORTHO on, Measure and Dimension land on the arc where it was picked, a free pick is still bent straight, and the dimension is linear (only the X or the Y distance)', async () => {
+  // ---- TODO 89 / 68c review: Nearest beats ORTHO and keeps a snapped Dimension aligned ----
+  await step('Nearest snap (89): with ORTHO on, Measure and Dimension land on the arc where it was picked, a free pick is still bent straight, and a snapped dimension stays aligned', async () => {
     await openGrips(dimDoc(), 'dims-89.dxf');
     const arcPt = (r) => [200 + r * Math.cos(Math.PI / 4), 150 + r * Math.sin(Math.PI / 4)];      // 45° on the arc (centre 200, 150, R20), r a bit outside it
     const dx = 200 + 20 * Math.cos(Math.PI / 4) - 60, dy = 150 + 20 * Math.sin(Math.PI / 4) - 20;   // from the line at (60, 20) to that point on the arc
@@ -11167,24 +12369,24 @@ try {
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; }); await page.waitForTimeout(150);
     await click(...arcPt(20.4));
     assert.match(await prompt(), /Dimension: move the line up or down and click to place it/);
-    await click(140, 5);                                                          // the line below both points (on screen, as the Linear step's): horizontal
+    await click(140, 5);
     const placed = async () => { const m = (await prompt()).match(/Dimension placed: ([\d.]+)("| mm)/); if (!m) throw new Error('no dimension placed, the prompt says: ' + await prompt()); return Number(m[1]) * (m[2] === '"' ? 25.4 : 1); };       // (an earlier step may have left the Inch style on)
     const startD = async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.locator('[data-tool=dimension]').click(); await typeCmd('d'); };
-    assert.ok(Math.abs(await placed() - dx) < 3, 'the X distance only: ' + await prompt());
+    assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'the true distance: ' + await prompt());
     const onArc = (p) => Math.abs(Math.hypot(p.b[0] - 200, p.b[1] - 150) - 20) < 0.01 && Math.abs(p.a[1] - 20) < 1e-6 && p.b[1] > 150;       // the 2nd point on the arc, the 1st on the line
-    const d1 = (await dimBlocks()).PD_DIM_H1;
-    assert.deepEqual([d1.kind, d1.params.axis], ['linear', 'h'], 'kept as a linear dimension: ' + JSON.stringify(d1));
+    const d1 = (await dimBlocks()).PD_DIM_1;
+    assert.equal(d1.kind, 'aligned', 'a snapped second point keeps Aligned: ' + JSON.stringify(d1));
     assert.ok(onArc(d1.params), 'the 2nd point is on the arc, the 1st on the line: ' + JSON.stringify(d1.params));
-    await page.screenshot({ path: shotDir + '/s14-89-linear-light.png' });
+    await page.screenshot({ path: shotDir + '/s14-89-aligned-light.png' });
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+z');          // (its extension lines would snap the next picks)
-    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(35, 90);       // the line to the left (the right-hand corner of the canvas holds the zoom box): vertical
-    assert.ok(Math.abs(await placed() - dy) < 3, 'the Y distance only: ' + await prompt());
-    const d2 = (await dimBlocks()).PD_DIM_V1;
-    assert.deepEqual([d2.kind, d2.params.axis], ['linear', 'v']);
+    await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(35, 90);
+    assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned regardless of placement: ' + await prompt());
+    const d2 = (await dimBlocks()).PD_DIM_1;
+    assert.equal(d2.kind, 'aligned');
     assert.ok(onArc(d2.params), JSON.stringify(d2.params));
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
     await page.mouse.move(hov.x, hov.y); await page.waitForTimeout(150);
-    await page.screenshot({ path: shotDir + '/s14-89-linear-dark.png' });
+    await page.screenshot({ path: shotDir + '/s14-89-aligned-dark.png' });
     await menuItem('View', 'Theme: light');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Control+z');
@@ -11192,6 +12394,37 @@ try {
     await startD(); await click(60, 20); await click(...arcPt(20.4)); await click(140, 5);        // without ORTHO it stays aligned
     assert.ok(Math.abs(await placed() - Math.hypot(dx, dy)) < 4, 'aligned: the true distance ' + await prompt());
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    await closeTabs(/./);
+  });
+
+  await step('fix68c: ORTHO / Shift keep perpendicular dimension snaps aligned on a slanted line and constrain free picks', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 140, 90), entity('POINT', [[10, 60], [20, 110]]));
+    for (const mode of ['ortho', 'shift']) for (const snapped of [true, false]) {
+      await openGrips(writeDxf(raw), 'dim-snap-68c.dxf');
+      if ((await t('tog-ortho').getAttribute('aria-pressed') === 'true') !== (mode === 'ortho')) await t('tog-ortho').click();
+      await page.locator('[data-tool=dimension]').click(); await typeCmd('d');
+      await click(60, 110);
+      const shift = { shift: mode === 'shift' };
+      await click(...(snapped ? [84, 62] : [100, 100]), shift);
+      await click(80, 80, shift);
+      const text = await prompt(), label = text.match(/Dimension placed: ([\d.]+)("| mm)/);
+      assert.ok(label, text);
+      const mm = Number(label[1]) * (label[2] === '"' ? 25.4 : 1);
+      const [dim] = Object.values(await dimBlocks());
+      if (snapped) {
+        assert.equal(dim.kind, 'aligned', mode);
+        assert.ok(Math.hypot(dim.params.b[0] - 84, dim.params.b[1] - 62) < 1e-5, 'the exact perpendicular foot');
+        assert.ok(Math.abs(mm - Math.hypot(24, 48)) < .03, 'the 90 degree distance: ' + text);
+        await shotBoth('fix68c-dimension-' + mode);
+      } else {
+        assert.equal(dim.kind, 'linear', mode);
+        assert.equal(dim.params.axis, 'h');
+        assert.ok(Math.abs(dim.params.b[1] - 110) < 1e-5, 'free second point stays horizontal');
+        assert.ok(Math.abs(mm - 40) < 3, 'the constrained distance: ' + text);
+      }
+      await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    }
+    if (await t('tog-ortho').getAttribute('aria-pressed') === 'true') await t('tog-ortho').click();
     await closeTabs(/./);
   });
 
@@ -11727,6 +12960,425 @@ try {
     await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click(); await frame();
     assert.equal(await drawn(), all, 'Fit draws the same set as before');
     await closeTabs(/big/);
+  });
+
+  const shiftRight = async (x, y) => {
+    const p = await at(x, y);
+    await page.keyboard.down('Shift');
+    try { await page.mouse.click(p.x, p.y, { button: 'right' }); } finally { await page.keyboard.up('Shift'); }
+    await t('ctx-menu').waitFor();
+  };
+  const menuRows = () => page.locator('[data-testid=ctx-menu] .mi').evaluateAll((bs) => bs.map((b) => [b.childNodes[0].textContent, b.disabled]));
+  const SNAP_ROWS = ['end', 'middle', 'centre', 'point', 'nearest', 'intersection', 'quadrant', 'perpendicular'].map((n) => ['✓ Snap: ' + n, false]);
+
+  await step('TODO 72: Shift+right-click while a tool is on opens Enter / Cancel / Close / Undo last point and the snap types; plain right-click still finishes', async () => {
+    await openGrips(); await page.evaluate(() => localStorage.removeItem('pd-snap-types'));
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50); await click(70, 70); await click(100, 50);
+    await shiftRight(110, 60);
+    assert.deepEqual(await menuRows(), [['Enter', false], ['Cancel', false], ['Close', false], ['Undo last point', false], ...SNAP_ROWS]);
+    await shotBoth('rightclick-menu', async () => { if (!(await t('ctx-menu').count())) await shiftRight(110, 60); }, async () => { await page.keyboard.press('Escape'); });
+    await shiftRight(110, 60);
+    await page.getByRole('menuitem', { name: 'Undo last point', exact: true }).click();
+    assert.equal(await t('ctx-menu').count(), 0, 'a row closes the menu');
+    assert.equal(await entCount(), 4, 'nothing is made by an undo');
+    await shiftRight(110, 60);
+    assert.equal((await menuRows())[2][1], true, 'Close needs three points: greyed with two');
+    await page.keyboard.press('Escape');
+    await click(100, 50);
+    await shiftRight(110, 60); await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+    assert.equal(await entCount(), 5, 'Close made the polyline');
+    assert.equal((await histLabels()).at(-1), 'Polyline');
+    const doc = await savedDoc();
+    assert.equal(fieldOf(doc.entities.at(-1), 70) & 1, 1, 'the polyline is closed');
+    await click(40, 50); await click(70, 70);
+    await page.mouse.click((await at(70, 70)).x, (await at(70, 70)).y, { button: 'right' });
+    assert.equal(await t('ctx-menu').count(), 0, 'plain right-click: no menu');
+    assert.equal(await entCount(), 6, 'plain right-click still finishes the polyline');
+    await page.locator('[data-tool=line]').click();
+    await shiftRight(110, 60);
+    assert.deepEqual((await menuRows()).slice(0, 3), [['Enter', false], ['Cancel', false], ['Undo last point', true]], 'a Line: no Close, nothing to undo yet');
+    await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+  });
+
+  await step('fix72: Shift+right-click Cancel keeps a pending polyline and returns to Select; one Undo removes it', async () => {
+    await openGrips();
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50); await click(70, 70); await click(100, 50);
+    assert.equal(await entCount(), 4, 'the polyline is still pending');
+    await shiftRight(110, 60);
+    await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.equal(await entCount(), 5, 'Cancel keeps the polyline');
+    assert.match(await prompt(), /Polyline made on layer .*Ctrl\+Z takes it back/, 'the message says the polyline was made, not "Cancelled"');
+    const poly = (await savedDoc()).entities.at(-1);
+    assert.equal(poly.type, 'LWPOLYLINE');
+    assert.equal(fieldOf(poly, 90), 3);
+    assert.equal(fieldOf(poly, 70) & 1, 0, 'Cancel keeps the polyline open');
+    assert.equal((await histLabels()).at(-1), 'Polyline');
+    await shotBoth('fix72-cancel-polyline');
+    await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 4, 'one Undo removes the kept polyline');
+    const history = await histLabels();
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50);
+    await shiftRight(110, 60);
+    await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.equal(await entCount(), 4, 'Cancel with one point makes no polyline');
+    assert.match(await prompt(), /Cancelled/, 'one point reports Cancelled instead of the polyline validation message');
+    assert.deepEqual(await histLabels(), history, 'Cancel with one point adds no Undo step');
+  });
+
+  await step('TODO 72: the menu in Move, Measure and Dimension has Cancel and the snap types; a snap row ticks the type and the Snap types list follows', async () => {
+    await openGrips();
+    await click(70, 30); await waitSel('1 selected');
+    await typeCmd('mv'); assert.match(await prompt(), /Base point/);
+    await shiftRight(110, 60);
+    assert.deepEqual(await menuRows(), [['Cancel', false], ...SNAP_ROWS]);
+    await page.getByRole('menuitem', { name: '✓ Snap: end', exact: true }).click();
+    assert.equal(await t('snap-type-end').isChecked(), false, 'the row unticked end');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Move', 'a snap row keeps the tool on');
+    await shiftRight(110, 60);
+    assert.equal((await menuRows())[1][0], '  Snap: end', 'the menu shows end unticked now');
+    await page.getByRole('menuitem', { name: 'Snap: end', exact: true }).click();
+    assert.equal(await t('snap-type-end').isChecked(), true);
+    await shiftRight(110, 60); await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    for (const tool of ['measure', 'dimension']) {
+      await page.locator(`[data-tool=${tool}]`).click();
+      await shiftRight(110, 60);
+      assert.deepEqual(await menuRows(), [['Cancel', false], ...SNAP_ROWS], tool);
+      await page.keyboard.press('Escape');
+      assert.equal(await t('ctx-menu').count(), 0, 'Esc closes the menu');
+      assert.equal(await t('tool-chip').textContent(), 'Tool: ' + (tool === 'measure' ? 'Measure' : 'Dimension'), 'Esc only closed the menu');
+    }
+    await page.locator('[data-tool=select]').click();
+  });
+
+  const said = async () => (await histLine()) + ' ' + (await prompt());
+  const viewBox = async () => (await page.locator('[data-testid=canvas] > svg').first().getAttribute('viewBox')).split(' ').map(Number);
+  const viewItemOff = async (name) => { await page.locator('[data-menu=View]').click(); const off = await page.getByRole('menuitem', { name, exact: true }).isDisabled(); await page.locator('[data-menu=View]').click(); return off; };
+
+  await step('fix72: Esc during a Zoom Window drag cancels only the zoom and keeps the pending polyline', async () => {
+    await openGrips();
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50); await click(70, 70);
+    const before = await viewBox();
+    await menuItem('View', 'Zoom Window');
+    const a = await at(30, 40), b = await at(130, 90);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 });
+    assert.equal(await t('rubber').isVisible(), true);
+    await page.keyboard.press('Escape');
+    assert.match(await said(), /Zoom Window cancelled/);
+    assert.equal(await t('rubber').isVisible(), false);
+    await page.mouse.up();
+    assert.deepEqual(await viewBox(), before, 'releasing the cancelled drag does not zoom');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Polyline');
+    assert.equal(await entCount(), 4, 'Esc did not finish the polyline');
+    await click(100, 50); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 5);
+    const poly = (await savedDoc()).entities.at(-1);
+    assert.equal(poly.type, 'LWPOLYLINE');
+    assert.equal(fieldOf(poly, 90), 3, 'the polyline continued from its original points');
+  });
+
+  await step('TODO 74: Zoom Window drags a box (Esc cancels); Zoom Selection fits the selection and is greyed with none; Zoom Previous goes back twice', async () => {
+    await openGrips();
+    const v0 = await viewBox();
+    await typeCmd('zw');
+    await page.keyboard.press('Escape');
+    assert.match(await said(), /Zoom Window cancelled/);
+    const a = await at(30, 40), b = await at(130, 90);
+    await typeCmd('zw');
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 });
+    assert.equal(await t('rubber').isVisible(), true, 'the box shows while dragging');
+    await page.mouse.up();
+    const v1 = await viewBox();
+    assert.ok(v1[2] < v0[2] / 2, `zoomed in on the box: ${v0[2]} → ${v1[2]}`);
+    assert.ok(v1[0] <= 31 && v1[0] + v1[2] >= 129 && v1[2] < 110, `the box (x 30 to 130) fills the view, to a pixel or so: ${v1}`);
+    assert.equal(await t('rubber').isVisible(), false);
+    assert.equal(await viewItemOff('Zoom Selection'), true, 'greyed with nothing selected');
+    await typeCmd('zs'); assert.match(await said(), /select something first/); assert.deepEqual(await viewBox(), v1);
+    await typeCmd('all');
+    assert.equal(await viewItemOff('Zoom Selection'), false, 'on with a selection');
+    await typeCmd('zs');
+    const v2 = await viewBox();
+    assert.ok(v2[2] > v1[2] * 1.4 && v2[0] < 20, `zoomed out to everything selected (x 20 to 200): ${v1} → ${v2}`);
+    await typeCmd('zp'); assert.deepEqual(await viewBox(), v1, 'back to the window view');
+    await typeCmd('zp'); assert.deepEqual(await viewBox(), v0, 'back to the first view');
+    await typeCmd('zp'); assert.match(await said(), /no earlier view/);
+    assert.equal(await viewItemOff('Zoom Previous'), true, 'greyed with no earlier view');
+  });
+
+  await step('TODO 74: Zoom Selection on a layout fits the selected parts; Zoom Previous keeps at most 10', async () => {
+    await openGrips(); await t('add-to-layout').click();
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    await t('apply').click();
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Escape');
+    assert.equal(await viewItemOff('Zoom Selection'), true, 'greyed with no part selected');
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    const v0 = await viewBox();
+    await typeCmd('zs');
+    const v1 = await viewBox();
+    assert.ok(v1[2] < v0[2] / 2, `zoomed to the part: ${v0[2]} → ${v1[2]}`);
+    await typeCmd('zp'); assert.deepEqual(await viewBox(), v0);
+    for (let i = 0; i < 6; i++) { await typeCmd('zs'); await typeCmd('fit'); }       // twelve different views
+    for (let i = 0; i < 10; i++) await typeCmd('zp');
+    await typeCmd('zp'); assert.match(await said(), /no earlier view/, 'ten steps back and no more');
+    await closeTabs(/./);
+  });
+
+  // Each point prompt runs all three existing coordinate forms through the command bar.
+  const forms70 = ['relative', 'polar', 'relative polar'];
+  const point70 = (p, last, form) => {
+    const [x, y] = form === 'polar' ? p : p.map((v, i) => v - (last?.[i] || 0));
+    return form === 'relative' ? `@${x},${y}` : `${form === 'relative polar' ? '@' : ''}${Math.hypot(x, y)}<${Math.atan2(y, x) * 180 / Math.PI}`;
+  };
+  const near70 = (actual, expected) => {
+    assert.equal(actual.length, expected.length);
+    actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-5, `${actual} != ${expected}`));
+  };
+  const line70 = (e) => [10, 20, 11, 21].map((c) => fieldOf(e, c));
+  const open70 = async (entities = [dxfLine(100, 100, 120, 100)], units = 4) => {
+    const doc = newDoc(units); addEntities(doc, ...entities);
+    await openGrips(writeDxf(doc), 'typed-points70.dxf');
+    if (await t('tog-ortho').getAttribute('aria-pressed') === 'true') await t('tog-ortho').click();
+  };
+  const draw70 = [
+    { tool: 'line', prompts: ['first point', 'next point'], pts: [[20, 30], [60, 30]], check: (e) => near70(line70(e), [20, 30, 60, 30]) },
+    { tool: 'polyline', prompts: ['first point', 'next point', 'following point'], pts: [[20, 30], [60, 30], [60, 50]], check: (e) => near70(GR.lwVertices(e.r).flatMap((p) => [p.x, p.y]), [20, 30, 60, 30, 60, 50]) },
+    { tool: 'rect', prompts: ['first corner', 'other corner'], pts: [[20, 30], [60, 50]], check: (e) => near70(GR.lwVertices(e.r).flatMap((p) => [p.x, p.y]), [20, 30, 60, 30, 60, 50, 20, 50]) },
+    { tool: 'rrect', prompts: ['first corner', 'other corner'], pts: [[20, 30], [60, 50]], check: (e) => {
+      near70(GR.lwVertices(e.r).flatMap((p) => [p.x, p.y]), [25, 30, 55, 30, 60, 35, 60, 45, 55, 50, 25, 50, 20, 45, 20, 35]);
+      assert.equal(GR.lwVertices(e.r).filter((p) => p.b > 0).length, 4);
+    } },
+    { tool: 'circle', prompts: ['centre', 'radius point'], pts: [[20, 30], [30, 30]], check: (e) => near70([10, 20, 40].map((c) => fieldOf(e, c)), [20, 30, 10]) },
+    { tool: 'circle', option: 'd', prompts: ['centre', 'diameter point'], pts: [[20, 30], [30, 30]], check: (e) => near70([10, 20, 40].map((c) => fieldOf(e, c)), [20, 30, 5]) },
+    { tool: 'ellipse', prompts: ['centre', 'axis 1 end', 'axis 2 point'], pts: [[20, 30], [40, 30], [20, 35]], check: (e) => near70([10, 20, 11, 21, 40].map((c) => fieldOf(e, c)), [20, 30, 20, 0, .25]) },
+    { tool: 'arc', prompts: ['start point', 'second point', 'end point'], pts: [[30, 30], [20, 40], [10, 30]], check: (e) => near70([10, 20, 40, 50, 51].map((c) => fieldOf(e, c)), [20, 30, 10, 0, 180]) },
+  ];
+  for (const test of draw70) for (const [index, promptName] of test.prompts.entries()) {
+    await step(`TODO 70: ${test.tool}${test.option ? ' diameter' : ''} ${promptName}`, async () => {
+      for (const form of forms70) {
+        await open70(); await page.locator(`[data-tool=${test.tool}]`).click();
+        if (test.tool === 'rrect') await typeCmd('5');
+        for (const [i, p] of test.pts.entries()) {
+          if (i === 1 && test.option) await typeCmd(test.option);
+          await typeCmd(point70(p, test.pts[i - 1], i === index ? form : 'relative'));
+        }
+        if (test.tool === 'polyline') await typeCmd('');
+        const doc = await savedDoc(); assert.equal(doc.entities.length, 2, form);
+        test.check(doc.entities.at(-1));
+      }
+    });
+  }
+  for (const tool of ['move', 'copy', 'rotate', 'scale']) for (const index of [0, 1]) {
+    await step(`TODO 70: ${tool} ${index ? 'second point' : 'base point'}`, async () => {
+      for (const form of forms70) {
+        await open70([dxfLine(20, 30, 60, 50)]);
+        await page.keyboard.press('Control+a'); await typeCmd(tool);
+        const pts = [[20, 30], tool === 'rotate' ? [20, 40] : tool === 'scale' ? [22, 30] : [25, 40]];
+        for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+        const doc = await savedDoc();
+        assert.equal(doc.entities.length, tool === 'copy' ? 2 : 1);
+        near70(line70(doc.entities.at(-1)), tool === 'rotate' ? [20, 30, 0, 70] : tool === 'scale' ? [20, 30, 100, 70] : [25, 40, 65, 60]);
+      }
+    });
+  }
+  await step('TODO 70: Scale point on the base explains how to retry', async () => {
+    await open70([dxfLine(20, 30, 60, 50)]);
+    await page.keyboard.press('Control+a'); await typeCmd('scale'); await typeCmd('20,30');
+    for (const point of ['@0,0', '20,30', '@0<0']) {
+      await typeCmd(point);
+      assert.match(await histLine(), /Pick a point away from the base/);
+      assert.match(await prompt(), /Scale factor/);
+    }
+    await shotBoth('typed-scale-base70');
+    await typeCmd('@2,0');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+  });
+  await step('TODO 70: Copy relative targets follow the last typed or clicked target; bare pairs keep base displacement', async () => {
+    await open70([dxfLine(20, 30, 60, 50)]);
+    await page.keyboard.press('Control+a'); await typeCmd('copy'); await typeCmd('20,30');
+    for (const point of ['@5,10', '@5,0', '@10<90', '50<0', '5,10']) await typeCmd(point);
+    let doc = await savedDoc();
+    const starts = doc.entities.map((e) => line70(e).slice(0, 2)).flat();
+    near70(starts, [20, 30, 25, 40, 30, 40, 30, 50, 50, 0, 25, 40]);
+    await click(60, 50); await typeCmd('@5,0');
+    doc = await savedDoc(); near70(line70(doc.entities.at(-1)), [65, 50, 105, 70]);
+  });
+  for (const layout of [false, true]) for (const index of [0, 1]) {
+    await step(`TODO 70: Measure ${layout ? 'layout' : 'drawing'} ${index ? 'second' : 'first'} point`, async () => {
+      for (const form of forms70) {
+        await open70();
+        if (layout) {
+          const lay = newLayout('Typed points');
+          await t('picker').setInputFiles({ name: 'typed-layout70.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+          await page.locator('.dtab.on .tname').filter({ hasText: 'typed-layout70.dxf' }).waitFor();
+        }
+        await typeCmd('measure');
+        const pts = [[20, 30], [60, 60]];
+        for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+        assert.match(await prompt(), /Distance 50 mm\s+ΔX 40\s+ΔY 30\s+Angle 36\.87/);
+        // A third point continues relative to the second even though it starts a new measure.
+        await typeCmd('@10,10'); await typeCmd('@3,4');
+        assert.match(await prompt(), /Distance 5 mm\s+ΔX 3\s+ΔY 4/);
+        if (!layout) {
+          await t('meas-keep').click();
+          const doc = await savedDoc(), dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+          near70(dim.params.a.slice(0, 2), [70, 70]); near70(dim.params.b.slice(0, 2), [73, 74]);
+        }
+      }
+    });
+  }
+  for (const command of ['dimension', 'dimlinear']) for (const index of [0, 1, 2]) {
+    await step(`TODO 70: ${command} ${['first point', 'second point', 'line location'][index]}`, async () => {
+      for (const form of forms70) {
+        await open70(); await typeCmd(command);
+        const pts = [[20, 30], [60, 30], [60, 50]];
+        for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+        const doc = await savedDoc(), dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+        assert.equal(dim.kind, command === 'dimension' ? 'aligned' : 'linear');
+        near70(dim.params.a.slice(0, 2), pts[0]); near70(dim.params.b.slice(0, 2), pts[1]);
+        near70([dim.params.offset], [20]);
+      }
+    });
+  }
+  for (const command of ['dimradius', 'dimdiameter', 'dimangular']) {
+    await step(`TODO 70: ${command} callout location after object picks`, async () => {
+      for (const form of forms70) {
+        await open70(command === 'dimangular' ? [dxfLine(20, 30, 60, 30), dxfLine(20, 30, 20, 70)] : [dxfCircle(20, 30, 10)]);
+        await typeCmd(command);
+        if (command === 'dimangular') { await typeCmd('40,30'); await typeCmd('20,50'); }
+        else await typeCmd('30,30');
+        await typeCmd(point70([40, 50], command === 'dimangular' ? [20, 50] : [30, 30], form));
+        const doc = await savedDoc(), dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+        assert.ok(dim, 'callout was committed');
+        if (command === 'dimangular') { assert.equal(dim.kind, 'angle'); near70(dim.params.v, [20, 30]); near70([dim.params.r], [Math.hypot(20, 20)]); }
+        else if (command === 'dimradius') { assert.equal(dim.kind, 'radius'); near70(dim.params.c, [20, 30]); near70(dim.params.p, [40, 50]); }
+        else { assert.equal(dim.kind, 'diameter'); near70(dim.params.a, [20 - Math.SQRT1_2 * 10, 30 - Math.SQRT1_2 * 10]); near70(dim.params.b, [20 + Math.SQRT1_2 * 10, 30 + Math.SQRT1_2 * 10]); }
+      }
+    });
+  }
+  for (const index of [0, 1, 2]) await step(`TODO 70: Leader ${['arrowhead', 'second point', 'third point'][index]}`, async () => {
+    for (const form of forms70) {
+      await open70(); await typeCmd('leader');
+      const pts = [[20, 30], [40, 50], [60, 50]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      await typeNote('Typed leader');
+      const { list } = await ldrBlocks(); assert.equal(list.length, 1);
+      near70(list[0].model.pts.flat(), pts.flat());
+    }
+  });
+  await step('TODO 70: Text insertion point and continued relative placement', async () => {
+    for (const form of forms70) {
+      await open70(); await typeCmd('text'); await typeCmd(point70([20, 30], null, form)); await typeNote('First');
+      await typeCmd('@10<90'); await typeNote('Second');
+      const doc = await savedDoc(), texts = doc.entities.filter((e) => e.type === 'TEXT');
+      assert.equal(texts.length, 2);
+      near70(texts.flatMap((e) => [fieldOf(e, 10), fieldOf(e, 20)]), [20, 30, 20, 40]);
+    }
+  });
+  for (const index of [0, 1]) await step(`TODO 70: Mirror ${index ? 'second' : 'first'} point`, async () => {
+    for (const form of forms70) {
+      await open70([dxfLine(20, 30, 60, 50)]); await page.keyboard.press('Control+a'); await typeCmd('mirror');
+      const pts = [[20, 30], [20, 50]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      await typeCmd('n');
+      const doc = await savedDoc(); assert.equal(doc.entities.length, 2);
+      near70(line70(doc.entities.at(-1)), [20, 30, -20, 50]);
+    }
+  });
+  for (const index of [0, 1]) await step(`TODO 70: Set length ${index ? 'second' : 'first'} point`, async () => {
+    for (const form of forms70) {
+      await open70([dxfLine(20, 30, 60, 50)]); await t('set-length').click();
+      const pts = [[20, 30], [60, 60]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      assert.match(await t('measured').textContent(), /50(?:\.00)?/);
+      await t('real-length').fill('100'); await t('real-length').press('Enter');
+      near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+    }
+  });
+  await step('TODO 70: Set length extra typed point asks for the new length', async () => {
+    await open70([dxfLine(20, 30, 60, 50)]); await t('set-length').click();
+    await typeCmd('20,30'); await typeCmd('@40,30');
+    for (const point of ['@10,0', '10<0']) {
+      await typeCmd(point);
+      assert.match(await prompt(), /Set length: type the new length/);
+      assert.match(await t('measured').textContent(), /50(?:\.00)?/);
+    }
+    await shotBoth('typed-set-length-extra70');
+    await t('real-length').fill('100'); await t('real-length').press('Enter');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+  });
+  await step('TODO 70: Set length replaces active drawing, modify and Text point prompts', async () => {
+    for (const tool of ['line', 'move', 'text']) {
+      await open70([dxfLine(20, 30, 60, 50)]);
+      await page.keyboard.press('Control+a'); await typeCmd(tool);
+      if (tool !== 'text') await typeCmd('200,300');
+      await t('set-length').click();
+      assert.match(await prompt(), /Set length: click the first point/);
+      await cmdLine().fill('@20,30');
+      assert.match(await t('cmd-bar').textContent(), /Set length: click the first point/);
+      if (tool === 'line') await shotBoth('typed-set-length70', () => cmdLine().fill('@20,30'));
+      await typeCmd('@20,30'); await typeCmd('@50<0');
+      assert.match(await t('measured').textContent(), /50(?:\.00)?/);
+      await t('real-length').fill('100'); await t('real-length').press('Enter');
+      near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+    }
+  });
+  for (const index of [0, 1]) await step(`TODO 70: Balloon ${index ? 'centre' : 'arrow tip'} point`, async () => {
+    for (const form of forms70) {
+      await open70(); await typeCmd('balloon');
+      const pts = [[20, 30], [60, 50]];
+      for (const [i, p] of pts.entries()) await typeCmd(point70(p, pts[i - 1], i === index ? form : 'relative'));
+      const files = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
+      const data = JSON.parse(files.find((f) => f.name.endsWith('.json')).text);
+      near70(data.items[0].tip, pts[0]); near70(data.items[0].c, pts[1]);
+    }
+  });
+  await step('TODO 70: non-finite typed grip points are refused and a valid retry works', async () => {
+    await open70([dxfLine(20, 30, 60, 30)]); await page.keyboard.press('Control+a'); await gripWhen(3);
+    const p = await gripBox('0:b'); await page.mouse.click(p.x, p.y);
+    await typeCmd('9'.repeat(310) + ',0');
+    assert.match(await t('cmd-hist').textContent(), /Point coordinates must be finite/);
+    assert.equal(await t('grip-hot').count(), 1, 'invalid input keeps the grip hot');
+    await typeCmd('@5,0');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 65, 30]);
+  });
+  await step('TODO 70: exact typed points override snaps and ORTHO; inch conversion; Enter and Space repeat', async () => {
+    await open70([dxfLine(20, 30, 60, 30)]); await typeCmd('measure');
+    await typeCmd('@20.1,30.2'); await typeCmd('@3,4'); await t('meas-keep').click();
+    const exact = await savedDoc(), kept = Object.entries(exact.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+    near70(kept.params.a.slice(0, 2), [20.1, 30.2]); near70(kept.params.b.slice(0, 2), [23.1, 34.2]);
+    for (const tool of ['move', 'copy', 'rotate', 'scale', 'measure', 'dimension', 'leader', 'text', 'mirror']) {
+      await open70([dxfLine(1, 1, 3, 1)], 1);
+      await t('tog-ortho').click(); await page.keyboard.press('Control+a'); await typeCmd(tool);
+      await typeCmd('@25.4,25.4');
+      if (tool === 'text') { await typeNote('Inches'); }
+      else if (tool === 'rotate' || tool === 'mirror') { await typeCmd('@25.4<90'); if (tool === 'mirror') await typeCmd('n'); }
+      else if (tool === 'scale') await typeCmd('@50.8<0');
+      else { await typeCmd('@25.4,50.8'); if (tool === 'dimension') await typeCmd('@0,25.4'); if (tool === 'leader') { await typeCmd('@25.4<0'); await typeNote('Inches'); } }
+      if (tool === 'measure') { assert.match(await prompt(), /ΔX 25\.4\s+ΔY 50\.8/); continue; }
+      const doc = await savedDoc();
+      if (tool === 'text') near70([fieldOf(doc.entities.at(-1), 10), fieldOf(doc.entities.at(-1), 20)], [1, 1]);
+      else if (tool === 'leader') near70(readLeader('PD_LDR_1', doc.blocks.PD_LDR_1).pts.flat(), [1, 1, 2, 3, 3, 3]);
+      else if (tool === 'dimension') {
+        const dim = Object.entries(doc.blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+        assert.equal(dim.kind, 'aligned'); near70(dim.params.a.slice(0, 2), [1, 1]); near70(dim.params.b.slice(0, 2), [2, 3]);
+      } else near70(line70(doc.entities.at(-1)), tool === 'rotate' ? [1, 1, 1, 3] : tool === 'scale' ? [1, 1, 5, 1] : tool === 'mirror' ? [1, 1, -1, 1] : [2, 3, 4, 3]);
+    }
+    await open70(); await typeCmd('dimension'); await typeCmd('@20,30'); await typeCmd('@40,0');
+    await shotBoth('typed-points70', () => cmdLine().fill('@0,20'));
+    await cmdLine().press('Enter');
+    for (const key of ['Enter', 'Space']) {
+      await page.locator('[data-tool=select]').click();
+      await cmdLine().fill(''); await cmdLine().press(key);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', `${key} repeats the last command`);
+    }
+    await closeTabs(/./);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

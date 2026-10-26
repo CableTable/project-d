@@ -4,7 +4,9 @@ import { mmul, mscale, mapply, opsBox, CAP, fontOfStyle, strokeWidth } from './d
 import { placement, shownItems, itemVisible, spaceOf } from './doc.js';
 import { paintMode } from './wireframe.js';
 import { viewOrigin } from './view-origin.js';
+import { drawingPreviewBox, overlayBox } from './preview.js';
 import { outsideView, subPixel } from './perf.js';
+import { SNAP_NAME } from './snap.js';
 
 const SHEETS = { light: { bg: '#ffffff', fg: '#1b1d22' }, dark: { bg: '#000000', fg: '#e8e8ec' } };
 /** The canvas font of a text item: its style's font (Standard, Arial-like or Mono), bold when its MTEXT font code says so. */
@@ -43,7 +45,7 @@ function trace(c, ops, origin) {
 /**
  * Paints into `canvas` (already sized to w*dpr by h*dpr). Returns how many items the main drawing painted.
  * o: { keep (do not clear first: paint another drawing on top), fl, off, factor, sheetH, ox, oy, scale (px per sheet mm), w, h (css px), dpr, dark,
- *       tint (one css colour to draw everything in: a part off the sheet),
+ *       tint (one css colour to draw everything in: a part off the sheet), previewBounds (optional callback with the flattened preview's CSS-pixel box),
  *       bg (the background picture: bitmap, w, h, mm, x, y, visible), hl (items drawn again in `accent`: the selection), marks ([x, y] points in drawing units: Set length's picks), dim (a dimension being placed or moved: edit.js dimGeometry), accent (css colour), gaps ([x, y] drawing units: a ring each), markCol (css colour of the rings) }
  */
 export function paintDrawing(canvas, o) {
@@ -59,6 +61,7 @@ export function paintDrawing(canvas, o) {
     c.globalAlpha = 1;
   }
   if (!fl) return;
+  if (o.previewBounds && o.keep) o.previewBounds(drawingPreviewBox(o));       // a kept pass is a ghost: the whole flattened preview
   const k0 = scale * dpr, V = [k0, 0, 0, k0, -ox * k0, -oy * k0];
   const k = k0 * factor;                                   // pixels in one drawing unit
   c.lineJoin = 'round'; c.lineCap = 'round';
@@ -89,11 +92,12 @@ export function paintDrawing(canvas, o) {
   if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
   if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#00ff00', o.contourDash || []);
+  if (o.previewBounds && !o.keep) { const box = overlayBox(o, T, dpr); if (box) o.previewBounds(box); }
   return drawn;
 }
 
 /** Contour's preview: the chosen colour and style, translucent until Apply. */
-function drawContour(c, loops, T, dpr, col, dash) {
+export function drawContour(c, loops, T, dpr, col, dash) {
   c.save();
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = col;
@@ -197,7 +201,6 @@ function drawDimPreview(c, g, T, dpr, accent) {
 }
 
 /** Set length's / Measure's points: a ring and a cross at each, a line between two; the point under the cursor gets the shape of its snap. */
-const SNAP_NAME = { end: 'end', centre: 'centre', mid: 'middle', node: 'point', near: 'nearest' };
 export function drawMarks(c, pts, T, dpr, accent) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.6 * dpr; c.setLineDash([]);
@@ -211,7 +214,9 @@ export function drawMarks(c, pts, T, dpr, accent) {
     if (k === 'end') c.rect(x - h, y - h, 2 * h, 2 * h);
     else if (k === 'centre') c.arc(x, y, h, 0, Math.PI * 2);
     else if (k === 'mid') { c.moveTo(x, y - h); c.lineTo(x + h, y + h); c.lineTo(x - h, y + h); c.closePath(); }
-    else if (k === 'node') { c.moveTo(x - h, y); c.lineTo(x, y - h); c.lineTo(x + h, y); c.lineTo(x, y + h); c.closePath(); }
+    else if (k === 'node' || k === 'quadrant') { c.moveTo(x - h, y); c.lineTo(x, y - h); c.lineTo(x + h, y); c.lineTo(x, y + h); c.closePath(); }
+    else if (k === 'intersection') { c.moveTo(x - h, y - h); c.lineTo(x + h, y + h); c.moveTo(x - h, y + h); c.lineTo(x + h, y - h); }
+    else if (k === 'perpendicular') { c.moveTo(x - h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.moveTo(x - h, y); c.lineTo(x, y); c.lineTo(x, y + h); }       // the right-angle symbol
     else if (k === 'near') { c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.closePath(); }       // AutoCAD's hourglass
     else { c.moveTo(x - h, y); c.lineTo(x + h, y); c.moveTo(x, y - h); c.lineTo(x, y + h); }
     c.stroke();

@@ -40,6 +40,12 @@ export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed:
 
 // ---------------------------------------------------------------- parts
 
+/** Parts offered for placing or the library; linked contours stay with their source part. */
+export function partsForPlacement(lay) {
+  const ctParts = new Set(lay.placed.filter((q) => q.ct).map((q) => q.partId));
+  return Object.values(lay.parts).filter((p) => !ctParts.has(p.id));
+}
+
 /** A part keeps drawing blocks, never the source file's PDF title settings. */
 export const partBlocks = (blocks) => Object.fromEntries(Object.entries(blocks).filter(([name]) => name !== TITLE_BLOCK));
 
@@ -200,7 +206,8 @@ export function layoutFromRaw(raw, name) {
     if (part) lay.parts[pm.id] = part;
   }
   lay.placed = (Array.isArray(m.placed) ? m.placed : []).filter((p) => p && lay.parts[p.partId] && Number.isFinite(+p.x) && Number.isFinite(+p.y))
-    .map((p) => ({ ...placement1(p.partId, +p.x, +p.y, num(p.rot, 0), p.mirrorX, p.mirrorY), ...(typeof p.g === 'string' && p.g ? { g: p.g } : {}), ...(p.lock === true ? { lock: true } : {}) }));
+    .map((p) => ({ ...placement1(p.partId, +p.x, +p.y, num(p.rot, 0), p.mirrorX, p.mirrorY), ...(typeof p.g === 'string' && p.g ? { g: p.g } : {}), ...(p.lock === true ? { lock: true } : {}),
+      ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
   return lay;
 }

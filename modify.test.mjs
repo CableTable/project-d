@@ -222,6 +222,34 @@ test('Trim an arc segment of a polyline keeps the bulge of what is left', () => 
   assert.ok(Math.abs(s.pts[1][2] - Math.tan(Math.PI / 8)) < 1e-5, 'a quarter circle is left: ' + JSON.stringify(s.pts));
 });
 
+test('TODO 78: removed preview is exactly the missing path after Trim, including ends, corners, bulges and closed wraps', () => {
+  const length = (ent) => M.pathOf(S(ent)).segs.reduce((sum, seg) => {
+    const g = M.geo(seg); return sum + (g.line ? g.len : Math.abs(g.sw) * g.r);
+  }, 0);
+  const vertical = (x) => line(x, -20, x, 60), horizontal = (y) => line(-20, y, 60, y);
+  const l = line(0, 0, 100, 0, base);
+  for (const [name, source, edges, pick, start, end, removedLength] of [
+    ['line between edges', l, [vertical(30), vertical(70)], [50, 0], [30, 0], [70, 0], 40],
+    ['line start, one edge', l, [vertical(30)], [10, 0], [0, 0], [30, 0], 30],
+    ['line end, one edge', l, [vertical(30)], [90, 0], [30, 0], [100, 0], 70],
+    ['arc', arc(0, 0, 10, 0, 180, base), [vertical(0)], [8, 6], [10, 0], [0, 10], 5 * Math.PI],
+    ['polyline corner', lwpoly([[0, 0], [50, 0], [50, 50], [0, 50]], base), [line(25, -10, 25, 10), horizontal(25)], [50, 10], [25, 0], [50, 25], 50],
+    ['bulged segment', lwpoly([[0, 0], [10, 0, 1], [10, 20]], base), [horizontal(10)], [18, 15], [20, 10], [10, 20], 5 * Math.PI],
+    ['circle wrap', circle(0, 0, 10, base), [horizontal(-5), horizontal(5)], [10, 0], [Math.sqrt(75), -5], [Math.sqrt(75), 5], 10 * Math.PI / 3],
+    ['closed polyline wrap', rect(0, 0, 100, 50, base), [line(-10, 25, 110, 25)], [50, 0], [0, 25], [100, 25], 150],
+  ]) {
+    const result = M.trimEntity(source, [source, ...edges], pick);
+    assert.ok(result.removed, name);
+    assert.equal(result.removed.layer, 'Cut'); assert.equal(result.removed.aci, 3);
+    const path = M.pathOf(S(result.removed));
+    nearPt(path.segs[0].a, start, 1e-5); nearPt(path.segs.at(-1).b, end, 1e-5);
+    near(length(result.removed), removedLength, 1e-4);
+    near(result.ents.reduce((sum, e) => sum + length(e), 0) + length(result.removed), length(source), 1e-4);
+  }
+  assert.equal(M.trimEntity(l, [], [50, 0]).removed, undefined, 'no crossing means no red preview');
+  assert.equal(M.trimEntity(circle(0, 0, 10), [line(0, 0, 20, 0)], [10, 0]).removed, undefined, 'one crossing of a closed shape means no red preview');
+});
+
 test('Mirror: line, circle, arc, polyline (bulges flip) in a vertical and a sloped mirror line', () => {
   const v1 = [0, 0], v2 = [0, 10];
   let m = M.mirrorEntity(line(10, 5, 30, 25, base), v1, v2);

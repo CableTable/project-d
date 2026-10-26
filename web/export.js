@@ -2,7 +2,7 @@
 // A folder at once. The pages themselves are planned and drawn by pdf-export.js (pure); this file is the UI, saving and
 // printing. Page/film settings last the session; title block settings belong to the document. File text goes in via h().
 import { h, fill } from './dom.js';
-import { saveDefault, withExt } from './savepath.js';
+import { baseName, saveDefault, withExt } from './savepath.js';
 import { planPdf, freePdfName, DEFAULT_OPTIONS, tileGrid, scaleText, titleBlockTexts, cleanTitleBlock, readTitleBlock, PAPERS, PART_BORDER } from './pdf-export.js';
 import { drawingBoxMm, startHidden, unitFactor } from './doc.js';
 
@@ -14,7 +14,6 @@ const layoutSettings = {
 /** The Part screen's own settings: one page, as drawn (no mirror, no marks, no separations), fitted to A4 unless changed. */
 const partSettings = { ...DEFAULT_OPTIONS, mirror: false, separate: false, crop: false, reg: false, strip: false, tab: 'one', pageIdx: 0, batch: layoutSettings.batch };
 
-const baseName = (n) => String(n).replace(/\.[^.\\/]*$/, '');
 const joinPath = (dir, name) => String(dir).replace(/[\\/]+$/, '') + (String(dir).includes('\\') ? '\\' : '/') + name;
 const today = () => { const d = new Date(); return [d.getDate(), d.getMonth() + 1].map((n) => String(n).padStart(2, '0')).join('-') + '-' + d.getFullYear(); };
 const errText = (e) => (e && e.message ? e.message : String(e));

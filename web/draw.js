@@ -62,12 +62,13 @@ export function parseInput(text) {
 /** A typed point (xy or polar) → [x, y] given the last point (null = the origin). */
 export function typedPoint(inp, last) {
   const o = last || [0, 0];
-  if (inp.kind === 'xy') return inp.rel ? [o[0] + inp.x, o[1] + inp.y] : [inp.x, inp.y];
+  let p = null;
+  if (inp.kind === 'xy') p = inp.rel ? [o[0] + inp.x, o[1] + inp.y] : [inp.x, inp.y];
   if (inp.kind === 'polar') {
     const dx = inp.len * Math.cos(inp.ang / DEG), dy = inp.len * Math.sin(inp.ang / DEG);
-    return inp.rel ? [o[0] + dx, o[1] + dy] : [dx, dy];
+    p = inp.rel ? [o[0] + dx, o[1] + dy] : [dx, dy];
   }
-  return null;
+  return p && p.every(Number.isFinite) ? p : null;
 }
 
 /** Direct distance entry: the point `len` from `from` on the way to `toward` (the rubber band's direction), or null when it points nowhere. */
@@ -175,7 +176,7 @@ export function svgPath(sh, H) {
 export function createTool(kind, cfg = {}) {
   if (!KINDS.includes(kind)) throw new Error('unknown tool ' + kind);
   const radius = cfg.radius > 0 ? cfg.radius : 5;
-  const T = { kind, pts: [], trail: [], hover: null, dia: false, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
+  const T = { kind, pts: [], trail: [], last: null, hover: null, dia: false, radius, stage: kind === 'rrect' ? 'radius' : 'pts', back: null, msg: null };
   return T;
 }
 
@@ -207,6 +208,12 @@ function finishChain(T, closed) {
 
 /** A point picked or typed. */
 function addPoint(T, p) {
+  const result = placePoint(T, p);
+  if (!result.msg) T.last = p.slice(0, 2);
+  return result;
+}
+
+function placePoint(T, p) {
   p = [p[0], p[1]];
   const k = T.kind, n = T.pts.length;
   if (k === 'line' || k === 'polyline') {
@@ -291,8 +298,8 @@ export function toolFinish(T) {
  */
 export function toolUndoSeg(T) {
   if (T.kind !== 'line' || !T.pts.length) return null;
-  if (T.trail.length) { T.pts = [T.trail.pop()]; return 'seg'; }
-  reset(T); return 'point';
+  if (T.trail.length) { T.pts = [T.trail.pop()]; T.last = T.pts[0]; return 'seg'; }
+  reset(T); T.last = null; return 'point';
 }
 
 /** Back to the point before (Undo / U): a polyline loses its last point, the others their last pick. */
@@ -300,6 +307,7 @@ function undoPoint(T) {
   if (!T.pts.length) return say('Nothing to undo');
   if (T.kind === 'line' && T.trail.length) return { made: null, msg: null, undoSeg: true };         // the app undoes the segment's step
   T.pts.pop();
+  T.last = T.pts.at(-1) || null;
   return say(null);
 }
 
@@ -337,13 +345,12 @@ export function toolType(T, text) {
   }
   // a point or a length
   if (!T.pts.length) {
-    const p = typedPoint(inp, null);
+    const p = typedPoint(inp, T.last);
     if (!p) return say(k === 'circle' || k === 'ellipse' ? 'Type the centre as x,y' : 'Type the first point as x,y (or click it)');
     return addPoint(T, p);
   }
   if (k === 'rect' || k === 'rrect') {                                // the second corner: W,H (also @W,H), the way it points from the first
-    if (inp.kind === 'xy') return addPoint(T, [T.pts[0][0] + inp.x, T.pts[0][1] + inp.y]);
-    const p = typedPoint(inp, T.pts[0]);
+    const p = typedPoint(inp.kind === 'xy' ? { ...inp, rel: true } : inp, T.pts[0]);
     if (p) return addPoint(T, p);
     return say('Type the size as W,H (or @W,H)');
   }

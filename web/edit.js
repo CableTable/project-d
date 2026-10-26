@@ -12,9 +12,11 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
+import { DEFAULT_TYPES, perpFoot, preferSnap } from './snap.js';
+import { pieceInter } from './modify.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -209,25 +211,44 @@ export function snapEnd(ed, x, y, tol) {
 }
 
 /**
- * The snap under (x, y) within tol: an end, centre, midpoint or point first (the nearest; ends win a tie), else the nearest
- * point on a line or arc ('near'). → { x, y, kind: 'end' | 'centre' | 'mid' | 'node' | 'near' } or null.
+ * The closest enabled feature under (x, y) within tol (ends win a tie), else the nearest point on a line or arc.
+ * → { x, y, kind } or null.
  * on: false → null (the exact clicked point is used). skip: an entity index left out (the one a grip is dragging).
+ * types: enabled ticks. extra: the current drawing tool's own points, subject to the same filter and priority.
+ * from: the last picked point [x, y] (drawing units), for the perpendicular foot on a straight piece.
  */
-const RANK = { end: 0, centre: 1, node: 2, mid: 3 };
-export function snapPick(ed, x, y, tol, on = true, skip = -1) {
+export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TYPES, extra = [], from = null) {
   if (!on) return null;
+  let best = null;
+  for (const sn of extra) best = preferSnap(best, sn, x, y, tol, types);
   const ix = ed.ix;
-  if (!ix.G) return null;
+  if (!ix.G) return best;
   const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
   const i0 = at((x - tol - ix.x0) / ix.cell), i1 = at((x + tol - ix.x0) / ix.cell), j0 = at((y - tol - ix.y0) / ix.cell), j1 = at((y + tol - ix.y0) / ix.cell);
-  let best = null, bd = tol;
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const k of ix.sc.get(i * 4096 + j) || []) {
     const sn = ix.snaps[k];
     if (!ed.vis[sn.it] || ed.items[sn.it].e === skip) continue;
-    const d = Math.hypot(sn.x - x, sn.y - y);
-    if (d < bd - 1e-12 || (d <= bd + 1e-12 && best && RANK[sn.kind] < RANK[best.kind])) { bd = d; best = { x: sn.x, y: sn.y, kind: sn.kind }; }
+    best = preferSnap(best, sn, x, y, tol, types);
   }
-  if (best) return best;
+  const perp = from && types.perpendicular !== false;
+  if (types.intersection !== false || perp) {
+    // shortcut: only the 200 pieces nearest the cursor are crossed (k^2/2 pieceInter calls per hover); raise or index them if a dense drawing misses a crossing.
+    const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
+    const eps = 1e-9 * (1 + Math.abs(x) + Math.abs(y));
+    if (types.intersection !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
+      for (const [px, py] of pieceInter(pieces[i], pieces[j])) {
+        // a line-arc crossing lands ~1e-9 off the end point it shares: the end wins
+        if (best?.kind === 'end' && Math.hypot(best.x - px, best.y - py) <= eps) continue;
+        best = preferSnap(best, { x: px, y: py, kind: 'intersection' }, x, y, tol, types);
+      }
+    }
+    if (perp) for (const p of pieces) {
+      const foot = p.t === 's' && perpFoot(from, [p.x1, p.y1], [p.x2, p.y2]);
+      if (foot) best = preferSnap(best, { x: foot[0], y: foot[1], kind: 'perpendicular' }, x, y, tol, types);
+    }
+  }
+  if (best) return { x: best.x, y: best.y, kind: best.kind };
+  if (types.near === false) return null;
   const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip);
   return p.ent && p.near ? { x: p.near[0], y: p.near[1], kind: 'near' } : null;
 }

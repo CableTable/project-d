@@ -60,6 +60,12 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Fit**: Changes the view so the drawing or sheet fits in the window. Where: `TODO.md`, item 42. Avoid: Scaling the drawing; Fit to sheet.
 
+**Zoom Window**: Fills the view with a box dragged on the canvas. Where: `DECISIONS.md`, More zooms (TODO 74).
+
+**Zoom Selection**: Fills the view with what is selected. Where: `DECISIONS.md`, More zooms (TODO 74). Avoid: Zoom to (the panel menu for one item).
+
+**Zoom Previous**: Goes back to the view before the last pan or zoom on this tab. Where: `DECISIONS.md`, More zooms (TODO 74).
+
 **Fit to sheet**: Works out repeat rows and columns from the usable sheet area instead of using typed counts. Where: `TODO.md`, items 7 and 8; `web/layout.js`.
 
 **Gap**: The edge-to-edge space between neighbouring parts in a repeat grid or nest. Where: `web/layout.js`, `DECISIONS.md`, Auto-nest UI. Avoid: Gripper.
@@ -78,7 +84,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
-**In-app clipboard**: The session-only snapshot of selected drawing objects taken with Ctrl+C and pasted with Ctrl+V into drawing tabs or PDF sheets at the same coordinates and true size, or saved as a new Parts library part and placed at those mm coordinates on a layout tab. It remembers the source tab name at Ctrl+C. It survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first.
+**In-app clipboard**: The session-only snapshot of selected drawing objects or placed parts taken with Ctrl+C. Ctrl+V pastes at the same coordinates and true size. Drawing objects pasted on a layout become a new Parts library part; copied placed parts keep their library links on a layout and become plain drawing objects on a drawing tab or PDF sheet, with rotation and mirrors applied. It remembers drawing source names at Ctrl+C, survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first, Ctrl+C on layout tabs.
 
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
 
@@ -239,6 +245,12 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
+**Snap types**: The tick list beside SNAP: end, middle, centre, point, nearest, intersection and quadrant can each be switched off. All default on; ticks are remembered on this PC, outside drawing files. Perpendicular shows as “(soon)” until built. Where: `TODO.md`, item 68; `web/snap.js`.
+
+**Intersection snap**: A real crossing or tangent touch of finite lines, arcs, circles or straight / bulged polyline segments, shown with an X. Candidates come from geometry within the cursor's pick tolerance; extended lines and flattened ellipse / spline curves are excluded. Where: `web/modify.js`, `web/edit.js`.
+
+**Quadrant snap**: A circle's 0 / 90 / 180 / 270 degree points, restricted to the sweep for arcs and bulged polyline segments, shown with a diamond. Ellipses retain their axis ends as quadrant points. Where: `web/drawing.js`.
+
 **SOLID / TRACE**: DXF filled shapes handled together by the reader and left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`. Avoid: Bitmap tracing for TRACE.
 
 **SPLINE**: A DXF curve defined by control data and approximated by a polyline for cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
@@ -328,3 +340,21 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Tokens used, running total**: The usage page's cumulative lines across 14 IST days for Rook, Bishop and Knight. Each day adds input + output + cache-creation tokens, excluding cache reads; Codex cached input is subtracted from input. Where: usage page, Usage. Avoid: Lifetime totals, usage-limit percentages or the per-session runs table.
 
 **Title block**: The optional 22 mm box at the bottom of a fitted/check PDF print. Its file name, scale, part / size / page, date and footnote can be edited in PDF / Print; Reset restores automatic text. Turning it off gives its space to the drawing. Settings belong to the file. Avoid: Job strip (the separate label on a 1:1 sheet or tile).
+
+**Swatch**: One square colour box. Left click sets the selected objects' line colour, right click their fill colour.
+
+**Colour picker**: The shared dialog opened from Properties, ribbon, Layers and Contour colour boxes. Edits a draft through HSB, RGB, simple-formula CMYK or hex; OK applies it and Cancel discards it. Add to Swatches remembers a colour on this PC.
+
+**HSB**: Hue (0–360 degrees), saturation and brightness (0–100 percent), used by the Colour picker's hue strip and gradient square.
+
+**True colour**: An exact RGB colour stored in DXF group 420, accompanied by the nearest indexed colour (ACI, group 62) for older readers.
+
+**Swatch strip**: The column of swatches at the right edge of the window: default colours on top, the last 12 colours used at the bottom.
+
+**Fill**: A solid colour inside a closed outline, part of that outline.
+
+**Fill tool**: The tool that puts a fill inside a closed outline.
+
+**Eyedropper**: The tool that picks a colour from an object and applies it to the others you click.
+
+**Colour readout**: The tool that shows the R G B, C M Y K and hex of whatever is under the cursor inside the app; a click copies the hex.

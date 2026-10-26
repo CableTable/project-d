@@ -19,6 +19,9 @@ const onLayer = (doc, l) => doc.entities.filter((e) => e.layer === l);
 
 test('block names are valid', () => {
   assert.equal(A.blockName('front panel v2.dxf'), 'front_panel_v2');
+  assert.equal(A.blockName('Bracket 1.5'), 'Bracket_1.5');
+  assert.equal(A.blockName('plate.DXF'), 'plate');
+  assert.equal(A.blockName('Bracket.other'), 'Bracket.other');
   assert.equal(A.blockName('a<b>:c/d.dxf'), 'a_b_c_d');
   assert.equal(A.blockName('.dxf'), 'PART'); assert.equal(A.blockName(''), 'PART');
 });

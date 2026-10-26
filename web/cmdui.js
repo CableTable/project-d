@@ -21,13 +21,14 @@ function svg(name, size = 14) {
 
 /**
  * hooks: tab() → 'draw' | 'layout', active() → { label, prompt } | null (a command is on), submit(text) (the text goes to the command that is on, or
- * starts one), runName(name) (start a command by its name), canvas() → the canvas element, say(text).
+ * starts one), runName(name) (start a command by its name), canvas() → the canvas element, previewBounds() → a list of canvas-pixel boxes, say(text).
  */
 export function buildCmdUI(hooks) {
   const resolve = (text, tab = '') => CB.resolve(text, tab, hooks.commands());
   const suggest = (text, tab = '') => CB.suggest(text, tab, 6, hooks.commands());
   const lines = [], typed = [];                // the session's command lines { pre, ans, cls, run } (not saved), and what was typed at the bar
-  let lastName = '', echoName = '', echoAns = [], hi = 0, sugg = [], recall = -1, ptr = null, anchor = { x: 0, y: 0 }, idle = 0;
+  let lastName = '', echoName = '', echoAns = [], hi = 0, sugg = [], recall = -1, ptr = null, anchor = { x: 0, y: 0 }, cur = anchor, idle = 0;
+  let corner = null, nudge = null;
 
   // the log the rest of the app writes to (tests and screen readers read these two); the sight of them is the fade and the drawer
   const hist = h('div', { class: 'sr-only', 'data-testid': 'cmd-hist' });
@@ -63,10 +64,17 @@ export function buildCmdUI(hooks) {
   const hiName = () => (sugg[hi] ? sugg[hi].cmd.name : '');
   const labelOf = (name) => name.toUpperCase();
 
+  /** A box stays where it opened; only a tool preview that starts to cover it sends it to the first clear corner round the cursor now. */
+  function placeBox(box, previous) {
+    const r = hooks.canvas().getBoundingClientRect(), size = { w: box.offsetWidth, h: box.offsetHeight }, area = { w: r.width, h: r.height }, avoid = hooks.previewBounds();
+    const p = CB.placeBox(anchor, cur, size, area, avoid, previous);
+    anchor = p.anchor;
+    box.style.left = p.x + 'px'; box.style.top = p.y + 'px';
+    return p.corner;
+  }
   function place() {
-    const r = hooks.canvas().getBoundingClientRect();
-    const p = CB.placeBar(anchor, { w: bar.offsetWidth, h: bar.offsetHeight }, { w: r.width, h: r.height });
-    bar.style.left = p.x + 'px'; bar.style.top = p.y + 'px';
+    if (!bar.hidden) corner = placeBox(bar, corner);
+    if (nudge) nudge.corner = placeBox(nudge.box, nudge.corner);
   }
 
   /** The bar shows what the text means now: the command that is on with its prompt and option chips, and the commands the text could be. */
@@ -93,7 +101,8 @@ export function buildCmdUI(hooks) {
 
   function open(seed = '') {
     const r = hooks.canvas().getBoundingClientRect();
-    anchor = ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 };
+    anchor = cur = ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 };
+    corner = null;
     bar.hidden = false; input.value = seed; hi = 0; recall = -1;
     update(); input.focus(); input.setSelectionRange(seed.length, seed.length);
     fadeUp();
@@ -111,13 +120,12 @@ export function buildCmdUI(hooks) {
     const error = h('div', { class: 'cb-prompt', role: 'status', hidden: true });
     const box = h('div', { class: 'cbar nudgebox', role: 'dialog', 'aria-label': 'Nudge step', 'data-testid': 'nudge-box' },
       h('label', { class: 'cb-in' }, h('span', { class: 'cb-lab' }, 'Nudge (mm)'), field, h('kbd', null, 'Esc')), error);
-    const finish = () => { field.removeEventListener('blur', finish); box.remove(); };
+    const finish = () => { field.removeEventListener('blur', finish); box.remove(); nudge = null; };
     const canvas = hooks.canvas(), r = canvas.getBoundingClientRect();
     canvas.append(box);
-    const p = CB.placeBar(ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 },
-      { w: box.offsetWidth, h: box.offsetHeight }, { w: r.width, h: r.height });
-    box.style.left = p.x + 'px'; box.style.top = p.y + 'px';
-    for (const ev of ['pointerdown', 'wheel', 'dblclick', 'contextmenu']) box.addEventListener(ev, (e) => e.stopPropagation());
+    anchor = cur = ptr ? { x: ptr.x - r.left, y: ptr.y - r.top } : { x: r.width / 2, y: r.height / 2 };
+    nudge = { box, corner: null }; place();
+    for (const ev of ['pointerdown', 'pointermove', 'wheel', 'dblclick', 'contextmenu']) box.addEventListener(ev, (e) => e.stopPropagation());
     field.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== 'Escape') return;
       e.preventDefault(); e.stopPropagation();
@@ -125,6 +133,7 @@ export function buildCmdUI(hooks) {
       const why = apply(field.value);
       if (!why) { finish(); return; }
       hooks.say(why); error.textContent = why; error.hidden = false;
+      place();
       field.setAttribute('aria-invalid', 'true'); field.select();
     });
     field.addEventListener('blur', finish);
@@ -189,7 +198,7 @@ export function buildCmdUI(hooks) {
       else if (e.key === 'ArrowDown' && recall >= 0) { recall--; input.value = recall >= 0 ? typed[typed.length - 1 - recall] : ''; update(); }
     } else if (e.key === ' ' && !e.ctrlKey && !e.altKey && !e.metaKey && CB.spaceIsEnter(input.value, act && act.label, hooks.tab(), hooks.commands())) { e.preventDefault(); go(input.value); }
   });
-  for (const el of [bar, drawer, acts]) for (const ev of ['pointerdown', 'wheel', 'dblclick', 'contextmenu']) el.addEventListener(ev, (e) => e.stopPropagation());       // the canvas under them gets none of it
+  for (const el of [bar, drawer, acts]) for (const ev of ['pointerdown', 'pointermove', 'wheel', 'dblclick', 'contextmenu']) el.addEventListener(ev, (e) => e.stopPropagation());       // the canvas under them gets none of it
   bar.addEventListener('focusout', () => setTimeout(() => { if (!bar.hidden && !bar.contains(document.activeElement)) close(); }));
 
   // every message the app puts in the prompt line is a line of the history (a moving readout settles first)
@@ -217,12 +226,18 @@ export function buildCmdUI(hooks) {
 
   return {
     hist, prompt, log, input, bar, fade, drawer, acts, echo, hint,
-    open, close, openNudge, toggleHistory, go,
+    open, close, openNudge, toggleHistory, go, place,
     isOpen: () => !bar.hidden, historyOpen: () => !drawer.hidden,
     /** A command ran (by its name): Space on an empty bar repeats it. */
     ran: (name) => { lastName = name; },
     lastName: () => lastName,
-    pointer: (x, y) => { ptr = { x, y }; },
+    pointer: (x, y) => {
+      ptr = { x, y };
+      if (!bar.hidden || nudge) {
+        const r = hooks.canvas().getBoundingClientRect();
+        cur = { x: x - r.left, y: y - r.top };
+      }
+    },
     /** Space on the drawing with the bar shut: the last command again. */
     repeat: () => { if (lastName) go(''); },
     /** Esc: the bar shuts (and the command is cancelled by the caller); with only the drawer open it shuts. → 'bar' | 'drawer' | '' */
