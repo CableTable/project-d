@@ -40,6 +40,12 @@ export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed:
 
 // ---------------------------------------------------------------- parts
 
+/** Parts offered for placing or the library; linked contours stay with their source part. */
+export function partsForPlacement(lay) {
+  const ctParts = new Set(lay.placed.filter((q) => q.ct).map((q) => q.partId));
+  return Object.values(lay.parts).filter((p) => !ctParts.has(p.id));
+}
+
 /** A part keeps drawing blocks, never the source file's PDF title settings. */
 export const partBlocks = (blocks) => Object.fromEntries(Object.entries(blocks).filter(([name]) => name !== TITLE_BLOCK));
 

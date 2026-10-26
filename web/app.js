@@ -1543,8 +1543,7 @@ function openLayoutFile(lay, name, path, fontNote, titleBlock) {
   note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
-  const ctParts = new Set(lay.placed.filter((q) => q.ct).map((q) => q.partId));            // a contour belongs to its part: it never goes into the library
-  for (const p of Object.values(lay.parts)) if (!ctParts.has(p.id)) libKeep(p, baseName(p.src || name)); // a part the library does not have yet is added to it
+  for (const p of LD.partsForPlacement(lay)) libKeep(p, baseName(p.src || name)); // a part the library does not have yet is added to it
 }
 const SHIFT_HINT = 'Shift-drag keeps it straight';
 /** Puts a loose copy of the part on the layout, centred on `at` ([x, y] sheet mm, y up) or near the sheet's centre; its index in lay.placed. */
@@ -1632,7 +1631,7 @@ function openNestDialog(counts = null, autoRun = false) {
   const d = curDoc(), lay = d && d.lay;
   if (!lay) { note('Auto-nest is on a layout tab: Add to layout, or New layout'); return; }
   const s = lay.s, byId = new Map();
-  for (const p of Object.values(lay.parts)) byId.set(p.id, { part: p, thumb: (lib.items.find((r) => r.id === p.id) || {}).thumb || '', inLayout: true });
+  for (const p of LD.partsForPlacement(lay)) byId.set(p.id, { part: p, thumb: (lib.items.find((r) => r.id === p.id) || {}).thumb || '', inLayout: true });
   for (const rec of lib.items) if (!byId.has(rec.id)) { const part = libPart(rec); if (part) byId.set(rec.id, { part, thumb: rec.thumb || '', inLayout: false }); }
   const outlines = new Map(), outlineFor = (part) => { if (!outlines.has(part.id)) outlines.set(part.id, outlineOf(part).poly); return outlines.get(part.id); };
   const parts = [...byId.values()].map(({ part, thumb, inLayout }) => {
@@ -1685,7 +1684,10 @@ function removeFromLayout(id) {
   if (!lay || !lay.parts[id]) return;
   const name = lay.parts[id].name;
   pushLay(curDoc(), null, '', `Take off ${name}`);
-  lay.placed = lay.placed.filter((p) => p.partId !== id);
+  const cids = new Set(lay.placed.filter((p) => p.partId === id && p.cid).map((p) => p.cid));
+  const contours = lay.placed.filter((p) => p.ct && cids.has(p.ct));
+  lay.placed = lay.placed.filter((p) => p.partId !== id && !contours.includes(p));
+  for (const p of contours) if (!lay.placed.some((q) => q.partId === p.partId) && lay.s.gridPart !== p.partId) delete lay.parts[p.partId];
   if (lay.s.gridPart === id) lay.s.gridPart = null;
   delete lay.parts[id];
   touch(); update();
@@ -2480,7 +2482,7 @@ function cancelPlacedDrag() {
 function renderStep() {
   const lay = curLay(), s = state, on = s.fit;
   const label = (p) => `${p.name} · ${fmtSize(p.w)} × ${fmtSize(p.h)}`;
-  const own = lay ? Object.values(lay.parts) : [], rest = lay ? lib.items.filter((r) => !lay.parts[r.id]) : [];
+  const own = lay ? LD.partsForPlacement(lay) : [], rest = lay ? lib.items.filter((r) => !lay.parts[r.id]) : [];
   ui.partSel.replaceChildren(h('option', { value: '' }, lay && own.length + rest.length ? 'No grid' : 'No parts yet'),
     ...own.map((p) => h('option', { value: p.id }, label(p))),
     ...rest.map((r) => h('option', { value: 'lib:' + r.id }, `${r.name} · ${fmtSize(r.w)} × ${fmtSize(r.h)} (library)`)));

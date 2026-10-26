@@ -22,6 +22,14 @@ function plate(w, h, o = {}) {
   return d;
 }
 
+test('parts for placement exclude linked contours and keep unplaced parts', () => {
+  const lay = LD.newLayout('contoured');
+  lay.parts = Object.fromEntries(['a', 'b', 'ca'].map((id) => [id, { id }]));
+  lay.placed = [{ partId: 'a', cid: 'source' }, { partId: 'ca', ct: 'source' }];
+  assert.deepEqual(LD.partsForPlacement(lay).map((p) => p.id), ['a', 'b']);
+  assert.equal(Object.keys(lay.parts).length, 3, 'filtering leaves the contour in the layout');
+});
+
 test('extractRaw: a selection, without the kept dimensions, sized without them', () => {
   const raw = plate(100, 60, { dim: true });
   assert.equal(raw.entities.length, 3);

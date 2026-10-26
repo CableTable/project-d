@@ -5793,7 +5793,7 @@ try {
       await t('ptab-drawing').click(); await closeTabs(/./);
     }
   });
-  await step('TODO 147 review fixes: no errors on a layout, Pick colour opens, Ungroup then run again leaves one contour, a copy keeps its own, a turned part is surrounded', async () => {
+  await step('TODO 147 review fixes: Pick colour, Ungroup, copies, turns, contour-free placement lists, and Parts list removal with one Undo', async () => {
     await closeTabs(/./);
     const errs0 = errors.length;
     const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('147 fixes');
@@ -5856,6 +5856,30 @@ try {
       s = await state();
       assert.deepEqual(ctSizes(s, 'Plate F'), [[130, 90], [140, 100]], 'the original keeps 15 mm, the copy has 20 mm');
       await t('contour-close').click();
+      const choices = await t('part').locator('option').allTextContents();
+      assert.deepEqual(choices.filter((n) => / - contour/.test(n)), [], 'Step and repeat never offers linked contour parts');
+      assert.ok(choices.some((n) => n.startsWith('Plate F ·')) && choices.some((n) => n.startsWith('Block F ·')), 'normal parts are still offered');
+      await t('part').focus();
+      await shotBoth('todo147b-step');
+      await t('nest').click();
+      const nestNames = await t('nest-dialog').locator('.nnm').allTextContents();
+      assert.deepEqual(nestNames.filter((n) => / - contour/.test(n)), [], 'Auto-nest never offers linked contour parts');
+      assert.ok(nestNames.includes('Plate F') && nestNames.includes('Block F'), 'normal parts are still offered');
+      await t('nest-cancel').click();
+      await shotBoth('todo147b-nest', () => t('nest').click(), () => t('nest-cancel').click());
+      const beforeRemoval = s.lay;
+      await panelControl(page, page.locator('[data-part-remove="147f-a"]')).click();
+      assert.equal(await nParts(), 2, 'both copies of Plate F and their contours leave the sheet');
+      s = await state();
+      assert.deepEqual(s.src.map(s.name), ['Block F']);
+      assert.deepEqual(s.ct.map(s.name), ['Block F - contour 1'], 'the other part keeps its contour');
+      assert.deepEqual(Object.values(s.lay.parts).map((p) => p.name).sort(), ['Block F', 'Block F - contour 1'], 'unused contour parts cannot reappear in placement lists');
+      await shotBoth('todo147b-removed');
+      await page.keyboard.press('Control+z');
+      assert.equal(await nParts(), 6, 'one Undo brings both copies and their contours back');
+      s = await state();
+      assert.deepEqual(s.lay.placed, beforeRemoval.placed, 'Undo restores placements and contour links');
+      assert.deepEqual(Object.keys(s.lay.parts).sort(), Object.keys(beforeRemoval.parts).sort());
       assert.deepEqual(errors.slice(errs0), [], 'no errors while using Contour on a layout');
     } finally {
       await menuItem('Layout', 'Parts library');
