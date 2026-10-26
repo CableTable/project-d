@@ -12995,6 +12995,15 @@ try {
     await shotBoth('fix72-cancel-polyline');
     await page.keyboard.press('Control+z');
     assert.equal(await entCount(), 4, 'one Undo removes the kept polyline');
+    const history = await histLabels();
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50);
+    await shiftRight(110, 60);
+    await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.equal(await entCount(), 4, 'Cancel with one point makes no polyline');
+    assert.match(await prompt(), /Cancelled/, 'one point reports Cancelled instead of the polyline validation message');
+    assert.deepEqual(await histLabels(), history, 'Cancel with one point adds no Undo step');
   });
 
   await step('TODO 72: the menu in Move, Measure and Dimension has Cancel and the snap types; a snap row ticks the type and the Snap types list follows', async () => {

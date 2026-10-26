@@ -5696,7 +5696,7 @@ function toolMenu(e) {
   const rows = [];
   if (T) {
     rows.push(['Enter', () => { state.msg = null; drawFinish(); }, 'Enter']);
-    rows.push(['Cancel', () => { const busy = DR.toolBusy(T); if (busy) drawFinish(); const made = busy && state.msg; setTool('select'); note(made || 'Cancelled'); }]);   // setTool clears the msg: keep drawCommit's "made on layer" line
+    rows.push(['Cancel', () => { const d = state.drawDoc, before = d.raw.entities.length; if (DR.toolBusy(T)) drawFinish(); const made = d.raw.entities.length > before && state.msg; setTool('select'); note(made || 'Cancelled'); }]);   // setTool clears the msg: keep drawCommit's "made on layer" line
     if (T.kind === 'polyline') rows.push(['Close', () => drawTyped('c'), null, T.pts.length >= 3]);
     rows.push(['Undo last point', () => drawTyped('u'), null, DR.toolBusy(T)]);
   } else rows.push(['Cancel', () => { setTool('select'); note('Cancelled'); }]);
