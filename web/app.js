@@ -41,7 +41,7 @@ import { placedMat, placedBox, placement1 } from './apply.js';
 import { layoutSnap } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { dropPart } from './dropin.js';
-import { copySnapshot, pasteSnapshot, partFromSnapshot } from './clipboard.js';
+import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } from './clipboard.js';
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
@@ -394,7 +394,7 @@ function buildMenus() {
       ...recentItems()],
     Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
       ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
-      ['Copy', copySelection, 'Ctrl+C', () => !!editable()?.sel.size],
+      ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
       ['Undo history…', showHistory, null, () => !!historyOf(curDoc())],
@@ -594,7 +594,7 @@ function ribbonContents(kind) {
       btn('Compare', '<rect x="3" y="6" width="12" height="13"/><rect x="9" y="5" width="12" height="13" stroke-dasharray="2 2"/>', () => cmpRun(cmpDoc()), { enabled: () => cmpDoc().cmp.items.filter((x) => x.checked).length >= 2 }))];
   const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!editable() || !!curLay()) }),
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
-      btn('Copy', copy, copySelection, { small: true, enabled: () => !!editable()?.sel.size }),
+      btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
@@ -4453,6 +4453,15 @@ const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
 const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, ltypes: d.raw.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 function copySelection() {
+  const lay = curLay();
+  if (lay) {
+    const items = selItems();
+    if (!items.length) return;
+    clipboard = copyPlacedSnapshot(lay.parts, items.map((x) => placementOf(x.p)));
+    renderRibbon();
+    note(`Copied ${items.length} placed part${items.length === 1 ? '' : 's'}`);
+    return;
+  }
   const d = editable();
   if (!d?.sel.size) { note('Nothing selected to copy'); return; }
   const name = baseName(d.name) + (d.pdf && PS.sheetNumbers(d.pdf).length > 1 ? ` sheet ${d.pdf.page}` : '');
@@ -4470,6 +4479,18 @@ async function pasteSelection() {
   if (!d?.lay && !editable()) { note('Paste: open a drawing or layout first'); return; }
   try {
     if (d.lay) {
+      if (clipboard.placed) {
+        const { parts, placed } = structuredClone(clipboard), lay = d.lay, groups = {};
+        pushLay(d, null, '', `Paste ${placed.length} parts`);
+        for (const [id, part] of Object.entries(parts)) if (!lay.parts[id]) lay.parts[id] = part;
+        const from = lay.placed.length;
+        lay.placed.push(...placed.map((p) => fresh(p, groups)));
+        if (sheetSelOn()) selectSheet(false);
+        selLooseMany = placed.map((_, i) => from + i);
+        touch(); update();
+        note(`Pasted ${placed.length} placed part${placed.length === 1 ? '' : 's'} at the same coordinates. Ctrl+Z takes them away`);
+        return;
+      }
       const part = partFromSnapshot(clipboard, uid(), lib.items.map((r) => r.name));
       if (!part) { note('Paste: the selection has no size (kept dimensions are not part of a part)'); return; }
       const report = writeDxfWithReport(part.raw, { escapeUnicode: true });

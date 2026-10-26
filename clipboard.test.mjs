@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { copySnapshot, pasteSnapshot, partFromSnapshot } from './web/clipboard.js';
+import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } from './web/clipboard.js';
+import { makePart } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, line, circle, insert, entity, writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { addDimension, buildDim, readDim, createHistory, moveEntities } from './web/edit.js';
@@ -9,6 +10,55 @@ import * as LR from './web/leader.js';
 const field = (e, c) => e.r.v[e.r.c.indexOf(c)];
 const target = (raw = newDoc(4), factor = 1, space = 0) => ({ raw, factor, space, dp: 2, names: Object.keys(raw.layers), hidden: [], locked: [], cur: '0' });
 const copyAll = (raw, factor = 1) => copySnapshot(raw, new Set(raw.entities.map((_, i) => i)), factor, 'source.dxf');
+
+test('placed snapshot keeps only selected linked parts and survives source edits; drawing paste applies units, rotation and mirrors', () => {
+  const raw = newDoc(1); addEntities(raw, line(1, 2, 3, 2), line(3, 2, 3, 3));
+  const part = makePart('linked', 'Bracket', raw, 25.4, 'Bracket');
+  const placed = [
+    { partId: 'linked', x: 100.25, y: 80.5, rot: 90, mirrorX: true, mirrorY: false },
+    { partId: 'linked', x: 200.75, y: 160.25, rot: 0, mirrorX: false, mirrorY: true },
+  ];
+  const snapshot = copyPlacedSnapshot({ linked: part, unused: { id: 'unused' } }, placed), before = structuredClone(snapshot);
+  assert.deepEqual(Object.keys(snapshot.parts), ['linked']);
+  assert.deepEqual(snapshot.placed, placed);
+  placed[0].x = 999; part.raw.entities.length = 0; part.src = 'changed';
+  assert.deepEqual(snapshot, before);
+  const expected = [[100.25, 80.5, 100.25, 29.7], [100.25, 29.7, 74.85, 29.7],
+    [200.75, 160.25, 251.55, 160.25], [251.55, 160.25, 251.55, 134.85]];
+  for (const factor of [1, 25.4]) {
+    const t = target(newDoc(factor === 1 ? 4 : 1), factor), r = pasteSnapshot(snapshot, t);
+    assert.equal(r.count, 4); assert.ok(r.entities.every((e) => e.type === 'LINE'));
+    assert.deepEqual(r.blocks, {}, 'no layout metadata or enclosing part blocks');
+    r.entities.forEach((e, i) => [10, 20, 11, 21].forEach((c, j) => assert.ok(Math.abs(+field(e, c) * factor - expected[i][j]) < 1e-8)));
+    assert.deepEqual(t.raw.entities, []); assert.deepEqual(snapshot, before);
+  }
+});
+
+test('placed drawing paste retains independent nested blocks and layer definitions', () => {
+  const raw = newDoc(4);
+  addLayer(raw, 'CUT', { aci: 1 }); addBlock(raw, 'B', [circle(10, 20, 5, { layer: 'CUT' })]);
+  addEntities(raw, insert('B', 0, 0));
+  const part = makePart('p', 'part', raw, 1), snapshot = copyPlacedSnapshot({ p: part }, [{ partId: 'p', x: 30, y: 40, rot: 90 }]);
+  const r = pasteSnapshot(snapshot, target());
+  assert.equal(r.count, 1); assert.equal(r.entities[0].type, 'INSERT');
+  assert.equal(r.layers.CUT.aci, 1); assert.deepEqual(Object.keys(r.blocks), ['B']);
+  const box = flatten({ ...newDoc(4), ...r }).boxes.model;
+  assert.deepEqual(box.map((v) => Math.round(v)), [20, 40, 30, 50]);
+  r.blocks.B.entities.length = 0;
+  assert.equal(snapshot.parts.p.raw.blocks.B.entities.length, 1);
+});
+
+test('part members that cannot explode paste losslessly as ordinary independent drawing blocks', () => {
+  const raw = newDoc(4); addEntities(raw, circle(10, 20, 5), entity('HATCH', [[70, 1], [91, 0]]));
+  const part = makePart('p', 'filled part', raw, 1), snapshot = copyPlacedSnapshot({ p: part }, [{ partId: 'p', x: 30, y: 40, rot: 90, mirrorX: true }]);
+  const before = structuredClone(snapshot), r = pasteSnapshot(snapshot, target());
+  assert.equal(r.count, 1); assert.equal(r.entities[0].type, 'INSERT');
+  assert.deepEqual([10, 20, 50, 41, 42].map((c) => +field(r.entities[0], c)), [30, 40, 90, -1, 1]);
+  const block = r.blocks[field(r.entities[0], 2)];
+  assert.deepEqual(block.entities.map((e) => e.type), ['CIRCLE', 'HATCH']);
+  assert.deepEqual(Object.keys(r.blocks), [field(r.entities[0], 2)]);
+  block.entities.length = 0; assert.deepEqual(snapshot, before);
+});
 
 test('a layout paste keeps the copied source name, gets an unused library name, and owns its extracted drawing', () => {
   const raw = newDoc(1); addEntities(raw, circle(2.25, 3.5, 0.5));

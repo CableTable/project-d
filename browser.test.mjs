@@ -5395,6 +5395,83 @@ try {
     assert.deepEqual((await savedDoc()).entities, sheet1.entities, 'sheet 2 paste and Undo leave sheet 1 alone');
     await closeTabs(/./);
   });
+  await step('TODO 144: copy on a layout', async () => {
+    await closeTabs(/./);
+    const open = async (name, raw) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    };
+    const parts = () => page.evaluate(async () => (await import('./partstore.js')).loadParts());
+    const rawA = newDoc(4), rawB = newDoc(4), source = newLayout('144 source');
+    addEntities(rawA, dxfLine(10, 20, 50, 20), dxfLine(50, 20, 50, 40));
+    addEntities(rawB, dxfCircle(15, 25, 5));
+    source.parts['144-a'] = makePart('144-a', '144 bracket', rawA, 1, 'bracket');
+    source.parts['144-b'] = makePart('144-b', '144 circle', rawB, 1, 'circle');
+    source.placed = [
+      { partId: '144-a', x: 100.25, y: 80.5, rot: 90, mirrorX: true, mirrorY: false },
+      { partId: '144-b', x: 200.75, y: 160.25, rot: 0, mirrorX: false, mirrorY: true },
+    ];
+    await open('144 source.dxf', layoutRaw(source));
+    await page.waitForFunction(async () => (await (await import('./partstore.js')).loadParts()).filter((p) => p.id.startsWith('144-')).length === 2);
+    const library = await parts(), original = layoutFromRaw(await savedDoc());
+    assert.deepEqual(library.filter((p) => p.id.startsWith('144-')).map((p) => p.source).sort(), ['bracket', 'circle']);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    const nothing = await prompt();
+    await page.keyboard.press('Control+c'); assert.equal(await prompt(), nothing, 'empty layout copy leaves the message alone');
+    await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    assert.equal(await prompt(), 'Copied 2 placed parts');
+    await shotBoth('todo144-copy', () => page.locator('[data-menu=Edit]').click(), () => page.keyboard.press('Escape'));
+    await page.keyboard.press('Control+a');
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Copy', exact: true }).isDisabled(), false);
+    await page.getByRole('menuitem', { name: 'Copy', exact: true }).click();
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    const cleared = await prompt();
+    await page.keyboard.press('Control+c'); assert.equal(await prompt(), cleared);
+    await page.locator('[data-menu=Edit]').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Copy', exact: true }).isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+v');
+    let lay = layoutFromRaw(await savedDoc());
+    assert.deepEqual(lay.placed.slice(2), original.placed, 'same-layout paste overlaps at the same coordinates and keeps the ids');
+    await page.keyboard.press('Control+z');
+    assert.deepEqual(layoutFromRaw(await savedDoc()).placed, original.placed);
+    await typeCmd('newlayout'); await page.keyboard.press('Escape');
+    await closeTabs(/144 source/);
+    await menuItem('Edit', 'Paste');
+    lay = layoutFromRaw(await savedDoc());
+    assert.deepEqual(lay.placed, original.placed, 'two placements link to the same library ids on another layout');
+    assert.deepEqual(Object.keys(lay.parts).sort(), ['144-a', '144-b']);
+    assert.equal(await page.locator('[data-group=tools] .sel-box').count(), 2, 'both pasted parts are selected');
+    await shotBoth('todo144-layout');
+    await page.keyboard.press('Control+z');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 0, 'one Undo removes both parts');
+    await page.keyboard.press('Control+y');
+    assert.deepEqual(layoutFromRaw(await savedDoc()).placed, original.placed, 'Redo restores both linked parts');
+    const target = newDoc(4); addEntities(target, dxfLine(300, 300, 320, 320));
+    await open('144 drawing.dxf', target);
+    const before = await savedDoc();
+    await page.keyboard.press('Control+v'); await waitSel('3 selected');
+    const drawing = await savedDoc(), pasted = drawing.entities.slice(before.entities.length);
+    assert.deepEqual(pasted.map((e) => e.type), ['LINE', 'LINE', 'CIRCLE']);
+    const field = (e, c) => +e.r.v[e.r.c.indexOf(c)];
+    const expected = [[100.25, 80.5, 100.25, 40.5], [100.25, 40.5, 80.25, 40.5]];
+    pasted.slice(0, 2).forEach((e, i) => [10, 20, 11, 21].forEach((c, j) => assert.ok(Math.abs(field(e, c) - expected[i][j]) < 1e-6)));
+    assert.deepEqual([10, 20, 40].map((c) => field(pasted[2], c)), [205.75, 155.25, 5]);
+    assert.deepEqual(drawing.blocks, before.blocks, 'plain drawing objects have no enclosing layout blocks');
+    await t('canvas').getByRole('button', { name: 'Fit', exact: true }).click();
+    await shotBoth('todo144-drawing');
+    await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities, before.entities);
+    assert.deepEqual(await parts(), library, 'pastes and Undo create no new library entries or source names');
+    await menuItem('Layout', 'Parts library');
+    for (const name of ['144 bracket', '144 circle']) {
+      await libCard(name).locator('[data-testid=lib-menu]').click();
+      page.once('dialog', (d) => d.accept());
+      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+      await libCard(name).waitFor({ state: 'detached' });
+    }
+    await t('ptab-drawing').click(); await closeTabs(/./);
+  });
   await step('TODO 142c: Add to layout saves the plain drawing source; reopening uses it, or the plain layout name when unknown', async () => {
     await closeTabs(/./);
     const raw = newDoc(4), name = '142c reopened part';
