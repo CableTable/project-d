@@ -85,6 +85,21 @@ test('TODO 68b: a shared segment corner is an intersection; its end name wins wh
   }
 });
 
+test('TODO 68b: at a slot corner (line meets half circle) the end wins at every hover position', () => {
+  const ed = index(W.lwpoly([[0, 0], [10, 0, 1], [10, 4], [0, 4, 1]], { closed: true }));
+  for (const [cx, cy] of [[0, 0], [10, 0], [10, 4], [0, 4]]) for (let a = 0; a < 360; a += 3) for (const r of [.05, .2, .45]) {
+    const got = snapPick(ed, cx + r * Math.cos(a * Math.PI / 180), cy + r * Math.sin(a * Math.PI / 180), .5);
+    if (got.kind !== 'near') assert.equal(got.kind, 'end', `corner ${cx},${cy} angle ${a} r ${r}`);
+  }
+});
+
+test('TODO 68b: 1000 lines through one point still snap (only the 200 nearest are crossed)', () => {
+  const ed = index(...Array.from({ length: 1000 }, (_, i) => { const a = i * Math.PI / 1000; return W.line(-50 * Math.cos(a), -50 * Math.sin(a), 50 * Math.cos(a), 50 * Math.sin(a)); }));
+  const got = snapPick(ed, .1, .1, .5);
+  assert.equal(got.kind, 'intersection');
+  assert.ok(near([got.x, got.y], [0, 0]));
+});
+
 test('TODO 68c: perpendicular foot on a line / polyline segment from the last point, ticks, aperture and skip', () => {
   const ed = index(W.line(0, 0, 100, 0), W.lwpoly([[0, 50], [100, 50], [100, 100]]), W.line(5, 5, 5, 5));
   const from = [30, 20], on = (x, y, types = snapTypes(), skip = -1, f = from) => snapPick(ed, x, y, .5, true, skip, types, [], f);

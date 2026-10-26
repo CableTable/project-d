@@ -232,9 +232,15 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
   }
   const perp = from && types.perpendicular !== false;
   if (types.intersection !== false || perp) {
-    const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).map((p) => p.ent).filter((p) => !p.curve);
+    // shortcut: only the 200 pieces nearest the cursor are crossed (k^2/2 pieceInter calls per hover); raise or index them if a dense drawing misses a crossing.
+    const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
+    const eps = 1e-9 * (1 + Math.abs(x) + Math.abs(y));
     if (types.intersection !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
-      for (const [px, py] of pieceInter(pieces[i], pieces[j])) best = preferSnap(best, { x: px, y: py, kind: 'intersection' }, x, y, tol, types);
+      for (const [px, py] of pieceInter(pieces[i], pieces[j])) {
+        // a line-arc crossing lands ~1e-9 off the end point it shares: the end wins
+        if (best?.kind === 'end' && Math.hypot(best.x - px, best.y - py) <= eps) continue;
+        best = preferSnap(best, { x: px, y: py, kind: 'intersection' }, x, y, tol, types);
+      }
     }
     if (perp) for (const p of pieces) {
       const foot = p.t === 's' && perpFoot(from, [p.x1, p.y1], [p.x2, p.y2]);
