@@ -12608,6 +12608,122 @@ try {
     await closeTabs(/big/);
   });
 
+  const shiftRight = async (x, y) => {
+    const p = await at(x, y);
+    await page.keyboard.down('Shift');
+    try { await page.mouse.click(p.x, p.y, { button: 'right' }); } finally { await page.keyboard.up('Shift'); }
+    await t('ctx-menu').waitFor();
+  };
+  const menuRows = () => page.locator('[data-testid=ctx-menu] .mi').evaluateAll((bs) => bs.map((b) => [b.childNodes[0].textContent, b.disabled]));
+  const SNAP_ROWS = ['end', 'middle', 'centre', 'point', 'nearest', 'intersection', 'quadrant', 'perpendicular'].map((n) => ['✓ Snap: ' + n, false]);
+
+  await step('TODO 72: Shift+right-click while a tool is on opens Enter / Cancel / Close / Undo last point and the snap types; plain right-click still finishes', async () => {
+    await openGrips(); await page.evaluate(() => localStorage.removeItem('pd-snap-types'));
+    await page.locator('[data-tool=polyline]').click();
+    await click(40, 50); await click(70, 70); await click(100, 50);
+    await shiftRight(110, 60);
+    assert.deepEqual(await menuRows(), [['Enter', false], ['Cancel', false], ['Close', false], ['Undo last point', false], ...SNAP_ROWS]);
+    await shotBoth('rightclick-menu', async () => { if (!(await t('ctx-menu').count())) await shiftRight(110, 60); }, async () => { await page.keyboard.press('Escape'); });
+    await shiftRight(110, 60);
+    await page.getByRole('menuitem', { name: 'Undo last point', exact: true }).click();
+    assert.equal(await t('ctx-menu').count(), 0, 'a row closes the menu');
+    assert.equal(await entCount(), 4, 'nothing is made by an undo');
+    await shiftRight(110, 60);
+    assert.equal((await menuRows())[2][1], true, 'Close needs three points: greyed with two');
+    await page.keyboard.press('Escape');
+    await click(100, 50);
+    await shiftRight(110, 60); await page.getByRole('menuitem', { name: 'Close', exact: true }).click();
+    assert.equal(await entCount(), 5, 'Close made the polyline');
+    assert.equal((await histLabels()).at(-1), 'Polyline');
+    const doc = await savedDoc();
+    assert.equal(fieldOf(doc.entities.at(-1), 70) & 1, 1, 'the polyline is closed');
+    await click(40, 50); await click(70, 70);
+    await page.mouse.click((await at(70, 70)).x, (await at(70, 70)).y, { button: 'right' });
+    assert.equal(await t('ctx-menu').count(), 0, 'plain right-click: no menu');
+    assert.equal(await entCount(), 6, 'plain right-click still finishes the polyline');
+    await page.locator('[data-tool=line]').click();
+    await shiftRight(110, 60);
+    assert.deepEqual((await menuRows()).slice(0, 3), [['Enter', false], ['Cancel', false], ['Undo last point', true]], 'a Line: no Close, nothing to undo yet');
+    await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+  });
+
+  await step('TODO 72: the menu in Move, Measure and Dimension has Cancel and the snap types; a snap row ticks the type and the Snap types list follows', async () => {
+    await openGrips();
+    await click(70, 30); await waitSel('1 selected');
+    await typeCmd('mv'); assert.match(await prompt(), /Base point/);
+    await shiftRight(110, 60);
+    assert.deepEqual(await menuRows(), [['Cancel', false], ...SNAP_ROWS]);
+    await page.getByRole('menuitem', { name: '✓ Snap: end', exact: true }).click();
+    assert.equal(await t('snap-type-end').isChecked(), false, 'the row unticked end');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Move', 'a snap row keeps the tool on');
+    await shiftRight(110, 60);
+    assert.equal((await menuRows())[1][0], '  Snap: end', 'the menu shows end unticked now');
+    await page.getByRole('menuitem', { name: 'Snap: end', exact: true }).click();
+    assert.equal(await t('snap-type-end').isChecked(), true);
+    await shiftRight(110, 60); await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    for (const tool of ['measure', 'dimension']) {
+      await page.locator(`[data-tool=${tool}]`).click();
+      await shiftRight(110, 60);
+      assert.deepEqual(await menuRows(), [['Cancel', false], ...SNAP_ROWS], tool);
+      await page.keyboard.press('Escape');
+      assert.equal(await t('ctx-menu').count(), 0, 'Esc closes the menu');
+      assert.equal(await t('tool-chip').textContent(), 'Tool: ' + (tool === 'measure' ? 'Measure' : 'Dimension'), 'Esc only closed the menu');
+    }
+    await page.locator('[data-tool=select]').click();
+  });
+
+  const said = async () => (await histLine()) + ' ' + (await prompt());
+  const viewBox = async () => (await page.locator('[data-testid=canvas] > svg').first().getAttribute('viewBox')).split(' ').map(Number);
+  const viewItemOff = async (name) => { await page.locator('[data-menu=View]').click(); const off = await page.getByRole('menuitem', { name, exact: true }).isDisabled(); await page.locator('[data-menu=View]').click(); return off; };
+
+  await step('TODO 74: Zoom Window drags a box (Esc cancels); Zoom Selection fits the selection and is greyed with none; Zoom Previous goes back twice', async () => {
+    await openGrips();
+    const v0 = await viewBox();
+    await typeCmd('zw');
+    await page.keyboard.press('Escape');
+    assert.match(await said(), /Zoom Window cancelled/);
+    const a = await at(30, 40), b = await at(130, 90);
+    await typeCmd('zw');
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 });
+    assert.equal(await t('rubber').isVisible(), true, 'the box shows while dragging');
+    await page.mouse.up();
+    const v1 = await viewBox();
+    assert.ok(v1[2] < v0[2] / 2, `zoomed in on the box: ${v0[2]} → ${v1[2]}`);
+    assert.ok(v1[0] <= 31 && v1[0] + v1[2] >= 129 && v1[2] < 110, `the box (x 30 to 130) fills the view, to a pixel or so: ${v1}`);
+    assert.equal(await t('rubber').isVisible(), false);
+    assert.equal(await viewItemOff('Zoom Selection'), true, 'greyed with nothing selected');
+    await typeCmd('zs'); assert.match(await said(), /select something first/); assert.deepEqual(await viewBox(), v1);
+    await typeCmd('all');
+    assert.equal(await viewItemOff('Zoom Selection'), false, 'on with a selection');
+    await typeCmd('zs');
+    const v2 = await viewBox();
+    assert.ok(v2[2] > v1[2] * 1.4 && v2[0] < 20, `zoomed out to everything selected (x 20 to 200): ${v1} → ${v2}`);
+    await typeCmd('zp'); assert.deepEqual(await viewBox(), v1, 'back to the window view');
+    await typeCmd('zp'); assert.deepEqual(await viewBox(), v0, 'back to the first view');
+    await typeCmd('zp'); assert.match(await said(), /no earlier view/);
+    assert.equal(await viewItemOff('Zoom Previous'), true, 'greyed with no earlier view');
+  });
+
+  await step('TODO 74: Zoom Selection on a layout fits the selected parts; Zoom Previous keeps at most 10', async () => {
+    await openGrips(); await t('add-to-layout').click();
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    await t('apply').click();
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Escape');
+    assert.equal(await viewItemOff('Zoom Selection'), true, 'greyed with no part selected');
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    const v0 = await viewBox();
+    await typeCmd('zs');
+    const v1 = await viewBox();
+    assert.ok(v1[2] < v0[2] / 2, `zoomed to the part: ${v0[2]} → ${v1[2]}`);
+    await typeCmd('zp'); assert.deepEqual(await viewBox(), v0);
+    for (let i = 0; i < 6; i++) { await typeCmd('zs'); await typeCmd('fit'); }       // twelve different views
+    for (let i = 0; i < 10; i++) await typeCmd('zp');
+    await typeCmd('zp'); assert.match(await said(), /no earlier view/, 'ten steps back and no more');
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

@@ -13,6 +13,7 @@ import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layou
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import { SNAP_NAME, snapTypes } from './snap.js';
+import { pushView, popView } from './viewhist.js';
 import * as UF from './unitfix.js';
 import * as CL from './cleanup.js';
 import * as DM from './dims.js';
@@ -198,6 +199,7 @@ const state = {
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
   wireframe: false,
+  zwin: false,                     // Zoom Window is waiting for its box (TODO 74)
   shapingKeepOriginals: false,
   workArea: 'Follow app',
   dp: 2,                           // decimal places in dimensions (status bar), remembered on this PC
@@ -404,7 +406,8 @@ function buildMenus() {
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
     View: () => {
       const lay = curLay(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
-      return [['Fit to window', fit, 'Ctrl+0'], [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
+      return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
+        [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
         [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!curLay().s.guidesShow), null, () => !!curLay()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!curLay().s.guidesLock), null, () => !!curLay()],
@@ -1164,7 +1167,7 @@ function setTool(id) {
   if (id === 'contour' && !editable()) { note('Contour works on a drawing tab: open a drawing and pick a closed outline'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
-  state.text.drag = null; state.grip = null; state.entityDrag = null; state.txoWait = false; trackClear();
+  state.text.drag = null; state.grip = null; state.entityDrag = null; state.txoWait = false; state.zwin = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
   if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab'); return; }
@@ -1210,7 +1213,7 @@ function buildCanvas() {
   });
   ui.bgPicker.addEventListener('cancel', () => { traceAfter = false; });
   ui.pct = h('span', { class: 'pct mono', 'data-testid': 'zoom' }, '100%');
-  ui.fitBtn = h('button', { class: 'tog on', type: 'button', onclick: fit }, 'Fit');
+  ui.fitBtn = h('button', { class: 'tog on', type: 'button', onclick: fitView }, 'Fit');
   ui.rubber = h('div', { class: 'rubber', hidden: true, 'data-testid': 'rubber' });
   ui.dropHint = h('div', { class: 'pop drophint', hidden: true, 'data-testid': 'drop-hint' });
   ui.hintPill = h('div', { class: 'pop hintpill', hidden: true, 'data-testid': 'hint-pill' });
@@ -3397,7 +3400,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
-  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || state.txoWait || (curLay() && state.mode === 'rotate');
+  const on = !['select', 'pan', 'step'].includes(state.tool) || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
   return { label: m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
@@ -3466,7 +3469,7 @@ const DO = {
   redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
   paste: pasteSelection,
   history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
-  fit: () => fit(), rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
+  fit: fitView, zoomwindow: zoomWindow, zoomselection: zoomSelection, zoomprevious: zoomPrevious, rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(),
   shortcuts: () => showShortcuts(),
   closetab: () => closeTab(curDoc()), nexttab: () => cycleTab(1), previoustab: () => cycleTab(-1),
@@ -3483,15 +3486,19 @@ function runCommand(cmd) {
   ui.cmdUI.ran(n);
 }
 
+/** One snap type on or off: remembered on this PC, and the Snap types popover's tick follows. */
+function setSnapType(kind, on) {
+  state.snapTypes[kind] = on;
+  const box = document.querySelector(`[data-testid=snap-type-${kind}]`);
+  if (box) box.checked = on;
+  try { localStorage.setItem('pd-snap-types', JSON.stringify(state.snapTypes)); } catch { /* storage may be blocked */ }
+}
 function buildSnapTypes() {
   try { state.snapTypes = snapTypes(JSON.parse(localStorage.getItem('pd-snap-types'))); } catch { /* defaults if storage is blocked or invalid */ }
   const pop = h('div', { id: 'snap-types', popover: 'auto', class: 'snap-types', role: 'group', 'aria-label': 'Snap types', 'data-testid': 'snap-types' },
     h('strong', {}, 'Snap types'), Object.entries(SNAP_NAME).map(([kind, name]) => {
       const input = h('input', { type: 'checkbox', checked: state.snapTypes[kind], 'data-testid': 'snap-type-' + kind });
-      input.addEventListener('change', () => {
-        state.snapTypes[kind] = input.checked;
-        try { localStorage.setItem('pd-snap-types', JSON.stringify(state.snapTypes)); } catch { /* storage may be blocked */ }
-      });
+      input.addEventListener('change', () => setSnapType(kind, input.checked));
       return h('label', {}, input, name);
     }));
   const arrow = h('button', { type: 'button', class: 'tog snap-arrow', popovertarget: pop.id, 'aria-label': 'Snap types', 'aria-expanded': 'false', 'aria-controls': pop.id, 'data-testid': 'snap-types-open', title: 'Snap types' }, '▾');
@@ -3928,25 +3935,62 @@ function zoomAt(factor, px, py, gesture = false) {
   view.fitted = false;
   applyView(gesture);
 }
-function zoomBy(factor) { const { w, h: ch } = canvasSize(); zoomAt(factor, w / 2, ch / 2); }
+function zoomBy(factor) { const { w, h: ch } = canvasSize(); markView(); zoomAt(factor, w / 2, ch / 2); }
+
+// ---- more zooms (TODO 74): Zoom Window, Zoom Selection, Zoom Previous ----
+/** Remembers the view the tab has now, for Zoom Previous (the last 10, not saved). */
+function markView() { const d = curDoc(); if (d) pushView(d.viewHist || (d.viewHist = []), view); }
+function fitView() { markView(); fit(); }
+function zoomWindow() { state.zwin = true; renderCommand(); }
+/** The box was dragged (client px): the view zooms to it. A click alone keeps waiting for a box. */
+function zoomWindowUp(r, e) {
+  if (!state.zwin || !r.moved) return;
+  const cr = ui.canvas.getBoundingClientRect(), mm = (cx, cy) => cursorMm(view.ox + (cx - cr.left) / view.scale, view.oy + (cy - cr.top) / view.scale, state.sheetH);
+  const a = mm(r.x, r.y), b = mm(e.clientX, e.clientY);
+  state.zwin = false;
+  zoomToBox([Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])], 0);
+  note('Zoom Window done. ZP goes back');
+}
+/** The box (mm, y up) of what is selected on this tab: shapes on a drawing, parts on a layout. Null when nothing is. */
+function selectionBox() {
+  const d = curDoc();
+  if (d?.lay) { const bs = selIdxs().map((i) => placedBox(d.lay.parts[placedNow[i].partId], placedNow[i])); return bs.length ? A.unionBox(bs) : null; }
+  const b = editable() && d.sel.size ? OB.boxOf(d.fl, [...d.sel]) : null;
+  return b && b.map((v) => v * d.factor);
+}
+function zoomSelection() {
+  const b = selectionBox();
+  if (!b) { note('Zoom Selection: select something first'); return; }
+  zoomToBox(b, zoomPad(b));
+}
+function zoomPrevious() {
+  const d = curDoc(), v = d && d.viewHist && popView(d.viewHist);
+  if (!v) { note('Zoom Previous: there is no earlier view on this tab'); return; }
+  Object.assign(view, v);
+  applyView();
+}
 
 function attachCanvasEvents() {
   const c = ui.canvas;
   const local = (e) => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  let pan = null, drag = null, lrub = null;                          // lrub: a rubber band started on an empty bit of a layout's sheet
+  let pan = null, drag = null, lrub = null, wheelAt = 0;                        // lrub: a rubber band started on an empty bit of a layout's sheet
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
     const p = local(e);
+    if (e.timeStamp - wheelAt > 400) markView();                       // one Zoom Previous step per wheel turn, not per notch
+    wheelAt = e.timeStamp;
     zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y, true);
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
+    if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
     if (e.button === 0 && gh0 && curLay() && !state.setlen && state.tool !== 'pan' && state.tool !== 'measure' && !curLay().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
     if (e.button === 0 && state.tool !== 'pan' && cmpDown(e)) return;
     if (e.button === 1 || (e.button === 0 && state.tool === 'pan')) {
       e.preventDefault();
+      markView();
       pan = { x: e.clientX, y: e.clientY };
       capture(c, e);
       c.classList.add('panning');
@@ -4019,7 +4063,7 @@ function attachCanvasEvents() {
     if (state.grip) gripUp(e);
     if (state.balDrag) balUp();
     if (pdrag) placedUp();
-    if (lrub) { const r = lrub; lrub = null; hideRubber(); layoutBoxSelect(r, e); }
+    if (lrub) { const r = lrub; lrub = null; hideRubber(); if (r.zoom) zoomWindowUp(r, e); else layoutBoxSelect(r, e); }
     const was = drag; drag = null;
     const d = state.tool === 'measure' ? measureTarget() : editable();
     if (was && d && e.button === 0) {
@@ -4060,6 +4104,7 @@ function attachCanvasEvents() {
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
+    if (e.shiftKey && toolMenu(e)) return;                         // Shift+right-click while a tool is on: its menu (plain right-click finishes, below)
     const gh = e.target.closest && e.target.closest('[data-guide]');
     if (state.draw && !curLay()) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
@@ -4084,6 +4129,7 @@ function renderCommand() {
   if (cm) { cmpCommand(cm.cmp); return; }
   if (state.dsOpen) { ui.hist.textContent = 'Command: DIMSTYLE   Dimension style'; ui.prompt.textContent = 'Preset, arrow size, text height, decimals, gap, units and text position. OK applies, Esc cancels:'; return; }
   const t = TOOLS.find((x) => x.id === state.tool), lay = curLay(), ed = editable();
+  if (state.zwin) { ui.hist.textContent = 'Command: ZOOM   Window'; ui.prompt.textContent = 'Drag a box with the left button to zoom into it (Esc cancels):'; return; }
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
@@ -5606,6 +5652,22 @@ function drawApply(r) {
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
 function drawFinish() { trackClear(); drawApply(DR.toolFinish(state.draw)); }
+/** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
+function toolMenu(e) {
+  const T = drawLive() ? state.draw : null;
+  if (!T && !modLive() && !(state.tool === 'measure' && measureTarget()) && !(state.tool === 'dimension' && editable())) return false;
+  const tick = (on, text) => (on ? '✓ ' : '  ') + text;
+  const rows = [];
+  if (T) {
+    rows.push(['Enter', () => { state.msg = null; drawFinish(); }, 'Enter']);
+    rows.push(['Cancel', () => { setTool('select'); note('Cancelled'); }]);
+    if (T.kind === 'polyline') rows.push(['Close', () => drawTyped('c'), null, T.pts.length >= 3]);
+    rows.push(['Undo last point', () => drawTyped('u'), null, DR.toolBusy(T)]);
+  } else rows.push(['Cancel', () => { setTool('select'); note('Cancelled'); }]);
+  rows.push('-', ...Object.entries(SNAP_NAME).map(([kind, name]) => [tick(state.snapTypes[kind], 'Snap: ' + name), () => setSnapType(kind, !state.snapTypes[kind])]));
+  popMenu(e.clientX, e.clientY, rows);
+  return true;
+}
 function drawCommit(d, kind, shapes) {
   const layer = curLayerName(d);
   if (!d.raw.layers[layer]) addLayer(d.raw, layer);
@@ -6592,7 +6654,8 @@ function editKey(e) {
     if (ui.preflight && !ui.preflight.hidden && !activeCmd() && !ui.cmdUI.isOpen()) { closePreflight(); e.preventDefault(); return; }
     const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
     if (shut === 'drawer' || (shut === 'bar' && !wasOn)) return;
-    if (gdrag) cancelGuideDrag();
+    if (state.zwin) { state.zwin = false; hideRubber(); note('Zoom Window cancelled'); }
+    else if (gdrag) cancelGuideDrag();
     else if (state.sheetDrag) sheetCancel();
     else if (sheetSelOn() && !pdrag) selectSheet(false);
     else if (curLay() && pdrag) cancelPlacedDrag();
@@ -7692,6 +7755,7 @@ function renderCompare() {
 
 /** Centres the view on a box (mm, y up) with room round it. */
 function zoomToBox(b, pad) {
+  markView();
   const { w, h: ch } = canvasSize(), R = state.rulers ? RULER : 0, bw = b[2] - b[0] + 2 * pad, bh = b[3] - b[1] + 2 * pad;
   view.scale = Math.min(40, (w - R) / bw, (ch - R) / bh);
   view.ox = (b[0] + b[2]) / 2 - (w + R) / 2 / view.scale;
