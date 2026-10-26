@@ -9404,6 +9404,35 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/extend/);
   });
 
+  await step('TODO 66i: Extend an arc and an open polyline to a line; Undo restores; Save and reopen keep the geometry', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 0, 20, 100), dxfArc(40, 40, 20, 0, 90), dxfPoly([[100, 20], [120, 20], [120, 40]], { width: 2 }), dxfLine(90, 80, 140, 80), dxfCircle(200, 100, 10));
+    await openGrips(writeDxf(raw), 'extend-arc-poly.dxf'); const before = await savedDoc();
+    const verts = (e) => e.r.c.flatMap((c, i) => (c === 10 || c === 20 ? [+e.r.v[i]] : []));
+    const undo = async () => {
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores it');
+    };
+    await typeCmd('ex'); await page.keyboard.press('Enter');
+    await click(40, 60);
+    let doc = await savedDoc();
+    assert.deepEqual([40, 50, 51].map((c) => fieldOf(doc.entities[1], c)), [20, 0, 180], 'the arc end grows along its circle to the line, the start stays');
+    assert.equal((await histLabels()).at(-1), 'Extend'); await undo();
+    await click(120, 40);
+    doc = await savedDoc();
+    assert.deepEqual(verts(doc.entities[2]), [100, 20, 120, 20, 120, 80], 'the polyline end runs on to the line');
+    assert.equal(fieldOf(doc.entities[2], 43), 2, 'the width stays'); await undo();
+    await click(40, 60); await click(120, 40);
+    await click(200, 110); assert.match(await histLine(), /closed shape/, 'a circle is refused');
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await page.keyboard.press('Escape'); await closeTabs(/./);
+    await openGrips(text, 'extend-arc-poly-reopened.dxf'); doc = await savedDoc();
+    assert.equal(fieldOf(doc.entities[1], 51), 180, 'the saved arc reopens extended');
+    assert.deepEqual(verts(doc.entities[2]), [100, 20, 120, 20, 120, 80], 'the saved polyline reopens extended');
+    await closeTabs(/extend/);
+  });
+
   await step('TODO 66e: Fillet two lines', async () => {
     await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
     const raw = newDoc(4); addLayer(raw, 'Cut');
