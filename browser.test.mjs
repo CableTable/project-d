@@ -12892,6 +12892,7 @@ try {
     await page.getByRole('menuitem', { name: 'Cancel', exact: true }).click();
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.equal(await entCount(), 5, 'Cancel keeps the polyline');
+    assert.match(await prompt(), /Polyline made on layer .*Ctrl\+Z takes it back/, 'the message says the polyline was made, not "Cancelled"');
     const poly = (await savedDoc()).entities.at(-1);
     assert.equal(poly.type, 'LWPOLYLINE');
     assert.equal(fieldOf(poly, 90), 3);
