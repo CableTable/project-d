@@ -10,7 +10,7 @@ test('snap ticks default on; only stored booleans are accepted, missing types st
 const choose = (candidates, ticks = DEFAULT_TYPES, tol = 5) => candidates.reduce((best, sn) => preferSnap(best, sn, 0, 0, tol, ticks), null);
 test('every feature beats nearest in either order; among features the closest wins', () => {
   const near = { x: 0, y: .1, kind: 'near' };
-  for (const kind of ['end', 'mid', 'centre', 'node']) {
+  for (const kind of ['end', 'mid', 'centre', 'node', 'intersection', 'quadrant']) {
     const feature = { x: 4, y: 0, kind };
     assert.equal(choose([near, feature]), feature);
     assert.equal(choose([feature, near]), feature);

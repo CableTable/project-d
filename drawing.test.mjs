@@ -68,7 +68,8 @@ test('blocks: placed, turned and scaled; a layer-0 part takes its insert\'s laye
   near(c.x, 10); near(c.y, 5);                                       // the base point lands on the insert point
   const hit = D.pickAt(ix, 10, 9, 0.5);
   assert.equal(hit.ent.t, 'a'); near(hit.ent.r, 4);                  // scaled twice
-  assert.equal(G.label(D.describe2d(hit), 'mm'), 'Ø 8 mm');
+  assert.equal(hit.snap.kind, 'quadrant');
+  assert.equal(G.label(D.describe2d({ ...hit, snap: null }), 'mm'), 'Ø 8 mm');
 });
 
 test('an arc drawn from below (extrusion −Z) is mirrored', () => {
@@ -251,7 +252,7 @@ test('nested arrays of empty blocks stop at a limit (truncated) instead of hangi
 test('an ellipse snaps to its centre and its 4 quadrant points; a partial one only to those in its sweep', () => {
   const ell = (t1) => lay(dxf([g([0, 'ELLIPSE'], [8, '0'], [10, 10], [20, 20], [30, 0], [11, 10], [21, 0], [31, 0], [40, 0.5], [41, 0], [42, t1])]));
   const pts = (fl) => D.pickIndex(fl, false).snaps.map((s) => s.kind + ' ' + Math.round(s.x) + ',' + Math.round(s.y));
-  assert.deepEqual(pts(ell(2 * Math.PI)).sort(), ['centre 10,20', 'end 0,20', 'end 10,15', 'end 10,25', 'end 20,20']);
+  assert.deepEqual(pts(ell(2 * Math.PI)).sort(), ['centre 10,20', 'quadrant 0,20', 'quadrant 10,15', 'quadrant 10,25', 'quadrant 20,20']);
   const part = pts(ell(Math.PI / 2 + 0.1));
-  assert.ok(part.includes('end 10,25') && !part.includes('end 0,20') && !part.includes('end 10,15'), part.join(' | '));
+  assert.ok(part.includes('quadrant 10,25') && !part.includes('quadrant 0,20') && !part.includes('quadrant 10,15'), part.join(' | '));
 });

@@ -136,7 +136,7 @@ try {
       await p.goto(URL_); await arrow.waitFor();
       await arrow.focus(); await p.keyboard.press('Enter'); await list.waitFor({ state: 'visible' });
       assert.equal(await list.locator('input:checked').count(), 8, 'all current and future types default on');
-      assert.equal(await list.locator('input:disabled').count(), 3, 'future types are labelled soon');
+      assert.equal(await list.locator('input:disabled').count(), 1, 'only perpendicular is still labelled soon');
       await end.focus(); await p.keyboard.press('Space');
       assert.equal(await end.isChecked(), false, 'keyboard toggles a tick');
       await p.keyboard.press('Escape'); await closed();
@@ -182,6 +182,55 @@ try {
         await p.screenshot({ path: `${shotDir}/todo68a-snap-types-${theme}.png` });
         await p.keyboard.press('Escape');
       }
+    } finally { await context.close(); }
+  });
+  await step('TODO 68b: intersection and quadrant', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => {
+      const fillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['intersection', 'quadrant', 'nearest'].includes(text)) window.__snapLabel = text;
+        return fillText.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    try {
+      await p.goto(URL_); await q('snap-types-open').waitFor();
+      const doc = newDoc(4);
+      addEntities(doc, dxfLine(20, 50, 140, 50), dxfLine(65, 20, 65, 120), dxfCircle(220, 70, 30));
+      await q('picker').setInputFiles({ name: 'snap-crossings.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snap-crossings.dxf');
+      const hover = async (label, wx, wy) => {
+        await p.locator('[data-tool=line]').click();
+        const r = await p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+        const x = r.x + wx * r.scale + 3, y = r.y + (r.h - wy) * r.scale - 2;
+        await p.evaluate(() => { window.__snapLabel = ''; });
+        await p.mouse.move(x, y);
+        await p.waitForFunction((want) => window.__snapLabel === want, label);
+        return { x, y, r };
+      };
+      const pick = async ({ x, y, r }, wx, wy) => {
+        await p.mouse.click(x, y); await p.mouse.move(x + 50, y - 50);
+        const path = await q('draw-preview').getAttribute('d'), start = path.match(/-?\d+(?:\.\d+)?/g).slice(0, 2).map(Number);
+        assert.ok(Math.abs(start[0] - wx) < .02 && Math.abs(start[1] - (r.h - wy)) < .02, 'picked point uses the named snap: ' + path);
+        await p.keyboard.press('Escape');
+      };
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click();
+        await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme + '\\b') }).click();
+        for (const [kind, x, y] of [['intersection', 65, 50], ['quadrant', 220, 100]]) {
+          const pos = await hover(kind, x, y);
+          await p.screenshot({ path: `${shotDir}/todo68b-${kind}-${theme}.png` });
+          await pick(pos, x, y);
+        }
+      }
+      await q('snap-types-open').click();
+      await q('snap-type-intersection').uncheck();
+      await p.keyboard.press('Escape');
+      const pos = await hover('nearest', 65, 50);
+      await pick(pos, 65 + 3 / pos.r.scale, 50);
     } finally { await context.close(); }
   });
   await step('TODO 94/132: docker tabs, remembered folds, library first, resize, hide/show and typed Guides', async () => {
