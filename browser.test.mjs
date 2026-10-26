@@ -99,9 +99,18 @@ try {
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(String(e)));
-  await page.goto(URL_);
+  // Autosave off for this page (a day): its tabs stay dirty for the whole run, and the default 2-minute timer would write recovery copies
+  // mid-run, so a later reload on a slow runner shows the Recover dialog over the page.
+  await page.goto(URL_ + '?autosave=86400000');
   await page.waitForSelector('[data-testid=count]', { state: 'attached' });
-  const t = (id) => panelControl(page, page.locator(`[data-testid=${id}]`));
+  // After a FAILED step, no modal may stay open (it would fail every later step 30 s each): Esc, then a reload as the last resort.
+  const closeModals = async () => {
+    const open = () => page.locator('.pop-back').count();
+    for (let i = 0; i < 3 && await open(); i++) await page.keyboard.press('Escape');
+    if (await open()) { await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' }); }
+  };
+  afterStep = closeModals;
+  const t =(id) => panelControl(page, page.locator(`[data-testid=${id}]`));
   const layoutTab = () => page.locator('[data-ribbon-tab=Layout]').click();
   const partTab = () => page.locator('[data-ribbon-tab=Part]').click();
   // Display toggles moved from the right panel to View in TODO 110b.
@@ -1960,7 +1969,8 @@ try {
   const dialog = page.locator('[data-testid=pdf-dialog]');
   const openPdf = async () => { await t('pdf-open').click(); await dialog.waitFor(); await page.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
   afterStep = async () => {
-    const v = page.viewportSize();                                  // a failed small-window step must not leave the window small
+    await closeModals();
+    const v = page.viewportSize();                                // a failed small-window step must not leave the window small
     if (!v || v.width !== 1440 || v.height !== 900) await page.setViewportSize({ width: 1440, height: 900 });
     if (await page.locator('[data-testid=pdf-back]').count()) await closePdf();
   };   // after a FAILED step, a still-open PDF dialog is closed so it does not block the steps after it
