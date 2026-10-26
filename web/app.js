@@ -930,7 +930,7 @@ async function openPdf(name, buf, path = null) {
     return;
   }
   const raw = r.doc, fl = flatten(raw);
-  const base = name.replace(/\.[^.\\/]*$/, ''), dxfName = base + '.dxf';
+  const base = baseName(name), dxfName = base + '.dxf';
   const doc = { name: dxfName, path: null, openPath: path, dirty: false, fromPdf: name, pdf: { name, bytes, pages: r.pages, page: r.page }, ...tabFields(raw, fl) };
   addTab(doc);
   note(`Opened ${name} as a drawing (page ${r.page} of ${r.pages}): ${raw.entities.length} entities, ${r.texts} texts, ${fmtSize(r.mm[0])} × ${fmtSize(r.mm[1])} mm. Not saved yet: Save writes ${base}${PS.sheetNumbers(doc.pdf).length > 1 ? `-sheet${r.page}` : ''}.dxf` + (fl.truncated ? '. Too big to show all of it' : ''));
@@ -5219,7 +5219,7 @@ async function balSheet(d, n) {
       next = { ...next, bg: { name: P.name, mm: r.mmPerPx, x: 0, y: 0, visible: true, ...next.bg, bitmap: bm, w: bm.width, h: bm.height } };
     } else if (!next) {
       const r = await readPdf(new Uint8Array(P.bytes.slice(0)), { page: n });
-      next = { ...tabFields(r.doc, flatten(r.doc)), hist: Ed.createHistory(), name: P.name.replace(/\.[^.]*$/, '.dxf'), path: null, dirty: false };
+      next = { ...tabFields(r.doc, flatten(r.doc)), hist: Ed.createHistory(), name: baseName(P.name) + '.dxf', path: null, dirty: false };
     }
     PS.keepPage(d);
     if (P.picture) d.bg?.bitmap?.close();

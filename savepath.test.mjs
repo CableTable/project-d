@@ -20,6 +20,11 @@ await test('plain names strip only known extensions, case-insensitively, keeping
   }
 });
 
+await test('PDF names keep decimal suffixes and remove known uppercase extensions', () => {
+  assert.equal(baseName('Bracket 1.5') + '.pdf', 'Bracket 1.5.pdf');
+  assert.equal(baseName('plate.DXF') + '.pdf', 'plate.pdf');
+});
+
 await test('save suggestions use the source folder and preserve literal names, or leave the native last folder alone', () => {
   for (const [path, want] of [
     ['C:\\jobs\\plate.dxf', 'C:\\jobs\\plate $&.pdf'], ['C:/jobs/plate.pdf', 'C:/jobs/plate $&.pdf'],

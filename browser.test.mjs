@@ -1812,6 +1812,32 @@ try {
     await openPdf(); await t('pdf-page-sheet').check(); await closePdf();
   });
 
+  await step('TODO 149: PDF export keeps decimal names and strips known uppercase extensions', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await ctx.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
+    const raw = newDoc(); addEntities(raw, dxfCircle(20, 20, 10));
+    try {
+      await p.goto(URL_);
+      for (const [name, want] of [['Bracket 1.5', 'Bracket 1.5.pdf'], ['plate.DXF', 'plate.pdf']]) {
+        await p.evaluate(async ({ name, fl }) => {
+          const { openExport } = await import('./export.js');
+          openExport({ source: () => ({ name, fl, factor: 1, off: new Set(), sheetW: 100, sheetH: 100, hide: [] }), setTitleBlock: () => {}, note: () => {} });
+        }, { name, fl: flatten(raw) });
+        assert.equal(await q('pdf-foot').textContent(), want);
+        await q('pdf-page-check').check();
+        assert.equal(await q('pdf-title-file').inputValue(), want.slice(0, -4));
+        if (name === 'Bracket 1.5') {
+          for (const theme of ['light', 'dark']) {
+            await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+            await p.screenshot({ path: `${shotDir}/todo149-pdf-name-${theme}.png` });
+          }
+        }
+        const pending = p.waitForEvent('download'); await q('pdf-go').click();
+        assert.equal((await pending).suggestedFilename(), want);
+      }
+    } finally { await ctx.close(); }
+  });
+
   await step('TODO 101 / T18: editable title block, off frees the strip, Reset, per-tab settings saved and reopened', async () => {
     const titleCtx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const titlePage = await titleCtx.newPage();

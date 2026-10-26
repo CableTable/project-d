@@ -4,14 +4,15 @@
 // the sheet outline on "Sheet", crop / registration marks on "Marks". Units are mm; 0,0 is the sheet's bottom-left
 // and y is up. layout.js works from the top-left with y down, so every y here is sheetH - y.
 import { spaceOf } from './doc.js';
+import { baseName } from './savepath.js';
 import { markGeometry } from './layout.js';
 import { newDoc, addLayer, addBlock, addEntities, insert, rect, roundRect, line, circle } from './dxf-write.js';
 
 export const LAYERS = { parts: 'Parts', sheet: 'Sheet', marks: 'Marks' };
 
-/** A valid block name from a file or part name: no extension, none of  < > / \ " : ; ? * | , = `  and no spaces. */
+/** A valid block name from a file or part name: no known extension, none of  < > / \ " : ; ? * | , = `  and no spaces. */
 export function blockName(fileName) {
-  const base = String(fileName || '').replace(/\.[^.\\/]*$/, '').replace(/[<>/\\":;?*|,=`'\s\u0080-￿]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
+  const base = baseName(String(fileName || '')).replace(/[<>/\\":;?*|,=`'\s\u0080-￿]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 80);
   return base || 'PART';
 }
 
