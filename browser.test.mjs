@@ -138,6 +138,8 @@ try {
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
     };
     const save = async () => {
+      // Chromium drops downloads above 10/s; match downloaded() even when CI runs this flow faster.
+      await p.waitForTimeout(110);
       const downloading = p.waitForEvent('download'); await p.keyboard.press('Control+s');
       return readFileSync(await (await downloading).path(), 'utf8');
     };
