@@ -97,7 +97,7 @@ export function paintDrawing(canvas, o) {
 }
 
 /** Contour's preview: the chosen colour and style, translucent until Apply. */
-function drawContour(c, loops, T, dpr, col, dash) {
+export function drawContour(c, loops, T, dpr, col, dash) {
   c.save();
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = col;

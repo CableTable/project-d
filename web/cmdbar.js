@@ -28,7 +28,7 @@ const TABLE = [
   ['trim', 'Edit', 'Cut objects back to cutting edges', ['tr'], 'draw'],
   ['extend', 'Edit', 'Extend lines to boundary edges', ['ex'], 'draw'],
   ['mirror', 'Edit', 'Mirror objects about a line', ['mi'], 'draw'],
-  ['contour', 'Edit', 'Offset a closed outline in steps', ['ct'], 'draw'],
+  ['contour', 'Edit', 'Offset a closed outline in steps', ['ct'], ''],
   ['trace', 'Edit', 'Trace a picture into closed outlines', ['tb'], 'draw'],
   ['textoutlines', 'Edit', 'Turn the selected text into closed outlines', ['txo'], 'draw'],
   ['weld', 'Edit', 'Shaping: join the selected closed outlines into one', [], 'draw'],

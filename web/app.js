@@ -20,7 +20,7 @@ import * as DM from './dims.js';
 import * as LR from './leader.js';
 import * as BAL from './balloons.js';
 import * as PS from './pdf-sheets.js';
-import { paintDrawing, drawMarks, ink, FONT_FAMILY } from './render.js';
+import { paintDrawing, drawMarks, drawContour, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
 import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex } from './drawing.js';
@@ -49,6 +49,7 @@ import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
 import * as CT from './contour.js';
+import * as LC from './layoutcontour.js';
 import * as OB from './objects.js';
 import * as C from './compare.js';
 import * as CMP from './compare-list.js';
@@ -185,6 +186,7 @@ const state = {
   mode: 'select',                        // 'select' (size handles) or 'rotate' (turn arrows and the pivot) for the selected placed part
   pivot: { kind: 'centre', x: 0, y: 0 }, // the turn's pivot: 'centre', 'bl' (the part's own lower-left corner) or 'custom' (x, y: sheet mm, y up)
   rotCopy: false,                        // the command line's Copy: the next typed angle turns a copy
+  layCt: null,                           // Contour on a layout: the preview rings (sheet mm, y up) or null
   contourCfg: null,                      // Contour's last values (loaded in init): { dir: 'inside' | 'outside', dist (mm), steps, corners: 'sharp' | 'rounded', live }
   rulers: true,                          // mm rulers along the top and left of the canvas (View → Rulers; remembered on this PC)
   guideDrag: null,                       // a guide being dragged out of a ruler or along the sheet: see gdrag
@@ -524,7 +526,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : setTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable(), pressed: () => state.tool === id, title: t.title });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable() || (id === 'contour' && !!curLay()), pressed: () => state.tool === id, title: t.title });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -605,7 +607,7 @@ function ribbonContents(kind) {
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart)),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest'))];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('contour'))];
   if (kind === 'drawing') {
     groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
@@ -717,7 +719,7 @@ function applyKind() {
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
-  if (lay && (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.tool === 'contour' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
+  if (lay && (state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || DR.KINDS.includes(state.tool) || state.tool === 'text')) setTool('step');
   else if (!lay && state.tool === 'step') setTool('select');
   else if (lay && wasLayout === false && state.tool === 'select') setTool('step');
   wasLayout = lay;
@@ -1164,7 +1166,7 @@ function setDimType(type) {
 
 function setTool(id) {
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
-  if (id === 'contour' && !editable()) { note('Contour works on a drawing tab: open a drawing and pick a closed outline'); return; }
+  if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
   state.text.drag = null; state.grip = null; state.entityDrag = null; state.txoWait = false; state.zwin = false; trackClear();
@@ -1814,7 +1816,7 @@ function selectedPlaced() {
   const d = curDoc(), lay = d && d.lay, p = lay && state.sel >= 0 && placedNow[state.sel], part = p && lay.parts[p.partId];
   return part ? { d, lay, p, part } : null;
 }
-const placementOf = (p) => ({ ...placement1(p.partId, p.x, p.y, p.rot, p.mirrorX, p.mirrorY), ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) });
+const placementOf = (p) => ({ ...placement1(p.partId, p.x, p.y, p.rot, p.mirrorX, p.mirrorY), ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}), ...(p.cid ? { cid: p.cid } : {}), ...(p.ct ? { ct: p.ct } : {}) });
 /** The turn's pivot of the selected part as a sheet point (mm, y up). */
 const pivotPoint = (part, pl) => PL.pivotOf(part, pl, state.pivot.kind, [state.pivot.x, state.pivot.y]);
 const showBox = (i) => { if (multiSel()) { const b = selBox(); return b ? fmt(b[i]) : '—'; } const s = selectedPlaced(); return s ? fmt(placedBox(s.part, s.p)[i]) : '—'; };
@@ -3424,7 +3426,7 @@ function cmdEnter(raw) {
     const w = { left: 'left', l: 'left', centre: 'centre', center: 'centre', c: 'centre', right: 'right', r: 'right', top: 'top', t: 'top', middle: 'middle', m: 'middle', bottom: 'bottom', b: 'bottom', horizontal: 'horizontal', h: 'horizontal', vertical: 'vertical', v: 'vertical' }[c];
     if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
   }
-  if (state.tool === 'contour' && editable()) {                         // the words in the Contour prompt
+  if (state.tool === 'contour' && (editable() || curLay())) {           // the words in the Contour prompt
     const m = /^(distance|dist|d|steps|s)\s+(.+)$/.exec(c), cfg = state.contourCfg, set = (k, v) => { cfg[k] = v; saveContourCfg(); renderContour(); renderCommand(); };
     if (c === 'inside' || c === 'i') { set('dir', 'inside'); return; }
     if (c === 'outside' || c === 'o') { set('dir', 'outside'); return; }
@@ -3885,6 +3887,11 @@ function paintOverlay(gesture = false) {
           if (outside.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
+      if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
+        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+        drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
+        canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ contour: state.layCt }, T, dpr));
+      }
       if (marks) {
         const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
         drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'));
@@ -4012,7 +4019,7 @@ function attachCanvasEvents() {
         }
         capture(c, e);
       }
-      if (curLay() && (state.tool === 'select' || state.tool === 'step')) {
+      if (curLay() && (state.tool === 'select' || state.tool === 'step' || state.tool === 'contour')) {
         if (placedDown(e)) { capture(c, e); }
         else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; capture(c, e); }
       }
@@ -4142,7 +4149,7 @@ function renderCommand() {
   const nSel = lay ? selIdxs().length : 0, gd = state.guideDrag && lay && lay.s.guides[state.guideDrag.idx];
   ui.hist.textContent = gd ? `Command: GUIDE   Dragging a ${gd.axis === 'y' ? 'horizontal' : 'vertical'} guide from the ${gd.axis === 'y' ? 'top' : 'left'} ruler (Esc cancels)` : rs ? `Command: ROTATE   Pivot: ${fmt(rp[0])}, ${fmt(rp[1])}` : (state.tool === 'select' || state.tool === 'step') && nSel > 1 ? `Command: SELECT   ${wholeGroup() ? `Group of ${nSel}` : `${nSel} parts selected`} (Shift-click adds or removes a part)` : state.tool === 'step' && lay
     ? `Command: STEP   Part: ${gp ? gp.name : '(none)'}   Gap X <5>: ${state.gapX}   Gap Y <5>: ${state.gapY}   Click a gap between rows or columns for extra room`
-    : state.tool === 'contour' && ed ? 'Command: CONTOUR   ' + contourCommandText()
+    : state.tool === 'contour' && (ed || lay) ? 'Command: CONTOUR   ' + contourCommandText()
     : state.tool === 'select' && ed ? 'Command: SELECT   Click an edge: its whole outline. Shift adds or removes, drag a box, Esc clears. Right-click: Extract part…'
     : state.tool === 'dimension' && ed ? 'Command: ' + dimTypeRow(state.dimType)[4]
     : state.tool === 'leader' && ed ? 'Command: LEADER'
@@ -4152,7 +4159,7 @@ function renderCommand() {
   ui.prompt.textContent = gd ? `${gd.axis.toUpperCase()} position <${fmt(gd.mm)}>:` : state.msg ? state.msg
     : state.tool === 'measure' && measureTarget() ? (state.meas?.pts.length === 2 ? Ed.formatMeasure(state.meas.result) : state.meas?.pts.length ? 'Measure: now the second point' : 'Measure: click the first point (it snaps to ends and centres)')
     : rs ? `Angle <${fmt(rs.p.rot)}>: ${state.rotCopy ? 'Copy on. ' : ''}[Pivot / Copy / Esc]:`
-    : state.tool === 'contour' && ed ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
+    : state.tool === 'contour' && (ed || lay) ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:')
     : lay ? (gp
       ? (layout.count ? `${layout.count} ${word}${gridCellNote(layout) ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. ${gridCellNote(layout) ? gridCellNote(layout) + '. ' : ''}[Apply / Rotate / Nest]:`
@@ -6809,7 +6816,7 @@ function sheetEdgeNear(e) {
 /** A press on the layout canvas: a sheet handle starts (or, when one is waiting for its second click, ends) a resize; the sheet's edge selects the sheet. True when it took the press. */
 function sheetDown(e) {
   const lay = curLay();
-  if (!lay || (state.tool !== 'select' && state.tool !== 'step') || state.setlen) return false;
+  if (!lay || (state.tool !== 'select' && state.tool !== 'step' && state.tool !== 'contour') || state.setlen) return false;
   if (state.sheetDrag && state.sheetDrag.hot) { sheetMove(e, true); sheetCommit(); return true; }
   const t = e.target && e.target.closest ? e.target : null;
   const hd = t && t.closest('[data-sheet-handle]');
@@ -7151,7 +7158,7 @@ const CONTOUR_LAYER = 'Contour';
 const CT_STYLES = [{ key: 'BYLAYER', label: 'Solid', dash: [] }, { key: 'DASHED', label: 'Dashed', dash: [7, 4] }, { key: 'DOT', label: 'Dotted', dash: [0, 4] }];
 const contourStyle = () => CT_STYLES.find((st) => st.key === state.contourCfg.lt);
 const contourColour = (d) => {
-  const key = PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYER }, state.contourCfg.colour), { [CONTOUR_LAYER]: d.raw.layers[CONTOUR_LAYER] || { aci: 3 } });
+  const key = PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYER }, state.contourCfg.colour), { [CONTOUR_LAYER]: (d.raw && d.raw.layers[CONTOUR_LAYER]) || { aci: 3 } });
   return colourCss(key);
 };
 const CT_SAVED = 'pd-contour';
@@ -7290,14 +7297,30 @@ function contourCompute(d) {
   return { kind: 'ok', an, res };
 }
 
+/** Contour on a layout: the selected placed parts that are not themselves contours, each with its own contour for the panel's values.
+ * → { kind: 'none' | 'open' | 'ok', rows: [{ x (selItems entry), c (LC.partContour's result) }] (the ones with a contour), made (rings in all), polys (preview, sheet mm), warn, an / res (the first part's, for the panel's little picture) }. */
+function layContourCompute(lay) {
+  const cfg = state.contourCfg, all = selItems().filter((x) => !x.p.ct).map((x) => ({ x, c: LC.partContour(x.part, cfg) }));
+  if (!all.length) return { kind: 'none', rows: [] };
+  const rows = all.filter((r) => r.c.kind === 'ok');
+  if (!rows.length) return { kind: 'open', rows, an: { loops: [], open: 0 } };
+  const stopped = rows.filter((r) => r.c.res.stopped).length, skipped = all.length - rows.length;
+  return { kind: 'ok', rows, made: rows.reduce((n, r) => n + r.c.res.made, 0), an: { loops: [rows[0].c.loop], open: 0 }, res: rows[0].c.res,
+    polys: rows.flatMap((r) => LC.sheetLoops(r.x.part, r.x.p, r.c.res, lay.s.sheetH)),
+    warn: [stopped && `${stopped} part${stopped === 1 ? '' : 's'} would close up before the last step`, skipped && `${skipped} part${skipped === 1 ? ' has' : 's have'} no closed outline and ${skipped === 1 ? 'is' : 'are'} left out`].filter(Boolean).join('. ') };
+}
+const layContourHint = (cc, made) => cc.kind === 'none' ? 'Select placed parts on the layout: click one, or drag a box round several.'
+  : cc.kind === 'open' ? 'That selection has no closed outline to follow.'
+  : `Apply adds a contour (${made} outline${made === 1 ? '' : 's'}) to ${cc.rows.length} part${cc.rows.length === 1 ? '' : 's'}, attached to it. Applying again replaces it.`;
+
 /** Shows or hides the Contour panel and brings it, the preview and the top bar up to date (called with every change of the drawing tab). */
 function renderContour() {
   if (!ui.contourPanel) return;
-  const d = editable(), on = state.tool === 'contour';
-  if (on && !d) { setTool('select'); return; }
+  const d = editable(), lay = curLay(), on = state.tool === 'contour';
+  if (on && !d && !lay) { setTool('select'); return; }
   ui.contourPanel.hidden = !on;
   ui.selContour.hidden = !on;
-  if (!on) { if (d) d.cRes = null; return; }
+  if (!on) { if (d) d.cRes = null; else if (state.layCt) ui.hintPill.hidden = true; state.layCt = null; return; }
   const cfg = state.contourCfg;
   ui.ctColours.forEach((b, i) => b.setAttribute('aria-pressed', String(PR.COLOURS[i].key === cfg.colour)));
   ui.ctCustomColour.style.background = contourColour(d);
@@ -7309,18 +7332,19 @@ function renderContour() {
   if (document.activeElement !== ui['contour-steps']) ui['contour-steps'].value = String(cfg.steps);
   ui.ctLive.checked = cfg.live;
   ui.selContour.textContent = 'Contour: ' + contourWords();
-  const cc = contourCompute(d), res = cc.kind === 'ok' ? cc.res : null;
-  d.cRes = res && cfg.live ? { polys: res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 3))) } : null;
-  const made = res ? res.made : 0;
+  const cc = lay ? layContourCompute(lay) : contourCompute(d), res = cc.kind === 'ok' ? cc.res : null;
+  if (d) d.cRes = res && cfg.live ? { polys: res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 3))) } : null;
+  state.layCt = lay && res && cfg.live ? cc.polys : null;
+  const made = res ? (cc.made ?? res.made) : 0;
   ui.ctApply.disabled = made === 0;
-  ui.ctHint.textContent = cc.kind === 'none' ? 'Pick a closed outline in the drawing: click one of its edges.'
+  ui.ctHint.textContent = lay ? layContourHint(cc, made) : cc.kind === 'none' ? 'Pick a closed outline in the drawing: click one of its edges.'
     : cc.kind === 'big' ? 'That selection is too big for a contour. Pick one outline.'
     : cc.kind === 'open' ? `That is not a closed outline (${cc.an.open} piece${cc.an.open === 1 ? '' : 's'} left open). Join the tiny gaps, or pick a closed one.`
     : made ? `Apply makes ${made} new outline${made === 1 ? '' : 's'} on the layer Contour. The part itself is not changed.` : 'Nothing to make with these values.';
-  const warn = res && res.stopped ? `Step ${res.stopped.step} would close up: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '';
+  const warn = lay ? (cc.warn || '') : res && res.stopped ? `Step ${res.stopped.step} would close up: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '';
   ui.ctWarn.hidden = !warn; ui.ctWarn.textContent = warn;
   // Reduced opacity distinguishes preview contours from applied geometry.
-  ui.ctPreview.style.setProperty('--ct-colour', contourColour(d));
+  ui.ctPreview.style.setProperty('--ct-colour', contourColour(d || curDoc()));
   ui.ctPreview.style.setProperty('--ct-dash', contourStyle().dash.join(' ') || 'none');
   const loops = cc.an ? cc.an.loops.map((l) => CT.loopPoints(l, 6)) : [], outs = res ? res.steps.flatMap((st) => st.map((l) => CT.loopPoints(l, 4))) : [];
   const all = [...loops, ...outs].flat();
@@ -7341,6 +7365,7 @@ function renderContour() {
 
 /** Apply: the outlines are added to the drawing as lines and arcs (a circle as a circle) on the layer "Contour"; one undo step. */
 function applyContour() {
+  if (curLay()) { applyLayContour(); return; }
   const d = editable();
   if (!d) return;
   const cc = contourCompute(d), cfg = state.contourCfg;
@@ -7356,6 +7381,34 @@ function applyContour() {
   setSel(d, keep);
   renderLayers();
   note(`Contour: ${res.made} new outline${res.made === 1 ? '' : 's'} (${ents.length} line${ents.length === 1 ? '' : 's'} and arcs) on the layer ${CONTOUR_LAYER}` + (res.stopped ? `. Step ${res.stopped.step} would close up` : '') + '. Ctrl+Z takes them away');
+}
+
+/** Apply on a layout: each selected placed part gets a contour (a new part on the layer Contour) placed on it and grouped with it, so they move, turn and copy together; one undo step.
+ * A contour the part already has (same group, same cid / ct) is replaced. */
+function applyLayContour() {
+  const d = curDoc(), lay = curLay(), cfg = state.contourCfg, cc = layContourCompute(lay);
+  if (cc.kind !== 'ok') { note('Contour: nothing to apply. Select placed parts with a closed outline first'); return; }
+  const g = startGesture(d, `Contour ${cfg.dir} ${fmtSize(cfg.dist)} mm × ${cc.made}`);
+  gMark(g);
+  const idxs = gLooseMany(g, cc.rows.map((r) => r.x.i)), style = contourStyle();
+  const srcs = idxs.map((i) => ({ ...lay.placed[i], g: lay.placed[i].g || newGroupId(), cid: lay.placed[i].cid || 'c' + uid() }));
+  const keys = new Set(srcs.map((p) => p.cid + '|' + p.g)), old = lay.placed.filter((p) => p.ct && keys.has(p.ct + '|' + p.g)), made = {}, add = [];
+  lay.placed = lay.placed.map((p, i) => (idxs.includes(i) ? srcs[idxs.indexOf(i)] : p)).filter((p) => !old.includes(p));
+  for (const p of old) if (!lay.placed.some((q) => q.partId === p.partId) && lay.s.gridPart !== p.partId) delete lay.parts[p.partId];       // before the names are chosen, so "contour 1" is free again
+  const names = Object.values(lay.parts).map((p) => p.name);
+  srcs.forEach((src, k) => {
+    const part = cc.rows[k].x.part;
+    if (!(src.partId in made)) {                                                       // one contour part for all the places of a part
+      made[src.partId] = LC.contourPart(part, cc.rows[k].c.res, { id: uid(), name: LD.nextName(`${part.name} - contour`, names), layer: CONTOUR_LAYER, colour: cfg.colour, lt: cfg.lt, dash: style.dash });
+      if (made[src.partId]) { names.push(made[src.partId].name); lay.parts[made[src.partId].id] = made[src.partId]; }
+    }
+    const cp = made[src.partId];
+    if (cp) add.push({ ...LC.contourPlacement(part, src, cp), g: src.g, ct: src.cid });
+  });
+  lay.placed.push(...add);
+  selLooseMany = lay.placed.map((p, i) => (srcs.includes(p) || add.includes(p) ? i : -1)).filter((i) => i >= 0);
+  gCommit(g); update();
+  say(`Contour: ${add.length} part${add.length === 1 ? '' : 's'} got ${cc.made === add.length ? 'an outline' : `${cc.made} outlines`} on the layer ${CONTOUR_LAYER}, attached to ${add.length === 1 ? 'it' : 'them'}${old.length ? ' (the old contour was replaced)' : ''}. Ctrl+Z takes it away`, loosenedNote(g));
 }
 
 /** The outlines of a drawing, biggest first: what is joined end to end and at least 5 × 5 mm ({ set, w, h }). Null until the drawing has been read for picking. Kept dimensions are not outlines. */

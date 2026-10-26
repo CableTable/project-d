@@ -27,11 +27,11 @@ test('every reserved key has a reason; bare and Shift letters/digits cannot be k
 test('defaults have no clashes; aliases overlap across draw/layout only, keys clash across scopes', () => {
   const b = SC.bindings();
   assert.deepEqual(SC.clashes(b), []);
-  b.contour.alias.push('ww'); b.group.alias.push('ww');
+  b.trace.alias.push('ww'); b.group.alias.push('ww');
   assert.deepEqual(SC.clashes(b), []);
-  b.contour.alias.push('mi'); b.contour.key = 'Ctrl+G';
-  assert.ok(SC.clashes(b).some((c) => c.field === 'alias' && c.other === 'contour' && c.name === 'mirror'));
-  assert.ok(SC.clashes(b).some((c) => c.field === 'key' && c.name === 'contour' && c.other === 'group'));
+  b.trace.alias.push('mi'); b.trace.key = 'Ctrl+G';
+  assert.ok(SC.clashes(b).some((c) => c.field === 'alias' && c.other === 'trace' && c.name === 'mirror'));
+  assert.ok(SC.clashes(b).some((c) => c.field === 'key' && c.name === 'trace' && c.other === 'group'));
   b.fit.alias.push('ww');
   assert.equal(SC.clashes(b).filter((c) => c.value === 'ww').length, 2);
   b.line.alias = ['<img src=x>', 'contour']; b.line.key = 'Ctrl+S';

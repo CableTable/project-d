@@ -5143,11 +5143,15 @@ try {
     await page.keyboard.press('Escape');                          // clears the selection
     await page.keyboard.press('Escape');                          // nothing selected: back to Select
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
-    // on a layout tab it is not available
+    // on a layout tab it works on placed parts (TODO 147): with nothing selected the panel says what to do
     await t('new-layout').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent === 'Tool: Step and repeat');
     await page.locator('[data-tool=contour]').click();
-    assert.match(await prompt(), /^Contour works on a drawing tab/);
-    assert.equal(await t('contour-panel').isVisible(), false);
+    await page.waitForFunction(() => document.querySelector('[data-testid=contour-panel]') && !document.querySelector('[data-testid=contour-panel]').hidden);
+    assert.equal(await t('contour-panel').isVisible(), true);
+    assert.match(await t('contour-hint').textContent(), /^Select placed parts/);
+    assert.equal(await t('contour-apply').isDisabled(), true);
+    await t('contour-close').click();
     await closeTabs(/Layout/);
     await page.locator('.tabs .dtab', { hasText: 'shapes.dxf' }).click();
   });
@@ -5691,6 +5695,100 @@ try {
     await t('ptab-drawing').click();
     await closeTabs(/./);
   });
+  await step('TODO 147 / T53: Contour on layout parts: one outline each, attached (a group), run again replaces, one Undo per run, moves with the part, saved and reopened; light and dark', async () => {
+    await closeTabs(/./);
+    const open = async (name, text) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text, 'latin1') });
+      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+    };
+    const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('147 source');
+    addEntities(rawA, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q)), dxfCircle(50, 30, 10));
+    addEntities(rawB, ...[[0, 0, 80, 0], [80, 0, 80, 80], [80, 80, 0, 80], [0, 80, 0, 0]].map((q) => dxfLine(...q)));
+    src.parts['147-a'] = makePart('147-a', 'Plate', rawA, 1); src.parts['147-b'] = makePart('147-b', 'Block', rawB, 1);
+    src.placed = [{ partId: '147-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '147-b', x: 400, y: 300, rot: 90, mirrorX: false, mirrorY: false }];
+    await open('147 source.dxf', writeDxf(layoutRaw(src)));
+    const state = async () => {
+      const lay = layoutFromRaw(await savedDoc()), name = (p) => lay.parts[p.partId].name;
+      return { lay, name, ct: lay.placed.filter((p) => p.ct), src: lay.placed.filter((p) => !p.ct) };
+    };
+    const size = (s, word) => { const p = s.lay.parts[s.ct.find((c) => s.name(c).startsWith(word)).partId]; return [Math.round(p.w), Math.round(p.h)]; };
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+a');
+    assert.equal(await nParts(), 2);
+    // the ribbon has Contour on a layout; the command box starts it; both parts are selected, nothing is made yet
+    await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await page.locator('.ribbon-body').getByRole('button', { name: 'Contour', exact: true }).isEnabled(), true);
+    await typeCmd('contour');
+    assert.equal(await t('contour-panel').isVisible(), true);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Contour');
+    await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');      // earlier Contour steps leave their values behind
+    await t('contour-outside').click(); await t('contour-sharp').click();
+    assert.match(await t('contour-hint').textContent(), /^Apply adds a contour \(2 outlines\) to 2 parts/);
+    assert.equal(await nParts(), 2, 'the preview is not a part');
+    await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+    await shotBoth('todo147-preview');
+    await t('contour-apply').click();
+    assert.equal(await nParts(), 4, 'one contour per part, the hole is left alone');
+    assert.match(await prompt(), /^Contour: 2 parts got an outline on the layer Contour, attached to them/);
+    let s = await state();
+    assert.deepEqual(s.ct.map((p) => s.name(p)).sort(), ['Block - contour 1', 'Plate - contour 1']);
+    assert.deepEqual(size(s, 'Plate'), [120, 80]); assert.deepEqual(size(s, 'Block'), [100, 100]);
+    assert.equal(new Set(s.lay.placed.map((p) => p.g)).size, 2, 'two groups: each part with its own contour');
+    for (const c of s.ct) assert.ok(s.src.some((p) => p.cid === c.ct && p.g === c.g), 'the contour is linked to its part');
+    // run it again with another distance: replaces, no third part, the new size is in the file
+    await page.keyboard.press('Control+a');
+    await t('contour-dist').fill('15'); await t('contour-dist').press('Enter');
+    await t('contour-apply').click();
+    assert.equal(await nParts(), 4, 'replaced, not added');
+    assert.match(await prompt(), /old contour was replaced/);
+    s = await state();
+    assert.deepEqual(Object.values(s.lay.parts).map((p) => p.name).sort(), ['Block', 'Block - contour 1', 'Plate', 'Plate - contour 1'], 'the old contour parts are gone');
+    assert.deepEqual(size(s, 'Plate'), [130, 90]);
+    // one Undo goes back one run; a second takes the contours away; Redo brings them back
+    await page.keyboard.press('Control+z');
+    s = await state(); assert.equal(s.ct.length, 2); assert.deepEqual(size(s, 'Plate'), [120, 80], 'the first run is back');
+    await page.keyboard.press('Control+z');
+    assert.equal(await nParts(), 2); s = await state(); assert.equal(s.ct.length, 0); assert.ok(s.src.every((p) => !p.g));
+    await page.keyboard.press('Control+y'); await page.keyboard.press('Control+y');
+    assert.equal(await nParts(), 4);
+    // a part and its contour move together
+    await page.locator('[data-tool=select]').click();
+    s = await state();
+    const key = (p) => p.cid || p.ct, at0 = new Map(s.lay.placed.map((p) => [key(p) + (p.ct ? 'c' : 's'), [p.x, p.y]]));
+    await click(800, 100); await click(150, 330);                    // one part's click picks its whole group
+    assert.equal(await t('pp-name').textContent(), 'Group of 2');
+    await dragMm([150, 330], [250, 380]);
+    s = await state();
+    const d = s.lay.placed.map((p) => [key(p), p.ct ? 'c' : 's', Math.round((p.x - at0.get(key(p) + (p.ct ? 'c' : 's'))[0]) * 100) / 100, Math.round((p.y - at0.get(key(p) + (p.ct ? 'c' : 's'))[1]) * 100) / 100]);
+    const moving = d.filter((q) => q[2] !== 0 || q[3] !== 0);
+    assert.equal(moving.length, 2, 'the dragged group moved, the other did not');
+    assert.deepEqual(new Set(moving.map((q) => q[0])).size, 1, 'the part and its own contour');
+    assert.equal(moving[0][2], moving[1][2]); assert.equal(moving[0][3], moving[1][3]);
+    // save, close, reopen: the contours and their links come back, and running it again still replaces
+    const dl = await downloaded(() => page.keyboard.press('Control+s'));
+    await closeTabs(/./);
+    await open('147 again.dxf', dl.text);
+    assert.equal(await nParts(), 4);
+    await click(260, 380);
+    assert.equal(await t('pp-name').textContent(), 'Group of 2', 'the group came back');
+    await page.keyboard.press('Control+a');
+    await page.locator('[data-tool=contour]').click();
+    await t('contour-apply').click();
+    assert.equal(await nParts(), 4, 'after reopening, running it again still replaces');
+    await t('contour-close').click();
+    await shotBoth('todo147-applied');
+    // leave the shared Parts library as it was (the Auto-nest dialog lists every part and runs out of room with more)
+    await menuItem('Layout', 'Parts library');
+    for (const name of ['Plate - contour 1', 'Block - contour 1', 'Plate', 'Block']) {
+      if (!await libCard(name).count()) continue;
+      await libCard(name).locator('[data-testid=lib-menu]').click();
+      page.once('dialog', (d) => d.accept());
+      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+      await libCard(name).waitFor({ state: 'detached' });
+    }
+    await t('ptab-drawing').click(); await closeTabs(/./);
+  });
+
   await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {
     await closeTabs(/./);
     const name = '111b <img src=x>.dxf', base = '111b <img src=x>', first = `${base} paste`, second = `${first} 2`;
