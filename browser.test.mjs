@@ -11,6 +11,7 @@ import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { placedBox } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { svgPath } from './web/draw.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
@@ -5777,16 +5778,96 @@ try {
     assert.equal(await nParts(), 4, 'after reopening, running it again still replaces');
     await t('contour-close').click();
     await shotBoth('todo147-applied');
-    // leave the shared Parts library as it was (the Auto-nest dialog lists every part and runs out of room with more)
+    // reopening adds the parts but no contour cards to the shared Parts library; leave it as it was (the Auto-nest dialog lists every part and runs out of room with more)
     await menuItem('Layout', 'Parts library');
-    for (const name of ['Plate - contour 1', 'Block - contour 1', 'Plate', 'Block']) {
-      if (!await libCard(name).count()) continue;
-      await libCard(name).locator('[data-testid=lib-menu]').click();
-      page.once('dialog', (d) => d.accept());
-      await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
-      await libCard(name).waitFor({ state: 'detached' });
+    try {
+      assert.deepEqual((await libNames()).filter((n) => / - contour/.test(n)), [], 'a contour belongs to its part, not to the library');
+    } finally {
+      for (const name of ['Plate', 'Block']) {
+        if (!await libCard(name).count()) continue;
+        await libCard(name).locator('[data-testid=lib-menu]').click();
+        page.once('dialog', (d) => d.accept());
+        await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+        await libCard(name).waitFor({ state: 'detached' });
+      }
+      await t('ptab-drawing').click(); await closeTabs(/./);
     }
-    await t('ptab-drawing').click(); await closeTabs(/./);
+  });
+  await step('TODO 147 review fixes: no errors on a layout, Pick colour opens, Ungroup then run again leaves one contour, a copy keeps its own, a turned part is surrounded', async () => {
+    await closeTabs(/./);
+    const errs0 = errors.length;
+    const rawA = newDoc(4), rawB = newDoc(4), src = newLayout('147 fixes');
+    addEntities(rawA, ...[[0, 0, 100, 0], [100, 0, 100, 60], [100, 60, 0, 60], [0, 60, 0, 0]].map((q) => dxfLine(...q)));
+    addEntities(rawB, ...[[0, 0, 80, 0], [80, 0, 80, 80], [80, 80, 0, 80], [0, 80, 0, 0]].map((q) => dxfLine(...q)));
+    src.parts['147f-a'] = makePart('147f-a', 'Plate F', rawA, 1); src.parts['147f-b'] = makePart('147f-b', 'Block F', rawB, 1);
+    src.placed = [{ partId: '147f-a', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }, { partId: '147f-b', x: 400, y: 300, rot: 90, mirrorX: false, mirrorY: false }];
+    await t('picker').setInputFiles({ name: '147 fixes.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === '147 fixes.dxf');
+    try {
+      const state = async () => {
+        const lay = layoutFromRaw(await savedDoc()), name = (p) => lay.parts[p.partId].name;
+        return { lay, name, ct: lay.placed.filter((p) => p.ct), src: lay.placed.filter((p) => !p.ct) };
+      };
+      const ctSizes = (s, word) => s.ct.filter((c) => s.name(c).startsWith(word)).map((c) => [Math.round(s.lay.parts[c.partId].w), Math.round(s.lay.parts[c.partId].h)]).sort((a, b) => a[0] - b[0]);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await typeCmd('contour');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      await t('contour-outside').click(); await t('contour-sharp').click();
+      await t('contour-dist').fill('10'); await t('contour-dist').press('Enter');
+      assert.match(await t('contour-hint').textContent(), /^Apply adds a contour \(2 outlines\) to 2 parts/, 'the layout hint, not the drawing one');
+      // Pick colour opens on a layout and the swatch follows it; put ByLayer back for the other steps
+      await t('contour-colour').click(); await t('colour-hex').fill('3399cd'); await t('colour-ok').click();
+      assert.equal(await t('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)');
+      await t('contour-panel').getByRole('button', { name: 'ByLayer', exact: true }).click();
+      await t('contour-apply').click();
+      assert.equal(await nParts(), 4);
+      await t('contour-close').click();
+      // a turned part: its contour is its box grown by the distance on every side
+      let s = await state();
+      for (const c of s.ct) {
+        const own = s.src.find((p) => p.cid === c.ct), pb = placedBox(s.lay.parts[own.partId], own), cb = placedBox(s.lay.parts[c.partId], c);
+        pb.forEach((v, i) => approx(cb[i], v + (i < 2 ? -10 : 10), 0.05, `contour box ${i} of ${s.name(own)} (turn ${own.rot})`));
+      }
+      // Ungroup the Plate, run it on everything again: still one contour each
+      await click(150, 330);
+      assert.equal(await t('pp-name').textContent(), 'Group of 2');
+      await page.keyboard.press('Control+Shift+g');
+      await page.keyboard.press('Control+a');
+      await typeCmd('contour');
+      await t('contour-dist').fill('15'); await t('contour-dist').press('Enter');
+      await t('contour-apply').click();
+      assert.equal(await nParts(), 4, 'after Ungroup the old contour is still replaced');
+      s = await state();
+      assert.deepEqual(ctSizes(s, 'Plate F'), [[130, 90]]); assert.deepEqual(ctSizes(s, 'Block F'), [[110, 110]]);
+      await t('contour-close').click();
+      // a copy has a contour of its own: running Contour on the copy leaves the original's alone
+      await click(150, 330);
+      assert.equal(await t('pp-name').textContent(), 'Group of 2');
+      await page.keyboard.press('Control+d');
+      assert.equal(await nParts(), 6);
+      s = await state();
+      const plates = s.src.filter((p) => s.name(p) === 'Plate F');
+      assert.equal(plates.length, 2); assert.notEqual(plates[0].cid, plates[1].cid, 'the copy has its own link');
+      assert.equal(s.ct.filter((c) => s.name(c).startsWith('Plate F')).length, 2);
+      await typeCmd('contour');
+      await t('contour-dist').fill('20'); await t('contour-dist').press('Enter');
+      await t('contour-apply').click();
+      assert.equal(await nParts(), 6, 'the copy got a new contour; nothing else was added or taken');
+      s = await state();
+      assert.deepEqual(ctSizes(s, 'Plate F'), [[130, 90], [140, 100]], 'the original keeps 15 mm, the copy has 20 mm');
+      await t('contour-close').click();
+      assert.deepEqual(errors.slice(errs0), [], 'no errors while using Contour on a layout');
+    } finally {
+      await menuItem('Layout', 'Parts library');
+      for (const name of ['Plate F', 'Block F']) {
+        if (!await libCard(name).count()) continue;
+        await libCard(name).locator('[data-testid=lib-menu]').click();
+        page.once('dialog', (d) => d.accept());
+        await page.getByRole('menuitem', { name: 'Delete from library', exact: true }).click();
+        await libCard(name).waitFor({ state: 'detached' });
+      }
+      await t('ptab-drawing').click(); await closeTabs(/./);
+    }
   });
 
   await step('TODO 111b: copy in a drawing, paste on a layout saves a named library part at the same mm position, selected; Undo keeps the part; second paste is numbered', async () => {

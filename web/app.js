@@ -1540,7 +1540,8 @@ function openLayoutFile(lay, name, path, fontNote, titleBlock) {
   note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
-  for (const p of Object.values(lay.parts)) libKeep(p, baseName(p.src || name)); // a part the library does not have yet is added to it
+  const ctParts = new Set(lay.placed.filter((q) => q.ct).map((q) => q.partId));            // a contour belongs to its part: it never goes into the library
+  for (const p of Object.values(lay.parts)) if (!ctParts.has(p.id)) libKeep(p, baseName(p.src || name)); // a part the library does not have yet is added to it
 }
 const SHIFT_HINT = 'Shift-drag keeps it straight';
 /** Puts a loose copy of the part on the layout, centred on `at` ([x, y] sheet mm, y up) or near the sheet's centre; its index in lay.placed. */
@@ -1800,10 +1801,12 @@ function selectMany(list, main) {
   picksArr = l.length > 1 ? l : [];
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false;
 }
-/** A copy of a placement for a new part: not locked, and a group's copy is a group of its own (gmap: old group id → new one, one per copy). */
+/** A copy of a placement for a new part: not locked, and a group's copy is a group of its own (gmap: old group id → new one, one per copy).
+ * A part with a contour (cid) and the contour (ct) get a new cid together, so the copy has a contour of its own. */
 function fresh(pl, gmap) {
-  const { lock, g, ...rest } = pl;
-  return g ? { ...rest, g: gmap[g] || (gmap[g] = newGroupId()) } : rest;
+  const { lock, g, cid, ct, ...rest } = pl;
+  const link = (c) => gmap['c|' + c] || (gmap['c|' + c] = 'c' + uid());
+  return { ...rest, ...(g ? { g: gmap[g] || (gmap[g] = newGroupId()) } : {}), ...(cid ? { cid: link(cid) } : {}), ...(ct ? { ct: link(ct) } : {}) };
 }
 /** A group left with one member is no group: its mark goes. */
 function tidyGroups(lay) {
@@ -7158,7 +7161,7 @@ const CONTOUR_LAYER = 'Contour';
 const CT_STYLES = [{ key: 'BYLAYER', label: 'Solid', dash: [] }, { key: 'DASHED', label: 'Dashed', dash: [7, 4] }, { key: 'DOT', label: 'Dotted', dash: [0, 4] }];
 const contourStyle = () => CT_STYLES.find((st) => st.key === state.contourCfg.lt);
 const contourColour = (d) => {
-  const key = PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYER }, state.contourCfg.colour), { [CONTOUR_LAYER]: (d.raw && d.raw.layers[CONTOUR_LAYER]) || { aci: 3 } });
+  const key = PR.effectiveColour(PR.withColour({ layer: CONTOUR_LAYER }, state.contourCfg.colour), { [CONTOUR_LAYER]: (d && d.raw && d.raw.layers[CONTOUR_LAYER]) || { aci: 3 } });
   return colourCss(key);
 };
 const CT_SAVED = 'pd-contour';
@@ -7191,7 +7194,7 @@ function buildContourPanel() {
     }
   }, key === 'bylayer' ? label : null));
   ui.ctCustomColour = h('button', { class: 'cs', type: 'button', 'aria-label': 'Pick Contour colour', 'data-testid': 'contour-colour', onclick: async () => {
-    const d = editable(); if (!d) return;
+    const d = editable() || curDoc(); if (!d) return;
     const rgb = await pickColour(parseHex(contourColour(d)) || [0, 255, 0]);
     if (rgb) { cfg.colour = rgbKey(rgb); saveContourCfg(); renderContour(); }
   } });
@@ -7384,7 +7387,7 @@ function applyContour() {
 }
 
 /** Apply on a layout: each selected placed part gets a contour (a new part on the layer Contour) placed on it and grouped with it, so they move, turn and copy together; one undo step.
- * A contour the part already has (same group, same cid / ct) is replaced. */
+ * A contour the part already has (its ct is the part's cid) is replaced, wherever it is now (Ungroup does not matter). A copy of a part gets a cid of its own (fresh), so it keeps its contour. */
 function applyLayContour() {
   const d = curDoc(), lay = curLay(), cfg = state.contourCfg, cc = layContourCompute(lay);
   if (cc.kind !== 'ok') { note('Contour: nothing to apply. Select placed parts with a closed outline first'); return; }
@@ -7392,7 +7395,7 @@ function applyLayContour() {
   gMark(g);
   const idxs = gLooseMany(g, cc.rows.map((r) => r.x.i)), style = contourStyle();
   const srcs = idxs.map((i) => ({ ...lay.placed[i], g: lay.placed[i].g || newGroupId(), cid: lay.placed[i].cid || 'c' + uid() }));
-  const keys = new Set(srcs.map((p) => p.cid + '|' + p.g)), old = lay.placed.filter((p) => p.ct && keys.has(p.ct + '|' + p.g)), made = {}, add = [];
+  const cids = new Set(srcs.map((p) => p.cid)), old = lay.placed.filter((p) => p.ct && cids.has(p.ct)), made = {}, add = [];
   lay.placed = lay.placed.map((p, i) => (idxs.includes(i) ? srcs[idxs.indexOf(i)] : p)).filter((p) => !old.includes(p));
   for (const p of old) if (!lay.placed.some((q) => q.partId === p.partId) && lay.s.gridPart !== p.partId) delete lay.parts[p.partId];       // before the names are chosen, so "contour 1" is free again
   const names = Object.values(lay.parts).map((p) => p.name);
