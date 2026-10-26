@@ -137,11 +137,24 @@ try {
       await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
     };
+    let saveNumber = 0;
     const save = async () => {
-      // Chromium drops downloads above 10/s; match downloaded() even when CI runs this flow faster.
-      await p.waitForTimeout(110);
-      const downloading = p.waitForEvent('download'); await p.keyboard.press('Control+s');
-      return readFileSync(await (await downloading).path(), 'utf8');
+      const number = ++saveNumber;
+      try {
+        // renderStatus() exposes the active drawing's parsed fl; openBytes() sets raw alongside it before addTab().
+        await p.waitForFunction(() => !document.querySelector('.pop-back, .pdlg-back, dialog[open]') &&
+          !!document.querySelector('.dtab.on[data-kind=drawing]') && /^Entities \d+$/.test(document.querySelector('[data-testid=entities]')?.textContent));
+        const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+        return readFileSync(await dl.path(), 'utf8');
+      } catch (e) {
+        const seen = await p.evaluate(() => ({
+          dialog: !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'),
+          focus: { tag: document.activeElement?.tagName, id: document.activeElement?.id, testid: document.activeElement?.getAttribute('data-testid') },
+          docLoaded: !!document.querySelector('.dtab.on[data-kind=drawing]') && /^Entities \d+$/.test(document.querySelector('[data-testid=entities]')?.textContent),
+          tab: document.querySelector('.dtab.on .tname')?.textContent,
+        })).catch(() => ({}));
+        throw new Error(`TODO 148a save #${number}: ${e.message} | page: ${JSON.stringify(seen)}`);
+      }
     };
     const history = async () => {
       await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo history…', exact: true }).click();
