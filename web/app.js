@@ -3999,7 +3999,7 @@ function attachCanvasEvents() {
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
   });
   c.addEventListener('pointerleave', () => {
-    if (modLive() && state.mod.kind === 'trim') { state.mod.p = null; paintOverlay(); }
+    if (modLive() && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
   const end = () => { pan = null; c.classList.remove('panning'); };
   c.addEventListener('pointerup', (e) => {
@@ -5794,6 +5794,7 @@ function modTyped(d, raw) {
 function modHover(d, cx, cy, shift) {
   const m = state.mod, p = toDrawing(d, cx, cy);
   m.p = p; m.shift = shift;
+  if (m.kind === 'trim') m.client = [cx, cy];
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     m.cur = movePick(d, p, shift, true);
     if (m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
@@ -6015,6 +6016,9 @@ function modOvl(d, out) {
     if (r?.ent) { addEnt(e, 'dr-guide'); addEnt(r.ent, 'dr-shape', 'mod-preview'); }
   } else if (m.kind === 'trim') {
     for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
+    // Re-pick under the screen cursor after view changes; captured pans can move it outside the canvas.
+    const r = ui.canvas.getBoundingClientRect(), c = m.client;
+    m.p = c && c[0] >= r.left && c[0] < r.right && c[1] >= r.top && c[1] < r.bottom ? toDrawing(d, ...c) : null;
     if (m.stage === 'cut' && m.p) {
       const e = modEntAt(d, m.p);
       if (e && MD.canModify(e)) {

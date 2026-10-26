@@ -8832,6 +8832,73 @@ try {
     await closeTabs(/trim-preview/);
   });
 
+  await step('TODO 78c: Trim preview invalidation', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 90));
+    await openGrips(writeDxf(raw), 'trim-invalidation.dxf');
+    // A newly drawn cutting edge lets Undo / Redo change the boundary set under a stationary cursor.
+    await typeCmd('l'); await typeCmd('160,10'); await typeCmd('160,90'); await page.keyboard.press('Escape');
+    const h = (await sheetPx()).h, path = (e) => svgPath(GR.shapeOf(e, 1), h);
+    const interval = path(dxfLine(80, 30, 160, 30)), tail = path(dxfLine(80, 30, 220, 30));
+    const hover = async (x = 120, y = 30) => {
+      await page.evaluate(() => document.activeElement?.blur());
+      await t('cmd-bar').waitFor({ state: 'hidden' });
+      const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); return p;
+    };
+    const clear = async (why) => {
+      await frames();
+      assert.equal(await t('mod-preview').count(), 0, why + ': no red piece');
+      assert.equal(await t('trim-glow').count(), 0, why + ': no object glow');
+    };
+    const red = async (expected, why) => {
+      await frames();
+      assert.equal(await t('mod-preview').count(), 1, why);
+      assert.equal(await t('mod-preview').getAttribute('d'), expected, why);
+      assert.equal(await t('trim-glow').count(), 1, why);
+    };
+    const start = async () => { await typeCmd('tr'); await page.keyboard.press('Enter'); await hover(); await red(interval, 'fresh preview'); };
+    await start();
+    await t('ptab-objects').hover(); await clear('pointer leave');
+    await hover(); await red(interval, 'pointer re-entry');
+    await page.keyboard.press('Escape'); await clear('Esc');
+    assert.equal(await t('trim-edge').count(), 0, 'Esc clears cutting edges too');
+
+    // Adding / taking out selected boundaries must not carry a preview from the previous run.
+    await typeCmd('tr'); await click(80, 60); await click(160, 60); await click(160, 60);
+    await hover(); await clear('boundary selection');
+    await page.keyboard.press('Enter'); await red(tail, 'only the remaining selected boundary cuts');
+    await page.keyboard.press('Escape'); await start();
+
+    // Invoke the existing zoom control without moving the pointer away from the object first.
+    const pct = await page.getByLabel('Zoom in', { exact: true }).evaluate((el) => {
+      const before = document.querySelector('.zoombox').textContent; el.click(); return before;
+    });
+    assert.notEqual(await page.locator('.zoombox').textContent(), pct, 'the view zoomed');
+    await clear('zoom moves the object away from the stationary cursor');
+    await hover(); await red(interval, 'hover at the new view');
+    await page.mouse.wheel(0, -150); await frames();
+    await red(interval, 'wheel zoom keeps the object beneath its anchor');
+
+    const p = await hover(), beforePan = await t('mod-preview').boundingBox();
+    await page.mouse.down({ button: 'middle' }); await page.mouse.move(p.x + 35, p.y + 25); await frames();
+    await red(interval, 'pan keeps the current piece under the cursor');
+    const afterPan = await t('mod-preview').boundingBox();
+    assert.ok(Math.abs(afterPan.x - beforePan.x - 35) < 1 && Math.abs(afterPan.y - beforePan.y - 25) < 1, 'preview follows the panned view');
+    // Pointer capture continues delivering moves outside the canvas during a pan.
+    const canvas = await t('canvas').boundingBox();
+    await page.mouse.move(canvas.x + canvas.width + 20, p.y + 25); await clear('pan outside canvas');
+    await page.mouse.up({ button: 'middle' });
+    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await hover(); await red(interval, 'hover after pan');
+
+    await page.keyboard.press('Control+z'); await red(tail, 'Undo removes a cutting edge');
+    await page.keyboard.press('Control+y'); await red(interval, 'Redo restores the cutting edge');
+    await click(120, 30); await clear('trim removes the hovered interval');
+    await page.keyboard.press('Control+z'); await red(interval, 'Undo restores the hovered interval');
+    await page.keyboard.press('Control+y'); await clear('Redo removes the hovered interval');
+    await page.keyboard.press('Escape'); await closeTabs(/trim-invalidation/);
+  });
+
   await step('TODO 66a: Move', async () => {
     await menuItem('View', 'Theme: light');
     const raw = newDoc(4);
