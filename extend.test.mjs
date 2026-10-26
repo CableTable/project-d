@@ -79,6 +79,8 @@ test('extendEntity polyline: a straight end segment runs along its line, widths 
 test('extendEntity polyline: a bulged end segment runs along its arc', () => {
   let s = S(extendEntity(lwpoly([[20, 0], [10, 0, BQ], [0, 10]]), [line(-20, 0, 0, 0)], [0, 10]).ent);   // the quarter circle grows to a half
   close(s.pts[2], [-10, 0]); near(s.pts[1][2], 1); close(s.pts[0], [20, 0]);
+  s = S(extendEntity(lwpoly([[20, 0], [10, 0, -BQ], [0, -10]]), [line(-20, 0, 0, 0)], [0, -10]).ent);
+  close(s.pts[2], [-10, 0]); near(s.pts[1][2], -1); close(s.pts[1], [10, 0]); close(s.pts[0], [20, 0]);
   s = S(extendEntity(lwpoly([[10, 0, BQ], [0, 10]]), [line(5, -20, 5, -1)], [10, 0]).ent);                // the start end, clockwise
   close(s.pts[0], [5, -Math.sqrt(75)]); near(s.pts[0][2], Math.tan(Math.PI * 150 / 180 / 4)); close(s.pts[1], [0, 10]);
 });

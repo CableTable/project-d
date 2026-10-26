@@ -9609,7 +9609,8 @@ try {
     assert.equal(await prompt(), 'Select boundary edges (click adds or takes out), Enter = all:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
     assert.equal(await page.locator('nav.rail [data-tool=extend]').count(), 0);
     await click(80, 30); await frames(); assert.equal(await t('trim-edge').count(), 1);
-    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line to extend. Enter or Esc ends:');
+    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line, arc or open polyline to extend. Enter or Esc ends:');
+    assert.match(await histLine(), /1 boundary edge\. Click near the end of a line, arc or open polyline to extend$/);
     const hover = () => hoverPreview(38, 20);
     await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended line is previewed');
     await shotBoth('extend', hover);
@@ -9617,11 +9618,13 @@ try {
     let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
     assert.deepEqual(coords(doc.entities[0]), [20, 20, 80, 20], 'the picked end reaches the boundary, the other stays');
     assert.equal(doc.entities[0].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Extend');
-    assert.match(await prompt(), /^Click near the end of a line/, 'Extend repeats');
+    assert.match(await prompt(), /^Click near the end of a line, arc or open polyline to extend/, 'Extend repeats');
     await click(38, 70); assert.match(await histLine(), /No boundary ahead/);
     assert.equal((await savedDoc()).entities.length, 4); await undo();
     await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Extend');
-    await typeCmd('ex'); await page.keyboard.press('Enter'); await click(22, 20);
+    await typeCmd('ex'); await page.keyboard.press('Enter');
+    assert.match(await histLine(), /Every line, arc, circle and polyline is a boundary edge\. Click near the end of a line, arc or open polyline to extend$/);
+    await click(22, 20);
     doc = await savedDoc(); assert.deepEqual(coords(doc.entities[0]), [5, 20, 40, 20], 'Enter alone: every object is a boundary; the near end moves');
     await undo(); await page.keyboard.press('Escape');
     for (const tab of ['Home', 'Modify']) {
@@ -9632,7 +9635,7 @@ try {
     await menuItem('Modify', 'Extend'); assert.match(await prompt(), /^Select boundary edges/);
     await page.keyboard.press('Enter');
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
-    await click(38, 20); assert.match(await histLine(), /nothing there/, 'a line on a locked layer is not extended');
+    await click(38, 20); assert.match(await histLine(), /Extend: nothing there\. Click near the end of a line, arc or open polyline$/, 'a line on a locked layer is not extended');
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/extend/);
   });
 
