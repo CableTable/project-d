@@ -19,6 +19,8 @@ export function pickColour(current) {
     };
     const key = (e) => {
       if (picking) return;
+      // Enter is OK only from a text field; on a button (OK included) it presses that button.
+      if (e.key === 'Enter' && !e.target.matches?.('input[type=text]')) return;
       if (e.key === 'Escape' || e.key === 'Enter') {
         e.preventDefault(); e.stopImmediatePropagation();
         if (e.key === 'Escape') finish();

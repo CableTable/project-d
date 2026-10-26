@@ -42,7 +42,9 @@ const indexed = ACI.map(parseHex);
 /** Euclidean RGB distance; ties use the first index, excluding ByBlock / ByLayer. */
 export function nearestAci(rgb) {
   let best = 1, distance = Infinity;
+  const grey = Math.max(...rgb) - Math.min(...rgb) <= 8;                // a grey must not land on a tinted index such as 18
   for (let i = 1; i < indexed.length; i++) {
+    if (grey && Math.max(...indexed[i]) !== Math.min(...indexed[i])) continue;
     const d = rgb.reduce((sum, n, j) => sum + (n - indexed[i][j]) ** 2, 0);
     if (d < distance) { distance = d; best = i; }
   }
@@ -50,8 +52,8 @@ export function nearestAci(rgb) {
 }
 export function rgbKey(rgb) {
   const aci = nearestAci(rgb);
-  return ACI[aci] === rgbHex(rgb) ? 'aci:' + aci : 'tc:' + pack420(rgb);
+  return ACI[aci] === rgbHex(rgb) && aci !== 7 ? 'aci:' + aci : 'tc:' + pack420(rgb);
 }
-export const keyRgb = (key) => key?.startsWith('tc:') ? unpack420(Number(key.slice(3))) : parseHex(ACI[Number(key?.slice(4))] || '#ffffff');
+export const keyRgb = (key) => key?.startsWith('tc:') ? unpack420(Number(key.slice(3))) : parseHex(key === 'aci:7' ? '#000000' : ACI[Number(key?.slice(4))] || '#ffffff');   // ACI 7 is white or black by the background; the picker opens it as black
 export const validColourKey = (key) => typeof key === 'string' && (['bylayer', 'byblock'].includes(key) ||
   /^tc:\d+$/.test(key) && +key.slice(3) <= 0xffffff || /^aci:[1-9]\d*$/.test(key) && +key.slice(4) <= 255);

@@ -7235,9 +7235,8 @@ function buildContourPanel() {
   ui.ctColours = PR.COLOURS.map(({ key, label }) => h('button', {
     class: 'cs' + (key === 'bylayer' ? ' bylayer' : ''), type: 'button', title: label, 'aria-label': label, 'aria-pressed': 'false',
     style: 'background:' + (key === 'bylayer' ? 'var(--field)' : colourCss(key)),
-    onclick: async () => {
-      if (key === 'bylayer') cfg.colour = key;
-      else { const rgb = await pickColour(keyRgb(key)); if (!rgb) return; cfg.colour = rgbKey(rgb); }
+    onclick: () => {
+      cfg.colour = key;
       saveContourCfg(); renderContour();
     }
   }, key === 'bylayer' ? label : null));

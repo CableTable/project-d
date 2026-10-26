@@ -168,6 +168,9 @@ try {
       assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc);
       await q('prop-swatch').click(); await q('colour-hex').fill('abcdef'); await q('colour-cancel').click();
       assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc, 'Cancel keeps the current colour');
+      await q('prop-swatch').click(); await q('colour-hex').fill('abcdef'); await q('colour-cancel').focus(); await p.keyboard.press('Enter');
+      assert.equal(await q('colour-dialog').count(), 0, 'Enter on Cancel presses Cancel');
+      assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc, 'Enter on Cancel keeps the current colour');
       await q('prop-swatch').click(); await q('colour-hex').fill('bad hex');
       assert.equal(await q('colour-hex').getAttribute('aria-invalid'), 'true');
       assert.equal(await q('colour-hex').evaluate((el) => getComputedStyle(el).borderTopColor), 'rgb(223, 51, 69)', 'invalid hex stays red');
@@ -5256,7 +5259,6 @@ try {
     await t('contour-steps').fill('2'); await t('contour-steps').press('Enter');
     await ctPanel('contour-outside').click(); await ctPanel('contour-sharp').click();
     await colours.getByRole('button', { name: 'Red', exact: true }).click();
-    await t('colour-ok').click();
     await styles.getByRole('button', { name: 'Dashed', exact: true }).click();
     const previewStyle = await t('contour-preview').locator('.ct-out').first().evaluate((p) => {
       const s = getComputedStyle(p); return [s.stroke, s.strokeDasharray, s.opacity];

@@ -48,6 +48,16 @@ test('nearest ACI excludes special indices, preserves exact indexed colours and 
   for (const key of [null, undefined, {}, ['tc:1'], '', 'aci:0', 'aci:256', 'tc:-1', 'tc:16777216', 'tc:NaN']) assert.equal(validColourKey(key), false);
 });
 
+test('nearest ACI maps greys to grey indices and aci:7 opens as black', () => {
+  assert.equal(nearestAci([0, 0, 0]), 250);
+  assert.equal(nearestAci([255, 255, 255]), 7);
+  assert.equal(nearestAci([128, 128, 128]), 8);
+  assert.equal(nearestAci([5, 6, 4]), 250);
+  assert.deepEqual(keyRgb('aci:7'), [0, 0, 0]);
+  assert.equal(rgbKey([255, 255, 255]), 'tc:' + 0xffffff);
+  assert.deepEqual(keyRgb(rgbKey([255, 255, 255])), [255, 255, 255]);
+});
+
 test('DXF exact RGB and nearest ACI round trip on entities, block members, attributes and off layers', () => {
   const rgb = [51, 153, 204], tc = pack420(rgb), aci = nearestAci(rgb), doc = newDoc();
   addLayer(doc, 'Colour', { tc, aci: 1, off: true });
