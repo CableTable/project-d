@@ -105,7 +105,7 @@ try {
   await page.waitForSelector('[data-testid=count]', { state: 'attached' });
   // After a FAILED step, no modal may stay open (it would fail every later step 30 s each): Esc, then a reload as the last resort.
   const closeModals = async () => {
-    const open = () => page.locator('.pop-back').count();
+    const open = () => page.locator('.pop-back, .pdlg-back, dialog[open]').count();
     for (let i = 0; i < 3 && await open(); i++) await page.keyboard.press('Escape');
     if (await open()) { await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' }); }
   };
