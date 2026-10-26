@@ -308,7 +308,7 @@ test('MTEXT preserves entity colour and layer, names simplifications and missing
   const { raw, items } = itemsOf([mtext(String.raw`\C1;A{\fArial|b1;🦄}V\L\S1#2;\l\Zhidden;`, [], { layer: 'CUT', aci: 3, tc: 0x123456 })]);
   const r = TO.outlineEntities(items, raw.entities, fontOf, 0.01);
   assert.equal(r.texts, 1); assert.deepEqual(r.missing, ['🦄']);
-  assert.ok(r.ents.every((e) => e.type === 'LWPOLYLINE' && e.layer === 'CUT' && e.aci === 3 && e.tc === 0x123456 && e.r.v[e.r.c.indexOf(70)] === '1'));
+  assert.ok(r.ents.every((e) => e.type === 'LWPOLYLINE' && e.layer === 'CUT' && e.aci === raw.entities[0].aci && e.tc === 0x123456 && e.r.v[e.r.c.indexOf(70)] === '1'));
   assert.deepEqual(r.notes, ['Inline colours ignored', 'Underline / overline skipped', 'Stacked fractions drawn as a/b', 'Unknown MTEXT codes stripped']);
   const v = r.ents[2], x = +v.r.v[v.r.c.indexOf(10)];
   const advance = font.getAdvanceWidth('A', 10 / CAP) + boldFont.getAdvanceWidth('🦄', 10 / CAP);

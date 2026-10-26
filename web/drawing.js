@@ -1,3 +1,4 @@
+import { ACI } from './colour.js';
 // The drawing viewer's reader (.dxf), pure: no DOM, no canvas — drawing.test.mjs. dxf-worker.js runs it off the
 // page's thread, viewers.js draws what it gives, and Measure asks pickAt / describe2d / measure2d (geom.js words them).
 //
@@ -183,18 +184,7 @@ const FLIP = [-1, 0, 0, 1, 0, 0];
 
 // ---------------------------------------------------------------- colours and line types
 
-/** AutoCAD's 256 colours: 1–9 the plain ones, 10–249 in tens (hue every 15°, tints and shades), 250–255 greys. */
-export const ACI = (() => {
-  const t = ['#000000', '#ff0000', '#ffff00', '#00ff00', '#00ffff', '#0000ff', '#ff00ff', '#ffffff', '#808080', '#c0c0c0'];
-  const V = [1, 1, .8, .8, .6, .6, .5, .5, .3, .3];
-  for (let i = 10; i < 250; i++) {
-    const hue = Math.floor((i - 10) / 10) * 15, n = (i - 10) % 10, s = n % 2 ? .5 : 1, v = V[n];
-    const f = (k) => { const a = (k + hue / 60) % 6; const c = v * (1 - s * Math.max(0, Math.min(a, 4 - a, 1))); return Math.round(c * 255); };
-    t.push('#' + [f(5), f(3), f(1)].map((x) => x.toString(16).padStart(2, '0')).join(''));
-  }
-  for (const g of [0x33, 0x50, 0x69, 0x82, 0xbe, 0xff]) t.push('#' + g.toString(16).padStart(2, '0').repeat(3));
-  return t;
-})();
+export { ACI } from './colour.js';
 const rgbCss = (n) => '#' + (n & 0xffffff).toString(16).padStart(6, '0');
 
 /** A line type's elements (+ dash, − gap, 0 dot) as a canvas dash list: on, off, on, off… */

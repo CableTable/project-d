@@ -117,6 +117,105 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 148a: colour picker fields, Properties, Cancel, swatches, screen pick, layers, Contour and exact DXF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    await p.addInitScript(() => { window.EyeDropper = undefined; });
+    const open = async (text, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+    };
+    const save = async () => {
+      const downloading = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      return readFileSync(await (await downloading).path(), 'utf8');
+    };
+    const values = async (group, count) => Promise.all(Array.from({ length: count }, (_, i) => q(`colour-${group}-${i}`).inputValue().then(Number)));
+    try {
+      const doc = newDoc(); addEntities(doc, dxfPoly([[10, 10], [110, 10], [110, 110], [10, 110]], { closed: true }));
+      await p.goto(URL_); await open(writeDxf(doc), 'picker.dxf');
+      await q('prop-swatch').click(); await q('colour-dialog').waitFor();
+      for (const key of ['Control+w', 'Control+Tab']) {
+        await p.keyboard.press(key);
+        assert.equal(await p.locator('.dtab.on .tname').textContent(), 'picker.dxf', 'tab shortcuts wait while the picker is open');
+        assert.equal(await q('colour-dialog').isVisible(), true);
+      }
+      assert.equal(await q('colour-screen').isVisible(), false, 'unavailable EyeDropper is hidden');
+      await q('colour-hex').fill('51,153,204');
+      assert.deepEqual(await values('rgb', 3), [51, 153, 204]);
+      assert.deepEqual(await values('hsb', 3), [200, 75, 80]);
+      assert.deepEqual(await values('cmyk', 4), [75, 25, 0, 20]);
+      await q('colour-cmyk-3').fill('100'); assert.equal(await q('colour-hex').inputValue(), '#000000');
+      await q('colour-cmyk-3').fill('20'); assert.equal(await q('colour-hex').inputValue(), '#3399cc');
+      await q('colour-hsb-0').fill('120'); assert.deepEqual(await values('rgb', 3), [51, 204, 51]);
+      await q('colour-rgb-0').fill('1'); assert.equal(await q('colour-hex').inputValue(), '#01cc33');
+      await q('colour-rgb-0').fill('256'); assert.equal(await q('colour-ok').isDisabled(), true);
+      await q('colour-rgb-0').fill('1'); assert.equal(await q('colour-ok').isEnabled(), true);
+      await q('colour-square').click({ position: { x: 80, y: 80 } });
+      assert.notEqual(await q('colour-hex').inputValue(), '#01cc33');
+      await q('colour-hue').focus(); await p.keyboard.press('Home');
+      assert.equal(Number(await q('colour-hsb-0').inputValue()), 0, 'hue strip supports the keyboard');
+      await q('colour-hex').fill('#3399cc');
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo148a-colour-picker-${theme}.png` });
+      }
+      await q('colour-add').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=colour-status]').textContent === 'Added to Swatches');
+      await q('colour-ok').click();
+      assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc);
+      await q('prop-swatch').click(); await q('colour-hex').fill('abcdef'); await q('colour-cancel').click();
+      assert.equal(await q('prop-colour').inputValue(), 'tc:' + 0x3399cc, 'Cancel keeps the current colour');
+      await q('prop-swatch').click(); await q('colour-hex').fill('bad hex');
+      assert.equal(await q('colour-hex').getAttribute('aria-invalid'), 'true');
+      assert.equal(await q('colour-hex').evaluate((el) => getComputedStyle(el).borderTopColor), 'rgb(223, 51, 69)', 'invalid hex stays red');
+      assert.equal(await q('colour-ok').isDisabled(), true);
+      assert.equal(await q('colour-add').isDisabled(), true);
+      await p.keyboard.press('Enter'); assert.equal(await q('colour-dialog').isVisible(), true);
+      await p.keyboard.press('Escape'); assert.equal(await q('colour-dialog').count(), 0);
+      // The ribbon's colour box opens the same draft; Enter commits it.
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.getByRole('button', { name: 'Pick ribbon colour', exact: true }).click();
+      await q('colour-hex').fill('3399cc'); await p.keyboard.press('Enter');
+      const saved = await save(); assert.equal(readDxf(saved).entities[0].tc, 0x3399cc);
+      await open(saved, 'picker-reopened.dxf');
+      await q('prop-swatch').click(); assert.equal(await q('colour-hex').inputValue(), '#3399cc');
+      // Exercise the optional API through a deterministic screen pick and a cancelled pick.
+      await q('colour-cancel').click();
+      await p.evaluate(() => { window.EyeDropper = class { async open() { return { sRGBHex: '#123456' }; } }; });
+      await q('prop-swatch').click(); await q('colour-screen').click();
+      await p.waitForFunction(() => document.querySelector('[data-testid=colour-hex]').value === '#123456');
+      await p.evaluate(() => { window.EyeDropper = class { async open() { throw new DOMException('Cancelled', 'AbortError'); } }; });
+      await q('colour-screen').click(); assert.equal(await q('colour-hex').inputValue(), '#123456');
+      await q('colour-cancel').click();
+      const layerCss = () => q('layer-colour').first().evaluate((el) => el.style.backgroundColor), layerBefore = await layerCss();
+      await q('layer-colour').first().click(); await q('colour-hex').fill('123456'); await q('colour-ok').click();
+      assert.equal(readDxf(await save()).layers['0'].tc, 0x123456);
+      const layerAfter = await layerCss();
+      assert.notEqual(layerAfter, layerBefore, 'layer list redraws from the changed layer table, using its theme tint');
+      await p.keyboard.press('Control+z'); assert.equal(readDxf(await save()).layers['0'].tc, null, 'layer colour has one Undo');
+      assert.equal(await layerCss(), layerBefore, 'Undo redraws the old layer colour');
+      await p.keyboard.press('Control+y'); assert.equal(readDxf(await save()).layers['0'].tc, 0x123456, 'Redo restores the colour');
+      assert.equal(await layerCss(), layerAfter, 'Redo redraws the new layer colour');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await p.locator('[data-tool=contour]').click();
+      await q('contour-colour').click(); await q('colour-hex').fill('3399cd'); await q('colour-ok').click();
+      assert.equal(await q('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)');
+      await p.reload(); await q('picker').waitFor({ state: 'attached' });
+      const stored = await p.evaluate(async () => {
+        const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-swatches', 'swatches', 'swatches').all();
+      });
+      assert.deepEqual(stored, [{ id: '#3399cc', rgb: [51, 153, 204] }], 'swatch survives reload on this PC');
+      await open(saved, 'contour-reload.dxf'); await p.locator('[data-tool=contour]').click();
+      assert.equal(await q('contour-colour').evaluate((el) => el.style.backgroundColor), 'rgb(51, 153, 205)', 'custom Contour colour survives reload');
+      const untabled = '0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\nUntabled\n10\n0\n20\n0\n11\n100\n21\n100\n0\nENDSEC\n0\nEOF\n';
+      await open(untabled, 'untabled.dxf');
+      await panelControl(p, p.locator('.layer[data-layer-name=Untabled] [data-testid=layer-colour]')).click();
+      await q('colour-hex').fill('#123456'); await q('colour-ok').click();
+      assert.equal(readDxf(await save()).layers.Untabled.tc, 0x123456, 'layers missing from an imported table still accept a colour');
+    } finally { await context.close(); }
+  });
   await step('TODO 68a: snap per type', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -5144,7 +5243,7 @@ try {
     await page.locator('[data-tool=contour]').click(); await click(150, 100); await waitSel('1 selected');
     const colours = t('contour-panel').getByRole('group', { name: 'Colour', exact: true });
     const styles = t('contour-panel').getByRole('group', { name: 'Line style', exact: true });
-    assert.deepEqual(await colours.locator('button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))), ['ByLayer', 'Red', 'Blue', 'Green', 'Black']);
+    assert.deepEqual(await colours.locator('button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))), ['ByLayer', 'Red', 'Blue', 'Green', 'Black', 'Pick Contour colour']);
     assert.deepEqual(await styles.locator('button').allTextContents(), ['Solid', 'Dashed', 'Dotted']);
     assert.equal(await colours.getByRole('button', { name: 'ByLayer', exact: true }).getAttribute('aria-pressed'), 'true');
     assert.equal(await styles.getByRole('button', { name: 'Solid', exact: true }).getAttribute('aria-pressed'), 'true');
@@ -5152,6 +5251,7 @@ try {
     await t('contour-steps').fill('2'); await t('contour-steps').press('Enter');
     await ctPanel('contour-outside').click(); await ctPanel('contour-sharp').click();
     await colours.getByRole('button', { name: 'Red', exact: true }).click();
+    await t('colour-ok').click();
     await styles.getByRole('button', { name: 'Dashed', exact: true }).click();
     const previewStyle = await t('contour-preview').locator('.ct-out').first().evaluate((p) => {
       const s = getComputedStyle(p); return [s.stroke, s.strokeDasharray, s.opacity];
@@ -6147,7 +6247,8 @@ try {
     assert.match(await prompt(), /can't hold/);
     await l2.fill('Cut line'); await l2.press('Enter');
     assert.match(await prompt(), /Layer renamed to Cut line/);
-    await t('layer-colour').last().fill('#ff0000');
+    await t('layer-colour').last().click();
+    await t('colour-hex').fill('#ff0000'); await t('colour-ok').click();
     assert.equal(await page.locator('.layer.current [data-testid=layer-name]').inputValue(), 'Cut line');
     for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `${shotDir}/s15-addlayer-${th}.png` }); }
     await page.evaluate(() => { delete document.documentElement.dataset.theme; });
@@ -6156,7 +6257,7 @@ try {
     await typeCmd('700,150'); await typeCmd('15');
     const doc = await savedDoc();
     assert.equal(doc.entities.at(-1).layer, 'Cut line');
-    assert.equal(doc.layers['Cut line'].tc, 0xff0000);
+    assert.equal(doc.layers['Cut line'].aci, 1); assert.equal(doc.layers['Cut line'].tc, null);
     assert.ok(doc.layers.Layer1, 'the empty layer is in the file too');
     await page.locator('[data-tool=select]').click();
   });

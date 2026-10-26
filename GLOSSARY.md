@@ -343,6 +343,12 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Swatch**: One square colour box. Left click sets the selected objects' line colour, right click their fill colour.
 
+**Colour picker**: The shared dialog opened from Properties, ribbon, Layers and Contour colour boxes. Edits a draft through HSB, RGB, simple-formula CMYK or hex; OK applies it and Cancel discards it. Add to Swatches remembers a colour on this PC.
+
+**HSB**: Hue (0–360 degrees), saturation and brightness (0–100 percent), used by the Colour picker's hue strip and gradient square.
+
+**True colour**: An exact RGB colour stored in DXF group 420, accompanied by the nearest indexed colour (ACI, group 62) for older readers.
+
 **Swatch strip**: The column of swatches at the right edge of the window: default colours on top, the last 12 colours used at the bottom.
 
 **Fill**: A solid colour inside a closed outline, part of that outline.

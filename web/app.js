@@ -1,5 +1,7 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
 import { h } from './dom.js';
+import { pickColour } from './colourpicker.js';
+import { parseHex, rgbKey, keyRgb, validColourKey } from './colour.js';
 import * as CB from './cmdbar.js';
 import { buildCmdUI } from './cmdui.js';
 import * as SC from './shortcuts.js';
@@ -613,11 +615,11 @@ function ribbonContents(kind) {
   } });
   groups.push(group('Layers', stack(ribbonField('Layer', ui.ribbonLayer)), btn('+ Add layer', '<path d="M12 3l9 5-9 5-9-5zM3 13l9 5 9-5"/>', addLayerNow, { small: true, enabled: () => !!curDoc() && !curLay() && !cmpDoc() })));
   if (kind === 'drawing') {
-    ui.ribbonColour = h('select', { 'aria-label': 'Ribbon colour', onchange: (e) => propSet('colour', e.target.value) });
+    ui.ribbonColour = h('select', { 'aria-label': 'Ribbon colour', onchange: (e) => e.target.value === 'custom' ? pickPropColour() : propSet('colour', e.target.value) });
     ui.ribbonWidth = h('select', { 'aria-label': 'Ribbon line width', onchange: (e) => propWidthSet(['ByLayer', 'Hairline'].includes(e.target.value) ? e.target.value : PL.parseMm(e.target.value)) });
     ui.ribbonLt = h('select', { 'aria-label': 'Ribbon line style', onchange: (e) => propSet('lt', e.target.value) });
     const colourField = ribbonField('Colour', ui.ribbonColour);
-    ui.ribbonSwatch = h('i', { class: 'ribbon-swatch', 'aria-hidden': 'true' });
+    ui.ribbonSwatch = h('button', { class: 'ribbon-swatch', type: 'button', 'aria-label': 'Pick ribbon colour', onclick: pickPropColour });
     colourField.insertBefore(ui.ribbonSwatch, ui.ribbonColour);
     groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt))));
   }
@@ -670,7 +672,8 @@ function renderRibbon() {
     const ents = editable() ? propEnts(d).map((x) => x[1]) : [], all = editable() ? propEnts(d, true).map((x) => x[1]) : [], sm = PR.summarize(ents);
     const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] : '';
     ui.ribbonSwatch.style.background = sm.colour == null ? 'var(--muted)' : colourCss(sm.colour === 'bylayer' ? PR.effectiveColour(ents[0], layerMap(d)) : sm.colour);
-    for (const [sel, options, value] of [[ui.ribbonColour, PR.COLOURS.map((c) => [c.key, c.label]), sm.colour],
+    ui.ribbonSwatch.disabled = !ents.length;
+    for (const [sel, options, value] of [[ui.ribbonColour, [...PR.COLOURS.map((c) => [c.key, c.label]), ['custom', 'Colour picker…']], sm.colour],
       [ui.ribbonLt, PR.LINETYPES.map((c) => [c.key, c.label]), sm.lt],
       [ui.ribbonWidth, PR.WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]), String(width)]]) {
       if (value && !options.some(([v]) => v === value)) options.push([value, value]);
@@ -3070,12 +3073,19 @@ function addedName(d, l) {
   clearInvalid(input);
   return input;
 }
-/** The colour of a layer added by hand: a colour box in place of the swatch. */
+/** A file layer or an empty layer added by hand uses the same picker. */
 function addedSwatch(d, l) {
-  const input = h('input', { class: 'swatch pick', type: 'color', value: l.css, 'aria-label': 'Layer colour', 'data-testid': 'layer-colour', title: 'Layer colour' });
-  input.addEventListener('input', () => { d.raw.layers = { ...d.raw.layers, [l.name]: { ...d.raw.layers[l.name], tc: parseInt(input.value.slice(1), 16) } }; d.dirty = true; });
-  input.addEventListener('change', () => { renderTabs(); renderLayers(); });
-  return input;
+  return h('button', { class: 'swatch pick', type: 'button', style: 'background:' + l.color,
+    'aria-label': 'Layer colour', 'data-testid': 'layer-colour', title: 'Layer colour', onclick: async (e) => {
+      e.stopPropagation();
+      const def = d.raw.layers[l.name] || { aci: 7, tc: null }, rgb = await pickColour(parseHex(layerCss(def)));
+      if (!rgb) return;
+      const next = PR.withColour(def, rgbKey(rgb));
+      if (next.aci === def.aci && next.tc === def.tc) return;
+      const keep = new Set(d.sel);
+      commit(d, { ...snapshotOf(d), layers: { ...d.raw.layers, [l.name]: next } }, 'Layer colour → ' + l.name);
+      setSel(d, keep);
+    } });
 }
 
 function renderLayers() {
@@ -3094,7 +3104,7 @@ function renderLayers() {
     }
     const pick = isFile || l.added || l.zero;
     const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': pick || l.cur ? l.name : null, title: pick || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
-      l.added ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
+      pick ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
       l.added ? addedName(d, l) : h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
     if (pick) row.addEventListener('click', (e) => { if (e.target.closest('.vis') || e.target.closest('input')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
     return row;
@@ -4620,10 +4630,11 @@ function restoreBg(d, st) {
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
 }
 function restore(d, st) {
+  const layerTableChanged = st.layers && st.layers !== d.raw.layers;
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if (st.ltypes) d.raw.ltypes = st.ltypes;
   if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
-  if (st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
+  if (!layerTableChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
     d.dirty = true; showDoc(); return;
   }
@@ -6618,7 +6629,7 @@ function editKey(e) {
   if (own && (!inField || own.name === 'properties')) { e.preventDefault(); runCommand(own); return; }       // Properties' key works in a field too, as Ctrl+1 always did
   if (inField || e.target?.isContentEditable) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
-  const dialog = !!document.querySelector('.pop-back, .pdlg-back'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
+  const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
@@ -6851,6 +6862,13 @@ function colourCss(key) {
   return 'transparent';
 }
 const layerMap = (d) => d.raw.layers || {};
+async function pickPropColour() {
+  const d = editable(), ent = d && propEnts(d)[0]?.[1];
+  if (!ent) return;
+  const rgb = await pickColour(keyRgb(PR.effectiveColour(ent, layerMap(d))));
+  if (rgb) propSet('colour', rgbKey(rgb));
+  else renderEdit();
+}
 
 function buildPropsSection() {
   const row = (label, ...kids) => h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, label), ...kids);
@@ -6858,9 +6876,9 @@ function buildPropsSection() {
   ui.propLayer = h('select', { class: 'fld', 'aria-label': 'Layer', 'data-testid': 'prop-layer' });
   ui.propColour = h('select', { class: 'fld', 'aria-label': 'Colour', 'data-testid': 'prop-colour' });
   ui.propLt = h('select', { class: 'fld', 'aria-label': 'Line type', 'data-testid': 'prop-lt' });
-  ui.propSwatch = h('span', { class: 'cswatch', 'aria-hidden': 'true', 'data-testid': 'prop-swatch' });
+  ui.propSwatch = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Pick colour', 'data-testid': 'prop-swatch', onclick: pickPropColour });
   ui.propLayer.addEventListener('change', () => propSet('layer', ui.propLayer.value));
-  ui.propColour.addEventListener('change', () => propSet('colour', ui.propColour.value));
+  ui.propColour.addEventListener('change', () => ui.propColour.value === 'custom' ? pickPropColour() : propSet('colour', ui.propColour.value));
   ui.propLt.addEventListener('change', () => propSet('lt', ui.propLt.value));
   ui.propWidthUnits = h('span', { class: 'lbl' });
   ui.propWidthHint = h('span', { class: 'lbl' });
@@ -6919,7 +6937,7 @@ function renderPropsPanel(d) {
   if (none) return;
   ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
-  const cols = [...PR.COLOURS.map((c) => [c.key, c.label])];
+  const cols = [...PR.COLOURS.map((c) => [c.key, c.label]), ['custom', 'Colour picker…']];
   if (sm.colour != null && !cols.some((c) => c[0] === sm.colour)) cols.push([sm.colour, PR.colourLabel(sm.colour)]);
   setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...cols], sm.colour == null ? '' : sm.colour);
   const lts = [...PR.LINETYPES.map((c) => [c.key, c.label])];
@@ -7080,7 +7098,7 @@ const loadContourCfg = () => {
     const v = JSON.parse(localStorage.getItem(CT_SAVED) || 'null');
     if (v && (v.dir === 'inside' || v.dir === 'outside')) cfg.dir = v.dir;
     if (v && v.corners === 'rounded') cfg.corners = 'rounded';
-    if (v && PR.COLOURS.some((c) => c.key === v.colour)) cfg.colour = v.colour;
+    if (v && validColourKey(v.colour)) cfg.colour = v.colour;
     if (v && CT_STYLES.some((st) => st.key === v.lt)) cfg.lt = v.lt;
     if (v && Number.isFinite(+v.dist) && +v.dist > 0 && +v.dist <= 10000) cfg.dist = +v.dist;
     if (v && Number.isInteger(+v.steps) && +v.steps >= 1 && +v.steps <= 100) cfg.steps = +v.steps;
@@ -7096,8 +7114,17 @@ function buildContourPanel() {
   ui.ctColours = PR.COLOURS.map(({ key, label }) => h('button', {
     class: 'cs' + (key === 'bylayer' ? ' bylayer' : ''), type: 'button', title: label, 'aria-label': label, 'aria-pressed': 'false',
     style: 'background:' + (key === 'bylayer' ? 'var(--field)' : colourCss(key)),
-    onclick: () => { cfg.colour = key; saveContourCfg(); renderContour(); }
+    onclick: async () => {
+      if (key === 'bylayer') cfg.colour = key;
+      else { const rgb = await pickColour(keyRgb(key)); if (!rgb) return; cfg.colour = rgbKey(rgb); }
+      saveContourCfg(); renderContour();
+    }
   }, key === 'bylayer' ? label : null));
+  ui.ctCustomColour = h('button', { class: 'cs', type: 'button', 'aria-label': 'Pick Contour colour', 'data-testid': 'contour-colour', onclick: async () => {
+    const d = editable(); if (!d) return;
+    const rgb = await pickColour(parseHex(contourColour(d)) || [0, 255, 0]);
+    if (rgb) { cfg.colour = rgbKey(rgb); saveContourCfg(); renderContour(); }
+  } });
   ui.ctStyles = CT_STYLES.map(({ key, label, dash }) => h('button', {
     class: 'ctstyle', type: 'button', 'aria-pressed': 'false',
     onclick: () => { cfg.lt = key; saveContourCfg(); renderContour(); }
@@ -7132,7 +7159,7 @@ function buildContourPanel() {
       segs('Direction', 'Direction', [['inside', 'Inside'], ['outside', 'Outside']], 'dir'),
       h('div', { class: 'grid2' }, field('Distance (mm)', 'contour-dist', setContourDist, 'Distance in mm'), field('Steps', 'contour-steps', setContourSteps, 'Steps')),
       segs('Corners', 'Corners', [['sharp', 'Sharp'], ['rounded', 'Rounded']], 'corners'),
-      h('div', { class: 'row' }, h('span', { class: 'lbl ctlbl' }, 'Colour'), h('div', { class: 'cswatches', role: 'group', 'aria-label': 'Colour' }, ui.ctColours)),
+      h('div', { class: 'row' }, h('span', { class: 'lbl ctlbl' }, 'Colour'), h('div', { class: 'cswatches', role: 'group', 'aria-label': 'Colour' }, ui.ctColours, ui.ctCustomColour)),
       h('div', { class: 'row' }, h('span', { class: 'lbl ctlbl' }, 'Line style'), h('div', { class: 'ctstyles', role: 'group', 'aria-label': 'Line style' }, ui.ctStyles)),
       h('div', { class: 'row' }, ui.ctLive, h('label', { for: 'contour-live', style: 'flex:1' }, 'Live preview on the sheet')),
       ui.ctHint, ui.ctWarn,
@@ -7210,6 +7237,8 @@ function renderContour() {
   if (!on) { if (d) d.cRes = null; return; }
   const cfg = state.contourCfg;
   ui.ctColours.forEach((b, i) => b.setAttribute('aria-pressed', String(PR.COLOURS[i].key === cfg.colour)));
+  ui.ctCustomColour.style.background = contourColour(d);
+  ui.ctCustomColour.setAttribute('aria-pressed', String(!PR.COLOURS.some((c) => c.key === cfg.colour)));
   ui.ctStyles.forEach((b, i) => b.setAttribute('aria-pressed', String(CT_STYLES[i].key === cfg.lt)));
   ui.ct_dir.forEach((b) => { const v = b.dataset.testid.slice(8) === cfg.dir; b.classList.toggle('on', v); b.setAttribute('aria-pressed', String(v)); });
   ui.ct_corners.forEach((b) => { const v = b.dataset.testid.slice(8) === cfg.corners; b.classList.toggle('on', v); b.setAttribute('aria-pressed', String(v)); });
@@ -7794,7 +7823,7 @@ async function init() {
   renderTabs();
   attachDrop();
   document.addEventListener('keydown', (e) => {
-    if (document.querySelector('.pop-back, .pdlg-back')) return;
+    if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;
     const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key);
     if (!['closetab', 'nexttab', 'previoustab'].includes(cmd?.name)) return;
     e.preventDefault(); e.stopPropagation();
@@ -7802,7 +7831,7 @@ async function init() {
     textCommit(); runCommand(cmd);
   }, true);                                               // tab keys also work in fields that handle their own keys
   document.addEventListener('keydown', (e) => {
-    if (document.querySelector('.pop-back, .pdlg-back')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
+    if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
     editKey(e);
   });
