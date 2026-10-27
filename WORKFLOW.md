@@ -65,7 +65,8 @@ usage-agent-install.ps1.
    before the round is asked. Never ask a round and then replace it when a lookup comes back: two sets of questions confuse.
    **AutoCAD check** (his call, 2026-10-27): before grilling any AutoCAD-style feature (commands, prompts, keys, snaps,
    selection, dimensions), Pawn reads Autodesk's own help (help.autodesk.com) on how AutoCAD does it, and the round's
-   recommendations follow AutoCAD unless he decided otherwise. Not settled by the docs: watch it in his installed AutoCAD
+   recommendations follow AutoCAD unless he decided otherwise. Not settled by the docs: a short AutoLISP / script check
+   he runs in his AutoCAD (licence allows; he pastes the result), then, if still open, watch it in his installed AutoCAD
    with computer use (Claude desktop app only; from the CLI, ask him to run that step there). Never reverse-engineer
    AutoCAD's binaries (e.g. REA): Autodesk's licence forbids it.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
