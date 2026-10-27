@@ -138,6 +138,77 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 71a: drawing window and crossing boxes, live styles, Shift add, locked and hidden skip, Move pick', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const doc = newDoc(4);
+      addLayer(doc, 'Locked'); addLayer(doc, 'Hidden');
+      addEntities(doc, dxfLine(25, 25, 35, 35), dxfLine(10, 30, 60, 30), dxfArc(20, 20, 30, 0, 90),
+        dxfPoly([[10, 15], [15, 35], [60, 35]]), dxfCircle(70, 30, 3),
+        dxfLine(26, 27, 34, 27, { layer: 'Locked' }), dxfLine(26, 33, 34, 33, { layer: 'Hidden' }), dxfCircle(30, 30, 45));
+      await q('picker').setInputFiles({ name: 'selection-71a.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-71a.dxf');
+      await q('ptab-objects').click();
+      await p.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+      await p.locator('.or.layer[data-layer=Hidden] [data-act=vis]').click();
+      await q('ptab-drawing').click();
+      await p.locator('[data-tool=select]').click();
+      const atPoint = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), h = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
+        return { x: b.x + x * b.width / w, y: b.y + (h - y) * b.width / w };
+      };
+      const start = async (a, b, shift = false) => {
+        const from = await atPoint(...a), to = await atPoint(...b);
+        if (shift) await p.keyboard.down('Shift');
+        await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 5 });
+        await p.getByTestId('rubber').waitFor({ state: 'visible' });
+      };
+      const finish = async (shift = false) => { await p.mouse.up(); if (shift) await p.keyboard.up('Shift'); };
+      const selected = (n) => p.waitForFunction((n) => document.querySelector('[data-testid=sel-count]').textContent.trim() === `${n} selected`, n);
+      const clear = async () => { await p.keyboard.press('Escape'); await selected(0); };
+      const style = () => p.getByTestId('rubber').evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { border: s.borderTopStyle, colour: s.borderTopColor, tint: s.backgroundColor };
+      });
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        for (const crossing of [false, true]) {
+          await clear();
+          await start(crossing ? [40, 40] : [20, 20], crossing ? [20, 20] : [40, 40]);
+          const s = await style();
+          assert.equal(s.border, crossing ? 'dashed' : 'solid');
+          const expected = theme === 'light' ? (crossing ? '#188344' : '#2f7bd0') : (crossing ? '#5cdb8b' : '#60a5fa');
+          assert.equal(s.colour, `rgb(${expected.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16)).join(', ')})`);
+          assert.notEqual(s.tint, 'rgba(0, 0, 0, 0)');
+          assert.ok(contrastRatio(expected, theme === 'light' ? '#ffffff' : '#212830') >= 3, 'box border reads on the work area');
+          await p.screenshot({ path: `${shotDir}/todo71a-${crossing ? 'crossing' : 'window'}-${theme}.png` });
+          await finish(); await selected(crossing ? 3 : 1);
+          assert.match(await q('cmd-prompt').textContent(), crossing ? /3 entities touching the box/ : /1 entity inside the box/);
+        }
+      }
+      await clear();
+      await start([30, 17], [40, 40]); assert.equal((await style()).border, 'solid');
+      const left = await atPoint(20, 40); await p.mouse.move(left.x, left.y, { steps: 5 });
+      assert.equal((await style()).border, 'dashed', 'style switches as the cursor crosses the start');
+      const right = await atPoint(40, 40); await p.mouse.move(right.x, right.y, { steps: 5 });
+      assert.equal((await style()).border, 'solid', 'style switches back during the same drag');
+      await finish(); await clear();
+      for (const crossing of [false, true]) {
+        await start([66, 26], [74, 34]); await finish(); await selected(1);
+        await start(crossing ? [40, 20] : [20, 40], crossing ? [20, 40] : [40, 20], true);
+        await finish(true); await selected(crossing ? 4 : 2);
+        await clear();
+      }
+      await q('cmd-echo').click(); await q('cmd-input').fill('mv'); await q('cmd-input').press('Enter');
+      await start([40, 40], [20, 20]); await finish(); await selected(3);
+      assert.match(await q('cmd-hist').textContent(), /3 entities touching the box/);
+      await p.keyboard.press('Enter');
+      assert.match(await q('cmd-prompt').textContent(), /Base point or x,y:/);
+      await p.keyboard.press('Escape');
+    } finally { await context.close(); }
+  });
   await step('TODO 152c: a 200-character command echo ellipsizes with a tooltip and keeps the status bar on one line', async () => {
     const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
     try {

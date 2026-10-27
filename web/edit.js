@@ -8,6 +8,7 @@
 //   hitEntity(ed, x, y, tol)     → the entity index under a point, or -1
 //   chainAt(ed, e, tol)          → the entity and everything joined to it end to end (endpoints within tol)
 //   inBox(ed, [x0,y0,x1,y1])     → entities lying fully inside a box
+//   crossBox(ed, [x0,y0,x1,y1])  → entities whose geometry touches or lies inside a box
 //   snapEnd(ed, x, y, tol)       → the nearest entity end point within tol, or null
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
@@ -176,7 +177,19 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
     if (type !== 'LINE' && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end; zero-length lines can be micro pieces
     ends[e * 4] = a[0]; ends[e * 4 + 1] = a[1]; ends[e * 4 + 2] = b[0]; ends[e * 4 + 3] = b[1];
   }
-  return { raw, fl, space, n, vis, byEnt, box, shown, areas, ends, items, ix: pickIndex(fl, space === 1), graph: null };
+  const ix = pickIndex(fl, space === 1), bc = new Map(), bw = [];
+  const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
+  // Entity boxes share the pick grid; dimensions need their whole block box, text and hatches have no pick pieces.
+  for (const e of shown) {
+    const k = e * 4, i0 = at((box[k] - ix.x0) / ix.cell), i1 = at((box[k + 2] - ix.x0) / ix.cell), j0 = at((box[k + 1] - ix.y0) / ix.cell), j1 = at((box[k + 3] - ix.y0) / ix.cell);
+    if ((i1 - i0 + 1) * (j1 - j0 + 1) > 256) { bw.push(e); continue; }
+    for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) {
+      const key = i * 4096 + j;
+      if (!bc.has(key)) bc.set(key, []);
+      bc.get(key).push(e);
+    }
+  }
+  return { raw, fl, space, n, vis, byEnt, box, shown, areas, ends, items, ix, bc, bw, graph: null };
 }
 
 /** The entity under (x, y) within tol: the nearest line or arc, else a filled or text item whose box holds the point. -1 if none. */
@@ -301,12 +314,92 @@ export function chainAt(ed, e, tol) {
 
 /** Entities lying fully inside the box [x0, y0, x1, y1] (any two corners). */
 export function inBox(ed, b) {
-  const x0 = Math.min(b[0], b[2]), x1 = Math.max(b[0], b[2]), y0 = Math.min(b[1], b[3]), y1 = Math.max(b[1], b[3]), out = [];
-  for (const e of ed.shown) {
+  const [x0, y0, x1, y1] = selectionBox(b), out = [];
+  for (const e of boxCandidates(ed, [x0, y0, x1, y1])) {
     const k = e * 4;
     if (ed.box[k] >= x0 && ed.box[k + 2] <= x1 && ed.box[k + 1] >= y0 && ed.box[k + 3] <= y1) out.push(e);
   }
-  return out;
+  return out.sort((a, b) => a - b);
+}
+
+const selectionBox = (b) => [Math.min(b[0], b[2]), Math.min(b[1], b[3]), Math.max(b[0], b[2]), Math.max(b[1], b[3])];
+function boxCandidates(ed, b) {
+  const ix = ed.ix;
+  if (!ix.G) return [];
+  const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
+  const i0 = at((b[0] - ix.x0) / ix.cell), i1 = at((b[2] - ix.x0) / ix.cell), j0 = at((b[1] - ix.y0) / ix.cell), j1 = at((b[3] - ix.y0) / ix.cell), seen = new Set(ed.bw);
+  for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const e of ed.bc.get(i * 4096 + j) || []) seen.add(e);
+  return [...seen].filter((e) => { const k = e * 4; return ed.box[k] <= b[2] && ed.box[k + 2] >= b[0] && ed.box[k + 1] <= b[3] && ed.box[k + 3] >= b[1]; });
+}
+const pointInBox = (p, b) => p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3];
+
+function segmentCrossBox(a, c, b) {
+  let lo = 0, hi = 1;
+  for (let k = 0; k < 2; k++) {
+    const d = c[k] - a[k];
+    if (!d) { if (a[k] < b[k] || a[k] > b[k + 2]) return false; }
+    else {
+      const t0 = (b[k] - a[k]) / d, t1 = (b[k + 2] - a[k]) / d;
+      lo = Math.max(lo, Math.min(t0, t1)); hi = Math.min(hi, Math.max(t0, t1));
+      if (lo > hi) return false;
+    }
+  }
+  return true;
+}
+
+/** The transformed curve c + u cos(t) + v sin(t), including circular arcs and stretched blocks. */
+function curveCrossBox(c, u, v, start, sweep, b) {
+  const tau = 2 * Math.PI, at = (t) => [c[0] + u[0] * Math.cos(t) + v[0] * Math.sin(t), c[1] + u[1] * Math.cos(t) + v[1] * Math.sin(t)];
+  if (pointInBox(at(start), b) || pointInBox(at(start + sweep), b)) return true;
+  for (let k = 0; k < 2; k++) for (const edge of [b[k], b[k + 2]]) {
+    const r = Math.hypot(u[k], v[k]);
+    if (!r) continue;
+    const q = (edge - c[k]) / r;
+    if (Math.abs(q) > 1 + 1e-12) continue;
+    const angle = Math.acos(Math.max(-1, Math.min(1, q))), phase = Math.atan2(v[k], u[k]);
+    for (const t of [phase - angle, phase + angle]) {
+      const rel = (((t - start) * Math.sign(sweep) % tau) + tau) % tau, p = at(t), other = 1 - k;
+      if ((rel <= Math.abs(sweep) + 1e-10 || rel >= tau - 1e-10) && p[other] >= b[other] - 1e-10 && p[other] <= b[other + 2] + 1e-10) return true;
+    }
+  }
+  return false;
+}
+
+function itemCrossBox(it, m, b) {
+  if (it.k === 't' || !it.ops) return it.b[0] <= b[2] && it.b[2] >= b[0] && it.b[1] <= b[3] && it.b[3] >= b[1];
+  const curve = (cx, cy, ux, uy, vx, vy, start, sweep) => curveCrossBox(mapply(m, cx, cy), [m[0] * ux + m[2] * uy, m[1] * ux + m[3] * uy], [m[0] * vx + m[2] * vy, m[1] * vx + m[3] * vy], start, sweep, b);
+  if (it.ell) {
+    const [cx, cy, , ux, uy, vx, vy, start, end] = it.ell;
+    return curve(cx, cy, ux, uy, vx, vy, start, end - start);
+  }
+  let cur = null, first = null;
+  const ops = it.ops;
+  for (let k = 0; k < ops.length;) {
+    const op = ops[k];
+    if (op === 0 || op === 1) {
+      const p = mapply(m, ops[k + 1], ops[k + 2]);
+      if (pointInBox(p, b) || (op === 1 && cur && segmentCrossBox(cur, p, b))) return true;
+      cur = p; if (op === 0) first = p; k += 3;
+    } else if (op === 2) {
+      const [cx, cy, r, a0, a1, acw] = ops.slice(k + 1, k + 7), sw = arcSweepOp(a0, a1, acw === 1);
+      if (curve(cx, cy, r, 0, 0, r, a0, sw)) return true;
+      cur = mapply(m, cx + r * Math.cos(a1), cy + r * Math.sin(a1)); k += 7;
+    } else {
+      if (cur && first && segmentCrossBox(cur, first, b)) return true;
+      cur = first; k++;
+    }
+  }
+  return false;
+}
+
+/** Entities whose geometry touches or lies inside the box; an enclosing curve alone does not count. */
+export function crossBox(ed, corners) {
+  const b = selectionBox(corners), out = [];
+  for (const e of boxCandidates(ed, b)) {
+    const ent = ed.raw.entities[e];
+    if (ent.type === 'DIMENSION' || (ent.type === 'INSERT' && DIM_BLOCK.test(fieldOf(ent.r, 2))) || ed.byEnt[e].some((i) => itemCrossBox(ed.items[i], ed.fl.mats[ed.items[i].m], b))) out.push(e);
+  }
+  return out.sort((a, b) => a - b);
 }
 
 // ---------------------------------------------------------------- tiny gaps (TODO 46)

@@ -4129,7 +4129,7 @@ function attachCanvasEvents() {
       else if (state.tool === 'dimension') dimensionPoint(d, p, e.shiftKey);
       else if (state.tool === 'leader') ldrPoint(d, p, e.shiftKey);
       else if (state.tool === 'balloon') balClick(d, p, e.shiftKey);
-      else if (modLive()) modUp(d, was, p, e.shiftKey);
+      else if (modLive()) modUp(d, was, p, e.shiftKey, e.clientX < was.x);
       else if (state.match && editable() === d) { if (!was.moved) matchClick(d, was.p); }
       else if (was.dim && was.moved) dimDragEnd(d, was.dim);
       else if (was.move && was.moved) {
@@ -4146,7 +4146,7 @@ function attachCanvasEvents() {
         }
       }
       else if (!editable()) { /* a layout tab: its placed parts are picked by the page itself (data-i) */ }
-      else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift);
+      else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift, e.clientX < was.x);
       else clickSelect(d, was.p, e.shiftKey || was.shift || e.ctrlKey || e.metaKey);
     }
     end();
@@ -4709,16 +4709,17 @@ function clickSelect(d, p, shift) {
   if (next.has(e)) d.lastPick = e;
   note(chain.length > 1 ? `${chain.length} entities joined end to end` + (shift ? '' : ' selected') : '1 entity selected');
 }
-/** A dragged box: what lies fully inside it. */
-function boxSelect(d, a, b, add) {
-  const inside = Ed.inBox(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), next = new Set(add ? d.sel : []);
+/** A dragged window or crossing box, chosen by the screen drag direction. */
+function boxSelect(d, a, b, add, crossing) {
+  const inside = (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), next = new Set(add ? d.sel : []);
   for (const e of inside) next.add(e);
   setSel(d, next);
-  note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + ' inside the box');
+  note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + (crossing ? ' touching the box' : ' inside the box'));
 }
 function showRubber(drag, e) {
   const r = ui.canvas.getBoundingClientRect(), x0 = Math.min(drag.x, e.clientX) - r.left, y0 = Math.min(drag.y, e.clientY) - r.top;
   const st = ui.rubber.style;
+  ui.rubber.classList.toggle('crossing', !!drag.p && e.clientX < drag.x);
   st.left = x0 + 'px'; st.top = y0 + 'px'; st.width = Math.abs(e.clientX - drag.x) + 'px'; st.height = Math.abs(e.clientY - drag.y) + 'px';
   ui.rubber.hidden = false;
 }
@@ -5964,10 +5965,10 @@ function modHover(d, cx, cy, shift) {
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
   paintOverlay();
 }
-function modUp(d, was, p, shift) {
+function modUp(d, was, p, shift, crossing) {
   const m = state.mod;
   modSync(d);
-  if (['move', 'copy', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
+  if (['move', 'copy', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (was.moved) return;
   if (m.kind === 'offset') {
     if (m.stage === 'obj') {
