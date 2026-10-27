@@ -41,6 +41,7 @@ import { rotateEntities, rotationAngle, rotationMatrix } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './scale.js';
 import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
+import * as FI from './fill.js';
 import { extendEntity } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import { layoutSnap } from './layoutsnap.js';
@@ -82,6 +83,7 @@ const ribbon = { mode: 'full', last: 'full', tab: 'Home', flyout: false, panel: 
 const docker = { width: 290, folds: {} };
 const strip = { on: true, saved: [], recent: [] };
 let currentColour = 'bylayer';
+let currentFill = 'aci:7';
 function showShortcuts() {
   ui.cmdUI.close();
   openShortcuts(ownBindings, async (draft) => {
@@ -525,7 +527,8 @@ function renderSwatchStrip() {
   if (!ui.swatchStrip) return;
   const scroll = ui.swatchStrip.scrollTop;
   const active = document.activeElement, key = active?.dataset.colour, group = active?.parentElement.dataset.swatchGroup;
-  ui.swatchStrip.replaceChildren(...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
+  ui.swatchStrip.replaceChildren(h('button', { type: 'button', class: 'strip-swatch no-fill', title: 'No fill', 'aria-label': 'No fill', 'data-testid': 'no-fill',
+    onclick: () => applyFill(null), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); applyFill(null); } }), ...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
     h('div', { class: 'strip-group', role: 'group', 'aria-label': group + ' colours', 'data-swatch-group': group }, list.map(({ key, title, id }) =>
       h('button', { type: 'button', class: 'strip-swatch', title, 'aria-label': title, 'data-colour': key, style: 'background:' + colourCss(key),
         onclick: () => applyStripColour(key), oncontextmenu: (e) => {
@@ -534,6 +537,7 @@ function renderSwatchStrip() {
             try { await swatches.del(id); await loadSwatches(); }
             catch { note('Could not remove the swatch on this PC. Try again.'); }
           }]]);
+          else applyFill(key);
         }
       })) )));
   ui.swatchStrip.scrollTop = scroll;
@@ -707,7 +711,9 @@ function ribbonContents(kind) {
     const colourField = ribbonField('Colour', ui.ribbonColour);
     ui.ribbonSwatch = h('button', { class: 'ribbon-swatch', type: 'button', 'aria-label': 'Pick ribbon colour', onclick: pickPropColour });
     colourField.insertBefore(ui.ribbonSwatch, ui.ribbonColour);
-    groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt))));
+    groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt)),
+      stack(btn('Fill', '<path d="M4 12l8-8 8 8-8 8zM4 12h16"/>', () => startColourTool('fill'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'fill' }),
+        btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'eyedropper' }))));
   }
   return groups;
 }
@@ -1274,6 +1280,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
+  state.colourTool = null;
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
@@ -3518,7 +3525,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
-  const on = !['select', 'pan', 'step'].includes(state.tool) || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
+  const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
   return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
@@ -3575,6 +3582,7 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'),
   dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
@@ -4115,7 +4123,7 @@ function attachCanvasEvents() {
   c.addEventListener('pointerdown', (e) => {
     altPick = false;
     if (!e.altKey && selectionCycle) { selectionCycle = null; renderCommand(); }
-    if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
+    if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.colourTool || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
     altPick = true;
     suppressAltUp = true;
     e.preventDefault(); e.stopImmediatePropagation();
@@ -4152,6 +4160,7 @@ function attachCanvasEvents() {
       capture(c, e);
       c.classList.add('panning');
     } else if (e.button === 0 && state.tool !== 'pan') {
+      if (state.colourTool && editable() === state.colourTool.d) { colourToolClick(editable(), toDrawing(editable(), e.clientX, e.clientY)); return; }
       const gh = e.target.closest && e.target.closest('[data-gap]');
       if (sheetDown(e)) { capture(c, e); return; }
       if (balDown(e)) { capture(c, e); return; }
@@ -4289,6 +4298,11 @@ function renderCommand() {
   if (state.dsOpen) { ui.hist.textContent = 'Command: DIMSTYLE   Dimension style'; ui.prompt.textContent = 'Preset, arrow size, text height, decimals, gap, units and text position. OK applies, Esc cancels:'; return; }
   const t = TOOLS.find((x) => x.id === state.tool), lay = curLay(), ed = editable();
   if (state.zwin) { ui.hist.textContent = 'Command: ZOOM   Window'; ui.prompt.textContent = 'Drag a box with the left button to zoom into it (Esc cancels):'; return; }
+  if (state.colourTool && ed === state.colourTool.d) {
+    const t = state.colourTool;
+    ui.hist.textContent = 'Command: ' + t.kind.toUpperCase() + (state.msg ? '   ' + state.msg : '');
+    ui.prompt.textContent = t.kind === 'fill' ? 'Click inside a closed outline (Esc ends):' : t.source ? 'Click each target (Esc ends):' : 'Click a source object (Esc ends):'; return;
+  }
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
@@ -6687,7 +6701,7 @@ function trackOvl(d, out, k) {
 
 // ---- grips (grips.js; mock-up R5c, left pane): blue squares on a selected line, arc, circle or polyline to drag ----
 /** Do grips show? On a drawing tab with the Select tool, something selected (not too many things), and no text handles in the way. */
-const gripOn = (d) => !!d && !d.lay && !state.match && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
+const gripOn = (d) => !!d && !d.lay && !state.match && !state.colourTool && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -6873,6 +6887,7 @@ function editKey(e) {
     else if (curLay() && pdrag) cancelPlacedDrag();
     else if (curLay() && multiSel() && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
+    else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }
     else if (state.match) endMatch();
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
@@ -7153,6 +7168,14 @@ function buildPropsSection() {
   ui.propColour = h('select', { class: 'fld', 'aria-label': 'Colour', 'data-testid': 'prop-colour' });
   ui.propLt = h('select', { class: 'fld', 'aria-label': 'Line type', 'data-testid': 'prop-lt' });
   ui.propSwatch = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Pick colour', 'data-testid': 'prop-swatch', onclick: pickPropColour });
+  ui.propFill = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Fill colour', 'data-testid': 'prop-fill', onclick: async () => {
+    const d = editable(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
+    if (!ents?.length) return;
+    const rgb = await pickColour(keyRgb(ents[0].fill || currentFill), !ents[0].fill || ents.some((e) => e.fill !== ents[0].fill));
+    if (rgb && editable() === d) applyFill(rgbKey(rgb));
+  } });
+  ui.propFillLabel = h('span', { class: 'lbl' });
+  ui.propFillRow = row('Fill', ui.propFill, ui.propFillLabel);
   ui.propLayer.addEventListener('change', () => propSet('layer', ui.propLayer.value));
   ui.propColour.addEventListener('change', () => ui.propColour.value === 'custom' ? pickPropColour() : propSet('colour', ui.propColour.value));
   ui.propLt.addEventListener('change', () => propSet('lt', ui.propLt.value));
@@ -7178,7 +7201,7 @@ function buildPropsSection() {
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
-  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt));
+  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), ui.propFillRow, row('Line type', ui.propLt));
   ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch);
   ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo, ui.propButtons);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
@@ -7211,6 +7234,11 @@ function renderPropsPanel(d) {
     ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
   }
   if (none) return;
+  const closed = ents.filter(FI.closedOutline), fill = closed[0]?.fill;
+  ui.propFillRow.hidden = !closed.length;
+  ui.propFill.classList.toggle('no-fill', !fill);
+  ui.propFill.style.backgroundColor = fill ? colourCss(fill) : '';
+  ui.propFillLabel.textContent = closed.some((e) => e.fill !== fill) ? VARIES : fill ? PR.colourLabel(fill) : 'No fill';
   ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
   setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...PR.colourOptions(sm.colour)], sm.colour == null ? '' : sm.colour);
@@ -7329,9 +7357,64 @@ function selectSimilarMenu(btn) {
   popMenu(b.left, b.bottom + 2, items);
 }
 
+function fillTargets(d, targets, key) {
+  const keep = new Set(d.sel);
+  const eligible = targets.filter((i) => FI.closedOutline(d.raw.entities[i]) && !lockedEnt(d, i));
+  const changed = new Set(eligible.filter((i) => (d.raw.entities[i].fill || null) !== key));
+  if (changed.size) {
+    commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill');
+    setSel(d, keep);
+    if (key) usedColour(key);
+  }
+  renderEdit(); renderRibbon();
+  note(`${changed.size} outline${changed.size === 1 ? '' : 's'} ${key ? 'filled' : 'cleared'}` + (eligible.length < targets.length ? '; open shapes or locked outlines skipped' : '') + '. Ctrl+Z takes it back');
+}
+function applyFill(key) {
+  if (key) currentFill = key;                          // only an actual fill (fillTargets, the Fill tool) joins the recents
+  const d = editable();
+  if (d?.sel.size) fillTargets(d, [...d.sel], key);
+  else note(key ? 'Current fill colour: ' + PR.colourLabel(key) : 'Select closed outlines to remove their fills');
+}
+function startColourTool(kind) {
+  const d = editable();
+  if (!d) { note('Fill and Eyedropper work on a drawing tab'); return; }
+  setTool('select'); state.match = null;
+  state.colourTool = { kind, d, source: null };
+  renderEdit(); renderRibbon(); paintOverlay();
+  note(kind === 'fill' ? 'Fill: click inside a closed outline; Esc ends' : 'Eyedropper: click a source object; Esc ends');
+  renderCommand();
+}
+function closedAt(d, p) {
+  const seen = new Set();
+  for (let k = d.fl.items.length - 1; k >= 0; k--) {
+    const it = d.fl.items[k], i = it.e;
+    if (seen.has(i) || !itemVisible(it, d.off) || (it.ps ? 1 : 0) !== spaceOf(d.fl) || hidIdx(d)?.has(i) || lockedEnt(d, i)) continue;
+    if (p[0] < it.b[0] || p[0] > it.b[2] || p[1] < it.b[1] || p[1] > it.b[3]) continue;
+    seen.add(i);
+    if (FI.closedOutline(d.raw.entities[i]) && FI.containsPoint(FI.boundary(d.raw.entities[i]), p)) return i;
+  }
+  return -1;
+}
+function colourToolClick(d, p) {
+  const tool = state.colourTool;
+  if (tool.kind === 'fill') {
+    const i = closedAt(d, p);
+    if (i < 0) { note('Not one closed outline: Join first'); return; }
+    fillTargets(d, [i], currentFill); return;
+  }
+  const hit = Math.max(closedAt(d, p), hitAt(d, p));
+  if (hit < 0 || d.raw.entities[hit].layer === Ed.DIM_LAYER) { note('Eyedropper: click an object; Esc ends'); return; }
+  if (!tool.source) { tool.source = PR.withColour(d.raw.entities[hit], PR.effectiveColour(d.raw.entities[hit], layerMap(d))); note('Eyedropper: click targets one by one; Esc ends'); return; }
+  const next = FI.copyColours(tool.source, d.raw.entities[hit], layerMap(d));
+  if (!FI.coloursEqual(next, d.raw.entities[hit])) commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours');
+  usedColour(PR.colourKey(next)); if (next.fill) usedColour(next.fill);
+  renderEdit(); note('Eyedropper: colours copied; click the next target or Esc');
+}
+
 // -- Match properties: the first selected shape is the source; each shape clicked takes its layer, colour and line type; Esc ends
 function matchWords(ent) { return `${PR.typeName(ent)} (${ent.layer}, ${PR.colourLabel(PR.colourKey(ent))}, ${PR.ltLabel(PR.ltKey(ent))})`; }
 function startMatch() {
+  state.colourTool = null;
   const d = editable();
   if (!d) return;
   const src = [...d.sel].find((e) => d.raw.entities[e] && d.raw.entities[e].layer !== Ed.DIM_LAYER);
@@ -7779,6 +7862,7 @@ function renderEdit() {
   }
   ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = !on && !lib; ui.outSec.hidden = !on || lib;
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
+  if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
   if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
   if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }

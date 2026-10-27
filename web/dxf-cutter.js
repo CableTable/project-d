@@ -99,6 +99,7 @@ export function cutterDoc(doc, tol) {
 
   function walk(ents, M, ctx, depth) {
     for (const e of ents || []) {
+      if (e.fill) count.left++;
       if (e.hidden) continue;
       const byBlock = e.aci === 0 && ctx.aci != null;
       const o = { layer: e.layer === '0' && ctx.layer != null ? ctx.layer : e.layer, aci: byBlock ? ctx.aci : e.aci, tc: byBlock ? ctx.tc : e.tc, ps: !!(ctx.ps || e.ps) };

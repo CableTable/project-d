@@ -1,4 +1,5 @@
 import { ACI } from './colour.js';
+import { closedOutline, linkFills, fillCss, outlineOps } from './fill.js';
 // The drawing viewer's reader (.dxf), pure: no DOM, no canvas — drawing.test.mjs. dxf-worker.js runs it off the
 // page's thread, viewers.js draws what it gives, and Measure asks pickAt / describe2d / measure2d (geom.js words them).
 //
@@ -59,7 +60,7 @@ export function readDxf(text) {
     else if (name === 'ENTITIES') doc.entities = entities(records(C, V, i + 2, end));
     i = end;
   }
-  return doc;
+  return linkFills(doc);
 }
 
 function header(doc, C, V, from, to) {
@@ -256,7 +257,7 @@ export function arcSweep(a0, a1, cw) {
 }
 
 /** Polyline points [x, y, bulge] into ops. */
-function polyOps(ops, pts, closed) {
+export function polyOps(ops, pts, closed) {
   if (!pts.length) return;
   ops.push(0, pts[0][0], pts[0][1]);
   const n = closed ? pts.length : pts.length - 1;
@@ -368,9 +369,16 @@ export function flatten(doc) {
         it.b = worldBox(mats[it.m], it.b);
         items.push(it);
       };
-      const path = (ops, extra) => { if (ops.length > 3 || (ops.length === 3 && extra && extra.fill)) put({ k: 'p', ...base, ops, ...extra, b: opsBox(ops, extra && extra.w ? extra.w / 2 : 0) }); };
+      const path = (ops, extra) => {
+        if (ops.length <= 3 && !(ops.length === 3 && extra?.fill)) return;
+        put({ k: 'p', ...base, ops, ...extra, b: opsBox(ops, extra?.w ? extra.w / 2 : 0) });
+      };
       const inner = (lt2) => ({ layer: own, L, css, lw, lt: lt2, ps: base.ps, ei: top });
       const r = e.r, f = firsts(r);
+      if (e.fill && closedOutline(e)) {
+        const ops = outlineOps(e);
+        if (ops) put({ k: 'p', ...base, ops, fill: 1, attachedFill: true, css: fillCss(e.fill, lay.css, ctx.css), b: opsBox(ops) });
+      }
       switch (e.type) {
         case 'LINE': path([0, num(f[10]), num(f[20]), 1, num(f[11]), num(f[21])]); break;
         case 'POINT': { const x = num(f[10]), y = num(f[20]); put({ k: 'n', ...base, x, y, b: [x, y, x, y] }); break; }
@@ -408,7 +416,7 @@ export function flatten(doc) {
             else if (c === 41) w.push(num(r.v[k]));
           }
           const pts = nurbs(cp, knots, num(f[71], 3), w, fit);
-          if (pts.length > 1) path(lineOps(pts, false), { spl: 1 });
+          if (pts.length > 1) path(lineOps(pts, closedOutline(e)), { spl: 1 });
           break;
         }
         case 'TEXT': text(base, f, false, put); break;
@@ -678,6 +686,13 @@ function hatch(e, base, put) {
     }
   }
   put({ k: 'h', ...base2, ops, fam, b });
+}
+
+/** The ops of a HATCH's boundary (all loops in one path), null when it draws nothing. */
+export function hatchOps(e) {
+  let ops = null;
+  hatch(e, {}, (it) => { if (it.k === 'p') ops = it.ops; });
+  return ops;
 }
 
 /** A multileader: its lines, arrows and text (the parts most drawings use). */

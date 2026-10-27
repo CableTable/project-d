@@ -14,6 +14,7 @@
 
 import { flatten } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
+import { fillHatch } from './fill.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
@@ -48,7 +49,7 @@ function value(c, v, esc) {
 // ---------------------------------------------------------------- building entities (the shape readDxf gives)
 
 const props = (o = {}) => ({ layer: o.layer ?? '0', lt: o.lt ?? null, aci: o.aci ?? 256, tc: o.tc ?? null, lw: o.lw ?? -1,
-  lts: o.lts ?? 1, hidden: !!o.hidden, ps: !!o.ps, flip: false });
+  lts: o.lts ?? 1, hidden: !!o.hidden, ps: !!o.ps, flip: false, ...(o.fill ? { fill: o.fill } : {}) });
 
 /** An entity from its type, its pairs [[code, value], …] and its common properties { layer, aci, tc, lt, lw, lts, ps, hidden }. */
 export function entity(type, pairs, o = {}) {
@@ -163,6 +164,8 @@ function prepareSave(doc) {
         const v = e.r.v.slice(); v[e.r.c.indexOf(2)] = normal;
         e = { ...e, r: { ...e.r, v } };
       }
+      const hatch = fillHatch(e);
+      if (hatch) result.push(hatch);
       result.push(e);
     }
     return result;

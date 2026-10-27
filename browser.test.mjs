@@ -582,6 +582,93 @@ try {
       await expectFades(true, false);
     } finally { await context.close(); }
   });
+  await step('TODO 148c: Fill tool, Undo, swatch fill, No fill, Join-first, Eyedropper two targets, save/reopen and PDF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const command = async (text) => {
+      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    const open = async (text, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
+      await command('fit');
+    };
+    const click = async (x, y) => {
+      const pt = await p.evaluate(([x, y]) => {
+        const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
+        const pt = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: pt.x, y: pt.y };
+      }, [x, y]);
+      await p.mouse.click(pt.x, pt.y);
+    };
+    const swatch = (key) => p.locator(`[data-swatch-group=standard] [data-colour="${key}"]`);
+    const save = async () => {
+      await p.locator('.coords').click(); await p.waitForTimeout(1100);
+      const pending = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      return readFileSync(await (await pending).path(), 'utf8');
+    };
+    const undo = async () => { await p.locator('.coords').click(); await p.keyboard.press('Control+z'); };
+    const fills = (text) => readDxf(text).entities.map((e) => e.fill || null);
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(); addLayer(raw, 'Target', { aci: 3 });
+      addEntities(raw, dxfPoly([[10, 10], [60, 10], [60, 60], [10, 60]], { closed: true }),
+        dxfCircle(100, 35, 20, { layer: 'Target', lt: 'DASHED' }), dxfEllipse(165, 35, 25, 0, .7),
+        dxfLine(10, 90, 60, 90), dxfLine(60, 90, 60, 120), dxfLine(60, 120, 10, 120), dxfLine(10, 120, 10, 90));
+      await open(writeDxf(raw), 'fill148c.dxf'); await p.keyboard.press('Escape');
+      await swatch('aci:1').click({ button: 'right' });
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Fill', exact: true }).click();
+      await click(35, 35); assert.equal(fills(await save())[0], 'tc:16711680');
+      await undo(); assert.equal(fills(await save())[0], null, 'one Undo per tool fill');
+      await click(35, 105); assert.match(await q('cmd-hist').textContent(), /Not one closed outline: Join first/);
+      await p.keyboard.press('Escape'); await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await swatch('aci:3').click({ button: 'right' });
+      assert.match(await q('cmd-prompt').textContent(), /open shapes.*skipped/);
+      assert.deepEqual(fills(await save()).slice(0, 3), Array(3).fill('tc:65280'));
+      await q('no-fill').click(); assert.ok(fills(await save()).every((v) => v === null));
+      await undo(); assert.equal(fills(await save())[0], 'tc:65280', 'No fill is one Undo');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await q('no-fill').click({ button: 'right' }); assert.equal(fills(await save())[0], null);
+      await p.keyboard.press('Escape'); await click(10, 35);
+      await q('prop-fill').click(); await q('colour-hex').fill('#ff8800'); await q('colour-ok').click();
+      await swatch('aci:5').click();
+      await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Eyedropper', exact: true }).click();
+      await click(35, 35); await click(100, 35); await click(165, 35);
+      const copied = readDxf(await save());
+      for (const e of copied.entities.slice(0, 3)) { assert.equal(e.fill, 'tc:16746496'); assert.equal(e.aci, 5); }
+      assert.equal(copied.entities[1].layer, 'Target'); assert.equal(copied.entities[1].lt, 'DASHED');
+      await undo(); assert.equal(fills(await save())[2], null, 'one Undo per Eyedropper target');
+      await p.keyboard.press('Control+y'); await p.keyboard.press('Escape');
+      const text = await save(); await open(text, 'fill148c-reopened.dxf');
+      assert.deepEqual(fills(await save()).slice(0, 3), Array(3).fill('tc:16746496'));
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'fits 1024 px');
+        for (const name of ['Fill', 'Eyedropper']) assert.ok(await p.locator('[data-panel=Properties]').getByRole('button', { name, exact: true }).isVisible());
+        await p.screenshot({ path: `${shotDir}/todo148c-filled-${theme}.png` });
+      }
+      await command('pdf'); await q('pdf-dialog').waitFor();
+      await q('pdf-black').uncheck();
+      const pending = p.waitForEvent('download'); await q('pdf-go').click();
+      const pdf = readFileSync(await (await pending).path(), 'latin1');
+      assert.match(pdf, /1 0\.533 0 rg/); assert.match(pdf, /f\*/);
+      if (await q('pdf-close').count()) await q('pdf-close').click();
+      await command('eyedropper'); await click(35, 90); await click(100, 35);
+      assert.equal(fills(await save())[1], null, 'unfilled source copies No fill');
+      await p.keyboard.press('Escape');
+      const overlapping = newDoc(); addEntities(overlapping, dxfPoly([[10, 10], [60, 10], [60, 60], [10, 60]], { closed: true }), dxfCircle(35, 35, 15));
+      await open(writeDxf(overlapping), 'topmost148c.dxf');
+      await command('fill'); await click(35, 35);
+      assert.deepEqual(fills(await save()), [null, 'tc:16746496'], 'topmost closed outline wins');
+      await p.keyboard.press('Escape');
+    } catch (e) { await p.screenshot({ path: `${shotDir}/todo148c-failure.png` }); throw e; }
+    finally { await context.close(); }
+  });
+
   await step('TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour, recents and saved removal', async () => {
     const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
