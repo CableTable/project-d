@@ -232,10 +232,11 @@ try {
         await expectFades(true, true);
         await strip.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
         await expectFades(true, false);
-        const box = await strip.boundingBox();
         await strip.evaluate((el) => { el.scrollLeft = 0; });
-        await p.mouse.move(box.x + 100, box.y + 12); await p.mouse.down();
-        await p.mouse.move(box.x + 60, box.y + 12, { steps: 8 }); await p.mouse.up();
+        // A fixed strip offset can hit the close button with wider CI fonts.
+        const box = await p.locator('.tabs .dtab .tname').first().boundingBox();
+        await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await p.mouse.down();
+        await p.mouse.move(box.x + box.width / 2 - 30, box.y + box.height / 2, { steps: 8 }); await p.mouse.up();
         assert.ok(await strip.evaluate((el) => el.scrollLeft > 0), 'drag scrolls sideways');
         await expectFades(true, true);
         assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'Drawing 1', 'drag does not switch tabs');
