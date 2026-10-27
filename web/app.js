@@ -207,6 +207,7 @@ const state = {
   snap: true,                      // the SNAP toggle in the status bar (kept for the session)
   snapTypes: snapTypes(),          // per-type ticks, remembered on this PC
   ortho: false,                    // the ORTHO toggle: a sticky Shift (picks kept straight along X or Y from the first point)
+  dynamicInput: true,
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
   wireframe: false,
@@ -1349,6 +1350,14 @@ function buildCanvas() {
   ui.grips = s('svg', { 'aria-hidden': 'true', style: 'position:absolute;inset:0', preserveAspectRatio: 'none' });
   ui.ovlWrap = h('div', { class: 'ovl' }, ui.ovl, ui.grips);
   ui.tip = h('div', { class: 'drawtip', hidden: true, 'data-testid': 'draw-tip' });
+  ui.dynamicTrack = h('div', { class: 'dynamic-track', hidden: true });
+  ui.cursorFields = {};
+  ui.dynamicFields = h('div', { class: 'cursor-fields' }, [['length', 'Length'], ['angle', 'Angle'], ['dx', 'Δx'], ['dy', 'Δy']].map(([key, label]) => {
+    const field = ui.cursorFields[key] = h(key === 'length' || key === 'angle' ? 'input' : 'output', {
+      class: 'cursor-field', 'data-testid': 'cursor-' + key, 'aria-label': label, readonly: true, tabindex: '-1',
+    });
+    return h('label', {}, h('span', {}, label), field);
+  }));
   ui.textHint = h('div', { class: 'pop texthint', hidden: true, 'data-testid': 'text-hint' }, 'Text tool (T): click to place · type · drag a corner to change the height');
   ui.matchHint = h('div', { class: 'pop hintpill matchpill', hidden: true, 'data-testid': 'match-hint' });
   ui.gripHint = h('div', { class: 'pop hintpill', hidden: true, 'data-testid': 'grip-hint' }, 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels');
@@ -3697,15 +3706,16 @@ function buildStatus() {
   // GRID is not built: greyed, never "on". SNAP, ORTHO, POLAR (F10) and OTRACK (F11) work.
   loadTrack();
   const TITLES = { SNAP: 'Snap on/off. Right-click: snap types', GRID: 'Not built yet', ORTHO: 'Keep picked points straight along X or Y from the first point (Shift does it for one pick)',
-    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it' };
+    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): show cursor fields during Line’s next-point prompt' };
   ui.tog = {};
-  const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['OTRACK', state.otrack]].map(([t, on]) => {
+  const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['DYN', state.dynamicInput], ['OTRACK', state.otrack]].map(([t, on]) => {
     const off = t === 'GRID';
     const b = ui.tog[t] = h('button', { class: 'tog' + (on ? ' on' : '') + (off ? ' off' : ''), type: 'button', 'data-testid': 'tog-' + t.toLowerCase(), 'aria-pressed': String(on), 'aria-disabled': off ? 'true' : null, title: TITLES[t] }, t);
     b.addEventListener('click', () => {
       if (off) return;
       if (t === 'POLAR') { polarSet(!state.polar.on); return; }
       if (t === 'OTRACK') { otrackSet(!state.otrack); return; }
+      if (t === 'DYN') { dynamicInputSet(!state.dynamicInput); return; }
       chip(t, !b.classList.contains('on'));
       const clear = () => { for (const a of [state.setlen, state.meas, state.dim, state.ldr]) if (a) a.hover = null; paintOverlay(); };
       if (t === 'SNAP') { state.snap = b.classList.contains('on'); clear(); drawAlignmentGuides(); note(state.snap ? 'Snap on: ticked snap types' : 'Snap off: the exact point you click'); }
@@ -5952,7 +5962,13 @@ function drawOvl() {
     const pv = DR.toolPreview(state.draw);
     for (const g of pv.guides) out.push(s('path', { class: 'dr-guide', d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
-    if (pv.at && (pv.readout || state.trk.res)) tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: pv.at[0], y: pv.at[1] };
+    if (pv.at && (pv.readout || state.trk.res)) {
+      tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: pv.at[0], y: pv.at[1] };
+      if (state.dynamicInput && state.draw.kind === 'line' && state.draw.pts.length) {
+        tip.fields = DR.dynamicInput(state.draw.pts.at(-1), pv.at, state.dp);
+        tip.tracking = state.trk.res?.text;
+      }
+    }
   }
   if (d && !d.lay && modLive()) modOvl(d, out);
   if (d && !d.lay && editable()) {
@@ -5972,8 +5988,20 @@ function drawOvl() {
   const t = ui.tip;
   if (!tip) { t.hidden = true; return; }
   const r = canvasSize(), px = (tip.x - view.ox) * view.scale + 16, py = (H - tip.y - view.oy) * view.scale + 16;
-  t.textContent = tip.text; t.hidden = false;
-  t.style.left = Math.max(4, Math.min(px, r.w - t.offsetWidth - 4)) + 'px'; t.style.top = Math.max(4, Math.min(py, r.h - t.offsetHeight - 4)) + 'px';
+  t.classList.toggle('dynamic-input', !!tip.fields);
+  if (tip.fields) {
+    if (t.firstChild !== ui.dynamicTrack) t.replaceChildren(ui.dynamicTrack, ui.dynamicFields);
+    ui.dynamicTrack.textContent = tip.tracking || ''; ui.dynamicTrack.hidden = !tip.tracking;
+    for (const [key, value] of Object.entries(tip.fields)) {
+      const field = ui.cursorFields[key];
+      if (field.tagName === 'INPUT') { field.value = value; field.style.width = value.length + 2 + 'ch'; }
+      else field.textContent = value;
+    }
+  } else t.textContent = tip.text;
+  t.hidden = false;
+  const left = tip.fields && px + t.offsetWidth > r.w - 4 ? px - 32 - t.offsetWidth : px;
+  const top = tip.fields && py + t.offsetHeight > r.h - 4 ? py - 32 - t.offsetHeight : py;
+  t.style.left = Math.max(4, Math.min(left, r.w - t.offsetWidth - 4)) + 'px'; t.style.top = Math.max(4, Math.min(top, r.h - t.offsetHeight - 4)) + 'px';
 }
 
 /** Keys while a drawing tool is on or a letter starts one. Returns true when it took the key. */
@@ -6697,6 +6725,11 @@ function loadTrack() {
 }
 const saveTrack = () => { try { localStorage.setItem(TRK_SAVED, JSON.stringify({ polar: state.polar.on, inc: state.polar.inc, otrack: state.otrack })); } catch { /* ignore */ } };
 function chip(name, on) { const b = ui.tog[name]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+function dynamicInputSet(on) {
+  state.dynamicInput = on; chip('DYN', on); paintOverlay();
+  note(on ? 'Dynamic input on' : 'Dynamic input off');
+  viewStore.put({ id: 'dynamicInput', on }).catch(() => note('Could not remember Dynamic input; it still applies until the app closes'));
+}
 function polarSet(on) {
   state.polar.on = on; chip('POLAR', on);
   if (on && state.ortho) { state.ortho = false; chip('ORTHO', false); }          // POLAR and ORTHO turn each other off
@@ -6923,6 +6956,7 @@ function selectAll() {
 
 function editKey(e) {
   if (document.querySelector('[data-testid=pdf-dialog]')) return;
+  if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); dynamicInputSet(!state.dynamicInput); return; }
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
@@ -8332,6 +8366,7 @@ async function init() {
   try {
     const saved = await viewStore.all();
     state.wireframe = saved.some((r) => r.id === 'wireframe' && r.on === true);
+    state.dynamicInput = saved.find((r) => r.id === 'dynamicInput')?.on !== false;
     const mode = saved.find((r) => r.id === 'workArea')?.mode;
     if (WORK_AREAS.includes(mode)) state.workArea = mode;
     const rb = saved.find((r) => r.id === 'ribbon');

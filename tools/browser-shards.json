@@ -413,5 +413,6 @@
   "TODO 70: Balloon centre point": 10.17,
   "TODO 70: non-finite typed grip points are refused and a valid retry works": 3.42,
   "TODO 70: exact typed points override snaps and ORTHO; inch conversion; Enter and Space repeat": 42.29,
+  "TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges": 12,
   "no console errors": 0
 }

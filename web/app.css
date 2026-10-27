@@ -585,6 +585,13 @@ select.fld { font-family: var(--sans); }
 .ovl .dr-trim-cut { stroke: var(--hot); stroke-width: 3.6; }
 .drawtip { position: absolute; z-index: 5; padding: 3px 9px; border-radius: var(--r); background: var(--accent); color: var(--accentink); font: 500 13px var(--mono); white-space: nowrap; pointer-events: none; }
 .drawtip[hidden] { display: none; }
+.drawtip.dynamic-input { padding: 7px 9px; background: var(--panel); color: var(--text); border: 1px solid var(--accent); box-shadow: 0 2px 6px var(--shadow); }
+.dynamic-track { margin-bottom: 5px; color: var(--accenttext); }
+.cursor-fields { display: grid; grid-template-columns: auto auto; gap: 5px 12px; }
+.cursor-fields label { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.cursor-fields label > span { font: 12px var(--sans); }
+.cursor-field { display: inline-block; min-width: 9ch; padding: 2px 5px; font: inherit; text-align: right; color: var(--text); }
+input.cursor-field { border: 1px solid var(--line); border-radius: var(--r); background: var(--field); }
 
 /* The Text tool (text.js; mock-up R5a Option A): the box and corner handles of a selected text, the typing box, the top bar */
 .ovl .tx-box { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }

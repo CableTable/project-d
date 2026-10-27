@@ -34,6 +34,17 @@ export function angleOf(a, b) {
 }
 const norm360 = (t) => { t %= 360; if (t < 0) t += 360; return t >= 360 - 1e-9 ? 0 : t; };
 
+/** Dynamic input cursor fields: points in mm, Y up; fixed decimals, without negative zero or 360°. */
+export function dynamicInput(a, b, dp) {
+  const fixed = (v) => { const s = v.toFixed(dp); return +s === 0 ? (0).toFixed(dp) : s; };
+  return {
+    length: fixed(dist(a, b)) + ' mm',
+    angle: fixed(+angleOf(a, b).toFixed(dp) % 360) + '°',
+    dx: fixed(b[0] - a[0]) + ' mm',
+    dy: fixed(b[1] - a[1]) + ' mm',
+  };
+}
+
 // ---------------------------------------------------------------- typed input
 
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)';

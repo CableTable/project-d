@@ -7421,8 +7421,8 @@ try {
     await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' });
     return rows;
   };
-  const tipText = () => t('draw-tip').textContent();
-  const tipWhen = (re) => page.waitForFunction((src) => new RegExp(src).test(document.querySelector('[data-testid=draw-tip]').textContent), re.source, { timeout: 8000 }).catch(async (e) => { throw new Error('the readout ' + re + ' never came; it says ' + JSON.stringify(await tipText().catch(() => null)) + '; prompt ' + (await prompt()) + '; ortho ' + (await t('tog-ortho').getAttribute('aria-pressed'))); });
+  const tipText = () => t('draw-tip').evaluate((el) => (el.querySelector('.dynamic-track') || el).textContent);
+  const tipWhen = (re) => page.waitForFunction((src) => { const el = document.querySelector('[data-testid=draw-tip]'); return new RegExp(src).test((el.querySelector('.dynamic-track') || el).textContent); }, re.source, { timeout: 8000 }).catch(async (e) => { throw new Error('the readout ' + re + ' never came; it says ' + JSON.stringify(await tipText().catch(() => null)) + '; prompt ' + (await prompt()) + '; ortho ' + (await t('tog-ortho').getAttribute('aria-pressed'))); });
   await step('drawing tools: the rail buttons are built (titles with keys); on a layout tab they say so; on an empty "Drawing 1" tab a drawing tool makes it a drawing', async () => {
     await closeTabs(/./);
     assert.deepEqual(await tabNames(), ['Drawing 1']);
@@ -7462,7 +7462,7 @@ try {
     const p = await at(120, 70);
     await t('tog-ortho').click();                              // ORTHO (a sticky Shift) locks it straight up
     await page.mouse.move(p.x, p.y);
-    await tipWhen(/· 90\.00°$/);
+    await page.waitForFunction(() => parseFloat(document.querySelector('[data-testid=cursor-angle]')?.value) === 90);
     assert.equal(await t('draw-preview').count(), 1, 'the rubber band is drawn');
     await typeCmd('50');
     await t('tog-ortho').click();
@@ -7483,10 +7483,10 @@ try {
     await click(120.4, 69.7);                                  // within a few pixels of the end (120, 70): snaps to it exactly
     const free = await at(60, 90);
     await page.mouse.move(free.x, free.y);
-    await tipWhen(/^[\d.]+ mm/);
+    await t('cursor-length').waitFor({ state: 'visible' });
     await page.keyboard.down('Shift');
     await page.mouse.move(free.x + 1, free.y + 1);
-    await tipWhen(/· (0|180)\.00°$/);                         // straight along X from the first point
+    await page.waitForFunction(() => [0, 180].includes(parseFloat(document.querySelector('[data-testid=cursor-angle]')?.value))); // straight along X
     await page.keyboard.up('Shift');
     const mid = await at(70, 20);                              // the middle of the first line (20,20)-(120,20): a snap too
     await page.mouse.move(mid.x, mid.y);
@@ -14515,6 +14515,83 @@ try {
       assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', `${key} repeats the last command`);
     }
     await closeTabs(/./);
+  });
+
+  await step('TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges', async () => {
+    await closeTabs(/./);
+    assert.equal(await chipOn('tog-dyn'), true, 'Dynamic input defaults on');
+    await t('decimals').selectOption('2');
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await page.locator('[data-tool=line]').click();
+    const first = await at(20, 20);
+    await page.mouse.move(first.x, first.y); await frames();
+    assert.equal(await t('draw-tip').isVisible(), false, 'no tag before the first point');
+    await page.mouse.click(first.x, first.y);
+    // Use whole client pixels and the actual view scale, including the free-pick rounding to 0.01 mm.
+    const view = await t('overlay').evaluate((el) => { const v = el.viewBox.baseVal; return { x: v.x, y: v.y, width: v.width }; });
+    const canvas = await t('canvas').boundingBox(), sc = canvas.width / view.width;
+    const sheetH = Number(await page.locator('[data-key=sheetH]').inputValue());
+    const start = { x: Math.round(first.x), y: Math.round(first.y) };
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=line]').click();
+    await page.mouse.click(start.x, start.y);
+    const mouse = { x: start.x + 90, y: start.y - 120 };
+    await page.mouse.move(mouse.x, mouse.y); await frames();
+    const mm = (p) => [Math.round((view.x + (p.x - canvas.x) / sc) * 100) / 100, Math.round((sheetH - view.y - (p.y - canvas.y) / sc) * 100) / 100];
+    const a = mm(start), b = mm(mouse), dx = b[0] - a[0], dy = b[1] - a[1];
+    const checkValues = async (dp) => {
+      assert.equal(await t('cursor-length').inputValue(), Math.hypot(dx, dy).toFixed(dp) + ' mm');
+      assert.equal(await t('cursor-angle').inputValue(), (Math.atan2(dy, dx) * 180 / Math.PI).toFixed(dp) + '°');
+      assert.equal(await t('cursor-dx').textContent(), dx.toFixed(dp) + ' mm');
+      assert.equal(await t('cursor-dy').textContent(), dy.toFixed(dp) + ' mm');
+    };
+    await checkValues(2);
+    assert.equal(await t('cursor-length').getAttribute('readonly'), '');
+    assert.equal(await t('cursor-angle').getAttribute('readonly'), '');
+    assert.equal(await page.locator('.drawtip').count(), 1, 'one existing tag');
+    await t('decimals').selectOption('4'); await frames(); await checkValues(4);
+    await t('decimals').selectOption('0'); await frames(); await checkValues(0);
+    await t('decimals').selectOption('2'); await frames();
+    await page.keyboard.press('F12'); await frames();
+    assert.equal(await chipOn('tog-dyn'), false);
+    assert.equal(await t('cursor-length').count(), 0, 'off restores the old tip');
+    assert.match(await t('draw-tip').textContent(), /^[\d.]+ mm · [\d.]+°$/);
+    await page.keyboard.press('F12'); await frames(); await checkValues(2);
+    assert.equal(await chipOn('tog-dyn'), true);
+    await t('tog-dyn').click(); await frames();
+    assert.equal(await chipOn('tog-dyn'), false);
+    await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    assert.equal(await chipOn('tog-dyn'), false, 'off survives reload');
+    await t('tog-dyn').click(); await frames();
+    await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    assert.equal(await chipOn('tog-dyn'), true, 'on survives reload');
+    await blankTab(); await t('tog-polar').click();
+    const cv = await t('canvas').boundingBox();
+    const show = async () => {
+      await page.locator('[data-tool=line]').click();
+      await page.mouse.click(cv.x + cv.width * .35, cv.y + cv.height * .55);
+      await page.mouse.move(cv.x + cv.width * .55, cv.y + cv.height * .4); await frames();
+      assert.ok(await t('cursor-length').isVisible());
+    };
+    await shotBoth('dynamic-input69a', show, async () => { await page.keyboard.press('Escape'); });
+    await show();
+    for (const [x, y] of [[cv.x + cv.width - 2, cv.y + cv.height - 2], [cv.x + 2, cv.y + 2], [cv.x + cv.width - 2, cv.y + 2], [cv.x + 2, cv.y + cv.height - 2]]) {
+      await page.mouse.move(x, y); await frames();
+      const tag = await t('draw-tip').boundingBox();
+      assert.ok(tag.x >= cv.x && tag.y >= cv.y && tag.x + tag.width <= cv.x + cv.width && tag.y + tag.height <= cv.y + cv.height, 'tag stays fully inside the canvas');
+      if (x > cv.x + cv.width / 2) assert.ok(tag.x + tag.width < x, 'flips left');
+      if (y > cv.y + cv.height / 2) assert.ok(tag.y + tag.height < y, 'flips up');
+    }
+    await page.keyboard.press('Escape');
+    // Tracking remains above the fields, and the angle follows its locked ray.
+    await t('tog-polar').click(); await page.locator('[data-tool=line]').click(); await typeCmd('20,20');
+    const ray = await ray30(100); await page.mouse.move(ray.x, ray.y); await frames();
+    assert.match(await page.locator('.dynamic-track').textContent(), /Polar:/);
+    assert.equal(await t('cursor-angle').inputValue(), '30.00°');
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tool=polyline]').click(); await typeCmd('20,20');
+    await page.mouse.move(ray.x, ray.y); await frames();
+    assert.equal(await t('cursor-length').count(), 0, 'other tools keep the original tip');
+    await page.keyboard.press('Escape'); await closeTabs(/./);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
