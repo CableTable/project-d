@@ -678,7 +678,7 @@ function renderRibbon() {
     const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] : '';
     ui.ribbonSwatch.style.background = sm.colour == null ? 'var(--muted)' : colourCss(sm.colour === 'bylayer' ? PR.effectiveColour(ents[0], layerMap(d)) : sm.colour);
     ui.ribbonSwatch.disabled = !ents.length;
-    for (const [sel, options, value] of [[ui.ribbonColour, [...PR.COLOURS.map((c) => [c.key, c.label]), ['custom', 'Colour picker…']], sm.colour],
+    for (const [sel, options, value] of [[ui.ribbonColour, PR.colourOptions(sm.colour), sm.colour],
       [ui.ribbonLt, PR.LINETYPES.map((c) => [c.key, c.label]), sm.lt],
       [ui.ribbonWidth, PR.WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]), String(width)]]) {
       if (value && !options.some(([v]) => v === value)) options.push([value, value]);
@@ -690,13 +690,36 @@ function renderRibbon() {
 
 function buildTabs() {
   ui.tabs = h('div', { class: 'tabs' });
+  ui.tabs.addEventListener('scroll', updateTabFades);
+  new ResizeObserver(updateTabFades).observe(ui.tabs);
+  ui.tabs.addEventListener('wheel', (e) => {
+    if (ui.tabs.scrollWidth <= ui.tabs.clientWidth) return;
+    e.preventDefault(); ui.tabs.scrollLeft += e.deltaX || e.deltaY;
+  }, { passive: false });
+  let drag = null, dragged = false;
+  ui.tabs.addEventListener('pointerdown', (e) => {
+    dragged = false;
+    if (e.button === 0 && !e.target.closest('.x')) drag = { x: e.clientX, left: ui.tabs.scrollLeft };
+  });
+  ui.tabs.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (!(e.buttons & 1)) { drag = null; return; }
+    if (!dragged && Math.abs(e.clientX - drag.x) < 5) return;
+    dragged = true; ui.tabs.setPointerCapture(e.pointerId);
+    ui.tabs.scrollLeft = drag.left + drag.x - e.clientX;
+  });
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) ui.tabs.addEventListener(event, () => { drag = null; });
+  ui.tabs.addEventListener('click', (e) => { if (dragged) { e.preventDefault(); e.stopPropagation(); dragged = false; } }, true);
   const modeBtns = [['2D drawing', true], ['3D viewer', false]].map(([text, on]) => {
     const b = h('button', { class: 'seg' + (on ? ' on' : ' off'), type: 'button', title: on ? null : 'Not built yet', 'aria-disabled': on ? null : 'true' }, text);
     if (!on) b.addEventListener('click', () => note('3D viewer: not built yet'));
     return b;
   });
   return h('div', { class: 'tabsrow' },
-    ui.tabs, h('div', { class: 'spacer' }),
+    ui.tabs,
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, '+'),
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, '+ New layout'),
+    h('div', { class: 'spacer' }),
     h('div', { class: 'rowtools' },
       h('div', { class: 'mode', role: 'group', 'aria-label': 'Mode' }, modeBtns),
       h('button', { class: 'btn', type: 'button', 'data-testid': 'open', onclick: openFile }, 'Open'),
@@ -727,6 +750,10 @@ function applyKind() {
 }
 
 const GRID_ICON = TOOLS.find((t) => t.id === 'step').svg;
+function updateTabFades() {
+  ui.tabs.classList.toggle('fade-left', ui.tabs.scrollLeft > 0);
+  ui.tabs.classList.toggle('fade-right', ui.tabs.scrollWidth - ui.tabs.clientWidth - ui.tabs.scrollLeft > 1);
+}
 function renderTabs() {
   ui.tabs.replaceChildren(
     ...state.docs.map((d, i) => {
@@ -737,11 +764,10 @@ function renderTabs() {
         PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
       return b;
-    }),
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, '+'),
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, '+ New layout'));
+    }));
   const on = ui.tabs.querySelector('.dtab.on');
   if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  updateTabFades();
 }
 
 // ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
@@ -7058,9 +7084,7 @@ function renderPropsPanel(d) {
   if (none) return;
   ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
-  const cols = [...PR.COLOURS.map((c) => [c.key, c.label]), ['custom', 'Colour picker…']];
-  if (sm.colour != null && !cols.some((c) => c[0] === sm.colour)) cols.push([sm.colour, PR.colourLabel(sm.colour)]);
-  setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...cols], sm.colour == null ? '' : sm.colour);
+  setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...PR.colourOptions(sm.colour)], sm.colour == null ? '' : sm.colour);
   const lts = [...PR.LINETYPES.map((c) => [c.key, c.label])];
   if (sm.lt != null && !lts.some((c) => c[0] === sm.lt)) lts.push([sm.lt, PR.ltLabel(sm.lt)]);
   setSelect(ui.propLt, [...(sm.lt == null ? [['', VARIES]] : []), ...lts], sm.lt == null ? '' : sm.lt);
