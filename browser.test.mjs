@@ -127,6 +127,35 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 152b: Properties and ribbon show custom colour swatch and hex, keeping the picker option', async () => {
+    const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const doc = newDoc(); addEntities(doc, dxfLine(0, 0, 100, 50));
+      await q('picker').setInputFiles({ name: 'custom-colour.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'custom-colour.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      const ribbonColour = p.getByRole('combobox', { name: 'Ribbon colour', exact: true });
+      for (const [control, hex, rgb] of [[q('prop-colour'), '#FFBF00', 'rgb(255, 191, 0)'], [q('prop-colour'), '#FF8800', 'rgb(255, 136, 0)'], [ribbonColour, '#123456', 'rgb(18, 52, 86)']]) {
+        await control.selectOption('custom');
+        await q('colour-hex').fill(hex); await q('colour-ok').click();
+        for (const select of [q('prop-colour'), ribbonColour]) {
+          assert.equal(await select.locator('option:checked').textContent(), hex);
+          assert.equal(await select.locator('option[value=custom]').textContent(), 'Colour picker…');
+        }
+        for (const swatch of [q('prop-swatch'), p.getByRole('button', { name: 'Pick ribbon colour', exact: true })]) {
+          assert.equal(await swatch.evaluate((el) => el.style.backgroundColor), rgb);
+        }
+        await control.selectOption('custom'); await q('colour-cancel').click();
+        assert.equal(await control.locator('option:checked').textContent(), hex, 'Cancel restores the current value');
+      }
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo152b-colour-${theme}.png` });
+      }
+    } finally { await context.close(); }
+  });
   await step('TODO 152a: 12 tabs keep the header height and add buttons visible; wheel and drag scroll the strip', async () => {
     const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
     try {

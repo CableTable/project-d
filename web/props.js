@@ -13,6 +13,7 @@
 import { lwVertices, hasGrips } from './grips.js';
 import { sweepOf } from './draw.js';
 import * as TX from './text.js';
+import { rgbHex, keyRgb } from './colour.js';
 
 const DEG = Math.PI / 180;
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : 0; };
@@ -42,7 +43,13 @@ export function colourKey(ent) {
   if (a === 0) return 'byblock';
   return 'aci:' + Math.abs(a);
 }
-export const colourLabel = (key) => (COLOURS.find((c) => c.key === key) || { label: key === 'byblock' ? 'ByBlock' : key.startsWith('tc:') ? 'True colour' : 'Colour ' + key.slice(4) }).label;
+export const colourLabel = (key) => (COLOURS.find((c) => c.key === key) || { label: key === 'byblock' ? 'ByBlock' : rgbHex(keyRgb(key)).toUpperCase() }).label;
+/** Both colour dropdowns keep the current colour separate from the picker action. */
+export function colourOptions(current) {
+  const options = COLOURS.map((c) => [c.key, c.label]);
+  if (current != null && !options.some(([key]) => key === current)) options.push([current, colourLabel(current)]);
+  return [...options, ['custom', 'Colour picker…']];
+}
 /** The colour an entity is drawn in, as a key: ByLayer resolves through its layer. */
 export function effectiveColour(ent, layers = {}) {
   const k = colourKey(ent);

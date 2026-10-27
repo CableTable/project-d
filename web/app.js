@@ -678,7 +678,7 @@ function renderRibbon() {
     const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] : '';
     ui.ribbonSwatch.style.background = sm.colour == null ? 'var(--muted)' : colourCss(sm.colour === 'bylayer' ? PR.effectiveColour(ents[0], layerMap(d)) : sm.colour);
     ui.ribbonSwatch.disabled = !ents.length;
-    for (const [sel, options, value] of [[ui.ribbonColour, [...PR.COLOURS.map((c) => [c.key, c.label]), ['custom', 'Colour picker…']], sm.colour],
+    for (const [sel, options, value] of [[ui.ribbonColour, PR.colourOptions(sm.colour), sm.colour],
       [ui.ribbonLt, PR.LINETYPES.map((c) => [c.key, c.label]), sm.lt],
       [ui.ribbonWidth, PR.WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]), String(width)]]) {
       if (value && !options.some(([v]) => v === value)) options.push([value, value]);
@@ -7077,9 +7077,7 @@ function renderPropsPanel(d) {
   if (none) return;
   ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
-  const cols = [...PR.COLOURS.map((c) => [c.key, c.label]), ['custom', 'Colour picker…']];
-  if (sm.colour != null && !cols.some((c) => c[0] === sm.colour)) cols.push([sm.colour, PR.colourLabel(sm.colour)]);
-  setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...cols], sm.colour == null ? '' : sm.colour);
+  setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...PR.colourOptions(sm.colour)], sm.colour == null ? '' : sm.colour);
   const lts = [...PR.LINETYPES.map((c) => [c.key, c.label])];
   if (sm.lt != null && !lts.some((c) => c[0] === sm.lt)) lts.push([sm.lt, PR.ltLabel(sm.lt)]);
   setSelect(ui.propLt, [...(sm.lt == null ? [['', VARIES]] : []), ...lts], sm.lt == null ? '' : sm.lt);
