@@ -820,8 +820,9 @@ try {
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
     p.on('pageerror', (e) => errors.push(String(e)));
     const command = async (text) => {
-      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
-      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      if (await q('cmd-input').isVisible()) await q('cmd-input').fill(text);
+      else { await p.locator('.coords').click(); await p.keyboard.type(text); }
+      await p.keyboard.press('Enter');
     };
     const open = async (text, name) => {
       await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
@@ -907,8 +908,9 @@ try {
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
     p.on('pageerror', (e) => errors.push(String(e)));
     const command = async (text) => {
-      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
-      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      if (await q('cmd-input').isVisible()) await q('cmd-input').fill(text);
+      else { await p.locator('.coords').click(); await p.keyboard.type(text); }
+      await p.keyboard.press('Enter');
     };
     const point = (x, y) => p.evaluate(([x, y]) => {
       const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
@@ -1092,8 +1094,9 @@ try {
     };
     const selectAll = async () => { await p.locator('.coords').click(); await p.keyboard.press('Control+a'); };
     const command = async (text) => {
-      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
-      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+      if (await q('cmd-input').isVisible()) await q('cmd-input').fill(text);
+      else { await p.locator('.coords').click(); await p.keyboard.type(text); }
+      await p.keyboard.press('Enter');
     };
     const open = async (raw, name) => {
       await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
@@ -10965,7 +10968,7 @@ try {
       await page.mouse.click(cursor.x - 30, cursor.y - 30);
       await page.mouse.move(cursor.x, cursor.y); await frames();
       assert.ok(await t('draw-tip').isVisible(), 'the Line readout is showing');
-      await page.keyboard.type('1'); await frames();
+      await cmdLine().focus(); await frames();
       const box = await t('cmd-bar').boundingBox();
       assert.equal(box.x, cursor.x + 20, 'the box takes the first clear corner, right-above');
       assert.equal(box.y + box.height, cursor.y - 20);
@@ -14601,7 +14604,12 @@ try {
     if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
     for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
     await t('decimals').selectOption('2');
-    await page.locator('[data-tool=line]').click(); await click(20, 20);
+    await page.locator('[data-tool=line]').click();
+    await page.keyboard.type('20,20'); await frames();
+    assert.equal(await barOn(), false, 'a full point can be typed with DYN on without opening the command bar');
+    assert.equal(await t('cursor-length').inputValue(), '20');
+    assert.equal(await t('cursor-angle').inputValue(), '20');
+    await page.keyboard.press('Enter');
     const lineButton = page.locator('[data-tool=line]');
     await lineButton.focus(); await page.keyboard.press('Tab');
     assert.equal(await lineButton.evaluate((el) => document.activeElement === el), false, 'Tab leaves a ribbon button with no cursor value typed');
@@ -14617,6 +14625,7 @@ try {
     assert.equal(await page.locator('.cursor-lock:not([hidden])').count(), 1, 'Replacement locks again on Tab');
     await page.keyboard.type('90'); await page.keyboard.press('Enter');
     let doc = await savedDoc(), segment = line70(doc.entities.at(-1));
+    near70(segment.slice(0, 2), [20, 20]);
     near70(segment.slice(2), [segment[0], segment[1] + 3]);
     let end = segment.slice(2);
     const toward = await at(end[0] + 40, end[1]); await page.mouse.move(toward.x, toward.y); await frames();
