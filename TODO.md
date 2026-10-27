@@ -266,6 +266,11 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155l. DIM with automatic type and hover preview (M).
     155m. Extend splines and elliptical arcs (S).
     155n. Copy Array (later).
+    155o. Crosshair cursor (UI check, session 25): AutoCAD draws a full crosshair 5% of the screen (CURSORSIZE 5) with a 3 px pick box; ours is the plain OS crosshair, no pick box, 7 px aperture. No decision chose ours.
+    155p. Snap markers: AutoCAD colour ACI 31 (light orange), size 6; ours selection blue, 10 px, with a text label. No decision chose ours.
+    155q. Status bar: AutoCAD icon toggles, DYN before ORTHO; ours text chips SNAP GRID ORTHO POLAR DYN OTRACK. Check AutoCAD 2027 order first.
+    155r. Window / crossing box fill: AutoCAD 25% (SELECTIONAREAOPACITY); ours 14%. Also check grip hover (ACI 11) / hot (ACI 12, red) colours and grip size 5.
+    155s. Ribbon: a fold arrow per panel title (AutoCAD) vs one cycle button; extra top buttons (2D / 3D, Open, Save, PDF / Print) beside the ribbon have no decision. Selected objects as a plain blue line (not the glow) and the tab list are on purpose (DECISIONS 2026-10-24).
 154. **Next exe test checks** (S, test, S24): Alt + click cycling inside WebView2, Pick from screen, the readout's clipboard copy, a saved fill opening in AutoCAD, F12 toggling Dynamic input (DYN chip changes, no devtools window; 69a) and Alt-drag of a layout part skipping Alignment guides (67a).
 153. **Cache Playwright in CI** (S, CI, 151 review finding 3): cache the Chromium download between runs so the 4 test shards start faster.
 152. ✅ **Exe test 8dd719d leftovers** (built, Knight; S, bugs, Bishop-test 2026-10-27, report runs24/exetest-report.md): (a) with 9+ tabs the tab-bar scrollbar pushes the header down ~11 px and cuts "+ New layout" to "+ New"; (b) after a custom colour from the picker the Colour dropdown still reads "Colour picker…" instead of the colour; (c) a long command echo wraps the status bar right group and clips it. Bugs first (his call 2026-10-27).
