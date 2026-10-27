@@ -251,6 +251,21 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 144. ✅ **Ctrl+C on layout tabs** (built, Knight): Ctrl+C / Edit > Copy snapshots selected placed parts; layout paste keeps their library links and coordinates, one Undo; drawing paste applies placement, rotation and mirrors as plain drawing objects. Empty layout copy leaves the message and clipboard alone.
 145. ✅ **Exe test v0.1.95 leftovers** (S, bugs, Bishop-test 2026-10-25): (a) Guides clears its invalid border and aria-invalid when edited or cleared, in the panel and ribbon; (b) panel widths round to whole px for dragging, keyboard resizing and restored settings; browser check covers a fractional drag at 125% scaling, saved width and reload; (c) Move / Copy already sample the cursor synchronously on pointermove, before Enter uses it; browser checks now type "25", jump once to a different direction and press Enter without waiting for a frame. Rotate / Scale parse typed degrees / factor directly; (d) ✅ keep the Part context tab last, after Output, as AutoCAD context tabs (decision only). Report: `runs21/exe-report.txt`.
 146. ✅ **Floating command box covers the tool preview** (S, seen by both builders 2026-10-25 in the 66g / 66h light screenshots): the box that follows the cursor sits over the preview line of Extend / Fillet; offset it away from the preview or the pick point.
+155. **AutoCAD audit** (session 25, his call 2026-10-27; Bishop audit of built features vs Autodesk help and his AutoCAD 2027 acad.pgp, reports `Project D extras/runs25/au1-3.out`, local): differences an AutoCAD user would notice. Each sub-item is grilled with the AutoCAD check (WORKFLOW) before its build, in this order:
+    155a. Quick-mode Trim / Extend (TRIMEXTENDMODE 1, AutoCAD's default: click what to trim, every object an edge), plus Fence, Crossing, eRase, Undo and Edge options (M).
+    155b. Command aliases to acad.pgp: M Move, P Pan, D Dimstyle, S Stretch, E Erase, R Redraw, CP Copy, DLI / DAL; revisit the deliberate M = Measure and MV = Move (S–M).
+    155c. A click selects one object, not the whole chain of joined lines (S–M).
+    155d. Rotate and Scale Reference option (M).
+    155e. Grip modes: Space / Enter cycles Stretch, Move, Rotate, Scale, Mirror; C copy, B base point, grip menu; Shift for several hot grips; grips on text, ellipse, hatch and blocks (M–L, split when grilled).
+    155f. Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).
+    155g. Offset Through, Erase, Layer and Multiple options; offset ellipses and splines (M).
+    155h. Fillet Polyline (all corners at once), Trim / No trim, circles and parallel lines (M).
+    155i. Explode dimensions and hatches; block attributes as AutoCAD does (M).
+    155j. Mirror blocks and dimensions (M).
+    155k. Snaps: Tab cycles candidates, Tangent and the other missing types, F3 / F8 (with 73), `osnap` / `ortho` / `polar` commands (S–M).
+    155l. DIM with automatic type and hover preview (M).
+    155m. Extend splines and elliptical arcs (S).
+    155n. Copy Array (later).
 154. **Next exe test checks** (S, test, S24): Alt + click cycling inside WebView2, Pick from screen, the readout's clipboard copy, a saved fill opening in AutoCAD, F12 toggling Dynamic input (DYN chip changes, no devtools window; 69a) and Alt-drag of a layout part skipping Alignment guides (67a).
 153. **Cache Playwright in CI** (S, CI, 151 review finding 3): cache the Chromium download between runs so the 4 test shards start faster.
 152. ✅ **Exe test 8dd719d leftovers** (built, Knight; S, bugs, Bishop-test 2026-10-27, report runs24/exetest-report.md): (a) with 9+ tabs the tab-bar scrollbar pushes the header down ~11 px and cuts "+ New layout" to "+ New"; (b) after a custom colour from the picker the Colour dropdown still reads "Colour picker…" instead of the colour; (c) a long command echo wraps the status bar right group and clips it. Bugs first (his call 2026-10-27).
