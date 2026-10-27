@@ -1,7 +1,7 @@
 // Colour readout (TODO 148d): the pure parts. What colour is under the cursor, and how it is written out.
 import { ACI, parseHex, rgbHex, rgbCmyk } from './colour.js';
 import { hitItem } from './edit.js';
-import { boundary, closedOutline, containsPoint } from './fill.js';
+import { containsFill } from './fill.js';
 import { partIndex, toPart } from './layoutsnap.js';
 
 /** The true colour of the drawing item at (x, y) in the index's units, [r, g, b], as the page paints it (ByLayer, ByBlock and a block's own colours already resolved), with no theme darkening;
@@ -9,8 +9,10 @@ import { partIndex, toPart } from './layoutsnap.js';
 export function colourAtItem(ed, x, y, tol) {
   const i = hitItem(ed, x, y, tol), it = i < 0 ? null : ed.items[i];
   if (!it) return null;
-  const e = it.attachedFill && ed.raw.entities[it.e];
-  if (e && closedOutline(e) && !containsPoint(boundary(e), [x, y])) return null;     // an area is hit by its box; a fill is only where the outline holds the point
+  if (it.attachedFill) {
+    const [a, b, c, d, tx, ty] = ed.fl.mats[it.m], det = a * d - b * c;
+    if (!containsFill(it.ops, [(d * (x - tx) - c * (y - ty)) / det, (a * (y - ty) - b * (x - tx)) / det])) return null;
+  }
   return parseHex(it.css === ACI[7] ? '#000000' : it.css);
 }
 

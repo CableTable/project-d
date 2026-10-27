@@ -3437,6 +3437,7 @@ function objHide(d, ents) {
   const all = ents.every((e) => hid.has(E[e]));
   for (const e of ents) { if (all) hid.delete(E[e]); else hid.add(E[e]); }
   d.hidC = null;
+  d.fl = flatten(d.raw, hid);
   layersChanged(d); paintOverlay(); renderObjects(); renderStatus();
   note(all ? `${ents.length} shown again` : `${ents.length} hidden for this session: the saved file keeps them`);
 }
@@ -3458,6 +3459,7 @@ function objZoom(d, ents) {
 function showAllHidden(d) {
   if (d.lay) { if (d.hiddenParts) d.hiddenParts.clear(); drawSheet(); paintOverlay(); renderObjects(); note('All parts are shown'); return; }
   d.off.clear(); d.hid = new Set(); d.hidC = null;
+  d.fl = flatten(d.raw);
   layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
   note('All layers and objects are shown');
 }
@@ -4886,7 +4888,7 @@ function restore(d, st) {
   }
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   restoreBg(d, st);
-  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
+  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw, d.hid);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   showDoc();

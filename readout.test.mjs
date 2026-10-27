@@ -56,6 +56,14 @@ test('TODO 148d: values are RGB, whole-percent CMYK and upper-case hex', () => {
   assert.deepEqual(readoutValues([0, 0, 0]).cmyk, [0, 0, 0, 100]);
 });
 
+test('TODO 148e: readout leaves holes empty and reads the nested ring and inner fill', () => {
+  const raw = docOf(null, { ...rect(0, 0, 100, 100), fill: 'aci:1' }, circle(30, 30, 20), circle(30, 30, 5),
+    { ...circle(75, 75, 10), fill: 'aci:3' });
+  assert.equal(at(raw, 40, 30), null);
+  assert.deepEqual(at(raw, 30, 30), [255, 0, 0]);
+  assert.deepEqual(at(raw, 75, 75), [0, 255, 0]);
+});
+
 test('TODO 148d: computed CSS colours', () => {
   assert.deepEqual(cssRgb('rgb(242, 242, 242)'), [242, 242, 242]);
   assert.deepEqual(cssRgb('rgba(1, 2, 3, 0.5)'), [1, 2, 3]);

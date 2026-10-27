@@ -1,5 +1,5 @@
 import { ACI } from './colour.js';
-import { closedOutline, linkFills, fillCss, outlineOps } from './fill.js';
+import { closedOutline, linkFills, fillCss, fillHoles, fillOps } from './fill.js';
 // The drawing viewer's reader (.dxf), pure: no DOM, no canvas — drawing.test.mjs. dxf-worker.js runs it off the
 // page's thread, viewers.js draws what it gives, and Measure asks pickAt / describe2d / measure2d (geom.js words them).
 //
@@ -318,7 +318,7 @@ const charW = 0.8;                        // a guess at a character's width, in 
 
 // ---------------------------------------------------------------- flatten: what to draw
 
-export function flatten(doc) {
+export function flatten(doc, hidden = new Set()) {
   const H = doc.header, units = UNITS[num(H.$INSUNITS)] || '';
   const ltscale = num(H.$LTSCALE, 1) || 1;
   const metric = num(H.$MEASUREMENT, -1) === 1 || ['mm', 'cm', 'm', 'dm', 'km'].includes(units);
@@ -345,7 +345,10 @@ export function flatten(doc) {
     return px ? { dpx: px } : {};
   };
 
+  const holesByList = new Map();
   function walk(ents, ctx, depth) {
+    if (!holesByList.has(ents)) holesByList.set(ents, fillHoles(ents, hidden));
+    const holes = holesByList.get(ents);
     for (let ei = 0; ei < ents.length; ei++) {
       const e = ents[ei];
       if (truncated) return;
@@ -376,7 +379,7 @@ export function flatten(doc) {
       const inner = (lt2) => ({ layer: own, L, css, lw, lt: lt2, ps: base.ps, ei: top });
       const r = e.r, f = firsts(r);
       if (e.fill && closedOutline(e)) {
-        const ops = outlineOps(e);
+        const ops = fillOps(e, holes.get(e));
         if (ops) put({ k: 'p', ...base, ops, fill: 1, attachedFill: true, exact: /^(tc:|aci:(?!7$))/.test(e.fill), css: fillCss(e.fill, lay.css, ctx.css), b: opsBox(ops) });
       }
       switch (e.type) {
