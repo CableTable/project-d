@@ -209,6 +209,9 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   **CI monitor** (his call, 2026-10-21): right after opening the session PR, bind it (ccd_pr `get_status` / `bind_pr`) and turn
   on its CI monitor (`set_monitor`); on green with his merge OK, merge at once; on red, send the failing step to a Bishop fix round. Every Rook turn re-reads the whole conversation, so a
   long one costs the most.
+  **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min,
+  re-arm on expiry). It prints each finished job and ends with `RUN <id> success|failure`. Never pipe to `jq`: it is not installed
+  here, so such a watch stays silent forever (two silent monitors on PR #25); use gh's own `--jq`.
 - **Context limit 250k** (his call, 2026-10-21): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
   automatically there. If it ever doesn't fire, Rook finishes its step at ~250k and asks him to type `/compact`.
 - **Bishop-support** (his call, 2026-10-21): an interactive claude2 (Sonnet) in a Terminal tab answers his questions while he
