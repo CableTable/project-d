@@ -52,7 +52,7 @@ import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } fro
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
-import { sheetAlignmentLines, snapBoxToAlignment, alignmentSegments } from './align.js';
+import { sheetAlignmentLines, partAlignmentLines, snapBoxToAlignment, alignmentSegments } from './align.js';
 import * as CT from './contour.js';
 import * as LC from './layoutcontour.js';
 import * as OB from './objects.js';
@@ -267,6 +267,7 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 const note = (text) => { state.msg = text; if (ui.fontNote) ui.fontNote.hidden = true; renderCommand(); };
 const fmt = (n) => Number(n).toFixed(2);
 const partHid = (p) => { const d = curDoc(); return !!(d && d.hiddenParts && d.hiddenParts.has(p.partId)); };       // hidden in the Objects tab: not drawn, not hit, not selected
+const partSelectable = (p) => !state.hidden.parts && !partHid(p) && !p.lock;
 let cssCache = null;                // theme colours read from the page once per theme, not at every repaint
 const cssVar = (name, fallback) => { const c = cssCache || (cssCache = new Map()); if (!c.has(name)) c.set(name, getComputedStyle(ui.canvas).getPropertyValue(name).trim() || fallback); return c.get(name); };
 const capture = (el, e) => { try { el.setPointerCapture(e.pointerId); } catch { /* the pointer is already gone */ } };
@@ -2223,7 +2224,7 @@ function layoutBoxSelect(r, e) {
   if (!r.moved) { if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); } return; }
   const a = sheetAt(r.x, r.y), b = sheetAt(e.clientX, e.clientY), crossing = e.clientX < r.x;
   const box = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
-  const eligible = (p) => !state.hidden.parts && !partHid(p) && !p.lock;
+  const eligible = partSelectable;
   const seen = new Set(), hits = [];
   placedNow.forEach((p, i) => {
     if (seen.has(i) || !eligible(p) || !PL.boxHit(lay.parts[p.partId], p, box, crossing)) return;
@@ -2311,9 +2312,9 @@ function drawGuides() {
 function snapPlacedDrag(p, dx, dy) {
   const lay = curLay();
   if (!lay || !state.snap || p.skipSnap) return { dx, dy, hit: null };
-  const u = A.unionBox(p.items.map((x) => placedBox(x.part, x.orig))), straight = !!p.straight;
+  const u = p.box, straight = !!p.straight;
   const guidelines = ribbon.guideSnap && lay.s.guidesShow ? lay.s.guides : [];
-  const sn = snapBoxToAlignment([u[0] + dx, u[1] + dy, u[2] + dx, u[3] + dy], sheetAlignmentLines(lay.s), guidelines, 6 / view.scale, { skipX: straight && dx === 0, skipY: straight && dy === 0 });
+  const sn = snapBoxToAlignment([u[0] + dx, u[1] + dy, u[2] + dx, u[3] + dy], p.alignmentLines, guidelines, 6 / view.scale, { skipX: straight && dx === 0, skipY: straight && dy === 0 });
   return { dx: r2(dx + sn.dx), dy: r2(dy + sn.dy), hit: sn.hits.length ? sn.hits : null };
 }
 
@@ -2321,7 +2322,7 @@ function drawAlignmentGuides() {
   const p = pdrag, g = ui.gAlignment;
   if (!g) return;
   if (!p || !p.moved || p.kind !== 'move' || !p.snapped) { g.replaceChildren(); return; }
-  const box = A.unionBox(p.items.map((x) => placedBox(x.part, x.orig))).map((v, i) => v + (i % 2 ? p.dy : p.dx));
+  const box = p.box.map((v, i) => v + (i % 2 ? p.dy : p.dx));
   g.replaceChildren(...alignmentSegments(box, p.snapped).map(([x1, y1, x2, y2]) => s('line', {
     class: 'alignment-guide', x1, y1: state.sheetH - y1, x2, y2: state.sheetH - y2,
   })));
@@ -2529,6 +2530,10 @@ function placedMove(e) {
     if (!p.moved) {
       if (Math.hypot(e.clientX - p.cx, e.clientY - p.cy) <= 4) return;
       if (!p.copy && p.items.some((x) => x.orig.lock)) { pdrag = null; note(LOCKED); return; }
+      const dragged = new Set(p.items.map((x) => x.i));
+      // Cache before copying or loosening the grid: indexes still identify the dragged originals.
+      p.alignmentLines = [...sheetAlignmentLines(lay.s), ...partAlignmentLines(lay.parts, placedNow, (q, i) => !dragged.has(i) && partSelectable(q))];
+      p.box = A.unionBox(p.items.map((x) => placedBox(x.part, x.orig)));
       const name = p.items.length > 1 ? `${p.items.length} parts` : s.part.name, gm = {};
       p.moved = true; p.g = startGesture(s.d, (p.copy ? 'Copy ' : 'Move ') + name); gMark(p.g);
       p.base = p.items.map((x) => (p.copy ? fresh(x.orig, gm) : x.orig));

@@ -1,6 +1,7 @@
 // Alignment guides: sheet mm, y up; span is the target's extent along the line. See align.test.mjs.
 import { gripOf } from './layout.js';
 import { snapBoxToGuides } from './guides.js';
+import { placedBox } from './apply.js';
 
 /** Sheet edges / centres and the inner edges of nonzero gripper margins. */
 export function sheetAlignmentLines(o) {
@@ -17,7 +18,19 @@ export function sheetAlignmentLines(o) {
   return lines;
 }
 
-/** Nearest per axis; Guidelines precede Alignment guides so a Guideline wins a tie. */
+/** Eligible parts' upright edges / centres, in layout order; the caller excludes the dragged originals. */
+export function partAlignmentLines(parts, placed, eligible) {
+  const lines = [];
+  placed.forEach((p, i) => {
+    if (!eligible(p, i)) return;
+    const [left, bottom, right, top] = placedBox(parts[p.partId], p);
+    for (const mm of [left, (left + right) / 2, right]) lines.push({ axis: 'x', mm, span: [bottom, top] });
+    for (const mm of [bottom, (bottom + top) / 2, top]) lines.push({ axis: 'y', mm, span: [left, right] });
+  });
+  return lines;
+}
+
+/** Nearest per axis; ties keep the order: Guidelines, sheet / grippers, then parts in layout order. */
 export function snapBoxToAlignment(box, lines, guidelines, tol, options) {
   return snapBoxToGuides(box, [...guidelines, ...lines], tol, options);
 }

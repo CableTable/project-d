@@ -233,6 +233,84 @@ try {
       assert.deepEqual(errs, []);
     } finally { await context.close(); }
   });
+  await step('TODO 67b: other-part edges and centres, finite guides, copy exclusions, hidden/locked skip and Esc', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const lay = newLayout('Alignment 67b');
+      for (const [id, name, w, h] of [['a', 'Part A', 100, 60], ['b', 'Part B', 160, 100], ['hidden', 'Hidden target', 160, 100]]) {
+        const raw = newDoc(4);
+        addEntities(raw, dxfPoly([[0, 0], [w, 0], [w, h], [0, h]], { closed: true }));
+        lay.parts[id] = makePart(id, name, raw);
+      }
+      lay.s.gripBottom = 0;
+      lay.placed = [
+        { partId: 'a', x: 200, y: 200, rot: 0 }, { partId: 'b', x: 320, y: 430, rot: 0 },
+        { partId: 'hidden', x: 620, y: 430, rot: 0 }, { partId: 'a', x: 820, y: 430, rot: 0, lock: true },
+      ];
+      await q('picker').setInputFiles({ name: 'alignment-67b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.locator('.dtab.on .tname').filter({ hasText: 'alignment-67b.dxf' }).waitFor();
+      await q('ptab-objects').click(); await p.locator('.or.layer[data-part=hidden] [data-act=vis]').click();
+      await q('ptab-drawing').click(); await p.locator('[data-tool=select]').click();
+      const guides = p.locator('.alignment-guide');
+      const point = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox();
+        return { x: b.x + x * b.width / 1000, y: b.y + (700 - y) * b.width / 1000 };
+      };
+      const near = async (x, y, tol = .1) => {
+        const px = Number(await q('px').inputValue()), py = Number(await q('py').inputValue());
+        assert.ok(Math.abs(px - x) < tol && Math.abs(py - y) < tol, `${px},${py} != ${x},${y}`);
+      };
+      const start = async (x, y, keys = []) => {
+        const from = await point(250, 230), to = await point(x + 50, y + 30);
+        for (const key of keys) await p.keyboard.down(key);
+        await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 6 });
+        await p.waitForFunction(() => ['px', 'py'].some((id) => Number(document.querySelector(`[data-testid=${id}]`).value) !== 200));
+      };
+      const cancel = async () => {
+        await p.keyboard.press('Escape'); await p.mouse.up();
+        assert.equal(await guides.count(), 0); await near(200, 200);
+      };
+      const strokes = [];
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await start(322, 200); await near(320, 200);
+        assert.equal(await guides.count(), 1, 'Part A left snaps to Part B left during drag');
+        const guide = guides.first();
+        assert.ok(await guide.evaluate((el) => el.checkVisibility({ opacityProperty: true, visibilityProperty: true })), 'Alignment guide visible before capture');
+        assert.ok((await guide.boundingBox()).height > 100, 'guide spans the gap on screen');
+        assert.deepEqual(await guide.evaluate((el) => ['x1', 'y1', 'x2', 'y2'].map((k) => Number(el.getAttribute(k)))), [320, 500, 320, 170]);
+        const style = await guide.evaluate((el) => ({ stroke: getComputedStyle(el).stroke, dash: getComputedStyle(el).strokeDasharray, width: getComputedStyle(el).strokeWidth }));
+        assert.equal(style.dash, 'none'); assert.equal(style.width, '1px'); assert.notEqual(style.stroke, 'none'); strokes.push(style.stroke);
+        await p.screenshot({ path: `${shotDir}/todo67b-guide-${theme}.png` });
+        await cancel();
+      }
+      assert.notEqual(strokes[0], strokes[1], 'theme-specific accent strokes');
+      await start(352, 200); await near(350, 200);
+      assert.deepEqual(await guides.first().evaluate((el) => ['x1', 'y1', 'x2', 'y2'].map((k) => Number(el.getAttribute(k)))), [400, 500, 400, 170], 'centre-to-centre guide');
+      await cancel();
+      // Originals are not targets even when Ctrl leaves them under a copy.
+      await start(204, 240, ['Control']); await near(204, 240, .8); assert.equal(await guides.count(), 0);
+      await p.keyboard.up('Control'); await cancel();
+      assert.equal(await p.locator('[data-group=parts] [data-i]').count(), 3, 'Esc removes the copy; hidden target stays out of the DOM');
+      for (const x of [622, 822]) {
+        await start(x, 200); await near(x, 200, .8); assert.equal(await guides.count(), 0, 'hidden / locked parts are not targets'); await cancel();
+      }
+      await start(322, 200, ['Alt']); await near(322, 200, .8); assert.equal(await guides.count(), 0);
+      await cancel(); await p.keyboard.up('Alt');
+      await q('tog-snap').click();
+      await start(322, 200); await near(322, 200, .8); assert.equal(await guides.count(), 0); await cancel();
+      await q('tog-snap').click();
+      await start(322, 202, ['Shift']); await near(320, 200); await p.keyboard.up('Shift'); await cancel();
+      await start(322, 200); await near(320, 200); await p.mouse.up();
+      assert.equal(await guides.count(), 0); await p.keyboard.press('Control+z'); await near(200, 200);
+      await p.keyboard.press('Control+y'); await near(320, 200); await p.keyboard.press('Control+z');
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
   await step('TODO 71a: drawing window and crossing boxes, live styles, Shift add, locked and hidden skip, Move pick', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
