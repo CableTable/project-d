@@ -37,6 +37,18 @@ test('Dynamic input: Tab locks, cycles, preserves typed values and Backspace edi
   assert.deepEqual(s.locked, [false, true]);
   for (const key of ['c', 'U', 'Enter', 'ArrowLeft', '+']) assert.equal(inputKey(s, key, false), null);
 });
+test('Dynamic input: typing into a locked field replaces its value, then Tab locks it again', () => {
+  for (const first of [true, false]) {
+    let s = inputKey(keys('50', first), 'Tab', first);
+    s = inputKey(s, 'Tab', first);
+    s = keys('3', first, s);
+    assert.deepEqual(s.values, ['3', '']); assert.deepEqual(s.locked, [false, false]);
+    s = keys('2', first, s);
+    assert.deepEqual(s.values, ['32', '']);
+    s = inputKey(s, 'Tab', first);
+    assert.equal(s.active, 1); assert.deepEqual(s.locked, [true, false]);
+  }
+});
 test('Dynamic input: mouse fills untyped fields, signed lengths and typed angles override mouse angles', () => {
   near(pointInput(keys('30'), [10, 20], [13, 24]).point, [28, 44]);
   near(pointInput(keys('-30'), [10, 20], [13, 24]).point, [-8, -4]);

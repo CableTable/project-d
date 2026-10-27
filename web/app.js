@@ -6043,6 +6043,10 @@ function cursorKey(e) {
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
   if (field && (field !== ui.cmd || ui.cmd.value)) return;
   const input = cursorInput();
+  if (['Tab', 'Backspace'].includes(e.key) && !DI.hasTyped(input)) {
+    const onCanvas = e.target === document.body || (ui.canvas.contains(e.target) && !field && !e.target.closest?.('button, [role=button], dialog, [role=dialog]'));
+    if (!onCanvas) return;
+  }
   if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
   else {
     const next = DI.inputKey(input, e.key, !state.draw.pts.length);

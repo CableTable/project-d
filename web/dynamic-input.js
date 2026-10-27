@@ -26,7 +26,7 @@ export function inputKey(s, key, first) {
   } else if (key === '<' && !first && i === 0) {
     next.mode = 'polar'; next.locked[0] = !!s.values[0]; next.active = 1;
   } else {
-    next.values[i] += key; next.locked[i] = false;
+    next.values[i] = (s.locked[i] ? '' : s.values[i]) + key; next.locked[i] = false;
   }
   return next;
 }
