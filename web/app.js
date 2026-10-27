@@ -33,6 +33,7 @@ import { explodeSelection } from './explode.js';
 import { breakApart } from './breakapart.js';
 import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
+import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
 import * as GR from './grips.js';
 import { followDimensions } from './linked-dimensions.js';
@@ -1356,7 +1357,7 @@ function buildCanvas() {
     const field = ui.cursorFields[key] = h(key === 'length' || key === 'angle' ? 'input' : 'output', {
       class: 'cursor-field', 'data-testid': 'cursor-' + key, 'aria-label': label, readonly: true, tabindex: '-1',
     });
-    return h('label', {}, h('span', {}, label), field);
+    return h('label', {}, h('span', {}, label), field, h('span', { class: 'cursor-lock', hidden: true, 'aria-label': 'Locked' }, '🔒'));
   }));
   ui.textHint = h('div', { class: 'pop texthint', hidden: true, 'data-testid': 'text-hint' }, 'Text tool (T): click to place · type · drag a corner to change the height');
   ui.matchHint = h('div', { class: 'pop hintpill matchpill', hidden: true, 'data-testid': 'match-hint' });
@@ -3706,7 +3707,7 @@ function buildStatus() {
   // GRID is not built: greyed, never "on". SNAP, ORTHO, POLAR (F10) and OTRACK (F11) work.
   loadTrack();
   const TITLES = { SNAP: 'Snap on/off. Right-click: snap types', GRID: 'Not built yet', ORTHO: 'Keep picked points straight along X or Y from the first point (Shift does it for one pick)',
-    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): show cursor fields during Line’s next-point prompt' };
+    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type cursor fields during Line’s point prompts' };
   ui.tog = {};
   const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['DYN', state.dynamicInput], ['OTRACK', state.otrack]].map(([t, on]) => {
     const off = t === 'GRID';
@@ -5903,6 +5904,8 @@ function drawClick(e) {
   const q = drawPick(d, e.clientX, e.clientY, e.shiftKey);
   trackStop();                                                      // a click ends the hover (and the lock it showed)
   state.drawHover = q; state.msg = null;
+  if (lineDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2)); cursorCommit(); return; }
+  state.draw.cursorInput = null;
   drawApply(DR.toolClick(state.draw, [q[0], q[1]]));
 }
 /** What a tool action gave: shapes become ONE labelled undo step; otherwise its message and the new prompt. */
@@ -5916,7 +5919,7 @@ function drawApply(r) {
   state.msg = r.msg || null; renderCommand(); paintOverlay();
 }
 /** Enter / Esc / right-click: the tool ends what it has (a line or polyline keeps it) and the acquired points go. */
-function drawFinish() { trackClear(); drawApply(DR.toolFinish(state.draw)); }
+function drawFinish() { state.draw.cursorInput = null; trackClear(); drawApply(DR.toolFinish(state.draw)); }
 /** Shift+right-click while a tool asks for a point (TODO 72): Enter, Cancel, Close and Undo last point where they apply, then the snap types. → false when no such tool is on */
 function toolMenu(e) {
   const T = drawLive() ? state.draw : null;
@@ -5946,6 +5949,7 @@ function drawCommit(d, kind, shapes) {
 function drawTyped(raw) {
   if (!drawLive()) return false;
   const T = state.draw, word = raw.trim().toLowerCase();
+  T.cursorInput = null;
   if (word && !DR.toolBusy(T) && !DR.toolWords(T).has(word)) { const cmd = CB.resolve(word, 'draw', ownCommands); if (cmd && (TOOL_OF[cmd.name] || cmd.name) !== T.kind) { runCommand(cmd); return true; } }       // a command typed between two shapes
   state.msg = null;
   drawApply(DR.toolType(T, raw));
@@ -5959,13 +5963,15 @@ function drawOvl() {
   let tip = null;
   if (d && d.cmp && d.cmp.show && !d.cmp.moving && d.cmp.res && !d.cmp.stale) cmpGlow(d.cmp, out);
   if (d && !d.lay && drawLive()) {
-    const pv = DR.toolPreview(state.draw);
+    const T = state.draw, dynamic = lineDynamic() && T.hover ? cursorPoint() : null;
+    const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
     for (const g of pv.guides) out.push(s('path', { class: 'dr-guide', d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
-    if (pv.at && (pv.readout || state.trk.res)) {
-      tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: pv.at[0], y: pv.at[1] };
-      if (state.dynamicInput && state.draw.kind === 'line' && state.draw.pts.length) {
-        tip.fields = DR.dynamicInput(state.draw.pts.at(-1), pv.at, state.dp);
+    if (pv.at && (pv.readout || state.trk.res || dynamic)) {
+      tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: T.hover[0], y: T.hover[1] };
+      if (dynamic) {
+        tip.fields = DR.dynamicInput(T.pts.at(-1) || [0, 0], pv.at, state.dp);
+        tip.dynamic = dynamic;
         tip.tracking = state.trk.res?.text;
       }
     }
@@ -5994,7 +6000,17 @@ function drawOvl() {
     ui.dynamicTrack.textContent = tip.tracking || ''; ui.dynamicTrack.hidden = !tip.tracking;
     for (const [key, value] of Object.entries(tip.fields)) {
       const field = ui.cursorFields[key];
-      if (field.tagName === 'INPUT') { field.value = value; field.style.width = value.length + 2 + 'ch'; }
+      if (field.tagName === 'INPUT') {
+        const i = key === 'length' ? 0 : 1, input = cursorInput(), data = tip.dynamic;
+        const angular = input.mode === 'polar' && i === 1;
+        let rounded = +data.live[i].toFixed(state.dp);
+        if (angular) rounded %= 360;
+        field.value = input.values[i] || (rounded === 0 ? 0 : rounded).toFixed(state.dp) + (angular ? '°' : ' mm');
+        field.style.width = Math.max(9, field.value.length + 2) + 'ch';
+        field.previousElementSibling.textContent = data.labels[i]; field.setAttribute('aria-label', data.labels[i]);
+        field.classList.toggle('active', input.active === i); field.setAttribute('aria-invalid', String(!!data.errors[i]));
+        field.nextElementSibling.hidden = !input.locked[i];
+      }
       else field.textContent = value;
     }
   } else t.textContent = tip.text;
@@ -6011,6 +6027,32 @@ function drawKey(e, k) {
     if (e.key === 'Enter' || (e.key === ' ' && DR.toolBusy(T))) { e.preventDefault(); state.msg = null; drawFinish(); return true; }
   }
   return false;
+}
+
+const lineDynamic = () => state.dynamicInput && drawLive() && state.draw.kind === 'line';
+const cursorInput = () => state.draw.cursorInput ||= DI.createInput(!state.draw.pts.length);
+const cursorPoint = () => DI.pointInput(cursorInput(), state.draw.pts.at(-1), state.draw.hover || state.draw.pts.at(-1) || [0, 0]);
+function cursorCommit() {
+  const result = cursorPoint();
+  if (result.why) { note(result.why); paintOverlay(); return; }
+  trackStop(); drawTyped(result.text);
+}
+function cursorKey(e) {
+  if (!lineDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
+  const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
+  if (field && (field !== ui.cmd || ui.cmd.value)) return;
+  const input = cursorInput();
+  if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
+  else {
+    const next = DI.inputKey(input, e.key, !state.draw.pts.length);
+    if (!next) return;
+    state.draw.cursorInput = next;
+    if (!state.draw.hover) DR.toolHover(state.draw, [0, 0]);
+    if (e.key === 'Escape') state.msg = null;
+    paintOverlay(); renderCommand();
+  }
+  e.preventDefault(); e.stopPropagation();
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
@@ -6726,6 +6768,7 @@ function loadTrack() {
 const saveTrack = () => { try { localStorage.setItem(TRK_SAVED, JSON.stringify({ polar: state.polar.on, inc: state.polar.inc, otrack: state.otrack })); } catch { /* ignore */ } };
 function chip(name, on) { const b = ui.tog[name]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
 function dynamicInputSet(on) {
+  if (state.draw) state.draw.cursorInput = null;
   state.dynamicInput = on; chip('DYN', on); paintOverlay();
   note(on ? 'Dynamic input on' : 'Dynamic input off');
   viewStore.put({ id: 'dynamicInput', on }).catch(() => note('Could not remember Dynamic input; it still applies until the app closes'));
@@ -8417,6 +8460,7 @@ async function init() {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
     editKey(e);
   });
+  document.addEventListener('keydown', cursorKey, true);
   renderWorkArea();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { cssCache = null; renderWorkArea(); update(); });
   try { const t = localStorage.getItem('pd-theme'); if (t) setTheme(t); } catch { /* ignore */ }

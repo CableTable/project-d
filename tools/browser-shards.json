@@ -414,5 +414,6 @@
   "TODO 70: non-finite typed grip points are refused and a valid retry works": 3.42,
   "TODO 70: exact typed points override snaps and ORTHO; inch conversion; Enter and Space repeat": 42.29,
   "TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges": 12,
+  "TODO 69b: Line cursor typing, locks, coordinates, validation, Esc, options and DYN off": 24,
   "no console errors": 0
 }

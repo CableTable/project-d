@@ -142,7 +142,7 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
     68c. ✅ Perpendicular snap from the last picked point to a line or a polyline's straight segment (foot on the segment only), including Dimension point-to-line (T56), as decided in DECISIONS.md. On by default, in the tick list; any type beats nearest, the closest wins, ties go to end.
 69. **Live numbers at the cursor** (M): a tag by the cursor with length, angle, Δx, Δy; typing fills the first field, Tab the next (AutoCAD Dynamic Input, F12).
     69a. ✅ (built, Knight) Show length, angle, Δx and Δy beside the cursor during Line's next-point prompt, with F12 toggling it, tested calculations and a browser check that the tag stays on screen.
-    69b. (after 69a) Let typing and Tab edit Line's cursor fields and commit a validated next point through the existing point-input path, with unit and browser checks for invalid input, Enter and Esc.
+    69b. ✅ (built, Knight) Typing and Tab edit Line's cursor fields, including absolute X / Y before the first point; validated points use the existing point-input path, with unit and browser checks for locks, coordinate prefixes, negative length, invalid input, Enter and Esc.
     69c. (after 69b) Reuse the cursor fields in Polyline and Rectangle / Rounded rectangle point prompts, with focused browser cases per caller and unit tests for their different anchors.
     69d. (after 69b) Reuse the cursor fields in Measure, dimension and Set length point prompts, with focused browser cases per caller and unit tests for their different anchors.
     69e. (after 69b, 66a) Reuse the cursor fields in Modify base-point / target prompts, with unit and browser checks for command-bar focus, typed displacement, F12 and cancellation.
