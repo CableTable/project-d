@@ -63,6 +63,11 @@ usage-agent-install.ps1.
    any other work, and every grill round after that uses them; never questions written without them.
    **Facts first, one round at a time** (his call, 2026-10-24): every code or fact lookup a round needs finishes
    before the round is asked. Never ask a round and then replace it when a lookup comes back: two sets of questions confuse.
+   **AutoCAD check** (his call, 2026-10-27): before grilling any AutoCAD-style feature (commands, prompts, keys, snaps,
+   selection, dimensions), Pawn reads Autodesk's own help (help.autodesk.com) on how AutoCAD does it, and the round's
+   recommendations follow AutoCAD unless he decided otherwise. Not settled by the docs: watch it in his installed AutoCAD
+   with computer use (Claude desktop app only; from the CLI, ask him to run that step there). Never reverse-engineer
+   AutoCAD's binaries (e.g. REA): Autodesk's licence forbids it.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
