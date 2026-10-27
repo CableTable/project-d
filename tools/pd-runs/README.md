@@ -30,7 +30,7 @@ Recent
 ! ♝ Bishop  old          cut off  1h19
 ```
 
-Bars: green under 70 %, amber 70-89, red 90+ (theme colours). Piece, name and dot are Rook cyan, Bishop magenta, King green, Knight yellow. A run is King's when its process line names `claude3`, its file starts `king-`, or its text names `claude3` / `.claude-account3`; any other `.jsonl` is Bishop's.
+Bars: green under 70 %, amber 70-89, red 90+ (theme colours). Piece, name and dot are Rook cyan, Bishop magenta, King green, Knight yellow. A run is King's when its file starts `king-`; any other `.jsonl` is Bishop's (a process or text that merely mentions `claude3` does not count).
 
 - **Cap marker** (`┃` on the week bar, "cap N%" under it): Rook 14 % x k from its Sun 15:30 IST reset, but Fri 23 Oct 83 % and Sat 24 Oct 94 %; Bishop 14 % x k from Mon 15:30 IST (k = whole days since the reset + 1); King and Knight none. `todayCap()` in `runs.mjs`.
 - **Queue**: `runs<N>/queue.txt` of the newest runs folder, lines `[x]` (counted in "N done"), `[>]` (bold, accent dot), `[ ]` (plain); `#` lines ignored; at most 8 rows. No file, no section.

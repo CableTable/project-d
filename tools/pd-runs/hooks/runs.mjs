@@ -69,8 +69,7 @@ export function parseProcs(out) {
   return (out ?? '').split(/\r?\n/).map((l) => /^(\d+)\|(\d+)\|(-?\d+)\|(.*)$/.exec(l)).filter(Boolean).map((m) => ({ pid: +m[1], ppid: +m[2], startMs: +m[3], cmd: m[4] }));
 }
 
-// King = the 3rd account (claude3.cmd, config dir .claude-account3); its runs are the same stream-json files as Bishop's.
-const KING = /claude3|claude-account3/i;
+// King = the 3rd account (claude3.cmd); its runs are the same stream-json files as Bishop's, told apart by the `king-` file prefix.
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentions = (cmd, tok) => new RegExp(`(?<![\\w.-])${esc(tok)}(?![\\w.-])`, 'i').test(cmd);
 const sessionOf = (text) => /"session_id"\s*:\s*"([0-9a-f-]{36})"/.exec(text ?? '')?.[1];
@@ -89,7 +88,7 @@ export function probe(procs, tokens) {
   const hit = procs.filter((p) => tokens.some((t) => mentions(p.cmd, t)));
   if (!hit.length) return null;
   const tree = treeOf(procs, hit.map((p) => p.pid));
-  return { pids: hit.map((p) => p.pid), startMs: Math.min(...hit.map((p) => p.startMs)), testing: procs.some((p) => tree.has(p.pid) && /browser\.test/i.test(p.cmd)), king: procs.some((p) => tree.has(p.pid) && KING.test(p.cmd)) };
+  return { pids: hit.map((p) => p.pid), startMs: Math.min(...hit.map((p) => p.startMs)), testing: procs.some((p) => tree.has(p.pid) && /browser\.test/i.test(p.cmd)) };
 }
 
 const jsonlName = (file) => file.slice(0, -6).replace(/^(pip-|king-|b(?=\d|-))/, '').replace(/^-/, '');
@@ -138,7 +137,7 @@ export function findRuns(files, now, texts, procs = null) {
       const p = probes.get(f.name) ?? (!result && !doneBig ? spare.shift() : null);
       const name = jsonlName(f.name);
       const owns = [f.name];
-      const who = p?.king || KING.test(p?.cmd ?? '') || f.name.startsWith('king-') || KING.test(texts[f.name] ?? '') ? 'King' : 'Bishop';
+      const who = f.name.startsWith('king-') ? 'King' : 'Bishop'; // by file name only: a process or run text that mentions claude3 is not a King run
       if (p) rows.push({ who, name, state: p?.testing ? 'testing' : 'running', age: p ? now - p.startMs : age, files: owns });
       else rows.push({ who, name, state: result ? (result.error ? 'failed' : 'done') : doneBig ? 'done' : fresh ? 'running' : 'cut off', age, files: owns });
       continue;

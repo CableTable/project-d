@@ -94,12 +94,15 @@ test('Rook jobs: done only when the notice says it ended', async () => {
   expect(brief(v.recent)).toEqual(['Rook tests done'])
 })
 
-test('King runs: a claude3 process, a king- file or claude3 in the run text; other jsonl files stay Bishop', async () => {
+test('King runs: only a king- file; claude3 in a process line or in the run text stays Bishop', async () => {
   const files = [{ name: 'king-x.jsonl', mtimeMs: min(1) }, { name: 'b1.jsonl', mtimeMs: min(1) }, { name: 'b2.jsonl', mtimeMs: min(1) }, { name: 'b3.jsonl', mtimeMs: min(1) }]
   const texts = { 'king-x.jsonl': RESULT, 'b1.jsonl': RESULT, 'b2.jsonl': `${RESULT} claude3.cmd`, 'b3.jsonl': '{"type":"assistant"}' }
-  expect(brief(findRuns(files, NOW, texts, [])).sort()).toEqual(['Bishop 1 done', 'King 2 done', 'King x done', 'Bishop 3 running'].sort())
+  expect(brief(findRuns(files, NOW, texts, [])).sort()).toEqual(['Bishop 1 done', 'Bishop 2 done', 'King x done', 'Bishop 3 running'].sort())
   const wrapper = proc(99, 1, 5, 'cmd.exe /c claude3.cmd -p --output-format stream-json > b3.jsonl')
-  expect(brief(findRuns(files, NOW, texts, [wrapper])).sort()).toEqual(['Bishop 1 done', 'King 2 done', 'King x done', 'King 3 running'].sort())
+  expect(brief(findRuns(files, NOW, texts, [wrapper])).sort()).toEqual(['Bishop 1 done', 'Bishop 2 done', 'King x done', 'Bishop 3 running'].sort())
+  // a Bishop run that spawns a claude3 probe (node tools/rook.mjs usage) under its own process stays Bishop
+  const bishop = proc(98, 1, 5, 'cmd.exe /c claude2.cmd -p --output-format stream-json > b3.jsonl'), probe = proc(97, 98, 6, 'cmd.exe /c claude3.cmd -p')
+  expect(brief(findRuns(files, NOW, texts, [bishop, probe])).sort()).toEqual(['Bishop 1 done', 'Bishop 2 done', 'King x done', 'Bishop 3 running'].sort())
 })
 
 test('usage rows, bars, colours, IST', async () => {

@@ -15,7 +15,7 @@ import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
 const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : Math.round(n / 1e3) + 'k');
-const label = (a) => ({ Rowan: 'Knight' })[a] || a;
+const label = (a) => ({ Rowan: 'Knight', Pip: 'Bishop' })[a] || a;
 
 export function claudeUsage(bin, execute = execSync, report = console.error) {
   const env = { ...process.env };
@@ -78,8 +78,8 @@ if (cmd === 'result') {
       const age = cacheAge(['limits.csv', 'history.csv'].map((f) => statSync(join(U, f)).mtimeMs), now);
       if (age !== null) {
         const limits = parseCsv(readFileSync(join(U, 'limits.csv'), 'utf8'));
-        cached = ['Rook', 'Bishop', 'King', 'Rowan'].map((a) => {
-          const names = a === 'Bishop' ? ['Bishop', 'Pip'] : [a]; // a cache written before the rename
+        cached = ['Rook', 'Pip', 'King', 'Rowan'].map((a) => {
+          const names = a === 'Pip' ? ['Pip', 'Bishop'] : [a]; // 'Pip' = Bishop in the CSV and Firestore (the live site still reads it); a cache written under 'Bishop' still loads
           const h5 = limits.find((r) => names.includes(r.agent) && r.window === '5h');
           const wk = limits.find((r) => names.includes(r.agent) && r.window === 'week');
           return [a, h5?.role, h5?.model, h5 && wk ? { h5: [+h5.used_pct, h5.resets ? Date.parse(h5.resets) / 1e3 : null], wk: [+wk.used_pct, wk.resets ? Date.parse(wk.resets) / 1e3 : null] } : null];
@@ -94,18 +94,19 @@ if (cmd === 'result') {
   }
   const agents = cached || [
     ['Rook', 'Lead (main account)', 'Opus 5.5', claudeUsage('claude')],
-    ['Bishop', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
-    ['King', 'Builds and leads in Castle mode (claude3)', 'Sonnet', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude3.cmd')],
+    ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
+    // King is new and the likeliest to fail: a failed probe skips King, it does not take Rook, Bishop and Knight down
+    ['King', 'Builds and leads in Castle mode (claude3)', 'Sonnet', (() => { try { return claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude3.cmd'); } catch { return null; } })()],
     ['Rowan', 'Builder and web research (Codex)', 'gpt-6.1-sol', codex()],
   ];
-  for (const [a, , , u] of agents) if (!u && a !== 'Rowan') throw new Error(`${label(a)} usage probe failed, exit unknown`);
+  for (const [a, , , u] of agents) if (!u && a !== 'Rowan' && a !== 'King') throw new Error(`${label(a)} usage probe failed, exit unknown`);
   const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
   if (!cached) mkdirSync(U, { recursive: true });
   for (const [a, role, model, u] of agents) {
     if (!u) { console.log(`${label(a)}: no reading${suffix}`); continue; }
     if (a === 'Rowan') for (const w of ['h5', 'wk']) u[w] = codexWindow(u[w], now);
     const wkLen = 7 * 864e5, s = u.wk[1] * 1e3 - wkLen, el = now - s;
-    const cap = a === 'Bishop' ? Math.min(100, 14 * Math.ceil((now - s) / 864e5)) : '';
+    const cap = a === 'Pip' ? Math.min(100, 14 * Math.ceil((now - s) / 864e5)) : '';
     const atReset = el > 12 * 36e5 && u.wk[0] > 0 ? Math.round((u.wk[0] * wkLen) / el) : null;
     const fc = atReset == null ? 'too early' : atReset >= 100 ? `hits 100% ${ist((s + (el * 100) / u.wk[0]) / 1e3)}` : `~${atReset}% at reset`;
     console.log(`${label(a)}: 5h ${Math.round(u.h5[0])}% (${resetLabel(u.h5[1], ist)}) · week ${Math.round(u.wk[0])}%${cap ? ' of ' + cap + '% cap' : ''} (${resetLabel(u.wk[1], ist)}) · ${fc}${suffix}`);

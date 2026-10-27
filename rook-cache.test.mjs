@@ -101,6 +101,18 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     utimesSync(join(usage, 'limits.csv'), asOf / 1000, asOf / 1000);
     const noKing = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
     assert.deepEqual(noKing.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
+    // A King probe that fails (not logged in, missing, 100%) skips King only; Rook, Bishop and Knight are still written, here from a pre-King cache too.
+    const failKing = "child.execSync = (command, { env }) => {\n        if (/claude3\\.cmd/.test(command)) { calls++; throw Object.assign(Error('not logged in'), { status: 1 }); }";
+    const liveSource = readFileSync(join(repo, 'live.mjs'), 'utf8');
+    assert.ok(liveSource.includes('child.execSync = (command, { env }) => {'));
+    writeFileSync(join(repo, 'noking.mjs'), liveSource.replace('child.execSync = (command, { env }) => {', failKing));
+    const noKingLive = execFileSync(process.execPath, ['--import', './noking.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 });
+    assert.deepEqual(noKingLive.trim().split('\n'), lines.map((line, i) => (i === 2 ? 'King: no reading (live)' : line.replace(/ \(as of .*\)$/, ' (live)'))));
+    const written = readFileSync(join(usage, 'limits.csv'), 'utf8');
+    assert.match(written, /^Rook,/m);
+    assert.match(written, /^Pip,/m);
+    assert.match(written, /^Rowan,/m);
+    assert.doesNotMatch(written, /^King,/m);
     rmSync(usage, { recursive: true });
     const live = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
     assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
@@ -111,10 +123,10 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       assert.deepEqual(partial.trim().split('\n'), [...lines.slice(0, 3).map((line) => line.replace(/ \(as of .*\)$/, ' (live)')), 'Knight: no reading (live)']);
       const limits = readFileSync(join(usage, 'limits.csv'), 'utf8');
       assert.match(limits, /Rook,role|Rook,Lead/);
-      assert.match(limits, /Bishop,Builds/);
+      assert.match(limits, /Pip,Builds/); // Bishop is still written as Pip: the live site reads that name
       assert.match(limits, /King,Builds/);
       assert.doesNotMatch(limits, /Rowan,/);
-      assert.deepEqual(readFileSync(join(usage, 'history.csv'), 'utf8').trim().split('\n').slice(-6).map((row) => row.split(',')[1]), ['Rook', 'Rook', 'Bishop', 'Bishop', 'King', 'King']);
+      assert.deepEqual(readFileSync(join(usage, 'history.csv'), 'utf8').trim().split('\n').slice(-6).map((row) => row.split(',')[1]), ['Rook', 'Rook', 'Pip', 'Pip', 'King', 'King']);
     }
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });
