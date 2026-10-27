@@ -690,13 +690,34 @@ function renderRibbon() {
 
 function buildTabs() {
   ui.tabs = h('div', { class: 'tabs' });
+  ui.tabs.addEventListener('wheel', (e) => {
+    if (ui.tabs.scrollWidth <= ui.tabs.clientWidth) return;
+    e.preventDefault(); ui.tabs.scrollLeft += e.deltaX || e.deltaY;
+  }, { passive: false });
+  let drag = null, dragged = false;
+  ui.tabs.addEventListener('pointerdown', (e) => {
+    dragged = false;
+    if (e.button === 0 && !e.target.closest('.x')) drag = { x: e.clientX, left: ui.tabs.scrollLeft };
+  });
+  ui.tabs.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    if (!(e.buttons & 1)) { drag = null; return; }
+    if (!dragged && Math.abs(e.clientX - drag.x) < 5) return;
+    dragged = true; ui.tabs.setPointerCapture(e.pointerId);
+    ui.tabs.scrollLeft = drag.left + drag.x - e.clientX;
+  });
+  for (const event of ['pointerup', 'pointercancel', 'lostpointercapture']) ui.tabs.addEventListener(event, () => { drag = null; });
+  ui.tabs.addEventListener('click', (e) => { if (dragged) { e.preventDefault(); e.stopPropagation(); dragged = false; } }, true);
   const modeBtns = [['2D drawing', true], ['3D viewer', false]].map(([text, on]) => {
     const b = h('button', { class: 'seg' + (on ? ' on' : ' off'), type: 'button', title: on ? null : 'Not built yet', 'aria-disabled': on ? null : 'true' }, text);
     if (!on) b.addEventListener('click', () => note('3D viewer: not built yet'));
     return b;
   });
   return h('div', { class: 'tabsrow' },
-    ui.tabs, h('div', { class: 'spacer' }),
+    ui.tabs,
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, '+'),
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, '+ New layout'),
+    h('div', { class: 'spacer' }),
     h('div', { class: 'rowtools' },
       h('div', { class: 'mode', role: 'group', 'aria-label': 'Mode' }, modeBtns),
       h('button', { class: 'btn', type: 'button', 'data-testid': 'open', onclick: openFile }, 'Open'),
@@ -737,9 +758,7 @@ function renderTabs() {
         PS.hasChanges(d) && h('span', { class: 'dot', title: 'Not saved yet' }, ' •'), x);
       b.addEventListener('click', () => { state.doc = i; showDoc(); });
       return b;
-    }),
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, '+'),
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, '+ New layout'));
+    }));
   const on = ui.tabs.querySelector('.dtab.on');
   if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
 }

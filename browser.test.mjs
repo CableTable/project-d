@@ -127,6 +127,42 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 152a: 12 tabs keep the header height and add buttons visible; wheel and drag scroll the strip', async () => {
+    const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
+    try {
+      const p = await context.newPage();
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const height = await p.locator('.tabsrow').evaluate((el) => el.offsetHeight);
+      for (let i = 1; i < 12; i++) await p.getByTestId('new-tab').click();
+      for (const width of [1800, 1440, 1024]) {
+        await p.setViewportSize({ width, height: 1000 });
+        assert.equal(await p.locator('.tabs .dtab').count(), 12);
+        assert.equal(await p.locator('.tabsrow').evaluate((el) => el.offsetHeight), height);
+        for (const id of ['new-tab', 'new-layout']) {
+          assert.equal(await p.getByTestId(id).evaluate((el) => {
+            const r = el.getBoundingClientRect(), row = el.closest('.tabsrow').getBoundingClientRect();
+            return !el.closest('.tabs') && r.left >= 0 && r.right <= innerWidth && r.top >= row.top && r.bottom <= row.bottom && el.scrollWidth <= el.clientWidth;
+          }), true, `${id} fully visible at ${width}`);
+        }
+        await p.locator('.tabs .dtab').first().click();
+        await p.locator('.tabs').hover(); await p.mouse.wheel(0, 150);
+        await p.waitForFunction(() => document.querySelector('.tabs').scrollLeft > 0);
+        const strip = p.locator('.tabs'), box = await strip.boundingBox();
+        await strip.evaluate((el) => { el.scrollLeft = 0; });
+        await p.mouse.move(box.x + 100, box.y + 12); await p.mouse.down();
+        await p.mouse.move(box.x + 20, box.y + 12, { steps: 8 }); await p.mouse.up();
+        assert.ok(await strip.evaluate((el) => el.scrollLeft > 0), 'drag scrolls sideways');
+        assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'Drawing 1', 'drag does not switch tabs');
+      }
+      await p.setViewportSize({ width: 1800, height: 1000 });
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo152a-tabs-${theme}.png` });
+      }
+      await p.getByTestId('new-layout').click();
+      assert.equal(await p.locator('.tabs .dtab[data-kind=layout]').count(), 1);
+    } finally { await context.close(); }
+  });
   await step('TODO 148a: colour picker fields, Properties, Cancel, swatches, screen pick, layers, Contour and exact DXF', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
