@@ -337,7 +337,6 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 - Should the Agents decisions and workflow summaries be reconciled? `DECISIONS.md` assigns builds to Sonnet and permits small lead edits, while `CLAUDE.md` and the current `WORKFLOW.md` role table make Knight the default builder and `CLAUDE.md` says Rook writes no code; the workflow's opening and fresh-lead prompt still assign builds to Bishop, so the role definitions above leave the disputed default and lead-edit policy unsettled and the recorded decisions take precedence.
 - Should `WORKFLOW.md` and `CLAUDE.md` state both review models consistently? The newer two-review instructions assign Opus medium to spec review and Sonnet high to standards review, while the general role descriptions call Bishop-review Opus medium throughout.
-- Can the open duplicate of TODO 65 be removed? `TODO.md` lists Contour colour and line style as both open and completed, while `DECISIONS.md` records it built; the Contour entry follows the decision.
 
 **Castle mode**: The fallback when Rook runs short of usage: Bishop-lead leads and reviews, Knight builds, only S items are taken. Where: `WORKFLOW.md`, Castle mode.
 
