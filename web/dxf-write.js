@@ -14,7 +14,7 @@
 
 import { flatten } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
-import { fillHatch } from './fill.js';
+import { fillHatch, fillHoles } from './fill.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
@@ -121,7 +121,7 @@ export function addEntities(doc, ...ents) { doc.entities = doc.entities.concat(.
 
 /** What writeDxf leaves out: [{ type, count }], most first. */
 export function unwritable(doc) {
-  return prepareSave(doc).skipped;
+  return prepareSave(doc, false).skipped;
 }
 
 /** The same conversion and loss note for Save and the Parts library. */
@@ -134,7 +134,7 @@ export function saveReportNote({ tables, skipped }) {
 }
 
 /** Convert tables only in the saved copy, and count unsupported objects where they are filtered out. */
-function prepareSave(doc) {
+function prepareSave(doc, includeFills = true) {
   const sourceBlocks = doc.blocks || {}, renamed = new Map(), taken = new Set(Object.keys(sourceBlocks).map((n) => n.toLowerCase()));
   const field = (e, c, fallback = '') => e.r.v[e.r.c.indexOf(c)]?.trim() ?? fallback;
   let next = 1, tables = 0;
@@ -152,7 +152,7 @@ function prepareSave(doc) {
   for (const b of Object.values(sourceBlocks)) if (!b.xref) findTables(b.entities);
   const n = new Map(), add = (t) => n.set(t, (n.get(t) || 0) + 1);
   const saved = (list) => {
-    const result = [];
+    const result = [], holes = includeFills ? fillHoles(list || []) : new Map();
     for (let e of list || []) {
       const name = ['ACAD_TABLE', 'INSERT', 'DIMENSION'].includes(e.type) ? field(e, 2) : '', normal = renamed.get(name);
       if (e.type === 'ACAD_TABLE' && normal) {
@@ -164,9 +164,9 @@ function prepareSave(doc) {
         const v = e.r.v.slice(); v[e.r.c.indexOf(2)] = normal;
         e = { ...e, r: { ...e.r, v } };
       }
-      const hatch = fillHatch(e);
+      const hatch = includeFills && fillHatch(e, holes.get(e));
       if (hatch) result.push(hatch);
-      result.push(e);
+      result.push(hatch ? { ...e, fill: undefined } : e); // The saved HATCH already carries the fill; extents need only its geometry.
     }
     return result;
   };

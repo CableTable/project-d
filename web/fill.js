@@ -2,7 +2,7 @@
 // drawing.js paints it behind the outline, dxf-write.js writes it as a solid HATCH right before the outline, and readDxf links a solid
 // HATCH back to the outline it matches. Pure: no DOM; fill.test.mjs.
 import { ACI, keyRgb, pack420 } from './colour.js';
-import { flatten, hatchOps, polyOps, arcSweep } from './drawing.js';
+import { flatten, hatchOps, polyOps, arcSweep, opsBox } from './drawing.js';
 import { withColour, effectiveColour } from './props.js';
 
 const TAU = Math.PI * 2;
@@ -91,6 +91,87 @@ export function containsPoint(poly, p) {
   return inside;
 }
 
+const cross = (a, b, p) => (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0]);
+function edgesMeet(a, b, c, d) {
+  if (Math.max(a[0], b[0]) < Math.min(c[0], d[0]) || Math.max(c[0], d[0]) < Math.min(a[0], b[0]) ||
+      Math.max(a[1], b[1]) < Math.min(c[1], d[1]) || Math.max(c[1], d[1]) < Math.min(a[1], b[1])) return false;
+  return cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0;
+}
+
+function fullyInside(outer, inner, B) {
+  if (!containsPoint(outer, inner[0])) return false;
+  // One inside point suffices if no edges meet; only outer edges near the inner box can meet it.
+  for (let j = 0; j < outer.length; j++) {
+    const a = outer[j], b = outer[(j + 1) % outer.length];
+    if (Math.max(a[0], b[0]) < B[0] || Math.min(a[0], b[0]) > B[2] ||
+        Math.max(a[1], b[1]) < B[1] || Math.min(a[1], b[1]) > B[3]) continue;
+    for (let i = 0; i < inner.length; i++) if (edgesMeet(inner[i], inner[(i + 1) % inner.length], a, b)) return false;
+  }
+  return true;
+}
+
+/** Live islands, computed once per flatten/save, never on pan or zoom. All nested loops take part in even-odd filling. */
+export function fillHoles(entities, hidden = new Set()) {
+  const result = new Map(), groups = new Map();
+  if (!entities.some((e) => e.fill && closedOutline(e))) return result;
+  for (const e of entities) {
+    if (e.hidden || hidden.has(e) || !closedOutline(e)) continue;
+    const ops = outlineOps(e), b = ops && opsBox(ops);
+    if (!b) continue;
+    if (e.flip) [b[0], b[2]] = [-b[2], -b[0]];
+    const key = JSON.stringify([e.layer, !!e.ps]);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ e, ops, b, poly: null });
+  }
+  const polygon = (s) => s.poly ||= opsPoly(s.ops).map(([x, y]) => [s.e.flip ? -x : x, y]);
+  for (const shapes of groups.values()) {
+    shapes.sort((a, b) => a.b[0] - b.b[0]);
+    for (const outer of shapes) {
+      if (!outer.e.fill) continue;
+      const holes = [], A = outer.b;
+      let lo = 0, hi = shapes.length;
+      while (lo < hi) { const mid = (lo + hi) >>> 1; if (shapes[mid].b[0] < A[0]) lo = mid + 1; else hi = mid; }
+      for (let i = lo; i < shapes.length && shapes[i].b[0] <= A[2]; i++) {
+        const inner = shapes[i], B = inner.b;
+        if (inner === outer || B[1] < A[1] || B[2] > A[2] || B[3] > A[3]) continue;
+        if (fullyInside(polygon(outer), polygon(inner), B)) holes.push(inner.e);
+      }
+      result.set(outer.e, holes);
+    }
+  }
+  return result;
+}
+
+/** HATCH polyline loops, in the outer outline's OCS; circles retain exact semicircle bulges. */
+export function fillLoops(e, holes = []) {
+  return [e, ...holes].map((shape) => {
+    const r = shape.r;
+    const pts = shape.type === 'CIRCLE' ? [[val(r, 10) - val(r, 40), val(r, 20), 1], [val(r, 10) + val(r, 40), val(r, 20), 1]]
+      : shape.type === 'LWPOLYLINE' || shape.type === 'POLYLINE' ? polyPts(shape) : boundary(shape).map((p) => [p[0], p[1], 0]);
+    return !!shape.flip === !!e.flip ? pts : pts.map(([x, y, bulge]) => [-x, y, -bulge]);
+  });
+}
+
+export function fillOps(e, holes = []) {
+  const ops = outlineOps(e);
+  if (ops && holes.length) for (const pts of fillLoops(e, holes).slice(1)) polyOps(ops, pts, true);
+  return ops;
+}
+
+/** Hit an even-odd fill path, including its holes and nested islands. */
+export function containsFill(ops, p) {
+  let inside = false, start = 0;
+  for (let i = 0; i <= ops.length;) {
+    if (i === ops.length || (i > start && ops[i] === 0)) {
+      if (containsPoint(opsPoly(ops.slice(start, i)), p)) inside = !inside;
+      start = i;
+    }
+    if (i === ops.length) break;
+    i += ops[i] === 2 ? 7 : ops[i] === 9 ? 1 : 3;
+  }
+  return inside;
+}
+
 /** The css colour of a fill key (a by-layer fill takes the layer's colour, by-block the INSERT's). */
 export function fillCss(key, layerCss, blockCss) {
   if (key?.startsWith('tc:')) return '#' + (Number(key.slice(3)) & 0xffffff).toString(16).padStart(6, '0');
@@ -99,26 +180,34 @@ export function fillCss(key, layerCss, blockCss) {
 }
 
 /** The solid HATCH that saves `e`'s fill (written right before the outline); null when it has none. */
-export function fillHatch(e) {
+export function fillHatch(e, holes = []) {
   if (!e.fill || !closedOutline(e)) return null;
   const r = e.r;
-  const pts = e.type === 'CIRCLE' ? [[val(r, 10) - val(r, 40), val(r, 20), 1], [val(r, 10) + val(r, 40), val(r, 20), 1]]
-    : e.type === 'LWPOLYLINE' || e.type === 'POLYLINE' ? polyPts(e) : boundary(e).map((p) => [p[0], p[1], 0]);
-  const bulge = pts.some((p) => p[2]), key = e.fill;
+  const loops = fillLoops(e, holes), key = e.fill;
   const index = key.startsWith('aci:') ? Number(key.slice(4)) : key === 'byblock' ? 0 : key === 'bylayer' ? 256 : null;     // a palette fill is written as 62 only, so it reopens as the same key; true colour as 420
   const colour = index != null ? { aci: index, tc: null } : { aci: 256, tc: pack420(keyRgb(key)) };
-  const pairs = [[8, e.layer], [10, 0], [20, 0], [30, 0], [210, val(r, 210)], [220, val(r, 220)], [230, val(r, 230, 1)], [2, 'SOLID'], [70, 1], [71, 0], [91, 1],
-    [92, 3], [72, bulge ? 1 : 0], [73, 1], [93, pts.length], ...pts.flatMap((p) => [[10, p[0]], [20, p[1]], ...(bulge ? [[42, p[2]]] : [])]),
-    [97, 0], [75, 0], [76, 1], [98, 0]];
+  const pairs = [[8, e.layer], [10, 0], [20, 0], [30, 0], [210, val(r, 210)], [220, val(r, 220)], [230, val(r, 230, 1)], [2, 'SOLID'], [70, 1], [71, 0], [91, loops.length],
+    ...loops.flatMap((pts, i) => {
+      const bulge = pts.some((p) => p[2]);
+      return [[92, i === 0 ? 3 : 2], [72, bulge ? 1 : 0], [73, 1], [93, pts.length],
+        ...pts.flatMap((p) => [[10, p[0]], [20, p[1]], ...(bulge ? [[42, p[2]]] : [])]), [97, 0]];
+    }), [75, 0], [76, 1], [98, 0]];
   return { type: 'HATCH', layer: e.layer, lt: null, ...colour, lw: -1, lts: 1, hidden: !!e.hidden, ps: !!e.ps, flip: !!e.flip,
     r: { type: 'HATCH', c: pairs.map((x) => x[0]), v: pairs.map((x) => String(x[1])) }, kids: undefined };
 }
 
-/** A solid HATCH of one loop (no gradient): its polygon, else null. */
-function solidLoop(h) {
-  if (h.type !== 'HATCH' || val(h.r, 70) !== 1 || val(h.r, 91) !== 1 || val(h.r, 450) === 1) return null;
-  const ops = hatchOps(h);
-  return ops && opsPoly(ops);
+/** A solid HATCH's loops, no gradient; leave malformed loop counts alone. */
+function solidLoops(h) {
+  if (h.type !== 'HATCH' || val(h.r, 70) !== 1 || val(h.r, 91) < 1 || val(h.r, 450) === 1) return null;
+  const { c, v } = h.r, starts = c.flatMap((code, i) => code === 92 ? [i] : []);
+  if (starts.length !== val(h.r, 91)) return null;
+  return starts.map((start, i) => {
+    const end = starts[i + 1] ?? c.length;
+    const r = { ...h.r, c: [...c.slice(0, starts[0]), ...c.slice(start, end)], v: [...v.slice(0, starts[0]), ...v.slice(start, end)] };
+    r.v[c.indexOf(91)] = '1';
+    const ops = hatchOps({ ...h, r });
+    return ops ? opsPoly(ops) : [];
+  });
 }
 const hatchKey = (h) => h.tc != null ? 'tc:' + h.tc : h.aci >= 1 && h.aci <= 255 ? 'aci:' + h.aci : h.aci === 0 ? 'byblock' : 'bylayer';
 
@@ -130,11 +219,24 @@ export function linkFills(doc) {
   for (const list of [doc, ...Object.values(doc.blocks || {})]) {
     const ents = list.entities;
     if (!ents?.some((e) => e.type === 'HATCH')) continue;
-    const gone = new Set();
+    const gone = new Set(), candidates = new Map();
     ents.forEach((h, i) => {
-      const o = ents[i + 1], poly = o && !o.fill && !h.hidden && h.layer === o.layer && !!h.ps === !!o.ps && closedOutline(o) && solidLoop(h);
-      if (poly && boundariesMatch(poly, boundary(o))) { o.fill = hatchKey(h); gone.add(h); }
+      const o = ents[i + 1], loops = o && !o.fill && !h.hidden && h.layer === o.layer && !!h.ps === !!o.ps && closedOutline(o) && solidLoops(h);
+      if (loops && boundariesMatch(loops[0], boundary(o))) candidates.set(o, { h, loops, filled: { ...o, fill: hatchKey(h) } });
     });
+    const holes = [...candidates.values()].some(({ loops }) => loops.length > 1)
+      ? fillHoles(ents.map((e) => candidates.get(e)?.filled || e)) : new Map();
+    for (const [o, { h, loops, filled }] of candidates) {
+      if (loops.length > 1) {
+        const expected = fillLoops(filled, holes.get(filled)).slice(1).map((pts) => { const ops = []; polyOps(ops, pts, true); return opsPoly(ops); });
+        if (expected.length !== loops.length - 1 || !loops.slice(1).every((loop) => {
+          const i = expected.findIndex((poly) => boundariesMatch(loop, poly));
+          if (i < 0) return false;
+          expected.splice(i, 1); return true;
+        })) continue;
+      }
+      o.fill = filled.fill; gone.add(h);
+    }
     if (gone.size) list.entities = ents.filter((e) => !gone.has(e));
   }
   return doc;

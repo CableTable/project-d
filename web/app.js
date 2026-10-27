@@ -3437,6 +3437,7 @@ function objHide(d, ents) {
   const all = ents.every((e) => hid.has(E[e]));
   for (const e of ents) { if (all) hid.delete(E[e]); else hid.add(E[e]); }
   d.hidC = null;
+  d.fl = flatten(d.raw, hid);
   layersChanged(d); paintOverlay(); renderObjects(); renderStatus();
   note(all ? `${ents.length} shown again` : `${ents.length} hidden for this session: the saved file keeps them`);
 }
@@ -3458,6 +3459,7 @@ function objZoom(d, ents) {
 function showAllHidden(d) {
   if (d.lay) { if (d.hiddenParts) d.hiddenParts.clear(); drawSheet(); paintOverlay(); renderObjects(); note('All parts are shown'); return; }
   d.off.clear(); d.hid = new Set(); d.hidC = null;
+  d.fl = flatten(d.raw);
   layersChanged(d); paintOverlay(); renderLayers(); applyHidden(); renderStatus();
   note('All layers and objects are shown');
 }
@@ -3470,6 +3472,7 @@ async function renameLayerNow(d, name) {
   const i = d.fl.layers.findIndex((l) => l.name === to);
   if (wasOff && i >= 0) d.off.add(i);                                      // restore() keeps hidden layers by name: this one has a new name
   d.hid = new Set([...(hid || [])].map((k) => d.raw.entities[k])); d.hidC = null;       // the renamed entities are new objects, at the same numbers
+  d.fl = flatten(d.raw, d.hid);
   if (lk && lk.delete(name)) lk.add(to);
   if (d.curLayer === name) d.curLayer = to;
   if (d.addedLayers && d.addedLayers.delete(name)) d.addedLayers.add(to);
@@ -4816,8 +4819,7 @@ function moveSelectionTo(g, e) {
   g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
   try {
     if (!g.preview) {
-      const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.raw[i]) };
-      g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), 0, 0) });
+      g.preview = { ...g.d.fl, items: g.d.fl.items.filter((it) => g.sel.has(it.e)) };
       g.items = g.preview.items;
     }
     view.fitted = false; paintOverlay(); return true;
@@ -4886,7 +4888,7 @@ function restore(d, st) {
   }
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   restoreBg(d, st);
-  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw);
+  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw, d.hid);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   showDoc();

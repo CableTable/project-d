@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newDoc, rect, roundRect, circle, ellipse, lwpoly, entity, addBlock, insert, writeDxf } from './web/dxf-write.js';
-import { readDxf, flatten } from './web/drawing.js';
-import { boundary, boundariesMatch, closedOutline, containsPoint, fillHatch, copyColours } from './web/fill.js';
+import { newDoc, rect, roundRect, circle, ellipse, lwpoly, entity, addBlock, insert, writeDxf, unwritable } from './web/dxf-write.js';
+import { readDxf, flatten, hatchOps } from './web/drawing.js';
+import { boundary, boundariesMatch, closedOutline, containsPoint, fillHatch, copyColours, fillHoles, fillOps, fillLoops, containsFill } from './web/fill.js';
 import { moveEntities, copyEntities, removeEntities } from './web/edit.js';
 import { rotateEntities } from './web/rotate.js';
 import { scaleEntities } from './web/scale.js';
@@ -43,7 +43,7 @@ test('TODO 148c: all closed outline kinds save solid HATCH before outline, exact
   }
 });
 
-test('TODO 148c: HATCH boundary matches reversed/subdivided edges, leaves unmatched, patterned and holed HATCH alone', () => {
+test('TODO 148c: HATCH boundary matches reversed/subdivided edges, leaves unmatched, patterned and malformed HATCH alone', () => {
   const outline = lwpoly([[30, 30], [30, 10], [20, 10], [10, 10], [10, 30]], { closed: true });
   const hatch = fillHatch(filled(rect(10, 10, 20, 20)));
   const reopened = readDxf(writeDxf(docOf(circle(90, 90, 3), hatch, outline)));
@@ -149,4 +149,120 @@ test('TODO 148c review: a filled part placed on a layout draws its fill', () => 
   const lay = newLayout('L');
   lay.parts = { p: makePart('p', 'Plate', docOf(filled(rect(0, 0, 20, 20))), 1) }; lay.placed = [placement1('p', 30, 40)];
   assert.equal(flatten(readDxf(writeDxf(layoutRaw(lay)))).items.filter((it) => it.attachedFill).length, 1);
+});
+
+test('TODO 148e: only fully contained, visible closed shapes on the same layer and space cut holes', () => {
+  const outer = filled(rect(0, 0, 100, 100)), inside = circle(20, 20, 10);
+  const legacy = entity('POLYLINE', [[70, 1]]);
+  legacy.kids = [[60, 60], [70, 60], [70, 70], [60, 70]].map(([x, y]) => ({ type: 'VERTEX', c: [10, 20], v: [String(x), String(y)] }));
+  const yes = [inside, rect(30, 30, 5, 5), ellipse(50, 50, 5, 2, .5), spline(), legacy];
+  const no = [circle(98, 50, 5), circle(120, 50, 5), circle(50, 50, 2, { layer: 'Other' }),
+    { ...inside, hidden: true }, { ...inside, ps: true }, lwpoly([[40, 40], [50, 40], [50, 50]]),
+    entity('TEXT', [[10, 10], [20, 10], [40, 5], [1, 'O']]), entity('MTEXT', [[10, 10], [20, 10], [40, 5], [1, 'O']])];
+  assert.deepEqual(new Set(fillHoles([outer, ...yes, ...no]).get(outer)), new Set(yes));
+  assert.deepEqual(fillHoles([outer, inside], new Set([inside])).get(outer), []);
+  const hidden = flatten(docOf(outer, inside), new Set([inside])).items.find((it) => it.attachedFill);
+  assert.ok(containsFill(hidden.ops, [20, 20]), 'session-hidden shape cuts nothing');
+  const notch = filled(lwpoly([[0, 0], [100, 0], [100, 100], [60, 100], [60, 40], [40, 40], [40, 100], [0, 100]], { closed: true }));
+  const crossing = rect(20, 60, 60, 20); // all four corners inside, two edges cross the notch
+  assert.deepEqual(fillHoles([notch, crossing]).get(notch), []);
+  assert.deepEqual(fillHoles([outer, outer, filled(rect(0, 0, 100, 100))]).get(outer), [], 'coincident outlines are not holes');
+});
+
+test('TODO 148e: depth 2 fills again; an inner fill cuts the outer and keeps its own colour', () => {
+  const outer = filled(rect(0, 0, 100, 100)), hole = circle(30, 30, 20), island = circle(30, 30, 5);
+  const other = { ...circle(75, 75, 10), fill: 'aci:1' }, entities = [outer, hole, island, other];
+  const holes = fillHoles(entities), ops = fillOps(outer, holes.get(outer));
+  assert.equal(holes.get(outer).length, 3);
+  assert.equal(containsFill(ops, [5, 5]), true);
+  assert.equal(containsFill(ops, [40, 30]), false);
+  assert.equal(containsFill(ops, [30, 30]), true);
+  assert.equal(containsFill(ops, [75, 75]), false);
+  const fl = flatten(docOf(...entities)), fills = fl.items.filter((it) => it.attachedFill);
+  assert.equal(fills.length, 2); assert.equal(fills[1].css, '#ff0000');
+  assert.ok(containsFill(fills[1].ops, [75, 75]));
+});
+
+test('TODO 148e: moving, grips and deleting a hole recompute it without a stored link', () => {
+  const raw = docOf(filled(rect(0, 0, 100, 100)), circle(30, 30, 10)), sel = new Set([1]);
+  const filledAt = (doc) => containsFill(flatten(doc).items.find((it) => it.attachedFill).ops, [30, 30]);
+  assert.equal(filledAt(raw), false);
+  assert.equal(filledAt({ ...raw, ...moveEntities(raw, sel, 100, 0) }), true);
+  assert.equal(filledAt({ ...raw, ...removeEntities(raw, sel) }), true);
+  const moved = dragGrip(raw.entities[1], 'c', [130, 30]);
+  assert.equal(filledAt(docOf(raw.entities[0], moved.ent)), true);
+  assert.equal(filledAt(raw), false, 'old snapshot still has its hole');
+});
+
+test('TODO 148e: one solid HATCH has the outer loop and two exact circle loops, save/reopen twice', () => {
+  const outer = filled(rect(0, 0, 100, 100)), holes = [circle(25, 25, 10), circle(75, 75, 15)], raw = docOf(outer, ...holes);
+  const hatch = fillHatch(outer, fillHoles(raw.entities).get(outer));
+  assert.equal(hatch.r.v[hatch.r.c.indexOf(91)], '3');
+  assert.deepEqual(hatch.r.c.flatMap((c, i) => c === 92 ? [hatch.r.v[i]] : []), ['3', '2', '2']);
+  assert.deepEqual(fillLoops(outer, holes).slice(1).map((pts) => pts.map((p) => p[2])), [[1, 1], [1, 1]]);
+  let reopened = raw;
+  for (let i = 0; i < 2; i++) {
+    const text = writeDxf(reopened); assert.equal((text.match(/\r\nHATCH\r\n/g) || []).length, 1);
+    reopened = readDxf(text); assert.equal(reopened.entities.length, 3); assert.equal(reopened.entities[0].fill, fill);
+    assert.equal(fillHoles(reopened.entities).get(reopened.entities[0]).length, 2);
+    assert.equal(containsFill(flatten(reopened).items[0].ops, [25, 25]), false);
+  }
+});
+
+test('TODO 148e review: foreign HATCH islands survive when live holes differ in count or boundary', () => {
+  const outer = rect(0, 0, 100, 100), island = circle(25, 25, 10);
+  const hatch = fillHatch(filled(outer), [island]);
+  for (const shapes of [[{ ...island, layer: 'Other' }], [], [circle(75, 75, 10)], [island, circle(75, 75, 10)]]) {
+    let raw = docOf(hatch, outer, ...shapes);
+    for (let i = 0; i < 2; i++) {
+      raw = readDxf(writeDxf(raw));
+      assert.equal(raw.entities[0].type, 'HATCH');
+      assert.equal(raw.entities[0].r.v[raw.entities[0].r.c.indexOf(91)], '2');
+      assert.ok(!raw.entities[1].fill);
+      assert.equal(containsFill(hatchOps(raw.entities[0]), [25, 25]), false, 'island survives the next Save');
+    }
+  }
+  const holes = [island, circle(75, 75, 10)];
+  assert.equal(readDxf(writeDxf(docOf(fillHatch(filled(outer), [island, island]), outer, ...holes))).entities[0].type, 'HATCH', 'duplicate loops cannot match the same hole twice');
+  const reopened = readDxf(writeDxf(docOf(fillHatch(filled(outer), holes), outer, ...holes.toReversed())));
+  assert.equal(reopened.entities.length, 3, 'our own two-hole fill relinks regardless of loop order');
+  assert.equal(reopened.entities[0].fill, fill);
+});
+
+test('TODO 148e review: 4000 outline vertices and 1600 circle holes stay well below 2 s', (t) => {
+  const outer = filled(lwpoly(Array.from({ length: 4000 }, (_, i) => {
+    const a = i * Math.PI * 2 / 4000; return [1200 * Math.cos(a), 1200 * Math.sin(a)];
+  }), { closed: true }));
+  const holes = Array.from({ length: 1600 }, (_, i) => circle((i % 40) * 40 - 780, Math.floor(i / 40) * 40 - 780, 5));
+  const start = performance.now(), result = fillHoles([outer, ...holes]), elapsed = performance.now() - start;
+  assert.equal(result.get(outer).length, 1600);
+  t.diagnostic(`fillHoles: ${elapsed.toFixed(1)} ms`);
+  assert.ok(elapsed < 2000, `fillHoles took ${elapsed.toFixed(1)} ms`);
+});
+
+test('TODO 148e review: Save loss reporting does not compute fills before the writer does', () => {
+  const outer = rect(0, 0, 100, 100);
+  Object.defineProperty(outer, 'fill', { enumerable: true, get() { assert.fail('loss reporting must not inspect fill geometry'); } });
+  assert.deepEqual(unwritable(docOf(outer, circle(25, 25, 10))), []);
+});
+
+test('TODO 148e: no-hole save is byte-identical to the existing one-loop HATCH', () => {
+  const outer = filled(rect(0, 0, 10, 10));
+  const pairs = [[8, '0'], [10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'SOLID'], [70, 1], [71, 0], [91, 1],
+    [92, 3], [72, 0], [73, 1], [93, 4], [10, 0], [20, 0], [10, 10], [20, 0], [10, 10], [20, 10], [10, 0], [20, 10], [97, 0], [75, 0], [76, 1], [98, 0]];
+  const hatch = fillHatch(outer);
+  assert.deepEqual(hatch.r.c, pairs.map((p) => p[0])); assert.deepEqual(hatch.r.v, pairs.map((p) => String(p[1])));
+  assert.equal(writeDxf(docOf(outer)), writeDxf(docOf(hatch, { ...outer, fill: null })));
+});
+
+test('TODO 148e: holes survive placed parts and flipped OCS; cutter still drops fills', () => {
+  const outer = filled(rect(0, 0, 100, 100)), hole = circle(-30, 30, 10);
+  hole.flip = true; hole.r.c.push(230); hole.r.v.push('-1');
+  const raw = docOf(outer, hole);
+  assert.equal(fillHoles(raw.entities).get(outer).length, 1);
+  assert.equal(containsFill(flatten(readDxf(writeDxf(raw))).items[0].ops, [30, 30]), false);
+  const lay = newLayout('L'); lay.parts = { p: makePart('p', 'Plate', raw, 1) }; lay.placed = [placement1('p', 30, 40, 45)];
+  const placed = flatten(readDxf(writeDxf(layoutRaw(lay)))).items.find((it) => it.attachedFill);
+  assert.equal(containsFill(placed.ops, [30, 30]), false);
+  assert.doesNotMatch(writeDxf(cutterDoc(raw, .01).doc), /HATCH/);
 });

@@ -669,6 +669,94 @@ try {
     finally { await context.close(); }
   });
 
+  await step('TODO 148e: live fill holes, Move, Undo/Redo, save/reopen and nested rings in light + dark', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const command = async (text) => {
+      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
+      const pt = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: pt.x, y: pt.y };
+    }, [x, y]);
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const isRed = async (x, y) => q('drawing').evaluate((c, pt) => {
+      const b = c.getBoundingClientRect(), px = (pt.x - b.x) * c.width / b.width, py = (pt.y - b.y) * c.height / b.height;
+      const [r, g, blue, a] = c.getContext('2d').getImageData(Math.round(px), Math.round(py), 1, 1).data;
+      return r > 245 && g < 10 && blue < 10 && a > 245;
+    }, await point(x, y));
+    const isPainted = async (x, y) => q('drawing').evaluate((c, pt) => {
+      const b = c.getBoundingClientRect();
+      return c.getContext('2d').getImageData(Math.round((pt.x - b.x) * c.width / b.width), Math.round((pt.y - b.y) * c.height / b.height), 1, 1).data[3] > 245;
+    }, await point(x, y));
+    const expectRed = async (x, y, want) => {
+      await p.mouse.move(2, 2); await p.waitForTimeout(100);
+      assert.equal(await isRed(x, y), want, `fill pixel at ${x},${y}`);
+    };
+    const open = async (text, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
+      await command('fit'); await p.keyboard.press('Escape');
+    };
+    const save = async () => {
+      await p.locator('.coords').click(); await p.waitForTimeout(1100);
+      const pending = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      return readFileSync(await (await pending).path(), 'utf8');
+    };
+    const undo = async (key = 'Control+z') => { await p.locator('.coords').click(); await p.keyboard.press(key); };
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(), layer = 'Plate'; addLayer(raw, layer);
+      addEntities(raw, dxfPoly([[10, 10], [150, 10], [150, 100], [10, 100]], { closed: true, layer }),
+        dxfCircle(40, 40, 16, { layer }), dxfCircle(110, 60, 22, { layer }), dxfCircle(110, 60, 7, { layer }));
+      await open(writeDxf(raw), 'holes148e.dxf');
+      await p.locator('[data-swatch-group=standard] [data-colour="aci:1"]').click({ button: 'right' });
+      await command('fill'); await click(20, 20); await p.keyboard.press('Escape');
+      await expectRed(20, 20, true); await expectRed(40, 40, false);
+      await expectRed(123, 60, false); await expectRed(110, 60, true);
+      await click(56, 40); await command('move'); await command('0,0'); await command('160,0'); await p.keyboard.press('Escape');
+      await expectRed(40, 40, true);
+      await undo(); await expectRed(40, 40, false);
+      await undo('Control+y'); await expectRed(40, 40, true);
+      await undo(); await p.keyboard.press('Escape'); await expectRed(40, 40, false);
+      const text = await save(), back = readDxf(text);
+      assert.equal(back.entities.length, 4); assert.equal(back.entities[0].fill, 'aci:1');
+      assert.match(text, /91\r\n4\r\n/);
+      await open(text, 'holes148e-reopened.dxf');
+      await expectRed(40, 40, false); await expectRed(110, 60, true);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        await expectRed(40, 40, false); await expectRed(110, 60, true);
+        await p.screenshot({ path: `${shotDir}/todo148e-holes-${theme}.png` });
+        await click(65, 10);
+        const from = await point(65, 10), to = await point(75, 15);
+        await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 5 });
+        await p.waitForTimeout(100);
+        assert.equal(await isPainted(30, 25), true, 'drag preview paints the filled outline');
+        assert.equal(await isPainted(50, 45), false, 'dragging only the outline keeps its hole');
+        await p.screenshot({ path: `${shotDir}/todo148e-drag-${theme}.png` });
+        await p.keyboard.press('Escape'); await p.mouse.up(); await p.keyboard.press('Escape');
+      }
+      await command('pdf'); await q('pdf-dialog').waitFor(); await q('pdf-black').uncheck();
+      const pending = p.waitForEvent('download'); await q('pdf-go').click();
+      const pdf = readFileSync(await (await pending).path(), 'latin1');
+      assert.match(pdf, /1 0 0 rg/); assert.match(pdf, /f\*/);
+      await q('ptab-objects').click();
+      if (await p.locator('.or.layer[data-layer="Plate"]').getAttribute('aria-expanded') === 'false') await p.locator('.or.layer[data-layer="Plate"]').click();
+      await p.locator('.or.obj[data-e="1"] [data-act=vis]').click();
+      await expectRed(40, 40, true);
+      await p.locator('.or.layer[data-layer="Plate"]').click({ button: 'right' });
+      await p.getByRole('menuitem', { name: 'Rename…' }).click();
+      await q('name-input').fill('Renamed plate'); await q('name-ok').click();
+      await expectRed(40, 40, true);
+    } catch (e) { await p.screenshot({ path: `${shotDir}/todo148e-failure.png` }); throw e; }
+    finally { await context.close(); }
+  });
+
   await step('TODO 148d: colour readout: line, fill, panel, copy hex + recent colours, Esc ends', async () => {
     const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
