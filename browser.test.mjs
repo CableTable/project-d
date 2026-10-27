@@ -10377,6 +10377,7 @@ try {
     assert.equal(await entCount(), 6, 'the fence crossed both long lines: each is cut in two');
     assert.deepEqual(await rows(30), split); assert.deepEqual(await rows(70), split);
     assert.equal((await histLabels()).length, steps0 + 1, 'one undo step for the whole fence');
+    assert.equal(await t('trim-fence').count(), 0, 'no fence guide is left on screen after the trim');
     assert.equal((await histLabels()).at(-1), 'Trim');
     assert.ok((await prompt()).startsWith(MAIN) && (await prompt()).endsWith('/Undo]:'), 'back to the main prompt, with /Undo');
     await typeCmd('u'); assert.equal(await entCount(), 4, 'U takes the whole fence back');
@@ -10430,10 +10431,8 @@ try {
     assert.equal(await entCount(), 5, 'Enter with no edge picked: every object cuts again'); assert.deepEqual(await rows(30), split);
     await typeCmd('u');
     await typeCmd('t'); await click(80, 50); await page.keyboard.press('Escape');
-    assert.ok((await prompt()).startsWith(MAIN)); assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'Esc in the edge pick goes back to all, Trim stays');
-    await click(120, 30); assert.equal(await entCount(), 5);
-    await page.keyboard.press('Escape');
-    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Trim');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc in the edge pick cancels the whole Trim, as in AutoCAD');
+    assert.equal(await entCount(), 4);
   });
 
   await step('TODO 155a fixes: a locked frame still cuts in Quick Trim, U after Ctrl+Z leaves an earlier command alone, mo / mod ask for the mode', async () => {
@@ -10546,6 +10545,59 @@ try {
     assert.equal(await entCount(), n0 - 1, 'a plain click still trims: the lone line goes whole'); assert.equal((await histLabels()).at(-1), 'Trim');
     await page.keyboard.press('Escape');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+  });
+
+  await step('TODO 155a fix round: U after 100+ earlier steps, a locked object says so, eRase skips locked, a window inside a circle leaves it alone, Esc cancels Extend\'s edge pick', async () => {
+    const hv = async (x, y) => { const q = await at(x, y); await page.mouse.move(q.x, q.y); await frames(); };
+    const rows = async (y) => (await savedDoc()).entities.filter((e) => e.type === 'LINE' && fieldOf(e, 20) === y && fieldOf(e, 21) === y).map((e) => [fieldOf(e, 10), fieldOf(e, 11)].sort((a, b) => a[0] - b[0])).sort((a, b) => a[0] - b[0]);
+    const MAIN = 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase';
+    const split = [[20, 80], [160, 220]];
+    const quickTrim = async () => { await typeCmd('tr'); await typeCmd('o'); await typeCmd('q'); await page.keyboard.press('Escape'); await page.locator('[data-tool=trim]').click(); };
+    // the history keeps 100 steps: U must still know which cuts are this command's
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(20, 70, 220, 70), dxfLine(80, 10, 80, 90), dxfLine(160, 10, 160, 90));
+    await openGrips(writeDxf(doc0), 'trim-cap.dxf');
+    await t('ptab-layers').click();
+    for (let i = 0; i < 101; i++) await t('layer-add').click();
+    await t('ptab-drawing').click();
+    assert.equal((await histLabels()).length, 101, 'the history is full: 100 steps (the cap) and the current state');
+    await quickTrim();
+    await click(120, 30); await click(120, 70);
+    assert.ok((await prompt()).endsWith('/Undo]:'), '/Undo is offered with a full history');
+    await typeCmd('u'); assert.deepEqual(await rows(70), [[20, 220]], 'U takes back the last cut'); assert.deepEqual(await rows(30), split);
+    await typeCmd('u'); assert.deepEqual(await rows(30), [[20, 220]]);
+    await typeCmd('u'); assert.match(await histLine(), /Nothing to undo in this Trim/, 'and not an earlier command\'s step');
+    await page.keyboard.press('Escape');
+    // a locked object: clicking it says so (no fence starts), and eRase cannot pick it
+    const doc1 = newDoc(4); addLayer(doc1, 'Frame');
+    addEntities(doc1, dxfLine(20, 30, 220, 30, { layer: 'Frame' }), dxfLine(80, 50, 80, 90));
+    await openGrips(writeDxf(doc1), 'trim-locked2.dxf');
+    await t('ptab-objects').click();
+    await page.locator('.or.layer[data-layer=Frame] [data-act=lock]').click();
+    await t('ptab-drawing').click();
+    await quickTrim();
+    await click(150, 30);
+    assert.match(await histLine(), /On a locked layer/); assert.ok((await prompt()).startsWith(MAIN), 'no fence was started');
+    await typeCmd('r'); await click(150, 30); await click(80, 80);
+    assert.match(await prompt(), /\(1 picked/, 'only the unlocked line is picked');
+    await click(80, 80); await page.keyboard.press('Enter');
+    assert.match(await histLine(), /Nothing picked to erase/); assert.equal(await entCount(), 2, 'the locked line is not deleted');
+    await page.keyboard.press('Escape');
+    // a crossing window wholly inside a circle: the circle is not touched, the line through it is cut between the circle's crossings
+    const doc2 = newDoc(4);
+    addEntities(doc2, dxfLine(20, 50, 220, 50), dxfCircle(120, 50, 20));
+    await openGrips(writeDxf(doc2), 'trim-circle.dxf');
+    await quickTrim();
+    await typeCmd('c'); await click(110, 40); await click(130, 60);
+    assert.equal(await entCount(), 3, 'the line is cut in two');
+    assert.equal((await savedDoc()).entities.filter((e) => e.type === 'CIRCLE').length, 1, 'the circle stays whole');
+    assert.deepEqual(await rows(50), [[20, 100], [140, 220]]);
+    await page.keyboard.press('Escape');
+    // Extend: Esc in the Boundary edges pick ends the command too
+    await typeCmd('ex'); await typeCmd('o'); await typeCmd('q');
+    await typeCmd('b'); assert.match(await prompt(), /^Select boundary edges/);
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc cancels the whole Extend');
   });
 
   await step('TODO 78: Trim preview', async () => {

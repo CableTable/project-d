@@ -6121,9 +6121,8 @@ function modEsc(d) {
   const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
   if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
   if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note(`${ext ? 'Extend' : 'Trim'}: cancelled. ${again}`); renderCommand(); paintOverlay(); return; }
-  if ((m.kind === 'trim' || ext) && m.quick && m.stage === 'edges') { m.edges = []; m.all = true; m.stage = 'cut'; note(`Every object is a ${ext ? 'boundary' : 'cutting'} edge again. ${again}`); renderCommand(); paintOverlay(); return; }
   if (m.kind === 'offset' && m.stage === 'side') { m.stage = 'obj'; m.ent = null; note('Offset: pick an object'); paintOverlay(); return; }
-  if (['trim', 'extend'].includes(m.kind) && m.stage === 'edges' && (m.edges.length || m.all)) { m.edges = []; m.all = false; note(m.kind === 'trim' ? 'Cutting edges cleared' : 'Boundary edges cleared'); paintOverlay(); return; }
+  if (['trim', 'extend'].includes(m.kind) && !m.quick && m.stage === 'edges' && (m.edges.length || m.all)) { m.edges = []; m.all = false; note(m.kind === 'trim' ? 'Cutting edges cleared' : 'Boundary edges cleared'); paintOverlay(); return; }
   if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line, arc or polyline segment'); paintOverlay(); return; }
   if (m.kind === 'mirror' && m.stage === 'pick' && d.sel.size) { setSel(d, new Set()); renderCommand(); return; }
   const was = m.kind;
@@ -6416,6 +6415,13 @@ function trimMode(quick) {
   renderCommand(); paintOverlay();
 }
 /** Undo inside a running Quick Trim / Extend: takes back its last cut (only a Trim or Extend step made since the command began). */
+/** A Trim / Extend step: commit, and keep m.base (the history length when the command began) true when the 100-step cap drops the oldest step. */
+function trimCommit(d, next, label) {
+  const m = state.mod, n = d.hist.labels().past.length;
+  m.base = Math.min(m.base, n);                                 // a Ctrl+Z below the start leaves nothing of this command to undo
+  commit(d, next, label);
+  m.base -= n + 1 - d.hist.labels().past.length;
+}
 const trimUndoable = (d, m) => { const past = d.hist.labels().past; return past.length > m.base && ['Trim', 'Extend'].includes(past.at(-1)); };
 function trimUndo(d) {
   const m = state.mod;
@@ -6433,7 +6439,7 @@ function trimRegionDo(d, hit, what) {
     if (m.edges.includes(ent)) { for (const q of c.ents) m.was.set(q, ent); m.edges = m.edges.flatMap((e) => (e === ent ? c.ents : [e])); }
   }
   view.fitted = false;
-  commit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim');
+  trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim');
   note(`${what} ${ext ? 'extended' : 'trimmed'} ${r.changed.length} object${r.changed.length === 1 ? '' : 's'}.` + (r.skipped ? (ext ? ` ${r.skipped} left alone (no boundary ahead).` : ` ${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone.`) : '') + ' Ctrl+Z takes it back');
   return true;
 }
@@ -6469,7 +6475,7 @@ function trimEraseRun(d) {
   const m = state.mod, gone = new Set(m.erase);
   m.erase = null;
   if (gone.size) {
-    commit(d, { entities: d.raw.entities.filter((e) => !gone.has(e)), blocks: d.raw.blocks }, 'Trim');
+    trimCommit(d, { entities: d.raw.entities.filter((e) => !gone.has(e)), blocks: d.raw.blocks }, 'Trim');
     note(`Erased ${gone.size} object${gone.size === 1 ? '' : 's'}. Click the part to cut away. Ctrl+Z takes it back`);
   } else note('Nothing picked to erase');
   renderCommand(); paintOverlay();
@@ -6478,6 +6484,7 @@ function trimEraseRun(d) {
 function editDo(d, p, shift) {
   const m = state.mod, idx = hitAt(d, p), ext = m.kind === 'extend';
   m.askMode = false;                                            // a click answers the mode question with "stay"
+  if (idx < 0 && m.quick && m.stage === 'cut' && !shift && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) >= 0) { note('On a locked layer'); return; }      // not the start of a fence
   if (idx < 0 && m.quick && m.stage === 'cut' && !shift) { m.fence = [p]; note(`Fence started: click the next point, Enter ${ext ? 'extends' : 'trims'} everything it ${ext ? 'touches' : 'crosses'}, Esc cancels`); renderCommand(); paintOverlay(); return; }
   if (idx < 0) { note(ext ? 'Extend: nothing there. Click near the end of a line, arc or open polyline' : 'Trim: nothing there. Click the part to cut away'); return; }
   if (ext !== !!shift) extendDo(d, idx, p); else trimDo(d, idx, p);
@@ -6490,7 +6497,7 @@ function trimDo(d, idx, p) {
   view.fitted = false;
   // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
   if (m.edges.includes(ent)) { for (const p of r.ents) m.was.set(p, ent); m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e])); }
-  commit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim');
+  trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim');
   renderCommand();
   note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
 }
@@ -6500,7 +6507,7 @@ function extendDo(d, idx, p) {
   if (r.error) { note(r.error); return; }
   view.fitted = false;
   if (m.edges.includes(ent)) { m.was.set(r.ent, ent); m.edges = m.edges.map((e) => (e === ent ? r.ent : e)); }
-  commit(d, { entities: d.raw.entities.map((e, i) => (i === idx ? r.ent : e)), blocks: d.raw.blocks }, 'Extend');
+  trimCommit(d, { entities: d.raw.entities.map((e, i) => (i === idx ? r.ent : e)), blocks: d.raw.blocks }, 'Extend');
   note('Extended. Click another line end, or Esc ends. Ctrl+Z takes it back');
 }
 /** Mirror: the second point is picked, now Yes (the sources go) or No (they stay). One undo step. */
