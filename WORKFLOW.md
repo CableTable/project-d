@@ -75,6 +75,14 @@ usage-agent-install.ps1.
    scratch drawing (never his open work); WScript.Shell SendKeys types into it; LOGFILEON / LOGFILEOFF writes the command line
    to `%LOCALAPPDATA%AutodeskAutoCAD 2027R26.0enu<drawing>.log`: read the log, not COM busy states (unreliable).
    Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
+   **Bishop-acad runs these checks, not Rook** (his call 2026-10-28, to save Rook's usage): Rook writes the questions
+   (what to try, which prompts / keys / screenshots), then from `Project D extras/runs<N>`:
+   `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out`.
+   The brief always says: one AutoCAD session at a time; only new scratch drawings (`Documents.Add()`), never his open
+   drawings, close scratch ones without saving; wrap SendCommand in Start-Job with a timeout (it blocks while a prompt
+   waits; Esc via SendKeys frees it); zoom before picking (off-screen picks are ignored); PrintWindow the AutoCAD window
+   only (never the whole screen), CopyFromScreen around the cursor only for Dynamic input tooltips; save facts to
+   `Project D extras/acad-<topic>.txt` (+ PNGs) and reply in at most 10 lines. Rook reads the reply, not the PNGs.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
