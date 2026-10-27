@@ -1,8 +1,10 @@
 // The UI in Chromium against web/ served locally.   node browser.test.mjs
 // Locally: CHROME=/path/to/chrome node browser.test.mjs   (CI uses Playwright's own Chromium)
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
+import { join } from 'node:path';
+import { browserArgs, shardSelector } from './tools/browser-shards.mjs';
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
 import { read as readLeader } from './web/leader.js';
@@ -28,7 +30,12 @@ function contrastRatio(foreground, background, opacity = 1) {
   return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
 }
 
-const PORT = Number(process.env.TEST_PORT) || Number(process.argv[2]) || 5181;   // TEST_PORT or `npm run test:browser -- 5291`
+// SHARD=2/4 (env or argument); ONLY=regex / positional regex ignores shards.
+// Refresh committed per-step seconds: node browser.test.mjs 5181 --update-timings
+const { port: PORT, only, shard, updateTimings } = browserArgs(process.argv.slice(2), process.env);
+const selectStep = only ? (name) => new RegExp(only).test(name) : shard
+  ? shardSelector(JSON.parse(readFileSync(new URL('./tools/browser-shards.json', import.meta.url), 'utf8')), shard.index, shard.count)
+  : () => true;
 const URL_ = `http://localhost:${PORT}/`;
 const server = spawn(process.execPath, ['serve.mjs', String(PORT)], { stdio: ['ignore', 'pipe', 'inherit'], env: { ...process.env, PORT: String(PORT) } });
 let browser;
@@ -78,11 +85,13 @@ function panelControl(page, locator) {
 const base = { sheetW: 1000, sheetH: 700, gripTop: 0, gripRight: 0, gripBottom: 30, gripLeft: 0, partW: 120, partH: 80, gapX: 5, gapY: 5, rotate: '0', align: 'centre' };
 const N0 = stepRepeat(base).count;                // the default sheet, 120 × 80 parts: 8 × 7 = 56
 let failed = 0;
+const timings = {};
 let afterStep = async () => {};
 async function step(name, fn) {
-  const only = process.env.ONLY || process.argv[3];
-  if (only && !new RegExp(only).test(name)) return;      // ONLY=regex (or a 2nd argument: node browser.test.mjs 5297 regex) runs just the steps whose name matches (to work on one flow quickly)
+  if (!selectStep(name)) return;
+  const started = performance.now();
   try { await fn(); console.log('ok', name); } catch (e) { failed++; console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim()); try { await afterStep(); } catch { /* best effort */ } }
+  finally { timings[name] = Math.round((performance.now() - started) / 10) / 100; }
 }
 
 try {
@@ -125,7 +134,9 @@ try {
   const typeCmd = async (text) => { await cmdLine().fill(text); await cmdLine().press('Enter'); };
   const readout = async () => ({ count:Number(await t('count').textContent()), grid: await t('grid').textContent() });
 
-  const shotDir = process.env.SHOTS_DIR || 'shots';
+  const shotRoot = process.env.SHOTS_DIR || 'shots';
+  const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
+  if (shard) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
   await step('TODO 152c: a 200-character command echo ellipsizes with a tooltip and keeps the status bar on one line', async () => {
     const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
@@ -1729,9 +1740,8 @@ try {
     assert.equal(await page.locator('.grip-label').textContent(), 'GRIPPER 30');
     const fits = (sel) => page.locator(sel).evaluate((e) => e.scrollHeight <= e.clientHeight + 1);
     assert.ok(await fits('nav.rail'), 'rail scrolls');
+    await page.screenshot({ path: shotDir + '/a-light.png' });
   });
-
-  await page.screenshot({ path: shotDir + '/a-light.png' });
 
   await step('Gap X 20 changes the count', async () => {
     await panelControl(page, page.locator('[data-key=gapX]')).fill('20');
@@ -3392,6 +3402,18 @@ try {
   // ---- Round 3: extract a part, the Parts library, a layout of several parts, step and repeat per layout, saving and reopening a layout
   const libCard = (name) => page.locator(`[data-testid=lib-list] .card[data-name="${name}"]`);
   const libNames = () => page.locator('[data-testid=lib-list] .card .cname').allTextContents();
+  const ensureLibraryParts = async () => {
+    await t('panel-library').click();
+    if (await libCard('Plate A').count() && await libCard('Dial').count()) return;
+    // The extraction flow may run in another shard; opening a layout keeps its parts in this library.
+    const raw = readDxf(readFileSync('fixtures/outline.dxf', 'utf8')), lay = newLayout('Library fixture');
+    lay.parts['fixture-plate'] = makePart('fixture-plate', 'Plate A', { ...raw, entities: raw.entities.slice(0, 8) }, 1, 'outline');
+    lay.parts['fixture-dial'] = makePart('fixture-dial', 'Dial', { ...raw, entities: [raw.entities[8]] }, 1, 'outline');
+    lay.placed.push({ partId: 'fixture-plate', x: 0, y: 0, rot: 0 }, { partId: 'fixture-dial', x: 120, y: 0, rot: 0 });
+    await t('picker').setInputFiles({ name: 'library-fixture.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'library-fixture.dxf');
+    await closeTabs(/./);
+  };
   const nameDlg = page.locator('[data-testid=name-dialog]');
   const ctxItems = () => page.locator('[data-testid=ctx-menu] .mi').allTextContents();
   /** A screenshot of a screen light and dark: show() opens what is to be seen, hide() puts it away again. */
@@ -4132,6 +4154,7 @@ try {
   });
   const freshLayoutWithPlate = async () => {
     await closeTabs(/./);
+    await ensureLibraryParts();
     await t('new-layout').click();
     await t('panel-library').click();
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
@@ -10448,6 +10471,7 @@ try {
   const sheetParts = () => page.locator('.part-hit').count();
   const nestLayout = async () => {                       // a fresh layout with Plate A and Dial in it, no grid
     await closeTabs(/./);
+    await ensureLibraryParts();
     await t('new-layout').click();
     await t('panel-library').click();
     await libCard('Plate A').locator('[data-testid=lib-add]').click();
@@ -13529,5 +13553,6 @@ try {
   stop();
 }
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
+if (updateTimings) writeFileSync(new URL('./tools/browser-shards.json', import.meta.url), JSON.stringify(timings, null, 2) + '\n');
 console.log('all browser steps passed');
 process.exit(0);

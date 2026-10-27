@@ -20,6 +20,10 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -28,16 +32,19 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Lint and unit tests
+        if: matrix.shard == 1
         run: npm test
       - name: Chromium, for the browser test
         run: npx playwright install --with-deps chromium
       - name: The UI in a browser
-        run: npm run test:browser
+        env:
+          SHARD: ${{ matrix.shard }}/4
+        run: node browser.test.mjs $((5180 + ${{ matrix.shard }}))
       - name: Keep the screenshot if it failed
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: browser-failure
+          name: browser-failure-shard-${{ matrix.shard }}
           path: shots/
           if-no-files-found: ignore
 

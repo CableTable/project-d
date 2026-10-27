@@ -2,6 +2,8 @@
 
 Project D's own words, based on the project docs and names in `web/`; `DECISIONS.md` wins over older descriptions, and planned features are marked below.
 
+**Browser shard**: One contiguous run of browser-suite steps, balanced by measured time and run independently with its own server port, browser, page and screenshot subfolder. Four shards run together locally and in CI. Where: `browser.test.mjs`, `tools/browser-shards.json`.
+
 ## App
 
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
@@ -61,6 +63,12 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Fit**: Changes the view so the drawing or sheet fits in the window. Where: `TODO.md`, item 42. Avoid: Scaling the drawing; Fit to sheet.
 
 **Zoom Window**: Fills the view with a box dragged on the canvas. Where: `DECISIONS.md`, More zooms (TODO 74).
+
+**Window selection** (planned): Dragging left to right draws a solid blue box that selects only objects lying fully inside it. Where: `DECISIONS.md`, Window / crossing selection (TODO 71). Avoid: Box select; Marquee; Zoom Window (a different thing).
+
+**Crossing selection** (planned): Dragging right to left draws a dashed green box that selects every object it touches or encloses. Where: `DECISIONS.md`, Window / crossing selection (TODO 71). Avoid: Box select; Marquee.
+
+**Selection cycling** (planned): Repeated Alt + click on one spot steps through the overlapping objects under the cursor, highlighting the current one. Where: `DECISIONS.md`, Window / crossing selection (TODO 71c).
 
 **Zoom Selection**: Fills the view with what is selected. Where: `DECISIONS.md`, More zooms (TODO 74). Avoid: Zoom to (the panel menu for one item).
 
