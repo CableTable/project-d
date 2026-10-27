@@ -7,7 +7,7 @@
   --mark: #c2410c; --grip: rgba(47, 123, 208, .10);
   --field: #ffffff; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #1d7a3a; --pdpaper: #ffffff;
   --r: 5px; --dim: #0f766e;
-  --selection: #2f7bd0; --edge-opacity: .35;
+  --selection: #2f7bd0; --crossing: #188344; --edge-opacity: .35;
   --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, 'DejaVu Sans Mono', monospace;
   color-scheme: light;
@@ -16,7 +16,7 @@
   --app: #262a31; --panel: #2b2f36; --ribbon: #3b4048; --ctx: #2fb7a3;
   --line: #1c1f24; --line2: #4b515b; --text: #e6e8eb; --muted: #9ba2ac; --mutedink: #b1b7c0;
   --canvas: #212830; --sheet: #212830; --sheetline: #4b515b; --part: #212830; --partline: #eef1f4;
-  --selection: #60a5fa; --edge-opacity: .8;
+  --selection: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
   --accent: #0696d7; --accentink: #000000; --accenttext: #8cccff; --sel: #14516e;
   --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
   --field: #23272d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
@@ -27,7 +27,7 @@
     --app: #262a31; --panel: #2b2f36; --ribbon: #3b4048; --ctx: #2fb7a3;
     --line: #1c1f24; --line2: #4b515b; --text: #e6e8eb; --muted: #9ba2ac; --mutedink: #b1b7c0;
     --canvas: #212830; --sheet: #212830; --sheetline: #4b515b; --part: #212830; --partline: #eef1f4;
-    --selection: #60a5fa; --edge-opacity: .8;
+    --selection: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
     --accent: #0696d7; --accentink: #000000; --accenttext: #8cccff; --sel: #14516e;
     --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
     --field: #23272d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
@@ -147,12 +147,12 @@ select.fld { font-family: var(--sans); }
 .canvas { user-select: none; flex: 1; min-width: 0; position: relative; background: var(--canvas); overflow: hidden; touch-action: none; }
 .canvas.part { background: var(--sheet); }
 .canvas[data-work-area='Light'] {
-  --selection: #2f7bd0; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
+  --selection: #2f7bd0; --crossing: #188344; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
   background: #e9e9e9;
 }
 .canvas.part[data-work-area='Light'] { background: #ffffff; }
 .canvas[data-work-area='Dark'] {
-  --selection: #60a5fa; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
+  --selection: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
   background: #212830;
 }
 .canvas[data-work-area='Light'] > .ovl { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; }
@@ -278,6 +278,7 @@ select.fld { font-family: var(--sans); }
 /* editing the opened drawing */
 [hidden] { display: none !important; }
 .rubber { position: absolute; z-index: 3; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.canvas > .rubber.crossing { --accent: var(--crossing); border-style: dashed; }
 .drawbox .layers-head { gap: 2px; }
 .drawbox .layers-head .tog { margin-left: 0; }
 .drawbox .tools { margin-left: auto; display: flex; gap: 2px; }

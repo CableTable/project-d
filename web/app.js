@@ -2124,23 +2124,23 @@ function lockSel(on) {
   say(on ? `${name} locked: it cannot be moved, turned, mirrored or deleted until you unlock it` : `${name} unlocked`, loosenedNote(r.g));
 }
 
-/** A rubber band on the sheet of a layout ended: the parts (groups) fully inside are selected; Shift adds them to the selection. */
+/** A layout window or crossing box picks eligible parts and their groups; Shift adds. */
 function layoutBoxSelect(r, e) {
   const lay = curLay();
   if (!lay) return;
   if (!r.moved) { if (selIdxs().length > 1 && !r.shift) { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); } return; }
-  const a = sheetAt(r.x, r.y), b = sheetAt(e.clientX, e.clientY), t = 1e-6;
-  const x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+  const a = sheetAt(r.x, r.y), b = sheetAt(e.clientX, e.clientY), crossing = e.clientX < r.x;
+  const box = [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])];
+  const eligible = (p) => !state.hidden.parts && !partHid(p) && !p.lock;
   const seen = new Set(), hits = [];
   placedNow.forEach((p, i) => {
-    if (seen.has(i) || partHid(p)) return;
-    const grp = groupIdxs(i).filter((k) => !partHid(placedNow[k]));
+    if (seen.has(i) || !eligible(p) || !PL.boxHit(lay.parts[p.partId], p, box, crossing)) return;
+    const grp = groupIdxs(i).filter((k) => eligible(placedNow[k]));
     grp.forEach((k) => seen.add(k));
-    const bx = A.unionBox(grp.map((k) => placedBox(lay.parts[placedNow[k].partId], placedNow[k])));
-    if (bx[0] >= x0 - t && bx[2] <= x1 + t && bx[1] >= y0 - t && bx[3] <= y1 + t) hits.push(...grp);
+    hits.push(...grp);
   });
-  if (!hits.length) { note('No part lies fully inside that box (a box selects what it holds completely)'); return; }
-  const cur = r.shift ? selIdxs() : [];
+  if (!hits.length) { note(crossing ? 'No part touches that box' : 'No part lies fully inside that box'); return; }
+  const cur = r.shift || e.shiftKey ? selIdxs() : [];
   selectMany([...cur, ...hits.filter((k) => !cur.includes(k))]);
   update();
   const n = selIdxs().length;
@@ -4129,7 +4129,7 @@ function attachCanvasEvents() {
       else if (state.tool === 'dimension') dimensionPoint(d, p, e.shiftKey);
       else if (state.tool === 'leader') ldrPoint(d, p, e.shiftKey);
       else if (state.tool === 'balloon') balClick(d, p, e.shiftKey);
-      else if (modLive()) modUp(d, was, p, e.shiftKey);
+      else if (modLive()) modUp(d, was, p, e.shiftKey, e.clientX < was.x);
       else if (state.match && editable() === d) { if (!was.moved) matchClick(d, was.p); }
       else if (was.dim && was.moved) dimDragEnd(d, was.dim);
       else if (was.move && was.moved) {
@@ -4146,7 +4146,7 @@ function attachCanvasEvents() {
         }
       }
       else if (!editable()) { /* a layout tab: its placed parts are picked by the page itself (data-i) */ }
-      else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift);
+      else if (was.moved) boxSelect(d, was.p, p, e.shiftKey || was.shift, e.clientX < was.x);
       else clickSelect(d, was.p, e.shiftKey || was.shift || e.ctrlKey || e.metaKey);
     }
     end();
@@ -4709,16 +4709,17 @@ function clickSelect(d, p, shift) {
   if (next.has(e)) d.lastPick = e;
   note(chain.length > 1 ? `${chain.length} entities joined end to end` + (shift ? '' : ' selected') : '1 entity selected');
 }
-/** A dragged box: what lies fully inside it. */
-function boxSelect(d, a, b, add) {
-  const inside = Ed.inBox(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), next = new Set(add ? d.sel : []);
+/** A dragged window or crossing box, chosen by the screen drag direction. */
+function boxSelect(d, a, b, add, crossing) {
+  const inside = (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), next = new Set(add ? d.sel : []);
   for (const e of inside) next.add(e);
   setSel(d, next);
-  note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + ' inside the box');
+  note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + (crossing ? ' touching the box' : ' inside the box'));
 }
 function showRubber(drag, e) {
   const r = ui.canvas.getBoundingClientRect(), x0 = Math.min(drag.x, e.clientX) - r.left, y0 = Math.min(drag.y, e.clientY) - r.top;
   const st = ui.rubber.style;
+  ui.rubber.classList.toggle('crossing', !drag.zoom && e.clientX < drag.x);
   st.left = x0 + 'px'; st.top = y0 + 'px'; st.width = Math.abs(e.clientX - drag.x) + 'px'; st.height = Math.abs(e.clientY - drag.y) + 'px';
   ui.rubber.hidden = false;
 }
@@ -5964,10 +5965,10 @@ function modHover(d, cx, cy, shift) {
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
   paintOverlay();
 }
-function modUp(d, was, p, shift) {
+function modUp(d, was, p, shift, crossing) {
   const m = state.mod;
   modSync(d);
-  if (['move', 'copy', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
+  if (['move', 'copy', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (was.moved) return;
   if (m.kind === 'offset') {
     if (m.stage === 'obj') {

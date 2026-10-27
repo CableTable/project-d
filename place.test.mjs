@@ -123,4 +123,26 @@ test('the preview matrix and the maths agree: a corner of the part lands in the 
   }
 });
 
+test('TODO 71b: rotated outline box selection rejects bbox-only overlap and includes containment and touches', () => {
+  const square = { w: 80, h: 80 }, p = pl(140, 80, 45), miss = [85, 85, 105, 100];
+  const bbox = placedBox(square, p);
+  assert.ok(bbox[0] < miss[2] && bbox[2] > miss[0] && bbox[1] < miss[3] && bbox[3] > miss[1]);
+  assert.equal(P.boxHit(square, p, miss, true), false, '45 degree bbox corner is empty');
+  assert.equal(P.boxHit(square, p, [75, 70, 205, 205]), true, 'window contains all rotated corners');
+  assert.equal(P.boxHit(square, p, [130, 70, 210, 110]), false, 'window misses most of the part');
+  assert.equal(P.boxHit(square, p, [130, 70, 210, 110], true), true, 'crossing meets a rotated edge');
+  for (const rot of [0, 45, 90, 173, 270]) for (const mx of [false, true]) for (const my of [false, true]) {
+    const q = pl(200, 200, rot, mx, my), [x, y] = P.centreOf(square, q), inner = [x - 1, y - 1, x + 1, y + 1];
+    assert.equal(P.boxHit(square, q, inner, true), true, 'box inside a larger part crosses');
+    assert.equal(P.boxHit(square, q, inner), false, 'box inside a larger part is no window hit');
+    assert.equal(P.boxHit(square, q, placedBox(square, q)), true, 'window exactly on bbox includes boundary');
+    assert.equal(P.boxHit(square, q, [500, 500, 510, 510], true), false, 'bbox prefilter rejects distant parts');
+    assert.equal(P.boxHit(square, q, [200, 200, 201, 201], true), true, 'touching an outline corner counts');
+  }
+  assert.equal(P.boxHit(square, pl(0, 0), [80, 10, 90, 20], true), true, 'shared edge counts');
+  assert.equal(P.boxHit(square, pl(0, 0), [80.01, 10, 90, 20], true), false, 'a gap is not a touch');
+  const thin = { w: 100, h: 4 };
+  assert.equal(P.boxHit(thin, pl(0, 0, 45), [30, 0, 40, 60], true), true, 'edges cross without any corner inside');
+});
+
 console.log(n + ' tests passed');

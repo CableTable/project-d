@@ -276,6 +276,116 @@ test('a box selects what lies fully inside it', () => {
   assert.ok(E.inBox(ed, [-30, 25, 60, 35]).some((i) => raw.entities[i].type === 'LINE'), 'the leader is fully inside this one');
 });
 
+test('TODO 71a: crossing tests curves and segments, not their corner boxes', () => {
+  const doc = W.newDoc(4);
+  W.addEntities(doc, W.arc(0, 0, 10, 0, 90), W.line(-20, 2, 20, 2), W.circle(0, 0, 15),
+    W.lwpoly([[-20, -20], [-10, 3], [20, 3]]), W.line(1, 1, 3, 3));
+  const ed = E.makeIndex(doc, D.flatten(doc));
+  assert.deepEqual(E.crossBox(ed, [0, 0, 4, 4]), [1, 3, 4], 'arc bbox overlaps but curve misses; enclosing circle misses; one polyline segment crosses');
+  assert.deepEqual(E.crossBox(ed, [4, 4, 0, 0]), [1, 3, 4], 'either corner order');
+  assert.deepEqual(E.inBox(ed, [0, 0, 4, 4]), [4], 'window still requires the whole entity');
+  assert.deepEqual(E.crossBox(ed, [9.99, -.01, 10.01, .01]), [0], 'arc endpoint inside');
+  assert.deepEqual(E.crossBox(ed, [-1, 9.99, 1, 10.01]), [0], 'tangent arc');
+  assert.deepEqual(E.crossBox(ed, [-1, 14.99, 1, 15.01]), [2], 'tangent circle');
+  assert.deepEqual(E.crossBox(E.makeIndex(W.newDoc(), D.flatten(W.newDoc())), [0, 0, 1, 1]), []);
+});
+
+test('TODO 71a: ellipses use the curve, splines their sampled path, and blocks their transformed geometry', () => {
+  const doc = W.newDoc(4);
+  W.addBlock(doc, 'Curve', [W.circle(0, 0, 10)]);
+  W.addEntities(doc, W.ellipse(0, 0, 10, 0, .5), W.insert('Curve', 30, 0, { sx: 2, sy: 1, rot: 30 }),
+    W.entity('SPLINE', [[70, 0], [71, 1], [72, 4], [73, 2], [40, 0], [40, 0], [40, 1], [40, 1], [10, -20], [20, 2], [10, 20], [20, 2]]));
+  const ed = E.makeIndex(doc, D.flatten(doc));
+  assert.deepEqual(E.crossBox(ed, [-1, -1, 1, 1]), [], 'enclosing ellipse misses');
+  const angle = Math.PI / 96, x = 10 * Math.cos(angle), y = 5 * Math.sin(angle);
+  assert.deepEqual(E.crossBox(ed, [x - .0001, y - .0001, x + .0001, y + .0001]), [0], 'tiny box on the ellipse between samples');
+  assert.deepEqual(E.crossBox(ed, [29, -1, 31, 1]), [], 'stretched, rotated block curve encloses the box');
+  assert.deepEqual(E.crossBox(ed, [47.31, 9.99, 47.33, 10.01]), [1], 'transformed circular arc touches');
+  assert.deepEqual(E.crossBox(ed, [-1, 1.9, 1, 2.1]), [2], 'sampled spline crosses');
+  const rotated = W.newDoc(4); W.addEntities(rotated, W.ellipse(0, 0, 8, 6, .5));
+  const rx = Math.hypot(8, -3), red = E.makeIndex(rotated, D.flatten(rotated));
+  assert.deepEqual(E.crossBox(red, [rx, 0, rx + .01, 10]), [0], 'exact ellipse extremum survives candidate lookup');
+});
+
+test('TODO 71a: text uses its box; dimensions and hatches use geometry; hidden items are absent', () => {
+  for (const solid of [0, 1]) {
+    const doc = W.newDoc(4);
+    W.addEntities(doc, W.entity('HATCH', [[70, solid], [91, 1], [92, 2], [72, 0], [73, 1], [93, 4], [10, -10], [20, -10], [10, 10], [20, -10], [10, 10], [20, 10], [10, -10], [20, 10], [97, 0]]));
+    const ed = E.makeIndex(doc, D.flatten(doc));
+    assert.deepEqual(E.crossBox(ed, [-1, -1, 1, 1]), [], 'hatch boundary encloses box');
+    assert.deepEqual(E.crossBox(ed, [9, -1, 11, 1]), [0], 'hatch boundary crosses');
+    assert.deepEqual(E.crossBox(ed, [-11, -11, 11, 11]), [0], 'hatch boundary inside');
+  }
+  const doc = W.newDoc(4);
+  W.addBlock(doc, 'PD_DIM_1', [W.line(-10, -10, 10, -10), W.line(10, -10, 10, 10)]);
+  W.addBlock(doc, '*D1', [W.line(-10, -10, 10, -10), W.line(10, -10, 10, 10)]);
+  W.addEntities(doc, W.text(20, 0, 5, 'ABC'), W.insert('PD_DIM_1', 0, 0), W.entity('DIMENSION', [[2, '*D1'], [70, 0]]));
+  const fl = D.flatten(doc), ed = E.makeIndex(doc, fl), tb = ed.items.find((it) => it.e === 0).b;
+  assert.deepEqual(E.crossBox(ed, [tb[0] + .1, tb[1] + .1, tb[0] + .2, tb[1] + .2]), [0], 'text box');
+  assert.deepEqual(E.crossBox(ed, [-1, -1, 1, 1]), [], 'empty corner inside L-shaped dimension boxes misses');
+  assert.deepEqual(E.crossBox(ed, [-1, -11, 1, -9]), [1, 2], 'dimension line crosses');
+  assert.deepEqual(E.crossBox(ed, [9, -1, 11, 1]), [1, 2], 'extension line crosses');
+  const off = E.makeIndex(doc, fl, new Set([0]));
+  assert.deepEqual(E.crossBox(off, [-100, -100, 100, 100]), []);
+  assert.deepEqual(E.inBox(off, [-100, -100, 100, 100]), []);
+  const hidden = E.makeIndex(doc, fl, new Set(), new Set([0, 1, 2]));
+  assert.deepEqual(E.crossBox(hidden, [-100, -100, 100, 100]), []);
+  const textOnly = W.newDoc(); W.addEntities(textOnly, W.text(0, 0, 5, 'ABC'));
+  assert.deepEqual(E.crossBox(E.makeIndex(textOnly, D.flatten(textOnly)), [-100, -100, 100, 100]), [0], 'index also works without line or arc pieces');
+});
+
+test('TODO 71a: aligned and linear dimensions pick their lines, arrows and text, including native dimensions', () => {
+  for (const kind of ['aligned', 'linear']) {
+    const doc = W.newDoc(4), dim = E.buildDim(kind, { a: [-10, -10], b: [10, -10], axis: kind === 'linear' ? 'h' : null,
+      offset: 20, textH: 2, arrow: 2 }, 1, kind === 'linear' ? 'PD_DIM_H1' : 'PD_DIM_1');
+    W.addBlock(doc, dim.name, dim.block.entities);
+    W.addBlock(doc, '*D1', dim.block.entities);
+    W.addEntities(doc, dim.insert, W.entity('DIMENSION', [[2, '*D1'], [70, 0]]));
+    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+    assert.deepEqual(E.crossBox(ed, [-1, -1, 1, 1]), [], kind + ': empty space misses');
+    for (const [x, y, piece] of [[0, 10, 'dimension line'], [-10, 0, 'extension line'], [-8, 10.36, 'arrow']]) {
+      assert.deepEqual(E.crossBox(ed, [x - .01, y - .01, x + .01, y + .01]), [0, 1], kind + ': ' + piece);
+    }
+    const tb = ed.items.find((it) => it.e === 0 && it.k === 't').b;
+    assert.deepEqual(E.crossBox(ed, [tb[0] + .1, tb[1] + .1, tb[0] + .2, tb[1] + .2]), [0, 1], kind + ': text box');
+  }
+});
+
+test('TODO 71a: mirrored block arcs pick their reflected curve and miss empty space inside their boxes', () => {
+  for (const [sx, sy] of [[-1, 1], [1, -1]]) {
+    const doc = W.newDoc(4);
+    W.addBlock(doc, 'Arc', [W.arc(0, 0, 10, 0, 90)]);
+    W.addEntities(doc, W.insert('Arc', 30, 40, { sx, sy }));
+    const ed = E.makeIndex(doc, D.flatten(doc)), q = 10 / Math.sqrt(2), x = 30 + sx * q, y = 40 + sy * q;
+    assert.deepEqual(E.crossBox(ed, [x - .01, y - .01, x + .01, y + .01]), [0], 'reflected curve crosses');
+    const mx = 30 + sx * 2, my = 40 + sy * 2;
+    assert.deepEqual(E.crossBox(ed, [mx - .1, my - .1, mx + .1, my + .1]), [], 'reflected arc box overlaps but curve misses');
+  }
+});
+
+test('TODO 71a: window and crossing use drawing coordinates away from zero in mm and inches', () => {
+  for (const units of [4, 1]) {
+    const doc = W.newDoc(units), ox = 1234, oy = -5678;
+    W.addEntities(doc, W.arc(ox, oy, 10, 0, 90), W.line(ox - 20, oy + 2, ox + 20, oy + 2));
+    const raw = D.readDxf(W.writeDxf(doc)), fl = D.flatten(raw), ed = E.makeIndex(raw, fl);
+    assert.equal(unitFactor(fl.units), units === 4 ? 1 : 25.4);
+    assert.deepEqual(E.crossBox(ed, [ox, oy, ox + 4, oy + 4]), [1], 'line crosses; arc corner misses');
+    assert.deepEqual(E.crossBox(ed, [ox + 7, oy + 7, ox + 7.2, oy + 7.2]), [0], 'arc curve crosses');
+    assert.deepEqual(E.inBox(ed, [ox - 21, oy - 1, ox + 21, oy + 11]), [0, 1], 'window encloses both');
+    assert.deepEqual(E.inBox(ed, [ox, oy, ox + 4, oy + 4]), [], 'partial window misses');
+    assert.deepEqual(E.crossBox(ed, [0, 0, 4, 4]), [], 'no implicit origin shift');
+  }
+});
+
+test('TODO 71a: selection queries indexed candidates, including objects spanning many cells', () => {
+  const doc = W.newDoc(4);
+  W.addEntities(doc, Array.from({ length: 10000 }, (_, i) => W.line(i * 10, 0, i * 10 + 1, 1)), W.line(-10, -10, 100000, 10));
+  const ed = E.makeIndex(doc, D.flatten(doc));
+  ed.shown = new Proxy(ed.shown, { get() { throw new Error('selection scanned all shown entities'); } });
+  assert.deepEqual(E.inBox(ed, [-1, -1, 2, 2]), [0]);
+  assert.deepEqual(E.crossBox(ed, [49999, -1, 50002, 2]), [5000, 10000]);
+});
+
 test('end snapping finds an end of an open shape, not the middle', () => {
   const { raw, fl } = load('outline.dxf');
   const ed = E.makeIndex(raw, fl);

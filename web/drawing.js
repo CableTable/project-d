@@ -386,12 +386,14 @@ export function flatten(doc) {
           let nz = 1; for (let k = 0; k < r.c.length; k++) if (r.c[k] === 230) nz = num(r.v[k], 1);
           const nx = nz < 0 ? my * ratio : -my * ratio, ny = nz < 0 ? -mx * ratio : mx * ratio;
           const t0 = num(f[41], 0); let t1 = num(f[42], TAU); if (t1 <= t0) t1 += TAU;
-          const steps = Math.max(8, Math.ceil(96 * (t1 - t0) / TAU)), pts = [];
-          for (let i = 0; i <= steps; i++) { const t = t0 + (t1 - t0) * i / steps; pts.push([cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]); }
+          const steps = Math.max(8, Math.ceil(96 * (t1 - t0) / TAU)), ts = Array.from({ length: steps + 1 }, (_, i) => t0 + (t1 - t0) * i / steps);
+          // Include exact extrema so the selection index cannot discard a box touching the curve between samples.
+          for (const phase of [Math.atan2(nx, mx), Math.atan2(ny, my)]) for (let t = phase + Math.ceil((t0 - phase) / Math.PI) * Math.PI; t < t1; t += Math.PI) ts.push(t);
+          const pts = ts.sort((a, b) => a - b).map((t) => [cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]);
           const full = t1 - t0 > TAU - 1e-6;
           const quads = [];                                                // the 4 axis ends (inside a partial ellipse's sweep): quadrant snaps, as before it was flattened
           for (let k = Math.ceil((t0 - 1e-9) / (TAU / 4)); k * TAU / 4 <= (full ? t1 - 1e-6 : t1 + 1e-9); k++) { const t = k * TAU / 4; quads.push([cx + mx * Math.cos(t) + nx * Math.sin(t), cy + my * Math.cos(t) + ny * Math.sin(t)]); }
-          path(lineOps(full ? pts.slice(0, -1) : pts, full), { ell: [cx, cy, quads] });
+          path(lineOps(full ? pts.slice(0, -1) : pts, full), { ell: [cx, cy, quads, mx, my, nx, ny, t0, t1] });
           break;
         }
         case 'LWPOLYLINE': lwpoly(e, f, base, path, put); break;
@@ -789,8 +791,9 @@ export function pickIndex(fl, paper) {
   const pbox = (p) => p.t === 's' ? [Math.min(p.x1, p.x2), Math.min(p.y1, p.y2), Math.max(p.x1, p.x2), Math.max(p.y1, p.y2)] : [p.cx - p.r, p.cy - p.r, p.cx + p.r, p.cy + p.r];
   for (const p of pieces) grow(...pbox(p));
   for (const s of snaps) grow(s.x, s.y, s.x, s.y);
+  for (const it of fl.items) if (!!it.ps === !!paper) grow(...it.b);
   if (!Number.isFinite(x0)) return { pieces, snaps, G: 0 };
-  const G = Math.min(512, Math.max(1, Math.ceil(Math.sqrt((pieces.length + snaps.length) / 3))));
+  const G = Math.min(512, Math.max(1, Math.ceil(Math.sqrt((pieces.length + snaps.length + fl.items.length) / 3))));
   const cell = Math.max(x1 - x0, y1 - y0, 1e-9) / G;
   const ix = { pieces, snaps, G, cell, x0, y0, pc: new Map(), sc: new Map(), wide: [] };
   const key = (i, j) => i * 4096 + j;
