@@ -357,7 +357,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **True colour**: An exact RGB colour stored in DXF group 420, accompanied by the nearest indexed colour (ACI, group 62) for older readers.
 
-**Swatch strip**: The column of swatches at the right edge of the window: default colours on top, the last 12 colours used at the bottom.
+**Swatch strip**: The column of swatches at the right edge of the window: default colours on top, then the saved swatches (Add to Swatches), then the last 12 colours used at the bottom.
 
 **Fill**: A solid colour inside a closed outline, part of that outline.
 
