@@ -44,7 +44,7 @@ import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './scale.
 import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
 import * as FI from './fill.js';
-import { extendEntity, extendRegion } from './extend.js';
+import { extendEntity, extendRegion, previewEdit } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import { layoutSnap } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
@@ -4020,7 +4020,7 @@ let canvasPreviewBounds = null;
 function previewBounds() {
   const canvas = ui.canvas.getBoundingClientRect();
   let bounds = canvasPreviewBounds;
-  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-glow, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
+  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-fade, .dr-trim-ext, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
@@ -6079,7 +6079,22 @@ function modSync(d) {
 }
 const modEntAt = (d, p) => { const i = hitAt(d, p); return i >= 0 ? d.raw.entities[i] : null; };
 /** The cutting edges: the ones picked, or (Enter with none picked) every line, arc, circle and polyline showing. */
-const trimEdges = (d, m) => (m.all ? edIndex(d).shown.map((i) => d.raw.entities[i]).filter(MD.canModify) : m.edges);
+const trimEdges = (d, m) => {
+  if (!m.all) return m.edges;
+  const ix = edIndex(d), c = m.edgeCache;                       // every object showing: built once per command and drawing, not on every hover
+  if (c && c.ents === d.raw.entities && c.ix === ix) return c.list;
+  const list = ix.shown.map((i) => d.raw.entities[i]).filter(MD.canModify);
+  m.edgeCache = { ents: d.raw.entities, ix, list };
+  return list;
+};
+/** What a click under the pointer would do (Shift swaps Trim and Extend): previewEdit's answer, kept while the pointer, object and edges stay the same. */
+function trimPreview(d, m, e) {
+  const edges = trimEdges(d, m), ext = (m.kind === 'extend') !== !!m.shift, c = m.pv;
+  if (c && c.e === e && c.edges === edges && c.ext === ext && c.quick === m.quick && c.p[0] === m.p[0] && c.p[1] === m.p[1]) return c.r;
+  const r = previewEdit(e, edges, m.p, ext, m.quick);
+  m.pv = { e, edges, ext, quick: m.quick, p: m.p, r };
+  return r;
+}
 
 /** A modify tool just chosen: Offset reads its remembered distance; Mirror takes the selection if there is one. */
 function modStart(id) {
@@ -6249,6 +6264,12 @@ function modTyped(d, raw) {
   return false;
 }
 
+document.addEventListener('keydown', trimShiftKey); document.addEventListener('keyup', trimShiftKey);
+/** Holding or letting go of Shift in Trim / Extend flips the hover preview at once, without moving the mouse. */
+function trimShiftKey(e) {
+  const m = state.mod;
+  if (e.key === 'Shift' && m && modLive() && (m.kind === 'trim' || m.kind === 'extend') && m.shift !== e.shiftKey) { m.shift = e.shiftKey; paintOverlay(); }
+}
 function modHover(d, cx, cy, shift) {
   const m = state.mod, p = toDrawing(d, cx, cy);
   m.p = p; m.shift = shift;
@@ -6555,23 +6576,23 @@ function modOvl(d, out) {
     for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
     // Re-pick under the screen cursor after view changes; captured pans can move it outside the canvas.
     const r = ui.canvas.getBoundingClientRect(), c = m.client;
-    if (m.kind === 'trim' || m.fence || m.cross) m.p = c && c[0] >= r.left && c[0] < r.right && c[1] >= r.top && c[1] < r.bottom ? toDrawing(d, ...c) : null;     // Extend's preview stays while the mouse is over the command box
+    const inside = c && c[0] >= r.left && c[0] < r.right && c[1] >= r.top && c[1] < r.bottom;
+    if (inside) m.p = toDrawing(d, ...c);
+    else if (m.kind === 'trim' || m.fence || m.cross) m.p = null;      // Extend's preview stays while the mouse is over the command box
     const rub = (a, b, tid) => add({ t: 'line', a: [a[0] * f, a[1] * f], b: [b[0] * f, b[1] * f] }, 'dr-guide', tid);
     if (m.fence) { m.fence.slice(1).forEach((q, i) => rub(m.fence[i], q, 'trim-fence')); if (m.p) rub(m.fence.at(-1), m.p, 'trim-fence'); }
     else if (m.cross) {
       const a = m.cross.p1, b = m.p;
       if (a && b) [[a, [b[0], a[1]]], [[b[0], a[1]], b], [b, [a[0], b[1]]], [[a[0], b[1]], a]].forEach(([u, v]) => rub(u, v, 'trim-cross'));
     } else if (m.erase) for (const e of m.erase) addEnt(e, 'dr-trim-cut', 'trim-erase');
-    else if (m.stage === 'cut' && m.p && m.kind === 'extend') {
-      const e = modEntAt(d, m.p), r = e ? extendEntity(e, trimEdges(d, m), m.p) : null;
-      if (r?.ent) { addEnt(e, 'dr-guide'); addEnt(r.ent, 'dr-shape', 'mod-preview'); }
-    } else if (m.stage === 'cut' && m.p) {
-      const e = modEntAt(d, m.p);
-      if (e && MD.canModify(e)) {
-        addEnt(e, 'dr-trim-glow', 'trim-glow');
-        const r = MD.trimEntity(e, trimEdges(d, m), m.p, m.quick);
-        if (r.removed) addEnt(r.removed, 'dr-trim-cut', 'mod-preview');
-      }
+    else if (m.stage === 'cut' && m.p) {
+      // only the piece a click would cut, faded with a small red x by the pointer; Extend shows the stretch it would grow by
+      const e = modEntAt(d, m.p), pv = e && MD.canModify(e) ? trimPreview(d, m, e) : null;
+      if (pv?.act === 'trim' && pv.cut) {
+        const k = 1 / view.scale, [x, y] = toSheetPt(d, m.p), u = 4 * k, cx = x + 12 * k, cy = y + 12 * k;
+        add(GR.shapeOf(pv.cut, f), 'dr-trim-mask'); addEnt(pv.cut, 'dr-trim-fade', 'mod-preview');
+        out.push(s('path', { class: 'dr-trim-x', d: `M${cx - u} ${cy - u}L${cx + u} ${cy + u}M${cx - u} ${cy + u}L${cx + u} ${cy - u}`, 'data-testid': 'trim-x' }));
+      } else if (pv?.act === 'extend') addEnt(pv.add, 'dr-trim-ext', 'mod-preview');
     }
   } else if (m.stage === 'p1' || m.stage === 'p2' || m.stage === 'erase') {
     const a = m.p1, b = m.stage === 'erase' ? m.p2 : m.stage === 'p2' ? m.cur : null;

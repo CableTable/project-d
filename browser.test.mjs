@@ -10610,6 +10610,69 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc cancels the whole Extend');
   });
 
+  await step('TODO 155a T4: Quick hover preview (the piece a click cuts, faded, with a red x; Extend shows the stretch it grows by; Shift swaps; pan and zoom keep it on the cursor)', async () => {
+    const hv = async (x, y) => { const q = await at(x, y); await page.mouse.move(q.x, q.y); await frames(); return q; };
+    const quick = async (cmd) => { await typeCmd(cmd); await typeCmd('o'); await typeCmd('q'); await page.keyboard.press('Escape'); await typeCmd(cmd); await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' }); };
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50), dxfLine(20, 70, 60, 70), dxfLine(100, 55, 100, 90));
+    await openGrips(writeDxf(doc0), 'trim-hover.dxf');
+    const h = (await sheetPx()).h, path = (e) => svgPath(GR.shapeOf(e, 1), h);
+    const prev = async () => (await t('mod-preview').count()) ? { d: await t('mod-preview').getAttribute('d'), cls: await t('mod-preview').getAttribute('class') } : null;
+    await quick('tr');
+    // Trim: only the piece between the nearest crossings is faded, a red x sits by the pointer, nothing else glows
+    const p0 = await hv(120, 30);
+    assert.deepEqual(await prev(), { d: path(dxfLine(80, 30, 160, 30)), cls: 'dr-trim-fade' });
+    assert.equal(await t('trim-x').count(), 1); assert.equal(await page.locator('.dr-trim-glow').count(), 0, 'the whole-object glow is gone');
+    const xb = await t('trim-x').boundingBox();
+    assert.ok(xb.x > p0.x && xb.y > p0.y && xb.x - p0.x < 30 && xb.y - p0.y < 30, 'the x sits just off the pointer, lower right');
+    const pieceStyle = await t('mod-preview').evaluate((el) => { const c = getComputedStyle(el); return [c.strokeWidth, c.strokeOpacity]; });
+    assert.deepEqual(pieceStyle, ['1.4px', '0.7']);
+    await hv(40, 30); assert.equal((await prev()).d, path(dxfLine(20, 30, 80, 30)), 'an end piece runs to the end of the line');
+    // a lone line goes whole in Quick
+    await hv(58, 70); assert.equal((await prev()).d, path(dxfLine(20, 70, 60, 70)));
+    await shotBoth('155a4-trim-hover', () => hv(120, 30));
+    // Shift previews the other action at once, without moving the mouse: Trim shows Extend's stretch, and the x goes
+    await hv(58, 70);
+    await page.keyboard.down('Shift'); await frames();
+    assert.deepEqual(await prev(), { d: path(dxfLine(60, 70, 100, 70)), cls: 'dr-trim-ext' }, 'Shift: the line would grow to the next object');
+    assert.equal(await t('trim-x').count(), 0, 'no x when extending');
+    await page.keyboard.up('Shift'); await frames();
+    assert.equal((await prev()).cls, 'dr-trim-fade', 'letting go goes back to the cut');
+    // pan: the preview and its x travel with the content under the pointer
+    const p1 = await hv(120, 30), before = await t('mod-preview').boundingBox(), xBefore = await t('trim-x').boundingBox();
+    await page.mouse.down({ button: 'middle' }); await page.mouse.move(p1.x + 35, p1.y + 25); await frames();
+    assert.equal((await prev()).d, path(dxfLine(80, 30, 160, 30)), 'the same piece after the pan');
+    const after = await t('mod-preview').boundingBox(), xAfter = await t('trim-x').boundingBox();
+    assert.ok(Math.abs(after.x - before.x - 35) < 1 && Math.abs(after.y - before.y - 25) < 1, 'the piece follows the pan');
+    assert.ok(Math.abs(xAfter.x - xBefore.x - 35) < 1 && Math.abs(xAfter.y - xBefore.y - 25) < 1, 'the x stays by the pointer');
+    await page.mouse.up({ button: 'middle' });
+    await page.getByRole('button', { name: 'Fit', exact: true }).click();
+    await page.keyboard.press('Escape');
+    // Extend: a faint extension line shows where the end would grow to; Shift previews the cut
+    await quick('ex');
+    await hv(58, 70);
+    assert.deepEqual(await prev(), { d: path(dxfLine(60, 70, 100, 70)), cls: 'dr-trim-ext' });
+    assert.equal(await t('trim-x').count(), 0);
+    assert.deepEqual(await t('mod-preview').evaluate((el) => { const c = getComputedStyle(el); return [c.strokeWidth, c.strokeOpacity, c.strokeDasharray !== 'none']; }), ['1.4px', '0.6', true]);
+    await shotBoth('155a4-extend-hover', () => hv(58, 70));
+    await page.keyboard.down('Shift'); await frames();
+    assert.deepEqual(await prev(), { d: path(dxfLine(20, 70, 60, 70)), cls: 'dr-trim-fade' }, 'Shift in Extend previews the cut (this line crosses nothing: it goes whole)');
+    assert.equal(await t('trim-x').count(), 1);
+    await page.keyboard.up('Shift'); await frames();
+    assert.equal((await prev()).cls, 'dr-trim-ext');
+    // the view zooms under a stationary pointer: Extend re-reads the pointer and does not leave the old preview behind
+    await page.getByLabel('Zoom in', { exact: true }).evaluate((el) => el.click()); await frames();
+    const now = await prev();
+    assert.ok(!now || now.d !== path(dxfLine(60, 70, 100, 70)), 'the old extension is not left at a stale place');
+    // what the preview shows is what the click does
+    await hv(58, 70); await page.getByRole('button', { name: 'Fit', exact: true }).click(); await hv(58, 70);
+    assert.equal((await prev())?.d, path(dxfLine(60, 70, 100, 70)));
+    await click(58, 70);
+    const grown = (await savedDoc()).entities.find((e) => e.type === 'LINE' && fieldOf(e, 20) === 70 && fieldOf(e, 21) === 70);
+    assert.deepEqual([fieldOf(grown, 10), fieldOf(grown, 11)].sort((a, b) => a - b), [20, 100], 'the click grew the line to where the preview showed');
+    await page.keyboard.press('Escape'); await closeTabs(/trim-hover/);
+  });
+
   await step('TODO 78: Trim preview', async () => {
     const workArea = async (name) => { await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frames(); };
     await menuItem('View', 'Theme: light'); await workArea('Follow app');
@@ -10621,7 +10684,7 @@ try {
     const before = await savedDoc(), h = (await sheetPx()).h;
     const path = (ent) => svgPath(GR.shapeOf(ent, 1), h);
     const hover = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
-    const clear = async () => { assert.equal(await t('trim-glow').count(), 0); assert.equal(await t('mod-preview').count(), 0); };
+    const clear = async () => { assert.equal(await t('trim-x').count(), 0); assert.equal(await t('mod-preview').count(), 0); };
     await typeCmd('tr'); await trimStd(); await click(80, 40); await hover(120, 30); await clear();
     assert.equal(await t('trim-edge').evaluate((el) => getComputedStyle(el).strokeWidth), '4px');
     await page.keyboard.press('Enter');
@@ -10630,27 +10693,27 @@ try {
       await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' });
       await hover(120, 30);
       await page.keyboard.type('1'); await frames();
-      assert.equal(await t('trim-glow').count(), 1, 'hover picks the pale polyline; ' + await prompt());
-      assert.equal(await t('trim-glow').getAttribute('d'), path(before.entities[0]), 'the whole pale object glows');
-      assert.equal(await t('mod-preview').getAttribute('d'), path(dxfPoly([[80, 30], [120, 30], [160, 30]])), 'only the interval between the nearest edges is red');
+      assert.equal(await t('trim-x').count(), 1, 'hover picks the pale polyline; ' + await prompt());
+      assert.equal(await page.locator('.dr-trim-glow').count(), 0, 'no whole-object glow any more');
+      assert.equal(await t('mod-preview').getAttribute('d'), path(dxfPoly([[80, 30], [120, 30], [160, 30]])), 'only the interval between the nearest edges is faded');
       const style = await t('mod-preview').evaluate((el) => {
-        const c = getComputedStyle(el), canvas = getComputedStyle(document.querySelector('[data-testid=canvas]'));
-        return { stroke: c.stroke, width: c.strokeWidth, hot: canvas.getPropertyValue('--hot').trim(), selection: canvas.getPropertyValue('--selection').trim(), edgeOpacity: String(Number(canvas.getPropertyValue('--edge-opacity'))), bg: canvas.backgroundColor };
+        const c = getComputedStyle(el), canvas = getComputedStyle(document.querySelector('[data-testid=canvas]')), x = getComputedStyle(document.querySelector('[data-testid=trim-x]'));
+        return { stroke: c.stroke, width: c.strokeWidth, opacity: c.strokeOpacity, muted: getComputedStyle(el.ownerSVGElement.parentElement).getPropertyValue('--muted').trim(), xStroke: x.stroke, hot: canvas.getPropertyValue('--hot').trim(), selection: canvas.getPropertyValue('--selection').trim(), edgeOpacity: String(Number(canvas.getPropertyValue('--edge-opacity'))), bg: canvas.backgroundColor };
       });
       const rgbHex = (s) => '#' + s.match(/\d+/g).slice(0, 3).map((v) => Number(v).toString(16).padStart(2, '0')).join('');
-      assert.equal(rgbHex(style.stroke), style.hot); assert.equal(style.width, '3.6px');
+      assert.equal(rgbHex(style.stroke), style.muted.toLowerCase()); assert.equal(style.width, '1.4px'); assert.equal(style.opacity, '0.7');
+      assert.equal(rgbHex(style.xStroke), style.hot, 'the x is red');
       assert.ok(contrastRatio(style.hot, rgbHex(style.bg)) >= 3, 'red is readable against the work area');
-      assert.deepEqual(await t('trim-glow').evaluate((el) => { const c = getComputedStyle(el); return [c.strokeWidth, c.strokeOpacity]; }), ['5.4px', '0.35']);
       const edge = await t('trim-edge').evaluate((el) => { const c = getComputedStyle(el); return [c.stroke, c.strokeWidth, c.strokeOpacity]; });
       assert.deepEqual([rgbHex(edge[0]), ...edge.slice(1)], [style.selection, '4px', style.edgeOpacity], 'cutting edges keep their blue and thickness');
-      const box = await t('cmd-bar').boundingBox(), glow = await t('trim-glow').boundingBox();
-      assert.ok(box.y + box.height < glow.y - 3 || box.y > glow.y + glow.height + 3 || box.x + box.width < glow.x - 3 || box.x > glow.x + glow.width + 3, 'command box stays clear of the whole glow');
+      const box = await t('cmd-bar').boundingBox(), glow = await t('mod-preview').boundingBox();
+      assert.ok(box.y + box.height < glow.y - 3 || box.y > glow.y + glow.height + 3 || box.x + box.width < glow.x - 3 || box.x > glow.x + glow.width + 3, 'command box stays clear of the faded piece');
     };
     await shotBoth('78-trim-preview', show);
     await workArea('Dark'); await show();
     await workArea('Follow app');
     await hover(120, 65); await clear();
-    await hover(120, 70); assert.equal(await t('trim-glow').count(), 1); assert.equal(await t('mod-preview').count(), 0, 'no crossing: glow only');
+    await hover(120, 70); await clear();                          // Standard: nothing crosses it, so a click would cut nothing and nothing shows
     await hover(120, 30); await t('ptab-objects').hover(); await frames(); await clear();
     await hover(120, 30); await page.keyboard.press('Escape'); await frames(); await clear();
     await typeCmd('tr'); await trimStd(); await click(80, 40); await page.keyboard.press('Enter'); await hover(120, 30);
@@ -10702,13 +10765,13 @@ try {
     const clear = async (why) => {
       await frames();
       assert.equal(await t('mod-preview').count(), 0, why + ': no red piece');
-      assert.equal(await t('trim-glow').count(), 0, why + ': no object glow');
+      assert.equal(await t('trim-x').count(), 0, why + ': no x');
     };
     const red = async (expected, why) => {
       await frames();
       assert.equal(await t('mod-preview').count(), 1, why);
       assert.equal(await t('mod-preview').getAttribute('d'), expected, why);
-      assert.equal(await t('trim-glow').count(), 1, why);
+      assert.equal(await t('trim-x').count(), 1, why);
     };
     const start = async () => { await typeCmd('tr'); await trimStd(); await page.keyboard.press('Enter'); await hover(); await red(interval, 'fresh preview'); };
     await start();

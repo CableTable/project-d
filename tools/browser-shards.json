@@ -266,6 +266,7 @@
   "Trim with picked cutting edges: click toggles an edge; a line nothing crosses says so; a circle between two lines leaves an arc": 4.26,
   "TODO 155a T1: Quick Trim starts at once (no edges), a click cuts between the crossings, a lone line goes whole, U undoes a cut, O switches to Standard (remembered over a reload), Esc ends": 6,
   "TODO 155a T2: Quick Trim fence across two lines, Crossing window, eRase and cuTting edges; each is one undo step and U steps back": 8,
+  "TODO 155a T4: Quick hover preview (the piece a click cuts, faded, with a red x; Extend shows the stretch it grows by; Shift swaps; pan and zoom keep it on the cursor)": 6,
   "TODO 78: Trim preview": 20.5,
   "TODO 78c: Trim preview invalidation": 4.21,
   "TODO 66a: Move": 11.73,

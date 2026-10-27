@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import * as M from './web/modify.js';
 import { shapeOf, get } from './web/grips.js';
-import { extendEntity, extendRegion } from './web/extend.js';
+import { extendEntity, extendRegion, previewEdit } from './web/extend.js';
 import { entity, line, circle, arc, lwpoly, text, mtext, ellipse, insert, rect, roundRect } from './web/dxf-write.js';
 
 let n = 0;
@@ -465,6 +465,26 @@ test('Quick Extend by a crossing window (TODO 155a T3 fix): a window holding the
   nearPt(S(both.changed[0].ents[0]).a, [-30, 0]); nearPt(S(both.changed[0].ents[0]).b, [40, 0]);
   const none = extendRegion([line(0, 0, 40, 0, base), line(0, 50, 5, 50, base)], [line(0, 50, 5, 50, base)], M.windowHit([10, -5], [30, 5]));
   assert.deepEqual(none.changed, []); assert.equal(none.skipped, 1, 'a boundary at neither end is still skipped');
+});
+
+test('previewEdit (TODO 155a T4): the piece a click would cut, or the stretch it would grow by, nothing changed', () => {
+  const ln = line(0, 0, 100, 0, base), cutA = line(30, -10, 30, 10, base), cutB = line(70, -10, 70, 10, base), above = line(0, 20, 100, 20, base);
+  const t = previewEdit(ln, [cutA, cutB], [50, 0], false);                                     // the piece between the nearest crossings
+  assert.equal(t.act, 'trim'); nearPt(S(t.cut).a, [30, 0]); nearPt(S(t.cut).b, [70, 0]);
+  const end = previewEdit(ln, [cutA, cutB], [90, 0], false);                                   // an end piece runs to the end of the line
+  nearPt(S(end.cut).a, [70, 0]); nearPt(S(end.cut).b, [100, 0]);
+  const whole = previewEdit(ln, [above], [50, 0], false);                                      // nothing crosses: Quick cuts the whole object
+  nearPt(S(whole.cut).a, [0, 0]); nearPt(S(whole.cut).b, [100, 0]);
+  assert.match(previewEdit(ln, [above], [50, 0], false, false).error, /Nothing crosses/, 'Standard refuses it');
+  const e = previewEdit(line(0, 0, 20, 0, base), [line(50, -20, 50, 20, base)], [18, 0], true);   // only the new tail, not the whole line
+  assert.equal(e.act, 'extend'); nearPt(S(e.add).a, [20, 0]); nearPt(S(e.add).b, [50, 0]);
+  const front = previewEdit(line(0, 0, 20, 0, base), [line(-30, -20, -30, 20, base)], [2, 0], true);
+  nearPt(S(front.add).a, [-30, 0]); nearPt(S(front.add).b, [0, 0]);
+  const ar = previewEdit(arc(0, 0, 10, 0, 90, base), [line(-10, -20, -10, 20, base)], [0, 10], true);   // an arc: just the new sweep
+  near(S(ar.add).a0, 90); near(S(ar.add).a1, 180);
+  const pl = previewEdit(lwpoly([[0, 0], [20, 0]], base), [line(50, -20, 50, 20, base)], [19, 0], true);   // a polyline: its new end segment
+  assert.equal(pl.act, 'extend'); nearPt(S(pl.add).a, [20, 0]); nearPt(S(pl.add).b, [50, 0]);  assert.match(previewEdit(line(0, 0, 20, 0, base), [], [18, 0], true).error, /No boundary/, 'nothing ahead: no preview');
+  assert.ok(previewEdit(circle(0, 0, 10, base), [line(50, -20, 50, 20, base)], [10, 0], true).error, 'a closed shape cannot extend');
 });
 
 console.log(`${n} modify tests passed`);
