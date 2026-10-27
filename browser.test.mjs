@@ -10622,6 +10622,7 @@ try {
     // Trim: only the piece between the nearest crossings is faded, a red x sits by the pointer, nothing else glows
     const p0 = await hv(120, 30);
     assert.deepEqual(await prev(), { d: path(dxfLine(80, 30, 160, 30)), cls: 'dr-trim-fade' });
+    assert.equal(await page.locator('.dr-trim-mask').count(), 0, 'no sheet-coloured mask covers pictures or PDF underlays');
     assert.equal(await t('trim-x').count(), 1); assert.equal(await page.locator('.dr-trim-glow').count(), 0, 'the whole-object glow is gone');
     const xb = await t('trim-x').boundingBox();
     assert.ok(xb.x > p0.x && xb.y > p0.y && xb.x - p0.x < 30 && xb.y - p0.y < 30, 'the x sits just off the pointer, lower right');
@@ -10638,6 +10639,12 @@ try {
     assert.equal(await t('trim-x').count(), 0, 'no x when extending');
     await page.keyboard.up('Shift'); await frames();
     assert.equal((await prev()).cls, 'dr-trim-fade', 'letting go goes back to the cut');
+    await page.keyboard.down('Shift'); await frames();
+    assert.equal((await prev()).cls, 'dr-trim-ext');
+    await page.evaluate(() => window.dispatchEvent(new Event('blur'))); await frames();
+    assert.deepEqual(await prev(), { d: path(dxfLine(20, 70, 60, 70)), cls: 'dr-trim-fade' }, 'blur clears Shift in Trim without a keyup');
+    assert.equal(await t('trim-x').count(), 1);
+    await page.keyboard.up('Shift');
     // pan: the preview and its x travel with the content under the pointer
     const p1 = await hv(120, 30), before = await t('mod-preview').boundingBox(), xBefore = await t('trim-x').boundingBox();
     await page.mouse.down({ button: 'middle' }); await page.mouse.move(p1.x + 35, p1.y + 25); await frames();
@@ -10658,6 +10665,9 @@ try {
     await page.keyboard.down('Shift'); await frames();
     assert.deepEqual(await prev(), { d: path(dxfLine(20, 70, 60, 70)), cls: 'dr-trim-fade' }, 'Shift in Extend previews the cut (this line crosses nothing: it goes whole)');
     assert.equal(await t('trim-x').count(), 1);
+    await page.evaluate(() => window.dispatchEvent(new Event('blur'))); await frames();
+    assert.deepEqual(await prev(), { d: path(dxfLine(60, 70, 100, 70)), cls: 'dr-trim-ext' }, 'blur clears Shift in Extend without a keyup');
+    assert.equal(await t('trim-x').count(), 0);
     await page.keyboard.up('Shift'); await frames();
     assert.equal((await prev()).cls, 'dr-trim-ext');
     // the view zooms under a stationary pointer: Extend re-reads the pointer and does not leave the old preview behind

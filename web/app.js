@@ -6265,10 +6265,11 @@ function modTyped(d, raw) {
 }
 
 document.addEventListener('keydown', trimShiftKey); document.addEventListener('keyup', trimShiftKey);
-/** Holding or letting go of Shift in Trim / Extend flips the hover preview at once, without moving the mouse. */
+window.addEventListener('blur', trimShiftKey);
+/** Shift changes and window blur update the Trim / Extend hover preview without moving the mouse. */
 function trimShiftKey(e) {
-  const m = state.mod;
-  if (e.key === 'Shift' && m && modLive() && (m.kind === 'trim' || m.kind === 'extend') && m.shift !== e.shiftKey) { m.shift = e.shiftKey; paintOverlay(); }
+  const m = state.mod, shift = e.type === 'blur' ? false : e.shiftKey;
+  if ((e.key === 'Shift' || e.type === 'blur') && m && modLive() && (m.kind === 'trim' || m.kind === 'extend') && m.shift !== shift) { m.shift = shift; paintOverlay(); }
 }
 function modHover(d, cx, cy, shift) {
   const m = state.mod, p = toDrawing(d, cx, cy);
@@ -6590,7 +6591,7 @@ function modOvl(d, out) {
       const e = modEntAt(d, m.p), pv = e && MD.canModify(e) ? trimPreview(d, m, e) : null;
       if (pv?.act === 'trim' && pv.cut) {
         const k = 1 / view.scale, [x, y] = toSheetPt(d, m.p), u = 4 * k, cx = x + 12 * k, cy = y + 12 * k;
-        add(GR.shapeOf(pv.cut, f), 'dr-trim-mask'); addEnt(pv.cut, 'dr-trim-fade', 'mod-preview');
+        addEnt(pv.cut, 'dr-trim-fade', 'mod-preview');
         out.push(s('path', { class: 'dr-trim-x', d: `M${cx - u} ${cy - u}L${cx + u} ${cy + u}M${cx - u} ${cy + u}L${cx + u} ${cy - u}`, 'data-testid': 'trim-x' }));
       } else if (pv?.act === 'extend') addEnt(pv.add, 'dr-trim-ext', 'mod-preview');
     }
