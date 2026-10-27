@@ -1,6 +1,7 @@
 {
   "TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo": 3,
   "TODO 67b: other-part edges and centres, finite guides, copy exclusions, hidden/locked skip and Esc": 5,
+  "TODO 67c: part gap labels, live decimals, nearest target, cleanup and mid-drag light / dark": 5,
   "TODO 152c: a 200-character command echo ellipsizes with a tooltip and keeps the status bar on one line": 0.58,
   "TODO 152b: Properties and ribbon show custom colour swatch and hex, keeping the picker option": 0.74,
   "TODO 152a: 12 tabs keep the header height and add buttons visible; wheel and drag scroll the strip": 1.57,

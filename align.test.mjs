@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { sheetAlignmentLines, partAlignmentLines, snapBoxToAlignment, alignmentSegments } from './web/align.js';
+import { sheetAlignmentLines, partAlignmentLines, snapBoxToAlignment, alignmentSegments, alignmentGaps } from './web/align.js';
 import { placedBox } from './web/apply.js';
 import { unionBox } from './web/arrange.js';
 
@@ -83,8 +83,8 @@ const all = () => true;
 test('part edges and centres on both axes snap each dragged edge and centre; guide joins only their extents', () => {
   const targets = partAlignmentLines(parts, [{ partId: 'plate', x: 200, y: 400 }], all);
   assert.deepEqual(targets, [
-    { axis: 'x', mm: 200, span: [400, 440] }, { axis: 'x', mm: 240, span: [400, 440] }, { axis: 'x', mm: 280, span: [400, 440] },
-    { axis: 'y', mm: 400, span: [200, 280] }, { axis: 'y', mm: 420, span: [200, 280] }, { axis: 'y', mm: 440, span: [200, 280] },
+    { axis: 'x', mm: 200, span: [400, 440], part: true }, { axis: 'x', mm: 240, span: [400, 440], part: true }, { axis: 'x', mm: 280, span: [400, 440], part: true },
+    { axis: 'y', mm: 400, span: [200, 280], part: true }, { axis: 'y', mm: 420, span: [200, 280], part: true }, { axis: 'y', mm: 440, span: [200, 280], part: true },
   ]);
   for (const target of targets) for (const fraction of [0, .5, 1]) {
     const box = [600, 100, 660, 160], low = target.axis === 'x' ? 0 : 1;
@@ -132,4 +132,44 @@ test('a rotated target uses its upright box, including the finite span', () => {
   assert.deepEqual(targets.map((l) => l.mm), [box[0], (box[0] + box[2]) / 2, box[2], box[1], (box[1] + box[3]) / 2, box[3]]);
   assert.deepEqual(targets[0].span, [box[1], box[3]]);
   assert.deepEqual(snap([box[0] + 2, 100, box[0] + 62, 160], [], targets), { dx: -2, dy: 0, hits: [targets[0]] });
+});
+
+test('part gaps above / below / left / right measure edges along the guide', () => {
+  const targets = partAlignmentLines(parts, [{ partId: 'plate', x: 200, y: 400 }], all);
+  for (const [box, hit, gap, mid] of [
+    [[200, 500, 280, 540], targets[0], 60, 470],
+    [[200, 300, 280, 340], targets[0], 60, 370],
+    [[100, 400, 180, 440], targets[3], 20, 190],
+    [[300, 400, 380, 440], targets[3], 20, 290],
+  ]) assert.deepEqual(alignmentGaps(box, [hit], targets), [{ axis: hit.axis, mm: hit.mm, gap, mid }]);
+});
+
+test('overlap, containment and touching hide gaps; sheet / gripper / Guideline hits never label', () => {
+  const targets = partAlignmentLines(parts, [{ partId: 'plate', x: 200, y: 400 }], all);
+  for (const box of [[200, 420, 280, 460], [200, 400, 280, 440], [200, 390, 280, 450], [200, 410, 280, 430], [200, 440, 280, 480]]) {
+    assert.deepEqual(alignmentGaps(box, [targets[0]], targets), []);
+  }
+  assert.deepEqual(alignmentGaps([0, 100, 80, 140], [...lines, ...sheetAlignmentLines({ ...sheet, gripLeft: 20 }), { axis: 'x', mm: 0 }], targets), []);
+});
+
+test('nearest part on the active line wins regardless of layout order; one label per active axis', () => {
+  const targets = partAlignmentLines(parts, [
+    { partId: 'plate', x: 200, y: 500 }, { partId: 'plate', x: 200, y: 400 },
+    { partId: 'plate', x: 400, y: 200 },
+  ], all);
+  const box = [200, 200, 280, 240];
+  assert.deepEqual(alignmentGaps(box, [targets[0], targets[15]], targets), [
+    { axis: 'x', mm: 200, gap: 160, mid: 320 }, { axis: 'y', mm: 200, gap: 120, mid: 340 },
+  ]);
+  const overlap = partAlignmentLines(parts, [{ partId: 'plate', x: 200, y: 220 }], all);
+  assert.deepEqual(alignmentGaps(box, [targets[0]], [...targets, ...overlap]), []);
+});
+
+test('rotated target and dragged part gaps use their upright boxes', () => {
+  const target = { partId: 'plate', x: 240, y: 400, rot: 45 };
+  const targets = partAlignmentLines(parts, [target], all);
+  const box = placedBox(parts.plate, { x: targets[0].mm + 40, y: 100, rot: 90 });
+  const [gap] = alignmentGaps(box, [targets[0]], targets);
+  assert.equal(gap.gap, 220);
+  assert.equal(gap.mid, 290);
 });

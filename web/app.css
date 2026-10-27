@@ -534,6 +534,7 @@ select.fld { font-family: var(--sans); }
 .ruler text { fill: var(--muted); font: 500 10px var(--mono); }
 .guide { stroke: var(--guide); stroke-width: 1.2; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; pointer-events: none; fill: none; }
 .alignment-guide { stroke: var(--alignment-guide); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; fill: none; }
+.alignment-gap { fill: var(--alignment-guide); font-family: var(--mono); font-weight: 600; stroke: var(--sheet); stroke-width: 3; paint-order: stroke; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .guide.snapped { stroke-width: 2.2; stroke-dasharray: none; }
 .guide.going { opacity: .35; }
 .guide.drag { stroke: var(--accent); stroke-width: 1.6; }

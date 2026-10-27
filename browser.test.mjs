@@ -158,16 +158,13 @@ try {
         const b = await p.locator('rect.sheet').boundingBox();
         return { x: b.x + x * b.width / 1000, y: b.y + (700 - y) * b.width / 1000 };
       };
-      const position = async () => [Number(await q('px').inputValue()), Number(await q('py').inputValue())];
       const near = async (x, y, tol = .1) => {
-        const [px, py] = await position();
-        assert.ok(Math.abs(px - x) < tol && Math.abs(py - y) < tol, `${px},${py} != ${x},${y}`);
+        await p.waitForFunction(({ x, y, tol }) => Math.abs(Number(document.querySelector('[data-testid=px]').value) - x) < tol && Math.abs(Number(document.querySelector('[data-testid=py]').value) - y) < tol, { x, y, tol });
       };
       const start = async (x, y, keys = []) => {
         const from = await point(250, 230), to = await point(x + 50, y + 30);
         for (const key of keys) await p.keyboard.down(key);
         await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 6 });
-        await p.waitForFunction(() => ['px', 'py'].some((id) => Number(document.querySelector(`[data-testid=${id}]`).value) !== 200));
       };
       const cancel = async () => {
         await p.keyboard.press('Escape'); await p.mouse.up();
@@ -261,14 +258,12 @@ try {
         return { x: b.x + x * b.width / 1000, y: b.y + (700 - y) * b.width / 1000 };
       };
       const near = async (x, y, tol = .1) => {
-        const px = Number(await q('px').inputValue()), py = Number(await q('py').inputValue());
-        assert.ok(Math.abs(px - x) < tol && Math.abs(py - y) < tol, `${px},${py} != ${x},${y}`);
+        await p.waitForFunction(({ x, y, tol }) => Math.abs(Number(document.querySelector('[data-testid=px]').value) - x) < tol && Math.abs(Number(document.querySelector('[data-testid=py]').value) - y) < tol, { x, y, tol });
       };
       const start = async (x, y, keys = []) => {
         const from = await point(250, 230), to = await point(x + 50, y + 30);
         for (const key of keys) await p.keyboard.down(key);
         await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 6 });
-        await p.waitForFunction(() => ['px', 'py'].some((id) => Number(document.querySelector(`[data-testid=${id}]`).value) !== 200));
       };
       const cancel = async () => {
         await p.keyboard.press('Escape'); await p.mouse.up();
@@ -308,6 +303,71 @@ try {
       await start(322, 200); await near(320, 200); await p.mouse.up();
       assert.equal(await guides.count(), 0); await p.keyboard.press('Control+z'); await near(200, 200);
       await p.keyboard.press('Control+y'); await near(320, 200); await p.keyboard.press('Control+z');
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
+  await step('TODO 67c: part gap labels, live decimals, nearest target, cleanup and mid-drag light / dark', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const lay = newLayout('Alignment 67c');
+      for (const [id, name, w, h] of [['a', 'Part A', 100, 60], ['b', 'Part B', 160, 100]]) {
+        const raw = newDoc(4);
+        addEntities(raw, dxfPoly([[0, 0], [w, 0], [w, h], [0, h]], { closed: true }));
+        lay.parts[id] = makePart(id, name, raw);
+      }
+      lay.s.gripBottom = 0;
+      // The farther target comes first: the label must still measure to the nearer Part B.
+      lay.placed = [{ partId: 'a', x: 200, y: 200, rot: 0 }, { partId: 'b', x: 320, y: 80, rot: 0 }, { partId: 'b', x: 320, y: 230.12, rot: 0 }];
+      await q('picker').setInputFiles({ name: 'alignment-67c.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.locator('.dtab.on .tname').filter({ hasText: 'alignment-67c.dxf' }).waitFor();
+      await p.locator('[data-tool=select]').click();
+      const labels = p.locator('.alignment-gap');
+      const point = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox();
+        return { x: b.x + x * b.width / 1000, y: b.y + (700 - y) * b.width / 1000 };
+      };
+      const near = async (x, y, tol = .1) => {
+        try { await p.waitForFunction(({ x, y, tol }) => Math.abs(Number(document.querySelector('[data-testid=px]').value) - x) < tol && Math.abs(Number(document.querySelector('[data-testid=py]').value) - y) < tol, { x, y, tol }); }
+        catch (e) { throw new Error(`${e.message}: expected ${x},${y}, got ${await q('px').inputValue()},${await q('py').inputValue()}`); }
+      };
+      const start = async (x = 322, y = 500) => {
+        const from = await point(250, 230), to = await point(x + 50, y + 30);
+        await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 6 });
+      };
+      const text = (value) => p.waitForFunction((value) => document.querySelectorAll('.alignment-gap').length === 1 && document.querySelector('.alignment-gap').textContent === value, value);
+      const gapText = async (dp) => (Number(await q('py').inputValue()) - 330.12).toFixed(dp) + ' mm';
+      const clear = () => p.waitForFunction(() => !document.querySelector('.alignment-gap'));
+      const cancel = async () => { await p.keyboard.press('Escape'); await p.mouse.up(); await clear(); await near(200, 200); };
+      // Dispatch the picker's normal change event without releasing the held mouse button.
+      const decimals = (dp) => p.getByTestId('decimals').evaluate((el, dp) => { el.value = String(dp); el.dispatchEvent(new Event('change', { bubbles: true })); }, dp);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await decimals(2); await start(); await near(320, 500, .8); await text(await gapText(2));
+        for (const dp of [0, 1, 3, 4, 2]) {
+          await decimals(dp); await text(await gapText(dp));
+        }
+        assert.equal(await p.evaluate(() => localStorage.getItem('pd-decimals')), '2');
+        assert.ok(await labels.first().isVisible(), 'gap label visible MID-DRAG before capture');
+        const style = await labels.first().evaluate((el) => ({ fill: getComputedStyle(el).fill, stroke: getComputedStyle(el.parentElement.querySelector('.alignment-guide')).stroke }));
+        assert.equal(style.fill, style.stroke, 'label uses the guide accent colour');
+        const label = await labels.first().boundingBox(), part = await p.locator('[data-group=parts] [data-i="0"] .part-hit').boundingBox();
+        assert.ok(label.y >= part.y + part.height || label.x >= part.x + part.width || label.x + label.width <= part.x || label.y + label.height <= part.y, 'label clears the dragged box');
+        await p.screenshot({ path: `${shotDir}/todo67c-gap-${theme}.png` });
+        await cancel();
+      }
+      await start(); await near(320, 500, .8); await text(await gapText(2)); await p.mouse.up(); await clear();
+      await p.keyboard.press('Control+z'); await near(200, 200);
+      await start(); await near(320, 500, .8); await text(await gapText(2)); await p.keyboard.down('Alt'); await clear();
+      await p.keyboard.up('Alt'); await cancel();
+      await start(); await near(320, 500, .8); await text(await gapText(2));
+      await p.getByTestId('tog-snap').evaluate((el) => el.click()); await clear(); await cancel();
+      await q('tog-snap').click();
+      await start(322, 300); await near(320, 300, .8); await clear(); await cancel();
+      await start(3, 500); await near(0, 500, .8); await clear(); await cancel();
       assert.deepEqual(errs, []);
     } finally { await context.close(); }
   });

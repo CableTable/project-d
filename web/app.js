@@ -52,7 +52,7 @@ import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } fro
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
-import { sheetAlignmentLines, partAlignmentLines, snapBoxToAlignment, alignmentSegments } from './align.js';
+import { sheetAlignmentLines, partAlignmentLines, snapBoxToAlignment, alignmentSegments, alignmentGaps } from './align.js';
 import * as CT from './contour.js';
 import * as LC from './layoutcontour.js';
 import * as OB from './objects.js';
@@ -2321,11 +2321,20 @@ function snapPlacedDrag(p, dx, dy) {
 function drawAlignmentGuides() {
   const p = pdrag, g = ui.gAlignment;
   if (!g) return;
-  if (!p || !p.moved || p.kind !== 'move' || !p.snapped) { g.replaceChildren(); return; }
+  if (!p || !p.moved || p.kind !== 'move' || !p.snapped || !state.snap || p.skipSnap) { g.replaceChildren(); return; }
   const box = p.box.map((v, i) => v + (i % 2 ? p.dy : p.dx));
   g.replaceChildren(...alignmentSegments(box, p.snapped).map(([x1, y1, x2, y2]) => s('line', {
     class: 'alignment-guide', x1, y1: state.sheetH - y1, x2, y2: state.sheetH - y2,
   })));
+  const k = 1 / view.scale;
+  for (const { axis, mm, gap, mid } of alignmentGaps(box, p.snapped, p.alignmentLines)) {
+    const text = gap.toFixed(state.dp) + ' mm', vertical = axis === 'x';
+    // A short gap cannot fit the text: put it beyond the box's perpendicular edge.
+    const x = vertical ? (gap < 18 * k ? Math.max(mm, box[2]) : mm) + 8 * k : mid;
+    const y = state.sheetH - (vertical ? mid : gap < text.length * 8 * k ? Math.max(mm, box[3]) : mm);
+    g.append(s('text', { class: 'alignment-gap', x, y: y - (vertical ? 0 : 8 * k),
+      'font-size': 12 * k, 'text-anchor': vertical ? 'start' : 'middle', 'dominant-baseline': vertical ? 'central' : 'auto' }, text));
+  }
 }
 
 /** One change to the guides, kept for undo: fn() changes lay.s.guides. */
@@ -3699,7 +3708,7 @@ function buildStatus() {
       if (t === 'OTRACK') { otrackSet(!state.otrack); return; }
       chip(t, !b.classList.contains('on'));
       const clear = () => { for (const a of [state.setlen, state.meas, state.dim, state.ldr]) if (a) a.hover = null; paintOverlay(); };
-      if (t === 'SNAP') { state.snap = b.classList.contains('on'); clear(); note(state.snap ? 'Snap on: ticked snap types' : 'Snap off: the exact point you click'); }
+      if (t === 'SNAP') { state.snap = b.classList.contains('on'); clear(); drawAlignmentGuides(); note(state.snap ? 'Snap on: ticked snap types' : 'Snap off: the exact point you click'); }
       if (t === 'ORTHO') {
         state.ortho = b.classList.contains('on');
         if (state.ortho && state.polar.on) { state.polar.on = false; chip('POLAR', false); }          // ORTHO and POLAR turn each other off

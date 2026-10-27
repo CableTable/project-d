@@ -24,8 +24,8 @@ export function partAlignmentLines(parts, placed, eligible) {
   placed.forEach((p, i) => {
     if (!eligible(p, i)) return;
     const [left, bottom, right, top] = placedBox(parts[p.partId], p);
-    for (const mm of [left, (left + right) / 2, right]) lines.push({ axis: 'x', mm, span: [bottom, top] });
-    for (const mm of [bottom, (bottom + top) / 2, top]) lines.push({ axis: 'y', mm, span: [left, right] });
+    for (const mm of [left, (left + right) / 2, right]) lines.push({ axis: 'x', mm, span: [bottom, top], part: true });
+    for (const mm of [bottom, (bottom + top) / 2, top]) lines.push({ axis: 'y', mm, span: [left, right], part: true });
   });
   return lines;
 }
@@ -40,4 +40,23 @@ export function alignmentSegments(box, hits) {
   return hits.filter((hit) => hit.span).map(({ axis, mm, span }) => axis === 'x'
     ? [mm, Math.min(box[1], span[0]), mm, Math.max(box[3], span[1])]
     : [Math.min(box[0], span[0]), mm, Math.max(box[2], span[1]), mm]);
+}
+
+/** Nearest part along each active part guide; touching / overlapping spans have no label. */
+export function alignmentGaps(box, hits, lines) {
+  const gaps = [];
+  for (const hit of hits) {
+    if (!hit.part) continue;
+    const lo = hit.axis === 'x' ? box[1] : box[0], hi = hit.axis === 'x' ? box[3] : box[2];
+    let nearest = null;
+    for (const line of lines) {
+      if (!line.part || line.axis !== hit.axis || Math.abs(line.mm - hit.mm) > 1e-6) continue;
+      const [a, b] = line.span;
+      const start = hi <= a ? hi : b, end = hi <= a ? a : lo;
+      const gap = Math.max(0, end - start);
+      if (!nearest || gap < nearest.gap) nearest = { axis: hit.axis, mm: hit.mm, gap, mid: (start + end) / 2 };
+    }
+    if (nearest && nearest.gap > 0) gaps.push(nearest);
+  }
+  return gaps;
 }
