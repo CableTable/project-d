@@ -733,6 +733,28 @@ try {
       await p.keyboard.type('line'); await p.keyboard.press('Enter');                    // another tool ends it
       await box().waitFor({ state: 'detached' });
       assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'false');
+      // review fixes: a line inside a block reads its own colour; a click outside the drawing ends the readout and then acts; a middle-button pan is not swallowed
+      const blocks = newDoc(); addLayer(blocks, 'Red', { aci: 1 }); addBlock(blocks, 'B', [dxfLine(0, 0, 50, 0, { aci: 3 })]);
+      addEntities(blocks, dxfInsert('B', 10, 10, { layer: 'Red' }), { ...dxfPoly([[10, 40], [60, 40], [60, 90], [10, 90]], { closed: true, layer: 'Red' }), fill: 'bylayer' });
+      await q('picker').setInputFiles({ name: 'readout148d-block.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(blocks)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'readout148d-block.dxf');
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await readoutBtn().click(); await hover(35, 10);
+      await p.waitForFunction(() => /#00FF00/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      await hover(35, 65);
+      await p.waitForFunction(() => /#FF0000/.test(document.querySelector('[data-testid=readout-box]').textContent));   // a ByLayer fill is its layer's colour, not white
+      const pan = await screen(35, 65);
+      await p.mouse.move(pan.x, pan.y); await p.mouse.down({ button: 'middle' }); await p.mouse.move(pan.x + 30, pan.y + 30); await p.mouse.up({ button: 'middle' });
+      assert.equal(await box().count(), 1, 'a middle-button drag does not end the readout');
+      await p.locator('[data-tool=circle]').click();
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'false');
+      assert.match(await p.locator('[data-tool=circle]').getAttribute('class'), /\bon\b/, 'the tool started');
+      await p.keyboard.press('Escape');
+      await readoutBtn().click(); await hover(35, 65);
+      await p.locator('[data-ribbon-tab=View]').click();
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await p.locator('[data-ribbon-tab=View]').getAttribute('aria-selected'), 'true', 'the tab opened');
     } catch (e) { await p.screenshot({ path: `${shotDir}/todo148d-failure.png` }); throw e; }
     finally { await context.close(); }
   });

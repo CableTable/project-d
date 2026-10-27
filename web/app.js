@@ -3,7 +3,7 @@ import { h } from './dom.js';
 import { pickColour, swatches } from './colourpicker.js';
 import { recentColours, stripGroups } from './swatchstrip.js';
 import { parseHex, rgbKey, keyRgb, validColourKey } from './colour.js';
-import { colourUnder, readoutValues, cssRgb } from './readout.js';
+import { colourAtItem, colourAtLayout, readoutValues, cssRgb } from './readout.js';
 import * as CB from './cmdbar.js';
 import { buildCmdUI } from './cmdui.js';
 import * as SC from './shortcuts.js';
@@ -7417,16 +7417,17 @@ function colourToolClick(d, p) {
 // -- Colour readout (TODO 148d): a box beside the cursor shows the true colour under it; a click copies the hex; Esc or another tool ends it
 let readout = null;
 const readoutBtn = (e) => !!e.target.closest?.('button[aria-label=Readout]');
+const onSheet = (t) => !!t && (t === ui.canvas || t === ui.dcanvas || ui.svg.contains(t) || ui.ovlWrap.contains(t));     // the drawing surface, not the panels, rulers, zoom box or command bar over it
 function toggleReadout() { if (readout) { endReadout(); note('Readout ended'); } else startReadout(); }
 function startReadout() {
   setTool('select'); state.match = null;
   const box = h('div', { class: 'readout-box', 'data-testid': 'readout-box', hidden: true });
   document.body.append(box);
-  const swallow = (e) => { if (!readoutBtn(e)) { e.preventDefault(); e.stopPropagation(); } };       // reading is not clicking: nothing else sees the mouse
-  const stops = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'contextmenu', 'auxclick'];
+  const swallow = (e) => { if (e.button === 0 && onSheet(e.target)) { e.preventDefault(); e.stopPropagation(); } };       // reading is not clicking: the drawing does not see the left button (the middle button still pans)
+  const stops = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick'];
   const on = {
     pointermove: (e) => { readout.at = [e.clientX, e.clientY]; if (!readout.raf) readout.raf = requestAnimationFrame(() => { readout.raf = 0; readoutShow(); }); },
-    click: (e) => { if (readoutBtn(e)) return; swallow(e); readoutCopy(); },
+    click: (e) => { if (readoutBtn(e)) return; if (onSheet(e.target)) { swallow(e); readoutCopy(); } else endReadout(); },       // a click anywhere else ends the readout and then acts as usual
     keydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endReadout(); note('Readout ended'); } },
   };
   for (const [t, fn] of Object.entries(on)) document.addEventListener(t, fn, true);
@@ -7442,16 +7443,13 @@ function endReadout() {
   for (const t of stops) document.removeEventListener(t, swallow, true);
   cancelAnimationFrame(raf); box.remove(); readout = null; renderRibbon();
 }
-/** [r, g, b] of what is at the pointer: a drawing's object (its line, else its fill), the canvas pixel (empty sheet, picture), or the element's own background. */
+/** [r, g, b] of what is at the pointer: a drawing's or layout part's item (its line, else its fill), the canvas pixel (empty sheet, picture), or the element's own background. */
 function colourAt(cx, cy) {
-  const els = document.elementsFromPoint(cx, cy), top = els[0], d = editable();
-  if (d && !d.lay && top && ui.canvas.contains(top) && !top.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic, .ruler, .readout-box')) {
-    const p = toDrawing(d, cx, cy), line = hitAt(d, p), i = line >= 0 ? line : closedAt(d, p);
-    const e = d.raw.entities[i] || {};
-    if (i >= 0 && (line >= 0 || e.fill)) {
-      const inside = e.fill && FI.closedOutline(e) && FI.edgeDist(p, FI.boundary(e)) > pickTol(d);       // a filled outline is "hit" all over; only its rim is the line
-      return colourUnder(e, layerMap(d), line >= 0 && !inside);
-    }
+  const els = document.elementsFromPoint(cx, cy), d = curDoc();
+  if (d && onSheet(els[0])) {                                                                          // the item as the page paints it (blocks, locked layers and layout parts too); else the pixel
+    const p = toDrawing(d, cx, cy), ed = d.lay ? null : editable() && edIndex(d);
+    const rgb = d.lay ? !state.hidden.parts && colourAtLayout(d.lay.parts, placedNow.filter((pl) => !partHid(pl)), p[0], p[1], pickTol(d)) : ed && colourAtItem(ed, p[0], p[1], pickTol(d));
+    if (rgb) return rgb;
   }
   for (const el of els) {
     if (el === ui.dcanvas) {
