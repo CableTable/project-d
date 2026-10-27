@@ -3472,6 +3472,7 @@ async function renameLayerNow(d, name) {
   const i = d.fl.layers.findIndex((l) => l.name === to);
   if (wasOff && i >= 0) d.off.add(i);                                      // restore() keeps hidden layers by name: this one has a new name
   d.hid = new Set([...(hid || [])].map((k) => d.raw.entities[k])); d.hidC = null;       // the renamed entities are new objects, at the same numbers
+  d.fl = flatten(d.raw, d.hid);
   if (lk && lk.delete(name)) lk.add(to);
   if (d.curLayer === name) d.curLayer = to;
   if (d.addedLayers && d.addedLayers.delete(name)) d.addedLayers.add(to);
@@ -4818,8 +4819,7 @@ function moveSelectionTo(g, e) {
   g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
   try {
     if (!g.preview) {
-      const raw = { ...g.d.raw, entities: [...g.sel].map((i) => g.raw[i]) };
-      g.preview = flatten({ ...raw, ...Ed.moveEntities(raw, new Set(raw.entities.map((_, i) => i)), 0, 0) });
+      g.preview = { ...g.d.fl, items: g.d.fl.items.filter((it) => g.sel.has(it.e)) };
       g.items = g.preview.items;
     }
     view.fitted = false; paintOverlay(); return true;

@@ -687,6 +687,10 @@ try {
       const [r, g, blue, a] = c.getContext('2d').getImageData(Math.round(px), Math.round(py), 1, 1).data;
       return r > 245 && g < 10 && blue < 10 && a > 245;
     }, await point(x, y));
+    const isPainted = async (x, y) => q('drawing').evaluate((c, pt) => {
+      const b = c.getBoundingClientRect();
+      return c.getContext('2d').getImageData(Math.round((pt.x - b.x) * c.width / b.width), Math.round((pt.y - b.y) * c.height / b.height), 1, 1).data[3] > 245;
+    }, await point(x, y));
     const expectRed = async (x, y, want) => {
       await p.mouse.move(2, 2); await p.waitForTimeout(100);
       assert.equal(await isRed(x, y), want, `fill pixel at ${x},${y}`);
@@ -704,8 +708,9 @@ try {
     const undo = async (key = 'Control+z') => { await p.locator('.coords').click(); await p.keyboard.press(key); };
     try {
       await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
-      const raw = newDoc(); addEntities(raw, dxfPoly([[10, 10], [150, 10], [150, 100], [10, 100]], { closed: true }),
-        dxfCircle(40, 40, 16), dxfCircle(110, 60, 22), dxfCircle(110, 60, 7));
+      const raw = newDoc(), layer = 'Plate'; addLayer(raw, layer);
+      addEntities(raw, dxfPoly([[10, 10], [150, 10], [150, 100], [10, 100]], { closed: true, layer }),
+        dxfCircle(40, 40, 16, { layer }), dxfCircle(110, 60, 22, { layer }), dxfCircle(110, 60, 7, { layer }));
       await open(writeDxf(raw), 'holes148e.dxf');
       await p.locator('[data-swatch-group=standard] [data-colour="aci:1"]').click({ button: 'right' });
       await command('fill'); await click(20, 20); await p.keyboard.press('Escape');
@@ -727,11 +732,27 @@ try {
         await p.locator('[data-ribbon-tab=Home]').click();
         await expectRed(40, 40, false); await expectRed(110, 60, true);
         await p.screenshot({ path: `${shotDir}/todo148e-holes-${theme}.png` });
+        await click(65, 10);
+        const from = await point(65, 10), to = await point(75, 15);
+        await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 5 });
+        await p.waitForTimeout(100);
+        assert.equal(await isPainted(30, 25), true, 'drag preview paints the filled outline');
+        assert.equal(await isPainted(50, 45), false, 'dragging only the outline keeps its hole');
+        await p.screenshot({ path: `${shotDir}/todo148e-drag-${theme}.png` });
+        await p.keyboard.press('Escape'); await p.mouse.up(); await p.keyboard.press('Escape');
       }
       await command('pdf'); await q('pdf-dialog').waitFor(); await q('pdf-black').uncheck();
       const pending = p.waitForEvent('download'); await q('pdf-go').click();
       const pdf = readFileSync(await (await pending).path(), 'latin1');
       assert.match(pdf, /1 0 0 rg/); assert.match(pdf, /f\*/);
+      await q('ptab-objects').click();
+      if (await p.locator('.or.layer[data-layer="Plate"]').getAttribute('aria-expanded') === 'false') await p.locator('.or.layer[data-layer="Plate"]').click();
+      await p.locator('.or.obj[data-e="1"] [data-act=vis]').click();
+      await expectRed(40, 40, true);
+      await p.locator('.or.layer[data-layer="Plate"]').click({ button: 'right' });
+      await p.getByRole('menuitem', { name: 'Rename…' }).click();
+      await q('name-input').fill('Renamed plate'); await q('name-ok').click();
+      await expectRed(40, 40, true);
     } catch (e) { await p.screenshot({ path: `${shotDir}/todo148e-failure.png` }); throw e; }
     finally { await context.close(); }
   });

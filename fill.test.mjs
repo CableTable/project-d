@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { newDoc, rect, roundRect, circle, ellipse, lwpoly, entity, addBlock, insert, writeDxf } from './web/dxf-write.js';
-import { readDxf, flatten } from './web/drawing.js';
+import { newDoc, rect, roundRect, circle, ellipse, lwpoly, entity, addBlock, insert, writeDxf, unwritable } from './web/dxf-write.js';
+import { readDxf, flatten, hatchOps } from './web/drawing.js';
 import { boundary, boundariesMatch, closedOutline, containsPoint, fillHatch, copyColours, fillHoles, fillOps, fillLoops, containsFill } from './web/fill.js';
 import { moveEntities, copyEntities, removeEntities } from './web/edit.js';
 import { rotateEntities } from './web/rotate.js';
@@ -207,6 +207,43 @@ test('TODO 148e: one solid HATCH has the outer loop and two exact circle loops, 
     assert.equal(fillHoles(reopened.entities).get(reopened.entities[0]).length, 2);
     assert.equal(containsFill(flatten(reopened).items[0].ops, [25, 25]), false);
   }
+});
+
+test('TODO 148e review: foreign HATCH islands survive when live holes differ in count or boundary', () => {
+  const outer = rect(0, 0, 100, 100), island = circle(25, 25, 10);
+  const hatch = fillHatch(filled(outer), [island]);
+  for (const shapes of [[{ ...island, layer: 'Other' }], [], [circle(75, 75, 10)], [island, circle(75, 75, 10)]]) {
+    let raw = docOf(hatch, outer, ...shapes);
+    for (let i = 0; i < 2; i++) {
+      raw = readDxf(writeDxf(raw));
+      assert.equal(raw.entities[0].type, 'HATCH');
+      assert.equal(raw.entities[0].r.v[raw.entities[0].r.c.indexOf(91)], '2');
+      assert.ok(!raw.entities[1].fill);
+      assert.equal(containsFill(hatchOps(raw.entities[0]), [25, 25]), false, 'island survives the next Save');
+    }
+  }
+  const holes = [island, circle(75, 75, 10)];
+  assert.equal(readDxf(writeDxf(docOf(fillHatch(filled(outer), [island, island]), outer, ...holes))).entities[0].type, 'HATCH', 'duplicate loops cannot match the same hole twice');
+  const reopened = readDxf(writeDxf(docOf(fillHatch(filled(outer), holes), outer, ...holes.toReversed())));
+  assert.equal(reopened.entities.length, 3, 'our own two-hole fill relinks regardless of loop order');
+  assert.equal(reopened.entities[0].fill, fill);
+});
+
+test('TODO 148e review: 4000 outline vertices and 1600 circle holes stay well below 500 ms', (t) => {
+  const outer = filled(lwpoly(Array.from({ length: 4000 }, (_, i) => {
+    const a = i * Math.PI * 2 / 4000; return [1200 * Math.cos(a), 1200 * Math.sin(a)];
+  }), { closed: true }));
+  const holes = Array.from({ length: 1600 }, (_, i) => circle((i % 40) * 40 - 780, Math.floor(i / 40) * 40 - 780, 5));
+  const start = performance.now(), result = fillHoles([outer, ...holes]), elapsed = performance.now() - start;
+  assert.equal(result.get(outer).length, 1600);
+  t.diagnostic(`fillHoles: ${elapsed.toFixed(1)} ms`);
+  assert.ok(elapsed < 350, `fillHoles took ${elapsed.toFixed(1)} ms`);
+});
+
+test('TODO 148e review: Save loss reporting does not compute fills before the writer does', () => {
+  const outer = rect(0, 0, 100, 100);
+  Object.defineProperty(outer, 'fill', { enumerable: true, get() { assert.fail('loss reporting must not inspect fill geometry'); } });
+  assert.deepEqual(unwritable(docOf(outer, circle(25, 25, 10))), []);
 });
 
 test('TODO 148e: no-hole save is byte-identical to the existing one-loop HATCH', () => {

@@ -98,11 +98,14 @@ function edgesMeet(a, b, c, d) {
   return cross(a, b, c) * cross(a, b, d) <= 0 && cross(c, d, a) * cross(c, d, b) <= 0;
 }
 
-function fullyInside(outer, inner) {
-  if (!inner.every((p) => containsPoint(outer, p))) return false;
-  // Vertices alone miss a straight edge crossing a concave outline's notch.
-  for (let i = 0; i < inner.length; i++) for (let j = 0; j < outer.length; j++) {
-    if (edgesMeet(inner[i], inner[(i + 1) % inner.length], outer[j], outer[(j + 1) % outer.length])) return false;
+function fullyInside(outer, inner, B) {
+  if (!containsPoint(outer, inner[0])) return false;
+  // One inside point suffices if no edges meet; only outer edges near the inner box can meet it.
+  for (let j = 0; j < outer.length; j++) {
+    const a = outer[j], b = outer[(j + 1) % outer.length];
+    if (Math.max(a[0], b[0]) < B[0] || Math.min(a[0], b[0]) > B[2] ||
+        Math.max(a[1], b[1]) < B[1] || Math.min(a[1], b[1]) > B[3]) continue;
+    for (let i = 0; i < inner.length; i++) if (edgesMeet(inner[i], inner[(i + 1) % inner.length], a, b)) return false;
   }
   return true;
 }
@@ -131,7 +134,7 @@ export function fillHoles(entities, hidden = new Set()) {
       for (let i = lo; i < shapes.length && shapes[i].b[0] <= A[2]; i++) {
         const inner = shapes[i], B = inner.b;
         if (inner === outer || B[1] < A[1] || B[2] > A[2] || B[3] > A[3]) continue;
-        if (fullyInside(polygon(outer), polygon(inner))) holes.push(inner.e);
+        if (fullyInside(polygon(outer), polygon(inner), B)) holes.push(inner.e);
       }
       result.set(outer.e, holes);
     }
@@ -193,15 +196,18 @@ export function fillHatch(e, holes = []) {
     r: { type: 'HATCH', c: pairs.map((x) => x[0]), v: pairs.map((x) => String(x[1])) }, kids: undefined };
 }
 
-/** A solid HATCH's first (outer) loop, no gradient; leave malformed loop counts alone. */
-function solidLoop(h) {
+/** A solid HATCH's loops, no gradient; leave malformed loop counts alone. */
+function solidLoops(h) {
   if (h.type !== 'HATCH' || val(h.r, 70) !== 1 || val(h.r, 91) < 1 || val(h.r, 450) === 1) return null;
   const { c, v } = h.r, starts = c.flatMap((code, i) => code === 92 ? [i] : []);
   if (starts.length !== val(h.r, 91)) return null;
-  const end = starts[1] ?? c.length, r = { ...h.r, c: c.slice(0, end), v: v.slice(0, end) };
-  r.v[c.indexOf(91)] = '1';
-  const ops = hatchOps({ ...h, r });
-  return ops && opsPoly(ops);
+  return starts.map((start, i) => {
+    const end = starts[i + 1] ?? c.length;
+    const r = { ...h.r, c: [...c.slice(0, starts[0]), ...c.slice(start, end)], v: [...v.slice(0, starts[0]), ...v.slice(start, end)] };
+    r.v[c.indexOf(91)] = '1';
+    const ops = hatchOps({ ...h, r });
+    return ops ? opsPoly(ops) : [];
+  });
 }
 const hatchKey = (h) => h.tc != null ? 'tc:' + h.tc : h.aci >= 1 && h.aci <= 255 ? 'aci:' + h.aci : h.aci === 0 ? 'byblock' : 'bylayer';
 
@@ -213,11 +219,24 @@ export function linkFills(doc) {
   for (const list of [doc, ...Object.values(doc.blocks || {})]) {
     const ents = list.entities;
     if (!ents?.some((e) => e.type === 'HATCH')) continue;
-    const gone = new Set();
+    const gone = new Set(), candidates = new Map();
     ents.forEach((h, i) => {
-      const o = ents[i + 1], poly = o && !o.fill && !h.hidden && h.layer === o.layer && !!h.ps === !!o.ps && closedOutline(o) && solidLoop(h);
-      if (poly && boundariesMatch(poly, boundary(o))) { o.fill = hatchKey(h); gone.add(h); }
+      const o = ents[i + 1], loops = o && !o.fill && !h.hidden && h.layer === o.layer && !!h.ps === !!o.ps && closedOutline(o) && solidLoops(h);
+      if (loops && boundariesMatch(loops[0], boundary(o))) candidates.set(o, { h, loops, filled: { ...o, fill: hatchKey(h) } });
     });
+    const holes = [...candidates.values()].some(({ loops }) => loops.length > 1)
+      ? fillHoles(ents.map((e) => candidates.get(e)?.filled || e)) : new Map();
+    for (const [o, { h, loops, filled }] of candidates) {
+      if (loops.length > 1) {
+        const expected = fillLoops(filled, holes.get(filled)).slice(1).map((pts) => { const ops = []; polyOps(ops, pts, true); return opsPoly(ops); });
+        if (expected.length !== loops.length - 1 || !loops.slice(1).every((loop) => {
+          const i = expected.findIndex((poly) => boundariesMatch(loop, poly));
+          if (i < 0) return false;
+          expected.splice(i, 1); return true;
+        })) continue;
+      }
+      o.fill = filled.fill; gone.add(h);
+    }
     if (gone.size) list.entities = ents.filter((e) => !gone.has(e));
   }
   return doc;
