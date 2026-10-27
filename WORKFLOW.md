@@ -82,7 +82,7 @@ usage-agent-install.ps1.
    drawings, close scratch ones without saving; wrap SendCommand in Start-Job with a timeout (it blocks while a prompt
    waits; Esc via SendKeys frees it); zoom before picking (off-screen picks are ignored); PrintWindow the AutoCAD window
    only (never the whole screen), CopyFromScreen around the cursor only for Dynamic input tooltips; save facts to
-   `Project D extras/acad-<topic>.txt` (+ PNGs) and reply in at most 10 lines. Rook reads the reply, not the PNGs.
+   `Project D extras/acad-<topic>.txt` (+ PNGs), add a line to `Project D extras/acad-facts.md` (the index; read it first, never retest a fact in it), and reply in at most 10 lines. Rook reads the reply, not the PNGs.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
