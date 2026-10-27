@@ -89,6 +89,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Group**: A set of placed parts that selects, moves, turns and copies as one while keeping its members as parts. Where: `DECISIONS.md`, Group and Ungroup. Avoid: DXF block.
 
 **Guidelines**: Positioning guides dragged from rulers and used for snapping. Where: `TODO.md`, item 38; `web/guides.js`.
+**Alignment guide**: A temporary thin line shown while dragging parts on a layout when the selection's box lines up with the sheet, a gripper margin or another part, with the gap in mm beside it. Where: `DECISIONS.md`, Alignment guides (TODO 67); `TODO.md`, item 67. Avoid: Guidelines (those stay until removed), Smart guide, Dynamic guide.
 
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
