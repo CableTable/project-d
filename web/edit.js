@@ -396,8 +396,7 @@ function itemCrossBox(it, m, b) {
 export function crossBox(ed, corners) {
   const b = selectionBox(corners), out = [];
   for (const e of boxCandidates(ed, b)) {
-    const ent = ed.raw.entities[e];
-    if (ent.type === 'DIMENSION' || (ent.type === 'INSERT' && DIM_BLOCK.test(fieldOf(ent.r, 2))) || ed.byEnt[e].some((i) => itemCrossBox(ed.items[i], ed.fl.mats[ed.items[i].m], b))) out.push(e);
+    if (ed.byEnt[e].some((i) => itemCrossBox(ed.items[i], ed.fl.mats[ed.items[i].m], b))) out.push(e);
   }
   return out.sort((a, b) => a - b);
 }
