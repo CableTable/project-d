@@ -147,6 +147,7 @@ export function buildCmdUI(hooks) {
     if (cls === 'cm') { echoName = resolve(ans) ? resolve(ans).name.toUpperCase() : String(ans).toUpperCase(); echoAns = []; }
     else if (ans && echoName) echoAns = [...echoAns, ans].slice(-2);       // the command and its last two answers, as the mock-up's "OFFSET  5  ·  Exit"
     echoSpan.textContent = echoName ? [echoName, echoAns.join('  ·  ')].filter(Boolean).join('  ') : 'Command';
+    echo.title = echoSpan.textContent;
     paintFade();
     if (!drawer.hidden) paintDrawer();
   }

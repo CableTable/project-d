@@ -127,6 +127,40 @@ try {
 
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 152c: a 200-character command echo ellipsizes with a tooltip and keeps the status bar on one line', async () => {
+    const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
+    try {
+      const p = await context.newPage();
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const doc = newDoc(); addEntities(doc, dxfLine(0, 0, 100, 50));
+      await p.getByTestId('picker').setInputFiles({ name: 'status.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'status.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      const height = await p.locator('.status').evaluate((el) => el.offsetHeight);
+      await p.getByTestId('cmd-echo').click();
+      await p.getByTestId('cmd-input').fill('x'.repeat(200)); await p.getByTestId('cmd-input').press('Enter');
+      const echo = p.getByTestId('cmd-echo');
+      assert.equal(await echo.textContent(), 'X'.repeat(200));
+      assert.equal(await echo.getAttribute('title'), 'X'.repeat(200));
+      for (const width of [1800, 1440, 1300, 1280, 1100, 1024]) {
+        await p.setViewportSize({ width, height: 1000 });
+        assert.equal(await p.locator('.status').evaluate((el) => el.offsetHeight), height);
+        assert.equal(await p.locator('.status').evaluate((bar) => {
+          const row = bar.getBoundingClientRect();
+          return bar.scrollWidth <= bar.clientWidth && [...bar.children].filter((el) => el.getClientRects().length && !el.classList.contains('font-note')).every((el) => {
+            const r = el.getBoundingClientRect();
+            return r.left >= row.left && r.right <= row.right && r.top >= row.top && r.bottom <= row.bottom && ['nowrap', 'pre'].includes(getComputedStyle(el).whiteSpace);
+          });
+        }), true, `status fits on one line at ${width}`);
+        if (width > 1280) assert.equal(await p.locator('.cb-echo-text').evaluate((el) => el.scrollWidth > el.clientWidth && getComputedStyle(el).textOverflow === 'ellipsis'), true);
+      }
+      await p.setViewportSize({ width: 1440, height: 1000 });
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo152c-status-${theme}.png` });
+      }
+    } finally { await context.close(); }
+  });
   await step('TODO 152b: Properties and ribbon show custom colour swatch and hex, keeping the picker option', async () => {
     const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
     try {

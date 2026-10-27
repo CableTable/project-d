@@ -309,6 +309,9 @@ select.fld { font-family: var(--sans); }
 
 /* command line + status */
 .status { position: relative; height: 28px; flex-shrink: 0; display: flex; align-items: center; gap: 4px; padding: 0 10px; background: var(--app); border-top: 1px solid var(--line); font-size: 12px; }
+.status > :not(.font-note) { flex-shrink: 0; white-space: nowrap; }
+.status .cb-echo, .status .cb-hint { flex-shrink: 1; min-width: 0; }
+.status .cb-hint { overflow: hidden; text-overflow: ellipsis; }
 .status .coords { min-width: 210px; }
 .status .gap { flex: 1; }
 /* Dismissing the note must not resize the canvas and refit the drawing during a pick. */
@@ -922,7 +925,7 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cb-echo { display: inline-flex; align-items: center; gap: 6px; height: 20px; max-width: 230px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); color: var(--text); font: 12px var(--mono); cursor: pointer; flex-shrink: 0; }
 .cb-echo svg { color: var(--accenttext); flex-shrink: 0; }
 .cb-echo:hover { border-color: var(--accent); }
-.cb-echo-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cb-echo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
 @media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* narrow: the echo is its icon only */
 @media (max-width: 1200px) { .status { gap: 2px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 6px; } .status .work-area { padding: 0 4px; } }       /* narrow: the work-area button is a tight icon (its title and aria-label carry the name) and the gaps shrink, so the bar fits with the sheet chip */
