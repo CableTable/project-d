@@ -155,7 +155,7 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
 71. **Selection feedback** (S–M): left-to-right box = window (solid blue, fully inside), right-to-left = crossing (dashed green, touching); Alt + click cycles overlapping objects (doubled DXF lines). Check first what exists.
     71a. ✅ (built, Knight) Check existing drawing box selection and complete solid-blue window / dashed-green crossing feedback with matching inside / touching logic, plus unit and browser cases for direction, modifiers and locks.
     71b. ✅ (built, Knight) (after 71a) Apply the same window / crossing feedback to layout parts without selecting hidden or locked parts, with unit and browser checks for rotated parts and additive selection.
-    71c. Cycle overlapping drawing objects with repeated Alt + click using stable hit order, highlighting the current candidate and resetting on a new location or edit, with unit and browser tests on duplicate lines.
+    71c. ✅ (built, Knight) Cycle overlapping drawing objects with repeated Alt + click using stable hit order, highlighting the current candidate and resetting on a new location or edit, with unit and browser tests on duplicate lines.
 72. ✅ (built, session 23) **Right-click while drawing** (S): during a tool, right-click finishes (Enter); a menu with Cancel, Close, Undo last point and the snap list. Grill done (2026-10-26): Shift+right-click menu, see DECISIONS.
 73. **Tooltips and F-keys** (S): tooltip = name + alias + key; add F3 snap, F8 ortho, F9 grid; optional "show labels" on the rail.
 74. ✅ (built, session 23) **More zooms** (S): Zoom Window, Zoom Selection, Zoom Previous (Z W, Z S, Z P). Grill done (2026-10-26): see DECISIONS "More zooms (TODO 74)".
