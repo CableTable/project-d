@@ -14,6 +14,7 @@ briefs, reading short reports and merging.
 | Lead | main account (this session) | Opus | Plans, picks TODO items, writes briefs, reads reports (never whole diffs, logs or files), publishes mock-ups, merges. |
 | Lookup | claude2 | Haiku | Broad surveys across many files. Small lookups (one grep, one file section, one web page) Rook does itself (his OK, 2026-10-24). Replies in a few lines. |
 | Builder (**Knight**) | Codex CLI (his ChatGPT Go plan) | gpt-6.1-sol, high | THE builder (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): features and fixes, code, tests, commit. Rook pushes (no git credentials in its sandbox). |
+| Builder (**King**) | claude3 (3rd account, `claude3.cmd`) | Sonnet, high | His call 2026-10-28: builds only (fresh session per build, worktree `Project D extras/ProjectD-king`, same command as Bishop-build with `claude3.cmd`), and leads in Castle mode. A clone of Rook: same CLAUDE.md, WORKFLOW.md, plugins and the **same memory folder** (junctions from `~/.claude-account3/projects/*/memory` to Rook's), so a memory either writes the other reads. Builds go Knight first, then King, then Bishop. |
 | Builder (Bishop) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark), and builds when its weekly usage is lower than Knight's, or a second build runs at once: code, tests, commit, push. |
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
 | PC tester | claude2 | Sonnet, high | Downloads the released exe and drives it (WebView2 debug port + Playwright), reports what broke. |
@@ -92,7 +93,7 @@ after the reset, like Bishop. At the cap Rook finishes the step it is on, says s
 **Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
 (`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
 wait for a reset, or pause the session. **Knight builds** (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): every build or fix
-round goes to Knight. Bishop-build takes one when Knight is above 85% of its 5-hour limit (his call 2026-10-27, within Bishop's daily cap), at 100% weekly, or he says to
+round goes to Knight. King-build (claude3, then Bishop-build) takes one when Knight is above 85% of its 5-hour limit (his call 2026-10-27, within Bishop's daily cap), at 100% weekly, or he says to
 run it on Bishop. Knight busy (2 runs) is not a reason: the build waits in the queue.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
@@ -240,7 +241,11 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   firebase-tools@15.30.2 deploy --only hosting,firestore:rules --project project-d-usage` (usage-site/, his OK per deploy).
   The old claude.ai usage artifact is retired.
 
-## Castle mode (his call, 2026-10-21)
+## Castle mode (his call, 2026-10-21; King leads since 2026-10-28)
+
+**Since 2026-10-28 King (claude3) is the lead in this mode, not Bishop-lead:** read "Bishop-lead" below as King-lead,
+`claude2.cmd` as `claude3.cmd`, and `handover-pip.md` as `handover-king.md`. King shares Rook's memory, so it may take M / L items
+too. Bishop still reviews every build.
 
 For when Rook (main account) runs short of usage: Bishop leads and reviews, Knight builds, Rook only helps.
 
