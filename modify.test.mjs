@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import * as M from './web/modify.js';
 import { shapeOf, get } from './web/grips.js';
+import { extendEntity, extendRegion } from './web/extend.js';
 import { entity, line, circle, arc, lwpoly, text, mtext, ellipse, insert, rect, roundRect } from './web/dxf-write.js';
 
 let n = 0;
@@ -423,6 +424,34 @@ test('Quick Trim by crossing window (TODO 155a T2): pieces touching the window g
   const wide = M.trimRegion(all, all, M.windowHit([-50, -50], [150, 50]));                     // everything inside: all goes (pieces between crossings, so whole objects)
   assert.equal(wide.changed.length, 3); assert.ok(wide.changed.every((c) => c.ents.length === 0));
   assert.deepEqual(M.trimRegion(all, all, M.windowHit([200, 200], [210, 210])).changed, [], 'a window on nothing changes nothing');
+});
+
+test('Quick Extend (TODO 155a T3): every object is a boundary, the picked end goes to the nearest one', () => {
+  const near50 = line(50, -20, 50, 20, base), far80 = line(80, -20, 80, 20, base);
+  const ln = extendEntity(line(0, 0, 20, 0, base), [far80, near50], [18, 0]);                  // the nearest of two lines, whatever their order
+  nearPt(S(ln.ent).a, [0, 0]); nearPt(S(ln.ent).b, [50, 0]);
+  const back = extendEntity(line(0, 0, 20, 0, base), [line(-30, -20, -30, 20, base), near50], [2, 0]);   // the end nearest the pick moves, the other stays
+  nearPt(S(back.ent).a, [-30, 0]); nearPt(S(back.ent).b, [20, 0]);
+  const ar = extendEntity(arc(0, 0, 10, 0, 90, base), [line(-10, -20, -10, 20, base)], [0, 10]);   // an arc end grows along its circle
+  near(S(ar.ent).a0, 0); near(S(ar.ent).a1, 180);
+  assert.match(extendEntity(line(0, 0, 20, 0, base), [line(-30, 5, -30, 20, base), line(50, 5, 50, 20, base)], [18, 0]).error, /No boundary/, 'nothing to meet: a message, nothing changes');
+  assert.match(extendEntity(line(0, 0, 20, 0, base), [], [18, 0]).error, /No boundary/, 'no other object at all');
+  assert.match(extendEntity(circle(0, 0, 10, base), [near50], [10, 0]).error, /closed/, 'a closed shape is refused');
+});
+
+test('Quick Extend by fence or crossing window (TODO 155a T3): each object touched is extended at its nearest end, in one go', () => {
+  const l1 = line(0, 10, 20, 10, base), l2 = line(0, 30, 20, 30, base), v = line(50, 0, 50, 40, base), all = [l1, l2, v];
+  const f = M.fenceHit([[18, 0], [18, 40]]);                                                  // one stroke across both: both reach the boundary
+  const r = extendRegion(all, all, f);
+  assert.deepEqual(r.changed.map((c) => c.i), [0, 1]); assert.equal(r.skipped, 0);
+  for (const c of r.changed) { assert.equal(c.ents.length, 1); nearPt(S(c.ents[0]).b, [50, c.i * 20 + 10]); nearPt(S(c.ents[0]).a, [0, c.i * 20 + 10]); }
+  const w = extendRegion(all, all, M.windowHit([15, 5], [25, 15]));                           // a window on l1 only
+  assert.deepEqual(w.changed.map((c) => c.i), [0]);
+  assert.deepEqual(extendRegion(all, all, M.fenceHit([[100, 0], [100, 40]])).changed, [], 'a fence that touches nothing changes nothing');
+  const lone = extendRegion([l1], [l1], f);                                                   // touched, but nothing to reach
+  assert.deepEqual(lone.changed, []); assert.equal(lone.skipped, 1);
+  const c = extendRegion([circle(10, 10, 5, base), l1], [v], M.fenceHit([[10, 0], [10, 20]]));   // a closed shape is skipped, the line still goes
+  assert.deepEqual(c.changed.map((x) => x.i), [1]); assert.equal(c.skipped, 1);
 });
 
 console.log(`${n} modify tests passed`);

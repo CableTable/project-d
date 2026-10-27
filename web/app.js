@@ -44,7 +44,7 @@ import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './scale.
 import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
 import * as FI from './fill.js';
-import { extendEntity } from './extend.js';
+import { extendEntity, extendRegion } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import { layoutSnap } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
@@ -6065,7 +6065,7 @@ const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_S
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
 /** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => { const quick = kind === 'trim' && loadTrimQuick(); return { kind, stage: quick ? 'cut' : kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: curDoc() ? curDoc().hist.labels().past.length : 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
+const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: quick ? 'cut' : kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: curDoc()?.hist ? curDoc().hist.labels().past.length : 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
 const modLive = () => !!(state.mod && state.modDoc === curDoc() && editable());
 const offDistU = (d) => state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
@@ -6088,7 +6088,7 @@ function modStart(id) {
   else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line, arc or polyline segment (radius ${mmText(state.filR)} mm; R changes it)`; }
   else if (id === 'offset') { state.offDist = loadOffsetDist(); state.msg = 'Offset: pick an object, or type the distance first'; }
   else if (id === 'trim') state.msg = m.quick ? 'Trim: click the part to cut away (every object is a cutting edge)' : 'Trim: pick the cutting edges, then Enter (Enter alone = all)';
-  else if (id === 'extend') state.msg = 'Extend: pick the boundary edges, then Enter (Enter alone = all)';
+  else if (id === 'extend') state.msg = m.quick ? 'Extend: click near the end to extend (every object is a boundary)' : 'Extend: pick the boundary edges, then Enter (Enter alone = all)';
   else if (d.sel.size) { m.objs = [...d.sel].map((i) => d.raw.entities[i]); m.stage = 'p1'; state.msg = `${d.sel.size} selected: click the first point of the mirror line`; }
   else state.msg = 'Mirror: select the objects, then press Enter';
 }
@@ -6099,16 +6099,17 @@ function modPrompt(d) {
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point or x,y:' : 'Target, dx,dy or distance:' + (m.kind === 'copy' ? ' Enter ends:' : '') };
   if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):` };
   if (m.kind === 'offset') return { status: `Command: OFFSET   Distance <${mmText(state.offDist)}> mm`, prompt: m.stage === 'obj' ? `Select the object to offset, or type the distance <${mmText(state.offDist)}>:` : `Click the side to offset to (or type a new distance <${mmText(state.offDist)}>):` };
-  if (m.kind === 'extend') return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all:' : 'Click near the end of a line, arc or open polyline to extend. Enter or Esc ends:' };
-  if (m.kind === 'trim' && m.askMode) return { status: `Command: TRIM   Mode: ${m.quick ? 'Quick' : 'Standard'}`, prompt: `Enter a trim mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
-  if (m.kind === 'trim' && m.quick) {
-    const status = 'Command: TRIM   Mode: Quick';
+  const ext = m.kind === 'extend', undoOpt = () => (trimUndoable(d, m) ? '/Undo' : '');
+  if ((m.kind === 'trim' || ext) && m.askMode) return { status: `Command: ${m.kind.toUpperCase()}   Mode: ${m.quick ? 'Quick' : 'Standard'}`, prompt: `Enter ${ext ? 'an extend' : 'a trim'} mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
+  if ((m.kind === 'trim' || ext) && m.quick) {
+    const status = `Command: ${m.kind.toUpperCase()}   Mode: Quick`;
     if (m.fence) return { status, prompt: 'Specify next fence point or [Undo]:' };
-    if (m.cross) return { status, prompt: m.cross.p1 ? 'Specify opposite corner (the pieces inside are trimmed):' : 'Specify first crossing corner:' };
+    if (m.cross) return { status, prompt: m.cross.p1 ? `Specify opposite corner (the pieces inside are ${ext ? 'extended' : 'trimmed'}):` : 'Specify first crossing corner:' };
     if (m.erase) return { status, prompt: `Select objects to erase (${m.erase.length} picked, click again takes one out), then Enter:` };
-    if (m.stage === 'edges') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: 'Select cutting edges (click adds or takes out), Enter = all:' };
-    return { status, prompt: `Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase${trimUndoable(d, m) ? '/Undo' : ''}]:` };
+    if (m.stage === 'edges') return { status: `Command: ${m.kind.toUpperCase()}   ${ext ? 'Boundary' : 'Cutting'} edges: ${n}`, prompt: `Select ${ext ? 'boundary' : 'cutting'} edges (click adds or takes out), Enter = all:` };
+    return { status, prompt: ext ? `Select object to extend or shift-select to trim or [Boundary edges/Crossing/mOde${undoOpt()}]:` : `Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase${undoOpt()}]:` };
   }
+  if (ext) return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all [mOde]:' : 'Click near the end of a line, arc or open polyline to extend [mOde]. Enter or Esc ends:' };
   if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all [mOde]:' : 'Click the part to cut away [mOde]. Enter or Esc ends:' };
   const objs = m.objs.length;
   return { status: `Command: MIRROR   ${m.stage === 'pick' ? `${n} selected` : `${objs} object${objs === 1 ? '' : 's'}`}`,
@@ -6117,9 +6118,10 @@ function modPrompt(d) {
 
 function modEsc(d) {
   const m = state.mod;
-  if (m.askMode) { m.askMode = false; note('Trim mode unchanged'); renderCommand(); return; }
-  if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note('Trim: cancelled. Click the part to cut away'); renderCommand(); paintOverlay(); return; }
-  if (m.kind === 'trim' && m.quick && m.stage === 'edges') { m.edges = []; m.all = true; m.stage = 'cut'; note('Every object is a cutting edge again. Click the part to cut away'); renderCommand(); paintOverlay(); return; }
+  const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
+  if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
+  if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note(`${ext ? 'Extend' : 'Trim'}: cancelled. ${again}`); renderCommand(); paintOverlay(); return; }
+  if ((m.kind === 'trim' || ext) && m.quick && m.stage === 'edges') { m.edges = []; m.all = true; m.stage = 'cut'; note(`Every object is a ${ext ? 'boundary' : 'cutting'} edge again. ${again}`); renderCommand(); paintOverlay(); return; }
   if (m.kind === 'offset' && m.stage === 'side') { m.stage = 'obj'; m.ent = null; note('Offset: pick an object'); paintOverlay(); return; }
   if (['trim', 'extend'].includes(m.kind) && m.stage === 'edges' && (m.edges.length || m.all)) { m.edges = []; m.all = false; note(m.kind === 'trim' ? 'Cutting edges cleared' : 'Boundary edges cleared'); paintOverlay(); return; }
   if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line, arc or polyline segment'); paintOverlay(); return; }
@@ -6219,7 +6221,8 @@ function modTyped(d, raw) {
     if (c === 'y' || c === 'yes') modAnswer(d, true); else if (c === 'n' || c === 'no') modAnswer(d, false); else note('Erase source objects? Type Yes or No (Enter = No)');
     return true;
   }
-  if (m.kind === 'trim') {
+  if (m.kind === 'trim' || m.kind === 'extend') {
+    const ext = m.kind === 'extend';
     if (m.askMode) {
       if ('quick'.startsWith(c)) trimMode(true); else if ('standard'.startsWith(c)) trimMode(false); else note('Type Quick or Standard (Enter keeps the one in <>)');
       return true;
@@ -6229,9 +6232,11 @@ function modTyped(d, raw) {
     if (c === 'o' || (c.length > 1 && 'mode'.startsWith(c))) { m.askMode = true; note(modPrompt(d).prompt); renderCommand(); return true; }
     if (m.quick && m.stage === 'cut') {
       if (c === 'u' || c === 'undo') { trimUndo(d); return true; }
-      if (c === 't' || c === 'cutting' || c === 'cutting edges') { m.edges = []; m.all = false; m.stage = 'edges'; note('Cutting edges: click the ones that cut (Enter alone = every object)'); renderCommand(); paintOverlay(); return true; }
+      if (ext ? (c === 'b' || c === 'boundary' || c === 'boundary edges') : (c === 't' || c === 'cutting' || c === 'cutting edges')) {
+        m.edges = []; m.all = false; m.stage = 'edges'; note(ext ? 'Boundary edges: click the ones to reach (Enter alone = every object)' : 'Cutting edges: click the ones that cut (Enter alone = every object)'); renderCommand(); paintOverlay(); return true;
+      }
       if (c === 'c' || c === 'crossing') { m.cross = { p1: null }; note(modPrompt(d).prompt); renderCommand(); return true; }
-      if (c === 'r' || c === 'erase') { m.erase = []; note(modPrompt(d).prompt); renderCommand(); return true; }
+      if (!ext && (c === 'r' || c === 'erase')) { m.erase = []; note(modPrompt(d).prompt); renderCommand(); return true; }
     }
   }
   if (['trim', 'extend'].includes(m.kind) && m.stage === 'edges' && (c === 'a' || c === 'all')) { m.edges = []; modEnter(d); return true; }
@@ -6241,7 +6246,7 @@ function modTyped(d, raw) {
 function modHover(d, cx, cy, shift) {
   const m = state.mod, p = toDrawing(d, cx, cy);
   m.p = p; m.shift = shift;
-  if (m.kind === 'trim') m.client = [cx, cy];
+  if (m.kind === 'trim' || m.kind === 'extend') m.client = [cx, cy];
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     m.cur = movePick(d, p, shift, true);
     if (m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
@@ -6283,24 +6288,18 @@ function modUp(d, was, p, shift, crossing) {
       if (!['LINE', 'ARC', 'LWPOLYLINE', 'POLYLINE'].includes(ent.type)) { note('Fillet takes lines, arcs and polyline corners; circles are not supported'); return; }
       m.ent = ent; m.p0 = was.p; m.askR = false; m.stage = 'second'; note('Fillet: pick the second line, arc or polyline segment (Shift = sharp corner)'); paintOverlay();
     } else filletDo(d, ent, was.p, shift || was.shift);
-  } else if (m.kind === 'extend') {
-    if (m.stage === 'cut') { extendDo(d, was.p); return; }
-    const ent = modEntAt(d, was.p);
-    if (!ent) { note('Extend: click a boundary edge, or press Enter to use them all'); return; }
-    if (!MD.canModify(ent)) { note('A boundary edge is a line, arc, circle or polyline'); return; }
-    m.edges = m.edges.includes(ent) ? m.edges.filter((e) => e !== ent) : [...m.edges, ent];
-    note(`${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click more, or press Enter`); paintOverlay();
-  } else if (m.kind === 'trim') {
+  } else if (m.kind === 'extend' || m.kind === 'trim') {
+    const ext = m.kind === 'extend', word = ext ? 'boundary' : 'cutting';
     if (m.stage === 'edges') {
       const ent = modEntAt(d, was.p);
-      if (!ent) { note('Trim: click a cutting edge, or press Enter to use them all'); return; }
-      if (!MD.canModify(ent)) { note('A cutting edge is a line, arc, circle or polyline'); return; }
+      if (!ent) { note(`${ext ? 'Extend' : 'Trim'}: click a ${word} edge, or press Enter to use them all`); return; }
+      if (!MD.canModify(ent)) { note(`A ${word} edge is a line, arc, circle or polyline`); return; }
       m.edges = m.edges.includes(ent) ? m.edges.filter((e) => e !== ent) : [...m.edges, ent];
-      note(`${m.edges.length} cutting edge${m.edges.length === 1 ? '' : 's'}. Click more, or press Enter`); paintOverlay();
+      note(`${m.edges.length} ${word} edge${m.edges.length === 1 ? '' : 's'}. Click more, or press Enter`); paintOverlay();
     } else if (m.cross) trimCross(d, was.p);
     else if (m.erase) trimErasePick(d, was.p);
     else if (m.fence) trimFencePoint(d, was.p);
-    else trimDo(d, was.p, shift || was.shift);
+    else editDo(d, was.p, shift || was.shift);
   } else if (['move', 'copy'].includes(m.kind)) {
     moveTo(d, movePick(d, was.p, shift || was.shift));
   } else if (m.kind === 'scale') {
@@ -6408,34 +6407,34 @@ function filletDo(d, ent, p, sharp) {
   m.stage = 'obj'; m.ent = null;
   note(`${!sharp && state.filR > 0 ? `Filleted, radius ${mmText(state.filR)} mm` : 'Corner made'}. Pick the next first line, arc or polyline segment, or Esc ends. Ctrl+Z takes it back`);
 }
-/** mOde answered: Quick = no edge picking (every object cuts); Standard = pick the cutting edges first. Remembered. */
+/** mOde answered (Trim and Extend share it): Quick = no edge picking (every object is an edge); Standard = pick the edges first. Remembered. */
 function trimMode(quick) {
-  const m = state.mod;
+  const m = state.mod, ext = m.kind === 'extend';
   m.askMode = false; m.fence = m.cross = m.erase = null; m.quick = quick; m.edges = []; m.all = quick; m.stage = quick ? 'cut' : 'edges';
   try { localStorage.setItem(TRIM_MODE_SAVED, quick ? 'quick' : 'standard'); } catch { /* storage may be blocked */ }
-  note(quick ? 'Trim mode: Quick. Click the part to cut away' : 'Trim mode: Standard. Pick the cutting edges, then Enter (Enter alone = all)');
+  note(`${ext ? 'Extend' : 'Trim'} mode: ${quick ? `Quick. ${ext ? 'Click near the end to extend' : 'Click the part to cut away'}` : `Standard. Pick the ${ext ? 'boundary' : 'cutting'} edges, then Enter (Enter alone = all)`}`);
   renderCommand(); paintOverlay();
 }
-/** Undo inside a running Quick Trim: takes back its last cut (only a Trim step made since the command began). */
-const trimUndoable = (d, m) => { const past = d.hist.labels().past; return past.length > m.base && past.at(-1) === 'Trim'; };
+/** Undo inside a running Quick Trim / Extend: takes back its last cut (only a Trim or Extend step made since the command began). */
+const trimUndoable = (d, m) => { const past = d.hist.labels().past; return past.length > m.base && ['Trim', 'Extend'].includes(past.at(-1)); };
 function trimUndo(d) {
   const m = state.mod;
-  if (!trimUndoable(d, m)) { note('Nothing to undo in this Trim'); return; }
+  if (!trimUndoable(d, m)) { note(`Nothing to undo in this ${m.kind === 'extend' ? 'Extend' : 'Trim'}`); return; }
   undo(d); renderCommand();
 }
-/** Quick Trim of a whole region (a fence or a crossing window): one undo step; what the cutting edges were stays a cutting edge as pieces. */
+/** Quick Trim (or Extend) of a whole region (a fence or a crossing window): one undo step; what the edges were stays an edge as pieces. */
 function trimRegionDo(d, hit, what) {
-  const m = state.mod, idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && MD.canModify(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
-  const r = MD.trimRegion(ents, trimEdges(d, m), hit);
-  if (!r.changed.length) { note(`${what} crosses nothing to trim` + (r.skipped ? ` (${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone)` : '')); return false; }
+  const m = state.mod, ext = m.kind === 'extend', idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && MD.canModify(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
+  const r = ext ? extendRegion(ents, trimEdges(d, m), hit) : MD.trimRegion(ents, trimEdges(d, m), hit);
+  if (!r.changed.length) { note(ext ? `${what} reaches nothing to extend` + (r.skipped ? ` (${r.skipped} object${r.skipped === 1 ? '' : 's'} with no boundary ahead or closed)` : '') : `${what} crosses nothing to trim` + (r.skipped ? ` (${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone)` : '')); return false; }
   const rep = new Map(r.changed.map((c) => [idxs[c.i], c.ents]));
   for (const c of r.changed) {
     const ent = ents[c.i];
     if (m.edges.includes(ent)) { for (const q of c.ents) m.was.set(q, ent); m.edges = m.edges.flatMap((e) => (e === ent ? c.ents : [e])); }
   }
   view.fitted = false;
-  commit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, 'Trim');
-  note(`${what} trimmed ${r.changed.length} object${r.changed.length === 1 ? '' : 's'}.` + (r.skipped ? ` ${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone.` : '') + ' Ctrl+Z takes it back');
+  commit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim');
+  note(`${what} ${ext ? 'extended' : 'trimmed'} ${r.changed.length} object${r.changed.length === 1 ? '' : 's'}.` + (r.skipped ? (ext ? ` ${r.skipped} left alone (no boundary ahead).` : ` ${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone.`) : '') + ' Ctrl+Z takes it back');
   return true;
 }
 function trimFencePoint(d, p) {
@@ -6475,12 +6474,16 @@ function trimEraseRun(d) {
   } else note('Nothing picked to erase');
   renderCommand(); paintOverlay();
 }
-function trimDo(d, p, shift) {
-  const m = state.mod, idx = hitAt(d, p);
+/** A click in Trim or Extend: Shift swaps them (Trim extends, Extend trims); a click on empty space in Quick mode starts a fence. */
+function editDo(d, p, shift) {
+  const m = state.mod, idx = hitAt(d, p), ext = m.kind === 'extend';
   m.askMode = false;                                            // a click answers the mode question with "stay"
-  if (idx < 0 && m.quick && m.stage === 'cut' && !shift) { m.fence = [p]; note('Fence started: click the next point, Enter trims everything it crosses, Esc cancels'); renderCommand(); paintOverlay(); return; }
-  if (idx < 0) { note('Trim: nothing there. Click the part to cut away'); return; }
-  const ent = d.raw.entities[idx];
+  if (idx < 0 && m.quick && m.stage === 'cut' && !shift) { m.fence = [p]; note(`Fence started: click the next point, Enter ${ext ? 'extends' : 'trims'} everything it ${ext ? 'touches' : 'crosses'}, Esc cancels`); renderCommand(); paintOverlay(); return; }
+  if (idx < 0) { note(ext ? 'Extend: nothing there. Click near the end of a line, arc or open polyline' : 'Trim: nothing there. Click the part to cut away'); return; }
+  if (ext !== !!shift) extendDo(d, idx, p); else trimDo(d, idx, p);
+}
+function trimDo(d, idx, p) {
+  const m = state.mod, ent = d.raw.entities[idx];
   if (!MD.canModify(ent)) { note('Trim takes a line, arc, circle or polyline'); return; }
   const r = MD.trimEntity(ent, trimEdges(d, m), p, m.quick);
   if (r.error) { note(r.error); return; }
@@ -6489,13 +6492,11 @@ function trimDo(d, p, shift) {
   if (m.edges.includes(ent)) { for (const p of r.ents) m.was.set(p, ent); m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e])); }
   commit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim');
   renderCommand();
-  note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + (shift ? ' (Shift, extend, is not built: this trims.)' : '') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
+  note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
 }
 /** Extend: the end of the line nearest the click goes on to the nearest boundary ahead, one undo step; repeats until Esc. */
-function extendDo(d, p) {
-  const m = state.mod, idx = hitAt(d, p);
-  if (idx < 0) { note('Extend: nothing there. Click near the end of a line, arc or open polyline'); return; }
-  const ent = d.raw.entities[idx], r = extendEntity(ent, trimEdges(d, m), p);
+function extendDo(d, idx, p) {
+  const m = state.mod, ent = d.raw.entities[idx], r = extendEntity(ent, trimEdges(d, m), p);
   if (r.error) { note(r.error); return; }
   view.fitted = false;
   if (m.edges.includes(ent)) { m.was.set(r.ent, ent); m.edges = m.edges.map((e) => (e === ent ? r.ent : e)); }
@@ -6536,22 +6537,21 @@ function modOvl(d, out) {
     if (m.ent) addEnt(m.ent, 'dr-guide');
     const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f) : null;
     if (r?.ents) for (const k of r.ents) addEnt(k, 'dr-shape', 'mod-preview');
-  } else if (m.kind === 'extend') {
-    for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
-    const e = m.stage === 'cut' && m.p ? modEntAt(d, m.p) : null, r = e ? extendEntity(e, trimEdges(d, m), m.p) : null;
-    if (r?.ent) { addEnt(e, 'dr-guide'); addEnt(r.ent, 'dr-shape', 'mod-preview'); }
-  } else if (m.kind === 'trim') {
+  } else if (m.kind === 'trim' || m.kind === 'extend') {
     for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
     // Re-pick under the screen cursor after view changes; captured pans can move it outside the canvas.
     const r = ui.canvas.getBoundingClientRect(), c = m.client;
-    m.p = c && c[0] >= r.left && c[0] < r.right && c[1] >= r.top && c[1] < r.bottom ? toDrawing(d, ...c) : null;
+    if (m.kind === 'trim' || m.fence || m.cross) m.p = c && c[0] >= r.left && c[0] < r.right && c[1] >= r.top && c[1] < r.bottom ? toDrawing(d, ...c) : null;     // Extend's preview stays while the mouse is over the command box
     const rub = (a, b, tid) => add({ t: 'line', a: [a[0] * f, a[1] * f], b: [b[0] * f, b[1] * f] }, 'dr-guide', tid);
     if (m.fence) { m.fence.slice(1).forEach((q, i) => rub(m.fence[i], q, 'trim-fence')); if (m.p) rub(m.fence.at(-1), m.p, 'trim-fence'); }
     else if (m.cross) {
       const a = m.cross.p1, b = m.p;
       if (a && b) [[a, [b[0], a[1]]], [[b[0], a[1]], b], [b, [a[0], b[1]]], [[a[0], b[1]], a]].forEach(([u, v]) => rub(u, v, 'trim-cross'));
     } else if (m.erase) for (const e of m.erase) addEnt(e, 'dr-trim-cut', 'trim-erase');
-    else if (m.stage === 'cut' && m.p) {
+    else if (m.stage === 'cut' && m.p && m.kind === 'extend') {
+      const e = modEntAt(d, m.p), r = e ? extendEntity(e, trimEdges(d, m), m.p) : null;
+      if (r?.ent) { addEnt(e, 'dr-guide'); addEnt(r.ent, 'dr-shape', 'mod-preview'); }
+    } else if (m.stage === 'cut' && m.p) {
       const e = modEntAt(d, m.p);
       if (e && MD.canModify(e)) {
         addEnt(e, 'dr-trim-glow', 'trim-glow');

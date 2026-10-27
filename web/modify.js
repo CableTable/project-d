@@ -436,14 +436,14 @@ export function trimEntity(ent, edges, pick, quick = false) {
 // ---------------------------------------------------------------- Quick Trim by fence or crossing window
 
 const straight = (pts) => pts.slice(1).map((b, i) => ({ a: pts[i], b, bulge: 0 })).filter((l) => dist(l.a, l.b) >= 1e-9);
-const touches = (segs, lines) => segs.some((s) => lines.some((l) => segInter(s, l).length));
-/** For trimRegion: a piece is cut when the fence (a polyline of straight segments) crosses it. */
+const touches = (segs, lines) => { for (const s of segs) for (const l of lines) { const h = segInter(s, l); if (h.length) return h[0].p; } return null; };
+/** For trimRegion and extendRegion: where the fence (a polyline of straight segments) first crosses a piece, null when it does not. */
 export const fenceHit = (pts) => { const lines = straight(pts); return (segs) => touches(segs, lines); };
-/** For trimRegion: a piece is cut when it touches the crossing window of corners a and b. */
+/** For trimRegion and extendRegion: a point of the piece inside or on the crossing window of corners a and b, null when it does not touch it. */
 export function windowHit(a, b) {
   const x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
   const lines = straight([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]), inside = (p) => p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
-  return (segs) => inside(segs[0].a) || touches(segs, lines);
+  return (segs) => (inside(segs[0].a) ? segs[0].a : touches(segs, lines));
 }
 
 /**
@@ -462,7 +462,7 @@ export function trimRegion(ents, cutters, hit) {
     if (P.closed && cs.length === 1) { skipped++; return; }
     const bounds = !cs.length ? [0, n] : P.closed ? [...cs, cs[0] + n] : [0, ...cs, n];
     let pieces = bounds.slice(1).map((u, k) => [bounds[k], u]);
-    const cut = pieces.map(([u0, u1]) => hit(subPath(P, u0, u1)));
+    const cut = pieces.map(([u0, u1]) => !!hit(subPath(P, u0, u1)));
     if (!cut.includes(true)) return;
     const s = P.closed ? (cut.indexOf(true) + 1) % pieces.length : 0;           // a closed shape: start just after a cut piece, so no run wraps
     pieces = pieces.slice(s).concat(pieces.slice(0, s).map(([a, b]) => [a + n, b + n]));

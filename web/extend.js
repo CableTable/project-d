@@ -82,3 +82,21 @@ export function extendEntity(ent, edges, pick) {
   if (!p) return none;
   return { ent: rebuilt(moveB ? { t: 'line', a: sh.a, b: p } : { t: 'line', a: p, b: sh.b }, ent) };
 }
+
+/**
+ * Quick Extend of many at once: each of `ents` that `hit` (modify.js fenceHit / windowHit) touches is extended, at the end nearest where
+ * it was touched, to the nearest of `boundaries`. Returns { changed: [{ i, ents: [the extended one] }], skipped } (skipped = touched
+ * but nothing to reach, or a closed shape).
+ */
+export function extendRegion(ents, boundaries, hit) {
+  const changed = [];
+  let skipped = 0;
+  ents.forEach((ent, i) => {
+    if (!canModify(ent)) return;
+    const at = hit(pathOf(shapeOf(ent, 1)).segs);
+    if (!at) return;
+    const r = extendEntity(ent, boundaries, at);
+    if (r.ent) changed.push({ i, ents: [r.ent] }); else skipped++;
+  });
+  return { changed, skipped };
+}

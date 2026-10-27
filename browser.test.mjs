@@ -10149,6 +10149,7 @@ try {
   const layerOf = (e) => e.r.v[e.r.c.indexOf(8)];
   // Trim starts in Quick mode (TODO 155a T1); the older steps test the pick-edges-first way, so they switch to Standard (mOde, remembered)
   const trimStd = async () => { await typeCmd('o'); await typeCmd('s'); };
+  const extStd = async () => { await typeCmd('ex'); await trimStd(); };                       // Extend shares Trim's mode (TODO 155a T3): the older Extend steps test the Standard way
   await step('Offset, Trim and Mirror: built (their buttons are not greyed, titles with keys); Auto-nest is built too; none works on a layout tab', async () => {
     await openGrips(modDoc(), 'mod.dxf');
     const titles = {};
@@ -10475,6 +10476,76 @@ try {
     await typeCmd('mod'); assert.equal(await prompt(), 'Enter a trim mode option [Quick/Standard] <Quick>:');
     await typeCmd('q');
     await page.keyboard.press('Escape');
+  });
+
+  await step('TODO 155a T3: Quick Extend (click, fence, Crossing, Boundary edges, mOde shared with Trim), and Shift + click swaps Trim and Extend', async () => {
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 60, 30), dxfLine(20, 45, 60, 45), dxfLine(100, 10, 100, 50), dxfLine(20, 70, 60, 70), dxfLine(20, 110, 140, 110), dxfLine(100, 90, 100, 130));
+    const coords = async (i) => { const e = (await savedDoc()).entities[i]; return [10, 20, 11, 21].map((c) => fieldOf(e, c)); };
+    const hv = async (x, y) => { const q = await at(x, y); await page.mouse.move(q.x, q.y); await frames(); };
+    const shiftClick = async (x, y) => { await page.keyboard.down('Shift'); await click(x, y); await page.keyboard.up('Shift'); };
+    const MAIN = 'Select object to extend or shift-select to trim or [Boundary edges/Crossing/mOde';
+    await openGrips(writeDxf(doc0), 'extend-quick.dxf');
+    await typeCmd('ex'); await typeCmd('o'); await typeCmd('q');                       // whatever an earlier step left: start from Quick
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
+    assert.equal(await prompt(), MAIN + ']:', 'no edge picking, no /Undo before the first extend');
+    assert.match(await histLine(), /Command: EXTEND\s+Mode: Quick/);
+    const steps0 = (await histLabels()).length;
+    // a click extends the end nearest it to the nearest object; a line with nothing ahead says so
+    await hv(58, 30); assert.equal(await t('mod-preview').count(), 1, 'the extension shows before the click');
+    await shotBoth('155a3-quick-extend', async () => {
+      if ((await t('tool-chip').textContent()) !== 'Tool: Extend') await typeCmd('ex');
+      await hv(58, 30);
+    });
+    await click(58, 30);
+    assert.deepEqual(await coords(0), [20, 30, 100, 30], 'the picked end reaches the vertical line, the other end stays');
+    assert.equal((await histLabels()).at(-1), 'Extend'); assert.equal((await histLabels()).length, steps0 + 1);
+    assert.equal(await prompt(), MAIN + '/Undo]:', '/Undo after the first extend');
+    await click(58, 70); assert.match(await histLine(), /No boundary ahead/); assert.equal((await histLabels()).length, steps0 + 1, 'nothing changed');
+    await typeCmd('u'); assert.deepEqual(await coords(0), [20, 30, 60, 30], 'U takes the extend back');
+    assert.equal(await prompt(), MAIN + ']:'); await typeCmd('u'); assert.match(await histLine(), /Nothing to undo in this Extend/);
+    // Shift + click in Extend trims: the side of the crossing that was clicked goes
+    await hv(130, 110); await shiftClick(130, 110);
+    assert.deepEqual(await coords(4), [20, 110, 100, 110], 'Shift + click trimmed the line at the vertical one'); assert.equal((await histLabels()).at(-1), 'Trim');
+    await typeCmd('u'); assert.deepEqual(await coords(4), [20, 110, 140, 110], 'U undoes a Shift trim too');
+    // a fence: a click on empty space starts it, Enter extends every object it touches in one undo step
+    await click(50, 5);
+    assert.match(await prompt(), /^Specify next fence point or \[Undo\]/); assert.deepEqual(await coords(0), [20, 30, 60, 30], 'starting a fence changes nothing');
+    await click(50, 60); await page.keyboard.press('Enter');
+    assert.deepEqual(await coords(0), [20, 30, 100, 30]); assert.deepEqual(await coords(1), [20, 45, 100, 45]); assert.deepEqual(await coords(3), [20, 70, 60, 70], 'a line the fence misses stays');
+    assert.equal((await histLabels()).length, steps0 + 1, 'one undo step for the whole fence'); assert.equal((await histLabels()).at(-1), 'Extend');
+    await typeCmd('u'); assert.deepEqual(await coords(1), [20, 45, 60, 45]);
+    // Crossing: the objects touching the window are extended
+    await typeCmd('c'); assert.equal(await prompt(), 'Specify first crossing corner:');
+    await click(45, 25); await hv(55, 50); assert.equal(await prompt(), 'Specify opposite corner (the pieces inside are extended):');
+    await click(55, 50);
+    assert.deepEqual(await coords(0), [20, 30, 100, 30]); assert.deepEqual(await coords(1), [20, 45, 100, 45]);
+    assert.equal((await histLabels()).length, steps0 + 1, 'the window is one undo step'); await typeCmd('u');
+    await typeCmd('c'); await click(45, 25); await page.keyboard.press('Escape');
+    assert.ok((await prompt()).startsWith(MAIN), 'Esc drops the window'); assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
+    // Boundary edges: only the picked objects stop the extension
+    await typeCmd('b'); assert.match(await prompt(), /^Select boundary edges/);
+    await click(100, 120); await frames(); assert.equal(await t('trim-edge').count(), 1);
+    await page.keyboard.press('Enter');
+    await click(58, 30); assert.match(await histLine(), /No boundary ahead/, 'the vertical line is no boundary now: only the one picked is');
+    await typeCmd('b'); await page.keyboard.press('Enter');
+    await click(58, 30); assert.deepEqual(await coords(0), [20, 30, 100, 30], 'Enter with none picked: every object is a boundary again'); await typeCmd('u');
+    // mOde is shared with Trim: Standard here is Standard there; Quick again for both
+    await typeCmd('o'); assert.equal(await prompt(), 'Enter an extend mode option [Quick/Standard] <Quick>:');
+    await typeCmd('s'); assert.match(await prompt(), /^Select boundary edges.*\[mOde\]/, 'Standard: the old pick-edges-first Extend');
+    await page.keyboard.press('Escape');
+    await typeCmd('tr'); assert.match(await prompt(), /^Select cutting edges/, 'Trim starts in Standard too');
+    await typeCmd('o'); await typeCmd('q');
+    // Shift + click in Trim extends the picked object to the nearest object
+    assert.ok((await prompt()).startsWith('Select object to trim or shift-select to extend or'));
+    await hv(58, 30); await shiftClick(58, 30);
+    assert.deepEqual(await coords(0), [20, 30, 100, 30], 'Shift + click in Trim extended the line'); assert.equal((await histLabels()).at(-1), 'Extend');
+    assert.ok((await prompt()).endsWith('/Undo]:'), 'the Extend step is undoable inside Trim');
+    await typeCmd('u'); assert.deepEqual(await coords(0), [20, 30, 60, 30]);
+    const n0 = await entCount(); await click(58, 70);
+    assert.equal(await entCount(), n0 - 1, 'a plain click still trims: the lone line goes whole'); assert.equal((await histLabels()).at(-1), 'Trim');
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
   });
 
   await step('TODO 78: Trim preview', async () => {
@@ -11046,11 +11117,11 @@ try {
       await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
       assert.deepEqual((await savedDoc()).entities, before.entities);
     };
-    await typeCmd('ex');
-    assert.equal(await prompt(), 'Select boundary edges (click adds or takes out), Enter = all:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
+    await extStd();
+    assert.equal(await prompt(), 'Select boundary edges (click adds or takes out), Enter = all [mOde]:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
     assert.equal(await page.locator('nav.rail [data-tool=extend]').count(), 0);
     await click(80, 30); await frames(); assert.equal(await t('trim-edge').count(), 1);
-    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line, arc or open polyline to extend. Enter or Esc ends:');
+    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line, arc or open polyline to extend [mOde]. Enter or Esc ends:');
     assert.match(await histLine(), /1 boundary edge\. Click near the end of a line, arc or open polyline to extend$/);
     const hover = () => hoverPreview(38, 20);
     await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended line is previewed');
@@ -11085,7 +11156,7 @@ try {
     const raw = newDoc(4);
     addEntities(raw, dxfLine(38, 82, 40, 80), dxfLine(100, 0, 100, 120));
     await openGrips(writeDxf(raw), 'preview-clear.dxf');
-    await typeCmd('ex'); await click(100, 70); await page.keyboard.press('Enter');
+    await extStd(); await click(100, 70); await page.keyboard.press('Enter');
     const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
       * Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
     const show = async () => {
@@ -11237,7 +11308,7 @@ try {
     const raw = newDoc(4);
     addEntities(raw, dxfLine(20, 50, 40, 50), dxfArc(80, 50, 20, 90, 270));
     await openGrips(writeDxf(raw), 'extend-arc.dxf'); const before = await savedDoc();
-    await typeCmd('ex'); await click(60, 50); await page.keyboard.press('Enter'); await click(38, 50);
+    await extStd(); await click(60, 50); await page.keyboard.press('Enter'); await click(38, 50);
     const doc = await savedDoc();
     assert.deepEqual([10, 20, 11, 21].map((c) => fieldOf(doc.entities[0], c)), [20, 50, 60, 50]);
     assert.deepEqual(doc.entities[1], before.entities[1], 'the arc boundary stays unchanged');
@@ -11257,7 +11328,7 @@ try {
       await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
       assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores it');
     };
-    await typeCmd('ex'); await page.keyboard.press('Enter');
+    await extStd(); await page.keyboard.press('Enter');
     await click(40, 60);
     let doc = await savedDoc();
     assert.deepEqual([40, 50, 51].map((c) => fieldOf(doc.entities[1], c)), [20, 0, 180], 'the arc end grows along its circle to the line, the start stays');
