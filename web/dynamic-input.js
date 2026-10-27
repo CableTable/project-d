@@ -1,11 +1,24 @@
 // Cursor typing stays separate from the tools; point parsing and geometry stay shared.
 import { angleOf, dist, parseInput, typedPoint } from './draw.js';
 
-export const createInput = (first) => ({ mode: first ? 'xy' : 'polar', prefix: '', values: ['', ''], locked: [false, false], active: 0 });
+export const createInput = (first, mode = first ? 'xy' : 'polar') => ({ mode, prefix: '', values: ['', ''], locked: [false, false], active: 0 });
 export const hasTyped = (s) => !!(s.prefix || s.values.some(Boolean));
 
+const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
+export const inputMode = (T) => T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
+  ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
+
+/** Rectangles anchor at the first corner; chains anchor at their latest vertex. */
+export function toolPointInput(s, T) {
+  const last = rectangle(T) ? T.pts[0] : T.pts.at(-1);
+  const result = pointInput(s, last, T.hover || last || [0, 0]);
+  // Rectangle's command-bar grammar takes sizes even when cursor entry used absolute X / Y.
+  if (rectangle(T) && last && result.point) result.text = '@' + result.point.map((v, i) => (v - last[i]).toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 })).join(',');
+  return result;
+}
+
 // Keep the clear-before-cancel policy here so an AutoCAD check can change it once.
-export const escapeInput = (s, first) => hasTyped(s) ? createInput(first) : null;
+export const escapeInput = (s, first) => hasTyped(s) ? createInput(first, s.mode === 'size' ? 'size' : undefined) : null;
 
 /** A routed key gives a new state; null leaves the key to the command bar. */
 export function inputKey(s, key, first) {
@@ -22,8 +35,9 @@ export function inputKey(s, key, first) {
     next.prefix = key;
     if (key === '#') next.mode = 'xy';
   } else if (key === ',' && i === 0) {
-    next.mode = 'xy'; next.locked[0] = !!s.values[0]; next.active = 1;
-  } else if (key === '<' && !first && i === 0) {
+    if (s.mode !== 'size') next.mode = 'xy';
+    next.locked[0] = !!s.values[0]; next.active = 1;
+  } else if (key === '<' && !first && i === 0 && s.mode !== 'size') {
     next.mode = 'polar'; next.locked[0] = !!s.values[0]; next.active = 1;
   } else {
     next.values[i] = (s.locked[i] ? '' : s.values[i]) + key; next.locked[i] = false;
@@ -34,12 +48,17 @@ export function inputKey(s, key, first) {
 /** Untyped fields use full precision mouse values, never the rounded display text. */
 export function pointInput(s, last, mouse) {
   const origin = last || [0, 0], relative = s.prefix === '@' || (!!last && s.prefix !== '#');
-  const live = s.mode === 'polar' ? [dist(origin, mouse), angleOf(origin, mouse)]
+  const live = s.mode === 'size' ? mouse.map((v, i) => Math.abs(v - origin[i]))
+    : s.mode === 'polar' ? [dist(origin, mouse), angleOf(origin, mouse)]
     : mouse.map((v, i) => v - (relative ? origin[i] : 0));
-  const labels = s.mode === 'polar' ? ['Length', 'Angle'] : relative ? ['Δx', 'Δy'] : ['X', 'Y'];
-  const errors = s.values.map((v, i) => v && (parseInput(v).kind !== 'len' || !Number.isFinite(+v)) ? `${labels[i]} must be a finite number` : '');
+  const labels = s.mode === 'size' ? ['Width', 'Height'] : s.mode === 'polar' ? ['Length', 'Angle'] : relative ? ['Δx', 'Δy'] : ['X', 'Y'];
+  const errors = s.values.map((v, i) => v && (parseInput(v).kind !== 'len' || !Number.isFinite(+v)) ? `${labels[i]} must be a finite number`
+    : s.mode === 'size' && +(v || live[i]) === 0 ? `${labels[i]} must not be zero` : '');
   // The typed-point grammar has no exponent notation (tiny mouse deltas can have it).
-  const values = s.values.map((v, i) => v || live[i].toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 }));
+  const values = s.values.map((v, i) => {
+    const value = s.mode === 'size' ? +(v || live[i]) * (mouse[i] < origin[i] ? -1 : 1) : v || live[i];
+    return typeof value === 'number' ? value.toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 }) : value;
+  });
   const text = (relative ? '@' : '') + values.join(s.mode === 'polar' ? '<' : ',');
   const point = errors.some(Boolean) ? null : typedPoint(parseInput(text), last);
   return { text, point, live, labels, errors, why: errors.find(Boolean) || (point ? '' : 'Point coordinates must be finite') };

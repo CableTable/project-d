@@ -5904,7 +5904,7 @@ function drawClick(e) {
   const q = drawPick(d, e.clientX, e.clientY, e.shiftKey);
   trackStop();                                                      // a click ends the hover (and the lock it showed)
   state.drawHover = q; state.msg = null;
-  if (lineDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2)); cursorCommit(); return; }
+  if (cursorDynamic() && DI.hasTyped(cursorInput())) { DR.toolHover(state.draw, q.slice(0, 2)); cursorCommit(); return; }
   state.draw.cursorInput = null;
   drawApply(DR.toolClick(state.draw, [q[0], q[1]]));
 }
@@ -5963,7 +5963,7 @@ function drawOvl() {
   let tip = null;
   if (d && d.cmp && d.cmp.show && !d.cmp.moving && d.cmp.res && !d.cmp.stale) cmpGlow(d.cmp, out);
   if (d && !d.lay && drawLive()) {
-    const T = state.draw, dynamic = lineDynamic() && T.hover ? cursorPoint() : null;
+    const T = state.draw, dynamic = cursorDynamic() && T.hover ? cursorPoint() : null;
     const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
     for (const g of pv.guides) out.push(s('path', { class: 'dr-guide', d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
@@ -6029,16 +6029,16 @@ function drawKey(e, k) {
   return false;
 }
 
-const lineDynamic = () => state.dynamicInput && drawLive() && state.draw.kind === 'line';
-const cursorInput = () => state.draw.cursorInput ||= DI.createInput(!state.draw.pts.length);
-const cursorPoint = () => DI.pointInput(cursorInput(), state.draw.pts.at(-1), state.draw.hover || state.draw.pts.at(-1) || [0, 0]);
+const cursorDynamic = () => state.dynamicInput && drawLive() && DI.inputMode(state.draw) !== null;
+const cursorInput = () => state.draw.cursorInput ||= DI.createInput(!state.draw.pts.length, DI.inputMode(state.draw));
+const cursorPoint = () => DI.toolPointInput(cursorInput(), state.draw);
 function cursorCommit() {
   const result = cursorPoint();
   if (result.why) { note(result.why); paintOverlay(); return; }
   trackStop(); drawTyped(result.text);
 }
 function cursorKey(e) {
-  if (!lineDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (!cursorDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
   if (field && (field !== ui.cmd || ui.cmd.value)) return;
@@ -6051,7 +6051,7 @@ function cursorKey(e) {
   else {
     const next = DI.inputKey(input, e.key, !state.draw.pts.length);
     if (!next) return;
-    state.draw.cursorInput = next;
+    state.draw.cursorInput = e.key === 'Escape' ? null : next;
     if (!state.draw.hover) DR.toolHover(state.draw, [0, 0]);
     if (e.key === 'Escape') state.msg = null;
     paintOverlay(); renderCommand();

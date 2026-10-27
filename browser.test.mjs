@@ -14592,7 +14592,7 @@ try {
     await page.keyboard.press('Escape');
     await page.locator('[data-tool=polyline]').click(); await typeCmd('20,20');
     await page.mouse.move(ray.x, ray.y); await frames();
-    assert.equal(await t('cursor-length').count(), 0, 'other tools keep the original tip');
+    assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Length', 'Polyline reuses Line fields');
     await page.keyboard.press('Escape'); await closeTabs(/./);
   });
 
@@ -14676,6 +14676,8 @@ try {
     const beforeUndo = await entCount();
     await page.keyboard.press('Control+z'); assert.equal(await entCount(), beforeUndo - 1);
     await page.keyboard.press('Control+y'); assert.equal(await entCount(), beforeUndo);
+    await typeCmd('#50,60');
+    near70(line70((await savedDoc()).entities.at(-1)).slice(2), [50, 60]);
     const show = async () => {
       await page.locator('[data-tool=line]').click(); await typeCmd('20,20');
       const p = await at(80, 70); await page.mouse.move(p.x, p.y);
@@ -14685,6 +14687,100 @@ try {
       assert.equal(await t('cursor-angle').inputValue(), '9');
     };
     await shotBoth('dynamic-input69b', show, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
+    await closeTabs(/./);
+  });
+
+  await step('TODO 69c: Polyline cursor points, locks, coordinates, Esc twice and F12 off', async () => {
+    await open70([dxfLine(0, 0, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await page.locator('[data-tool=polyline]').click();
+    let p = await at(80, 60); await page.mouse.move(p.x, p.y); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-label'), 'X');
+    assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Y');
+    await page.keyboard.type('20'); await page.keyboard.press('Tab'); await page.keyboard.type('25'); await page.keyboard.press('Enter');
+    await page.keyboard.type('50'); await page.keyboard.press('Tab'); await page.keyboard.type('90'); await frames();
+    assert.equal(await page.locator('.cursor-lock:not([hidden])').count(), 1);
+    assert.equal(await t('cursor-dx').getAttribute('readonly'), '');
+    await page.keyboard.press('Enter');
+    await typeCmd('@10,0'); await typeCmd('#30,85');
+    await page.keyboard.type('10,0'); await page.keyboard.press('Enter');
+    await page.keyboard.type('1..2'); await page.keyboard.press('Enter'); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-invalid'), 'true');
+    assert.match(await histLine(), /Length must be a finite number/);
+    await page.keyboard.press('Escape'); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-invalid'), 'false');
+    assert.match(await prompt(), /next point/i);
+    assert.equal(await entCount(), 1, 'first Esc only clears typing');
+    await page.keyboard.press('Escape');
+    assert.equal(await entCount(), 2, 'second Esc finishes the pending Polyline');
+    near70(GR.lwVertices((await savedDoc()).entities.at(-1).r).flatMap((v) => [v.x, v.y]), [20, 25, 20, 75, 30, 75, 30, 85, 40, 85]);
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), false);
+    await page.keyboard.type('10,20'); assert.equal(await cmdLine().inputValue(), '10,20'); await cmdLine().press('Enter');
+    await typeCmd('@5,6'); await typeCmd('');
+    near70(GR.lwVertices((await savedDoc()).entities.at(-1).r).flatMap((v) => [v.x, v.y]), [10, 20, 15, 26]);
+    await page.keyboard.press('F12'); await closeTabs(/./);
+  });
+
+  for (const [kind, label] of [['rect', 'Rectangle'], ['rrect', 'Rounded rectangle']]) await step(`TODO 69c: ${label} signed Width / Height, validation, locks, Esc twice and F12 off`, async () => {
+    await open70([dxfLine(0, 0, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await t('decimals').selectOption('2');
+    const start = async () => {
+      await page.locator(`[data-tool=${kind}]`).click();
+      if (kind === 'rrect') {
+        assert.match(await prompt(), /Corner radius/);
+        await page.keyboard.type('3'); assert.equal(await cmdLine().inputValue(), '3'); await cmdLine().press('Enter');
+      }
+    };
+    await start();
+    let p = await at(80, 60); await page.mouse.move(p.x, p.y); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-label'), 'X');
+    assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Y');
+    await page.keyboard.type('100'); await page.keyboard.press('Tab'); await page.keyboard.type('100'); await page.keyboard.press('Enter');
+    const upLeft = await at(40, 150); await page.mouse.move(upLeft.x, upLeft.y); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Width');
+    assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Height');
+    await page.keyboard.type('30'); await page.keyboard.press('Tab'); await page.keyboard.type('20'); await page.keyboard.press('Enter');
+    const bounds = async () => {
+      const ps = GR.lwVertices((await savedDoc()).entities.at(-1).r);
+      return [Math.min(...ps.map((v) => v.x)), Math.max(...ps.map((v) => v.x)), Math.min(...ps.map((v) => v.y)), Math.max(...ps.map((v) => v.y))];
+    };
+    near70(await bounds(), [70, 100, 100, 120]);
+    assert.equal((await histLabels()).at(-1), label);
+    if (kind === 'rrect') assert.equal(GR.lwVertices((await savedDoc()).entities.at(-1).r).filter((v) => v.b > 0).length, 4);
+    await typeCmd('100,100'); await page.mouse.move(upLeft.x, upLeft.y);
+    await page.keyboard.type('0'); await page.keyboard.press('Tab'); await page.keyboard.type('20'); await page.keyboard.press('Enter'); await frames();
+    assert.equal(await entCount(), 2); assert.match(await histLine(), /Width must not be zero/);
+    assert.equal(await t('cursor-length').getAttribute('aria-invalid'), 'true');
+    await page.keyboard.press('Tab'); await page.keyboard.type('-30'); await frames();
+    assert.equal(await t('cursor-length').inputValue(), '-30', 'typing replaces the locked zero');
+    await page.keyboard.press('Tab'); await page.keyboard.type('-20'); await page.keyboard.press('Enter');
+    near70(await bounds(), [100, 130, 80, 100]);
+    await typeCmd('100,100'); await page.mouse.move(upLeft.x, upLeft.y);
+    await page.keyboard.type('30'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 3); assert.match(await histLine(), /Height must not be zero/);
+    await page.keyboard.press('Escape'); await frames();
+    assert.match(await prompt(), /Other corner/);
+    assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Width');
+    assert.equal(await t('cursor-angle').getAttribute('aria-invalid'), 'false');
+    await page.keyboard.press('Escape'); assert.match(await prompt(), /first corner/);
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), false);
+    await page.keyboard.type('100,100'); assert.equal(await cmdLine().inputValue(), '100,100'); await cmdLine().press('Enter');
+    await page.mouse.move(upLeft.x, upLeft.y); await frames();
+    assert.equal(await t('cursor-length').count(), 0, 'DYN off keeps the original readout');
+    await typeCmd('30,20'); near70(await bounds(), [100, 130, 100, 120]);
+    await page.keyboard.press('F12');
+    if (kind === 'rect') {
+      const show = async () => {
+        await start(); await typeCmd('100,100'); await page.mouse.move(upLeft.x, upLeft.y);
+        await page.keyboard.type('30'); await page.keyboard.press('Tab'); await page.keyboard.type('2'); await frames();
+        assert.equal(await t('cursor-length').inputValue(), '30'); assert.equal(await t('cursor-angle').inputValue(), '2');
+        assert.equal(await page.locator('.cursor-lock:not([hidden])').count(), 1);
+      };
+      await shotBoth('dynamic-input69c-rectangle', show, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
+    }
     await closeTabs(/./);
   });
 

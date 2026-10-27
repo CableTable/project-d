@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { dynamicInput } from './web/draw.js';
-import { createInput, hasTyped, escapeInput, inputKey, pointInput } from './web/dynamic-input.js';
+import { createTool, toolType, toolHover, dynamicInput } from './web/draw.js';
+import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput } from './web/dynamic-input.js';
 
 test('Dynamic input: translated points, signed deltas and all angle quadrants', () => {
   assert.deepEqual(dynamicInput([10, 20], [13, 24], 2), { length: '5.00 mm', angle: '53.13°', dx: '3.00 mm', dy: '4.00 mm' });
@@ -80,4 +80,59 @@ test('Dynamic input: bad and overflowing numbers fail validation; first Esc clea
   const cleared = escapeInput(s, false);
   assert.equal(hasTyped(cleared), false); assert.equal(escapeInput(cleared, false), null);
   assert.deepEqual(escapeInput(keys('@', true), true), createInput(true));
+});
+
+const toolKeys = (T, text) => keys(text, !T.pts.length, createInput(!T.pts.length, inputMode(T)));
+test('TODO 69c: Polyline uses absolute first X / Y and its latest vertex for Line entry rules', () => {
+  const T = createTool('polyline');
+  T.last = [900, 900]; toolHover(T, [99, 99]);
+  let s = toolKeys(T, '10'); s = inputKey(s, 'Tab', true); s = keys('20', true, s);
+  assert.deepEqual(toolPointInput(s, T).labels, ['X', 'Y']);
+  toolType(T, toolPointInput(s, T).text);
+  toolType(T, '@5,5'); toolHover(T, [200, 200]);
+  s = toolKeys(T, '50'); s = inputKey(s, 'Tab', false); s = keys('90', false, s);
+  near(toolPointInput(s, T).point, [15, 75]);
+  toolType(T, toolPointInput(s, T).text);
+  near(T.pts.at(-1), [15, 75]);
+  near(toolPointInput(toolKeys(T, '#0,0'), T).point, [0, 0]);
+  near(toolPointInput(toolKeys(T, '@-10,0'), T).point, [5, 75]);
+  near(toolPointInput(toolKeys(T, '-10<90'), T).point, [15, 65]);
+});
+
+for (const kind of ['rect', 'rrect']) test(`TODO 69c: ${kind} first corner, signed sizes in every quadrant, live fields, locks and validation`, () => {
+  const T = createTool(kind);
+  if (kind === 'rrect') {
+    assert.equal(inputMode(T), null, 'radius stays in the command bar');
+    toolType(T, '3');
+  }
+  T.last = [900, 900]; toolHover(T, [80, 90]);
+  assert.equal(inputMode(T), 'xy');
+  assert.deepEqual(toolPointInput(toolKeys(T, '100,100'), T).point, [100, 100]);
+  toolType(T, toolPointInput(toolKeys(T, '100,100'), T).text);
+  assert.equal(inputMode(T), 'size');
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const flip of [-1, 1]) {
+    toolHover(T, [100 + sx * 80, 100 + sy * 60]);
+    let s = toolKeys(T, String(30 * flip)); s = inputKey(s, 'Tab', false); s = keys(String(20 * flip), false, s);
+    const result = toolPointInput(s, T);
+    assert.deepEqual(result.labels, ['Width', 'Height']);
+    near(result.point, [100 + sx * flip * 30, 100 + sy * flip * 20]);
+    const copy = { ...T, pts: [...T.pts] }, made = toolType(copy, result.text).made;
+    const xs = made[0].pts.map((p) => p[0]), ys = made[0].pts.map((p) => p[1]);
+    near([Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)],
+      [100 + Math.min(0, sx * flip * 30), 100 + Math.max(0, sx * flip * 30), 100 + Math.min(0, sy * flip * 20), 100 + Math.max(0, sy * flip * 20)]);
+  }
+  toolHover(T, [20, 160]);
+  let s = inputKey(toolKeys(T, '30'), 'Tab', false);
+  near(toolPointInput(s, T).point, [70, 160]);
+  s = inputKey(s, 'Tab', false); s = keys('40', false, s);
+  assert.deepEqual(s.values, ['40', '']);
+  near(toolPointInput(s, T).point, [60, 160]);
+  s = escapeInput(s, false);
+  assert.equal(s.mode, 'size'); assert.equal(hasTyped(s), false); assert.equal(escapeInput(s, false), null);
+  near(toolPointInput(toolKeys(T, ',20'), T).point, [20, 120]);
+  for (const [text, label] of [['0,20', 'Width'], ['30,0', 'Height'], ['-0,20', 'Width'], ['1..2,20', 'Width']]) {
+    const result = toolPointInput(toolKeys(T, text), T);
+    assert.equal(result.point, null); assert.match(result.why, new RegExp(label));
+  }
+  assert.equal(inputMode(createTool('circle')), null);
 });

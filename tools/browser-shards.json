@@ -415,5 +415,8 @@
   "TODO 70: exact typed points override snaps and ORTHO; inch conversion; Enter and Space repeat": 42.29,
   "TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges": 12,
   "TODO 69b: Line cursor typing, locks, coordinates, validation, Esc, options and DYN off": 24,
+  "TODO 69c: Polyline cursor points, locks, coordinates, Esc twice and F12 off": 12,
+  "TODO 69c: Rectangle signed Width / Height, validation, locks, Esc twice and F12 off": 22,
+  "TODO 69c: Rounded rectangle signed Width / Height, validation, locks, Esc twice and F12 off": 20,
   "no console errors": 0
 }

@@ -48,13 +48,13 @@ export function dynamicInput(a, b, dp) {
 // ---------------------------------------------------------------- typed input
 
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)';
-const RE_PT = new RegExp(`^(@?)\\s*(${NUM})\\s*,\\s*(${NUM})$`);
-const RE_POLAR = new RegExp(`^(@?)\\s*(${NUM})\\s*<\\s*(${NUM})$`);
+const RE_PT = new RegExp(`^([@#]?)\\s*(${NUM})\\s*,\\s*(${NUM})$`);
+const RE_POLAR = new RegExp(`^([@#]?)\\s*(${NUM})\\s*<\\s*(${NUM})$`);
 const RE_NUM = new RegExp(`^(${NUM})$`);
 
 /**
  * What was typed → { kind: 'enter' } | { kind: 'xy', rel, x, y } | { kind: 'polar', rel, len, ang } | { kind: 'len', v } | { kind: 'word', w } | { kind: 'bad' }.
- * "x,y" is absolute, "@dx,dy" relative to the last point; "len<ang" is polar from the origin, "@len<ang" from the last point; a bare
+ * "x,y" or "#x,y" is absolute, "@dx,dy" relative to the last point; "len<ang" (also with #) is polar from the origin, "@len<ang" from the last point; a bare
  * number is a length (direct distance entry); letters are an option word (lower case).
  */
 export function parseInput(text) {

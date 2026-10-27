@@ -13,8 +13,10 @@ test('parseInput: x,y, @dx,dy, polar, a length, words, Enter', () => {
   assert.deepEqual(DR.parseInput('10,20'), { kind: 'xy', rel: false, x: 10, y: 20 });
   assert.deepEqual(DR.parseInput(' 10 , -20.5 '), { kind: 'xy', rel: false, x: 10, y: -20.5 });
   assert.deepEqual(DR.parseInput('@5,-3'), { kind: 'xy', rel: true, x: 5, y: -3 });
+  assert.deepEqual(DR.parseInput('#5,-3'), { kind: 'xy', rel: false, x: 5, y: -3 });
   assert.deepEqual(DR.parseInput('@ .5,1'), { kind: 'xy', rel: true, x: 0.5, y: 1 });
   assert.deepEqual(DR.parseInput('@100<45'), { kind: 'polar', rel: true, len: 100, ang: 45 });
+  assert.deepEqual(DR.parseInput('#100<45'), { kind: 'polar', rel: false, len: 100, ang: 45 });
   assert.deepEqual(DR.parseInput('100<-30'), { kind: 'polar', rel: false, len: 100, ang: -30 });
   assert.deepEqual(DR.parseInput('75'), { kind: 'len', v: 75 });
   assert.deepEqual(DR.parseInput('-2.5'), { kind: 'len', v: -2.5 });
