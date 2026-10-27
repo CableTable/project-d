@@ -378,4 +378,47 @@ test('Quick Trim (TODO 155a T1): the piece between the nearest crossings goes, a
   assert.equal(seg.ents.length, 2);
 });
 
+test('Quick Trim by fence (TODO 155a T2): every piece the fence crosses goes, in one go, and the rest stays joined', () => {
+  const l1 = line(0, 0, 100, 0, base), l2 = line(0, 20, 100, 20, base), v1 = line(30, -10, 30, 30, base), v2 = line(70, -10, 70, 30, base);
+  const all = [l1, l2, v1, v2], tr = (hit, ents = all) => M.trimRegion(ents, all, hit);
+  const r = tr(M.fenceHit([[50, -5], [50, 25]]));                                             // one stroke across both horizontals: the middle of each goes
+  assert.deepEqual(r.changed.map((c) => c.i), [0, 1]);
+  for (const c of r.changed) { assert.equal(c.ents.length, 2); nearPt(S(c.ents[0]).b, [30, c.i * 20]); nearPt(S(c.ents[1]).a, [70, c.i * 20]); }
+  const zig = tr(M.fenceHit([[50, -5], [50, 10], [90, 10], [90, 25]]));                       // a bend: crosses l1 at x=50, v2 at y=10 and l2 at x=90 (the end piece)
+  assert.deepEqual(zig.changed.map((c) => c.i), [0, 1, 3]);
+  assert.equal(zig.changed[1].ents.length, 1); nearPt(S(zig.changed[1].ents[0]).b, [70, 20]);   // l2 loses 70..100 up to its end
+  assert.equal(zig.changed[2].ents.length, 2);                                                // v2 loses the stretch between l1 and l2
+  const both = tr(M.fenceHit([[10, 5], [90, 5], [90, -5], [10, -5]]));                         // a U round the lower part: v1 and v2 lose their pieces at y=5 and y=-5, l1 its end at x=90
+  assert.deepEqual(both.changed.map((c) => c.i), [0, 2, 3]);
+  assert.equal(both.changed[0].ents.length, 1); nearPt(S(both.changed[0].ents[0]).b, [70, 0]);
+  assert.equal(both.changed[1].ents.length, 1); nearPt(S(both.changed[1].ents[0]).a, [30, 20]);   // v1: only the stub above l2 is left
+  assert.deepEqual(tr(M.fenceHit([[200, 0], [210, 5]])).changed, [], 'a fence that misses everything changes nothing');
+  assert.deepEqual(tr(M.fenceHit([[5, 5], [5, 5]])).changed, [], 'a fence of no length changes nothing');
+  const lone = M.trimRegion([line(200, 0, 260, 0, base)], [], M.fenceHit([[230, -5], [230, 5]]));
+  assert.deepEqual(lone.changed, [{ i: 0, ents: [] }], 'a lone object the fence crosses goes whole');
+  const c = circle(0, 0, 10, base), cut = [line(-20, 5, 20, 5, base), line(-20, -5, 20, -5, base)];   // a circle with two cutters: the fence takes the right arc
+  const cr = M.trimRegion([c], cut, M.fenceHit([[8, 0], [14, 0]]));
+  assert.equal(cr.changed[0].ents.length, 1); assert.equal(S(cr.changed[0].ents[0]).t, 'arc');
+  near(S(cr.changed[0].ents[0]).a0, 30, 1e-4); near(S(cr.changed[0].ents[0]).a1, 330, 1e-4);
+  const one1 = M.trimRegion([circle(0, 0, 10, base)], [line(0, 0, 20, 0, base)], M.fenceHit([[8, 3], [14, 3]]));
+  assert.equal(one1.skipped, 1, 'a closed shape with one crossing is left alone'); assert.deepEqual(one1.changed, []);
+  const p = lwpoly([[0, 0], [50, 0], [50, 50], [0, 50]], base);                               // an open polyline: the fence takes one stretch, the rest stays one polyline each side
+  const pr = M.trimRegion([p], [line(-10, 25, 60, 25, base), line(25, -10, 25, 10, base)], M.fenceHit([[60, 10], [40, 10]]));
+  assert.equal(pr.changed[0].ents.length, 2);
+});
+
+test('Quick Trim by crossing window (TODO 155a T2): pieces touching the window go, whole objects inside go', () => {
+  const l = line(0, 0, 100, 0, base), v1 = line(30, -10, 30, 10, base), v2 = line(70, -10, 70, 10, base), all = [l, v1, v2];
+  const r = M.trimRegion(all, all, M.windowHit([40, 5], [60, -5]));                            // a window on the middle of l
+  assert.deepEqual(r.changed.map((c) => c.i), [0]);
+  assert.equal(r.changed[0].ents.length, 2); nearPt(S(r.changed[0].ents[0]).b, [30, 0]); nearPt(S(r.changed[0].ents[1]).a, [70, 0]);
+  const rev = M.trimRegion(all, all, M.windowHit([60, -5], [40, 5]));                          // corners in either order
+  assert.equal(rev.changed.length, 1);
+  const ins = M.trimRegion(all, all, M.windowHit([25, -2], [35, 2]));                          // a window on a crossing: l (both neighbours touch it) and v1 go
+  assert.ok(ins.changed.some((c) => c.i === 1), 'v1 is touched');
+  const wide = M.trimRegion(all, all, M.windowHit([-50, -50], [150, 50]));                     // everything inside: all goes (pieces between crossings, so whole objects)
+  assert.equal(wide.changed.length, 3); assert.ok(wide.changed.every((c) => c.ents.length === 0));
+  assert.deepEqual(M.trimRegion(all, all, M.windowHit([200, 200], [210, 210])).changed, [], 'a window on nothing changes nothing');
+});
+
 console.log(`${n} modify tests passed`);

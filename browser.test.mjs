@@ -10303,14 +10303,14 @@ try {
     await page.keyboard.press('Escape');
     await page.locator('[data-tool=trim]').click();
     assert.equal(await t('tool-chip').textContent(), 'Tool: Trim');
-    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:', 'no edge picking, no /Undo before the first cut');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase]:', 'no edge picking, no /Undo before the first cut');
     assert.match(await histLine(), /Command: TRIM\s+Mode: Quick/);
     await hv(120, 30);
     assert.equal(await t('mod-preview').count(), 1, 'the piece that goes shows before the click');
     await click(120, 30);
     assert.equal(await entCount(), 5, 'the line is cut in two');
     assert.deepEqual(await horiz(), [[20, 80], [160, 220]]);
-    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde/Undo]:', '/Undo after the first cut');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase/Undo]:', '/Undo after the first cut');
     assert.equal((await histLabels()).at(-1), 'Trim');
     await hv(40, 80);
     assert.equal(await t('mod-preview').count(), 1, 'a lone line is previewed whole');
@@ -10321,7 +10321,7 @@ try {
     assert.equal(await entCount(), 5, 'U takes back the last cut: the lone line is back');
     await typeCmd('u');
     assert.equal(await entCount(), 4); assert.deepEqual(await horiz(), [[20, 220]], 'U twice: the line is whole again');
-    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:', 'nothing left to undo: /Undo is gone');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase]:', 'nothing left to undo: /Undo is gone');
     await typeCmd('u'); assert.match(await histLine(), /Nothing to undo in this Trim/);
     await shotBoth('155a1-quick-trim', async () => {
       if ((await t('tool-chip').textContent()) !== 'Tool: Trim') await page.locator('[data-tool=trim]').click();
@@ -10342,13 +10342,97 @@ try {
     await page.keyboard.press('Escape');
     assert.match(await prompt(), /^Select cutting edges/); assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'Esc leaves the question only');
     await typeCmd('o'); await typeCmd('quick');
-    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase]:');
     await page.keyboard.press('Escape');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Trim');
     await page.locator('[data-tool=trim]').click();
-    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:', 'Quick is remembered too');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase]:', 'Quick is remembered too');
     await page.keyboard.press('Enter');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends Trim');
+  });
+
+  await step('TODO 155a T2: Quick Trim fence across two lines, Crossing window, eRase and cuTting edges; each is one undo step and U steps back', async () => {
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(20, 70, 220, 70), dxfLine(80, 10, 80, 90), dxfLine(160, 10, 160, 90));
+    const hv = async (x, y) => { const q = await at(x, y); await page.mouse.move(q.x, q.y); await frames(); };
+    const rows = async (y) => (await savedDoc()).entities.filter((e) => e.type === 'LINE' && fieldOf(e, 20) === y && fieldOf(e, 21) === y).map((e) => [fieldOf(e, 10), fieldOf(e, 11)].sort((a, b) => a - b)).sort((a, b) => a[0] - b[0]);
+    const MAIN = 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase';
+    const split = [[20, 80], [160, 220]];
+    await openGrips(writeDxf(doc0), 'trim-fence.dxf');
+    await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');                       // whatever an earlier step left: start from Quick
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tool=trim]').click();
+    assert.equal(await entCount(), 4);
+    const steps0 = (await histLabels()).length;
+    // a fence: a click on empty space starts it, the next clicks add points, Enter trims everything it crosses
+    await click(120, 95);
+    assert.match(await prompt(), /^Specify next fence point or \[Undo\]/);
+    assert.equal(await entCount(), 4, 'starting a fence cuts nothing');
+    await click(130, 95); await frames(); assert.equal(await t('trim-fence').count(), 2, 'the first stroke is drawn, and the rubber band to the cursor');
+    await typeCmd('u'); await frames(); assert.ok(await t('trim-fence').count() < 2, 'U takes the last fence point out: the stroke is gone');
+    assert.match(await prompt(), /^Specify next fence point/);
+    await click(120, 15);
+    await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 6, 'the fence crossed both long lines: each is cut in two');
+    assert.deepEqual(await rows(30), split); assert.deepEqual(await rows(70), split);
+    assert.equal((await histLabels()).length, steps0 + 1, 'one undo step for the whole fence');
+    assert.equal((await histLabels()).at(-1), 'Trim');
+    assert.ok((await prompt()).startsWith(MAIN) && (await prompt()).endsWith('/Undo]:'), 'back to the main prompt, with /Undo');
+    await typeCmd('u'); assert.equal(await entCount(), 4, 'U takes the whole fence back');
+    assert.deepEqual(await rows(30), [[20, 220]]);
+    // Esc cancels the fence only; a fence of one point does nothing
+    await click(120, 95); await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Trim'); assert.ok((await prompt()).startsWith(MAIN));
+    await click(120, 95); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 4); assert.match(await histLine(), /needs two points/);
+    await shotBoth('155a2-fence', async () => {
+      if ((await t('tool-chip').textContent()) !== 'Tool: Trim') await page.locator('[data-tool=trim]').click();
+      if (!/fence/.test(await prompt())) { await click(120, 95); await click(120, 60); }
+      await hv(120, 15);
+    });
+    await page.keyboard.press('Escape');
+    // Crossing: two corners, the pieces inside the window are trimmed
+    await typeCmd('c');
+    assert.equal(await prompt(), 'Specify first crossing corner:');
+    await click(100, 20); await hv(140, 80);
+    assert.equal(await prompt(), 'Specify opposite corner (the pieces inside are trimmed):');
+    assert.equal(await t('trim-cross').count(), 4, 'the window is drawn');
+    await click(140, 80);
+    assert.equal(await entCount(), 6); assert.deepEqual(await rows(30), split); assert.deepEqual(await rows(70), split);
+    assert.equal((await histLabels()).length, steps0 + 1, 'the window is one undo step');
+    await typeCmd('u'); assert.equal(await entCount(), 4);
+    await typeCmd('c'); await click(100, 20); await page.keyboard.press('Escape');
+    assert.ok((await prompt()).startsWith(MAIN), 'Esc drops the window'); assert.equal(await entCount(), 4);
+    // eRase: click objects, Enter deletes them all in one step and Trim goes on
+    await typeCmd('r');
+    assert.match(await prompt(), /^Select objects to erase \(0 picked/);
+    await click(80, 50); await click(160, 50); await frames();
+    assert.match(await prompt(), /\(2 picked/); assert.equal(await t('trim-erase').count(), 2, 'what will go is marked');
+    await click(160, 50); assert.match(await prompt(), /\(1 picked/, 'a second click takes it out again');
+    await click(160, 50);
+    await page.keyboard.press('Enter');
+    assert.equal(await entCount(), 2); assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'eRase does not leave Trim');
+    assert.equal((await histLabels()).length, steps0 + 1, 'both erased in one step');
+    await typeCmd('u'); assert.equal(await entCount(), 4);
+    // cuTting edges: only the picked objects cut; Enter alone (or Esc) goes back to all
+    await typeCmd('t');
+    assert.match(await prompt(), /^Select cutting edges/);
+    await click(80, 50); await frames(); assert.equal(await t('trim-edge').count(), 1);
+    await page.keyboard.press('Enter');
+    assert.ok((await prompt()).startsWith(MAIN)); assert.match(await histLine(), /TRIM\s+Cutting edges: 1|Mode: Quick|Cutting edges/);
+    await click(120, 30);
+    assert.equal(await entCount(), 4, 'only one cutting edge: the line loses its end beyond it, no second piece');
+    assert.deepEqual(await rows(30), [[20, 80]]);
+    await typeCmd('u'); assert.deepEqual(await rows(30), [[20, 220]]);
+    await typeCmd('t'); await page.keyboard.press('Enter');
+    await click(120, 30);
+    assert.equal(await entCount(), 5, 'Enter with no edge picked: every object cuts again'); assert.deepEqual(await rows(30), split);
+    await typeCmd('u');
+    await typeCmd('t'); await click(80, 50); await page.keyboard.press('Escape');
+    assert.ok((await prompt()).startsWith(MAIN)); assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'Esc in the edge pick goes back to all, Trim stays');
+    await click(120, 30); assert.equal(await entCount(), 5);
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Trim');
   });
 
   await step('TODO 78: Trim preview', async () => {
