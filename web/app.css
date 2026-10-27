@@ -103,6 +103,9 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
 .tabsrow { display: flex; align-items: flex-end; gap: 8px; padding: 6px 10px 0; background: var(--app); border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .tabs { display: flex; gap: 4px; align-items: flex-end; min-width: 0; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; user-select: none; }
 .tabs::-webkit-scrollbar { display: none; }
+.tabs.fade-left { --tab-fade-left: 18px; }
+.tabs.fade-right { --tab-fade-right: 18px; }
+.tabs:is(.fade-left, .fade-right) { mask-image: linear-gradient(to right, transparent, #000 var(--tab-fade-left, 0px), #000 calc(100% - var(--tab-fade-right, 0px)), transparent); }
 .spacer { flex: 1; }
 .rowtools { display: flex; gap: 8px; align-items: center; padding-bottom: 6px; flex-shrink: 0; }
 .dtab { height: 30px; display: inline-flex; align-items: center; gap: 8px; padding: 0 12px; border: 1px solid var(--line); border-bottom: 0; border-radius: var(--r) var(--r) 0 0; background: var(--app); color: var(--muted); cursor: pointer; flex-shrink: 0; white-space: nowrap; }

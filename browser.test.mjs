@@ -201,6 +201,17 @@ try {
     try {
       const p = await context.newPage();
       await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const strip = p.locator('.tabs');
+      const expectFades = async (left, right) => {
+        await p.waitForFunction(([left, right]) => {
+          const el = document.querySelector('.tabs');
+          return el.classList.contains('fade-left') === left && el.classList.contains('fade-right') === right;
+        }, [left, right], { timeout: 3000 }).catch(async (error) => {
+          throw new Error(`Expected fades ${left}/${right}: ${await strip.evaluate((el) => [el.className, el.scrollLeft, el.clientWidth, el.scrollWidth])}`, { cause: error });
+        });
+        assert.equal(await strip.evaluate((el) => getComputedStyle(el).maskImage !== 'none'), left || right, 'mask only with hidden tabs');
+      };
+      await expectFades(false, false);
       const height = await p.locator('.tabsrow').evaluate((el) => el.offsetHeight);
       for (let i = 1; i < 12; i++) await p.getByTestId('new-tab').click();
       for (const width of [1800, 1440, 1024]) {
@@ -214,22 +225,34 @@ try {
           }), true, `${id} fully visible at ${width}`);
         }
         await p.locator('.tabs .dtab').first().click();
-        await p.locator('.tabs').hover(); await p.mouse.wheel(0, 150);
+        await strip.evaluate((el) => { el.scrollLeft = 0; });
+        await expectFades(false, true);
+        await p.locator('.tabs').hover(); await p.mouse.wheel(0, 30);
         await p.waitForFunction(() => document.querySelector('.tabs').scrollLeft > 0);
-        const strip = p.locator('.tabs'), box = await strip.boundingBox();
+        await expectFades(true, true);
+        await strip.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+        await expectFades(true, false);
+        const box = await strip.boundingBox();
         await strip.evaluate((el) => { el.scrollLeft = 0; });
         await p.mouse.move(box.x + 100, box.y + 12); await p.mouse.down();
-        await p.mouse.move(box.x + 20, box.y + 12, { steps: 8 }); await p.mouse.up();
+        await p.mouse.move(box.x + 60, box.y + 12, { steps: 8 }); await p.mouse.up();
         assert.ok(await strip.evaluate((el) => el.scrollLeft > 0), 'drag scrolls sideways');
+        await expectFades(true, true);
         assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'Drawing 1', 'drag does not switch tabs');
       }
+      await p.setViewportSize({ width: 3000, height: 1000 });
+      await expectFades(false, false);
       await p.setViewportSize({ width: 1800, height: 1000 });
+      await expectFades(false, true);
+      await strip.evaluate((el) => { el.scrollLeft = (el.scrollWidth - el.clientWidth) / 2; });
+      await expectFades(true, true);
       for (const theme of ['light', 'dark']) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
         await p.screenshot({ path: `${shotDir}/todo152a-tabs-${theme}.png` });
       }
       await p.getByTestId('new-layout').click();
       assert.equal(await p.locator('.tabs .dtab[data-kind=layout]').count(), 1);
+      await expectFades(true, false);
     } finally { await context.close(); }
   });
   await step('TODO 148a: colour picker fields, Properties, Cancel, swatches, screen pick, layers, Contour and exact DXF', async () => {

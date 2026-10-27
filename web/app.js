@@ -690,6 +690,8 @@ function renderRibbon() {
 
 function buildTabs() {
   ui.tabs = h('div', { class: 'tabs' });
+  ui.tabs.addEventListener('scroll', updateTabFades);
+  new ResizeObserver(updateTabFades).observe(ui.tabs);
   ui.tabs.addEventListener('wheel', (e) => {
     if (ui.tabs.scrollWidth <= ui.tabs.clientWidth) return;
     e.preventDefault(); ui.tabs.scrollLeft += e.deltaX || e.deltaY;
@@ -748,6 +750,10 @@ function applyKind() {
 }
 
 const GRID_ICON = TOOLS.find((t) => t.id === 'step').svg;
+function updateTabFades() {
+  ui.tabs.classList.toggle('fade-left', ui.tabs.scrollLeft > 0);
+  ui.tabs.classList.toggle('fade-right', ui.tabs.scrollWidth - ui.tabs.clientWidth - ui.tabs.scrollLeft > 1);
+}
 function renderTabs() {
   ui.tabs.replaceChildren(
     ...state.docs.map((d, i) => {
@@ -761,6 +767,7 @@ function renderTabs() {
     }));
   const on = ui.tabs.querySelector('.dtab.on');
   if (on && on.scrollIntoView) on.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  updateTabFades();
 }
 
 // ---- closing the window with unsaved tabs: Save / Don't save / Cancel (the exe's close request, a browser's beforeunload; F5 and Ctrl+R are off in the exe) ----
