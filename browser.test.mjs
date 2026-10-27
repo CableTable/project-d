@@ -291,6 +291,162 @@ try {
       assert.deepEqual(errs, []);
     } finally { await context.close(); }
   });
+  await step('TODO 71c: duplicate lines cycle 1 to 2 to 1, spot/edit/undo/redo/tab/Esc reset, locked skip and Alt release', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const doc = newDoc(4);
+      addLayer(doc, 'Locked'); addLayer(doc, 'Hidden');
+      addEntities(doc, dxfLine(50, 100, 250, 100), dxfLine(50, 100, 250, 100),
+        dxfLine(50, 100, 250, 100, { layer: 'Locked' }), dxfLine(50, 100, 250, 100, { layer: 'Hidden' }),
+        dxfLine(50, 170, 250, 170));
+      await q('picker').setInputFiles({ name: 'selection-71c.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-71c.dxf');
+      await q('ptab-objects').click();
+      await p.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+      await p.locator('.or.layer[data-layer=Hidden] [data-act=vis]').click();
+      await q('ptab-drawing').click(); await p.locator('[data-tool=select]').click();
+      const point = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), h = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
+        return { x: b.x + x * b.width / w, y: b.y + (h - y) * b.width / w };
+      };
+      const pick = async (x = 150, y = 100, shift = false) => {
+        const pt = await point(x, y);
+        if (shift) await p.keyboard.down('Shift');
+        await p.keyboard.down('Alt'); await p.mouse.click(pt.x, pt.y); await p.keyboard.up('Alt');
+        if (shift) await p.keyboard.up('Shift');
+      };
+      let checks = 0;
+      const note = (n) => p.waitForFunction((n) => document.querySelector('[data-testid=cmd-prompt]').textContent === `${n} of 2 objects here`, n, { timeout: 5000 }).then(() => checks++).catch(async () => {
+        throw new Error(`Cycle check ${checks + 1}: expected ${n}; got ${await q('cmd-prompt').textContent()}`);
+      });
+      const selected = (ids) => p.waitForFunction((ids) => {
+        const rows = [...document.querySelectorAll('.or.obj.sel')];
+        return JSON.stringify(rows.map((el) => Number(el.dataset.e)).sort()) === JSON.stringify(ids);
+      }, ids, { timeout: 5000 }).catch(async () => {
+        throw new Error(`Expected drawing picks ${JSON.stringify(ids)}; rows ${JSON.stringify(await p.locator('.or.obj.sel').evaluateAll((els) => els.map((el) => el.dataset.e)))}; ${await q('cmd-prompt').textContent()}`);
+      });
+      // The Objects tree exposes which duplicate is highlighted, rather than just counting the note.
+      await q('ptab-objects').click();
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.keyboard.press('Escape');
+        await pick(); await note(1); await selected([1]);
+        await pick(); await note(2); await selected([0]);
+        assert.equal(await p.locator('.status .cb-hint').textContent(), '2 of 2 objects here');
+        await p.screenshot({ path: `${shotDir}/todo71c-cycle-${theme}.png` });
+        await pick(); await note(1); await selected([1]);
+      }
+      await pick(180, 100); await note(1); await selected([1]);
+      await pick(); await note(1); await selected([1]);
+      await p.setViewportSize({ width: 1280, height: 900 });
+      assert.ok(await p.locator('.status .cb-hint.cycling').isVisible(), 'cycling status survives the narrow status bar');
+      await p.setViewportSize({ width: 1440, height: 900 });
+      await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await p.keyboard.press('Escape'); await pick(); await note(1);
+      await pick(150, 100, true); await note(2); await selected([0]);
+      await pick(); await note(1); await selected([1]);
+      // A plain click at the same spot restarts the cycle, even when it hits a selected object.
+      await pick(120, 100); await note(1);
+      const sameSpot = await point(120, 100); await p.mouse.click(sameSpot.x, sameSpot.y);
+      await pick(120, 100); await note(1); await selected([1]);
+      // Shift keeps the pre-cycle selection, without accumulating temporary cycle hits.
+      await p.keyboard.press('Escape');
+      await pick(150, 100, true); await note(1); await selected([1]);
+      await pick(150, 100, true); await note(2); await selected([0]);
+      await pick(150, 100, true); await note(1); await selected([1]);
+      await p.locator('.or.obj[data-e="0"] .onm').click(); await selected([0]);
+      await pick(150, 100, true); await note(1); await selected([0, 1]);
+      await pick(150, 100, true); await note(2); await selected([0]);
+      await pick(150, 100, true); await note(1); await selected([0, 1]);
+      await p.keyboard.press('Escape');
+      await p.locator('.or.obj[data-e="4"] .onm').click(); await selected([4]);
+      await pick(120, 100); await note(1); await selected([1]);
+      await pick(120, 100, true); await note(2); await selected([0]);
+      await p.keyboard.press('Escape');
+      await q('cmd-echo').click(); await q('cmd-input').fill('mv'); await q('cmd-input').press('Enter');
+      assert.match(await q('cmd-prompt').textContent(), /Select objects/);
+      await pick(120, 170); await selected([4]);
+      assert.match(await q('cmd-prompt').textContent(), /Select objects/);
+      await p.keyboard.press('Enter');
+      assert.match(await q('cmd-prompt').textContent(), /Base point or x,y:/);
+      await p.keyboard.press('Escape');
+      const canvas = await q('canvas').boundingBox(); await p.mouse.click(canvas.x + 80, canvas.y + 50);
+      await pick(); await note(1); await selected([1]);
+      await p.keyboard.press('ArrowRight');
+      assert.match(await q('cmd-prompt').textContent(), /Selection moved/);
+      await pick(); await note(1); await selected([1]);
+      await p.keyboard.press('Control+z'); await pick(); await note(1); await selected([1]);
+      await p.keyboard.press('Control+y'); await pick(); await note(1); await selected([1]);
+      await p.keyboard.press('Escape'); await pick(); await note(1);
+      assert.ok(await p.locator('.dtab').count() >= 2, 'tab reset needs another tab');
+      await p.keyboard.press('Control+Tab'); await p.keyboard.press('Control+Shift+Tab');
+      await pick(); await note(1); await selected([1]);
+      const before = await q('cmd-prompt').textContent(), focus = await p.evaluate(() => document.activeElement?.tagName);
+      await p.keyboard.press('Alt');
+      assert.equal(await q('cmd-prompt').textContent(), before);
+      assert.equal(await p.evaluate(() => document.activeElement?.tagName), focus);
+      assert.equal(await p.locator('.pop-back:visible, .pdlg-back:visible, .ctxmenu:visible, .texted:visible').count(), 0);
+      assert.equal(await p.locator('.dtab.on').evaluate((el) => {
+        const e = new KeyboardEvent('keydown', { key: 'Alt', altKey: true, bubbles: true, cancelable: true });
+        el.dispatchEvent(e); return e.defaultPrevented;
+      }), false, 'Alt keydown outside the canvas keeps its default');
+      await pick();
+      assert.equal(await p.evaluate(() => {
+        const e = new KeyboardEvent('keyup', { key: 'Alt', bubbles: true, cancelable: true });
+        document.dispatchEvent(e); return e.defaultPrevented;
+      }), false, 'Alt release suppression is consumed by the click\'s first release');
+      for (const key of ['F4', ' ', 'Tab']) {
+        assert.equal(await p.evaluate((key) => {
+          const e = new KeyboardEvent('keydown', { key, altKey: true, bubbles: true, cancelable: true });
+          document.dispatchEvent(e); return e.defaultPrevented;
+        }, key), false, `Alt+${key} keeps its default`);
+      }
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
+  await step('TODO 71c: layout parts cycle topmost first, Shift adds, locked/hidden skip and edit resets', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const lay = newLayout('Cycling 71c'), raw = newDoc(4);
+      lay.s.sheetW = 600; lay.s.sheetH = 400;
+      addEntities(raw, dxfPoly([[0, 0], [80, 0], [80, 80], [0, 80]], { closed: true }));
+      for (const id of ['plate', 'hidden']) lay.parts[id] = makePart(id, id, raw);
+      lay.placed = [
+        { partId: 'plate', x: 100, y: 100, rot: 0 }, { partId: 'plate', x: 100, y: 100, rot: 0 },
+        { partId: 'plate', x: 100, y: 100, rot: 0, lock: true }, { partId: 'hidden', x: 100, y: 100, rot: 0 },
+      ];
+      await q('picker').setInputFiles({ name: 'layout-cycle-71c.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'layout-cycle-71c.dxf');
+      await q('ptab-objects').click(); await p.locator('.or.layer[data-part=hidden] [data-act=vis]').click();
+      await p.locator('.or.layer[data-part=plate] .onm').click();
+      await p.locator('[data-tool=select]').click();
+      const pick = async (shift = false) => {
+        const b = await p.locator('rect.sheet').boundingBox();
+        if (shift) await p.keyboard.down('Shift');
+        await p.keyboard.down('Alt'); await p.mouse.click(b.x + 140 * b.width / 600, b.y + 260 * b.width / 600); await p.keyboard.up('Alt');
+        if (shift) await p.keyboard.up('Shift');
+      };
+      const check = async (n, ids) => {
+        await p.waitForFunction(({ n, ids }) => document.querySelector('[data-testid=cmd-prompt]').textContent === `${n} of 2 objects here` &&
+          JSON.stringify([...document.querySelectorAll('.or.obj.sel')].map((el) => Number(el.dataset.place)).sort()) === JSON.stringify(ids), { n, ids }, { timeout: 5000 });
+        assert.equal(await p.locator('.status .cb-hint').textContent(), `${n} of 2 objects here`);
+        assert.equal(await p.locator('[data-group=tools] .sel-box').count(), ids.length);
+      };
+      await pick(); await check(1, [1]);
+      await pick(); await check(2, [0]);
+      await pick(); await check(1, [1]);
+      await pick(true); await check(2, [0, 1]);
+      await pick(); await check(1, [1]);
+      await p.keyboard.press('ArrowRight'); await pick(); await check(1, [1]);
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
   await step('TODO 152c: a 200-character command echo ellipsizes with a tooltip and keeps the status bar on one line', async () => {
     const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
     try {

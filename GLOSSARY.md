@@ -68,7 +68,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Crossing selection**: Dragging right to left draws a dashed green box that selects every object it touches or encloses, including layout parts whose rotated outline boxes touch it. Where: `DECISIONS.md`, Window / crossing selection (TODO 71). Avoid: Box select; Marquee.
 
-**Selection cycling** (planned): Repeated Alt + click on one spot steps through the overlapping objects under the cursor, highlighting the current one. Where: `DECISIONS.md`, Window / crossing selection (TODO 71c).
+**Selection cycling**: Repeated Alt + click on one spot steps through the overlapping objects under the cursor, highlighting the current one. Where: `DECISIONS.md`, Window / crossing selection (TODO 71c).
 
 **Zoom Selection**: Fills the view with what is selected. Where: `DECISIONS.md`, More zooms (TODO 74). Avoid: Zoom to (the panel menu for one item).
 

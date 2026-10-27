@@ -12,6 +12,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
+import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes } from './snap.js';
 import { pushView, popView } from './viewhist.js';
 import * as UF from './unitfix.js';
@@ -75,6 +76,7 @@ const viewStore = idbStore('project-d-view', 'settings', 'view settings');
 const shapingStore = idbStore('project-d-shaping', 'settings', 'Shaping settings');
 let ownBindings = SC.bindings(), ownCommands = SC.commandsFor(ownBindings);
 let clipboard = null;
+let selectionCycle = null;
 const ribbon = { mode: 'full', last: 'full', tab: 'Home', flyout: false, panel: null, rail: true, guideSnap: true };
 const docker = { width: 290, folds: {} };
 function showShortcuts() {
@@ -873,6 +875,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  selectionCycle = null;
   if (state.pointDoc !== curDoc()) { state.pointLast = null; state.pointDoc = curDoc(); }
   ui.fontNote.hidden = true;
   state.entityDrag = null;
@@ -4028,6 +4031,25 @@ function zoomPrevious() {
 function attachCanvasEvents() {
   const c = ui.canvas;
   const local = (e) => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
+  let altPick = false, suppressAltUp = false;
+  c.addEventListener('pointerdown', (e) => {
+    altPick = false;
+    if (!e.altKey && selectionCycle) { selectionCycle = null; renderCommand(); }
+    if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
+    altPick = true;
+    suppressAltUp = true;
+    e.preventDefault(); e.stopImmediatePropagation();
+    document.activeElement?.blur();
+    cycleSelect(e);
+  }, true);
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Alt') suppressAltUp = false; }, true);
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Alt') { if (suppressAltUp) e.preventDefault(); suppressAltUp = false; }
+  }, true);
+  window.addEventListener('blur', () => { suppressAltUp = false; });
+  for (const type of ['pointerup', 'click', 'dblclick']) c.addEventListener(type, (e) => {
+    if (altPick && e.button === 0) { e.preventDefault(); e.stopImmediatePropagation(); }
+  }, true);
   let pan = null, drag = null, lrub = null, wheelAt = 0;                        // lrub: a rubber band started on an empty bit of a layout's sheet
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -4178,6 +4200,8 @@ function attachCanvasEvents() {
 
 // ---- keeping the panels in step with the layout ----
 function renderCommand() {
+  const cycling = selectionCycle && state.msg === `${selectionCycle.index + 1} of ${selectionCycle.hits.length} objects here`;
+  ui.cmdUI.status(cycling ? state.msg : '');
   if (ui.keepMeas) ui.keepMeas.hidden = !(state.meas && state.meas.pts.length === 2 && editable());
   if (ui.modAsk) ui.modAsk.hidden = !(modLive() && state.mod.kind === 'mirror' && state.mod.stage === 'erase');
   const cm = cmpDoc();
@@ -4631,7 +4655,7 @@ function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)
 const lockedEnt = (d, e) => !!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer);
 /** Builds the index once the page has painted, so the first click is quick. */
 function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
-function layersChanged(d) { d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; warm(d); renderEdit(); }
+function layersChanged(d) { selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
 function toDrawing(d, cx, cy) {
@@ -4641,6 +4665,29 @@ function toDrawing(d, cx, cy) {
   return [mx / f, (state.sheetH - my) / f];
 }
 const pickTol = (d) => 7 / (view.scale * (d.lay ? 1 : d.factor));
+
+function cycleSelect(e) {
+  const d = curDoc();
+  if (!d || (!d.lay && editable() !== d)) return;
+  const p = toDrawing(d, e.clientX, e.clientY);
+  const hits = d.lay ? [...new Set(document.elementsFromPoint(e.clientX, e.clientY)
+    .filter((el) => el.matches('.part-hit')).map((el) => Number(el.parentElement.dataset.i)))]
+    .filter((i) => !state.hidden.parts && !partHid(placedNow[i]) && !placedNow[i].lock)
+    : Ed.hitEntities(edIndex(d), p[0], p[1], pickTol(d)).filter((i) => !lockedEnt(d, i));
+  selectionCycle = cyclePick(selectionCycle, hits, [e.clientX, e.clientY], 7, historyOf(d).revision, d.sel);
+  if (!selectionCycle) {
+    if (!e.shiftKey) { if (d.lay) { selectMany([]); update(); } else setSel(d, new Set()); }
+    note('No objects here'); return;
+  }
+  const { hit, index } = selectionCycle;
+  if (d.lay) { selectMany([...(e.shiftKey ? selIdxs() : []), hit], hit); update(); }
+  else {
+    const sel = new Set(e.shiftKey ? d.sel : []);
+    sel.delete(selectionCycle.drop); sel.add(hit);
+    setSel(d, sel); d.lastPick = hit;
+  }
+  note(`${index + 1} of ${hits.length} objects here`);
+}
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
 const snapPoint = (d, p, skip, extra, from) => {
   const sn = d.lay ? state.snap && layoutSnap(d.lay.parts, state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl)), state.sheetW, state.sheetH, p[0], p[1], pickTol(d), state.snapTypes, from)
@@ -8012,6 +8059,14 @@ async function init() {
   document.querySelector('.rail').hidden = !ribbon.rail;
   renderTabs();
   attachDrop();
+  document.addEventListener('pointerdown', (e) => {
+    if (selectionCycle && Math.hypot(e.clientX - selectionCycle.point[0], e.clientY - selectionCycle.point[1]) > 7) {
+      selectionCycle = null; renderCommand();
+    }
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && selectionCycle) { selectionCycle = null; renderCommand(); }
+  }, true);
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;
     const key = SC.eventKey(e), cmd = ownCommands.find((c) => c.key && c.key === key);
