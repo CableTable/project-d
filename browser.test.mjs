@@ -179,11 +179,14 @@ try {
       const strokes = [];
       for (const theme of ['light', 'dark']) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
-        await start(3, 200); await guides.waitFor({ state: 'attached' }); await near(0, 200);
-        assert.ok((await guides.boundingBox()).height > 0, 'Alignment guide spans the sheet on screen');
-        const style = await guides.evaluate((el) => ({ stroke: getComputedStyle(el).stroke, dash: getComputedStyle(el).strokeDasharray, width: getComputedStyle(el).strokeWidth }));
+        await start(452, 52); await near(450, 50);
+        assert.equal(await guides.count(), 2, 'sheet centre and bottom gripper Alignment guides during drag');
+        // SVG axis lines have a zero-width or zero-height box, so Playwright's isVisible() rejects them.
+        for (const guide of await guides.all()) assert.ok(await guide.evaluate((el) => el.checkVisibility({ opacityProperty: true, visibilityProperty: true })), 'Alignment guide visible before capture');
+        assert.ok((await guides.first().boundingBox()).height > 0, 'Alignment guide spans the sheet on screen');
+        const style = await guides.first().evaluate((el) => ({ stroke: getComputedStyle(el).stroke, dash: getComputedStyle(el).strokeDasharray, width: getComputedStyle(el).strokeWidth }));
         assert.equal(style.dash, 'none'); assert.equal(style.width, '1px'); strokes.push(style.stroke);
-        assert.deepEqual(await guides.evaluate((el) => ['x1', 'y1', 'x2', 'y2'].map((k) => Number(el.getAttribute(k)))), [0, 700, 0, 0]);
+        assert.deepEqual(await guides.evaluateAll((els) => els.map((el) => ['x1', 'y1', 'x2', 'y2'].map((k) => Number(el.getAttribute(k))))), [[500, 700, 500, 0], [30, 650, 960, 650]]);
         await p.screenshot({ path: `${shotDir}/todo67a-guide-${theme}.png` });
         await cancel();
       }
