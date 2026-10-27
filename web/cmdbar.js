@@ -5,6 +5,7 @@
 const TABLE = [
   ['fill', 'Edit', 'Fill a closed outline with the current fill colour', [], 'draw'],
   ['eyedropper', 'Edit', 'Copy line and fill colours from an object to targets', [], 'draw'],
+  ['readout', 'Edit', 'Show the colour under the cursor; a click copies its hex', [], ''],
   ['line', 'Draw', 'Straight segments', ['l'], 'draw'],
   ['polyline', 'Draw', 'Connected segments in one object', ['pl', 'pline', 'p'], 'draw'],
   ['rectangle', 'Draw', 'Rectangle from two corners', ['rec', 'rect', 'r'], 'draw'],

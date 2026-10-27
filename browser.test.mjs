@@ -669,6 +669,74 @@ try {
     finally { await context.close(); }
   });
 
+  await step('TODO 148d: colour readout: line, fill, panel, copy hex + recent colours, Esc ends', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const screen = (x, y) => p.evaluate(([x, y]) => {
+      const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
+      const pt = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: pt.x, y: pt.y };
+    }, [x, y]);
+    const hover = async (x, y) => { const pt = await screen(x, y); await p.mouse.move(pt.x - 2, pt.y - 2); await p.mouse.move(pt.x, pt.y); return pt; };
+    const box = () => q('readout-box');
+    const readoutBtn = () => p.locator('[data-panel=Properties]').getByRole('button', { name: 'Readout', exact: true });
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(); addLayer(raw, 'Red', { aci: 1 });
+      addEntities(raw, dxfLine(10, 10, 120, 10, { layer: 'Red' }), dxfPoly([[10, 40], [60, 40], [60, 90], [10, 90]], { closed: true, fill: 'tc:65280' }));
+      await q('picker').setInputFiles({ name: 'readout148d.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'readout148d.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Escape');
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await readoutBtn().click();
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'true');
+      await hover(65, 10);
+      await p.waitForFunction(() => /#FF0000/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      assert.match(await box().textContent(), /R 255\s+G 0\s+B 0/); assert.match(await box().textContent(), /C 0\s+M 100\s+Y 100\s+K 0/); assert.match(await box().textContent(), /#FF0000/);
+      await hover(35, 65);
+      await p.waitForFunction(() => /#00FF00/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      await hover(110, 120);                                                              // empty sheet: the canvas pixel
+      await p.waitForFunction(() => /#[0-9A-F]{6}/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      const panel = await p.evaluate(() => getComputedStyle(document.querySelector('.ribbon-body')).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
+      const at = await p.locator('.ribbon-body').boundingBox();
+      await p.mouse.move(at.x + at.width - 8, at.y + 4); await p.mouse.move(at.x + at.width - 6, at.y + 4);
+      const hex = '#' + panel.map((n) => n.toString(16).padStart(2, '0')).join('').toUpperCase();
+      await p.waitForFunction((hex) => document.querySelector('[data-testid=readout-box]').textContent.includes(hex), hex);
+      await hover(65, 10);
+      const pt = await screen(65, 10);
+      await p.waitForFunction(() => /#FF0000/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      await p.waitForTimeout(100);
+      const b = await box().boundingBox();
+      assert.ok(!(pt.x >= b.x && pt.x <= b.x + b.width && pt.y >= b.y && pt.y <= b.y + b.height), 'the box never covers the cursor');
+      const before = await p.evaluate(() => document.querySelector('[data-testid=sel-count]')?.textContent);
+      await p.mouse.click(pt.x, pt.y);
+      await p.waitForFunction(() => /Copied #FF0000/.test(document.querySelector('[data-testid=cmd-hist]')?.textContent || ''));
+      assert.equal(await p.evaluate(() => navigator.clipboard.readText()), '#FF0000');
+      await p.waitForFunction(() => document.querySelector('[data-swatch-group=recent] button')?.dataset.colour === 'aci:1');
+      assert.equal(await p.evaluate(() => document.querySelector('[data-testid=sel-count]')?.textContent), before, 'a click selects nothing');
+      await p.mouse.move(1010, 760);                                                      // near the corner: the box flips to the other side
+      const corner = await box().boundingBox();
+      assert.ok(corner.x + corner.width <= 1024 && corner.y + corner.height <= 768, 'the box stays in the window');
+      await p.keyboard.press('Escape');                                                 // Esc ends it; the readout reads panels too, so every click is a read
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'false');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        await readoutBtn().click(); await hover(35, 65);
+        await p.waitForFunction(() => /#00FF00/.test(document.querySelector('[data-testid=readout-box]').textContent));
+        await p.screenshot({ path: `${shotDir}/todo148d-readout-${theme}.png` });
+        if (theme === 'light') await p.keyboard.press('Escape');
+      }
+      await p.keyboard.type('line'); await p.keyboard.press('Enter');                    // another tool ends it
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'false');
+    } catch (e) { await p.screenshot({ path: `${shotDir}/todo148d-failure.png` }); throw e; }
+    finally { await context.close(); }
+  });
+
   await step('TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour, recents and saved removal', async () => {
     const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));

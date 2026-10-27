@@ -1000,3 +1000,9 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 /* Muted labels need body-text contrast on the stronger R19 selected fill. */
 :where(.stepbox, .stepfoot, .layer.on, .selrow, .lenrow, .dimrow, .ldrrow, .cmpitem.on, .or.sel, .or.layer.cur, .or:hover, .cb-rows .r.hi, .hrow.now, .pd-grid.active, .bt tr.hi, .bt tbody tr:hover, .sc-edited, .dropdown button:hover, .mi:hover, .mi:focus-visible) { --muted: var(--text); }
 :where(.tabsrow, .status, .propbar) { --muted: var(--mutedink); }
+
+/* colour readout (TODO 148d): the box beside the cursor */
+.readout-box { position: fixed; z-index: 9999; display: flex; gap: 8px; align-items: center; padding: 6px 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line2); border-radius: 6px; box-shadow: 0 2px 8px rgba(0, 0, 0, .3); font: 11px/1.35 ui-monospace, Consolas, monospace; white-space: pre; pointer-events: none; }
+.readout-box[hidden] { display: none; }
+.readout-sq { width: 34px; height: 34px; border: 1px solid var(--line2); border-radius: 3px; flex: none; }
+.readout-hex { font-weight: 700; }

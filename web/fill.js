@@ -64,7 +64,7 @@ export function opsPoly(ops) {
 export const boundary = (e) => { const ops = outlineOps(e); return ops ? opsPoly(ops) : []; };
 
 const box = (p) => p.reduce((b, q) => [Math.min(b[0], q[0]), Math.min(b[1], q[1]), Math.max(b[2], q[0]), Math.max(b[3], q[1])], [Infinity, Infinity, -Infinity, -Infinity]);
-function edgeDist(p, poly) {
+export function edgeDist(p, poly) {
   let best = Infinity;
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i], b = poly[(i + 1) % poly.length], dx = b[0] - a[0], dy = b[1] - a[1], l2 = dx * dx + dy * dy;

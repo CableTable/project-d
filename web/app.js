@@ -3,6 +3,7 @@ import { h } from './dom.js';
 import { pickColour, swatches } from './colourpicker.js';
 import { recentColours, stripGroups } from './swatchstrip.js';
 import { parseHex, rgbKey, keyRgb, validColourKey } from './colour.js';
+import { colourUnder, readoutValues, cssRgb } from './readout.js';
 import * as CB from './cmdbar.js';
 import { buildCmdUI } from './cmdui.js';
 import * as SC from './shortcuts.js';
@@ -713,7 +714,8 @@ function ribbonContents(kind) {
     colourField.insertBefore(ui.ribbonSwatch, ui.ribbonColour);
     groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt)),
       stack(btn('Fill', '<path d="M4 12l8-8 8 8-8 8zM4 12h16"/>', () => startColourTool('fill'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'fill' }),
-        btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'eyedropper' }))));
+        btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'eyedropper' }),
+        btn('Readout', '<circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/>', toggleReadout, { small: true, pressed: () => !!readout }))));
   }
   return groups;
 }
@@ -1280,7 +1282,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
-  state.colourTool = null;
+  state.colourTool = null; endReadout();
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
@@ -3582,7 +3584,7 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
-  fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'),
+  fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'), readout: () => toggleReadout(),
   dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
@@ -4303,6 +4305,7 @@ function renderCommand() {
     ui.hist.textContent = 'Command: ' + t.kind.toUpperCase() + (state.msg ? '   ' + state.msg : '');
     ui.prompt.textContent = t.kind === 'fill' ? 'Click inside a closed outline (Esc ends):' : t.source ? 'Click each target (Esc ends):' : 'Click a source object (Esc ends):'; return;
   }
+  if (readout) { ui.hist.textContent = 'Command: READOUT' + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Hover for the colour, click copies its hex (Esc ends):'; return; }
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
@@ -7409,6 +7412,83 @@ function colourToolClick(d, p) {
   if (!FI.coloursEqual(next, d.raw.entities[hit])) commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours');
   usedColour(PR.colourKey(next)); if (next.fill) usedColour(next.fill);
   renderEdit(); note('Eyedropper: colours copied; click the next target or Esc');
+}
+
+// -- Colour readout (TODO 148d): a box beside the cursor shows the true colour under it; a click copies the hex; Esc or another tool ends it
+let readout = null;
+const readoutBtn = (e) => !!e.target.closest?.('button[aria-label=Readout]');
+function toggleReadout() { if (readout) { endReadout(); note('Readout ended'); } else startReadout(); }
+function startReadout() {
+  setTool('select'); state.match = null;
+  const box = h('div', { class: 'readout-box', 'data-testid': 'readout-box', hidden: true });
+  document.body.append(box);
+  const swallow = (e) => { if (!readoutBtn(e)) { e.preventDefault(); e.stopPropagation(); } };       // reading is not clicking: nothing else sees the mouse
+  const stops = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick', 'contextmenu', 'auxclick'];
+  const on = {
+    pointermove: (e) => { readout.at = [e.clientX, e.clientY]; if (!readout.raf) readout.raf = requestAnimationFrame(() => { readout.raf = 0; readoutShow(); }); },
+    click: (e) => { if (readoutBtn(e)) return; swallow(e); readoutCopy(); },
+    keydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endReadout(); note('Readout ended'); } },
+  };
+  for (const [t, fn] of Object.entries(on)) document.addEventListener(t, fn, true);
+  for (const t of stops) document.addEventListener(t, swallow, true);
+  readout = { box, on, stops, swallow, at: null, rgb: null, raf: 0 };
+  renderRibbon();
+  note('Readout: hover for the colour, click copies its hex; Esc ends');
+}
+function endReadout() {
+  if (!readout) return;
+  const { box, on, stops, swallow, raf } = readout;
+  for (const [t, fn] of Object.entries(on)) document.removeEventListener(t, fn, true);
+  for (const t of stops) document.removeEventListener(t, swallow, true);
+  cancelAnimationFrame(raf); box.remove(); readout = null; renderRibbon();
+}
+/** [r, g, b] of what is at the pointer: a drawing's object (its line, else its fill), the canvas pixel (empty sheet, picture), or the element's own background. */
+function colourAt(cx, cy) {
+  const els = document.elementsFromPoint(cx, cy), top = els[0], d = editable();
+  if (d && !d.lay && top && ui.canvas.contains(top) && !top.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic, .ruler, .readout-box')) {
+    const p = toDrawing(d, cx, cy), line = hitAt(d, p), i = line >= 0 ? line : closedAt(d, p);
+    const e = d.raw.entities[i] || {};
+    if (i >= 0 && (line >= 0 || e.fill)) {
+      const inside = e.fill && FI.closedOutline(e) && FI.edgeDist(p, FI.boundary(e)) > pickTol(d);       // a filled outline is "hit" all over; only its rim is the line
+      return colourUnder(e, layerMap(d), line >= 0 && !inside);
+    }
+  }
+  for (const el of els) {
+    if (el === ui.dcanvas) {
+      try {
+        const r = el.getBoundingClientRect(), k = el.width / r.width;
+        const px = el.getContext('2d').getImageData(Math.floor((cx - r.left) * k), Math.floor((cy - r.top) * k), 1, 1).data;
+        if (px[3]) return [px[0], px[1], px[2]];
+      } catch { /* unreadable canvas: look at what is behind it */ }
+      continue;
+    }
+    const cs = getComputedStyle(el), rgb = cssRgb(el instanceof SVGElement ? cs.fill : cs.backgroundColor);
+    if (rgb) return rgb;
+  }
+  return null;
+}
+function readoutShow() {
+  const { box, at } = readout;
+  if (!at) return;
+  const rgb = readout.rgb = colourAt(at[0], at[1]);
+  box.hidden = !rgb;
+  if (!rgb) return;
+  const v = readoutValues(rgb);
+  const sq = h('span', { class: 'readout-sq' });
+  sq.style.background = v.hex;
+  box.replaceChildren(sq, h('div', { class: 'readout-txt' },
+    h('div', null, `R ${v.rgb[0]}  G ${v.rgb[1]}  B ${v.rgb[2]}`), h('div', null, `C ${v.cmyk[0]}  M ${v.cmyk[1]}  Y ${v.cmyk[2]}  K ${v.cmyk[3]}`), h('div', { class: 'readout-hex' }, v.hex)));
+  const w = box.offsetWidth, ht = box.offsetHeight, gap = 18;                                     // down-right of the cursor; the other side near the window edge
+  box.style.left = (at[0] + gap + w > innerWidth ? at[0] - gap - w : at[0] + gap) + 'px';
+  box.style.top = (at[1] + gap + ht > innerHeight ? at[1] - gap - ht : at[1] + gap) + 'px';
+}
+function readoutCopy() {
+  const rgb = readout?.at && colourAt(readout.at[0], readout.at[1]);
+  if (!rgb) return;
+  const hex = readoutValues(rgb).hex;
+  usedColour(rgbKey(rgb));
+  const fail = () => note('Could not copy ' + hex + ' to the clipboard');
+  try { navigator.clipboard.writeText(hex).then(() => note('Copied ' + hex), fail); } catch { fail(); }
 }
 
 // -- Match properties: the first selected shape is the source; each shape clicked takes its layer, colour and line type; Esc ends
