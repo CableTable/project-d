@@ -69,6 +69,11 @@ usage-agent-install.ps1.
    he runs in his AutoCAD (licence allows; he pastes the result), then, if still open, watch it in his installed AutoCAD
    with computer use (Claude desktop app only; from the CLI, ask him to run that step there). Never reverse-engineer
    AutoCAD's binaries (e.g. REA): Autodesk's licence forbids it.
+   From the CLI (works, 2026-10-27, AutoCAD 2027 on his PC when it is open): PowerShell COM
+   `[Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application')` reads system variables; `Documents.Add()` gives a
+   scratch drawing (never his open work); WScript.Shell SendKeys types into it; LOGFILEON / LOGFILEOFF writes the command line
+   to `%LOCALAPPDATA%AutodeskAutoCAD 2027R26.0enu<drawing>.log`: read the log, not COM busy states (unreliable).
+   Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
