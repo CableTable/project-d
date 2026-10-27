@@ -5,7 +5,7 @@ import { parseInput, typedPoint, directDistance } from './draw.js';
 export function movePoint(text, base = null, cursor = null, last = base) {
   const p = parseInput(text);
   let q = null;
-  if (p.kind === 'xy' && !p.rel && base) q = typedPoint({ ...p, rel: true }, base);
+  if (p.kind === 'xy' && !p.rel && !p.abs && base) q = typedPoint({ ...p, rel: true }, base);
   else if (p.kind === 'len' && p.v > 0) q = directDistance(base, cursor, p.v);
   else q = typedPoint(p, last);
   return q && q.every(Number.isFinite) ? q : null;

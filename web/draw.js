@@ -53,7 +53,7 @@ const RE_POLAR = new RegExp(`^([@#]?)\\s*(${NUM})\\s*<\\s*(${NUM})$`);
 const RE_NUM = new RegExp(`^(${NUM})$`);
 
 /**
- * What was typed → { kind: 'enter' } | { kind: 'xy', rel, x, y } | { kind: 'polar', rel, len, ang } | { kind: 'len', v } | { kind: 'word', w } | { kind: 'bad' }.
+ * What was typed → { kind: 'enter' } | { kind: 'xy', rel, abs, x, y } | { kind: 'polar', rel, abs, len, ang } | { kind: 'len', v } | { kind: 'word', w } | { kind: 'bad' }.
  * "x,y" or "#x,y" is absolute, "@dx,dy" relative to the last point; "len<ang" (also with #) is polar from the origin, "@len<ang" from the last point; a bare
  * number is a length (direct distance entry); letters are an option word (lower case).
  */
@@ -61,9 +61,9 @@ export function parseInput(text) {
   const t = String(text == null ? '' : text).trim();
   if (!t) return { kind: 'enter' };
   let m = RE_PT.exec(t);
-  if (m) return { kind: 'xy', rel: m[1] === '@', x: +m[2], y: +m[3] };
+  if (m) return { kind: 'xy', rel: m[1] === '@', abs: m[1] === '#', x: +m[2], y: +m[3] };
   m = RE_POLAR.exec(t);
-  if (m) return { kind: 'polar', rel: m[1] === '@', len: +m[2], ang: +m[3] };
+  if (m) return { kind: 'polar', rel: m[1] === '@', abs: m[1] === '#', len: +m[2], ang: +m[3] };
   m = RE_NUM.exec(t);
   if (m) return { kind: 'len', v: +m[1] };
   if (/^[a-z]+(\s+[-+.\d]+)?$/i.test(t)) return { kind: 'word', w: t.toLowerCase() };
@@ -360,8 +360,8 @@ export function toolType(T, text) {
     if (!p) return say(k === 'circle' || k === 'ellipse' ? 'Type the centre as x,y' : 'Type the first point as x,y (or click it)');
     return addPoint(T, p);
   }
-  if (k === 'rect' || k === 'rrect') {                                // the second corner: W,H (also @W,H), the way it points from the first
-    const p = typedPoint(inp.kind === 'xy' ? { ...inp, rel: true } : inp, T.pts[0]);
+  if (k === 'rect' || k === 'rrect') {                                // the second corner: W,H (also @W,H), or #x,y for an absolute corner
+    const p = typedPoint(inp.kind === 'xy' ? { ...inp, rel: inp.rel || !inp.abs } : inp, T.pts[0]);
     if (p) return addPoint(T, p);
     return say('Type the size as W,H (or @W,H)');
   }
