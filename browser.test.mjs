@@ -10435,6 +10435,48 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Trim');
   });
 
+  await step('TODO 155a fixes: a locked frame still cuts in Quick Trim, U after Ctrl+Z leaves an earlier command alone, mo / mod ask for the mode', async () => {
+    const hv = async (x, y) => { const q = await at(x, y); await page.mouse.move(q.x, q.y); await frames(); };
+    const rows = async (y) => (await savedDoc()).entities.filter((e) => e.type === 'LINE' && fieldOf(e, 20) === y && fieldOf(e, 21) === y).map((e) => [fieldOf(e, 10), fieldOf(e, 11)].sort((a, b) => a[0] - b[0])).sort((a, b) => a[0] - b[0]);
+    const MAIN = 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase';
+    const split = [[20, 80], [160, 220]];
+    // a line across a locked frame is cut at the frame, not deleted whole; the locked frame itself stays
+    const doc0 = newDoc(4); addLayer(doc0, 'Frame');
+    addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 50, { layer: 'Frame' }), dxfLine(160, 10, 160, 50, { layer: 'Frame' }));
+    await openGrips(writeDxf(doc0), 'trim-locked.dxf');
+    await t('ptab-objects').click();
+    await page.locator('.or.layer[data-layer=Frame] [data-act=lock]').click();
+    await t('ptab-drawing').click();
+    await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tool=trim]').click();
+    await hv(120, 30); await click(120, 30);
+    assert.equal(await entCount(), 4, 'the line is cut in two at the locked frame, nothing is deleted');
+    assert.deepEqual(await rows(30), split);
+    await typeCmd('u'); assert.deepEqual(await rows(30), [[20, 220]], 'U puts it back');
+    await page.keyboard.press('Escape');
+    // U after Ctrl+Z must not take back the cut of an earlier Trim command
+    const doc1 = newDoc(4);
+    addEntities(doc1, dxfLine(20, 30, 220, 30), dxfLine(20, 60, 220, 60), dxfLine(80, 10, 80, 90), dxfLine(160, 10, 160, 90));
+    await openGrips(writeDxf(doc1), 'trim-ctrlz.dxf');
+    await page.locator('[data-tool=trim]').click();
+    await click(120, 30); assert.deepEqual(await rows(30), split);
+    await page.keyboard.press('Escape');                                                         // ends the first Trim command
+    await page.locator('[data-tool=trim]').click();
+    assert.ok((await prompt()).startsWith(MAIN) && !(await prompt()).endsWith('/Undo]:'), 'a new command has nothing to undo yet');
+    await click(120, 60); assert.deepEqual(await rows(60), split);
+    await page.keyboard.press('Control+z'); await frames();
+    assert.deepEqual(await rows(60), [[20, 220]], 'Ctrl+Z took the second cut back');
+    await typeCmd('u'); assert.match(await histLine(), /Nothing to undo in this Trim/);
+    assert.deepEqual(await rows(30), split, 'the first command\'s cut is still there');
+    // mo / mod are the start of mOde
+    await typeCmd('mo'); assert.equal(await prompt(), 'Enter a trim mode option [Quick/Standard] <Quick>:');
+    await page.keyboard.press('Escape');
+    await typeCmd('mod'); assert.equal(await prompt(), 'Enter a trim mode option [Quick/Standard] <Quick>:');
+    await typeCmd('q');
+    await page.keyboard.press('Escape');
+  });
+
   await step('TODO 78: Trim preview', async () => {
     const workArea = async (name) => { await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frames(); };
     await menuItem('View', 'Theme: light'); await workArea('Follow app');

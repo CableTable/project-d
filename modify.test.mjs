@@ -376,6 +376,10 @@ test('Quick Trim (TODO 155a T1): the piece between the nearest crossings goes, a
   assert.equal(pr.ents.length, 2);
   const seg = M.trimEntity(lwpoly([[0, 0], [100, 0]], base), [e1, e2], [50, 0], true);        // a one-segment polyline cuts like a line
   assert.equal(seg.ents.length, 2);
+  const tj = M.trimEntity(l, [line(50, 0, 50, 20)], [20, 0], true);                           // T-junction: the edge ends on the line, the click side goes
+  assert.equal(tj.ents.length, 1); nearPt(X(tj.ents[0]).a, [50, 0]); nearPt(X(tj.ents[0]).b, [100, 0]);
+  const touch = M.trimEntity(l, [line(100, 0, 100, 50)], [50, 0], true);                      // only an end touches: nothing cuts it, so it goes whole
+  assert.deepEqual(touch.ents, []); assert.ok(!touch.error);
 });
 
 test('Quick Trim by fence (TODO 155a T2): every piece the fence crosses goes, in one go, and the rest stays joined', () => {
