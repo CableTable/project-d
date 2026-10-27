@@ -166,23 +166,29 @@ try {
     try {
       const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
       await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
-      const doc = newDoc(); addEntities(doc, dxfLine(0, 0, 100, 50));
+      const doc = newDoc(); addEntities(doc, dxfLine(0, 0, 100, 50, { aci: 30 }));
       await q('picker').setInputFiles({ name: 'custom-colour.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'custom-colour.dxf');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       const ribbonColour = p.getByRole('combobox', { name: 'Ribbon colour', exact: true });
-      for (const [control, hex, rgb] of [[q('prop-colour'), '#FFBF00', 'rgb(255, 191, 0)'], [q('prop-colour'), '#FF8800', 'rgb(255, 136, 0)'], [ribbonColour, '#123456', 'rgb(18, 52, 86)']]) {
+      for (const select of [q('prop-colour'), ribbonColour]) assert.equal(await select.locator('option:checked').textContent(), 'Colour 30');
+      await q('prop-similar').click(); await p.getByRole('menuitem', { name: 'Colour (1)', exact: true }).click();
+      assert.match(await q('cmd-prompt').textContent(), /Selected 1 shape in colour colour 30/);
+      await q('prop-match').click();
+      assert.match(await q('match-hint').textContent(), /Line \(0, Colour 30, ByLayer\)/);
+      await p.keyboard.press('Escape');
+      for (const [control, hex, rgb, label = hex] of [[q('prop-colour'), '#FFBF00', 'rgb(255, 191, 0)', 'Colour 40'], [q('prop-colour'), '#FF8800', 'rgb(255, 136, 0)'], [ribbonColour, '#123456', 'rgb(18, 52, 86)']]) {
         await control.selectOption('custom');
         await q('colour-hex').fill(hex); await q('colour-ok').click();
         for (const select of [q('prop-colour'), ribbonColour]) {
-          assert.equal(await select.locator('option:checked').textContent(), hex);
+          assert.equal(await select.locator('option:checked').textContent(), label);
           assert.equal(await select.locator('option[value=custom]').textContent(), 'Colour picker…');
         }
         for (const swatch of [q('prop-swatch'), p.getByRole('button', { name: 'Pick ribbon colour', exact: true })]) {
           assert.equal(await swatch.evaluate((el) => el.style.backgroundColor), rgb);
         }
         await control.selectOption('custom'); await q('colour-cancel').click();
-        assert.equal(await control.locator('option:checked').textContent(), hex, 'Cancel restores the current value');
+        assert.equal(await control.locator('option:checked').textContent(), label, 'Cancel restores the current value');
       }
       for (const theme of ['light', 'dark']) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);

@@ -27,8 +27,8 @@ test('colour and line type: keys, labels, setting them (a colour clears a true c
   const red = P.withColour(e, 'aci:1');
   assert.equal(P.colourKey(red), 'aci:1'); assert.equal(red.aci, 1);
   assert.equal(P.colourKey(P.withColour(red, 'bylayer')), 'bylayer');
-  assert.equal(P.colourKey({ ...e, tc: 0xff8800 }), 'tc:16746496'); assert.equal(P.colourLabel('tc:16746496'), '#FF8800'); assert.equal(P.colourLabel('aci:40'), '#FFBF00');
-  for (const [key, label] of [['tc:0', '#000000'], ['tc:16746496', '#FF8800'], ['byblock', 'ByBlock'], ['aci:40', '#FFBF00'], ['aci:1', 'Red']]) {
+  assert.equal(P.colourKey({ ...e, tc: 0xff8800 }), 'tc:16746496'); assert.equal(P.colourLabel('tc:16746496'), '#FF8800'); assert.equal(P.colourLabel('aci:30'), 'Colour 30');
+  for (const [key, label] of [['tc:0', '#000000'], ['tc:16746496', '#FF8800'], ['byblock', 'ByBlock'], ['aci:30', 'Colour 30'], ['aci:40', 'Colour 40'], ['aci:1', 'Red']]) {
     const options = P.colourOptions(key);
     assert.deepEqual(options.filter(([value]) => value === key), [[key, label]]);
     assert.deepEqual(options.at(-1), ['custom', 'Colour picker…']);

@@ -43,7 +43,7 @@ export function colourKey(ent) {
   if (a === 0) return 'byblock';
   return 'aci:' + Math.abs(a);
 }
-export const colourLabel = (key) => (COLOURS.find((c) => c.key === key) || { label: key === 'byblock' ? 'ByBlock' : rgbHex(keyRgb(key)).toUpperCase() }).label;
+export const colourLabel = (key) => (COLOURS.find((c) => c.key === key) || { label: key === 'byblock' ? 'ByBlock' : key.startsWith('tc:') ? rgbHex(keyRgb(key)).toUpperCase() : 'Colour ' + key.slice(4) }).label;
 /** Both colour dropdowns keep the current colour separate from the picker action. */
 export function colourOptions(current) {
   const options = COLOURS.map((c) => [c.key, c.label]);
