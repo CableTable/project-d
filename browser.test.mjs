@@ -659,6 +659,8 @@ try {
         assert.equal(Math.round(box.x + box.width), 1024, 'strip is at the far right');
         await p.screenshot({ path: `${shotDir}/todo148b-swatch-strip-${theme}.png` });
       }
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: follow system/ }).click();
       const oldRecents = await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour));
       const saved = swatch('saved', 'tc:16746496');
       await saved.evaluate((el) => el.addEventListener('contextmenu', (e) => { window.stripContextPrevented = e.defaultPrevented; }, { once: true }));
@@ -674,22 +676,38 @@ try {
       await saved.waitFor({ state: 'detached' });
       assert.deepEqual(await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour)), oldRecents);
       const lay = newLayout('Strip layout'), part = makePart('source', 'Source line', doc, 1);
-      lay.parts.source = part; lay.placed = [{ partId: 'source', x: 100, y: 100 }, { partId: 'source', x: 400, y: 100 }];
+      lay.parts.source = part; lay.placed = [100, 300, 500, 700].map((x) => ({ partId: 'source', x, y: 100 }));
       await open(layoutRaw(lay), 'strip-layout.dxf');
+      const rowsBefore = await q('part-rows').locator('.prow').count();
       await p.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+      for (const i of [1, 2]) await p.locator(`[data-group=parts] [data-i="${i}"] .part-hit`).click({ force: true, modifiers: ['Shift'] });
       await swatch('standard', 'aci:3').click();
+      assert.equal(await q('part-rows').locator('.prow').count(), rowsBefore + 1, 'several selected placements add just one Parts entry');
       const recoloured = layoutFromRaw(await save());
+      assert.equal(Object.keys(recoloured.parts).length, 2, 'one saved coloured copy per source part');
+      assert.equal(new Set(recoloured.placed.slice(0, 3).map((p) => p.partId)).size, 1, 'selected placements share the coloured copy');
       assert.equal(recoloured.parts[recoloured.placed[0].partId].raw.entities[0].aci, 3);
-      assert.notEqual(recoloured.parts[recoloured.placed[1].partId].raw.entities[0].aci, 3, 'unselected copy keeps its colour');
+      assert.notEqual(recoloured.parts[recoloured.placed[3].partId].raw.entities[0].aci, 3, 'unselected copy keeps its colour');
       await p.keyboard.press('Control+z');
+      assert.equal(await q('part-rows').locator('.prow').count(), rowsBefore, 'Undo removes the coloured Parts entry');
       const undone = layoutFromRaw(await save());
-      assert.equal(undone.placed[0].partId, undone.placed[1].partId, 'one Undo restores the source part');
+      assert.equal(Object.keys(undone.parts).length, 1);
+      assert.equal(new Set(undone.placed.map((p) => p.partId)).size, 1, 'one Undo restores the source part');
       await p.reload(); await q('swatch-strip').waitFor();
       assert.equal(await saved.count(), 0, 'saved removal remembered after reload');
       await recent('aci:3');
       await p.setViewportSize({ width: 1024, height: 480 });
       assert.equal(await q('swatch-strip').evaluate((el) => el.scrollHeight > el.clientHeight), true, 'strip scrolls in a short window');
       await swatch('recent', 'aci:3').scrollIntoViewIfNeeded();
+      await p.addInitScript(() => {
+        Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Storage blocked', 'SecurityError'); } });
+      });
+      await p.reload(); await q('swatch-strip').waitFor();
+      await open(doc, 'blocked-storage.dxf'); await selectAll();
+      await swatch('standard', 'aci:1').click(); await recent('aci:1');
+      assert.equal((await save()).entities[0].aci, 1, 'strip still recolours when localStorage throws');
+      await p.keyboard.press('Escape'); await swatch('standard', 'aci:5').click(); await recent('aci:5');
+      assert.equal(await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).inputValue(), 'aci:5', 'current colour still works without storage');
     } catch (e) {
       await p.screenshot({ path: `${shotDir}/todo148b-failure.png` }); throw e;
     } finally { await context.close(); }
@@ -858,6 +876,7 @@ try {
       assert.equal(await layerCss(), layerAfter, 'Redo redraws the new layer colour');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       await p.locator('[data-tool=contour]').click();
+      const contourRecents = await p.evaluate(() => localStorage.getItem('pd-recent-colours'));
       const byLayer = await p.evaluate(() => localStorage.getItem('pd-contour'));
       await q('contour-colour').click(); await q('colour-ok').click();
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), byLayer, 'unchanged OK keeps Contour ByLayer');
@@ -869,6 +888,7 @@ try {
       const contourBefore = await p.evaluate(() => localStorage.getItem('pd-contour'));
       await q('contour-colour').click(); await q('colour-ok').click();
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), contourBefore, 'unchanged Contour OK keeps its colour key');
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-recent-colours')), contourRecents, 'Contour colour choices stay out of recents until Apply');
       await p.reload(); await q('picker').waitFor({ state: 'attached' });
       const stored = await p.evaluate(async () => {
         const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-swatches', 'swatches', 'swatches').all();
@@ -5448,8 +5468,8 @@ try {
   };
   await step('TODO 38: rulers in mm along the top and left of the canvas; 0,0 is the sheet\'s bottom-left and Y counts up; on layouts and drawings; View → Rulers and the panel switch', async () => {
     await freshLayoutWithPlate();
-    await page.locator('[data-menu=View]').click();
-    await page.getByRole('menuitemcheckbox', { name: /Theme: light/ }).click();
+    const theme = await page.evaluate(() => document.documentElement.dataset.theme || 'system');
+    assert.notEqual(theme, 'dark', 'earlier steps restore the theme after dark screenshots');
     assert.equal(await t('ruler-top').isVisible(), true); assert.equal(await t('ruler-left').isVisible(), true);
     assert.equal(await t('ruler-corner').textContent(), 'mm');
     const cb = await rectOf(t('canvas')), sb = await page.locator('rect.sheet').boundingBox();
@@ -5464,7 +5484,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
+      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label]) => [(theme === mode ? '✓ ' : '  ') + 'Theme: ' + label, false])]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
@@ -5936,7 +5956,9 @@ try {
     await t('contour-dist').fill('5'); await t('contour-dist').press('Enter');
     await t('contour-steps').fill('2'); await t('contour-steps').press('Enter');
     await ctPanel('contour-outside').click(); await ctPanel('contour-sharp').click();
+    const recentsBefore = await page.evaluate(() => localStorage.getItem('pd-recent-colours'));
     await colours.getByRole('button', { name: 'Red', exact: true }).click();
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-recent-colours')), recentsBefore, 'a Contour preset only changes the preview');
     await styles.getByRole('button', { name: 'Dashed', exact: true }).click();
     const previewStyle = await t('contour-preview').locator('.ct-out').first().evaluate((p) => {
       const s = getComputedStyle(p); return [s.stroke, s.strokeDasharray, s.opacity];
@@ -5954,6 +5976,7 @@ try {
     await menuItem('View', 'Theme: light');
     const base = await entCount(); await t('contour-apply').click();
     assert.equal(await entCount(), base + 8);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('pd-recent-colours'))[0]), 'aci:1', 'Apply adds the Contour colour to recents');
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const saved = readDxf(dl.text), added = saved.entities.filter((e) => e.layer === 'Contour');
     assert.equal(added.length, 8); assert.ok(added.every((e) => e.aci === 1 && e.lt === 'DASHED'));
@@ -10460,7 +10483,8 @@ try {
   await step('TODO 146: the box stays put while the mouse walks to its chip', async () => {
     await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
     const raw = newDoc(4);
-    addEntities(raw, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60));
+    // Leave room for the 3 px preview margin with the swatch strip visible.
+    addEntities(raw, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 80));
     await openGrips(writeDxf(raw), 'chip-walk.dxf');
     await typeCmd('f'); await click(40, 20);
     await hoverPreview(60, 40);

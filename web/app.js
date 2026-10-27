@@ -544,7 +544,11 @@ function applyStripColour(key) {
     const items = selItems();
     if (items.length) {
       if (items.some((x) => x.p.lock)) { note(LOCKED); return; }
-      const changed = items.map((x) => ({ ...x, next: LD.withPartColour(x.part, key, uid()) })).filter((x) => x.next);
+      const copies = new Map();
+      const changed = items.map((x) => {
+        if (!copies.has(x.part.id)) copies.set(x.part.id, LD.withPartColour(x.part, key, uid()));
+        return { ...x, next: copies.get(x.part.id) };
+      }).filter((x) => x.next);
       if (changed.length) {
         const d = curDoc(), g = startGesture(d, 'Colour → ' + PR.colourLabel(key));
         gMark(g);
@@ -3967,7 +3971,7 @@ function previewBounds() {
   }
   const boxes = bounds ? [bounds] : [], tip = ui.tip.getBoundingClientRect();
   if (tip.width || tip.height) boxes.push([tip.left - canvas.left, tip.top - canvas.top, tip.right - canvas.left, tip.bottom - canvas.top]);
-  return boxes.map((box) => box.map((v, i) => v + (i < 2 ? -2 : 2)));
+  return boxes.map((box) => box.map((v, i) => v + (i < 2 ? -3 : 3)));
 }
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
 let paintFull = true, snap = null, snapCv = null, snapTimer = 0;
@@ -7390,14 +7394,13 @@ function buildContourPanel() {
     style: 'background:' + (key === 'bylayer' ? 'var(--field)' : colourCss(key)),
     onclick: () => {
       cfg.colour = key;
-      usedColour(contourKey(curDoc()));
       saveContourCfg(); renderContour();
     }
   }, key === 'bylayer' ? label : null));
   ui.ctCustomColour = h('button', { class: 'cs', type: 'button', 'aria-label': 'Pick Contour colour', 'data-testid': 'contour-colour', onclick: async () => {
     const d = editable() || curDoc(); if (!d) return;
     const rgb = await pickColour(keyRgb(contourKey(d)));
-    if (rgb) { cfg.colour = rgbKey(rgb); usedColour(cfg.colour); saveContourCfg(); renderContour(); }
+    if (rgb) { cfg.colour = rgbKey(rgb); saveContourCfg(); renderContour(); }
   } });
   ui.ctStyles = CT_STYLES.map(({ key, label, dash }) => h('button', {
     class: 'ctstyle', type: 'button', 'aria-pressed': 'false',
