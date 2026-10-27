@@ -582,6 +582,314 @@ try {
       await expectFades(true, false);
     } finally { await context.close(); }
   });
+  await step('TODO 148c: Fill tool, Undo, swatch fill, No fill, Join-first, Eyedropper two targets, save/reopen and PDF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const command = async (text) => {
+      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    const open = async (text, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
+      await command('fit');
+    };
+    const click = async (x, y) => {
+      const pt = await p.evaluate(([x, y]) => {
+        const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
+        const pt = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: pt.x, y: pt.y };
+      }, [x, y]);
+      await p.mouse.click(pt.x, pt.y);
+    };
+    const swatch = (key) => p.locator(`[data-swatch-group=standard] [data-colour="${key}"]`);
+    const save = async () => {
+      await p.locator('.coords').click(); await p.waitForTimeout(1100);
+      const pending = p.waitForEvent('download'); await p.keyboard.press('Control+s');
+      return readFileSync(await (await pending).path(), 'utf8');
+    };
+    const undo = async () => { await p.locator('.coords').click(); await p.keyboard.press('Control+z'); };
+    const fills = (text) => readDxf(text).entities.map((e) => e.fill || null);
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(); addLayer(raw, 'Target', { aci: 3 });
+      addEntities(raw, dxfPoly([[10, 10], [60, 10], [60, 60], [10, 60]], { closed: true }),
+        dxfCircle(100, 35, 20, { layer: 'Target', lt: 'DASHED' }), dxfEllipse(165, 35, 25, 0, .7),
+        dxfLine(10, 90, 60, 90), dxfLine(60, 90, 60, 120), dxfLine(60, 120, 10, 120), dxfLine(10, 120, 10, 90));
+      await open(writeDxf(raw), 'fill148c.dxf'); await p.keyboard.press('Escape');
+      await swatch('aci:1').click({ button: 'right' });
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Fill', exact: true }).click();
+      await click(35, 35); assert.equal(fills(await save())[0], 'aci:1');
+      await undo(); assert.equal(fills(await save())[0], null, 'one Undo per tool fill');
+      await click(35, 105); assert.match(await q('cmd-hist').textContent(), /Not one closed outline: Join first/);
+      await p.keyboard.press('Escape'); await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await swatch('aci:3').click({ button: 'right' });
+      assert.match(await q('cmd-prompt').textContent(), /open shapes.*skipped/);
+      assert.deepEqual(fills(await save()).slice(0, 3), Array(3).fill('aci:3'));
+      await q('no-fill').click(); assert.ok(fills(await save()).every((v) => v === null));
+      await undo(); assert.equal(fills(await save())[0], 'aci:3', 'No fill is one Undo');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');
+      await q('no-fill').click({ button: 'right' }); assert.equal(fills(await save())[0], null);
+      await p.keyboard.press('Escape'); await click(10, 35);
+      await q('prop-fill').click(); await q('colour-hex').fill('#ff8800'); await q('colour-ok').click();
+      await swatch('aci:5').click();
+      await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Eyedropper', exact: true }).click();
+      await click(35, 35); await click(100, 35); await click(165, 35);
+      const copied = readDxf(await save());
+      for (const e of copied.entities.slice(0, 3)) { assert.equal(e.fill, 'tc:16746496'); assert.equal(e.aci, 5); }
+      assert.equal(copied.entities[1].layer, 'Target'); assert.equal(copied.entities[1].lt, 'DASHED');
+      await undo(); assert.equal(fills(await save())[2], null, 'one Undo per Eyedropper target');
+      await p.keyboard.press('Control+y'); await p.keyboard.press('Escape');
+      const text = await save(); await open(text, 'fill148c-reopened.dxf');
+      assert.deepEqual(fills(await save()).slice(0, 3), Array(3).fill('tc:16746496'));
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'fits 1024 px');
+        for (const name of ['Fill', 'Eyedropper']) assert.ok(await p.locator('[data-panel=Properties]').getByRole('button', { name, exact: true }).isVisible());
+        await p.screenshot({ path: `${shotDir}/todo148c-filled-${theme}.png` });
+      }
+      await command('pdf'); await q('pdf-dialog').waitFor();
+      await q('pdf-black').uncheck();
+      const pending = p.waitForEvent('download'); await q('pdf-go').click();
+      const pdf = readFileSync(await (await pending).path(), 'latin1');
+      assert.match(pdf, /1 0\.533 0 rg/); assert.match(pdf, /f\*/);
+      if (await q('pdf-close').count()) await q('pdf-close').click();
+      await command('eyedropper'); await click(35, 90); await click(100, 35);
+      assert.equal(fills(await save())[1], null, 'unfilled source copies No fill');
+      await p.keyboard.press('Escape');
+      const overlapping = newDoc(); addEntities(overlapping, dxfPoly([[10, 10], [60, 10], [60, 60], [10, 60]], { closed: true }), dxfCircle(35, 35, 15));
+      await open(writeDxf(overlapping), 'topmost148c.dxf');
+      await command('fill'); await click(35, 35);
+      assert.deepEqual(fills(await save()), [null, 'tc:16746496'], 'topmost closed outline wins');
+      await p.keyboard.press('Escape');
+    } catch (e) { await p.screenshot({ path: `${shotDir}/todo148c-failure.png` }); throw e; }
+    finally { await context.close(); }
+  });
+
+  await step('TODO 148d: colour readout: line, fill, panel, copy hex + recent colours, Esc ends', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const screen = (x, y) => p.evaluate(([x, y]) => {
+      const svg = document.querySelector('.canvas > svg'), h = +document.querySelector('rect.sheet').getAttribute('height');
+      const pt = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: pt.x, y: pt.y };
+    }, [x, y]);
+    const hover = async (x, y) => { const pt = await screen(x, y); await p.mouse.move(pt.x - 2, pt.y - 2); await p.mouse.move(pt.x, pt.y); return pt; };
+    const box = () => q('readout-box');
+    const readoutBtn = () => p.locator('[data-panel=Properties]').getByRole('button', { name: 'Readout', exact: true });
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(); addLayer(raw, 'Red', { aci: 1 });
+      addEntities(raw, dxfLine(10, 10, 120, 10, { layer: 'Red' }), dxfPoly([[10, 40], [60, 40], [60, 90], [10, 90]], { closed: true, fill: 'tc:65280' }));
+      await q('picker').setInputFiles({ name: 'readout148d.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'readout148d.dxf');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a'); await p.keyboard.press('Escape');
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await readoutBtn().click();
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'true');
+      await hover(65, 10);
+      await p.waitForFunction(() => /#FF0000/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      assert.match(await box().textContent(), /R 255\s+G 0\s+B 0/); assert.match(await box().textContent(), /C 0\s+M 100\s+Y 100\s+K 0/); assert.match(await box().textContent(), /#FF0000/);
+      await hover(35, 65);
+      await p.waitForFunction(() => /#00FF00/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      await hover(110, 120);                                                              // empty sheet: the canvas pixel
+      await p.waitForFunction(() => /#[0-9A-F]{6}/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      const panel = await p.evaluate(() => getComputedStyle(document.querySelector('.ribbon-body')).backgroundColor.match(/\d+/g).slice(0, 3).map(Number));
+      const at = await p.locator('.ribbon-body').boundingBox();
+      await p.mouse.move(at.x + at.width - 8, at.y + 4); await p.mouse.move(at.x + at.width - 6, at.y + 4);
+      const hex = '#' + panel.map((n) => n.toString(16).padStart(2, '0')).join('').toUpperCase();
+      await p.waitForFunction((hex) => document.querySelector('[data-testid=readout-box]').textContent.includes(hex), hex);
+      await hover(65, 10);
+      const pt = await screen(65, 10);
+      await p.waitForFunction(() => /#FF0000/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      await p.waitForTimeout(100);
+      const b = await box().boundingBox();
+      assert.ok(!(pt.x >= b.x && pt.x <= b.x + b.width && pt.y >= b.y && pt.y <= b.y + b.height), 'the box never covers the cursor');
+      const before = await p.evaluate(() => document.querySelector('[data-testid=sel-count]')?.textContent);
+      await p.mouse.click(pt.x, pt.y);
+      await p.waitForFunction(() => /Copied #FF0000/.test(document.querySelector('[data-testid=cmd-hist]')?.textContent || ''));
+      assert.equal(await p.evaluate(() => navigator.clipboard.readText()), '#FF0000');
+      await p.waitForFunction(() => document.querySelector('[data-swatch-group=recent] button')?.dataset.colour === 'aci:1');
+      assert.equal(await p.evaluate(() => document.querySelector('[data-testid=sel-count]')?.textContent), before, 'a click selects nothing');
+      await p.mouse.move(1010, 760);                                                      // near the corner: the box flips to the other side
+      const corner = await box().boundingBox();
+      assert.ok(corner.x + corner.width <= 1024 && corner.y + corner.height <= 768, 'the box stays in the window');
+      await p.keyboard.press('Escape');                                                 // Esc ends it; the readout reads panels too, so every click is a read
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'false');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        await readoutBtn().click(); await hover(35, 65);
+        await p.waitForFunction(() => /#00FF00/.test(document.querySelector('[data-testid=readout-box]').textContent));
+        await p.screenshot({ path: `${shotDir}/todo148d-readout-${theme}.png` });
+        if (theme === 'light') await p.keyboard.press('Escape');
+      }
+      await p.keyboard.type('line'); await p.keyboard.press('Enter');                    // another tool ends it
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'false');
+      // review fixes: a line inside a block reads its own colour; a click outside the drawing ends the readout and then acts; a middle-button pan is not swallowed
+      const blocks = newDoc(); addLayer(blocks, 'Red', { aci: 1 }); addBlock(blocks, 'B', [dxfLine(0, 0, 50, 0, { aci: 3 })]);
+      addEntities(blocks, dxfInsert('B', 10, 10, { layer: 'Red' }), { ...dxfPoly([[10, 40], [60, 40], [60, 90], [10, 90]], { closed: true, layer: 'Red' }), fill: 'bylayer' });
+      await q('picker').setInputFiles({ name: 'readout148d-block.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(blocks)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'readout148d-block.dxf');
+      await p.locator('[data-ribbon-tab=Home]').click();
+      await readoutBtn().click(); await hover(35, 10);
+      await p.waitForFunction(() => /#00FF00/.test(document.querySelector('[data-testid=readout-box]').textContent));
+      await hover(35, 65);
+      await p.waitForFunction(() => /#FF0000/.test(document.querySelector('[data-testid=readout-box]').textContent));   // a ByLayer fill is its layer's colour, not white
+      const pan = await screen(35, 65);
+      await p.mouse.move(pan.x, pan.y); await p.mouse.down({ button: 'middle' }); await p.mouse.move(pan.x + 30, pan.y + 30); await p.mouse.up({ button: 'middle' });
+      assert.equal(await box().count(), 1, 'a middle-button drag does not end the readout');
+      await p.locator('[data-tool=circle]').click();
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await readoutBtn().getAttribute('aria-pressed'), 'false');
+      assert.match(await p.locator('[data-tool=circle]').getAttribute('class'), /\bon\b/, 'the tool started');
+      await p.keyboard.press('Escape');
+      await readoutBtn().click(); await hover(35, 65);
+      await p.locator('[data-ribbon-tab=View]').click();
+      await box().waitFor({ state: 'detached' });
+      assert.equal(await p.locator('[data-ribbon-tab=View]').getAttribute('aria-selected'), 'true', 'the tab opened');
+    } catch (e) { await p.screenshot({ path: `${shotDir}/todo148d-failure.png` }); throw e; }
+    finally { await context.close(); }
+  });
+
+  await step('TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour, recents and saved removal', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const group = (name) => p.locator(`[data-swatch-group=${name}]`);
+    const swatch = (name, key) => group(name).locator(`[data-colour="${key}"]`);
+    const recent = async (key) => {
+      await p.waitForFunction((key) => document.querySelector('[data-swatch-group=recent] button')?.dataset.colour === key, key);
+      assert.equal(await swatch('recent', key).count(), 1);
+    };
+    const selectAll = async () => { await p.locator('.coords').click(); await p.keyboard.press('Control+a'); };
+    const command = async (text) => {
+      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    const open = async (raw, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
+    };
+    const save = async () => {
+      await p.locator('.coords').click();
+      const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      return readDxf(readFileSync(await dl.path(), 'utf8'));
+    };
+    try {
+      await p.goto(URL_); await q('swatch-strip').waitFor();
+      assert.equal(await group('standard').locator('button').count(), 11);
+      assert.equal(await swatch('standard', 'aci:1').getAttribute('title'), 'Colour 1');
+      const panelWidth = await p.locator('aside.panel').evaluate((el) => el.getBoundingClientRect().width);
+      await p.locator('[data-menu=View]').click();
+      const tick = p.getByRole('menuitemcheckbox', { name: /Swatch strip/ });
+      assert.equal(await tick.getAttribute('aria-checked'), 'true'); await tick.click();
+      assert.equal(await q('swatch-strip').isVisible(), false);
+      await p.waitForFunction(async () => (await (await import('./idbstore.js')).idbStore('project-d-view', 'settings', 'view').all()).some((r) => r.id === 'swatchStrip' && r.on === false));
+      await p.reload(); await q('swatch-strip').waitFor({ state: 'attached' });
+      assert.equal(await q('swatch-strip').isVisible(), false, 'hidden on this PC after reload');
+      await p.locator('[data-ribbon-tab=View]').click();
+      const viewTick = p.locator('.ribbon-body').getByRole('button', { name: 'Swatch strip', exact: true });
+      assert.equal(await viewTick.getAttribute('aria-pressed'), 'false'); await viewTick.click();
+      await p.waitForFunction(async () => (await (await import('./idbstore.js')).idbStore('project-d-view', 'settings', 'view').all()).some((r) => r.id === 'swatchStrip' && r.on === true));
+      await p.reload(); await q('swatch-strip').waitFor();
+      assert.equal(await p.locator('aside.panel').evaluate((el) => el.getBoundingClientRect().width), panelWidth);
+      const doc = newDoc(4); addEntities(doc, dxfLine(10, 10, 110, 110));
+      await open(doc, 'swatch-strip.dxf'); await selectAll();
+      const before = (await save()).entities;
+      await swatch('standard', 'aci:1').click();
+      assert.equal(await q('prop-colour').inputValue(), 'aci:1'); await recent('aci:1');
+      assert.equal((await save()).entities[0].aci, 1);
+      await p.keyboard.press('Control+z');
+      assert.deepEqual((await save()).entities, before, 'one Undo restores the selected line');
+      await p.keyboard.press('Escape');
+      await swatch('standard', 'aci:5').click();
+      await p.locator('[data-ribbon-tab=Home]').click();
+      assert.equal(await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).inputValue(), 'aci:5');
+      await recent('aci:5');
+      await command('L'); await command('150,150'); await command('180,180'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      const drawn = await save(); assert.equal(drawn.entities.length, 2); assert.equal(drawn.entities[1].aci, 5, 'new line uses the ribbon current colour');
+      await selectAll();
+      await q('prop-colour').selectOption('aci:3'); await recent('aci:3');
+      await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).selectOption('aci:1'); await recent('aci:1');
+      await q('prop-swatch').click(); await q('colour-hex').fill('#ff8800');
+      await q('colour-add').click(); await p.waitForFunction(() => document.querySelector('[data-testid=colour-status]').textContent === 'Added to Swatches');
+      await q('colour-ok').click(); await recent('tc:16746496');
+      assert.equal(await swatch('saved', 'tc:16746496').getAttribute('title'), '#FF8800');
+      await q('layer-colour').first().click(); await q('colour-hex').fill('#1188ff'); await q('colour-ok').click();
+      await recent('tc:1149183');
+      await swatch('saved', 'tc:16746496').click(); await recent('tc:16746496');
+      assert.equal(await q('prop-colour').inputValue(), 'tc:16746496');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await q('ptab-drawing').click(); await p.locator('[data-ribbon-tab=Home]').click();
+        assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'fits 1024 px');
+        const box = await q('swatch-strip').boundingBox();
+        assert.equal(Math.round(box.x + box.width), 1024, 'strip is at the far right');
+        await p.screenshot({ path: `${shotDir}/todo148b-swatch-strip-${theme}.png` });
+      }
+      await p.locator('[data-menu=View]').click();
+      await p.getByRole('menuitemcheckbox', { name: /Theme: follow system/ }).click();
+      const oldRecents = await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour));
+      const saved = swatch('saved', 'tc:16746496');
+      await saved.evaluate((el) => el.addEventListener('contextmenu', (e) => { window.stripContextPrevented = e.defaultPrevented; }, { once: true }));
+      await saved.click({ button: 'right' });
+      assert.equal(await p.evaluate(() => window.stripContextPrevented), true, 'no browser context menu');
+      assert.equal(await q('ctx-menu').count(), 0);
+      await swatch('standard', 'aci:1').click({ button: 'right', modifiers: ['Alt'] });
+      assert.equal(await q('ctx-menu').count(), 0);
+      await swatch('recent', 'tc:16746496').click({ button: 'right', modifiers: ['Alt'] });
+      assert.equal(await q('ctx-menu').count(), 0);
+      await saved.click({ button: 'right', modifiers: ['Alt'] });
+      await p.getByRole('menuitem', { name: 'Remove from Swatches', exact: true }).click();
+      await saved.waitFor({ state: 'detached' });
+      assert.deepEqual(await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour)), oldRecents);
+      const lay = newLayout('Strip layout'), part = makePart('source', 'Source line', doc, 1);
+      lay.parts.source = part; lay.placed = [100, 300, 500, 700].map((x) => ({ partId: 'source', x, y: 100 }));
+      await open(layoutRaw(lay), 'strip-layout.dxf');
+      const rowsBefore = await q('part-rows').locator('.prow').count();
+      await p.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+      for (const i of [1, 2]) await p.locator(`[data-group=parts] [data-i="${i}"] .part-hit`).click({ force: true, modifiers: ['Shift'] });
+      await swatch('standard', 'aci:3').click();
+      assert.equal(await q('part-rows').locator('.prow').count(), rowsBefore + 1, 'several selected placements add just one Parts entry');
+      const recoloured = layoutFromRaw(await save());
+      assert.equal(Object.keys(recoloured.parts).length, 2, 'one saved coloured copy per source part');
+      assert.equal(new Set(recoloured.placed.slice(0, 3).map((p) => p.partId)).size, 1, 'selected placements share the coloured copy');
+      assert.equal(recoloured.parts[recoloured.placed[0].partId].raw.entities[0].aci, 3);
+      assert.notEqual(recoloured.parts[recoloured.placed[3].partId].raw.entities[0].aci, 3, 'unselected copy keeps its colour');
+      await p.keyboard.press('Control+z');
+      assert.equal(await q('part-rows').locator('.prow').count(), rowsBefore, 'Undo removes the coloured Parts entry');
+      const undone = layoutFromRaw(await save());
+      assert.equal(Object.keys(undone.parts).length, 1);
+      assert.equal(new Set(undone.placed.map((p) => p.partId)).size, 1, 'one Undo restores the source part');
+      await p.reload(); await q('swatch-strip').waitFor();
+      assert.equal(await saved.count(), 0, 'saved removal remembered after reload');
+      await recent('aci:3');
+      await p.setViewportSize({ width: 1024, height: 480 });
+      assert.equal(await q('swatch-strip').evaluate((el) => el.scrollHeight > el.clientHeight), true, 'strip scrolls in a short window');
+      await swatch('recent', 'aci:3').scrollIntoViewIfNeeded();
+      await p.addInitScript(() => {
+        Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Storage blocked', 'SecurityError'); } });
+      });
+      await p.reload(); await q('swatch-strip').waitFor();
+      await open(doc, 'blocked-storage.dxf'); await selectAll();
+      await swatch('standard', 'aci:1').click(); await recent('aci:1');
+      assert.equal((await save()).entities[0].aci, 1, 'strip still recolours when localStorage throws');
+      await p.keyboard.press('Escape'); await swatch('standard', 'aci:5').click(); await recent('aci:5');
+      assert.equal(await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).inputValue(), 'aci:5', 'current colour still works without storage');
+    } catch (e) {
+      await p.screenshot({ path: `${shotDir}/todo148b-failure.png` }); throw e;
+    } finally { await context.close(); }
+  });
+
   await step('TODO 148a: colour picker fields, Properties, Cancel, swatches, screen pick, layers, Contour and exact DXF', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
@@ -745,6 +1053,7 @@ try {
       assert.equal(await layerCss(), layerAfter, 'Redo redraws the new layer colour');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       await p.locator('[data-tool=contour]').click();
+      const contourRecents = await p.evaluate(() => localStorage.getItem('pd-recent-colours'));
       const byLayer = await p.evaluate(() => localStorage.getItem('pd-contour'));
       await q('contour-colour').click(); await q('colour-ok').click();
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), byLayer, 'unchanged OK keeps Contour ByLayer');
@@ -756,6 +1065,7 @@ try {
       const contourBefore = await p.evaluate(() => localStorage.getItem('pd-contour'));
       await q('contour-colour').click(); await q('colour-ok').click();
       assert.equal(await p.evaluate(() => localStorage.getItem('pd-contour')), contourBefore, 'unchanged Contour OK keeps its colour key');
+      assert.equal(await p.evaluate(() => localStorage.getItem('pd-recent-colours')), contourRecents, 'Contour colour choices stay out of recents until Apply');
       await p.reload(); await q('picker').waitFor({ state: 'attached' });
       const stored = await p.evaluate(async () => {
         const { idbStore } = await import('./idbstore.js'); return idbStore('project-d-swatches', 'swatches', 'swatches').all();
@@ -5335,6 +5645,8 @@ try {
   };
   await step('TODO 38: rulers in mm along the top and left of the canvas; 0,0 is the sheet\'s bottom-left and Y counts up; on layouts and drawings; View → Rulers and the panel switch', async () => {
     await freshLayoutWithPlate();
+    const theme = await page.evaluate(() => document.documentElement.dataset.theme || 'system');
+    assert.notEqual(theme, 'dark', 'earlier steps restore the theme after dark screenshots');
     assert.equal(await t('ruler-top').isVisible(), true); assert.equal(await t('ruler-left').isVisible(), true);
     assert.equal(await t('ruler-corner').textContent(), 'mm');
     const cb = await rectOf(t('canvas')), sb = await page.locator('rect.sheet').boundingBox();
@@ -5349,7 +5661,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
+      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label]) => [(theme === mode ? '✓ ' : '  ') + 'Theme: ' + label, false])]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
@@ -5821,7 +6133,9 @@ try {
     await t('contour-dist').fill('5'); await t('contour-dist').press('Enter');
     await t('contour-steps').fill('2'); await t('contour-steps').press('Enter');
     await ctPanel('contour-outside').click(); await ctPanel('contour-sharp').click();
+    const recentsBefore = await page.evaluate(() => localStorage.getItem('pd-recent-colours'));
     await colours.getByRole('button', { name: 'Red', exact: true }).click();
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-recent-colours')), recentsBefore, 'a Contour preset only changes the preview');
     await styles.getByRole('button', { name: 'Dashed', exact: true }).click();
     const previewStyle = await t('contour-preview').locator('.ct-out').first().evaluate((p) => {
       const s = getComputedStyle(p); return [s.stroke, s.strokeDasharray, s.opacity];
@@ -5839,6 +6153,7 @@ try {
     await menuItem('View', 'Theme: light');
     const base = await entCount(); await t('contour-apply').click();
     assert.equal(await entCount(), base + 8);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('pd-recent-colours'))[0]), 'aci:1', 'Apply adds the Contour colour to recents');
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
     const saved = readDxf(dl.text), added = saved.entities.filter((e) => e.layer === 'Contour');
     assert.equal(added.length, 8); assert.ok(added.every((e) => e.aci === 1 && e.lt === 'DASHED'));
@@ -10345,7 +10660,8 @@ try {
   await step('TODO 146: the box stays put while the mouse walks to its chip', async () => {
     await closeTabs(/./); await page.evaluate(() => localStorage.removeItem('pd-fillet'));
     const raw = newDoc(4);
-    addEntities(raw, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 60));
+    // Leave room for the 3 px preview margin with the swatch strip visible.
+    addEntities(raw, dxfLine(20, 20, 60, 20), dxfLine(60, 20, 60, 80));
     await openGrips(writeDxf(raw), 'chip-walk.dxf');
     await typeCmd('f'); await click(40, 20);
     await hoverPreview(60, 40);

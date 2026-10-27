@@ -2,7 +2,7 @@ import { h } from './dom.js';
 import { idbStore } from './idbstore.js';
 import { parseHex, rgbHex, rgbHsb, hsbRgb, rgbCmyk, cmykRgb } from './colour.js';
 
-const swatches = idbStore('project-d-swatches', 'swatches', 'swatches');
+export const swatches = idbStore('project-d-swatches', 'swatches', 'swatches');
 
 /** A draft colour: only OK after an edit returns a colour; OK untouched returns null (no change).
  * `edited` starts the draft as a change, e.g. for a mixed selection. Swatches belong to this PC. */
@@ -84,7 +84,10 @@ export function pickColour(current, edited = false) {
     const status = h('div', { class: 'lbl colour-status', role: 'status', 'data-testid': 'colour-status' });
     const add = h('button', { class: 'btn', type: 'button', 'data-testid': 'colour-add', onclick: async () => {
       saving = true; valid();
-      try { await swatches.put({ id: rgbHex(rgb), rgb: rgb.slice() }); status.textContent = 'Added to Swatches'; }
+      try {
+        await swatches.put({ id: rgbHex(rgb), rgb: rgb.slice() });
+        document.dispatchEvent(new Event('swatches-changed')); status.textContent = 'Added to Swatches';
+      }
       catch { status.textContent = 'Could not save the swatch on this PC. Try again.'; }
       finally { saving = false; valid(); }
     } }, 'Add to Swatches');

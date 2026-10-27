@@ -1,7 +1,9 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
 import { h } from './dom.js';
-import { pickColour } from './colourpicker.js';
+import { pickColour, swatches } from './colourpicker.js';
+import { recentColours, stripGroups } from './swatchstrip.js';
 import { parseHex, rgbKey, keyRgb, validColourKey } from './colour.js';
+import { colourAtItem, colourAtLayout, readoutValues, cssRgb } from './readout.js';
 import * as CB from './cmdbar.js';
 import { buildCmdUI } from './cmdui.js';
 import * as SC from './shortcuts.js';
@@ -40,6 +42,7 @@ import { rotateEntities, rotationAngle, rotationMatrix } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './scale.js';
 import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
+import * as FI from './fill.js';
 import { extendEntity } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import { layoutSnap } from './layoutsnap.js';
@@ -79,6 +82,9 @@ let clipboard = null;
 let selectionCycle = null;
 const ribbon = { mode: 'full', last: 'full', tab: 'Home', flyout: false, panel: null, rail: true, guideSnap: true };
 const docker = { width: 290, folds: {} };
+const strip = { on: true, saved: [], recent: [] };
+let currentColour = 'bylayer';
+let currentFill = 'aci:7';
 function showShortcuts() {
   ui.cmdUI.close();
   openShortcuts(ownBindings, async (draft) => {
@@ -418,6 +424,7 @@ function buildMenus() {
         [tick(ribbon.guideSnap, 'Snap to guides'), toggleGuideSnap, null, () => !!curLay()],
         ['Clear all guides', clearGuides, null, () => !!curLay() && curLay().s.guides.length > 0],
         [tick(ribbon.rail, 'Tool rail'), toggleRail],
+        [tick(strip.on, 'Swatch strip'), toggleStrip, null, null, null, false, strip.on],
         ...WORK_AREAS.map((mode, i) => [tick(state.workArea === mode, 'Work area: ' + mode), () => setWorkArea(mode), null, null, null, i === 0, state.workArea === mode]),
         ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label], i) => [tick(theme === mode, 'Theme: ' + label), () => setTheme(mode), null, null, null, i === 0, theme === mode])];
     },
@@ -490,6 +497,82 @@ function toggleRail() {
   renderRibbon();
 }
 function toggleGuideSnap() { ribbon.guideSnap = !ribbon.guideSnap; rememberRibbon(); renderRibbon(); }
+function toggleStrip() {
+  strip.on = !strip.on; ui.swatchStrip.hidden = !strip.on;
+  viewStore.put({ id: 'swatchStrip', on: strip.on }).catch(() => note('Could not remember Swatch strip visibility; it still applies until the app closes'));
+  renderRibbon();
+}
+async function loadSwatches() {
+  try { strip.saved = await swatches.all(); renderSwatchStrip(); }
+  catch { note('Could not load swatches from this PC. Try again.'); }
+}
+function usedColour(key) {
+  if (key === 'bylayer') {
+    const d = editable();
+    key = d ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : 'aci:7';
+  }
+  if (key === 'byblock') key = 'aci:7';
+  strip.recent = recentColours(strip.recent, key);
+  try { localStorage.setItem('pd-recent-colours', JSON.stringify(strip.recent)); }
+  catch { note('Could not remember recent colours; they still apply until the app closes'); }
+  renderSwatchStrip();
+}
+function buildSwatchStrip() {
+  ui.swatchStrip = h('aside', { class: 'swatch-strip', 'aria-label': 'Swatch strip', 'data-testid': 'swatch-strip', hidden: !strip.on,
+    oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); } });
+  document.addEventListener('swatches-changed', loadSwatches);
+  renderSwatchStrip();
+  return ui.swatchStrip;
+}
+function renderSwatchStrip() {
+  if (!ui.swatchStrip) return;
+  const scroll = ui.swatchStrip.scrollTop;
+  const active = document.activeElement, key = active?.dataset.colour, group = active?.parentElement.dataset.swatchGroup;
+  ui.swatchStrip.replaceChildren(h('button', { type: 'button', class: 'strip-swatch no-fill', title: 'No fill', 'aria-label': 'No fill', 'data-testid': 'no-fill',
+    onclick: () => applyFill(null), oncontextmenu: (e) => { e.preventDefault(); e.stopPropagation(); applyFill(null); } }), ...stripGroups(strip.saved, strip.recent).map(({ group, swatches: list }) =>
+    h('div', { class: 'strip-group', role: 'group', 'aria-label': group + ' colours', 'data-swatch-group': group }, list.map(({ key, title, id }) =>
+      h('button', { type: 'button', class: 'strip-swatch', title, 'aria-label': title, 'data-colour': key, style: 'background:' + colourCss(key),
+        onclick: () => applyStripColour(key), oncontextmenu: (e) => {
+          e.preventDefault(); e.stopPropagation(); hideMenu();
+          if (e.altKey && group === 'saved') popMenu(e.clientX, e.clientY, [['Remove from Swatches', async () => {
+            try { await swatches.del(id); await loadSwatches(); }
+            catch { note('Could not remove the swatch on this PC. Try again.'); }
+          }]]);
+          else applyFill(key);
+        }
+      })) )));
+  ui.swatchStrip.scrollTop = scroll;
+  if (group && key) ui.swatchStrip.querySelector(`[data-swatch-group="${group}"] [data-colour="${key}"]`)?.focus({ preventScroll: true });
+}
+function applyStripColour(key) {
+  if (curLay()) {
+    const items = selItems();
+    if (items.length) {
+      if (items.some((x) => x.p.lock)) { note(LOCKED); return; }
+      const copies = new Map();
+      const changed = items.map((x) => {
+        if (!copies.has(x.part.id)) copies.set(x.part.id, LD.withPartColour(x.part, key, uid()));
+        return { ...x, next: copies.get(x.part.id) };
+      }).filter((x) => x.next);
+      if (changed.length) {
+        const d = curDoc(), g = startGesture(d, 'Colour → ' + PR.colourLabel(key));
+        gMark(g);
+        const idxs = gLooseMany(g, items.map((x) => x.i));
+        changed.forEach((x) => {
+          g.lay.parts[x.next.id] = x.next;
+          const i = idxs[items.findIndex((item) => item.i === x.i)];
+          g.lay.placed[i] = { ...g.lay.placed[i], partId: x.next.id };
+        });
+        selLooseMany = idxs;
+        gCommit(g); update();
+        say('Colour → ' + PR.colourLabel(key), loosenedNote(g), 'Ctrl+Z takes it back');
+      }
+      usedColour(key); return;
+    }
+  } else if (editable()?.sel.size) { propSet('colour', key); return; }
+  currentColour = key; usedColour(key); renderRibbon();
+  note('Current colour: ' + PR.colourLabel(key) + '. New objects use this colour');
+}
 function closeRibbon() {
   if (!ribbon.flyout) return;
   ribbon.flyout = false; ribbon.panel = null; renderRibbon();
@@ -558,7 +641,8 @@ function ribbonContents(kind) {
     group('Navigate', btn('Fit to window', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit),
       btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe })),
     group('Windows', btn('Properties panel', '<rect x="3" y="4" width="18" height="16"/><path d="M15 4v16"/>', toggleProps, { pressed: () => state.propsOn }),
-      btn('Tool rail', '<rect x="3" y="4" width="18" height="16"/><path d="M8 4v16"/>', toggleRail, { pressed: () => ribbon.rail })),
+      btn('Tool rail', '<rect x="3" y="4" width="18" height="16"/><path d="M8 4v16"/>', toggleRail, { pressed: () => ribbon.rail }),
+      btn('Swatch strip', '<rect x="8" y="3" width="8" height="18"/><path d="M8 9h8M8 15h8"/>', toggleStrip, { pressed: () => strip.on })),
     group('Theme', ...['system', 'light', 'dark'].map((mode) => btn(mode[0].toUpperCase() + mode.slice(1), themeIcon, () => setTheme(mode), { pressed: () => (document.documentElement.dataset.theme || 'system') === mode })))];
   if (ribbon.tab === 'Output') return [
     group('Save', btn('Save', saveIcon, () => save(false)), btn('Save As…', saveIcon, () => save(true))),
@@ -628,7 +712,10 @@ function ribbonContents(kind) {
     const colourField = ribbonField('Colour', ui.ribbonColour);
     ui.ribbonSwatch = h('button', { class: 'ribbon-swatch', type: 'button', 'aria-label': 'Pick ribbon colour', onclick: pickPropColour });
     colourField.insertBefore(ui.ribbonSwatch, ui.ribbonColour);
-    groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt))));
+    groups.push(group('Properties', stack(colourField, ribbonField('Line width', ui.ribbonWidth), ribbonField('Line style', ui.ribbonLt)),
+      stack(btn('Fill', '<path d="M4 12l8-8 8 8-8 8zM4 12h16"/>', () => startColourTool('fill'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'fill' }),
+        btn('Eyedropper', '<path d="M14 3l7 7M17 6L5 18l-2 3 3-2L18 7"/>', () => startColourTool('eyedropper'), { small: true, enabled: () => !!editable(), pressed: () => state.colourTool?.kind === 'eyedropper' }),
+        btn('Readout', '<circle cx="12" cy="12" r="8"/><path d="M12 4v16M4 12h16"/>', toggleReadout, { small: true, pressed: () => !!readout }))));
   }
   return groups;
 }
@@ -678,14 +765,14 @@ function renderRibbon() {
   if (ui.ribbonColour) {
     const ents = editable() ? propEnts(d).map((x) => x[1]) : [], all = editable() ? propEnts(d, true).map((x) => x[1]) : [], sm = PR.summarize(ents);
     const values = all.map((e) => PR.widthKey(e, d.factor)), width = values.length && values.every((w) => w === values[0]) ? values[0] : '';
-    ui.ribbonSwatch.style.background = sm.colour == null ? 'var(--muted)' : colourCss(sm.colour === 'bylayer' ? PR.effectiveColour(ents[0], layerMap(d)) : sm.colour);
-    ui.ribbonSwatch.disabled = !ents.length;
-    for (const [sel, options, value] of [[ui.ribbonColour, PR.colourOptions(sm.colour), sm.colour],
+    const colour = ents.length ? sm.colour : currentColour;
+    ui.ribbonSwatch.style.background = colour == null ? 'var(--muted)' : colourCss(colour === 'bylayer' ? (ents.length ? PR.effectiveColour(ents[0], layerMap(d)) : editable() ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : 'aci:7') : colour);
+    for (const [sel, options, value] of [[ui.ribbonColour, PR.colourOptions(colour), colour],
       [ui.ribbonLt, PR.LINETYPES.map((c) => [c.key, c.label]), sm.lt],
       [ui.ribbonWidth, PR.WIDTHS.map((w) => [String(w), typeof w === 'number' ? w.toFixed(2) + ' mm' : w]), String(width)]]) {
       if (value && !options.some(([v]) => v === value)) options.push([value, value]);
       setSelect(sel, [['', ents.length || all.length ? '*varies*' : 'Select objects'], ...options], value || '');
-      sel.disabled = sel === ui.ribbonWidth ? !all.length : !ents.length;
+      sel.disabled = sel === ui.ribbonColour ? false : sel === ui.ribbonWidth ? !all.length : !ents.length;
     }
   }
 }
@@ -1195,6 +1282,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
+  state.colourTool = null; endReadout();
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
@@ -3126,6 +3214,7 @@ function addedSwatch(d, l) {
       const keep = new Set(d.sel);
       commit(d, { ...snapshotOf(d), layers: { ...d.raw.layers, [l.name]: next } }, 'Layer colour → ' + l.name);
       setSel(d, keep);
+      usedColour(rgbKey(rgb));
     } });
 }
 
@@ -3438,7 +3527,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
-  const on = !['select', 'pan', 'step'].includes(state.tool) || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
+  const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
   return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
@@ -3495,6 +3584,7 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'), readout: () => toggleReadout(),
   dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
   dimstyle: () => showDimStyle(),
@@ -4035,7 +4125,7 @@ function attachCanvasEvents() {
   c.addEventListener('pointerdown', (e) => {
     altPick = false;
     if (!e.altKey && selectionCycle) { selectionCycle = null; renderCommand(); }
-    if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
+    if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.colourTool || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
     altPick = true;
     suppressAltUp = true;
     e.preventDefault(); e.stopImmediatePropagation();
@@ -4072,6 +4162,7 @@ function attachCanvasEvents() {
       capture(c, e);
       c.classList.add('panning');
     } else if (e.button === 0 && state.tool !== 'pan') {
+      if (state.colourTool && editable() === state.colourTool.d) { colourToolClick(editable(), toDrawing(editable(), e.clientX, e.clientY)); return; }
       const gh = e.target.closest && e.target.closest('[data-gap]');
       if (sheetDown(e)) { capture(c, e); return; }
       if (balDown(e)) { capture(c, e); return; }
@@ -4209,6 +4300,12 @@ function renderCommand() {
   if (state.dsOpen) { ui.hist.textContent = 'Command: DIMSTYLE   Dimension style'; ui.prompt.textContent = 'Preset, arrow size, text height, decimals, gap, units and text position. OK applies, Esc cancels:'; return; }
   const t = TOOLS.find((x) => x.id === state.tool), lay = curLay(), ed = editable();
   if (state.zwin) { ui.hist.textContent = 'Command: ZOOM   Window'; ui.prompt.textContent = 'Drag a box with the left button to zoom into it (Esc cancels):'; return; }
+  if (state.colourTool && ed === state.colourTool.d) {
+    const t = state.colourTool;
+    ui.hist.textContent = 'Command: ' + t.kind.toUpperCase() + (state.msg ? '   ' + state.msg : '');
+    ui.prompt.textContent = t.kind === 'fill' ? 'Click inside a closed outline (Esc ends):' : t.source ? 'Click each target (Esc ends):' : 'Click a source object (Esc ends):'; return;
+  }
+  if (readout) { ui.hist.textContent = 'Command: READOUT' + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Hover for the colour, click copies its hex (Esc ends):'; return; }
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
@@ -5781,7 +5878,8 @@ function toolMenu(e) {
 function drawCommit(d, kind, shapes) {
   const layer = curLayerName(d);
   if (!d.raw.layers[layer]) addLayer(d.raw, layer);
-  const ents = shapes.map((sh) => DR.toEntity(sh, { layer }, d.factor));
+  const attrs = currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour);
+  const ents = shapes.map((sh) => DR.toEntity(sh, attrs, d.factor));
   view.fitted = false;                                              // the view stays where it is while he draws
   commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks }, DR.LABELS[kind]);
   note(`${DR.LABELS[kind]} made on layer ${layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
@@ -6284,7 +6382,7 @@ function textPick(d, cx, cy) {
 function textAdd(d, m) {
   const layer = curLayerName(d);
   if (!d.raw.layers[layer]) addLayer(d.raw, layer);
-  const ent = TX.encode(m, { layer }), idx = d.raw.entities.length;
+  const ent = TX.encode(m, currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour)), idx = d.raw.entities.length;
   view.fitted = false;
   commit(d, { entities: [...d.raw.entities, ent], blocks: d.raw.blocks }, 'Text');
   setSel(d, new Set([idx]));
@@ -6606,7 +6704,7 @@ function trackOvl(d, out, k) {
 
 // ---- grips (grips.js; mock-up R5c, left pane): blue squares on a selected line, arc, circle or polyline to drag ----
 /** Do grips show? On a drawing tab with the Select tool, something selected (not too many things), and no text handles in the way. */
-const gripOn = (d) => !!d && !d.lay && !state.match && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
+const gripOn = (d) => !!d && !d.lay && !state.match && !state.colourTool && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -6792,6 +6890,7 @@ function editKey(e) {
     else if (curLay() && pdrag) cancelPlacedDrag();
     else if (curLay() && multiSel() && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
+    else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }
     else if (state.match) endMatch();
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
@@ -7058,9 +7157,9 @@ function colourCss(key) {
 const layerMap = (d) => d.raw.layers || {};
 async function pickPropColour() {
   const d = editable(), ent = d && propEnts(d)[0]?.[1];
-  if (!ent) return;
-  const mixed = new Set(propEnts(d).map((x) => PR.colourKey(x[1]))).size > 1;
-  const rgb = await pickColour(keyRgb(PR.effectiveColour(ent, layerMap(d))), mixed);
+  const mixed = !!ent && new Set(propEnts(d).map((x) => PR.colourKey(x[1]))).size > 1;
+  const key = ent ? PR.effectiveColour(ent, layerMap(d)) : currentColour === 'bylayer' && d ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : currentColour;
+  const rgb = await pickColour(keyRgb(key), mixed);
   if (rgb) propSet('colour', rgbKey(rgb));
   else renderEdit();
 }
@@ -7072,6 +7171,14 @@ function buildPropsSection() {
   ui.propColour = h('select', { class: 'fld', 'aria-label': 'Colour', 'data-testid': 'prop-colour' });
   ui.propLt = h('select', { class: 'fld', 'aria-label': 'Line type', 'data-testid': 'prop-lt' });
   ui.propSwatch = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Pick colour', 'data-testid': 'prop-swatch', onclick: pickPropColour });
+  ui.propFill = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Fill colour', 'data-testid': 'prop-fill', onclick: async () => {
+    const d = editable(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
+    if (!ents?.length) return;
+    const rgb = await pickColour(keyRgb(ents[0].fill || currentFill), !ents[0].fill || ents.some((e) => e.fill !== ents[0].fill));
+    if (rgb && editable() === d) applyFill(rgbKey(rgb));
+  } });
+  ui.propFillLabel = h('span', { class: 'lbl' });
+  ui.propFillRow = row('Fill', ui.propFill, ui.propFillLabel);
   ui.propLayer.addEventListener('change', () => propSet('layer', ui.propLayer.value));
   ui.propColour.addEventListener('change', () => ui.propColour.value === 'custom' ? pickPropColour() : propSet('colour', ui.propColour.value));
   ui.propLt.addEventListener('change', () => propSet('lt', ui.propLt.value));
@@ -7097,7 +7204,7 @@ function buildPropsSection() {
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
-  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), row('Line type', ui.propLt));
+  ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), ui.propFillRow, row('Line type', ui.propLt));
   ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch);
   ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo, ui.propButtons);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
@@ -7130,6 +7237,11 @@ function renderPropsPanel(d) {
     ui.propWidthInput.placeholder = width == null ? VARIES : typeof width === 'string' ? width : '';
   }
   if (none) return;
+  const closed = ents.filter(FI.closedOutline), fill = closed[0]?.fill;
+  ui.propFillRow.hidden = !closed.length;
+  ui.propFill.classList.toggle('no-fill', !fill);
+  ui.propFill.style.backgroundColor = fill ? colourCss(fill) : '';
+  ui.propFillLabel.textContent = closed.some((e) => e.fill !== fill) ? VARIES : fill ? PR.colourLabel(fill) : 'No fill';
   ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
   setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...PR.colourOptions(sm.colour)], sm.colour == null ? '' : sm.colour);
@@ -7189,6 +7301,11 @@ function propWidthSet(value) {
 }
 function propSet(what, value) {
   const d = editable();
+  if (what === 'colour' && validColourKey(value)) {
+    if (!d?.sel.size) { currentColour = value; usedColour(value); renderRibbon(); return; }
+    const keys = new Set(propEnts(d).map(([, ent]) => PR.effectiveColour(PR.withColour(ent, value), layerMap(d))));
+    for (const key of keys) usedColour(key);
+  }
   if (!d || value === '') { renderEdit(); return; }
   const same = (ent) => (what === 'layer' ? ent.layer === value : what === 'colour' ? PR.colourKey(ent) === value : PR.ltKey(ent) === value);
   if (propEnts(d).every((x) => same(x[1]))) { renderEdit(); return; }
@@ -7243,9 +7360,139 @@ function selectSimilarMenu(btn) {
   popMenu(b.left, b.bottom + 2, items);
 }
 
+function fillTargets(d, targets, key) {
+  const keep = new Set(d.sel);
+  const eligible = targets.filter((i) => FI.closedOutline(d.raw.entities[i]) && !lockedEnt(d, i));
+  const changed = new Set(eligible.filter((i) => (d.raw.entities[i].fill || null) !== key));
+  if (changed.size) {
+    commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill');
+    setSel(d, keep);
+    if (key) usedColour(key);
+  }
+  renderEdit(); renderRibbon();
+  note(`${changed.size} outline${changed.size === 1 ? '' : 's'} ${key ? 'filled' : 'cleared'}` + (eligible.length < targets.length ? '; open shapes or locked outlines skipped' : '') + '. Ctrl+Z takes it back');
+}
+function applyFill(key) {
+  if (key) currentFill = key;                          // only an actual fill (fillTargets, the Fill tool) joins the recents
+  const d = editable();
+  if (d?.sel.size) fillTargets(d, [...d.sel], key);
+  else note(key ? 'Current fill colour: ' + PR.colourLabel(key) : 'Select closed outlines to remove their fills');
+}
+function startColourTool(kind) {
+  const d = editable();
+  if (!d) { note('Fill and Eyedropper work on a drawing tab'); return; }
+  setTool('select'); state.match = null;
+  state.colourTool = { kind, d, source: null };
+  renderEdit(); renderRibbon(); paintOverlay();
+  note(kind === 'fill' ? 'Fill: click inside a closed outline; Esc ends' : 'Eyedropper: click a source object; Esc ends');
+  renderCommand();
+}
+function closedAt(d, p) {
+  const seen = new Set();
+  for (let k = d.fl.items.length - 1; k >= 0; k--) {
+    const it = d.fl.items[k], i = it.e;
+    if (seen.has(i) || !itemVisible(it, d.off) || (it.ps ? 1 : 0) !== spaceOf(d.fl) || hidIdx(d)?.has(i) || lockedEnt(d, i)) continue;
+    if (p[0] < it.b[0] || p[0] > it.b[2] || p[1] < it.b[1] || p[1] > it.b[3]) continue;
+    seen.add(i);
+    if (FI.closedOutline(d.raw.entities[i]) && FI.containsPoint(FI.boundary(d.raw.entities[i]), p)) return i;
+  }
+  return -1;
+}
+function colourToolClick(d, p) {
+  const tool = state.colourTool;
+  if (tool.kind === 'fill') {
+    const i = closedAt(d, p);
+    if (i < 0) { note('Not one closed outline: Join first'); return; }
+    fillTargets(d, [i], currentFill); return;
+  }
+  const hit = Math.max(closedAt(d, p), hitAt(d, p));
+  if (hit < 0 || d.raw.entities[hit].layer === Ed.DIM_LAYER) { note('Eyedropper: click an object; Esc ends'); return; }
+  if (!tool.source) { tool.source = PR.withColour(d.raw.entities[hit], PR.effectiveColour(d.raw.entities[hit], layerMap(d))); note('Eyedropper: click targets one by one; Esc ends'); return; }
+  const next = FI.copyColours(tool.source, d.raw.entities[hit], layerMap(d));
+  if (!FI.coloursEqual(next, d.raw.entities[hit])) commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours');
+  usedColour(PR.colourKey(next)); if (next.fill) usedColour(next.fill);
+  renderEdit(); note('Eyedropper: colours copied; click the next target or Esc');
+}
+
+// -- Colour readout (TODO 148d): a box beside the cursor shows the true colour under it; a click copies the hex; Esc or another tool ends it
+let readout = null;
+const readoutBtn = (e) => !!e.target.closest?.('button[aria-label=Readout]');
+const onSheet = (t) => !!t && (t === ui.canvas || t === ui.dcanvas || ui.svg.contains(t) || ui.ovlWrap.contains(t));     // the drawing surface, not the panels, rulers, zoom box or command bar over it
+function toggleReadout() { if (readout) { endReadout(); note('Readout ended'); } else startReadout(); }
+function startReadout() {
+  setTool('select'); state.match = null;
+  const box = h('div', { class: 'readout-box', 'data-testid': 'readout-box', hidden: true });
+  document.body.append(box);
+  const swallow = (e) => { if (e.button === 0 && onSheet(e.target)) { e.preventDefault(); e.stopPropagation(); } };       // reading is not clicking: the drawing does not see the left button (the middle button still pans)
+  const stops = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'dblclick'];
+  const on = {
+    pointermove: (e) => { readout.at = [e.clientX, e.clientY]; if (!readout.raf) readout.raf = requestAnimationFrame(() => { readout.raf = 0; readoutShow(); }); },
+    click: (e) => { if (readoutBtn(e)) return; if (onSheet(e.target)) { swallow(e); readoutCopy(); } else endReadout(); },       // a click anywhere else ends the readout and then acts as usual
+    keydown: (e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); endReadout(); note('Readout ended'); } },
+  };
+  for (const [t, fn] of Object.entries(on)) document.addEventListener(t, fn, true);
+  for (const t of stops) document.addEventListener(t, swallow, true);
+  readout = { box, on, stops, swallow, at: null, rgb: null, raf: 0 };
+  renderRibbon();
+  note('Readout: hover for the colour, click copies its hex; Esc ends');
+}
+function endReadout() {
+  if (!readout) return;
+  const { box, on, stops, swallow, raf } = readout;
+  for (const [t, fn] of Object.entries(on)) document.removeEventListener(t, fn, true);
+  for (const t of stops) document.removeEventListener(t, swallow, true);
+  cancelAnimationFrame(raf); box.remove(); readout = null; renderRibbon();
+}
+/** [r, g, b] of what is at the pointer: a drawing's or layout part's item (its line, else its fill), the canvas pixel (empty sheet, picture), or the element's own background. */
+function colourAt(cx, cy) {
+  const els = document.elementsFromPoint(cx, cy), d = curDoc();
+  if (d && onSheet(els[0])) {                                                                          // the item as the page paints it (blocks, locked layers and layout parts too); else the pixel
+    const p = toDrawing(d, cx, cy), ed = d.lay ? null : editable() && edIndex(d);
+    const rgb = d.lay ? !state.hidden.parts && colourAtLayout(d.lay.parts, placedNow.filter((pl) => !partHid(pl)), p[0], p[1], pickTol(d)) : ed && colourAtItem(ed, p[0], p[1], pickTol(d));
+    if (rgb) return rgb;
+  }
+  for (const el of els) {
+    if (el === ui.dcanvas) {
+      try {
+        const r = el.getBoundingClientRect(), k = el.width / r.width;
+        const px = el.getContext('2d').getImageData(Math.floor((cx - r.left) * k), Math.floor((cy - r.top) * k), 1, 1).data;
+        if (px[3]) return [px[0], px[1], px[2]];
+      } catch { /* unreadable canvas: look at what is behind it */ }
+      continue;
+    }
+    const cs = getComputedStyle(el), rgb = cssRgb(el instanceof SVGElement ? cs.fill : cs.backgroundColor);
+    if (rgb) return rgb;
+  }
+  return null;
+}
+function readoutShow() {
+  const { box, at } = readout;
+  if (!at) return;
+  const rgb = readout.rgb = colourAt(at[0], at[1]);
+  box.hidden = !rgb;
+  if (!rgb) return;
+  const v = readoutValues(rgb);
+  const sq = h('span', { class: 'readout-sq' });
+  sq.style.background = v.hex;
+  box.replaceChildren(sq, h('div', { class: 'readout-txt' },
+    h('div', null, `R ${v.rgb[0]}  G ${v.rgb[1]}  B ${v.rgb[2]}`), h('div', null, `C ${v.cmyk[0]}  M ${v.cmyk[1]}  Y ${v.cmyk[2]}  K ${v.cmyk[3]}`), h('div', { class: 'readout-hex' }, v.hex)));
+  const w = box.offsetWidth, ht = box.offsetHeight, gap = 18;                                     // down-right of the cursor; the other side near the window edge
+  box.style.left = (at[0] + gap + w > innerWidth ? at[0] - gap - w : at[0] + gap) + 'px';
+  box.style.top = (at[1] + gap + ht > innerHeight ? at[1] - gap - ht : at[1] + gap) + 'px';
+}
+function readoutCopy() {
+  const rgb = readout?.at && colourAt(readout.at[0], readout.at[1]);
+  if (!rgb) return;
+  const hex = readoutValues(rgb).hex;
+  usedColour(rgbKey(rgb));
+  const fail = () => note('Could not copy ' + hex + ' to the clipboard');
+  try { navigator.clipboard.writeText(hex).then(() => note('Copied ' + hex), fail); } catch { fail(); }
+}
+
 // -- Match properties: the first selected shape is the source; each shape clicked takes its layer, colour and line type; Esc ends
 function matchWords(ent) { return `${PR.typeName(ent)} (${ent.layer}, ${PR.colourLabel(PR.colourKey(ent))}, ${PR.ltLabel(PR.ltKey(ent))})`; }
 function startMatch() {
+  state.colourTool = null;
   const d = editable();
   if (!d) return;
   const src = [...d.sel].find((e) => d.raw.entities[e] && d.raw.entities[e].layer !== Ed.DIM_LAYER);
@@ -7274,6 +7521,7 @@ function matchClick(d, p) {
   commit(d, { entities: d.raw.entities.map((x, i) => (i === hit ? PR.matchProps(srcEnt, x) : x)), blocks: d.raw.blocks }, 'Match properties');
   setSel(d, keep);
   note(`Matched ${PR.typeName(dst).toLowerCase()} to ${matchWords(srcEnt)}. Ctrl+Z takes it back; click the next or Esc`);
+  usedColour(PR.effectiveColour(srcEnt, layerMap(d)));
 }
 
 // ---- Contour (TODO 35; mock-up R4d, Option A): a floating panel; the preview is drawn on the sheet; Apply adds the outlines as lines and arcs on the layer "Contour" ----
@@ -7500,6 +7748,7 @@ function applyContour() {
   d.newLayer = CONTOUR_LAYER;
   setSel(d, keep);
   renderLayers();
+  usedColour(contourKey(d));
   note(`Contour: ${res.made} new outline${res.made === 1 ? '' : 's'} (${ents.length} line${ents.length === 1 ? '' : 's'} and arcs) on the layer ${CONTOUR_LAYER}` + (res.stopped ? `. Step ${res.stopped.step} would close up` : '') + '. Ctrl+Z takes them away');
 }
 
@@ -7529,6 +7778,7 @@ function applyLayContour() {
   selLooseMany = lay.placed.map((p, i) => (srcs.includes(p) || add.includes(p) ? i : -1)).filter((i) => i >= 0);
   gCommit(g); update();
   say(`Contour: ${add.length} part${add.length === 1 ? '' : 's'} got ${cc.made === add.length ? 'an outline' : `${cc.made} outlines`} on the layer ${CONTOUR_LAYER}, attached to ${add.length === 1 ? 'it' : 'them'}${old.length ? ' (the old contour was replaced)' : ''}. Ctrl+Z takes it away`, loosenedNote(g));
+  usedColour(contourKey(d));
 }
 
 /** The outlines of a drawing, biggest first: what is joined end to end and at least 5 × 5 mm ({ set, w, h }). Null until the drawing has been read for picking. Kept dimensions are not outlines. */
@@ -7690,6 +7940,7 @@ function renderEdit() {
   }
   ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = !on && !lib; ui.outSec.hidden = !on || lib;
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
+  if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
   if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
   if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }
@@ -8036,6 +8287,7 @@ async function init() {
     const mode = saved.find((r) => r.id === 'workArea')?.mode;
     if (WORK_AREAS.includes(mode)) state.workArea = mode;
     const rb = saved.find((r) => r.id === 'ribbon');
+    strip.on = saved.find((r) => r.id === 'swatchStrip')?.on !== false;
     if (FOLDS.includes(rb?.mode)) ribbon.mode = rb.mode;
     if (['full', 'titles'].includes(rb?.last)) ribbon.last = rb.last;
     ribbon.rail = rb?.rail !== false; ribbon.guideSnap = rb?.guideSnap !== false;
@@ -8045,6 +8297,8 @@ async function init() {
   } catch { /* storage may be blocked */ }
   try { state.shapingKeepOriginals = (await shapingStore.all()).some((r) => r.id === 'keepOriginals' && r.on === true); } catch { /* storage may be blocked */ }
   const app = document.getElementById('app');
+  try { strip.recent = recentColours(JSON.parse(localStorage.getItem('pd-recent-colours'))); } catch { /* storage may be blocked */ }
+  try { strip.saved = await swatches.all(); } catch { /* storage may be blocked */ }
   state.contourCfg = loadContourCfg();
   state.text.cfg = loadTextCfg();
   state.dimStyles = loadDimStyles();
@@ -8054,7 +8308,7 @@ async function init() {
   const balDock = buildBalloonDock();                      // before the canvas: its picture-only chip and sheet switcher sit on the canvas
   app.append(h('div', { class: 'shell' },
     buildMenus(), buildTabs(), buildRibbon(), buildPartRibbon(), buildSelbar(), buildTextbar(),
-    h('div', { class: 'main' }, buildRail(), buildCanvas(), buildPanel()),
+    h('div', { class: 'main' }, buildRail(), buildCanvas(), buildPanel(), buildSwatchStrip()),
     balDock, cmdLog, buildStatus()));
   document.querySelector('.rail').hidden = !ribbon.rail;
   renderTabs();

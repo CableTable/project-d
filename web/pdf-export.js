@@ -300,7 +300,7 @@ function drawPage(src, o, plan, p, artBox) {
   const g = p._g, geo = p._geo, check = o.page === 'check', tile = geo.tile;
   const neg = o.negative && !check, mirror = o.mirror && !check;
   const bg = neg ? BLACK : WHITE, markInk = neg ? WHITE : BLACK;
-  const inkOf = (css) => (neg ? WHITE : o.black ? BLACK : printInk(css));
+  const inkOf = (css, exact) => (neg ? WHITE : o.black ? BLACK : exact ? rgbOf(css) : printInk(css));
   const page = new Page(p.w, p.h);
   // sheet mm → page mm
   const flip = mirror ? [-1, 0, 0, 1, W, 0] : [1, 0, 0, 1, 0, 0];
@@ -334,7 +334,7 @@ function drawPage(src, o, plan, p, artBox) {
       page.strokeColor(inkOf(it.css)); page.lineWidth(w); page.dash(dash || []);
       trace(page, it.ops, M); page.stroke();
     } else if (it.k === 'p') {
-      page.fillColor(it.a != null && it.a < 1 ? mix(inkOf(it.css), bg, it.a) : inkOf(it.css));
+      page.fillColor(it.a != null && it.a < 1 ? mix(inkOf(it.css, it.exact), bg, it.a) : inkOf(it.css, it.exact));
       trace(page, it.ops, M); page.fill(true);
     } else if (it.k === 'w') {
       page.fillColor(bg); trace(page, it.ops, M); page.fill(true);

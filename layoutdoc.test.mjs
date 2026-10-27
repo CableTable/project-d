@@ -14,6 +14,27 @@ function test(name, fn) { fn(); n++; console.log('ok', name); }
 const load = (f) => readDxf(decodeDxf(readFileSync('fixtures/' + f)));
 const R = (x) => Math.round(x * 1e6) / 1e6;
 
+test('swatch strip recolours a private part including nested blocks, keeps geometry, source and saved colour', () => {
+  const raw = newDoc(4);
+  addBlock(raw, 'inner', [line(0, 0, 10, 10, { aci: 5 })]);
+  addEntities(raw, insert('inner', 0, 0), line(0, 10, 10, 0));
+  const part = LD.makePart('source', 'Bracket', raw, 1), before = structuredClone(raw);
+  const coloured = LD.withPartColour(part, 'tc:16746496', 'private');
+  assert.deepEqual(raw, before);
+  assert.equal(coloured.id, 'private');
+  assert.deepEqual(coloured.box, part.box);
+  assert.ok(coloured.raw.entities.every((e) => e.tc === 16746496));
+  assert.equal(coloured.raw.blocks.inner.entities[0].tc, 16746496);
+  assert.equal(LD.withPartColour(coloured, 'tc:16746496', 'again'), null);
+  const lay = LD.newLayout('Colours');
+  lay.parts = { source: part, private: coloured };
+  lay.placed = [placement1('source', 0, 0), placement1('private', 20, 0)];
+  const reopened = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))), 'Colours');
+  const saved = reopened.parts[reopened.placed[1].partId];
+  assert.ok(saved.raw.entities.every((e) => e.tc === 16746496));
+  assert.equal(Object.values(saved.raw.blocks)[0].entities[0].tc, 16746496);
+});
+
 /** A rectangle drawing w x h on layer OUT with one far-away dimension-layer line, as a document. */
 function plate(w, h, o = {}) {
   const d = newDoc(4);

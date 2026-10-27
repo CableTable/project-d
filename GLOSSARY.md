@@ -357,12 +357,12 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **True colour**: An exact RGB colour stored in DXF group 420, accompanied by the nearest indexed colour (ACI, group 62) for older readers.
 
-**Swatch strip**: The column of swatches at the right edge of the window: default colours on top, the last 12 colours used at the bottom.
+**Swatch strip**: The column of swatches at the right edge of the window: default colours on top, then the saved swatches (Add to Swatches), then the last 12 colours used at the bottom.
 
 **Fill**: A solid colour inside a closed outline, part of that outline.
 
 **Fill tool**: The tool that puts a fill inside a closed outline.
 
-**Eyedropper**: The tool that picks a colour from an object and applies it to the others you click.
+**Eyedropper**: The tool that picks the line colour and fill from one object and applies them to the others you click.
 
-**Colour readout**: The tool that shows the R G B, C M Y K and hex of whatever is under the cursor inside the app; a click copies the hex.
+**Colour readout**: The tool that shows the R G B, C M Y K and hex of the object, picture pixel or panel under the cursor inside the app; a click copies the hex.

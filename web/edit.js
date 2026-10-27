@@ -194,14 +194,20 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
 
 /** The entity under (x, y) within tol: the nearest line or arc, else a filled or text item whose box holds the point. -1 if none. */
 export function hitEntity(ed, x, y, tol) {
+  const i = hitItem(ed, x, y, tol);
+  return i < 0 ? -1 : ed.items[i].e;
+}
+
+/** hitEntity's pick, as the item index (its own colour, inside a block too). -1 if none. */
+export function hitItem(ed, x, y, tol) {
   const p = pickAt(ed.ix, x, y, tol, (i) => ed.vis[i] === 1);
-  if (p.ent) return ed.items[p.ent.it].e;
+  if (p.ent) return p.ent.it;
   let best = -1, bestA = Infinity;
   for (const i of ed.areas) {
     const b = ed.items[i].b;
     if (!ed.vis[i] || x < b[0] - tol || x > b[2] + tol || y < b[1] - tol || y > b[3] + tol) continue;
     const a = (b[2] - b[0] + 2 * tol) * (b[3] - b[1] + 2 * tol);
-    if (a < bestA) { bestA = a; best = ed.items[i].e; }
+    if (a < bestA) { bestA = a; best = i; }
   }
   return best;
 }

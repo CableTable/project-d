@@ -27,17 +27,17 @@ function vertices(e) {
 export function explodePolyline(e) {
   if (!['LWPOLYLINE', 'POLYLINE'].includes(e.type)) return null;
   if (val(e, 210) || val(e, 220) || e.type === 'POLYLINE' && (val(e, 70) & 8)) throw new Error('tilted polylines stay intact');
-  const pts = vertices(e), out = [], closed = val(e, 70) & 1;
-  const m = e.flip ? [-1, 0, 0, 1, 0, 0] : ID;
+  const pts = vertices(e), out = [], closed = val(e, 70) & 1, src = { ...e, fill: null };   // the pieces are open lines and arcs: no fill
+  const m =e.flip ? [-1, 0, 0, 1, 0, 0] : ID;
   for (let i = 0; i < pts.length - (closed ? 0 : 1); i++) {
     const p = pts[i], q = pts[(i + 1) % pts.length];
     const a = p[2] ? bulgeArc(p, q, p[2]) : null;
     if (a) {
       const [x, y] = mapply(m, a[0], a[1]), flip = !!a[5] !== !!e.flip;
       const t = (v) => angle(Math.atan2(Math.sin(v), Math.cos(v) * m[0]));
-      out.push(arc(x, y, a[2], t(a[flip ? 4 : 3]), t(a[flip ? 3 : 4]), e));
+      out.push(arc(x, y, a[2], t(a[flip ? 4 : 3]), t(a[flip ? 3 : 4]), src));
     } else {
-      out.push(line(...mapply(m, p[0], p[1]), ...mapply(m, q[0], q[1]), e));
+      out.push(line(...mapply(m, p[0], p[1]), ...mapply(m, q[0], q[1]), src));
     }
   }
   return out;
