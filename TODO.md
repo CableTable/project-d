@@ -262,6 +262,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 147. ✅ **Contour on a layout part** (M, ticket T53; grill answers in support/tickets.md T53): select placed parts on a layout, run `contour` / `co`; outer outline only; each part its own contour, grouped with it. Running it again on a part replaces that part's contour (one undo). S23 order: after 68.
 148. **Colour tools** (L, ticket T55; grill answers in support/tickets.md T55), one ticket each, in order: (a) colour picker dialog (HSB / RGB / CMYK / hex), (b) swatch strip with the last 12 colours, (c) Fill tool and Eyedropper, (d) screen colour readout. S23 order: after 147. **Grill round 2 done (2026-10-26)**: DECISIONS rows "Colour picker everywhere", "Colour in the DXF", "Pick from screen", "Swatch strip place", "Fill belongs to its outline".
     148a. ✅ (built, 2026-10-26) Colour picker dialog everywhere, synchronised HSB / RGB / CMYK / hex, PC-remembered Add to Swatches, optional Pick from screen, exact RGB DXF with nearest ACI fallback; unit / browser checks and light / dark screenshots.
+    148b. ✅ (built, 2026-10-27, Knight + Bishop review fixes) Swatch strip at the right edge: standard, saved and last 12 recent colours; left click = line colour, Alt + right click removes a saved swatch; one coloured part copy per source part on layouts.
     148e. Holes in fills: a closed shape inside a filled outline cuts a hole (even-odd, CorelDRAW way). After 148c (grill S24).
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
