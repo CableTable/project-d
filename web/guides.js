@@ -37,7 +37,7 @@ export const tickLabel = (v) => String(+Number(v).toFixed(3)).replace(/^-0$/, '0
 /**
  * Lands a box on the guides: the left edge, middle or right edge of the box on a vertical guide, the bottom, middle or top on a
  * horizontal one, whichever is nearest and within `tol` mm. skipX / skipY leave an axis alone (a straight drag).
- * → { dx, dy, hits: [{ axis, mm }] } — the move to add, and the guides it landed on.
+ * → { dx, dy, hits: [{ axis, mm, ... }] } — the move to add, and the guides it landed on (metadata kept; first wins ties).
  */
 export function snapBoxToGuides(box, guides, tol, { skipX = false, skipY = false } = {}) {
   const out = { dx: 0, dy: 0, hits: [] };
@@ -49,8 +49,8 @@ export function snapBoxToGuides(box, guides, tol, { skipX = false, skipY = false
     }
     return d === null ? null : { d, g };
   };
-  if (!skipX) { const b = best([box[0], (box[0] + box[2]) / 2, box[2]], 'x'); if (b) { out.dx = r6(b.d); out.hits.push({ axis: 'x', mm: b.g.mm }); } }
-  if (!skipY) { const b = best([box[1], (box[1] + box[3]) / 2, box[3]], 'y'); if (b) { out.dy = r6(b.d); out.hits.push({ axis: 'y', mm: b.g.mm }); } }
+  if (!skipX) { const b = best([box[0], (box[0] + box[2]) / 2, box[2]], 'x'); if (b) { out.dx = r6(b.d); out.hits.push({ ...b.g }); } }
+  if (!skipY) { const b = best([box[1], (box[1] + box[3]) / 2, box[3]], 'y'); if (b) { out.dy = r6(b.d); out.hits.push({ ...b.g }); } }
   return out;
 }
 

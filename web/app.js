@@ -52,6 +52,7 @@ import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } fro
 import * as PL from './place.js';
 import * as A from './arrange.js';
 import * as G from './guides.js';
+import { sheetAlignmentLines, snapBoxToAlignment, alignmentSegments } from './align.js';
 import * as CT from './contour.js';
 import * as LC from './layoutcontour.js';
 import * as OB from './objects.js';
@@ -2286,7 +2287,7 @@ function drawGuides() {
   if (!lay || !lay.s.guidesShow || !lay.s.guides.length) { g.replaceChildren(); return; }
   const { w, h: ch } = canvasSize(), k = 1 / view.scale, H = state.sheetH, out = [];
   const x0 = view.ox, x1 = view.ox + w * k, y0 = view.oy, y1 = view.oy + ch * k;
-  const snapped = (pdrag && pdrag.snapped) || [];
+  const snapped = ((pdrag && pdrag.snapped) || []).filter((hit) => !hit.span);
   lay.s.guides.forEach((gd, i) => {
     const hot = snapped.some((q) => q.axis === gd.axis && Math.abs(q.mm - gd.mm) < 1e-6);
     const going = gdrag && gdrag.idx === i && gdrag.over;
@@ -2306,13 +2307,24 @@ function drawGuides() {
   g.replaceChildren(...out);
 }
 
-/** A part being dragged near a guide lands on it (the SNAP toggle also switches this off). → the move to use and the guides it landed on. */
-function snapToGuides(p, dx, dy) {
+/** SNAP gates all placement snapping; Snap to guides gates only Guidelines. */
+function snapPlacedDrag(p, dx, dy) {
   const lay = curLay();
-  if (!lay || !state.snap || !ribbon.guideSnap || !lay.s.guidesShow || !lay.s.guides.length) return { dx, dy, hit: null };
+  if (!lay || !state.snap || p.skipSnap) return { dx, dy, hit: null };
   const u = A.unionBox(p.items.map((x) => placedBox(x.part, x.orig))), straight = !!p.straight;
-  const sn = G.snapBoxToGuides([u[0] + dx, u[1] + dy, u[2] + dx, u[3] + dy], lay.s.guides, 6 / view.scale, { skipX: straight && dx === 0, skipY: straight && dy === 0 });
+  const guidelines = ribbon.guideSnap && lay.s.guidesShow ? lay.s.guides : [];
+  const sn = snapBoxToAlignment([u[0] + dx, u[1] + dy, u[2] + dx, u[3] + dy], sheetAlignmentLines(lay.s), guidelines, 6 / view.scale, { skipX: straight && dx === 0, skipY: straight && dy === 0 });
   return { dx: r2(dx + sn.dx), dy: r2(dy + sn.dy), hit: sn.hits.length ? sn.hits : null };
+}
+
+function drawAlignmentGuides() {
+  const p = pdrag, g = ui.gAlignment;
+  if (!g) return;
+  if (!p || !p.moved || p.kind !== 'move' || !p.snapped) { g.replaceChildren(); return; }
+  const box = A.unionBox(p.items.map((x) => placedBox(x.part, x.orig))).map((v, i) => v + (i % 2 ? p.dy : p.dx));
+  g.replaceChildren(...alignmentSegments(box, p.snapped).map(([x1, y1, x2, y2]) => s('line', {
+    class: 'alignment-guide', x1, y1: state.sheetH - y1, x2, y2: state.sheetH - y2,
+  })));
 }
 
 /** One change to the guides, kept for undo: fn() changes lay.s.guides. */
@@ -2469,12 +2481,12 @@ function queueUpdate() {
 function flushUpdate() { if (updQueued) { cancelAnimationFrame(updQueued); updQueued = 0; } }
 
 /** A press on the sheet of a layout. → true when it was on a placed part, a turn arrow or the pivot. */
-function placedDown(e) {
+function placedDown(e, cycled = false) {
   const lay = curLay();
   let tgt = e.target;
   if (tgt && tgt.closest && tgt.closest('[data-guide]')) tgt = document.elementsFromPoint(e.clientX, e.clientY).find((el) => !el.closest('[data-guide]')) || tgt;       // a locked guide does not catch the press: what is under it does
   if (!lay || !tgt || !tgt.closest) return false;
-  const rotEl = tgt.closest('[data-rot]'), pivEl = tgt.closest('[data-pivot]'), hit = tgt.closest('[data-i]');
+  const rotEl = !cycled && tgt.closest('[data-rot]'), pivEl = !cycled && tgt.closest('[data-pivot]'), hit = cycled ? ui.gParts.querySelector(`[data-i="${state.sel}"]`) : tgt.closest('[data-i]');
   const here = sheetAt(e.clientX, e.clientY);
   let s = selectedPlaced();
   if (s && rotEl) {
@@ -2486,17 +2498,17 @@ function placedDown(e) {
   if (s && pivEl) { pdrag = { kind: 'pivot' }; return true; }
   if (hit) {
     const i = Number(hit.dataset.i), cur = selIdxs(), inSel = cur.includes(i);
-    const add = e.shiftKey && !e.ctrlKey && !e.metaKey;            // Shift-click adds a part or takes it out (a Shift-drag still moves them straight)
+    const add = !cycled && e.shiftKey && !e.ctrlKey && !e.metaKey;            // Shift-click adds a part or takes it out (a Shift-drag still moves them straight)
     const grp = groupIdxs(i);
     let toggle = null, was = cur.length === 1 && cur[0] === i && grp.length === 1;
     if (add) {
       if (inSel) toggle = i;
       else { selectMany([...cur, ...grp.filter((k) => !cur.includes(k))], i); update(); }
-    } else if (!inSel || !grp.every((k) => cur.includes(k))) { selectMany(grp, i); update(); }
+    } else if (!cycled && (!inSel || !grp.every((k) => cur.includes(k)))) { selectMany(grp, i); update(); }
     s = selectedPlaced();
     if (!s) return true;
     const items = selItems();
-    pdrag = { kind: 'move', cx: e.clientX, cy: e.clientY, start: here, items: items.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) })), copy: e.ctrlKey || e.metaKey, wasSel: was && !add, add, toggle, hitI: i, moved: false, g: null, idx: null, idxs: null, pivot0: [state.pivot.x, state.pivot.y] };
+    pdrag = { kind: 'move', cx: e.clientX, cy: e.clientY, start: here, items: items.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) })), copy: e.ctrlKey || e.metaKey, skipSnap: e.altKey, wasSel: was && !add, add, toggle, hitI: i, moved: false, g: null, idx: null, idxs: null, pivot0: [state.pivot.x, state.pivot.y] };
     return true;
   }
   if (state.mode === 'rotate') { state.mode = 'select'; update(); }
@@ -2512,6 +2524,8 @@ function placedMove(e) {
     return;
   }
   if (p.kind === 'move') {
+    p.pointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey };
+    p.skipSnap ||= e.altKey;
     if (!p.moved) {
       if (Math.hypot(e.clientX - p.cx, e.clientY - p.cy) <= 4) return;
       if (!p.copy && p.items.some((x) => x.orig.lock)) { pdrag = null; note(LOCKED); return; }
@@ -2525,7 +2539,7 @@ function placedMove(e) {
     const to = e.shiftKey || state.ortho ? Ed.orthoLock(p.start, here) : here;           // Shift: straight along X or Y from where it was picked up
     let dx = r2(to[0] - p.start[0]), dy = r2(to[1] - p.start[1]);
     p.straight = !!(e.shiftKey || state.ortho);
-    const sn = snapToGuides(p, dx, dy);
+    const sn = snapPlacedDrag(p, dx, dy);
     dx = sn.dx; dy = sn.dy; p.snapped = sn.hit;
     p.items.forEach((x, k) => { lay.placed[p.idxs[k]] = PL.translate(p.base[k], dx, dy); });
     p.dx = dx; p.dy = dy;
@@ -3844,16 +3858,18 @@ function drawSheet() {
   ui.gDims = s('g', { 'data-group': 'dims' }, lay ? dimensions() : []);
   ui.gGaps = s('g', { 'data-group': 'gaps' }, gapShapes(L));
   ui.gGuides = s('g', { 'data-group': 'guides' });
+  ui.gAlignment = s('g', { 'data-group': 'alignment' });
   ui.gSheetSel = s('g', { class: 'sheetsel', 'data-group': 'sheetsel' });
   ui.svg.replaceChildren(
     s('rect', { class: 'sheet-shadow', x: 5, y: 7, width: W, height: H }),
     s('rect', { class: 'sheet', x: 0, y: 0, width: W, height: H }),
     ...gripperBand(),
     s('rect', { class: 'printable', x: area.x, y: area.y, width: area.w, height: area.h }),
-    ui.gParts, ui.gMarks, ui.gDims, ui.gGaps, ui.gGuides, ui.gTools, ui.gSheetSel);
+    ui.gParts, ui.gMarks, ui.gDims, ui.gGaps, ui.gGuides, ui.gTools, ui.gAlignment, ui.gSheetSel);
   drawTools();
   drawSheetSel();
   drawGuides();
+  drawAlignmentGuides();
   drawRulers();
   applyHidden();
 }
@@ -3951,6 +3967,7 @@ function applyView(gesture = false) {
   drawTools();
   drawSheetSel();
   drawGuides();
+  drawAlignmentGuides();
   drawRulers();
   paintOverlay(gesture);
 }
@@ -4133,15 +4150,30 @@ function attachCanvasEvents() {
     suppressAltUp = true;
     e.preventDefault(); e.stopImmediatePropagation();
     document.activeElement?.blur();
+    const moving = curLay() ? selItems().map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) })) : [];
     cycleSelect(e);
+    if (curLay() && selectionCycle && placedDown(e, true)) {
+      // Alt-click cycles; dragging a member keeps the selection it was pressed in.
+      if (moving.some((x) => x.i === selectionCycle.hit)) pdrag.items = moving;
+      capture(c, e);
+    }
   }, true);
-  document.addEventListener('keydown', (e) => { if (e.key !== 'Alt') suppressAltUp = false; }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Alt') suppressAltUp = false;
+    if (e.key === 'Alt' && pdrag?.kind === 'move') {
+      pdrag.skipSnap = true;
+      if (pdrag.pointer) placedMove(pdrag.pointer);
+    }
+  }, true);
   document.addEventListener('keyup', (e) => {
     if (e.key === 'Alt') { if (suppressAltUp) e.preventDefault(); suppressAltUp = false; }
   }, true);
   window.addEventListener('blur', () => { suppressAltUp = false; });
   for (const type of ['pointerup', 'click', 'dblclick']) c.addEventListener(type, (e) => {
-    if (altPick && e.button === 0) { e.preventDefault(); e.stopImmediatePropagation(); }
+    if (altPick && e.button === 0) {
+      if (type === 'pointerup' && pdrag) { if (pdrag.moved) placedUp(); else pdrag = null; }
+      e.preventDefault(); e.stopImmediatePropagation();
+    }
   }, true);
   let pan = null, drag = null, lrub = null, wheelAt = 0;                        // lrub: a rubber band started on an empty bit of a layout's sheet
   c.addEventListener('wheel', (e) => {

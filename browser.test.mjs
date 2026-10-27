@@ -138,6 +138,98 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const lay = newLayout('Alignment 67a'), raw = newDoc(4);
+      addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      lay.parts.plate = makePart('plate', 'Plate', raw);
+      lay.s.gripLeft = 30; lay.s.gripRight = 40; lay.s.gripBottom = 50; lay.s.gripTop = 60;
+      lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }];
+      await q('picker').setInputFiles({ name: 'alignment-67a.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.locator('.dtab.on .tname').filter({ hasText: 'alignment-67a.dxf' }).waitFor();
+      await p.locator('[data-tool=select]').click();
+      const guides = p.locator('.alignment-guide');
+      const point = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox();
+        return { x: b.x + x * b.width / 1000, y: b.y + (700 - y) * b.width / 1000 };
+      };
+      const position = async () => [Number(await q('px').inputValue()), Number(await q('py').inputValue())];
+      const near = async (x, y, tol = .1) => {
+        const [px, py] = await position();
+        assert.ok(Math.abs(px - x) < tol && Math.abs(py - y) < tol, `${px},${py} != ${x},${y}`);
+      };
+      const start = async (x, y, keys = []) => {
+        const from = await point(250, 230), to = await point(x + 50, y + 30);
+        for (const key of keys) await p.keyboard.down(key);
+        await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 6 });
+        await p.waitForFunction(() => ['px', 'py'].some((id) => Number(document.querySelector(`[data-testid=${id}]`).value) !== 200));
+      };
+      const cancel = async () => {
+        await p.keyboard.press('Escape'); await p.mouse.up();
+        assert.equal(await guides.count(), 0); await near(200, 200);
+      };
+      // View's Guideline switch does not gate Alignment guides.
+      await p.locator('[data-ribbon-tab=View]').click();
+      await p.locator('.ribbon-body').getByRole('button', { name: 'Snap to guides', exact: true }).click();
+      const strokes = [];
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await start(3, 200); await guides.waitFor({ state: 'attached' }); await near(0, 200);
+        assert.ok((await guides.boundingBox()).height > 0, 'Alignment guide spans the sheet on screen');
+        const style = await guides.evaluate((el) => ({ stroke: getComputedStyle(el).stroke, dash: getComputedStyle(el).strokeDasharray, width: getComputedStyle(el).strokeWidth }));
+        assert.equal(style.dash, 'none'); assert.equal(style.width, '1px'); strokes.push(style.stroke);
+        assert.deepEqual(await guides.evaluate((el) => ['x1', 'y1', 'x2', 'y2'].map((k) => Number(el.getAttribute(k)))), [0, 700, 0, 0]);
+        await p.screenshot({ path: `${shotDir}/todo67a-guide-${theme}.png` });
+        await cancel();
+      }
+      assert.notEqual(strokes[0], strokes[1], 'light and dark Alignment guide tokens');
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      // Dropping makes one undo entry; Esc above makes none.
+      await start(3, 200); await near(0, 200); await p.mouse.up();
+      assert.equal(await guides.count(), 0); await p.keyboard.press('Control+z'); await near(200, 200);
+      await p.keyboard.press('Control+y'); await near(0, 200); await p.keyboard.press('Control+z');
+      // Alt held from the press and Alt pressed after a snap both bypass snapping for the drag.
+      await start(3, 200, ['Alt']); await near(3, 200, .8); assert.equal(await guides.count(), 0);
+      await p.keyboard.up('Alt');
+      const to = await point(54, 230); await p.mouse.move(to.x, to.y); await near(4, 200, .8); await cancel();
+      await start(3, 200); await near(0, 200); await p.keyboard.down('Alt');
+      await p.waitForFunction(() => !document.querySelector('.alignment-guide')); await near(3, 200, .8);
+      await p.keyboard.up('Alt'); await cancel();
+      await q('tog-snap').click();
+      await start(3, 200); await near(3, 200, .8); assert.equal(await guides.count(), 0); await cancel();
+      await q('tog-snap').click();
+      await start(3, 202, ['Shift']); await near(0, 200); await p.keyboard.up('Shift'); await cancel();
+      // Sheet centre and all four inner gripper edges, including a two-axis snap.
+      for (const [x, y, expectedX, expectedY, count] of [[452, 200, 450, 200, 1], [200, 322, 200, 320, 1], [32, 52, 30, 50, 2], [862, 200, 860, 200, 1], [200, 582, 200, 580, 1]]) {
+        await start(x, y); await near(expectedX, expectedY); assert.equal(await guides.count(), count); await cancel();
+      }
+      // Alt bypasses Guidelines too, while their separate switch remains functional.
+      await q('guide-add-v').click(); await q('guide-pos').fill('0'); await q('guide-pos').press('Enter');
+      await p.locator('[data-ribbon-tab=View]').click();
+      await p.locator('.ribbon-body').getByRole('button', { name: 'Snap to guides', exact: true }).click();
+      await start(3, 200); await near(0, 200);
+      assert.equal(await guides.count(), 0, 'Guideline wins the exact tie');
+      assert.equal(await p.locator('.guide.snapped').count(), 1); await cancel();
+      await start(3, 200, ['Alt']); await near(3, 200, .8);
+      assert.equal(await p.locator('.guide.snapped').count(), 0); assert.equal(await guides.count(), 0);
+      await cancel(); await p.keyboard.up('Alt');
+      lay.placed.push({ partId: 'plate', x: 400, y: 200, rot: 0 });
+      await q('picker').setInputFiles({ name: 'alignment-multi-67a.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.locator('.dtab.on .tname').filter({ hasText: 'alignment-multi-67a.dxf' }).waitFor();
+      await p.keyboard.press('Control+a');
+      await start(3, 200); await near(0, 200); assert.equal(await p.locator('.sel-box').count(), 2); await cancel();
+      await start(3, 200, ['Alt']); await near(3, 200, .8);
+      assert.equal(await p.locator('.sel-box').count(), 2, 'Alt-drag keeps the multi-part selection');
+      await p.mouse.up(); await p.keyboard.up('Alt');
+      assert.equal(await guides.count(), 0); await p.keyboard.press('Control+z'); await near(200, 200);
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
   await step('TODO 71a: drawing window and crossing boxes, live styles, Shift add, locked and hidden skip, Move pick', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
