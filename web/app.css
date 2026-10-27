@@ -316,6 +316,7 @@ select.fld { font-family: var(--sans); }
 .status > :not(.font-note) { flex-shrink: 0; white-space: nowrap; }
 .status .cb-echo, .status .cb-hint { flex-shrink: 1; min-width: 0; }
 .status .cb-hint { overflow: hidden; text-overflow: ellipsis; }
+.status .cb-hint.cycling { display: inline; }
 .status .coords { min-width: 210px; }
 .status .gap { flex: 1; }
 /* Dismissing the note must not resize the canvas and refit the drawing during a pick. */

@@ -206,6 +206,16 @@ export function hitEntity(ed, x, y, tol) {
   return best;
 }
 
+/** All hits with hitEntity's geometry rules, in paint order (topmost first). */
+export function hitEntities(ed, x, y, tol) {
+  const items = new Set(piecesNear(ed.ix, x, y, tol, (i) => ed.vis[i] === 1).map((p) => p.ent.it));
+  for (const i of ed.areas) {
+    const b = ed.items[i].b;
+    if (ed.vis[i] && x >= b[0] - tol && x <= b[2] + tol && y >= b[1] - tol && y <= b[3] + tol) items.add(i);
+  }
+  return [...new Set([...items].sort((a, b) => b - a).map((i) => ed.items[i].e))];
+}
+
 /** The nearest end point (of an open line, arc, polyline…) within tol of (x, y): { x, y } or null. */
 export function snapEnd(ed, x, y, tol) {
   const ix = ed.ix;
@@ -1109,11 +1119,12 @@ export function copyEntities(raw, selection, dx, dy) {
  * undoMany(n, current) / redoMany(n, current) go several steps at once.
  */
 export function createHistory(limit = 100) {
+  let revision = 0;
   let undo = [], redo = [];                                  // entries { s: the state to go back to, label: the step it undoes }
   const h = {
-    push(state, label = 'Edit') { undo.push({ s: state, label }); if (undo.length > limit) undo.shift(); redo = []; },
-    undo(current) { const e = undo.pop(); if (!e) return null; redo.push({ s: current, label: e.label }); return e.s; },
-    redo(current) { const e = redo.pop(); if (!e) return null; undo.push({ s: current, label: e.label }); return e.s; },
+    push(state, label = 'Edit') { revision++; undo.push({ s: state, label }); if (undo.length > limit) undo.shift(); redo = []; },
+    undo(current) { revision++; const e = undo.pop(); if (!e) return null; redo.push({ s: current, label: e.label }); return e.s; },
+    redo(current) { revision++; const e = redo.pop(); if (!e) return null; undo.push({ s: current, label: e.label }); return e.s; },
     /** Back n steps (1 to canUndo count): the state to restore, or null. */
     undoMany(n, current) { if (!(n >= 1) || n > undo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.undo(s); return s; },
     redoMany(n, current) { if (!(n >= 1) || n > redo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.redo(s); return s; },
@@ -1121,7 +1132,8 @@ export function createHistory(limit = 100) {
     labels() { return { past: undo.map((e) => e.label), future: redo.slice().reverse().map((e) => e.label) }; },
     get canUndo() { return undo.length > 0; },
     get canRedo() { return redo.length > 0; },
-    clear() { undo = []; redo = []; }
+    get revision() { return revision; },
+    clear() { revision++; undo = []; redo = []; }
   };
   return h;
 }

@@ -227,6 +227,10 @@ export function buildCmdUI(hooks) {
 
   return {
     hist, prompt, log, input, bar, fade, drawer, acts, echo, hint,
+    status: (text) => {
+      hint.classList.toggle('cycling', !!text);
+      hint.replaceChildren(...(text ? [text] : ['Just start typing on the drawing · ', h('kbd', null, 'F2'), ' history']));
+    },
     open, close, openNudge, toggleHistory, go, place,
     isOpen: () => !bar.hidden, historyOpen: () => !drawer.hidden,
     /** A command ran (by its name): Space on an empty bar repeats it. */
