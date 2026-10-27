@@ -33,7 +33,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     const now = Date.parse('2026-10-20T12:00:00Z'), asOf = now - 120_000;
     const reset5h = new Date(now + 3600_000).toISOString(), resetWeek = new Date(now + 5 * 86400_000).toISOString();
     const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
-    for (const a of ['Rook', 'Pip', 'Rowan']) {
+    for (const a of ['Rook', 'Pip', 'King', 'Rowan']) { // 'Pip': a cache written before the rename to Bishop
       for (const [window, used, reset] of [['5h', 20, reset5h], ['week', 10, resetWeek]]) {
         rows.push(`${a},role,model,${window},${used},,,${reset},${new Date(asOf).toISOString()}`);
       }
@@ -52,12 +52,13 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     `);
     const output = execFileSync(process.execPath, ['--import', './guard.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000 });
     const lines = output.trim().split('\n');
-    assert.equal(lines.length, 3);
-    for (const [i, agent] of ['Rook', 'Bishop', 'Knight'].entries()) {
+    assert.equal(lines.length, 4);
+    for (const [i, agent] of ['Rook', 'Bishop', 'King', 'Knight'].entries()) {
       assert.ok(lines[i].startsWith(`${agent}: 5h 20% (Resets Tue 18:30) · week 10%`));
       assert.ok(lines[i].endsWith('· ~35% at reset (as of 17:28 IST, 2 min old)'));
     }
     assert.match(lines[1], /10% of 28% cap/);
+    assert.doesNotMatch(lines[2], /cap/);
 
     mkdirSync(join(repo, '.codex', 'sessions'), { recursive: true });
     writeFileSync(join(repo, '.codex', 'sessions', 'reading.jsonl'), JSON.stringify({
@@ -72,7 +73,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       let calls = 0;
       process.env.CLAUDE_CONFIG_DIR = 'account2-test';
       child.execSync = (command, { env }) => {
-        assert.equal(env.CLAUDE_CONFIG_DIR, command.includes('claude2.cmd') ? 'account2-test' : undefined);
+        assert.equal(env.CLAUDE_CONFIG_DIR, /claude[23]\.cmd/.test(command) ? 'account2-test' : undefined);
         assert.ok(env.PATH === process.env.PATH);
         assert.equal(process.env.CLAUDE_CONFIG_DIR, 'account2-test');
         calls++; return JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: {
@@ -82,7 +83,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       os.homedir = () => process.cwd();
       syncBuiltinESMExports();
       Date.now = () => ${now};
-      process.on('exit', () => { if (calls !== 2) process.exitCode = 1; });
+      process.on('exit', () => { if (calls !== 3) process.exitCode = 1; });
     `);
     for (const file of ['limits.csv', 'history.csv']) {
       for (const missing of [false, true]) {
@@ -94,6 +95,12 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
         assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
       }
     }
+    // A fresh cache with no King rows (written before King existed) is read live, not reported as a failed probe.
+    for (const name of ['limits.csv', 'history.csv']) utimesSync(join(usage, name), asOf / 1000, asOf / 1000);
+    writeFileSync(join(usage, 'limits.csv'), readFileSync(join(usage, 'limits.csv'), 'utf8').split('\n').filter((l) => !l.startsWith('King,')).join('\n'));
+    utimesSync(join(usage, 'limits.csv'), asOf / 1000, asOf / 1000);
+    const noKing = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
+    assert.deepEqual(noKing.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
     rmSync(usage, { recursive: true });
     const live = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage', '--cached'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
     assert.deepEqual(live.trim().split('\n'), lines.map((line) => line.replace(/ \(as of .*\)$/, ' (live)')));
@@ -101,12 +108,13 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       if (missingRoot) rmSync(join(repo, '.codex'), { recursive: true });
       else writeFileSync(join(repo, '.codex', 'sessions', 'reading.jsonl'), '{}\n');
       const partial = execFileSync(process.execPath, ['--import', './live.mjs', 'tools/rook.mjs', 'usage'], { cwd: repo, encoding: 'utf8', timeout: 5000 });
-      assert.deepEqual(partial.trim().split('\n'), [...lines.slice(0, 2).map((line) => line.replace(/ \(as of .*\)$/, ' (live)')), 'Knight: no reading (live)']);
+      assert.deepEqual(partial.trim().split('\n'), [...lines.slice(0, 3).map((line) => line.replace(/ \(as of .*\)$/, ' (live)')), 'Knight: no reading (live)']);
       const limits = readFileSync(join(usage, 'limits.csv'), 'utf8');
       assert.match(limits, /Rook,role|Rook,Lead/);
-      assert.match(limits, /Pip,Builds/);
+      assert.match(limits, /Bishop,Builds/);
+      assert.match(limits, /King,Builds/);
       assert.doesNotMatch(limits, /Rowan,/);
-      assert.deepEqual(readFileSync(join(usage, 'history.csv'), 'utf8').trim().split('\n').slice(-4).map((row) => row.split(',')[1]), ['Rook', 'Rook', 'Pip', 'Pip']);
+      assert.deepEqual(readFileSync(join(usage, 'history.csv'), 'utf8').trim().split('\n').slice(-6).map((row) => row.split(',')[1]), ['Rook', 'Rook', 'Bishop', 'Bishop', 'King', 'King']);
     }
   } finally { rmSync(repo, { recursive: true, force: true }); }
 });

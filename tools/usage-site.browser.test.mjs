@@ -61,8 +61,8 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
         const when = new Date().toISOString();
         window.__failure = 'Rook usage probe failed, exit 1';
         window.__docs = {
-          limits: { rows: ['Rook', 'Pip', 'Rowan'].flatMap((agent) => ['5h', 'week'].map((window) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: '42', cap_pct: '', starts: '2026-10-01T00:00:00Z', resets: '2027-01-01T00:00:00Z', as_of: when }))) },
-          history: { rows: ['Rook', 'Pip', 'Rowan'].flatMap((agent) => ['2026-10-20T18:29:00Z', '2026-10-21T18:30:00Z'].map((when) => ({ when, agent, window: 'week', used_pct: '42' }))) },
+          limits: { rows: ['Rook', 'Pip', 'King', 'Rowan'].flatMap((agent) => ['5h', 'week'].map((window) => ({ agent, window, role: 'Builder', model: 'Fixture', used_pct: '42', cap_pct: '', starts: '2026-10-01T00:00:00Z', resets: '2027-01-01T00:00:00Z', as_of: when }))) },
+          history: { rows: ['Rook', 'Pip', 'King', 'Rowan'].flatMap((agent) => ['2026-10-20T18:29:00Z', '2026-10-21T18:30:00Z'].map((when) => ({ when, agent, window: 'week', used_pct: '42' }))) },
           runs: { rows: [{ id: 'run1', agent: 'Rowan', session: '15', task: '<img src=x onerror=alert(1)>', kind: 'build', model: 'Fixture', new_tokens: '10', total_tokens: '20', verdict: 'OK' }] },
           analysis: { items: [
             { id: 'a1', topic: 'Pip and Rowan', note: '<script>plain text</script>', as_of: '2026-10-21T18:45:00Z' },
@@ -71,7 +71,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
           ] },
           todo,
           // 14 IST days of hourly buckets, Oct 8 00:00 IST to Oct 21 23:00 IST. Every agent's weekly resetsAt is 2027-01-01T00:00Z, so its week resets Fridays 00:00Z (Oct 9 and Oct 16 here).
-          tokens: { rows: Array.from({ length: 336 }, (_, i) => ({ t: Date.UTC(2026, 9, 7, 18, 30) + i * 3600e3, Rook: 1000, Bishop: 1010, Knight: 1020 })) },
+          tokens: { rows: Array.from({ length: 336 }, (_, i) => ({ t: Date.UTC(2026, 9, 7, 18, 30) + i * 3600e3, Rook: 1000, Bishop: 1010, King: 1015, Knight: 1020 })) },
           tickets: { rows: [
             { id: 'T14', status: 'building', size: 'M', type: 'ask', tags: ['feature', 'usage-page', 'mod'], title: '<img src=x onerror=alert(1)>', todo: '95', updated: '2026-10-21', note: '<script>plain note</script>\nSecond line.' },
             { id: 'T17', status: 'checked in exe', size: 'S', type: 'bug', tags: ['bug', 'usage-page'], title: 'Refresh error', todo: '98', updated: '2026-10-21', note: 'Keep last good readings.' },
@@ -95,9 +95,20 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       page.on('pageerror', (error) => errors.push(error.message));
       await page.goto('http://usage.test/');
       await page.locator('#agents h3').last().waitFor();
-      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'Knight']);
+      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
       const knight = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'Knight', exact: true})});
       assert.equal(await knight.locator('.ud-agent p').textContent(), 'Builder');
+      // King: its own card with both windows, a forecast line, and its own colour (not Bishop's or Knight's).
+      const king = page.locator('#agents .ud-card').filter({has: page.getByRole('heading', {name: 'King', exact: true})});
+      assert.equal(await king.locator('.ud-meter').count(), 2);
+      assert.match(await king.textContent(), /5-hour window 42%.*Week 42%.*At this pace/);
+      const fills = await page.locator('#agents .ud-card').evaluateAll((cards) => cards.map((card) => getComputedStyle(card.querySelector('.ud-fill')).backgroundColor));
+      assert.equal(new Set(fills).size, 4);
+      assert.equal(fills[2], await page.locator('#token-legend i').nth(2).evaluate((node) => getComputedStyle(node).backgroundColor));
+      // Rows uploaded under the new name Bishop (the old name was Pip) fill the same card.
+      await page.evaluate(() => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Pip' ? {...r, agent: 'Bishop'} : r)}));
+      assert.deepEqual(await page.locator('#agents h3').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
+      await page.evaluate(() => window.__emit('limits', window.__docs.limits));
       await page.evaluate(() => window.__emit('limits', {rows: window.__docs.limits.rows.map((r) => r.agent === 'Rowan' ? {...r, role: 'Web research from role data'} : r)}));
       assert.equal(await knight.locator('.ud-agent p').textContent(), 'Web research from role data');
       for (const resets of ['2020-01-01T00:00:00Z', '']) {
@@ -116,11 +127,11 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       }
       await page.evaluate(() => window.__emit('limits', window.__docs.limits));
       assert.equal(await page.locator('#token-chart rect').count(), 0);
-      assert.equal(await page.locator('#token-chart polyline').count(), 3);
+      assert.equal(await page.locator('#token-chart polyline').count(), 4);
       assert.match(await page.locator('#token-chart svg').getAttribute('aria-label'), /running total.*14 days in IST, back to 0 at each weekly reset; input \+ output \+ cache creation; cache reads excluded/);
       assert.equal(await page.locator('#token-chart').locator('..').locator('h3').textContent(), 'Tokens used, running total');
       assert.equal(await page.locator('#token-chart').locator('..').locator('p').textContent(), 'Running total since each agent\'s weekly reset. Last 14 days in IST. Input + output + cache creation; cache reads excluded.');
-      assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'Knight']);
+      assert.deepEqual(await page.locator('#token-legend span').allTextContents(), ['Rook', 'Bishop', 'King', 'Knight']);
       assert.match(await page.locator('#notes tr[data-key=a1] td').first().textContent(), /^Bishop and KnightThu,? 22 Oct, 00:15 IST$/);
       assert.match(await page.locator('#notes tr[data-key=a2] td').first().textContent(), /^Thu,? 22 Oct, 00:15 IST$/);
       assert.equal(await page.locator('#notes tr[data-key=a3] .ud-muted').textContent(), '2026-99-99T00:00:00Z');
@@ -157,7 +168,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
           }),
           box: chart.getBoundingClientRect().toJSON(),
         }));
-        assert.equal(labels.length, 3);
+        assert.equal(labels.length, 4);
         for (const label of labels) {
           assert.ok(label.left >= box.x && label.right <= box.x + box.width, 'End values stay inside the chart');
           assert.ok(label.top >= box.y && label.bottom < box.y + 224, 'End values stay above the dates');
@@ -168,9 +179,9 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
         const lines = await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('polyline')].map((node) => ({
           points: [...node.points].map(({ x, y }) => ({ x, y })), color: getComputedStyle(node).stroke,
         })));
-        assert.equal(lines.length, 3);
+        assert.equal(lines.length, 4);
         // Independent expectation: hourly rate per agent, back to 0 in the buckets holding the Oct 9 and Oct 16 00:00Z resets (rows 29 and 197), drawn as a vertical drop.
-        const resetRows = [29, 197], rates = [1000, 1010, 1020], max = 168 * 1020;
+        const resetRows = [29, 197], rates = [1000, 1010, 1015, 1020], max = 168 * 1020;
         for (let a = 0; a < lines.length; a++) {
           const expected = []; let total = 0;
           for (let i = 0; i < 336; i++) {
@@ -188,7 +199,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
             assert.ok(lines[a].points[k + 1].y > lines[a].points[k].y);
           }
         }
-        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['141.8K', '140.4K', '139K']);
+        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['141.8K', '141.1K', '140.4K', '139K']);
         assert.deepEqual(await page.locator('#token-chart text[text-anchor=end]').allTextContents(), ['0', '85.7K', '171.4K']);
         assert.deepEqual(lines.map((line) => line.color), await page.locator('#token-legend').evaluate((legend) => [...legend.querySelectorAll('i')].map((node) => getComputedStyle(node).backgroundColor)));
         assert.deepEqual(await page.locator('#token-chart').evaluate((chart) => [...chart.querySelectorAll('.token-end')].map((node) => getComputedStyle(node).fill)), lines.map((line) => line.color).reverse());
@@ -196,12 +207,12 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
         await endLabels();
         // An extra drop in a stored week % (a manual reset; Knight is stored as Rowan) restarts that line only.
         await page.evaluate(() => window.__emit('history', { rows: [...window.__docs.history.rows, { when: '2026-10-20T08:00:00Z', agent: 'Rowan', window: 'week', used_pct: '60' }, { when: '2026-10-20T09:00:00Z', agent: 'Rowan', window: 'week', used_pct: '2' }] }));
-        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['140.4K', '139K', '34.7K']);
-        assert.equal(await page.locator('#token-chart polyline').nth(2).evaluate((node) => node.points.length), 339);
+        assert.deepEqual(await page.locator('#token-chart .token-end').allTextContents(), ['141.1K', '140.4K', '139K', '34.7K']);
+        assert.equal(await page.locator('#token-chart polyline').nth(3).evaluate((node) => node.points.length), 339);
         await page.evaluate(() => window.__emit('history', window.__docs.history));
         // All-zero totals and two zero agents keep labels inside the lower edge too.
         for (const rook of [0, 1000000]) {
-          await page.evaluate((Rook) => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ t: row.t, Rook, Bishop: 0, Knight: 0 })) }), rook);
+          await page.evaluate((Rook) => window.__emit('tokens', { rows: window.__docs.tokens.rows.map((row) => ({ t: row.t, Rook, Bishop: 0, King: 0, Knight: 0 })) }), rook);
           await endLabels();
         }
         await page.evaluate(() => window.__emit('tokens', { rows: [] }));
@@ -286,7 +297,7 @@ test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe r
       assert.equal(await page.locator('#message').textContent(), '');
       assert.equal(await page.locator('#last-error').textContent(), 'Rook usage probe failed, exit 1');
       assert.equal(await page.locator('#agents').textContent(), before);
-      assert.equal(await page.locator('#token-chart polyline').count(), 3);
+      assert.equal(await page.locator('#token-chart polyline').count(), 4);
       await page.evaluate(() => window.__emit('status', { ...window.__docs.status, lastError: 'stack trace secret hook_started JSON', lastErrorAt: Date.now() }));
       assert.equal(await page.locator('#last-error').textContent(), 'Usage refresh failed; see the local agent log');
       await page.evaluate(() => window.__emit('status', { ...window.__docs.status, lastError: 'Main account: 100%, limit reached', lastErrorAt: Date.now() }));

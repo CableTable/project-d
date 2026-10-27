@@ -15,6 +15,10 @@ test('reset times: resetsAt stepped back 7 days across the window, plus a sharp 
   // A drop read within 6 h of a scheduled reset is the same reset.
   assert.deepEqual(resetTimes('Rook', limits, [reading('2026-10-17T05:40:00Z', 90, 'Rook'), reading('2026-10-17T06:40:00Z', 1, 'Rook')], from, now), [at('2026-10-10T05:00:00Z'), at('2026-10-17T05:00:00Z')]);
   assert.deepEqual(resetTimes('Bishop', [], [], from, now), []);
+  // King: its own limits row and readings only (not Bishop's, whose old name was Pip).
+  const kingLimits = [...limits, { agent: 'King', window: 'week', resets: '2026-10-26T10:00:00Z' }, { agent: 'Pip', window: 'week', resets: '2026-10-25T10:00:00Z' }];
+  assert.deepEqual(resetTimes('King', kingLimits, [reading('2026-10-20T08:00:00Z', 70, 'King'), reading('2026-10-20T09:00:00Z', 3, 'King')], from, now), [at('2026-10-12T10:00:00Z'), at('2026-10-19T10:00:00Z'), at('2026-10-20T09:00:00Z')]);
+  assert.deepEqual(resetTimes('Bishop', kingLimits, [], from, now), [at('2026-10-11T10:00:00Z'), at('2026-10-18T10:00:00Z')]);
   assert.deepEqual(resetTimes('Rook', [{ agent: 'Rook', window: 'week', resets: 'garbage' }], [], from, now), []);
 });
 

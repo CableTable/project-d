@@ -26,4 +26,6 @@ test('Knight forecasts once the new window has 3 h of data and some use', () => 
   assert.equal(weeklyForecast(row, Date.parse(resets)).at_reset_pct, null);
   assert.equal(weeklyForecast({ ...row, agent: 'Rook' }, now).at_reset_pct, null);
   assert.equal(weeklyForecast({ ...row, agent: 'Pip' }, now).at_reset_pct, null);
+  assert.equal(weeklyForecast({ ...row, agent: 'King' }, now).at_reset_pct, null); // Claude accounts wait 12 h, like Rook and Bishop
+  assert.equal(weeklyForecast({ ...row, agent: 'King', as_of: '2026-10-23T12:00:00Z' }, Date.parse('2026-10-23T12:00:00Z')).at_reset_pct, 42);
 });

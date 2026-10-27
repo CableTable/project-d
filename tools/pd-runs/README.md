@@ -30,9 +30,9 @@ Recent
 ! ♝ Bishop  old          cut off  1h19
 ```
 
-Bars: green under 70 %, amber 70-89, red 90+ (theme colours). Piece, name and dot are Rook cyan, Bishop magenta, Knight yellow.
+Bars: green under 70 %, amber 70-89, red 90+ (theme colours). Piece, name and dot are Rook cyan, Bishop magenta, King green, Knight yellow. A run is King's when its process line names `claude3`, its file starts `king-`, or its text names `claude3` / `.claude-account3`; any other `.jsonl` is Bishop's.
 
-- **Cap marker** (`┃` on the week bar, "cap N%" under it): Rook 14 % x k from its Sun 15:30 IST reset, but Fri 23 Oct 83 % and Sat 24 Oct 94 %; Bishop 14 % x k from Mon 15:30 IST (k = whole days since the reset + 1); Knight none. `todayCap()` in `runs.mjs`.
+- **Cap marker** (`┃` on the week bar, "cap N%" under it): Rook 14 % x k from its Sun 15:30 IST reset, but Fri 23 Oct 83 % and Sat 24 Oct 94 %; Bishop 14 % x k from Mon 15:30 IST (k = whole days since the reset + 1); King and Knight none. `todayCap()` in `runs.mjs`.
 - **Queue**: `runs<N>/queue.txt` of the newest runs folder, lines `[x]` (counted in "N done"), `[>]` (bold, accent dot), `[ ]` (plain); `#` lines ignored; at most 8 rows. No file, no section.
 - **CI line**: the open PR of the branch in `<repo>/.git/HEAD`, via `gh pr view <branch> --json number,labels,statusCheckRollup`, at most every 2 min; the age is the last result's. gh missing or failing shows "CI unknown".
 - **Long text wraps** (queue, running, recent, CI line) onto the next line, starting under the text, not under the dot / piece.

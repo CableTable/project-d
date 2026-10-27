@@ -6,8 +6,8 @@ import { codexWindow, resetLabel, weeklyForecast } from './usage-window.js';
 import { firebaseConfig } from './firebase-config.js';
 import { cumulativeTokens, resetTimes, tokenEndLabels } from './token-chart.js';
 
-const AGENT_COLOR = { Rook: 'var(--ud-rook)', Pip: 'var(--ud-pip)', Rowan: 'var(--ud-rowan)', Bishop: 'var(--ud-pip)', Knight: 'var(--ud-rowan)' };
-const ORDER = ['Rook', 'Pip', 'Rowan'];
+const AGENT_COLOR = { Rook: 'var(--ud-rook)', Pip: 'var(--ud-pip)', Rowan: 'var(--ud-rowan)', Bishop: 'var(--ud-pip)', King: 'var(--ud-king)', Knight: 'var(--ud-rowan)' };
+const ORDER = ['Rook', 'Bishop', 'King', 'Rowan'];
 const label = (text) => String(text).replace(/\bPip\b/g, 'Bishop').replace(/\bRowan\b/g, 'Knight');
 const IST = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 const HM = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -121,10 +121,10 @@ function drawTake(limits, pace) {
   p.append(document.createTextNode(label(top.agent) + ' is the one to watch: '),
     mark(el('b', null, top.used_pct), 'limits', 'used_pct', wh(top.agent, 'week')), document.createTextNode('% of its week used, with '),
     mark(el('b', null, String(pk.get(top.agent + '|week'))), 'pace', 'pace_pct', wh(top.agent, 'week')), document.createTextNode('% of the week gone. '));
-  const pip = limits.find((r) => r.agent === 'Pip' && r.window === 'week');
-  if (pip && pip.cap_pct !== '') {
-    p.append(document.createTextNode('Bishop is at '), mark(el('b', null, pip.used_pct), 'limits', 'used_pct', wh('Pip', 'week')),
-      document.createTextNode('% against today’s cap of '), mark(el('b', null, pip.cap_pct), 'limits', 'cap_pct', wh('Pip', 'week')), document.createTextNode('%.'));
+  const bishop = limits.find((r) => r.agent === 'Bishop' && r.window === 'week');
+  if (bishop && bishop.cap_pct !== '') {
+    p.append(document.createTextNode('Bishop is at '), mark(el('b', null, bishop.used_pct), 'limits', 'used_pct', wh('Bishop', 'week')),
+      document.createTextNode('% against today’s cap of '), mark(el('b', null, bishop.cap_pct), 'limits', 'cap_pct', wh('Bishop', 'week')), document.createTextNode('%.'));
   }
 }
 
@@ -255,7 +255,7 @@ function drawTodo(sections) {
 function drawTokenChart() {
   const box = document.getElementById('token-chart'), legend = document.getElementById('token-legend');
   box.replaceChildren(); legend.replaceChildren();
-  const agents = ['Rook', 'Bishop', 'Knight'];
+  const agents = ['Rook', 'Bishop', 'King', 'Knight'];
   for (const agent of agents) {
     const item = el('span'), dot = el('i'); dot.style.background = AGENT_COLOR[agent]; item.append(dot, document.createTextNode(agent)); legend.append(item);
   }
@@ -269,7 +269,7 @@ function drawTokenChart() {
   const y = (value) => bottom - value / max * 190;
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', 'Tokens used, running total by Rook, Bishop and Knight over the last 14 days in IST, back to 0 at each weekly reset; input + output + cache creation; cache reads excluded');
+  svg.setAttribute('aria-label', 'Tokens used, running total by Rook, Bishop, King and Knight over the last 14 days in IST, back to 0 at each weekly reset; input + output + cache creation; cache reads excluded');
   box.append(svg);
   function add(tag, attrs, text, parent = svg) {
     const node = document.createElementNS(svg.namespaceURI, tag);
@@ -373,7 +373,7 @@ function showStatus() {
   const errorAt = currentStatus.lastErrorAt?.toMillis();
   lastUpdateLabel.textContent = 'Last update: ' + (last ? IST.format(new Date(last)) + ' IST' : '—');
   lastErrorLabel.hidden = !allowed || !currentStatus.lastError;
-  const shortError = currentStatus.lastError && /^(?:(?:Rook|Bishop|Knight) usage probe failed, exit (?:\d+|unknown)|(?:Main|Second) account: 100%, limit reached|Usage refresh failed; see the local agent log)$/.test(currentStatus.lastError)
+  const shortError = currentStatus.lastError && /^(?:(?:Rook|Bishop|King|Knight) usage probe failed, exit (?:\d+|unknown)|(?:Main|Second|Third) account: 100%, limit reached|Usage refresh failed; see the local agent log)$/.test(currentStatus.lastError)
     ? currentStatus.lastError : 'Usage refresh failed; see the local agent log';
   lastErrorLabel.textContent = currentStatus.lastError ? shortError : '';
   offline.hidden = !allowed || (heartbeat != null && Date.now() - heartbeat <= 180_000);
@@ -425,7 +425,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         const value = snapshot.data() || {};
         if (name === 'status') currentStatus = value;
         else if (name === 'todo') drawTodo(value.sections || []);
-        else data[name] = value[name === 'analysis' ? 'items' : 'rows'] || [];
+        else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
         showStatus(); draw();
       }, report));
