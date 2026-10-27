@@ -267,7 +267,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     148b. ✅ (built, 2026-10-27, Knight + Bishop review fixes) Swatch strip at the right edge: standard, saved and last 12 recent colours; left click = line colour, Alt + right click removes a saved swatch; one coloured part copy per source part on layouts.
     148c. ✅ (built, 2026-10-27, Knight start + Bishop finish + review fixes) Fill tool, Eyedropper, No fill; fills belong to their closed outline, exact colour on screen and PDF, solid HATCH saved before the outline and relinked only when adjacent, same layer, visible.
     148d. ✅ (built, 2026-10-27, Bishop + review fixes) Colour readout: Readout button and `readout` command, true colour of the object (ByLayer / block / layout parts / locked) or pixel or panel, box by the cursor, click copies hex and adds to recents; other clicks end it.
-    148e. Holes in fills: a closed shape inside a filled outline cuts a hole (even-odd). **Grilled S24**: DECISIONS row "Holes in fills" (same layer, fully inside, live, multi-loop HATCH).
+    148e. ✅ (built, 2026-10-27, Knight + Bishop review fixes) Holes in fills: a closed shape inside a filled outline cuts a hole (even-odd). **Grilled S24**: DECISIONS row "Holes in fills" (same layer, fully inside, live, multi-loop HATCH).
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
