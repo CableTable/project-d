@@ -363,6 +363,6 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Fill tool**: The tool that puts a fill inside a closed outline.
 
-**Eyedropper**: The tool that picks a colour from an object and applies it to the others you click.
+**Eyedropper**: The tool that picks the line colour and fill from one object and applies them to the others you click.
 
 **Colour readout**: The tool that shows the R G B, C M Y K and hex of whatever is under the cursor inside the app; a click copies the hex.
