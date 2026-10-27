@@ -454,4 +454,17 @@ test('Quick Extend by fence or crossing window (TODO 155a T3): each object touch
   assert.deepEqual(c.changed.map((x) => x.i), [1]); assert.equal(c.skipped, 1);
 });
 
+test('Quick Extend by a crossing window (TODO 155a T3 fix): a window holding the whole line, or crossing it on both sides, still finds the boundary at either end', () => {
+  const r50 = line(50, -20, 50, 20, base), l30 = line(-30, -20, -30, 20, base);
+  const whole = extendRegion([line(0, 0, 20, 0, base), r50], [r50], M.windowHit([-5, -5], [25, 5]));   // the window holds all of l: its start is the touch point, the boundary is past its end
+  assert.deepEqual(whole.changed.map((c) => c.i), [0]); assert.equal(whole.skipped, 0);
+  nearPt(S(whole.changed[0].ents[0]).a, [0, 0]); nearPt(S(whole.changed[0].ents[0]).b, [50, 0]);
+  const left = extendRegion([line(0, 0, 20, 0, base), l30], [l30], M.windowHit([-5, -5], [25, 5]));    // the boundary is behind the start
+  nearPt(S(left.changed[0].ents[0]).a, [-30, 0]); nearPt(S(left.changed[0].ents[0]).b, [20, 0]);
+  const both = extendRegion([line(0, 0, 40, 0, base), l30], [l30], M.windowHit([10, -5], [30, 5]));   // the window's right edge wins, but nothing is there: the other end goes
+  nearPt(S(both.changed[0].ents[0]).a, [-30, 0]); nearPt(S(both.changed[0].ents[0]).b, [40, 0]);
+  const none = extendRegion([line(0, 0, 40, 0, base), line(0, 50, 5, 50, base)], [line(0, 50, 5, 50, base)], M.windowHit([10, -5], [30, 5]));
+  assert.deepEqual(none.changed, []); assert.equal(none.skipped, 1, 'a boundary at neither end is still skipped');
+});
+
 console.log(`${n} modify tests passed`);

@@ -95,7 +95,9 @@ export function extendRegion(ents, boundaries, hit) {
     if (!canModify(ent)) return;
     const at = hit(pathOf(shapeOf(ent, 1)).segs);
     if (!at) return;
-    const r = extendEntity(ent, boundaries, at);
+    const segs = pathOf(shapeOf(ent, 1)).segs, ends = [segs[0].a, segs[segs.length - 1].b];
+    let r = extendEntity(ent, boundaries, at);
+    if (r.error) r = extendEntity(ent, boundaries, ends[dist(at, ends[0]) <= dist(at, ends[1]) ? 1 : 0]);       // nothing ahead at the touched end: try the other
     if (r.ent) changed.push({ i, ents: [r.ent] }); else skipped++;
   });
   return { changed, skipped };

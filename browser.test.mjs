@@ -10339,7 +10339,17 @@ try {
     await openGrips(writeDxf(doc0), 'trim-quick2.dxf');
     await page.locator('[data-tool=trim]').click();
     assert.match(await prompt(), /^Select cutting edges/, 'Standard is still the mode after a reload');
-    await typeCmd('o'); assert.equal(await prompt(), 'Enter a trim mode option [Quick/Standard] <Standard>:');
+    await click(80, 30); assert.match(await histLine(), /Cutting edges: 1/);
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc cancels the whole Standard Trim, edges picked or not');
+    await page.locator('[data-tool=trim]').click();
+    await cmdLine().fill('o');
+    assert.equal(await t('cmd-sugg').count(), 0, 'o is mOde inside Trim: no OFFSET suggestion');
+    await cmdLine().press('Enter');
+    assert.equal(await prompt(), 'Enter a trim mode option [Quick/Standard] <Standard>:');
+    await typeCmd('x'); await typeCmd('s');
+    assert.doesNotMatch(await t('cmd-echo').textContent(), /OFFSET/, 'o then s answered mOde and did not run OFFSET');
+    await typeCmd('o');
     await page.keyboard.press('Escape');
     assert.match(await prompt(), /^Select cutting edges/); assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'Esc leaves the question only');
     await typeCmd('o'); await typeCmd('quick');

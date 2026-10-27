@@ -3571,7 +3571,7 @@ function activeCmd() {
   const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
-  return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim() };
+  return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes };
 }
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
@@ -6122,7 +6122,6 @@ function modEsc(d) {
   if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
   if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note(`${ext ? 'Extend' : 'Trim'}: cancelled. ${again}`); renderCommand(); paintOverlay(); return; }
   if (m.kind === 'offset' && m.stage === 'side') { m.stage = 'obj'; m.ent = null; note('Offset: pick an object'); paintOverlay(); return; }
-  if (['trim', 'extend'].includes(m.kind) && !m.quick && m.stage === 'edges' && (m.edges.length || m.all)) { m.edges = []; m.all = false; note(m.kind === 'trim' ? 'Cutting edges cleared' : 'Boundary edges cleared'); paintOverlay(); return; }
   if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line, arc or polyline segment'); paintOverlay(); return; }
   if (m.kind === 'mirror' && m.stage === 'pick' && d.sel.size) { setSel(d, new Set()); renderCommand(); return; }
   const was = m.kind;
@@ -6153,6 +6152,14 @@ function modEnter(d) {
   else note('Mirror: click the ' + (m.stage === 'p1' ? 'first' : 'second') + ' point of the mirror line');
 }
 /** The command line while a modify tool is on. True when it took the text. */
+/** Words the Trim / Extend that is on takes itself (modTyped), so the command bar does not read them as commands (o is mOde, not OFFSET). */
+function modTakes(c) {
+  const m = state.mod;
+  if (!modLive() || !['trim', 'extend'].includes(m.kind)) return false;
+  if (m.askMode || m.fence || m.cross || m.erase) return true;
+  const own = m.kind === 'extend' ? ['b', 'boundary', 'boundary edges'] : ['t', 'cutting', 'cutting edges', 'r', 'erase'];
+  return c === 'o' || (c.length > 1 && 'mode'.startsWith(c)) || (m.quick && m.stage === 'cut' && ['u', 'undo', 'c', 'crossing', ...own].includes(c)) || (m.stage === 'edges' && (c === 'a' || c === 'all'));
+}
 function modTyped(d, raw) {
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
@@ -6227,7 +6234,7 @@ function modTyped(d, raw) {
       return true;
     }
     if (m.fence && (c === 'u' || c === 'undo')) { m.fence.pop(); if (!m.fence.length) m.fence = null; note(m.fence ? 'Last fence point taken out' : 'Fence cancelled'); renderCommand(); paintOverlay(); return true; }
-    if (m.fence || m.cross || m.erase) { note('Finish it first: Enter trims, Esc cancels'); return true; }
+    if (m.fence || m.cross || m.erase) { note(`Finish it first: Enter ${m.cross ? 'cancels' : ext ? 'extends' : 'trims'}, Esc cancels`); return true; }
     if (c === 'o' || (c.length > 1 && 'mode'.startsWith(c))) { m.askMode = true; note(modPrompt(d).prompt); renderCommand(); return true; }
     if (m.quick && m.stage === 'cut') {
       if (c === 'u' || c === 'undo') { trimUndo(d); return true; }

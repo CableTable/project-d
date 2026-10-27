@@ -86,7 +86,7 @@ export function buildCmdUI(hooks) {
     promptEl.hidden = !act; promptEl.textContent = act ? act.prompt : '';
     chips.hidden = !opts.length;
     chips.replaceChildren(...opts.map((o) => h('button', { class: 'chip' + (o === hit ? ' hit' : ''), type: 'button', 'aria-label': 'Option ' + o.word, 'data-testid': 'cmd-chip', onmousedown: (e) => e.preventDefault(), onclick: () => chip(o) }, h('b', null, o.key), o.rest)));
-    sugg = hit ? [] : suggest(input.value, tab);
+    sugg = hit || (act && act.takes && act.takes(text.toLowerCase())) ? [] : suggest(input.value, tab);
     hi = Math.max(0, Math.min(hi, sugg.length - 1));
     rows.hidden = !sugg.length;
     rows.replaceChildren(...sugg.map((s, i) => h('div', { class: 'r' + (i === hi ? ' hi' : '') + (s.cmd.where && s.cmd.where !== tab ? ' off' : ''), role: 'option', 'aria-selected': String(i === hi), 'data-testid': 'cmd-sugg', onmousedown: (e) => e.preventDefault(), onclick: () => go(s.cmd.name) },
@@ -176,7 +176,7 @@ export function buildCmdUI(hooks) {
     let send = text;
     if (picked) send = picked.word.toLowerCase();
     else if (!act && /^[a-z][a-z0-9]*$/i.test(text) && !resolve(text, tab)) { const s = suggest(text, tab); if (s.length && s[Math.min(hi, s.length - 1)].hit) send = s[Math.min(hi, s.length - 1)].cmd.name; }
-    const isCmd = !picked && !!resolve(send, tab);
+    const isCmd = !picked && !(act && act.takes && act.takes(text.toLowerCase())) && !!resolve(send, tab);
     addLine(act && !isCmd ? act.prompt : 'Command:', text, act && !isCmd ? '' : 'cm', isCmd ? send : '');
     if (typed[typed.length - 1] !== text) typed.push(text);
     close(); hooks.submit(send);
