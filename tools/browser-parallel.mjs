@@ -1,5 +1,5 @@
 // npm run test:browser -- [first-port]; each child owns its server and browser.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
 // A regex (ONLY or the 2nd argument) bypasses shard filtering, so launch that focused run just once.
@@ -12,7 +12,14 @@ if (!Number.isInteger(port) || port < 1 || port + count - 1 > 65535) {
   process.exit(1);
 }
 const children = [];
-const stop = () => { for (const child of children) child.kill(); };
+// win32: kill() leaves the child's server and Chromium running, so end the whole tree.
+const stop = () => {
+  for (const child of children) {
+    if (child.exitCode !== null || child.signalCode) continue;
+    if (process.platform === 'win32') spawnSync('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore' });
+    else child.kill();
+  }
+};
 process.on('exit', stop);
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(1));
 const failed = await Promise.all(Array.from({ length: count }, (_, i) => new Promise((resolve) => {
