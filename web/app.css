@@ -135,6 +135,11 @@ select.fld { font-family: var(--sans); }
 
 /* body */
 .main { flex: 1; min-height: 180px; display: flex; } /* Keep floating panel controls reachable above an expanded Balloons dock. */
+.swatch-strip { width: 30px; flex: 0 0 30px; min-height: 0; overflow-y: auto; scrollbar-width: none; padding: 4px; border-left: 1px solid var(--line); background: var(--panel); }
+.strip-group { display: flex; flex-direction: column; gap: 2px; }
+.strip-group + .strip-group { border-top: 1px solid var(--line); margin-top: 5px; padding-top: 5px; }
+.strip-swatch { width: 21px; height: 20px; flex-shrink: 0; padding: 0; border: 1px solid var(--muted); cursor: pointer; }
+.strip-swatch:hover, .strip-swatch:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .rail { width: 52px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 6px 0; background: var(--panel); border-right: 1px solid var(--line); overflow-y: auto; }
 .tool { width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: var(--r); background: transparent; color: var(--text); cursor: pointer; padding: 0; flex-shrink: 0; }
 .tool { position: relative; }

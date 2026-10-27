@@ -20,6 +20,7 @@ import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 
 import { keepOnly, DIM_LAYER } from './edit.js';
 import { cleanGuides } from './guides.js';
 import { TITLE_BLOCK } from './pdf-export.js';
+import { colourKey, withColour } from './props.js';
 
 export const LAYOUT_BLOCK = 'PD_LAYOUT';
 const CHUNK = 200;
@@ -53,6 +54,17 @@ export const partBlocks = (blocks) => Object.fromEntries(Object.entries(blocks).
 export function makePart(id, name, raw, factor, src = '') {
   const fl = flatten(raw), p = partFromDrawing(name, raw, fl, factor || unitFactor(fl.units));
   return p && { id, ...p, fl, off: startHidden(fl), src };
+}
+
+/** A private coloured copy for selected placements; the source and library part stay intact. */
+export function withPartColour(part, key, id) {
+  if (!part.raw) return null;
+  const blocks = Object.values(part.raw.blocks || {});
+  if ([...part.raw.entities, ...blocks.flatMap((b) => b.entities)].every((e) => colourKey(e) === key)) return null;
+  const colour = (ents) => ents.map((e) => withColour(e, key));
+  const raw = { ...part.raw, entities: colour(part.raw.entities), blocks: Object.fromEntries(Object.entries(part.raw.blocks || {}).map(([name, b]) =>
+    [name, { ...b, entities: colour(b.entities) }])) };
+  return { ...part, id, raw, fl: flatten(raw) };
 }
 
 /**

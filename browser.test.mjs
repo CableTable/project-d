@@ -582,6 +582,119 @@ try {
       await expectFades(true, false);
     } finally { await context.close(); }
   });
+  await step('TODO 148b: swatch strip visibility, remembered View tick, selection Undo, current colour, recents and saved removal', async () => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const group = (name) => p.locator(`[data-swatch-group=${name}]`);
+    const swatch = (name, key) => group(name).locator(`[data-colour="${key}"]`);
+    const recent = async (key) => {
+      await p.waitForFunction((key) => document.querySelector('[data-swatch-group=recent] button')?.dataset.colour === key, key);
+      assert.equal(await swatch('recent', key).count(), 1);
+    };
+    const selectAll = async () => { await p.locator('.coords').click(); await p.keyboard.press('Control+a'); };
+    const command = async (text) => {
+      if (!(await q('cmd-input').isVisible())) { await p.locator('.coords').click(); await p.keyboard.type(text[0]); }
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    const open = async (raw, name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname')?.textContent === name, name);
+    };
+    const save = async () => {
+      await p.locator('.coords').click();
+      const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      return readDxf(readFileSync(await dl.path(), 'utf8'));
+    };
+    try {
+      await p.goto(URL_); await q('swatch-strip').waitFor();
+      assert.equal(await group('standard').locator('button').count(), 11);
+      assert.equal(await swatch('standard', 'aci:1').getAttribute('title'), 'Colour 1');
+      const panelWidth = await p.locator('aside.panel').evaluate((el) => el.getBoundingClientRect().width);
+      await p.locator('[data-menu=View]').click();
+      const tick = p.getByRole('menuitemcheckbox', { name: /Swatch strip/ });
+      assert.equal(await tick.getAttribute('aria-checked'), 'true'); await tick.click();
+      assert.equal(await q('swatch-strip').isVisible(), false);
+      await p.waitForFunction(async () => (await (await import('./idbstore.js')).idbStore('project-d-view', 'settings', 'view').all()).some((r) => r.id === 'swatchStrip' && r.on === false));
+      await p.reload(); await q('swatch-strip').waitFor({ state: 'attached' });
+      assert.equal(await q('swatch-strip').isVisible(), false, 'hidden on this PC after reload');
+      await p.locator('[data-ribbon-tab=View]').click();
+      const viewTick = p.locator('.ribbon-body').getByRole('button', { name: 'Swatch strip', exact: true });
+      assert.equal(await viewTick.getAttribute('aria-pressed'), 'false'); await viewTick.click();
+      await p.waitForFunction(async () => (await (await import('./idbstore.js')).idbStore('project-d-view', 'settings', 'view').all()).some((r) => r.id === 'swatchStrip' && r.on === true));
+      await p.reload(); await q('swatch-strip').waitFor();
+      assert.equal(await p.locator('aside.panel').evaluate((el) => el.getBoundingClientRect().width), panelWidth);
+      const doc = newDoc(4); addEntities(doc, dxfLine(10, 10, 110, 110));
+      await open(doc, 'swatch-strip.dxf'); await selectAll();
+      const before = (await save()).entities;
+      await swatch('standard', 'aci:1').click();
+      assert.equal(await q('prop-colour').inputValue(), 'aci:1'); await recent('aci:1');
+      assert.equal((await save()).entities[0].aci, 1);
+      await p.keyboard.press('Control+z');
+      assert.deepEqual((await save()).entities, before, 'one Undo restores the selected line');
+      await p.keyboard.press('Escape');
+      await swatch('standard', 'aci:5').click();
+      await p.locator('[data-ribbon-tab=Home]').click();
+      assert.equal(await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).inputValue(), 'aci:5');
+      await recent('aci:5');
+      await command('L'); await command('150,150'); await command('180,180'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      const drawn = await save(); assert.equal(drawn.entities.length, 2); assert.equal(drawn.entities[1].aci, 5, 'new line uses the ribbon current colour');
+      await selectAll();
+      await q('prop-colour').selectOption('aci:3'); await recent('aci:3');
+      await p.getByRole('combobox', { name: 'Ribbon colour', exact: true }).selectOption('aci:1'); await recent('aci:1');
+      await q('prop-swatch').click(); await q('colour-hex').fill('#ff8800');
+      await q('colour-add').click(); await p.waitForFunction(() => document.querySelector('[data-testid=colour-status]').textContent === 'Added to Swatches');
+      await q('colour-ok').click(); await recent('tc:16746496');
+      assert.equal(await swatch('saved', 'tc:16746496').getAttribute('title'), '#FF8800');
+      await q('layer-colour').first().click(); await q('colour-hex').fill('#1188ff'); await q('colour-ok').click();
+      await recent('tc:1149183');
+      await swatch('saved', 'tc:16746496').click(); await recent('tc:16746496');
+      assert.equal(await q('prop-colour').inputValue(), 'tc:16746496');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme[0].toUpperCase() + theme.slice(1), exact: true }).click();
+        await q('ptab-drawing').click(); await p.locator('[data-ribbon-tab=Home]').click();
+        assert.equal(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'fits 1024 px');
+        const box = await q('swatch-strip').boundingBox();
+        assert.equal(Math.round(box.x + box.width), 1024, 'strip is at the far right');
+        await p.screenshot({ path: `${shotDir}/todo148b-swatch-strip-${theme}.png` });
+      }
+      const oldRecents = await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour));
+      const saved = swatch('saved', 'tc:16746496');
+      await saved.evaluate((el) => el.addEventListener('contextmenu', (e) => { window.stripContextPrevented = e.defaultPrevented; }, { once: true }));
+      await saved.click({ button: 'right' });
+      assert.equal(await p.evaluate(() => window.stripContextPrevented), true, 'no browser context menu');
+      assert.equal(await q('ctx-menu').count(), 0);
+      await swatch('standard', 'aci:1').click({ button: 'right', modifiers: ['Alt'] });
+      assert.equal(await q('ctx-menu').count(), 0);
+      await swatch('recent', 'tc:16746496').click({ button: 'right', modifiers: ['Alt'] });
+      assert.equal(await q('ctx-menu').count(), 0);
+      await saved.click({ button: 'right', modifiers: ['Alt'] });
+      await p.getByRole('menuitem', { name: 'Remove from Swatches', exact: true }).click();
+      await saved.waitFor({ state: 'detached' });
+      assert.deepEqual(await group('recent').locator('button').evaluateAll((els) => els.map((el) => el.dataset.colour)), oldRecents);
+      const lay = newLayout('Strip layout'), part = makePart('source', 'Source line', doc, 1);
+      lay.parts.source = part; lay.placed = [{ partId: 'source', x: 100, y: 100 }, { partId: 'source', x: 400, y: 100 }];
+      await open(layoutRaw(lay), 'strip-layout.dxf');
+      await p.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+      await swatch('standard', 'aci:3').click();
+      const recoloured = layoutFromRaw(await save());
+      assert.equal(recoloured.parts[recoloured.placed[0].partId].raw.entities[0].aci, 3);
+      assert.notEqual(recoloured.parts[recoloured.placed[1].partId].raw.entities[0].aci, 3, 'unselected copy keeps its colour');
+      await p.keyboard.press('Control+z');
+      const undone = layoutFromRaw(await save());
+      assert.equal(undone.placed[0].partId, undone.placed[1].partId, 'one Undo restores the source part');
+      await p.reload(); await q('swatch-strip').waitFor();
+      assert.equal(await saved.count(), 0, 'saved removal remembered after reload');
+      await recent('aci:3');
+      await p.setViewportSize({ width: 1024, height: 480 });
+      assert.equal(await q('swatch-strip').evaluate((el) => el.scrollHeight > el.clientHeight), true, 'strip scrolls in a short window');
+      await swatch('recent', 'aci:3').scrollIntoViewIfNeeded();
+    } catch (e) {
+      await p.screenshot({ path: `${shotDir}/todo148b-failure.png` }); throw e;
+    } finally { await context.close(); }
+  });
+
   await step('TODO 148a: colour picker fields, Properties, Cancel, swatches, screen pick, layers, Contour and exact DXF', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
@@ -5335,6 +5448,8 @@ try {
   };
   await step('TODO 38: rulers in mm along the top and left of the canvas; 0,0 is the sheet\'s bottom-left and Y counts up; on layouts and drawings; View → Rulers and the panel switch', async () => {
     await freshLayoutWithPlate();
+    await page.locator('[data-menu=View]').click();
+    await page.getByRole('menuitemcheckbox', { name: /Theme: light/ }).click();
     assert.equal(await t('ruler-top').isVisible(), true); assert.equal(await t('ruler-left').isVisible(), true);
     assert.equal(await t('ruler-corner').textContent(), 'mm');
     const cb = await rectOf(t('canvas')), sb = await page.locator('rect.sheet').boundingBox();
@@ -5349,7 +5464,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
+      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ['  Theme: follow system', false], ['✓ Theme: light (CorelDRAW-like)', false], ['  Theme: dark (AutoCAD-like)', false]]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
