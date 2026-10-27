@@ -349,4 +349,33 @@ test('an arc with no sweep is a whole circle for Trim and Offset (no NaN radius)
   assert.ok(!o.error, o.error);
 });
 
+test('Quick Trim (TODO 155a T1): the piece between the nearest crossings goes, an end piece goes to its end, a lone object goes whole', () => {
+  const l = line(0, 0, 100, 0, base), e1 = line(30, -10, 30, 10), e2 = line(70, -10, 70, 10);
+  const mid = M.trimEntity(l, [e1, e2], [50, 0], true);                                       // line between two lines: two pieces left
+  assert.equal(mid.ents.length, 2);
+  nearPt(X(mid.ents[0]).b, [30, 0]); nearPt(X(mid.ents[1]).a, [70, 0]);
+  nearPt(X(mid.removed).a, [30, 0]); nearPt(X(mid.removed).b, [70, 0]);
+  const end = M.trimEntity(l, [e1, e2], [90, 0], true);                                       // end piece: up to the end of the line
+  assert.equal(end.ents.length, 1); nearPt(X(end.ents[0]).b, [70, 0]);
+  nearPt(X(end.removed).a, [70, 0]); nearPt(X(end.removed).b, [100, 0]);
+  const lone = M.trimEntity(l, [line(200, -5, 200, 5)], [10, 0], true);                       // nothing crosses it: the whole line goes
+  assert.deepEqual(lone.ents, []); assert.ok(!lone.error);
+  nearPt(X(lone.removed).a, [0, 0]); nearPt(X(lone.removed).b, [100, 0]);
+  assert.deepEqual(M.trimEntity(l, [], [10, 0], true).ents, [], 'no other objects at all: it goes');
+  assert.match(M.trimEntity(l, [], [10, 0]).error, /Nothing crosses/, 'Standard still refuses');
+  const a = arc(0, 0, 10, 0, 180, base);                                                      // arc cut by a line: the right part goes
+  const ar = M.trimEntity(a, [line(0, -20, 0, 20)], [8, 6], true);
+  assert.equal(ar.ents.length, 1); near(X(ar.ents[0]).a0, 90); near(X(ar.ents[0]).a1, 180);
+  const c = circle(0, 0, 10, base);                                                           // circle cut by two lines: one arc left
+  const cr = M.trimEntity(c, [line(-20, 5, 20, 5), line(-20, -5, 20, -5)], [10, 0], true);
+  assert.equal(cr.ents.length, 1); assert.equal(X(cr.ents[0]).t, 'arc');
+  assert.deepEqual(M.trimEntity(circle(0, 0, 10, base), [], [10, 0], true).ents, [], 'a circle nothing crosses goes whole');
+  assert.match(M.trimEntity(c, [line(0, 0, 20, 0)], [10, 3], true).error, /two cutting edges/, 'one crossing of a closed shape is still refused');
+  const p = lwpoly([[0, 0], [50, 0], [50, 50], [0, 50]], base);                               // polyline: the stretch round the corner goes
+  const pr = M.trimEntity(p, [line(-10, 25, 60, 25), line(25, -10, 25, 10)], [50, 10], true);
+  assert.equal(pr.ents.length, 2);
+  const seg = M.trimEntity(lwpoly([[0, 0], [100, 0]], base), [e1, e2], [50, 0], true);        // a one-segment polyline cuts like a line
+  assert.equal(seg.ents.length, 2);
+});
+
 console.log(`${n} modify tests passed`);

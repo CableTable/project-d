@@ -10147,6 +10147,8 @@ try {
     return writeDxf(doc);
   };
   const layerOf = (e) => e.r.v[e.r.c.indexOf(8)];
+  // Trim starts in Quick mode (TODO 155a T1); the older steps test the pick-edges-first way, so they switch to Standard (mOde, remembered)
+  const trimStd = async () => { await typeCmd('o'); await typeCmd('s'); };
   await step('Offset, Trim and Mirror: built (their buttons are not greyed, titles with keys); Auto-nest is built too; none works on a layout tab', async () => {
     await openGrips(modDoc(), 'mod.dxf');
     const titles = {};
@@ -10229,7 +10231,7 @@ try {
     addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50));
     await openGrips(writeDxf(doc0), 'trim.dxf');
     assert.equal(await entCount(), 3);
-    await page.locator('[data-tool=trim]').click();
+    await page.locator('[data-tool=trim]').click(); await trimStd();
     assert.equal(await t('tool-chip').textContent(), 'Tool: Trim');
     assert.match(await prompt(), /Select cutting edges.*Enter = all/);
     await page.keyboard.press('Enter');
@@ -10264,7 +10266,7 @@ try {
     const doc0 = newDoc(4);
     addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50), dxfCircle(120, 100, 20), dxfLine(90, 90, 150, 90), dxfLine(90, 110, 150, 110));
     await openGrips(writeDxf(doc0), 'trim2.dxf');
-    await page.locator('[data-tool=trim]').click();
+    await page.locator('[data-tool=trim]').click(); await trimStd();
     await click(160, 40);
     assert.match(await histLine(), /Cutting edges: 1/);
     const hov = await at(160, 40);
@@ -10278,7 +10280,7 @@ try {
     await click(80, 40);                                        // the other vertical: the one cutting edge (x = 160) does not cross it
     assert.match(await histLine(), /Nothing crosses it here/);
     await page.keyboard.press('Escape');
-    await page.locator('[data-tool=trim]').click();
+    await page.locator('[data-tool=trim]').click(); await trimStd();
     await click(90, 91); await click(150, 109);                // two cutting lines for the circle
     await page.keyboard.press('Enter');
     const before = await entCount();
@@ -10287,8 +10289,66 @@ try {
     assert.equal(await entCount(), before, 'the circle becomes one arc');
     assert.equal(doc.entities.filter((e) => e.type === 'ARC').length, 1);
     assert.equal(doc.entities.filter((e) => e.type === 'CIRCLE').length, 0);
-    await shotBoth('trim', async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=trim]').click(); await page.keyboard.press('Enter'); const p = await at(120, 30); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); });
+    await shotBoth('trim', async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=trim]').click(); await trimStd(); await page.keyboard.press('Enter'); const p = await at(120, 30); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); });
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 155a T1: Quick Trim starts at once (no edges), a click cuts between the crossings, a lone line goes whole, U undoes a cut, O switches to Standard (remembered over a reload), Esc ends', async () => {
+    const doc0 = newDoc(4);
+    addEntities(doc0, dxfLine(20, 30, 220, 30), dxfLine(80, 10, 80, 50), dxfLine(160, 10, 160, 50), dxfLine(20, 80, 60, 80));
+    const hv = async (x, y) => { const q = await at(x, y); await page.mouse.move(q.x, q.y); await frames(); };
+    const horiz = async () => (await savedDoc()).entities.filter((e) => e.type === 'LINE' && fieldOf(e, 20) === 30 && fieldOf(e, 21) === 30).map((e) => [fieldOf(e, 10), fieldOf(e, 11)].sort((a, b) => a - b)).sort((a, b) => a[0] - b[0]);
+    await openGrips(writeDxf(doc0), 'trim-quick.dxf');
+    await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');                       // whatever an earlier step left: start from Quick
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tool=trim]').click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Trim');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:', 'no edge picking, no /Undo before the first cut');
+    assert.match(await histLine(), /Command: TRIM\s+Mode: Quick/);
+    await hv(120, 30);
+    assert.equal(await t('mod-preview').count(), 1, 'the piece that goes shows before the click');
+    await click(120, 30);
+    assert.equal(await entCount(), 5, 'the line is cut in two');
+    assert.deepEqual(await horiz(), [[20, 80], [160, 220]]);
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde/Undo]:', '/Undo after the first cut');
+    assert.equal((await histLabels()).at(-1), 'Trim');
+    await hv(40, 80);
+    assert.equal(await t('mod-preview').count(), 1, 'a lone line is previewed whole');
+    await click(40, 80);
+    assert.equal(await entCount(), 4, 'the line nothing crosses is deleted whole');
+    assert.deepEqual((await histLabels()).slice(-2), ['Trim', 'Trim'], 'one undo step per click');
+    await typeCmd('u');
+    assert.equal(await entCount(), 5, 'U takes back the last cut: the lone line is back');
+    await typeCmd('u');
+    assert.equal(await entCount(), 4); assert.deepEqual(await horiz(), [[20, 220]], 'U twice: the line is whole again');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:', 'nothing left to undo: /Undo is gone');
+    await typeCmd('u'); assert.match(await histLine(), /Nothing to undo in this Trim/);
+    await shotBoth('155a1-quick-trim', async () => {
+      if ((await t('tool-chip').textContent()) !== 'Tool: Trim') await page.locator('[data-tool=trim]').click();
+      await hv(120, 30);
+    });
+    // mOde: the question, then Standard; remembered over a reload
+    await typeCmd('o');
+    assert.equal(await prompt(), 'Enter a trim mode option [Quick/Standard] <Quick>:');
+    await typeCmd('x'); assert.match(await histLine(), /Type Quick or Standard/);
+    await typeCmd('s');
+    assert.match(await prompt(), /^Select cutting edges.*\[mOde\]/, 'Standard: the old pick-edges-first Trim');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Trim');
+    await page.reload(); await page.waitForSelector('[data-testid=count]', { state: 'attached' });
+    await openGrips(writeDxf(doc0), 'trim-quick2.dxf');
+    await page.locator('[data-tool=trim]').click();
+    assert.match(await prompt(), /^Select cutting edges/, 'Standard is still the mode after a reload');
+    await typeCmd('o'); assert.equal(await prompt(), 'Enter a trim mode option [Quick/Standard] <Standard>:');
+    await page.keyboard.press('Escape');
+    assert.match(await prompt(), /^Select cutting edges/); assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'Esc leaves the question only');
+    await typeCmd('o'); await typeCmd('quick');
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:');
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Trim');
+    await page.locator('[data-tool=trim]').click();
+    assert.equal(await prompt(), 'Select object to trim or shift-select to extend or [mOde]:', 'Quick is remembered too');
+    await page.keyboard.press('Enter');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends Trim');
   });
 
   await step('TODO 78: Trim preview', async () => {
@@ -10303,7 +10363,7 @@ try {
     const path = (ent) => svgPath(GR.shapeOf(ent, 1), h);
     const hover = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
     const clear = async () => { assert.equal(await t('trim-glow').count(), 0); assert.equal(await t('mod-preview').count(), 0); };
-    await typeCmd('tr'); await click(80, 40); await hover(120, 30); await clear();
+    await typeCmd('tr'); await trimStd(); await click(80, 40); await hover(120, 30); await clear();
     assert.equal(await t('trim-edge').evaluate((el) => getComputedStyle(el).strokeWidth), '4px');
     await page.keyboard.press('Enter');
     assert.match(await prompt(), /Click the part to cut away/);
@@ -10334,7 +10394,7 @@ try {
     await hover(120, 70); assert.equal(await t('trim-glow').count(), 1); assert.equal(await t('mod-preview').count(), 0, 'no crossing: glow only');
     await hover(120, 30); await t('ptab-objects').hover(); await frames(); await clear();
     await hover(120, 30); await page.keyboard.press('Escape'); await frames(); await clear();
-    await typeCmd('tr'); await click(80, 40); await page.keyboard.press('Enter'); await hover(120, 30);
+    await typeCmd('tr'); await trimStd(); await click(80, 40); await page.keyboard.press('Enter'); await hover(120, 30);
     await click(120, 30);
     const after = await savedDoc();
     assert.deepEqual(after.entities.filter((e) => e.layer === 'Cut').map(path),
@@ -10356,7 +10416,7 @@ try {
       [dxfPoly([[80, 60], [100, 60, 1], [100, 100]]), [dxfLine(80, 80, 140, 80)], [116, 92], dxfPoly([[120, 80, Math.tan(Math.PI / 8)], [100, 100]]), [dxfPoly([[80, 60], [100, 60, Math.tan(Math.PI / 8)], [120, 80]])]],
     ]) {
       const doc = newDoc(4); addEntities(doc, source, ...edges);
-      await openGrips(writeDxf(doc), 'trim-preview-kinds.dxf'); await typeCmd('tr'); await page.keyboard.press('Enter');
+      await openGrips(writeDxf(doc), 'trim-preview-kinds.dxf'); await typeCmd('tr'); await trimStd(); await page.keyboard.press('Enter');
       await hover(...pick);
       const height = (await sheetPx()).h, svg = (e) => svgPath(GR.shapeOf(e, 1), height);
       assert.equal(await t('mod-preview').getAttribute('d'), svg(removed), source.type + ' removed preview');
@@ -10391,7 +10451,7 @@ try {
       assert.equal(await t('mod-preview').getAttribute('d'), expected, why);
       assert.equal(await t('trim-glow').count(), 1, why);
     };
-    const start = async () => { await typeCmd('tr'); await page.keyboard.press('Enter'); await hover(); await red(interval, 'fresh preview'); };
+    const start = async () => { await typeCmd('tr'); await trimStd(); await page.keyboard.press('Enter'); await hover(); await red(interval, 'fresh preview'); };
     await start();
     await t('ptab-objects').hover(); await clear('pointer leave');
     await hover(); await red(interval, 'pointer re-entry');
@@ -10399,7 +10459,7 @@ try {
     assert.equal(await t('trim-edge').count(), 0, 'Esc clears cutting edges too');
 
     // Adding / taking out selected boundaries must not carry a preview from the previous run.
-    await typeCmd('tr'); await click(80, 60); await click(160, 60); await click(160, 60);
+    await typeCmd('tr'); await trimStd(); await click(80, 60); await click(160, 60); await click(160, 60);
     await hover(); await clear('boundary selection');
     await page.keyboard.press('Enter'); await red(tail, 'only the remaining selected boundary cuts');
     await page.keyboard.press('Escape'); await start();
@@ -11418,7 +11478,7 @@ try {
     const doc0 = newDoc(4);
     addEntities(doc0, dxfLine(80, 10, 80, 50), dxfLine(20, 30, 220, 30));
     await openGrips(writeDxf(doc0), 'trim3.dxf');
-    await page.locator('[data-tool=trim]').click();
+    await page.locator('[data-tool=trim]').click(); await trimStd();
     await click(80, 15); await click(200, 30);
     assert.match(await histLine(), /Cutting edges: 2/);
     await page.keyboard.press('Enter');

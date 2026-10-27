@@ -378,7 +378,7 @@ export function shapeOfPiece(segs, srcType) {
  * An open shape loses the stretch between the two crossings round the pick (up to its end when there is only one); a circle or closed
  * polyline needs two crossings and keeps the rest as one open piece.
  */
-export function trimShape(sh, edges, pick) {
+export function trimShape(sh, edges, pick, quick = false) {
   const P = pathOf(sh), n = P.segs.length;
   if (P.segs.some((s) => dist(s.a, s.b) < 1e-9)) return { error: 'The polyline has a side without length' };
   const cuts = [];
@@ -389,7 +389,7 @@ export function trimShape(sh, edges, pick) {
   let cs = cuts.map((u) => (P.closed && u >= n - 1e-9 ? 0 : u)).sort((a, b) => a - b);
   if (!P.closed) cs = cs.filter((u) => u > 1e-7 && u < n - 1e-7);
   cs = cs.filter((u, i) => i === 0 || u - cs[i - 1] > 1e-7);
-  if (!cs.length) return { error: 'Nothing crosses it here: pick a part between cutting edges' };
+  if (!cs.length) return quick ? { shapes: [], removed: sh } : { error: 'Nothing crosses it here: pick a part between cutting edges' };     // Quick: an object nothing crosses goes whole
   const up = closest(P, pick).u;
   let pieces, removed;
   if (!P.closed) {
@@ -420,10 +420,10 @@ export function offsetEntity(ent, d, at) {
   return r.error ? r : { ent: rebuilt(r.shape, ent) };
 }
 
-/** The kept entities and removed preview entity after cutting at the edges: { ents, removed } | { error }. */
-export function trimEntity(ent, edges, pick) {
+/** The kept entities and removed preview entity after cutting at the edges: { ents, removed } | { error }. `quick`: nothing crossing = the whole entity goes. */
+export function trimEntity(ent, edges, pick, quick = false) {
   if (!canModify(ent)) return { error: 'Trim takes a line, arc, circle or polyline' };
   const shapes = edges.filter((e) => e !== ent && canModify(e)).map((e) => shapeOf(e, 1));
-  const r = trimShape(shapeOf(ent, 1), shapes, pick);
+  const r = trimShape(shapeOf(ent, 1), shapes, pick, quick);
   return r.error ? r : { ents: r.shapes.map((sh) => rebuilt(sh, ent)), removed: r.removed ? rebuilt(r.removed, ent) : null };
 }

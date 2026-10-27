@@ -6060,11 +6060,12 @@ function cursorKey(e) {
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
-const MOD_KINDS = ['move', 'copy', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet';
+const MOD_KINDS = ['move', 'copy', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
+const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
 /** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => ({ kind, stage: kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: false, objs: [], p1: null, p2: null, p: null, cur: null });
+const newMod = (kind) => { const quick = kind === 'trim' && loadTrimQuick(); return { kind, stage: quick ? 'cut' : kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, cuts: 0, askMode: false, objs: [], p1: null, p2: null, p: null, cur: null }; };
 const modLive = () => !!(state.mod && state.modDoc === curDoc() && editable());
 const offDistU = (d) => state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
@@ -6078,7 +6079,7 @@ function modSync(d) {
 }
 const modEntAt = (d, p) => { const i = hitAt(d, p); return i >= 0 ? d.raw.entities[i] : null; };
 /** The cutting edges: the ones picked, or (Enter with none picked) every line, arc, circle and polyline showing. */
-const trimEdges = (d, m) => (m.all ? edIndex(d).shown.map((i) => d.raw.entities[i]).filter(MD.canModify) : m.edges);
+const trimEdges = (d, m) => (m.all ? edIndex(d).shown.filter((i) => !(m.quick && lockedEnt(d, i))).map((i) => d.raw.entities[i]).filter(MD.canModify) : m.edges);
 
 /** A modify tool just chosen: Offset reads its remembered distance; Mirror takes the selection if there is one. */
 function modStart(id) {
@@ -6086,7 +6087,7 @@ function modStart(id) {
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line, arc or polyline segment (radius ${mmText(state.filR)} mm; R changes it)`; }
   else if (id === 'offset') { state.offDist = loadOffsetDist(); state.msg = 'Offset: pick an object, or type the distance first'; }
-  else if (id === 'trim') state.msg = 'Trim: pick the cutting edges, then Enter (Enter alone = all)';
+  else if (id === 'trim') state.msg = m.quick ? 'Trim: click the part to cut away (every object is a cutting edge)' : 'Trim: pick the cutting edges, then Enter (Enter alone = all)';
   else if (id === 'extend') state.msg = 'Extend: pick the boundary edges, then Enter (Enter alone = all)';
   else if (d.sel.size) { m.objs = [...d.sel].map((i) => d.raw.entities[i]); m.stage = 'p1'; state.msg = `${d.sel.size} selected: click the first point of the mirror line`; }
   else state.msg = 'Mirror: select the objects, then press Enter';
@@ -6099,7 +6100,9 @@ function modPrompt(d) {
   if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):` };
   if (m.kind === 'offset') return { status: `Command: OFFSET   Distance <${mmText(state.offDist)}> mm`, prompt: m.stage === 'obj' ? `Select the object to offset, or type the distance <${mmText(state.offDist)}>:` : `Click the side to offset to (or type a new distance <${mmText(state.offDist)}>):` };
   if (m.kind === 'extend') return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all:' : 'Click near the end of a line, arc or open polyline to extend. Enter or Esc ends:' };
-  if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all:' : 'Click the part to cut away. Enter or Esc ends:' };
+  if (m.kind === 'trim' && m.askMode) return { status: `Command: TRIM   Mode: ${m.quick ? 'Quick' : 'Standard'}`, prompt: `Enter a trim mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
+  if (m.kind === 'trim' && m.quick) return { status: 'Command: TRIM   Mode: Quick', prompt: `Select object to trim or shift-select to extend or [mOde${m.cuts ? '/Undo' : ''}]:` };
+  if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all [mOde]:' : 'Click the part to cut away [mOde]. Enter or Esc ends:' };
   const objs = m.objs.length;
   return { status: `Command: MIRROR   ${m.stage === 'pick' ? `${n} selected` : `${objs} object${objs === 1 ? '' : 's'}`}`,
     prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Specify first point of mirror line:' : m.stage === 'p2' ? 'Specify second point of mirror line:' : 'Erase source objects? [Yes / No] <No>:' };
@@ -6107,6 +6110,7 @@ function modPrompt(d) {
 
 function modEsc(d) {
   const m = state.mod;
+  if (m.askMode) { m.askMode = false; note('Trim mode unchanged'); renderCommand(); return; }
   if (m.kind === 'offset' && m.stage === 'side') { m.stage = 'obj'; m.ent = null; note('Offset: pick an object'); paintOverlay(); return; }
   if (['trim', 'extend'].includes(m.kind) && m.stage === 'edges' && (m.edges.length || m.all)) { m.edges = []; m.all = false; note(m.kind === 'trim' ? 'Cutting edges cleared' : 'Boundary edges cleared'); paintOverlay(); return; }
   if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line, arc or polyline segment'); paintOverlay(); return; }
@@ -6116,6 +6120,7 @@ function modEsc(d) {
 }
 function modEnter(d) {
   const m = state.mod;
+  if (m.askMode) { trimMode(m.quick); return; }
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) { if (m.stage === 'pick') moveTake(d); else if (m.kind === 'copy') modEsc(d); else note(modPrompt(d).prompt); return; }
   if (m.kind === 'offset' || m.kind === 'fillet') { modEsc(d); return; }
   if (m.kind === 'extend') {
@@ -6201,6 +6206,14 @@ function modTyped(d, raw) {
   if (m.kind === 'mirror' && m.stage === 'erase') {
     if (c === 'y' || c === 'yes') modAnswer(d, true); else if (c === 'n' || c === 'no') modAnswer(d, false); else note('Erase source objects? Type Yes or No (Enter = No)');
     return true;
+  }
+  if (m.kind === 'trim') {
+    if (m.askMode) {
+      if ('quick'.startsWith(c)) trimMode(true); else if ('standard'.startsWith(c)) trimMode(false); else note('Type Quick or Standard (Enter keeps the one in <>)');
+      return true;
+    }
+    if (c === 'o' || c === 'm' || c === 'mode') { m.askMode = true; note(modPrompt(d).prompt); renderCommand(); return true; }
+    if (m.quick && (c === 'u' || c === 'undo')) { trimUndo(d); return true; }
   }
   if (['trim', 'extend'].includes(m.kind) && m.stage === 'edges' && (c === 'a' || c === 'all')) { m.edges = []; modEnter(d); return true; }
   return false;
@@ -6373,17 +6386,33 @@ function filletDo(d, ent, p, sharp) {
   m.stage = 'obj'; m.ent = null;
   note(`${!sharp && state.filR > 0 ? `Filleted, radius ${mmText(state.filR)} mm` : 'Corner made'}. Pick the next first line, arc or polyline segment, or Esc ends. Ctrl+Z takes it back`);
 }
+/** mOde answered: Quick = no edge picking (every object cuts); Standard = pick the cutting edges first. Remembered. */
+function trimMode(quick) {
+  const m = state.mod;
+  m.askMode = false; m.quick = quick; m.edges = []; m.all = quick; m.stage = quick ? 'cut' : 'edges';
+  try { localStorage.setItem(TRIM_MODE_SAVED, quick ? 'quick' : 'standard'); } catch { /* storage may be blocked */ }
+  note(quick ? 'Trim mode: Quick. Click the part to cut away' : 'Trim mode: Standard. Pick the cutting edges, then Enter (Enter alone = all)');
+  renderCommand(); paintOverlay();
+}
+/** Undo inside a running Quick Trim: takes back its last cut (only while the last step in the history is a Trim). */
+function trimUndo(d) {
+  const m = state.mod;
+  if (!m.cuts || d.hist.labels().past.at(-1) !== 'Trim') { note('Nothing to undo in this Trim'); return; }
+  m.cuts--; undo(d); renderCommand();
+}
 function trimDo(d, p, shift) {
   const m = state.mod, idx = hitAt(d, p);
+  m.askMode = false;                                            // a click answers the mode question with "stay"
   if (idx < 0) { note('Trim: nothing there. Click the part to cut away'); return; }
   const ent = d.raw.entities[idx];
   if (!MD.canModify(ent)) { note('Trim takes a line, arc, circle or polyline'); return; }
-  const r = MD.trimEntity(ent, trimEdges(d, m), p);
+  const r = MD.trimEntity(ent, trimEdges(d, m), p, m.quick);
   if (r.error) { note(r.error); return; }
   view.fitted = false;
   // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
   if (m.edges.includes(ent)) { for (const p of r.ents) m.was.set(p, ent); m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e])); }
   commit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim');
+  m.cuts++; renderCommand();
   note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + (shift ? ' (Shift, extend, is not built: this trims.)' : '') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
 }
 /** Extend: the end of the line nearest the click goes on to the nearest boundary ahead, one undo step; repeats until Esc. */
@@ -6444,7 +6473,7 @@ function modOvl(d, out) {
       const e = modEntAt(d, m.p);
       if (e && MD.canModify(e)) {
         addEnt(e, 'dr-trim-glow', 'trim-glow');
-        const r = MD.trimEntity(e, trimEdges(d, m), m.p);
+        const r = MD.trimEntity(e, trimEdges(d, m), m.p, m.quick);
         if (r.removed) addEnt(r.removed, 'dr-trim-cut', 'mod-preview');
       }
     }

@@ -264,6 +264,7 @@
   "Offset: the distance is remembered; click an object, click the side; a line, circle and rounded rectangle each make one copy on the same layer, one undo step \"Offset\"; too much is refused; Esc backs out": 4.67,
   "Trim: Enter makes every object a cutting edge, a click cuts the part between the crossings (a line becomes two); one undo step \"Trim\" each; pieces of an edge still cut": 3.24,
   "Trim with picked cutting edges: click toggles an edge; a line nothing crosses says so; a circle between two lines leaves an arc": 4.26,
+  "TODO 155a T1: Quick Trim starts at once (no edges), a click cuts between the crossings, a lone line goes whole, U undoes a cut, O switches to Standard (remembered over a reload), Esc ends": 6,
   "TODO 78: Trim preview": 20.5,
   "TODO 78c: Trim preview invalidation": 4.21,
   "TODO 66a: Move": 11.73,
