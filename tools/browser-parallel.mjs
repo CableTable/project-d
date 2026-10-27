@@ -2,8 +2,9 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
-// ONLY bypasses shard filtering, so launch that focused run just once.
-const count = process.env.ONLY ? 1 : 4;
+// A regex (ONLY or the 2nd argument) bypasses shard filtering, so launch that focused run just once.
+const only = process.env.ONLY || process.argv[3];
+const count = only ? 1 : 4;
 const port = Number(process.env.TEST_PORT || process.argv[2] || 5181);
 if (!Number.isInteger(port) || port < 1 || port + count - 1 > 65535) {
   console.error('Invalid first browser test port');
@@ -17,8 +18,8 @@ for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exi
 const failed = await Promise.all(Array.from({ length: count }, (_, i) => new Promise((resolve) => {
   const started = performance.now();
   const label = `[shard ${i + 1}/${count}]`;
-  const child = spawn(process.execPath, ['browser.test.mjs', String(port + i)], {
-    env: { ...process.env, TEST_PORT: String(port + i), SHARD: `${i + 1}/${count}` },
+  const child = spawn(process.execPath, ['browser.test.mjs', String(port + i), ...(only ? [only] : [])], {
+    env: { ...process.env, TEST_PORT: String(port + i), ...(only ? {} : { SHARD: `${i + 1}/${count}` }) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   children.push(child);
