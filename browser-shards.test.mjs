@@ -46,8 +46,10 @@ test('local runner launches four children together, prefixes failures and counts
     writeFileSync(join(dir, 'browser.test.mjs'), `
       import assert from 'node:assert/strict';
       import { writeFileSync, readdirSync } from 'node:fs';
-      const index = Number(process.env.SHARD.split('/')[0]);
-      const count = process.env.ONLY ? 1 : 4;
+      const focused = process.env.ONLY || process.argv[3];
+      assert.equal(!process.env.SHARD, Boolean(focused), 'a focused run is unsharded');
+      const index = focused ? 1 : Number(process.env.SHARD.split('/')[0]);
+      const count = focused ? 1 : 4;
       assert.equal(process.argv[2], String(5290 + index));
       assert.equal(process.env.TEST_PORT, process.argv[2]);
       writeFileSync('ready-' + index, '');
@@ -62,8 +64,9 @@ test('local runner launches four children together, prefixes failures and counts
       }
       console.log('all browser steps passed');
     `);
-    for (const [fail, only] of [['', ''], ['1', ''], ['', 'focused step']]) {
-      const result = spawnSync(process.execPath, [fileURLToPath(new URL('./tools/browser-parallel.mjs', import.meta.url)), '5291'], {
+    // The last case is the pre-151 form: the regex as the 2nd argument.
+    for (const [fail, only, arg] of [['', ''], ['1', ''], ['', 'focused step'], ['', '', 'focused step']]) {
+      const result = spawnSync(process.execPath, [fileURLToPath(new URL('./tools/browser-parallel.mjs', import.meta.url)), '5291', ...(arg ? [arg] : [])], {
         cwd: dir, encoding: 'utf8', timeout: 10000,
         env: { ...process.env, TEST_PORT: '', RUNNER_FAILURE: fail, ONLY: only },
       });
@@ -71,7 +74,7 @@ test('local runner launches four children together, prefixes failures and counts
       assert.equal(result.status, fail ? 1 : 0, result.stdout + result.stderr);
       assert.equal(result.stdout.trim().split('\n').at(-1), fail ? '3 failed' : 'all browser steps passed');
       if (fail) assert.match(result.stdout, /\[shard 2\/4\] FAIL example/);
-      for (const i of only ? [1] : [1, 2, 3, 4]) rmSync(join(dir, `ready-${i}`));
+      for (const i of only || arg ? [1] : [1, 2, 3, 4]) rmSync(join(dir, `ready-${i}`));
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
