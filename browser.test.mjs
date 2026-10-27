@@ -132,9 +132,10 @@ try {
     try {
       const p = await context.newPage();
       await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
-      const doc = newDoc(); addEntities(doc, dxfLine(0, 0, 100, 50));
-      await p.getByTestId('picker').setInputFiles({ name: 'status.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
-      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'status.dxf');
+      // Exercise the PDF sheet chip with wider fonts even on Windows.
+      await p.addStyleTag({ content: '.status { font-family: Verdana, system-ui, sans-serif; }' });
+      await p.getByTestId('picker').setInputFiles('fixtures/three-sheets.pdf');
+      await p.getByTestId('sheet-chip').waitFor({ state: 'visible' });
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       const height = await p.locator('.status').evaluate((el) => el.offsetHeight);
       await p.getByTestId('cmd-echo').click();
@@ -158,6 +159,11 @@ try {
       for (const theme of ['light', 'dark']) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
         await p.screenshot({ path: `${shotDir}/todo152c-status-${theme}.png` });
+      }
+      await p.setViewportSize({ width: 1024, height: 700 });
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/todo152c-status-1024-${theme}.png` });
       }
     } finally { await context.close(); }
   });
