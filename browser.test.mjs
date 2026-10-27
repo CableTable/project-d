@@ -209,6 +209,88 @@ try {
       await p.keyboard.press('Escape');
     } finally { await context.close(); }
   });
+  await step('TODO 71b: layout rotated part miss, window vs crossing, live styles, Shift add, locked/hidden skip and groups', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const lay = newLayout('Selection 71b'), raw = newDoc(4);
+      lay.s.sheetW = 600; lay.s.sheetH = 400;
+      addEntities(raw, dxfPoly([[0, 0], [80, 0], [80, 80], [0, 80]], { closed: true }));
+      for (const id of ['plate', 'hidden']) lay.parts[id] = makePart(id, id === 'plate' ? 'Plate' : 'Hidden', raw);
+      lay.placed = [
+        { partId: 'plate', x: 140, y: 80, rot: 45 }, { partId: 'plate', x: 300, y: 80, rot: 0 },
+        { partId: 'plate', x: 430, y: 80, rot: 0, lock: true, g: 'pair' },
+        { partId: 'hidden', x: 430, y: 220, rot: 0, g: 'pair' },
+        { partId: 'plate', x: 50, y: 270, rot: 0, g: 'pair' }, { partId: 'plate', x: 200, y: 270, rot: 0, g: 'pair' },
+      ];
+      await q('picker').setInputFiles({ name: 'selection-71b.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-71b.dxf');
+      await q('ptab-objects').click(); await p.locator('.or.layer[data-part=hidden] [data-act=vis]').click();
+      await q('ptab-drawing').click(); await p.locator('[data-tool=select]').click();
+      const atPoint = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox();
+        return { x: b.x + x * b.width / 600, y: b.y + (400 - y) * b.width / 600 };
+      };
+      const selected = (ids) => p.waitForFunction((ids) => {
+        const parts = [...document.querySelectorAll('[data-group=parts] .part-hit')];
+        const picked = [...document.querySelectorAll('[data-group=tools] .sel-box')].map((el) =>
+          Number(parts.find((part) => part.getAttribute('points') === el.getAttribute('points'))?.parentElement.dataset.i)).sort((a, b) => a - b);
+        return JSON.stringify(picked) === JSON.stringify(ids);
+      }, ids, { timeout: 5000 }).catch(async () => {
+        throw new Error(`Expected layout picks ${JSON.stringify(ids)}; outlines ${JSON.stringify(await p.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => el.getAttribute('points'))))}; ${await q('cmd-prompt').textContent()}`);
+      });
+      const clear = async () => {
+        await p.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true });
+        await p.evaluate(() => document.activeElement?.blur());
+        for (let i = 0; i < 4; i++) await p.keyboard.press('Escape');
+        await selected([]);
+      };
+      const start = async (a, b, shift = false) => {
+        const from = await atPoint(...a), to = await atPoint(...b);
+        if (shift) await p.keyboard.down('Shift');
+        await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 5 });
+        await q('rubber').waitFor({ state: 'visible' });
+      };
+      const finish = async (shift = false) => { await p.mouse.up(); if (shift) await p.keyboard.up('Shift'); };
+      const drag = async (a, b, shift = false) => { await start(a, b, shift); await finish(shift); };
+      const style = () => q('rubber').evaluate((el) => {
+        const s = getComputedStyle(el); return [s.borderTopStyle, s.borderTopColor, s.backgroundColor];
+      });
+      await clear(); await drag([105, 100], [85, 85]); await selected([]);
+      assert.match(await q('cmd-prompt').textContent(), /No part touches/);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        for (const crossing of [false, true]) {
+          await clear(); await start(crossing ? [210, 110] : [130, 70], crossing ? [130, 70] : [210, 110]);
+          const s = await style(), colour = theme === 'light' ? (crossing ? '#188344' : '#2f7bd0') : (crossing ? '#5cdb8b' : '#60a5fa');
+          assert.equal(s[0], crossing ? 'dashed' : 'solid');
+          assert.equal(s[1], `rgb(${colour.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16)).join(', ')})`);
+          assert.notEqual(s[2], 'rgba(0, 0, 0, 0)');
+          await p.screenshot({ path: `${shotDir}/todo71b-${crossing ? 'crossing' : 'window'}-${theme}.png` });
+          await finish(); await selected(crossing ? [0] : []);
+        }
+      }
+      await clear(); await start([210, 210], [220, 240]); assert.equal((await style())[0], 'solid');
+      const left = await atPoint(180, 240); await p.mouse.move(left.x, left.y, { steps: 5 });
+      assert.equal((await style())[0], 'dashed', 'layout style switches live to crossing');
+      const right = await atPoint(220, 240); await p.mouse.move(right.x, right.y, { steps: 5 });
+      assert.equal((await style())[0], 'solid', 'layout style switches back to window');
+      await finish();
+      await drag([75, 70], [205, 205]); await selected([0]);
+      for (const crossing of [false, true]) {
+        await clear(); await drag([290, 70], [390, 170]); await selected([1]);
+        await drag(crossing ? [210, 110] : [75, 70], crossing ? [130, 70] : [205, 205], true); await selected([0, 1]);
+        await drag(crossing ? [210, 110] : [75, 70], crossing ? [130, 70] : [205, 205], true); await selected([0, 1]);
+      }
+      for (const crossing of [false, true]) {
+        await clear(); await drag(crossing ? [520, 310] : [420, 70], crossing ? [420, 70] : [520, 310]); await selected([]);
+        await drag(crossing ? [140, 360] : [40, 260], crossing ? [40, 260] : [140, 360]); await selected([4, 5]);
+      }
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
   await step('TODO 152c: a 200-character command echo ellipsizes with a tooltip and keeps the status bar on one line', async () => {
     const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
     try {

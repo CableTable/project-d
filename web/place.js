@@ -31,6 +31,20 @@ export function toSheet(pl, u, v) {
 /** The part's four corners on the sheet, [[x, y] × 4]: its lower-left, lower-right, upper-right and upper-left as drawn before the turn. */
 export const corners = (part, pl) => [[0, 0], [part.w, 0], [part.w, part.h], [0, part.h]].map(([u, v]) => toSheet(pl, u, v));
 
+/** Window contains the rotated outline box; crossing includes any touch, in sheet mm (y up). */
+export function boxHit(part, pl, box, crossing = false) {
+  const [x0, y0, x1, y1] = box, b = placedBox(part, pl), t = 1e-6;
+  if (!crossing) return b[0] >= x0 - t && b[1] >= y0 - t && b[2] <= x1 + t && b[3] <= y1 + t;
+  if (b[2] < x0 - t || b[0] > x1 + t || b[3] < y0 - t || b[1] > y1 + t) return false;
+  // The sheet axes passed the bbox prefilter; the part's axes complete the separating-axis test.
+  const c = corners(part, pl), q = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
+  const th = rad(pl.rot || 0), co = Math.cos(th), si = Math.sin(th);
+  return [[co, si], [-si, co]].every(([ax, ay]) => {
+    const p = c.map(([x, y]) => x * ax + y * ay), r = q.map(([x, y]) => x * ax + y * ay);
+    return Math.max(...p) >= Math.min(...r) - t && Math.max(...r) >= Math.min(...p) - t;
+  });
+}
+
 /** The middle of the part on the sheet. */
 export const centreOf = (part, pl) => toSheet(pl, part.w / 2, part.h / 2);
 
