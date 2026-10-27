@@ -137,14 +137,18 @@ try {
       await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
     };
-    let saveNumber = 0;
+    // Blink's LocalFrame::ShouldThrottleDownload passes 10 downloads, then silently drops the 11th unless more than 1 s
+    // has passed since that window's first one (saves 1, 11, 21...). Fast CI ran saves 11-21 in under 1 s, so save 21 vanished.
+    let saveNumber = 0, windowStart = 0;
     const save = async () => {
-      const number = ++saveNumber;
+      const number = ++saveNumber, opensWindow = number % 10 === 1;
       try {
+        if (opensWindow && number > 1) await p.waitForTimeout(Math.max(0, windowStart + 1200 - Date.now()));
         // renderStatus() exposes the active drawing's parsed fl; openBytes() sets raw alongside it before addTab().
         await p.waitForFunction(() => !document.querySelector('.pop-back, .pdlg-back, dialog[open]') &&
           !!document.querySelector('.dtab.on[data-kind=drawing]') && /^Entities \d+$/.test(document.querySelector('[data-testid=entities]')?.textContent));
         const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+        if (opensWindow) windowStart = Date.now();   // after the renderer's own timestamp, so the wait above errs long
         return readFileSync(await dl.path(), 'utf8');
       } catch (e) {
         const seen = await p.evaluate(() => ({
