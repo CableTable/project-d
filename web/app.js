@@ -4031,15 +4031,22 @@ function zoomPrevious() {
 function attachCanvasEvents() {
   const c = ui.canvas;
   const local = (e) => { const r = c.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
-  let altPick = false;
+  let altPick = false, suppressAltUp = false;
   c.addEventListener('pointerdown', (e) => {
     altPick = false;
-    if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.zwin || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
+    if (!e.altKey && selectionCycle) { selectionCycle = null; renderCommand(); }
+    if (e.button !== 0 || !e.altKey || !['select', 'step'].includes(state.tool) || state.setlen || state.match || state.zwin || state.grip || state.mod || state.entityDrag || e.target.closest('.zoombox, .contourpanel, .preflightpanel, input, textarea, button')) return;
     altPick = true;
+    suppressAltUp = true;
     e.preventDefault(); e.stopImmediatePropagation();
     document.activeElement?.blur();
     cycleSelect(e);
   }, true);
+  document.addEventListener('keydown', (e) => { if (e.key !== 'Alt') suppressAltUp = false; }, true);
+  document.addEventListener('keyup', (e) => {
+    if (e.key === 'Alt') { if (suppressAltUp) e.preventDefault(); suppressAltUp = false; }
+  }, true);
+  window.addEventListener('blur', () => { suppressAltUp = false; });
   for (const type of ['pointerup', 'click', 'dblclick']) c.addEventListener(type, (e) => {
     if (altPick && e.button === 0) { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
@@ -4667,14 +4674,18 @@ function cycleSelect(e) {
     .filter((el) => el.matches('.part-hit')).map((el) => Number(el.parentElement.dataset.i)))]
     .filter((i) => !state.hidden.parts && !partHid(placedNow[i]) && !placedNow[i].lock)
     : Ed.hitEntities(edIndex(d), p[0], p[1], pickTol(d)).filter((i) => !lockedEnt(d, i));
-  selectionCycle = cyclePick(selectionCycle, hits, [e.clientX, e.clientY], 7, historyOf(d).revision);
+  selectionCycle = cyclePick(selectionCycle, hits, [e.clientX, e.clientY], 7, historyOf(d).revision, d.sel);
   if (!selectionCycle) {
     if (!e.shiftKey) { if (d.lay) { selectMany([]); update(); } else setSel(d, new Set()); }
     note('No objects here'); return;
   }
   const { hit, index } = selectionCycle;
   if (d.lay) { selectMany([...(e.shiftKey ? selIdxs() : []), hit], hit); update(); }
-  else { setSel(d, new Set([...(e.shiftKey ? d.sel : []), hit])); d.lastPick = hit; }
+  else {
+    const sel = new Set(e.shiftKey ? d.sel : []);
+    sel.delete(selectionCycle.drop); sel.add(hit);
+    setSel(d, sel); d.lastPick = hit;
+  }
   note(`${index + 1} of ${hits.length} objects here`);
 }
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
@@ -8053,9 +8064,8 @@ async function init() {
       selectionCycle = null; renderCommand();
     }
   }, true);
-  for (const type of ['keydown', 'keyup']) document.addEventListener(type, (e) => {
+  document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && selectionCycle) { selectionCycle = null; renderCommand(); }
-    if (e.key === 'Alt') { e.preventDefault(); e.stopImmediatePropagation(); }
   }, true);
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;

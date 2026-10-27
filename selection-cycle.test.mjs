@@ -38,6 +38,23 @@ test('TODO 71c: every history edit, undo, redo and clear resets the cycle, even 
   assert.equal(cyclePick(state, [], [10, 20], 7, hist.revision), null);
 });
 
+test('TODO 71c: the pre-cycle selection is copied, retained on wrap and refreshed on reset', () => {
+  const selected = new Set([0, 5]), hits = [1, 0];
+  let state = cyclePick(null, hits, [10, 20], 7, 0, selected);
+  selected.add(1);
+  assert.deepEqual(state.before, [0, 5]);
+  assert.equal(state.drop, null);
+  for (let i = 0; i < 3; i++) {
+    const previous = state;
+    state = cyclePick(state, hits, [10, 20], 7, 0, selected);
+    assert.deepEqual(state.before, [0, 5]);
+    assert.equal(state.drop, previous.hit === 1 ? 1 : null, 'only a temporary cycle hit can be dropped');
+  }
+  state = cyclePick(state, hits, [30, 20], 7, 0, selected);
+  assert.deepEqual(state.before, [0, 5, 1]);
+  assert.equal(state.drop, null);
+});
+
 test('TODO 71c: all hits use real line/arc geometry, area rules, visibility, and one candidate per block', () => {
   const doc = newDoc(4);
   addLayer(doc, 'Hidden');

@@ -300,7 +300,8 @@ try {
       const doc = newDoc(4);
       addLayer(doc, 'Locked'); addLayer(doc, 'Hidden');
       addEntities(doc, dxfLine(50, 100, 250, 100), dxfLine(50, 100, 250, 100),
-        dxfLine(50, 100, 250, 100, { layer: 'Locked' }), dxfLine(50, 100, 250, 100, { layer: 'Hidden' }));
+        dxfLine(50, 100, 250, 100, { layer: 'Locked' }), dxfLine(50, 100, 250, 100, { layer: 'Hidden' }),
+        dxfLine(50, 170, 250, 170));
       await q('picker').setInputFiles({ name: 'selection-71c.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'selection-71c.dxf');
       await q('ptab-objects').click();
@@ -343,8 +344,35 @@ try {
       await p.setViewportSize({ width: 1280, height: 900 });
       assert.ok(await p.locator('.status .cb-hint.cycling').isVisible(), 'cycling status survives the narrow status bar');
       await p.setViewportSize({ width: 1440, height: 900 });
-      await pick(150, 100, true); await note(2); await selected([0, 1]);
+      await p.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await p.keyboard.press('Escape'); await pick(); await note(1);
+      await pick(150, 100, true); await note(2); await selected([0]);
       await pick(); await note(1); await selected([1]);
+      // A plain click at the same spot restarts the cycle, even when it hits a selected object.
+      await pick(120, 100); await note(1);
+      const sameSpot = await point(120, 100); await p.mouse.click(sameSpot.x, sameSpot.y);
+      await pick(120, 100); await note(1); await selected([1]);
+      // Shift keeps the pre-cycle selection, without accumulating temporary cycle hits.
+      await p.keyboard.press('Escape');
+      await pick(150, 100, true); await note(1); await selected([1]);
+      await pick(150, 100, true); await note(2); await selected([0]);
+      await pick(150, 100, true); await note(1); await selected([1]);
+      await p.locator('.or.obj[data-e="0"] .onm').click(); await selected([0]);
+      await pick(150, 100, true); await note(1); await selected([0, 1]);
+      await pick(150, 100, true); await note(2); await selected([0]);
+      await pick(150, 100, true); await note(1); await selected([0, 1]);
+      await p.keyboard.press('Escape');
+      await p.locator('.or.obj[data-e="4"] .onm').click(); await selected([4]);
+      await pick(120, 100); await note(1); await selected([1]);
+      await pick(120, 100, true); await note(2); await selected([0]);
+      await p.keyboard.press('Escape');
+      await q('cmd-echo').click(); await q('cmd-input').fill('mv'); await q('cmd-input').press('Enter');
+      assert.match(await q('cmd-prompt').textContent(), /Select objects/);
+      await pick(120, 170); await selected([4]);
+      assert.match(await q('cmd-prompt').textContent(), /Select objects/);
+      await p.keyboard.press('Enter');
+      assert.match(await q('cmd-prompt').textContent(), /Base point or x,y:/);
+      await p.keyboard.press('Escape');
       const canvas = await q('canvas').boundingBox(); await p.mouse.click(canvas.x + 80, canvas.y + 50);
       await pick(); await note(1); await selected([1]);
       await p.keyboard.press('ArrowRight');
@@ -361,6 +389,21 @@ try {
       assert.equal(await q('cmd-prompt').textContent(), before);
       assert.equal(await p.evaluate(() => document.activeElement?.tagName), focus);
       assert.equal(await p.locator('.pop-back:visible, .pdlg-back:visible, .ctxmenu:visible, .texted:visible').count(), 0);
+      assert.equal(await p.locator('.dtab.on').evaluate((el) => {
+        const e = new KeyboardEvent('keydown', { key: 'Alt', altKey: true, bubbles: true, cancelable: true });
+        el.dispatchEvent(e); return e.defaultPrevented;
+      }), false, 'Alt keydown outside the canvas keeps its default');
+      await pick();
+      assert.equal(await p.evaluate(() => {
+        const e = new KeyboardEvent('keyup', { key: 'Alt', bubbles: true, cancelable: true });
+        document.dispatchEvent(e); return e.defaultPrevented;
+      }), false, 'Alt release suppression is consumed by the click\'s first release');
+      for (const key of ['F4', ' ', 'Tab']) {
+        assert.equal(await p.evaluate((key) => {
+          const e = new KeyboardEvent('keydown', { key, altKey: true, bubbles: true, cancelable: true });
+          document.dispatchEvent(e); return e.defaultPrevented;
+        }, key), false, `Alt+${key} keeps its default`);
+      }
       assert.deepEqual(errs, []);
     } finally { await context.close(); }
   });
