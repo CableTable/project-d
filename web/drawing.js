@@ -377,7 +377,7 @@ export function flatten(doc) {
       const r = e.r, f = firsts(r);
       if (e.fill && closedOutline(e)) {
         const ops = outlineOps(e);
-        if (ops) put({ k: 'p', ...base, ops, fill: 1, attachedFill: true, css: fillCss(e.fill, lay.css, ctx.css), b: opsBox(ops) });
+        if (ops) put({ k: 'p', ...base, ops, fill: 1, attachedFill: true, exact: /^(tc:|aci:(?!7$))/.test(e.fill), css: fillCss(e.fill, lay.css, ctx.css), b: opsBox(ops) });
       }
       switch (e.type) {
         case 'LINE': path([0, num(f[10]), num(f[20]), 1, num(f[11]), num(f[21])]); break;

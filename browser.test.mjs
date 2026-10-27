@@ -620,15 +620,15 @@ try {
       await swatch('aci:1').click({ button: 'right' });
       await p.locator('[data-ribbon-tab=Home]').click();
       await p.locator('[data-panel=Properties]').getByRole('button', { name: 'Fill', exact: true }).click();
-      await click(35, 35); assert.equal(fills(await save())[0], 'tc:16711680');
+      await click(35, 35); assert.equal(fills(await save())[0], 'aci:1');
       await undo(); assert.equal(fills(await save())[0], null, 'one Undo per tool fill');
       await click(35, 105); assert.match(await q('cmd-hist').textContent(), /Not one closed outline: Join first/);
       await p.keyboard.press('Escape'); await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       await swatch('aci:3').click({ button: 'right' });
       assert.match(await q('cmd-prompt').textContent(), /open shapes.*skipped/);
-      assert.deepEqual(fills(await save()).slice(0, 3), Array(3).fill('tc:65280'));
+      assert.deepEqual(fills(await save()).slice(0, 3), Array(3).fill('aci:3'));
       await q('no-fill').click(); assert.ok(fills(await save()).every((v) => v === null));
-      await undo(); assert.equal(fills(await save())[0], 'tc:65280', 'No fill is one Undo');
+      await undo(); assert.equal(fills(await save())[0], 'aci:3', 'No fill is one Undo');
       await p.locator('.coords').click(); await p.keyboard.press('Control+a');
       await q('no-fill').click({ button: 'right' }); assert.equal(fills(await save())[0], null);
       await p.keyboard.press('Escape'); await click(10, 35);

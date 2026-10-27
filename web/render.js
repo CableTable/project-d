@@ -65,7 +65,7 @@ export function paintDrawing(canvas, o) {
   const k0 = scale * dpr, V = [k0, 0, 0, k0, -ox * k0, -oy * k0];
   const k = k0 * factor;                                   // pixels in one drawing unit
   c.lineJoin = 'round'; c.lineCap = 'round';
-  const col = o.tint ? () => o.tint : (css) => ink(css, dark);
+  const col = o.tint ? () => o.tint : (css, exact) => exact ? css : ink(css, dark);          // exact: a fill with its own colour keeps it
   const sheetBg = dark ? SHEETS.dark.bg : SHEETS.light.bg;
   if (o.slots) {
     // Layout: the drawing once per slot (drawing units → sheet mm), any slot in view; no per-item culling
@@ -150,7 +150,7 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
       continue;
     }
     flush();
-    if (mode === 'fill') { c.beginPath(); trace(c, it.ops, origin); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css); c.fill('evenodd'); c.globalAlpha = 1; }
+    if (mode === 'fill') { c.beginPath(); trace(c, it.ops, origin); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css, it.exact); c.fill('evenodd'); c.globalAlpha = 1; }
     else if (mode === 'mask') { c.beginPath(); trace(c, it.ops, origin); c.fillStyle = sheetBg; c.fill(); }
     else if (mode === 'point') {
       c.beginPath(); c.arc(it.x - origin[0], it.y - origin[1], 1.8 * dpr / kk, 0, Math.PI * 2);

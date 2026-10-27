@@ -105,8 +105,8 @@ export function fillHatch(e) {
   const pts = e.type === 'CIRCLE' ? [[val(r, 10) - val(r, 40), val(r, 20), 1], [val(r, 10) + val(r, 40), val(r, 20), 1]]
     : e.type === 'LWPOLYLINE' || e.type === 'POLYLINE' ? polyPts(e) : boundary(e).map((p) => [p[0], p[1], 0]);
   const bulge = pts.some((p) => p[2]), key = e.fill;
-  const keep = key === 'aci:7' || key === 'bylayer' || key === 'byblock';          // the others are saved as their exact RGB (+ the nearest index)
-  const colour = keep ? { aci: key === 'aci:7' ? 7 : key === 'byblock' ? 0 : 256, tc: null } : { aci: 256, tc: pack420(keyRgb(key)) };
+  const index = key.startsWith('aci:') ? Number(key.slice(4)) : key === 'byblock' ? 0 : key === 'bylayer' ? 256 : null;     // a palette fill is written as 62 only, so it reopens as the same key; true colour as 420
+  const colour = index != null ? { aci: index, tc: null } : { aci: 256, tc: pack420(keyRgb(key)) };
   const pairs = [[8, e.layer], [10, 0], [20, 0], [30, 0], [210, val(r, 210)], [220, val(r, 220)], [230, val(r, 230, 1)], [2, 'SOLID'], [70, 1], [71, 0], [91, 1],
     [92, 3], [72, bulge ? 1 : 0], [73, 1], [93, pts.length], ...pts.flatMap((p) => [[10, p[0]], [20, p[1]], ...(bulge ? [[42, p[2]]] : [])]),
     [97, 0], [75, 0], [76, 1], [98, 0]];
@@ -123,19 +123,18 @@ function solidLoop(h) {
 const hatchKey = (h) => h.tc != null ? 'tc:' + h.tc : h.aci >= 1 && h.aci <= 255 ? 'aci:' + h.aci : h.aci === 0 ? 'byblock' : 'bylayer';
 
 /**
- * A solid HATCH whose boundary matches a closed outline in the same list becomes that outline's fill (the HATCH is dropped);
- * any other HATCH stays. Changes `doc` in place. shortcut: each HATCH is compared with every closed outline, use a grid if a drawing has thousands of both.
+ * A visible solid HATCH that sits right before a closed outline on the same layer and in the same space (as dxf-write.js saves a fill)
+ * and matches its boundary becomes that outline's fill (the HATCH is dropped); any other HATCH stays. Changes `doc` in place.
  */
 export function linkFills(doc) {
   for (const list of [doc, ...Object.values(doc.blocks || {})]) {
     const ents = list.entities;
     if (!ents?.some((e) => e.type === 'HATCH')) continue;
-    const outlines = ents.filter((e) => !e.fill && closedOutline(e)).map((e) => ({ e })), gone = new Set();
-    for (const h of ents) {
-      const poly = solidLoop(h);
-      const hit = poly && outlines.find((o) => !o.taken && boundariesMatch(poly, o.poly ||= boundary(o.e)));
-      if (hit) { hit.e.fill = hatchKey(h); hit.taken = true; gone.add(h); }
-    }
+    const gone = new Set();
+    ents.forEach((h, i) => {
+      const o = ents[i + 1], poly = o && !o.fill && !h.hidden && h.layer === o.layer && !!h.ps === !!o.ps && closedOutline(o) && solidLoop(h);
+      if (poly && boundariesMatch(poly, boundary(o))) { o.fill = hatchKey(h); gone.add(h); }
+    });
     if (gone.size) list.entities = ents.filter((e) => !gone.has(e));
   }
   return doc;
