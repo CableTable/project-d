@@ -6274,6 +6274,33 @@ try {
     assert.equal(await t('contour-preview').evaluate((p) => p.style.getPropertyValue('--ct-dash')), '0 4');
     await colours.getByRole('button', { name: 'ByLayer', exact: true }).click();
     await styles.getByRole('button', { name: 'Solid', exact: true }).click(); await t('contour-close').click();
+
+    // Custom Contour colour: picker OK / Cancel, preview, DXF true colour and one Undo / Redo.
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'contour-custom.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'contour-custom.dxf');
+    await page.locator('[data-tool=contour]').click(); await click(150, 100); await waitSel('1 selected');
+    await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+    await t('contour-colour').click(); await t('colour-hex').fill('336699'); await t('colour-ok').click();
+    const previewStroke = () => t('contour-preview').locator('.ct-out').first().evaluate((p) => getComputedStyle(p).stroke);
+    assert.equal(await previewStroke(), 'rgb(51, 102, 153)', 'OK updates the Contour preview');
+    const customCfg = await ctCfg();
+    await t('contour-colour').click(); await t('colour-hex').fill('abcdef'); await t('colour-cancel').click();
+    assert.deepEqual(await ctCfg(), customCfg, 'Cancel keeps the Contour colour');
+    assert.equal(await previewStroke(), 'rgb(51, 102, 153)', 'Cancel keeps the preview colour');
+    const customBase = await entCount();
+    await t('contour-apply').click(); assert.equal(await entCount(), customBase + 4);
+    const customSave = await downloaded(() => page.keyboard.press('Control+s'));
+    const customAdded = readDxf(customSave.text).entities.filter((e) => e.layer === 'Contour');
+    assert.equal(customAdded.length, 4);
+    assert.ok(customAdded.every((e) => e.tc === 0x336699), 'Apply writes the custom RGB as DXF group 420');
+    await colours.getByRole('button', { name: 'ByLayer', exact: true }).click();
+    await t('contour-close').click();
+    await page.keyboard.press('Control+z'); assert.equal(await entCount(), customBase, 'one Undo removes the contour');
+    await page.keyboard.press('Control+y'); assert.equal(await entCount(), customBase + 4, 'one Redo restores the contour');
+    const customRedo = await downloaded(() => page.keyboard.press('Control+s'));
+    assert.deepEqual(readDxf(customRedo.text).entities.filter((e) => e.layer === 'Contour').map((e) => e.tc),
+      customAdded.map((e) => e.tc), 'Redo preserves every custom RGB colour in DXF');
     if (await t('props-panel').isVisible()) await page.keyboard.press('Control+1');
   });
 
