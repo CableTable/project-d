@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "test": "npx eslint web && node tools/unit.mjs",
-    "test:browser": "node browser.test.mjs",
+    "test:browser": "node tools/browser-parallel.mjs",
     "serve": "node serve.mjs",
     "vendor": "node tools/vendor.mjs",
     "tauri": "tauri"

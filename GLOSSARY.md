@@ -2,6 +2,8 @@
 
 Project D's own words, based on the project docs and names in `web/`; `DECISIONS.md` wins over older descriptions, and planned features are marked below.
 
+**Browser shard**: One contiguous run of browser-suite steps, balanced by measured time and run independently with its own server port, browser, page and screenshot subfolder. Four shards run together locally and in CI. Where: `browser.test.mjs`, `tools/browser-shards.json`.
+
 ## App
 
 **Context tab**: A ribbon tab shown for the current selection, such as Part when placed parts are selected on a layout. Where: `web/app.js`.
