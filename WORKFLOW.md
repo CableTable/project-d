@@ -295,7 +295,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
   (Without it, claude2 reads CLAUDE.md's builder rule and tries to start claude2 itself.)
 - Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
-- Builders: tests (`npm.cmd test`, `npm.cmd run test:browser`) must pass; screenshots light + dark into `shots/` (`shots/shard-N-of-4/` through the runner).
+- Builders: `npm.cmd test` plus ONLY their own new / changed browser steps (`node browser.test.mjs <port> '<step names>'`) must pass; screenshots light + dark through those steps. **Rook runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
 - Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
 - **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in
   GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit. Review A checks the same list.
