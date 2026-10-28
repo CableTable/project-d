@@ -202,7 +202,7 @@ function drawDimPreview(c, g, T, dpr, accent) {
 
 /** Set length's / Measure's points: a ring and a cross at each, a line between two; the point under the cursor gets the shape of its snap. */
 export const SNAP_MARK_SIZE = 6;                   // 155p: AutoSnapMarkerSize 6, the half side in px like AutoCAD's
-export function drawMarks(c, pts, T, dpr, accent, snapCol = '#ffbf7f') {
+export function drawMarks(c, pts, T, dpr, accent, snapCol = '#00c000') {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.6 * dpr; c.setLineDash([]);
   const placed = pts.filter((p) => !p[3]).map(([x, y]) => mapply(T, x, y));
@@ -220,7 +220,7 @@ export function drawMarks(c, pts, T, dpr, accent, snapCol = '#ffbf7f') {
     else if (k === 'perpendicular') { c.moveTo(x - h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.moveTo(x - h, y); c.lineTo(x, y); c.lineTo(x, y + h); }       // the right-angle symbol
     else if (k === 'near') { c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.closePath(); }       // AutoCAD's hourglass
     else { c.moveTo(x - h, y); c.lineTo(x + h, y); c.moveTo(x, y - h); c.lineTo(x, y + h); }
-    const halo = c.lineWidth;                                                       // a dark edge under the light orange so it reads on a white sheet too
+    const halo = 1.6 * dpr;                                                        // unfilled green outlines need a dark edge on white (green alone is 2.46:1)
     c.strokeStyle = 'rgba(0, 0, 0, .55)'; c.lineWidth = halo + 2 * dpr; c.stroke();
     c.strokeStyle = snapCol; c.lineWidth = halo; c.stroke();
     if (k) {

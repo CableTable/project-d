@@ -192,6 +192,8 @@ try {
       }
       assert.equal(await field.inputValue(), '2');
       await p.keyboard.press('Escape');
+      await q('picker').setInputFiles('fixtures/sample.dxf'); // Objects search needs a loaded drawing.
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'sample.dxf');
       await p.locator('[data-tab=objects]').click();
       const search = q('obj-search');
       await search.fill('Layer');
@@ -565,7 +567,7 @@ try {
       await p.keyboard.press('Escape');
     } finally { await context.close(); }
   });
-  await step('TODO 155o-r: crosshair cursor over the canvas only, light orange snap marker of 6, box fill 25%, grip 5 with hover and hot colours', async () => {
+  await step('TODO 155o-r: crosshair cursor over the canvas only, green outline snap marker of 6, box fill 25%, grip 5 with hover and hot colours', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
       const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
@@ -620,21 +622,22 @@ try {
       await p.mouse.move(panel.x + panel.width / 2, panel.y + 30, { steps: 3 });
       await xh.waitFor({ state: 'hidden' });
       const alpha = (c) => { const m = /\/\s*([\d.]+)\s*\)$/.exec(c) || /,\s*([\d.]+)\)$/.exec(c); return m ? Number(m[1]) : 1; };
-      const snapBox = (pt) => q('drawing').evaluate((c, pt) => {                    // the extent of the light orange pixels within 10 css px of the snap point
+      const snapBox = (pt) => q('drawing').evaluate((c, pt) => {                    // the extent of green pixels within 10 css px of the snap point
         const b = c.getBoundingClientRect(), k = c.width / b.width, cx = (pt.x - b.x) * k, cy = (pt.y - b.y) * k, R = Math.round(10 * k);
         const d = c.getContext('2d').getImageData(Math.round(cx) - R, Math.round(cy) - R, 2 * R, 2 * R).data;
-        let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
-        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && Math.abs(d[i] - 255) < 6 && Math.abs(d[i + 1] - 191) < 6 && Math.abs(d[i + 2] - 127) < 6) { const n = i / 4, x = n % (2 * R), y = Math.floor(n / (2 * R)); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
-        return x1 < 0 ? null : { w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k };
+        let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1, inside = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 6 && Math.abs(d[i + 1] - 192) < 6 && d[i + 2] < 6) { const n = i / 4, x = n % (2 * R), y = Math.floor(n / (2 * R)); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); if (Math.abs(x - R) < 3 * k && Math.abs(y - R) < 3 * k) inside++; }
+        return x1 < 0 ? null : { w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k, inside };
       }, pt);
       for (const theme of ['light', 'dark']) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
-        // 155p: Line tool hovering an end point: the marker is ACI 31 (#ffbf7f) and 6 px a side each way, with its name beside it
+        // 155p: Line tool hovering an end point: green outline (#00c000), 6 px each way, with its name beside it
         await p.locator('[data-tool=line]').click();
         const end = await at(60.3, 20.3, 5);
         await p.waitForTimeout(200);
         const m = await snapBox(end);
-        assert.ok(m, 'the snap marker is painted in #ffbf7f');
+        assert.ok(m, 'the snap marker is painted in #00c000');
+        assert.equal(m.inside, 0, 'the endpoint square is an outline, not filled');
         assert.ok(m.w >= 12 && m.w <= 15 && m.h >= 12 && m.h <= 15, `a 6 px marker is about 12 to 14 px across, got ${m.w} x ${m.h}`);
         await p.screenshot({ path: `${shotDir}/todo155op-crosshair-snap-${theme}.png` });
         await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
@@ -650,6 +653,7 @@ try {
         // 155r: grips are 11 px (size 5), the one under the pointer is ACI 11, the dragged one ACI 12
         const mid = await atPoint(40, 20); await p.mouse.click(mid.x, mid.y);
         await p.waitForFunction(() => document.querySelectorAll('[data-testid=grip]').length >= 2);
+        await p.locator('[data-testid=grip]').first().waitFor({ state: 'visible' });
         const side = await p.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
         assert.equal(side, 11);
         const fill = (loc) => loc.evaluate((el) => getComputedStyle(el).fill);
@@ -3087,7 +3091,7 @@ try {
 
   await step('tools: every rail tool is built (none greyed); Auto-nest opens its dialog and does not become the tool; Select/Step work', async () => {
     const line = page.locator('[data-tool=nest]');
-    assert.equal(await line.getAttribute('title'), 'Auto-nest (N)');
+    assert.equal((await line.getAttribute('title')).split('\n')[0], 'Auto-nest (N)');
     assert.equal(await line.getAttribute('aria-disabled'), null);
     assert.equal(await page.locator('nav.rail button.off').count(), 0, 'nothing is greyed');
     await line.click();
@@ -6115,7 +6119,7 @@ try {
     await fourParts();
     await dragMm([40, 500], [960, 150]);
     assert.equal(await t('pp-name').textContent(), '3 parts');
-    assert.equal(await t('bar-group').getAttribute('title'), 'Group (G, Ctrl+G)');
+    assert.equal((await t('bar-group').getAttribute('title')).split('\n')[0], 'Group (G, Ctrl+G)');
     await page.keyboard.press('Control+g');
     assert.match(await prompt(), /^Grouped 3 parts: a click on one selects the group, and it moves, turns and copies as one \(Ctrl\+Shift\+G ungroups\):?$/);
     assert.equal(await t('placed-name').textContent(), 'Group of 3');
@@ -9219,7 +9223,7 @@ try {
     await threeParts();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 0, 'not selected yet');
     assert.equal(await t('sheet-select').textContent(), 'Select sheet');
-    assert.equal(await t('sheet-select').getAttribute('title'), 'Select sheet');
+    assert.equal((await t('sheet-select').getAttribute('title')).split('\n')[0], 'Select sheet');
     await layoutTab(); await t('sheet-select').click();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 4);
     assert.deepEqual(await page.locator('[data-sheet-handle]').evaluateAll((g) => g.map((x) => x.dataset.sheetHandle).sort()), ['bottom', 'left', 'right', 'top']);
@@ -14147,7 +14151,7 @@ try {
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await p.locator('[data-tool=line]').click();
         await p.mouse.move(endpoint.x + endpoint.width / 2, endpoint.y + endpoint.height / 2); await frame();
-        assert.ok(await pixels(selection) > 10, 'snap marker follows the work area');
+        assert.ok(await pixels('00c000') > 10, 'green snap marker is visible on both work areas');
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await q('new-layout').click(); await frame();
         assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), undefined, 'layout tabs follow the app theme entirely');
