@@ -268,6 +268,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155m. Extend splines and elliptical arcs (S).
     155n. Copy Array (later).
     155o. ✅ (built, King, `web/crosshair.js`) Crosshair cursor (UI check, session 25): AutoCAD draws a full crosshair 5% of the screen (CURSORSIZE 5) with a 3 px pick box; ours is the plain OS crosshair, no pick box, 7 px aperture. No decision chose ours.
+    156. Same features in every tab (DECISIONS "Same features in every tab"): audit Drawings / Layouts / Compare for tools that work in only one, then close each gap. 156a: corner-arrow rotate (Shift = 15°, ◎ pivot) on drawing selections (grill first).
     155p. ✅ (built, Knight, revised decision 2026-10-28) Snap markers: green `#00C000` outlines, about 12 px, with our text label. Dark halo kept for readability on white paper.
     155q. ✅ (built, King, 2026-10-28) Status bar chips in AutoCAD's order GRID SNAP ORTHO POLAR OTRACK DYN (text chips kept).
     155r. ✅ (built, King) Window / crossing box fill: AutoCAD 25% (SELECTIONAREAOPACITY); ours 14%. Also check grip hover (ACI 11) / hot (ACI 12, red) colours and grip size 5.
