@@ -347,6 +347,22 @@ test('layout objects as a drawing (TODO 156b3a): parts left out, the same entiti
   assert.equal(lay.placed.length, 2); assert.equal(lay.parts.o1, undefined, 'a part nothing is placed from goes'); assert.ok(lay.parts.p1, 'a real part is never removed');
 });
 
+test('layout objects (TODO 156b3b): a grip edit keeps the object (slot, name, group, lock); a part shared with a copy is not changed', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  const o = LD.objectPart('o1', 'Line 1', line(0, 0, 100, 0), layers);
+  lay.parts.o1 = o; lay.placed.push({ ...LD.objectPlacement(o), g: 'g1', lock: true, sc: 2 });
+  let v = LD.objectDoc(lay);
+  assert.ok(LD.objectReplace(lay, v, v.raw.entities[0], line(0, 0, 100, 50), () => 'n1'));
+  assert.equal(lay.placed.length, 1); assert.equal(lay.parts.n1.name, 'Line 1'); assert.deepEqual(Object.keys(lay.parts), ['n1'], 'the old part is gone');
+  assert.match(LD.objectSig(lay, () => false), /^n1\|/, 'a new part id, so the objects\' drawing is made again even at the same placement');
+  assert.equal(lay.placed[0].g, 'g1'); assert.equal(lay.placed[0].lock, true); assert.equal(lay.placed[0].sc, undefined);
+  assert.deepEqual(LD.objectDoc(lay).fl.boxes.model, [0, 0, 100, 50], 'the object is the new line');
+  lay.placed.push({ ...lay.placed[0], y: 70 });                          // a copy of it: the same part
+  v = LD.objectDoc(lay);
+  assert.ok(LD.objectReplace(lay, v, v.raw.entities[1], line(0, 70, 30, 70), () => 'n2'));
+  assert.deepEqual(lay.parts.n1.box, [0, 0, 100, 50], 'the first one is untouched'); assert.equal(lay.parts.n2.name, 'Line 2'); assert.equal(lay.placed[1].partId, 'n2');
+});
+
 test('layout objects (TODO 156b2): plain entities beside the INSERTs, back as objects, moved / turned ones baked in, not in the grid', () => {
   const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
   const part = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);

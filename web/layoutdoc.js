@@ -115,6 +115,20 @@ export function objectCommit(lay, view, entities, newId) {
   }
 }
 
+/** A grip edit: the object of entity `ent` (from objectDoc `view`) becomes `next`, in place: the same slot, name, group and lock (a part shared with a copy is left to the copy, and the new one gets a name of its own).
+ * The new part always has a new id: objectSig() sees a changed entity only through it (the placement can stay the same). False when `next` has no extents. */
+export function objectReplace(lay, view, ent, next, newId) {
+  const i = view.at.get(ent), old = lay.placed[i], was = lay.parts[old.partId], shared = lay.placed.some((p, k) => k !== i && p.partId === old.partId);
+  next.ps = false;
+  const part = objectPart(newId(), shared ? nextName(OBJ_NAMES[next.type] || 'Object', new Set(Object.values(lay.parts).map((p) => p.name))) : was.name, next, layersOf(lay));
+  if (!part) return false;
+  const { sc, ...rest } = old, pl = { ...rest, ...objectPlacement(part) };       // placed at its own extents, so no scale / mirror is left over
+  if (!shared) delete lay.parts[old.partId];
+  lay.parts[part.id] = part; lay.placed[i] = pl;
+  bakedCache.set(part, new Map([[bakeKey(pl), next]]));
+  return true;
+}
+
 // ---------------------------------------------------------------- parts
 
 /** Parts offered for placing or the library; linked contours stay with their source part. */

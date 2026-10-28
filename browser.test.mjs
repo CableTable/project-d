@@ -14825,6 +14825,74 @@ try {
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 8);
   });
 
+  await step('TODO 156b3b: on a layout, a selected object shows grips (a drag moves one, one Undo); Shaping welds closed objects (Keep originals too); a placed part is refused; saved and reopened they are still objects', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), p0 = await pos();
+    assert.equal(n0, 1);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const draw = async (...pts) => { await typeCmd('line'); for (const p of pts) await typeCmd(p); await typeCmd(''); };
+    const labels = async () => {      // the steps done so far (not the undone ones)
+      await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
+      const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
+      await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' });
+      return rows.slice(1);
+    };
+    const histLabels = labels;      // this step counts only the steps not undone
+    const gid = (s) => page.locator('[data-testid=grip]').evaluateAll((g, k) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + k)), s);
+    const rectAt = async (x, y, w, hh) => { await typeCmd('rect'); await typeCmd(`${x},${y}`); await typeCmd(`${w},${hh}`); };
+    await draw('50,600', '300,600');
+    await rectAt(50, 300, 100, 80); await rectAt(120, 320, 100, 80);
+    await page.locator('[data-tool=select]').click();
+    assert.equal(await nParts(), n0 + 3);
+    const l0 = (await histLabels()).length;
+    // grips: the line's two ends and middle; the end goes where it is dragged, in one history step
+    await page.keyboard.press('Escape'); await click(175, 600); await frames(); await gripWhen(3);
+    await t('grip-hint').waitFor({ state: 'visible' });
+    await dragGripTo(await gid('b'), 300, 650);
+    await frames(); await gripWhen(3);
+    const end = await gripBox(await gid('b')), want = await at(300, 650);
+    assert.ok(near(end.x, want.x, 2) && near(end.y, want.y, 2), `the end grip is where it was dropped: ${JSON.stringify([end, want])} ${await histLine()} ${(await histLabels()).at(-1)} ${await t('cmd-fade').textContent()} ${await page.evaluate(() => document.querySelector('[data-testid=tog-ORTHO],[data-testid=ORTHO]')?.outerHTML)}`);
+    assert.equal((await histLabels()).length, l0 + 1, 'one history step for the grip edit');
+    assert.equal(await nParts(), n0 + 3, 'the same object, not a new one');
+    await undo(); assert.equal((await histLabels()).length, l0, 'one Undo takes it back');
+    await page.keyboard.press('Escape'); await click(175, 600); await frames(); await gripWhen(3);
+    const back = await gripBox(await gid('b')), was = await at(300, 600);
+    assert.ok(near(back.x, was.x, 2) && near(back.y, was.y, 2), 'the end is back');
+    // Shaping: the two rectangles weld into one outline; Keep originals adds it on top
+    const pickBoth = async () => { await page.keyboard.press('Escape'); await click(50, 340); await click(220, 360, { shift: true }); await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 2); };
+    await pickBoth();
+    await menuItem('Modify', 'Shaping: Weld');
+    assert.match(await prompt(), /^Weld: 2 outlines → 1 outline/);
+    assert.equal(await nParts(), n0 + 2, 'two rectangles became one object'); assert.equal((await histLabels()).at(-1), 'Weld');
+    await undo(); assert.equal(await nParts(), n0 + 3);
+    await page.locator('[data-menu=Modify]').click(); await page.getByRole('menuitemcheckbox', { name: /Shaping: Keep originals$/ }).click();
+    await pickBoth(); await menuItem('Modify', 'Shaping: Weld');
+    assert.equal(await nParts(), n0 + 4, 'Keep originals: the result is added on top');
+    await undo(); assert.equal(await nParts(), n0 + 3);
+    await page.locator('[data-menu=Modify]').click(); await page.getByRole('menuitemcheckbox', { name: /Shaping: Keep originals$/ }).click();
+    await pickBoth(); await menuItem('Modify', 'Shaping: Weld');
+    assert.equal(await nParts(), n0 + 2);
+    // a placed part: refused, nothing changes
+    const nl = (await histLabels()).length;
+    await page.keyboard.press('Escape');
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true });
+    await menuItem('Modify', 'Shaping: Weld');
+    assert.match(await prompt(), /Weld works on layout objects, not placed parts/);
+    assert.equal(await nParts(), n0 + 2); assert.deepEqual(await pos(), p0); assert.equal((await histLabels()).length, nl);
+    await shotBoth('layout-object-grips');
+    // saved as plain entities, reopened as objects
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text, saved = readDxf(text);
+    const plain = saved.entities.filter((e) => e.type !== 'INSERT' && !['Sheet', 'Marks', 'Parts'].includes(e.layer));
+    assert.deepEqual(plain.map((e) => e.type).sort(), ['LINE', 'LWPOLYLINE']);
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'objects3.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects3.dxf');
+    assert.equal(await nParts(), n0 + 2, 'the objects and the plate are back');
+    assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
+    assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 2);
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('TODO 156b1: Contour on scaled placements keeps 5 mm spacing and shares contour parts only at the same scale', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
