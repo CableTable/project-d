@@ -15694,6 +15694,50 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 69d fixes: the preview follows typed values, a click uses the typed X, Esc keeps the points, Linear h', async () => {
+    await open70([dxfLine(0, 0, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await t('decimals').selectOption('2');
+    await page.evaluate(() => {                                     // the preview dimension is canvas text: keep what the drawing canvas wrote
+      if (window.__texts) return;
+      window.__texts = [];
+      const fillText = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) { if (this.canvas.dataset.testid === 'drawing') window.__texts.push(String(text)); return fillText.call(this, text, ...args); };
+    });
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const label = async (id) => t(id).getAttribute('aria-label');
+    const point = async (x, y) => { await page.keyboard.type(String(x)); await page.keyboard.press('Tab'); await page.keyboard.type(String(y)); await page.keyboard.press('Enter'); };
+    const startDim = async (cmd = 'dimension') => { await typeCmd(cmd); await move(80, 60); await point(10, 10); await move(110, 90); };
+    const lock = () => page.locator('.cursor-lock:not([hidden])').count();
+    // typed Distance 40: the preview reads 40 and not the length to the mouse
+    await startDim();
+    await page.evaluate(() => { window.__texts = []; });
+    await page.keyboard.type('40'); await page.keyboard.press('Tab'); await page.keyboard.type('90'); await frames();
+    const texts = await page.evaluate(() => window.__texts);
+    assert.ok(texts.some((x) => /^40(\.00)?$/.test(x)), 'the preview dimension reads 40: ' + texts);
+    // first Esc: the fields clear, the picked point stays
+    await page.keyboard.press('Escape'); await frames();
+    assert.equal(await lock(), 0); assert.equal(await label('cursor-length'), 'Distance');
+    await page.keyboard.type('40'); await page.keyboard.press('Tab'); await page.keyboard.type('90'); await page.keyboard.press('Enter');
+    // a click while X is typed at the dimension-line stage: the typed X, the pointer's Y
+    await move(40, 40); await page.keyboard.type('30');
+    const p = await at(90, 30); await page.mouse.click(p.x, p.y); await frames();
+    const dim = Object.entries((await savedDoc()).blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+    near70(dim.params.a.slice(0, 2), [10, 10]); near70(dim.params.b.slice(0, 2), [10, 50]);
+    assert.ok(Math.abs(Math.abs(dim.params.offset) - 20) < 1e-5, 'the typed X 30 sets the dimension line, not the pointer: ' + JSON.stringify(dim.params));
+    // Linear h with the cursor fields on
+    await page.locator('[data-tool=select]').click();
+    await startDim('dli');
+    await page.keyboard.type('40'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await page.keyboard.press('Enter');
+    await move(40, 40); await typeCmd('h');
+    assert.match(await prompt(), /Linear: horizontal/);
+    await point(25, 25);
+    const dims = Object.entries((await savedDoc()).blocks).map(([n, b]) => readDim(n, b)).filter(Boolean);
+    assert.equal(dims.at(-1).kind, 'linear'); assert.equal(dims.at(-1).params.axis, 'h');
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

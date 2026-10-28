@@ -4090,7 +4090,8 @@ function paintOverlay(gesture = false) {
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); ui.cmdUI.place(); return; }
     const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur } : null);
-    const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && L2.hover ? [[L2.hover[0], L2.hover[1], L2.hover[2], true]] : [])] : null;
+    const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
+    const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
@@ -5160,7 +5161,7 @@ function dimDraft(at) {
   const D = state.dim, type = state.dimType;
   if (!D) return null;
   if (type === 'aligned' || type === 'linear') {
-    if (D.pts.length === 1 && D.hover) return { kind: 'aligned', params: { a: D.pts[0], b: D.hover, offset: 0 } };
+    if (D.pts.length === 1 && D.hover) return { kind: 'aligned', params: { a: D.pts[0], b: typedAt() || D.hover, offset: 0 } };
     if (D.pts.length !== 2 || !at) return null;
     const [a, b] = D.pts;
     const lin = type === 'linear' || b.length === 2 && !D.typed && (state.ortho || D.shift); // an exact second point keeps Aligned
@@ -5180,7 +5181,7 @@ function previewDim(d) {
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
   if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset }, d.factor, G.dp);
-  const m = dimDraft(state.dim && state.dim.cursor);
+  const m = dimDraft(state.dim && (state.dim.pts.length === 2 && typedAt() || state.dim.cursor));
   return m ? Ed.dimGeom(m.kind, { ...m.params, ...dimNew(d) }, d.factor, state.dp) : null;
 }
 function dimHover(d, p, shift) {
@@ -6101,11 +6102,18 @@ function cursorInput() {
   return H.cursorInput;
 }
 const cursorPoint = () => DI.toolPointInput(cursorInput(), cursorTool());
-function cursorCommit() {
+/** The point the typed cursor fields give, in drawing units, for the previews of Measure, Dimension and Set length; null when nothing is typed (or it is not valid yet). */
+function typedAt() {
+  const T = cursorTool();
+  if (!T?.A || !DI.hasTyped(cursorInput())) return null;
+  const r = cursorPoint();
+  return r.point ? r.point.map((v) => v / T.f) : null;
+}
+function cursorCommit(shift = false) {
   const T = cursorTool(), result = cursorPoint();
   if (result.why) { note(result.why); paintOverlay(); return; }
   trackStop();
-  if (T.A) pointToolAction()(T.d, result.point.map((v) => v / T.f), false, true);
+  if (T.A) pointToolAction()(T.d, result.point.map((v) => v / T.f), shift, true);
   else drawTyped(result.text);
 }
 /** A click while cursor fields hold typing: the pointer fills the rest. → true when it committed (or said why not) */
@@ -6113,7 +6121,7 @@ function cursorClick(d, p, shift) {
   const T = cursorTool();
   if (!T?.A || !DI.hasTyped(cursorInput())) return false;
   if (T.kind === 'dimension' && T.pts.length === 2) T.A.cursor = p; else T.A.hover = pickPoint(d, p, T.A.pts, shift, true);
-  cursorCommit();
+  cursorCommit(shift);
   return true;
 }
 function cursorKey(e) {
