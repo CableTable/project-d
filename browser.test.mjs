@@ -11170,7 +11170,9 @@ try {
   }, { needs: ['balloons: the Balloon tool (B) sits beside Leader; two clicks make a balloon, the next number goes up by itself, a number typed at the command line restarts the count'] });
 
   await step('balloons: a selected balloon shows grips (centre, tip) and its row lights; the fields are typed, Pick from text fills the dimension from the PDF text under the arrow; a drag of a grip is one labelled step; Delete keeps the other numbers', async () => {
+    await page.locator('[data-tool=select]').click(); await frames();
     await click(75, 35); await page.waitForFunction(() => document.querySelector('[data-testid=bal-panel]') && !document.querySelector('[data-testid=bal-panel]').hidden);
+    await page.locator('[data-testid=bal-grip]').nth(1).waitFor({ state: 'attached' }); // The panel updates before the grips repaint.
     assert.equal(await t('bal-chip').textContent(), 'Balloon 2'); assert.equal(await page.locator('[data-testid=bal-grip]').count(), 2);
     assert.deepEqual(await page.locator('[data-testid=bal-row].hi').evaluateAll((r) => r.map((x) => x.dataset.n)), ['2']);
     assert.equal(await t('bal-pick').getAttribute('aria-disabled'), 'false');
@@ -11228,7 +11230,7 @@ try {
     assert.equal(csv.text.split('\r\n').length, 7, 'header, five balloons, and the end');
     const xl = (await downloadsUtf8(() => t('bal-excel').click(), 1))[0];
     assert.equal(xl.name, 'insp-balloons-excel.csv'); assert.equal(xl.text.charCodeAt(0), 0xfeff, 'a byte order mark, so Excel reads Ø and ±'); assert.equal(xl.text.slice(1), csv.text);
-  });
+  }, { needs: ['balloons: a selected balloon shows grips (centre, tip) and its row lights; the fields are typed, Pick from text fills the dimension from the PDF text under the arrow; a drag of a grip is one labelled step; Delete keeps the other numbers'] });
 
   await step('balloons: a two-page PDF has a sheet switcher; numbering carries on across sheets; the table filters by sheet and a row on another sheet goes there', async () => {
     assert.equal(await t('bal-sheets').isVisible(), true); assert.match(await t('bal-sheets').textContent(), /insp\.pdf · 2 pages/);
@@ -11246,7 +11248,7 @@ try {
     await page.locator('[data-testid=bal-row][data-n="4"]').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=sheet-chip]').textContent === 'Sheet 1 / 2');
     assert.equal(await t('bal-chip').textContent(), 'Balloon 4', 'the row went to its sheet and picked the balloon');
-  });
+  }, { needs: ['balloons: the table is docked above the command line, resizes, collapses; a row zooms to its balloon; Export CSV and Export Excel write the rows'] });
 
   await step('balloons: Save writes <name>.pdballoons.json next to the drawing (here a download), and opening the PDF with it brings the balloons and the table back', async () => {
     const dls = await downloadsUtf8(() => page.keyboard.press('Control+s'), 2);
@@ -11264,7 +11266,7 @@ try {
     // a damaged file says so and changes nothing
     await balOpen([{ name: 'insp.pdballoons.json', mimeType: 'application/json', buffer: Buffer.from('{"kind":"other"}') }], false);
     assert.match(await prompt(), /not a Project D balloons file/); assert.equal(await t('bal-dock').isVisible(), false);
-  });
+  }, { needs: ['balloons: a two-page PDF has a sheet switcher; numbering carries on across sheets; the table filters by sheet and a row on another sheet goes there'] });
 
   await step('balloons: a picture-only page (no text) takes balloons by eye; Pick from text is greyed; Save writes the balloons alone; the status bar and panel fit at 1024 px', async () => {
     await closeTabs(/./);
