@@ -23,6 +23,9 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
   filter artifact or old failure and go on.
 - `browser.test.mjs` starts and stops its own server: start no other, end no process (no taskkill / Stop-Process).
 - A new mode or command gets checks for Esc mid-command, one Undo, and an edit to its source after it ran.
+- While fixing, filter on your own step only (`'TODO <id>'`); never single-word filters like `Text`.
+- Throwaway scripts only read repo files (change files with your edit tool), live in the clone as `tmp-*` (gitignored);
+  repo files are CRLF on disk: split on `/\r?\n/`. Unit tests: `web/x.js` -> `x.test.mjs` at the repo root.
 
 ## Interrupted run
 If you are resuming a run that was cut off (usage limit), first look at `git status` / the diff and rerun the tests,

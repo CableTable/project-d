@@ -89,10 +89,11 @@ usage-agent-install.ps1.
    each in its own folder (ProjectD-review, or ProjectD-fixC when free).
 3. **PR body in the `pr` skill's shape**: a summary visual (file tree / call tree / diff), before / after evidence
    (tests, screenshots), and a merge-danger call: one-way or two-way door, plus blast radius.
-4. **Retro at session end** (two runs, his call 2026-10-28): before the merge, a Bishop run of the `retro` skill over the
-   session's commits, briefs and run reports, AND a King retro (`runs<N>/retro<N>king.txt`, same skill, over King's
-   `king-*.jsonl` runs: permissions, wasted tokens, navigation, brief gaps). Both suggest changes to rules, checks,
-   briefs (not code); he picks which to apply.
+4. **Retro at session end** (three runs, all on Bishop, his call 2026-10-28): before the merge, a Bishop run of the
+   `retro` skill over the session's commits, briefs and run reports; a King retro (`runs<N>/retro<N>king.txt`, same
+   skill, over King's `king-*.jsonl` runs: permissions, wasted tokens, navigation, brief gaps); and a Rook retro
+   (`runs<N>/retro<N>rook.txt`, over Rook's own transcript: wasted tokens, wrong claims, briefs that caused rework, rules
+   broken). Each skips points the earlier ones made. All suggest changes to rules, checks, briefs (not code); he picks.
 5. **Tickets sized for one fresh session** (his call 2026-10-20): every M / L TODO item is split into tickets
    (TODO "66a", "66b", …), each a vertical slice that one fresh builder run can finish with its context under
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
@@ -137,7 +138,10 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # Its cwd is the worktree: one bare command per call, no `cd … &&`. Find code with Grep or `grep -n`, read with Read
 # offset/limit, change it with Edit (`replace_all` for repeats); never awk / node -e with braces, sed -i, python
 # heredocs or PowerShell script blocks. A throwaway script goes to a file with Write, then `node <file>`.
-R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"
+# Session 26 King retro: a throwaway script only READS repo files (every change goes through Edit); it lives in the
+# worktree as tmp-*.mjs (gitignored), never in "Project D extras". Repo files are CRLF on disk: split on /\r?\n/.
+# Where tests live: web/x.js -> x.test.mjs at the repo root; a ticket's browser step: grep "step('TODO <id>" in browser.test.mjs.
+R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"; unset FORCE_COLOR
 /c/Users/raksh/.local/bin/claude3.cmd -p --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
   --add-dir "E:/Project B/Claude/Project D/.git" --add-dir "E:/Project B/Claude/Project D extras" \
   --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" \
@@ -325,6 +329,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
 - Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then once before commit the full suite `node tools/browser-parallel.mjs <port>` (pass / fail lines only; session 26 retro, his OK). A failing step they didn't touch: rerun it alone on the base; failing there too means it predates the build: note it and go on. Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
+  While fixing, filter on their own step only (`'TODO <id>'`); widen once, before commit, to whole step-name pieces they grepped, never single words like `Text` (session 26 King retro: 5 unrelated slow steps per run).
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
 - Rook writes briefs to `runs<N>/b*.txt` with the Write tool, never a heredoc (one hung Rook in session 25).
