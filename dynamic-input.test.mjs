@@ -216,7 +216,7 @@ test('TODO 69f: Circle types its centre then one Radius (Diameter after D); a ze
   r = toolPointInput(toolKeys(T, '25'), T); near([r.value], [25]); near(r.point, [10, 45]);
   for (const bad of ['0', '-5']) { r = toolPointInput(toolKeys(T, bad), T); assert.match(r.why, /Radius must be more than 0/); assert.equal(r.point, null); assert.notEqual(r.errors[0], ''); }
   T.dia = true;
-  r = toolPointInput(toolKeys(T, ''), T); assert.deepEqual(r.labels, ['Diameter']); near(r.live, [80]);
+  r = toolPointInput(toolKeys(T, ''), T); assert.deepEqual(r.labels, ['Diameter']); near(r.live, [40]);
   assert.equal(toolType(T, toolPointInput(toolKeys(T, '25'), T).text).made[0].r, 12.5, 'a typed Diameter 25 is a radius of 12.5');
   const U = createTool('circle'); toolType(U, '0,0'); toolHover(U, [0, 3]);
   assert.equal(toolType(U, toolPointInput(toolKeys(U, '25'), U).text).made[0].r, 25);
@@ -259,4 +259,19 @@ test('TODO 69f: the one-number Circle / Ellipse fields ignore point text; Esc cl
     const t = keys('5', false, s);
     assert.equal(escapeInput(t, false).mode, mode); assert.equal(escapeInput(s, false), null);
   }
+});
+
+test('TODO 69f: a click while a value is typed re-hovers at the click and still uses the typed value (Ellipse 3rd point, Arc 3rd point)', () => {
+  const E = createTool('ellipse'); toolHover(E, [1, 1]);
+  toolType(E, toolPointInput(toolKeys(E, '10,10'), E).text); toolHover(E, [30, 10]);
+  toolType(E, toolPointInput(keys('40<90', false, createInput(false, 'polar')), E).text);
+  toolHover(E, [25, 10]); toolHover(E, [10, 18]);                                  // the click moves the hover; the typed 15 still wins
+  const e = toolType(E, toolPointInput(toolKeys(E, '15'), E).text).made[0];
+  assert.equal(e.t, 'ellipse'); near([e.ratio], [15 / 40]);
+  const A = createTool('arc'); toolHover(A, [1, 1]);
+  toolType(A, toolPointInput(toolKeys(A, '0,0'), A).text); toolHover(A, [10, 0]);
+  toolType(A, toolPointInput(keys('10<0', false, createInput(false, 'polar')), A).text);
+  toolHover(A, [10, 10]); toolHover(A, [3, 7]);                                    // the click lands elsewhere; the typed 10<90 still wins
+  const made = toolType(A, toolPointInput(keys('10<90', false, createInput(false, 'polar')), A).text).made[0];
+  assert.equal(made.t, 'arc'); near([made.r], [Math.hypot(5, 5)]);
 });

@@ -6163,7 +6163,7 @@ function cursorKey(e) {
   }
   if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
   else {
-    if (T.mod && DI.isSingle(input.mode) && /^[,<]$/.test(e.key) && input.values[0]) {      // a point typed at the Rotate / Scale prompt moves whole to the command box
+    if (DI.isSingle(input.mode) && /^[,<]$/.test(e.key) && input.values[0]) {      // a point typed at a one-number prompt (Rotate, Scale, Radius, Length) moves whole to the command box
       const seed = input.values[0] + e.key;
       cursorHolder(T).cursorInput = null; e.preventDefault(); e.stopPropagation(); ui.cmdUI.open(seed); paintOverlay(); renderCommand(); return;
     }

@@ -82,7 +82,7 @@ const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Lengt
 /** The one number of Rotate (degrees from the pivot), Scale (a factor), Circle (radius, or diameter after D) or an ellipse's last half-axis (mm); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. A length also gives `point`, along the mouse's way, so the tool's own preview follows it. */
 function valueInput(s, base, mouse, unit, dia) {
   const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
-  const live = [mode === 'angle' ? angleOf(base, mouse) : dist(base, mouse) / unit * (label === 'Diameter' ? 2 : 1)];
+  const live = [mode === 'angle' ? angleOf(base, mouse) : dist(base, mouse) / unit];
   const bad = typed && (parseInput(typed).kind !== 'len' || !Number.isFinite(+typed)) ? `${label} must be a finite number` : '';
   const value = typed ? +typed : live[0];
   const error = bad || (mode !== 'angle' && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');

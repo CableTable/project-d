@@ -16029,6 +16029,19 @@ try {
     assert.equal(await label('cursor-length'), 'Diameter');
     await page.keyboard.type('10'); await page.keyboard.press('Enter');
     e = await last(); near70([10, 20, 40].map((c) => fieldOf(e, c)), [40, 40, 5]);
+    // a point typed at the Radius prompt goes whole to the command box: 10,0 from the centre 40,40 is a radius of 50 about it
+    await setup();
+    await centre('circle'); await page.keyboard.type('10'); await page.keyboard.type(','); await frames();
+    assert.equal(await cmdLine().inputValue(), '10,', 'the comma moves the typed text to the command box');
+    await page.keyboard.type('0'); await page.keyboard.press('Enter');
+    e = await last();
+    assert.equal(e.type, 'CIRCLE'); near70([10, 20, 40].map((c) => fieldOf(e, c)), [40, 40, 50]);
+    // the untyped Diameter field after D reads the cursor distance, not twice it
+    await setup();
+    await centre('circle'); await typeCmd('d'); await move(70, 40);      // 30 from the centre 40,40
+    assert.equal(await label('cursor-length'), 'Diameter');
+    const dv = await t('cursor-length').inputValue();
+    assert.ok(Math.abs(parseFloat(dv) - 30) < 1.5, `the untyped Diameter reads the cursor distance, got "${dv}"`);
     // Ellipse: X / Y, then Length + Angle from the centre, then ONE Length
     await setup();
     await typeCmd('ellipse'); await move(80, 60);
@@ -16052,6 +16065,14 @@ try {
     await page.keyboard.type('10'); await page.keyboard.press('Enter');
     e = await last();
     assert.equal(e.type, 'ELLIPSE'); near70([10, 20, 11, 21, 40].map((c) => fieldOf(e, c)), [40, 40, 20, 0, .5]);
+    // a polar point typed at the Ellipse 3rd-point Length goes whole to the command box too
+    await setup();
+    await centre('ellipse'); await page.keyboard.type('20'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await page.keyboard.press('Enter');
+    await move(60, 50);
+    await page.keyboard.type('20'); await page.keyboard.type('<'); await frames();
+    assert.equal(await cmdLine().inputValue(), '20<', 'the < moves the typed text to the command box');
+    await page.keyboard.type('45'); await page.keyboard.press('Enter');
+    assert.equal((await last()).type, 'ELLIPSE');
     // Arc: X / Y, then Length + Angle from the previous point twice
     await setup();
     await typeCmd('arc'); await move(80, 60);
