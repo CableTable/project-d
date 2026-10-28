@@ -15,7 +15,7 @@ import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
 const k = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : Math.round(n / 1e3) + 'k');
-const label = (a) => ({ Pip: 'Bishop', Rowan: 'Knight' })[a] || a;
+const label = (a) => ({ Rowan: 'Knight', Pip: 'Bishop' })[a] || a;
 
 export function claudeUsage(bin, execute = execSync, report = console.error) {
   const env = { ...process.env };
@@ -32,8 +32,9 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
       if (bin === 'claude' && attempt === 0) continue;
       const output = `${e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`;
       const limited = /limit (?:has been |is )?reached|you[’']?ve hit your[^\n]*limit|rate_limit_error|usage_limit_reached/i.test(output);
-      throw new Error(limited ? `${bin === 'claude' ? 'Main' : 'Second'} account: 100%, limit reached`
-        : `${bin === 'claude' ? 'Rook' : 'Bishop'} usage probe failed, exit ${Number.isInteger(e.status) ? e.status : 'unknown'}`);
+      const who = bin === 'claude' ? 'Rook' : /claude3/.test(bin) ? 'King' : 'Bishop';
+      throw new Error(limited ? `${{ Rook: 'Main', King: 'Third' }[who] || 'Second'} account: 100%, limit reached`
+        : `${who} usage probe failed, exit ${Number.isInteger(e.status) ? e.status : 'unknown'}`);
     }
   }
 }
@@ -77,22 +78,28 @@ if (cmd === 'result') {
       const age = cacheAge(['limits.csv', 'history.csv'].map((f) => statSync(join(U, f)).mtimeMs), now);
       if (age !== null) {
         const limits = parseCsv(readFileSync(join(U, 'limits.csv'), 'utf8'));
-        cached = ['Rook', 'Pip', 'Rowan'].map((a) => {
-          const h5 = limits.find((r) => r.agent === a && r.window === '5h');
-          const wk = limits.find((r) => r.agent === a && r.window === 'week');
+        cached = ['Rook', 'Pip', 'King', 'Rowan'].map((a) => {
+          const names = a === 'Pip' ? ['Pip', 'Bishop'] : [a]; // 'Pip' = Bishop in the CSV and Firestore (the live site still reads it); a cache written under 'Bishop' still loads
+          const h5 = limits.find((r) => names.includes(r.agent) && r.window === '5h');
+          const wk = limits.find((r) => names.includes(r.agent) && r.window === 'week');
           return [a, h5?.role, h5?.model, h5 && wk ? { h5: [+h5.used_pct, h5.resets ? Date.parse(h5.resets) / 1e3 : null], wk: [+wk.used_pct, wk.resets ? Date.parse(wk.resets) / 1e3 : null] } : null];
         });
+        if (cached.some(([a, , , u]) => !u && a !== 'Rowan')) cached = undefined; // a cache from before King: read live
+        else {
         const time = new Date(now - age).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit' });
         suffix = ` (as of ${time} IST, ${Math.floor(age / 60_000)} min old)`;
+        }
       }
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   const agents = cached || [
     ['Rook', 'Lead (main account)', 'Opus 5.5', claudeUsage('claude')],
     ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
+    // King is new and the likeliest to fail: a failed probe skips King, it does not take Rook, Bishop and Knight down
+    ['King', 'Builds and leads in Castle mode (claude3)', 'Sonnet', (() => { try { return claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude3.cmd'); } catch { return null; } })()],
     ['Rowan', 'Builder and web research (Codex)', 'gpt-6.1-sol', codex()],
   ];
-  for (const [a, , , u] of agents) if (!u && a !== 'Rowan') throw new Error(`${label(a)} usage probe failed, exit unknown`);
+  for (const [a, , , u] of agents) if (!u && a !== 'Rowan' && a !== 'King') throw new Error(`${label(a)} usage probe failed, exit unknown`);
   const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
   if (!cached) mkdirSync(U, { recursive: true });
   for (const [a, role, model, u] of agents) {

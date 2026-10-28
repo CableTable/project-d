@@ -1,4 +1,7 @@
 {
+  "TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo": 3,
+  "TODO 67b: other-part edges and centres, finite guides, copy exclusions, hidden/locked skip and Esc": 5,
+  "TODO 67c: part gap labels, live decimals, nearest target, cleanup and mid-drag light / dark": 5,
   "TODO 152c: a 200-character command echo ellipsizes with a tooltip and keeps the status bar on one line": 0.58,
   "TODO 152b: Properties and ribbon show custom colour swatch and hex, keeping the picker option": 0.74,
   "TODO 152a: 12 tabs keep the header height and add buttons visible; wheel and drag scroll the strip": 1.57,
@@ -261,6 +264,9 @@
   "Offset: the distance is remembered; click an object, click the side; a line, circle and rounded rectangle each make one copy on the same layer, one undo step \"Offset\"; too much is refused; Esc backs out": 4.67,
   "Trim: Enter makes every object a cutting edge, a click cuts the part between the crossings (a line becomes two); one undo step \"Trim\" each; pieces of an edge still cut": 3.24,
   "Trim with picked cutting edges: click toggles an edge; a line nothing crosses says so; a circle between two lines leaves an arc": 4.26,
+  "TODO 155a T1: Quick Trim starts at once (no edges), a click cuts between the crossings, a lone line goes whole, U undoes a cut, O switches to Standard (remembered over a reload), Esc ends": 6,
+  "TODO 155a T2: Quick Trim fence across two lines, Crossing window, eRase and cuTting edges; each is one undo step and U steps back": 8,
+  "TODO 155a T4: Quick hover preview (the piece a click cuts, faded, with a red x; Extend shows the stretch it grows by; Shift swaps; pan and zoom keep it on the cursor)": 6,
   "TODO 78: Trim preview": 20.5,
   "TODO 78c: Trim preview invalidation": 4.21,
   "TODO 66a: Move": 11.73,
@@ -410,5 +416,10 @@
   "TODO 70: Balloon centre point": 10.17,
   "TODO 70: non-finite typed grip points are refused and a valid retry works": 3.42,
   "TODO 70: exact typed points override snaps and ORTHO; inch conversion; Enter and Space repeat": 42.29,
+  "TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges": 12,
+  "TODO 69b: Line cursor typing, locks, coordinates, validation, Esc, options and DYN off": 24,
+  "TODO 69c: Polyline cursor points, locks, coordinates, Esc twice and F12 off": 12,
+  "TODO 69c: Rectangle signed Width / Height, validation, locks, Esc twice and F12 off": 22,
+  "TODO 69c: Rounded rectangle signed Width / Height, validation, locks, Esc twice and F12 off": 20,
   "no console errors": 0
 }

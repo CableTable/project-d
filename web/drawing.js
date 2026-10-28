@@ -13,6 +13,7 @@ import { closedOutline, linkFills, fillCss, fillHoles, fillOps } from './fill.js
 //   a path's ops: 0 x y (move) · 1 x y (line) · 2 cx cy r a0 a1 cw (arc; cw 1 = clockwise) · 9 (close)
 
 import { fontForStyle } from './fontsub.js';
+import { pathCentre } from './snap.js';
 export { fontOfStyle } from './fontsub.js';
 
 export class DrawingError extends Error {}
@@ -332,7 +333,7 @@ export function flatten(doc, hidden = new Set()) {
     layerAt.set(name, layers.length - 1);
     return layers.length - 1;
   };
-  const mats = [IDENT], items = [], left = {}, vports = [];
+  const mats = [IDENT], items = [], insertions = [], left = {}, vports = [];
   let truncated = false;
   const skip = (type) => { left[type] = (left[type] || 0) + 1; };
 
@@ -451,7 +452,9 @@ export function flatten(doc, hidden = new Set()) {
               mm = mmul(mm, [1, 0, 0, 1, col * num(f[44]), row * num(f[45])]);
               mm = mmul(mm, [sx, 0, 0, sy, -blk.base[0] * sx, -blk.base[1] * sy]);
               mats.push(mm);
+              const start = items.length;
               walk(blk.entities, { m: mats.length - 1, ...inner(lt) }, depth + 1);
+              insertions.push({ p: mapply(mm, ...blk.base), start, end: items.length });
             }
           }
           // the block's attributes (title-block fields): in the drawing's own place, not the block's
@@ -514,7 +517,7 @@ export function flatten(doc, hidden = new Set()) {
   for (const v of vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
   for (const it of items) layers[it.L[0]].n++;
   for (const l of layers) delete l.lt;
-  return { units, layers, items, mats, vports, boxes, left, truncated };
+  return { units, layers, items, insertions, mats, vports, boxes, left, truncated };
 }
 
 /** A filled arrowhead at `tip`, pointing away from `from`. */
@@ -592,7 +595,7 @@ function text(base, f, attrib, put) {
   if (ha === 4) { ha = 1; va = 2; }
   const fl = num(f[71]), lines = plainText(s, false);
   const wf = num(f[41], 1) || 1;
-  textItem(base, p, h, rot, lines, Math.min(ha, 2), ['alphabetic', 'bottom', 'middle', 'top'][va] || 'alphabetic', wf, fl, (it) => put({ ...it, st: f[7] }));
+  textItem(base, p, h, rot, lines, Math.min(ha, 2), ['alphabetic', 'bottom', 'middle', 'top'][va] || 'alphabetic', wf, fl, (it) => put({ ...it, st: f[7], insertion: p }));
 }
 
 function mtext(base, r, f, put) {
@@ -603,7 +606,7 @@ function mtext(base, r, f, put) {
   const ap = Math.min(Math.max(num(f[71], 1), 1), 9) - 1;
   const rot = f[11] != null && (num(f[11]) || num(f[21])) ? Math.atan2(num(f[21]), num(f[11])) : num(f[50]) * DEG;
   const bold = /\\f[^;]*\|b1/.test(s);   // a bold font code: {\fArial|b1;...}
-  textItem(base, [num(f[10]), num(f[20])], h, rot, plainText(s, true), ap % 3, ['top', 'middle', 'bottom'][Math.floor(ap / 3)], 1, 0, (it) => put({ ...it, st: f[7], bold }),
+  textItem(base, [num(f[10]), num(f[20])], h, rot, plainText(s, true), ap % 3, ['top', 'middle', 'bottom'][Math.floor(ap / 3)], 1, 0, (it) => put({ ...it, st: f[7], bold, insertion: [num(f[10]), num(f[20])] }),
     { multi: 1, lh: h * 5 / 3 * (num(f[44], 1) || 1), wrap: num(f[41]) });
 }
 
@@ -747,14 +750,25 @@ const similar = (m) => Math.abs(m[0] * m[0] + m[1] * m[1] - m[2] * m[2] - m[3] *
  * The pickable pieces of one space (the model, or the sheet): straight pieces, arcs, and snap points (ends,
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
-export function pickIndex(fl, paper) {
+export function pickIndex(fl, paper, visible = () => true) {
   const pieces = [], snaps = [];
+  for (const { p: [x, y], start, end } of fl.insertions || []) {
+    for (let it = start; it < end; it++) if (!!fl.items[it].ps === !!paper && visible(it)) {
+      snaps.push({ x, y, kind: 'insertion', it });
+      break;
+    }
+  }
   fl.items.forEach((it, idx) => {
     if (!!it.ps !== !!paper) return;
     const m = fl.mats[it.m];
+    if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
     if (it.k !== 'p' || it.fill) return;
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;
+    if (!it.ell && !it.spl) {
+      const centre = pathCentre(ops);
+      if (centre) { const [x, y] = mapply(m, ...centre); snaps.push({ x, y, kind: 'geometric', it: idx }); }
+    }
     const curve = !!(it.ell || it.spl), s0 = snaps.length;                 // an ellipse or spline is flattened: the joints of its pieces are no ends or middles (only its own ends are), Nearest finds the curve
     let cur = null, first = null, justMoved = false, closed = false;
     const seg = (a, b) => {

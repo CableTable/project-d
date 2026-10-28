@@ -1,4 +1,4 @@
-// Stop hook (.claude/settings.json): a Pip builder (2nd account) can't finish with web/ changes while `npm test` is red.
+// Stop hook (.claude/settings.json): a Bishop or King builder (2nd / 3rd account) can't finish with web/ changes while `npm test` is red.
 // Exit 2 blocks the stop and feeds stderr back to the agent; anything else lets it stop.
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 let input = {};
 try { input = JSON.parse(readFileSync(0, 'utf8') || '{}'); } catch {}
 if (input.stop_hook_active) process.exit(0);                          // already blocked once: don't loop
-if (!/account2/i.test(process.env.CLAUDE_CONFIG_DIR || '')) process.exit(0); // Rook (main account) is never blocked
+if (!/account[23]/i.test(process.env.CLAUDE_CONFIG_DIR || '')) process.exit(0); // Rook (main account) is never blocked
 
 const git = (c) => { try { return execSync(c, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return 'x'; } };
 // uncommitted, or committed but not pushed (no upstream counts as changed)

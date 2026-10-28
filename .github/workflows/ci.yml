@@ -34,8 +34,22 @@ jobs:
       - name: Lint and unit tests
         if: matrix.shard == 1
         run: npm test
+      - name: Playwright version, the cache key
+        id: pw
+        run: echo "version=$(node -p "require('./package-lock.json').packages['node_modules/playwright'].version")" >> "$GITHUB_OUTPUT"
+      - name: Chromium cache
+        id: pwcache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
       - name: Chromium, for the browser test
+        if: steps.pwcache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+      # The cache holds only the browser; on Linux the system libraries are apt packages, so they are still installed.
+      - name: Chromium system libraries, on a cache hit
+        if: steps.pwcache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
       - name: The UI in a browser
         env:
           SHARD: ${{ matrix.shard }}/4

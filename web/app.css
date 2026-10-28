@@ -5,9 +5,10 @@
   --canvas: #e9e9e9; --sheet: #ffffff; --sheetline: #9a9a9a; --part: #ffffff; --partline: #1d1d1d;
   --accent: #2f7bd0; --accentink: #000000; --accenttext: #1b5c9e; --sel: #d6e6f7;
   --mark: #c2410c; --grip: rgba(47, 123, 208, .10);
+  --snap-mark: #00c000; --grip-hover: #ff7f7f; --grip-hot: #cc0000;       /* AutoCAD's green snap outline and ACI 11 / 12 grips, the same in light and dark */
   --field: #ffffff; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #1d7a3a; --pdpaper: #ffffff;
   --r: 5px; --dim: #0f766e;
-  --selection: #2f7bd0; --crossing: #188344; --edge-opacity: .35;
+  --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #188344; --edge-opacity: .35;
   --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, 'DejaVu Sans Mono', monospace;
   color-scheme: light;
@@ -16,7 +17,7 @@
   --app: #262a31; --panel: #2b2f36; --ribbon: #3b4048; --ctx: #2fb7a3;
   --line: #1c1f24; --line2: #4b515b; --text: #e6e8eb; --muted: #9ba2ac; --mutedink: #b1b7c0;
   --canvas: #212830; --sheet: #212830; --sheetline: #4b515b; --part: #212830; --partline: #eef1f4;
-  --selection: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
+  --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
   --accent: #0696d7; --accentink: #000000; --accenttext: #8cccff; --sel: #14516e;
   --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
   --field: #23272d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
@@ -27,7 +28,7 @@
     --app: #262a31; --panel: #2b2f36; --ribbon: #3b4048; --ctx: #2fb7a3;
     --line: #1c1f24; --line2: #4b515b; --text: #e6e8eb; --muted: #9ba2ac; --mutedink: #b1b7c0;
     --canvas: #212830; --sheet: #212830; --sheetline: #4b515b; --part: #212830; --partline: #eef1f4;
-    --selection: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
+    --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
     --accent: #0696d7; --accentink: #000000; --accenttext: #8cccff; --sel: #14516e;
     --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
     --field: #23272d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
@@ -161,12 +162,12 @@ select.fld { font-family: var(--sans); }
 .canvas { user-select: none; flex: 1; min-width: 0; position: relative; background: var(--canvas); overflow: hidden; touch-action: none; }
 .canvas.part { background: var(--sheet); }
 .canvas[data-work-area='Light'] {
-  --selection: #2f7bd0; --crossing: #188344; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
+  --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #188344; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
   background: #e9e9e9;
 }
 .canvas.part[data-work-area='Light'] { background: #ffffff; }
 .canvas[data-work-area='Dark'] {
-  --selection: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
+  --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
   background: #212830;
 }
 .canvas[data-work-area='Light'] > .ovl { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; }
@@ -175,10 +176,17 @@ select.fld { font-family: var(--sans); }
 /* Drawing feedback has its own accent; panels and menus keep the UI accent. */
 .canvas > svg, .canvas > .ovl, .canvas > .rubber { --accent: var(--selection); }
 .canvas.part > svg { visibility: hidden; }
-.canvas.pick { cursor: crosshair; }
+.canvas, .canvas.pick { cursor: none; }                 /* 155o: the crosshair element (crosshair.js) stands in for the OS cursor; panels and buttons below keep theirs */
+.canvas > :not(svg, canvas, .ovl, .rubber, .canvas-notices, .xhair) { cursor: default; }
+.xhair { position: absolute; left: 0; top: 0; width: 1px; height: 1px; z-index: 4; pointer-events: none; mix-blend-mode: difference; }       /* white lines, inverted by the background: reads in light and dark */
+.xhair i { position: absolute; background: #fff; }
+.xh-h { left: calc(var(--arm, 0px) * -1); width: calc(var(--arm, 0px) * 2 + 1px); top: 0; height: 1px; }
+.xh-v { top: calc(var(--arm, 0px) * -1); height: calc(var(--arm, 0px) * 2 + 1px); left: 0; width: 1px; }
+.xh-box { left: calc(var(--pb) / -2 + .5px); top: calc(var(--pb) / -2 + .5px); width: var(--pb); height: var(--pb); background: none !important; border: 1px solid #fff; box-sizing: border-box; }
 .canvas.pan { cursor: grab; } .canvas.panning { cursor: grabbing; }
 .canvas svg { display: block; width: 100%; height: 100%; }
 .canvas .drawing-layer { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.drawing-grid { position: absolute; inset: 0; pointer-events: none; opacity: .3; background-image: radial-gradient(circle, var(--muted) 1px, transparent 1px); }
 .canvas.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .zoombox { position: absolute; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 4px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
 .zoombox .pct { font-size: 12px; min-width: 40px; text-align: center; }
@@ -291,7 +299,7 @@ select.fld { font-family: var(--sans); }
 
 /* editing the opened drawing */
 [hidden] { display: none !important; }
-.rubber { position: absolute; z-index: 3; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.rubber { position: absolute; z-index: 3; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }       /* 155r: SELECTIONAREAOPACITY 25 */
 .canvas > .rubber.crossing { --accent: var(--crossing); border-style: dashed; }
 .drawbox .layers-head { gap: 2px; }
 .drawbox .layers-head .tog { margin-left: 0; }
@@ -533,6 +541,8 @@ select.fld { font-family: var(--sans); }
 .ruler path { stroke: var(--muted); stroke-width: 1; fill: none; }
 .ruler text { fill: var(--muted); font: 500 10px var(--mono); }
 .guide { stroke: var(--guide); stroke-width: 1.2; stroke-dasharray: 8 5; vector-effect: non-scaling-stroke; pointer-events: none; fill: none; }
+.alignment-guide { stroke: var(--alignment-guide); stroke-width: 1; vector-effect: non-scaling-stroke; pointer-events: none; fill: none; }
+.alignment-gap { fill: var(--alignment-guide); font-family: var(--mono); font-weight: 600; stroke: var(--sheet); stroke-width: 3; paint-order: stroke; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; }
 .guide.snapped { stroke-width: 2.2; stroke-dasharray: none; }
 .guide.going { opacity: .35; }
 .guide.drag { stroke: var(--accent); stroke-width: 1.6; }
@@ -578,11 +588,26 @@ select.fld { font-family: var(--sans); }
 .ovl .dr-shape { fill: none; stroke: var(--accent); stroke-width: 1.8; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
 .ovl .dr-guide { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .ovl .dr-edge { fill: none; stroke: var(--accent); stroke-width: 4; stroke-opacity: var(--edge-opacity); stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.ovl .dr-trim-glow, .ovl .dr-trim-cut { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.ovl .dr-trim-glow { stroke: var(--selection); stroke-opacity: .35; stroke-width: 5.4; }
+.ovl .dr-trim-cut, .ovl .dr-trim-fade, .ovl .dr-trim-ext, .ovl .dr-trim-x { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .ovl .dr-trim-cut { stroke: var(--hot); stroke-width: 3.6; }
+/* the piece a Quick Trim click would cut: a dim grey stroke over the line, a small red x by the pointer */
+.ovl .dr-trim-fade { stroke: var(--muted); stroke-width: 1.4; stroke-opacity: .7; }
+.ovl .dr-trim-x { stroke: var(--hot); stroke-width: 1.6; }
+/* where an Extend click would grow the end to */
+.ovl .dr-trim-ext { stroke: var(--accent); stroke-width: 1.4; stroke-opacity: .6; stroke-dasharray: 5 4; }
 .drawtip { position: absolute; z-index: 5; padding: 3px 9px; border-radius: var(--r); background: var(--accent); color: var(--accentink); font: 500 13px var(--mono); white-space: nowrap; pointer-events: none; }
 .drawtip[hidden] { display: none; }
+.drawtip.dynamic-input { padding: 7px 9px; background: var(--panel); color: var(--text); border: 1px solid var(--accent); box-shadow: 0 2px 6px var(--shadow); }
+.dynamic-track { margin-bottom: 5px; color: var(--accenttext); }
+.cursor-fields { display: grid; grid-template-columns: auto auto; gap: 5px 12px; }
+.cursor-fields label { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.cursor-fields label[hidden] { display: none; }
+.cursor-fields label > span { font: 12px var(--sans); }
+.cursor-field { display: inline-block; min-width: 9ch; padding: 2px 5px; font: inherit; text-align: right; color: var(--text); }
+input.cursor-field { border: 1px solid var(--muted); border-radius: var(--r); background: var(--field); }
+input.cursor-field.active { border-color: var(--accenttext); outline: 1px solid var(--accenttext); }
+input.cursor-field[aria-invalid='true'] { border-color: #dc2626; outline: 1px solid #dc2626; }
+.cursor-lock { font-size: 11px; }
 
 /* The Text tool (text.js; mock-up R5a Option A): the box and corner handles of a selected text, the typing box, the top bar */
 .ovl .tx-box { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 5 3; vector-effect: non-scaling-stroke; }
@@ -612,7 +637,8 @@ select.fld { font-family: var(--sans); }
 
 /* Grips (grips.js; mock-up R5c): blue squares, the hot grip red, the dragged shape dashed over a dashed ghost of what it was */
 .ovl .gr { fill: var(--accent); stroke: var(--accentink); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
-.ovl .gr.hot { fill: var(--hot); stroke: var(--hot); }
+.ovl .gr.hover { fill: var(--grip-hover); stroke: var(--grip-hover); }       /* 155r: GRIPHOVER ACI 11 #ff7f7f, GRIPHOT ACI 12 #cc0000 */
+.ovl .gr.hot { fill: var(--grip-hot); stroke: var(--grip-hot); }
 .ovl .gr-tick { stroke: var(--hot); stroke-width: 1.2; fill: none; vector-effect: non-scaling-stroke; }
 .ovl .gr-cross { stroke: var(--accent); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
 .ovl .gr-spoke { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; fill: none; vector-effect: non-scaling-stroke; }
@@ -854,6 +880,7 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .omtop { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .osr { display: flex; align-items: center; gap: 6px; height: 26px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 0 7px; color: var(--muted); }
 .osr:focus-within { border-color: var(--accent); color: var(--text); }
+.lsr { margin: 4px 10px 6px; }
 .osr input { flex: 1; min-width: 0; border: 0; background: none; color: inherit; font: 12px var(--mono); outline: 0; padding: 0; }
 .ofs { display: flex; gap: 4px; align-items: center; }
 .ofb { height: 20px; padding: 0 8px; border: 0; border-radius: var(--r); background: none; color: var(--muted); font: 600 11px var(--sans); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
@@ -936,7 +963,7 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cb-fs { display: flex; align-items: center; gap: 6px; height: 26px; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 0 7px; color: var(--muted); margin: 8px 12px 0; flex-shrink: 0; }
 .cb-fs input { flex: 1; min-width: 0; border: 0; background: none; color: var(--text); font: 12px var(--mono); outline: 0; padding: 0; }
 .cb-drb { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px; display: flex; flex-direction: column; justify-content: flex-end; font: 12px/19px var(--mono); color: var(--muted); }
-.cb-drb .hl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+.cb-drb .hl { white-space: pre-wrap; overflow-wrap: anywhere; flex-shrink: 0; }
 .cb-drb .hl.cm { color: var(--text); }
 .cb-drb .hl.er { color: var(--mark); }
 .cb-drb .hl.run { cursor: pointer; }
@@ -948,7 +975,7 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .status .cb-hint { margin-left: 8px; margin-right: 6px; white-space: nowrap; }
 @media (max-width: 1280px) { .status .cb-hint, .status .cb-echo-text { display: none; } }       /* narrow: the echo is its icon only */
 @media (max-width: 1200px) { .status { gap: 2px; } .status .lbl + .lbl, .status .tool-chip { margin-left: 6px; } .status .tog { padding: 0 4px; } }       /* narrow: tighten toggle padding and gaps so the non-wrapping readouts and sheet chip fit with wider CI fonts */
-@media (max-width: 1100px) { .status .cb-echo { display: none; } .status .coords { min-width: 180px; } }       /* 1024 px: the status bar is as before TODO 47, so it fits with CI fonts (typing still opens the bar) */
+@media (max-width: 1100px) { .status .cb-echo { display: none; } .status .coords { min-width: 160px; } }       /* Leave room for DYN and the PDF sheet chip with wider fonts; typing still opens the bar. */
 
 /* TODO 34: R12 Shortcuts, using the same tokens as the mock-up. */
 .sc-back { background: color-mix(in srgb, var(--canvas) 75%, transparent); }

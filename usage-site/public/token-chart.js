@@ -1,6 +1,6 @@
 // Pure helpers for the usage page's running-total token chart.
 const DAY = 864e5, HOUR = 3600e3;
-const NAMES = { Rook: ['Rook'], Bishop: ['Bishop', 'Pip'], Knight: ['Knight', 'Rowan'] }; // limits / history may still use the old names
+const NAMES = { Rook: ['Rook'], Bishop: ['Bishop', 'Pip'], King: ['King'], Knight: ['Knight', 'Rowan'] }; // limits / history may still use the old names
 const DROP = 20; // a weekly % that falls this many points between two readings is a reset
 
 // Weekly reset times (ms, ascending) of one agent inside [from, now]: the current resetsAt stepped back in 7-day steps,

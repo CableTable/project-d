@@ -1,6 +1,7 @@
 // draw.js — the drawing tools' geometry and typed input.   node draw.test.mjs
 import assert from 'node:assert/strict';
 import * as DR from './web/draw.js';
+import { movePoint } from './web/move.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { newDoc, addEntities, writeDxf } from './web/dxf-write.js';
 
@@ -10,12 +11,14 @@ const near = (a, b, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
 const nearPt = (a, b, e = 1e-6) => { near(a[0], b[0], e); near(a[1], b[1], e); };
 
 test('parseInput: x,y, @dx,dy, polar, a length, words, Enter', () => {
-  assert.deepEqual(DR.parseInput('10,20'), { kind: 'xy', rel: false, x: 10, y: 20 });
-  assert.deepEqual(DR.parseInput(' 10 , -20.5 '), { kind: 'xy', rel: false, x: 10, y: -20.5 });
-  assert.deepEqual(DR.parseInput('@5,-3'), { kind: 'xy', rel: true, x: 5, y: -3 });
-  assert.deepEqual(DR.parseInput('@ .5,1'), { kind: 'xy', rel: true, x: 0.5, y: 1 });
-  assert.deepEqual(DR.parseInput('@100<45'), { kind: 'polar', rel: true, len: 100, ang: 45 });
-  assert.deepEqual(DR.parseInput('100<-30'), { kind: 'polar', rel: false, len: 100, ang: -30 });
+  assert.deepEqual(DR.parseInput('10,20'), { kind: 'xy', rel: false, abs: false, x: 10, y: 20 });
+  assert.deepEqual(DR.parseInput(' 10 , -20.5 '), { kind: 'xy', rel: false, abs: false, x: 10, y: -20.5 });
+  assert.deepEqual(DR.parseInput('@5,-3'), { kind: 'xy', rel: true, abs: false, x: 5, y: -3 });
+  assert.deepEqual(DR.parseInput('#5,-3'), { kind: 'xy', rel: false, abs: true, x: 5, y: -3 });
+  assert.deepEqual(DR.parseInput('@ .5,1'), { kind: 'xy', rel: true, abs: false, x: 0.5, y: 1 });
+  assert.deepEqual(DR.parseInput('@100<45'), { kind: 'polar', rel: true, abs: false, len: 100, ang: 45 });
+  assert.deepEqual(DR.parseInput('#100<45'), { kind: 'polar', rel: false, abs: true, len: 100, ang: 45 });
+  assert.deepEqual(DR.parseInput('100<-30'), { kind: 'polar', rel: false, abs: false, len: 100, ang: -30 });
   assert.deepEqual(DR.parseInput('75'), { kind: 'len', v: 75 });
   assert.deepEqual(DR.parseInput('-2.5'), { kind: 'len', v: -2.5 });
   assert.deepEqual(DR.parseInput('C'), { kind: 'word', w: 'c' });
@@ -38,6 +41,27 @@ test('typedPoint and directDistance', () => {
   for (const text of ['9'.repeat(310) + ',0', '@' + '9'.repeat(310) + '<90', '1<' + '9'.repeat(310)]) {
     assert.equal(DR.typedPoint(DR.parseInput(text), [1, 2]), null, 'non-finite point rejected');
   }
+});
+
+test('Rectangle: # is an absolute corner; plain and @ pairs stay sizes', () => {
+  for (const kind of ['rect', 'rrect']) {
+    for (const [text, end] of [['#130,120', [130, 120]], ['130,120', [230, 220]], ['@130,120', [230, 220]]]) {
+      const T = DR.createTool(kind);
+      if (kind === 'rrect') DR.toolType(T, '0');
+      DR.toolType(T, '100,100');
+      const r = DR.toolType(T, text);
+      assert.deepEqual(r.made[0].pts, [[100, 100], [end[0], 100], end, [100, end[1]]], `${kind}: ${text}`);
+    }
+  }
+});
+
+test('Move / Copy: # is an absolute target; plain pairs use base and @ uses last', () => {
+  assert.deepEqual(movePoint('#50,60', [10, 10]), [50, 60]);
+  assert.deepEqual(movePoint('50,60', [10, 10]), [60, 70]);
+  assert.deepEqual(movePoint('@50,60', [10, 10]), [60, 70]);
+  assert.deepEqual(movePoint('#50,60', [10, 10], null, [20, 30]), [50, 60]);
+  assert.deepEqual(movePoint('50,60', [10, 10], null, [20, 30]), [60, 70]);
+  assert.deepEqual(movePoint('@50,60', [10, 10], null, [20, 30]), [70, 90]);
 });
 
 test('rectangle sizes reject non-finite points and keep the first corner for a retry', () => {

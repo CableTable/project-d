@@ -36,6 +36,19 @@ test('contour colour and linetypes print before and after DXF save', async () =>
   }
 });
 
+test('contour Red and ByLayer colours print before and after DXF save', async () => {
+  const W = await import('./web/dxf-write.js');
+  for (const [aci, operator] of [[1, '1 0 0 RG'], [256, '0 1 0 RG']]) {
+    const raw = W.newDoc(); W.addLayer(raw, 'Contour', { aci: 3 });
+    W.addEntities(raw, W.line(10, 10, 50, 10, { layer: 'Contour', aci }));
+    for (const doc of [raw, D.readDxf(W.writeDxf(raw))]) {
+      const plan = X.planPdf({ fl: D.flatten(doc), factor: 1, off: new Set(), sheetW: 100, sheetH: 100 },
+        { page: 'sheet', separate: false, black: false, strip: false });
+      assert.ok(content(text(plan.bytes()), 0).includes(operator), `ACI ${aci}: ${operator}, ${doc === raw ? 'before' : 'after'} DXF save`);
+    }
+  }
+});
+
 test('structure: header, objects, xref offsets, trailer, page count', () => {
   const plan = X.planPdf(srcOf('sample.dxf'), { page: 'sheet', separate: true });
   const t = text(plan.bytes());

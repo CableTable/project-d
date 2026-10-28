@@ -1,4 +1,4 @@
-// Pure logic of the pd-runs mod: newest runs<N> folder, Bishop / Knight rows, live processes, usage, IST time. No I/O here.
+// Pure logic of the pd-runs mod: newest runs<N> folder, Bishop / King / Knight rows, live processes, usage, IST time. No I/O here.
 export const RUN_MS = 3 * 60_000; // a run with no process match and no result, quiet longer than this, is cut off
 export const KEEP_MS = 2 * 3_600_000; // finished rows stay this long
 export const MAX_RECENT = 8;
@@ -6,8 +6,8 @@ export const MAX_RUNNING = 8;
 export const BIG = 4 * 1024 * 1024; // $.fs.read cannot read a file over this
 export const WIDTH = 40; // the pane's columns
 
-export const PIECE = { Rook: '♜', Bishop: '♝', Knight: '♞', Pawn: '♟' };
-export const WHO_COLOR = { Rook: 'cyan', Bishop: 'magenta', Knight: 'yellow', Pawn: 'white' };
+export const PIECE = { Rook: '♜', Bishop: '♝', King: '♚', Knight: '♞', Pawn: '♟' };
+export const WHO_COLOR = { Rook: 'cyan', Bishop: 'magenta', King: 'green', Knight: 'yellow', Pawn: 'white' };
 
 export const ago = (ms) => (ms < 60_000 ? '<1m' : ms < 3_600_000 ? `${Math.floor(ms / 60_000)}m` : `${Math.floor(ms / 3_600_000)}h${String(Math.floor((ms % 3_600_000) / 60_000)).padStart(2, '0')}`);
 
@@ -69,6 +69,7 @@ export function parseProcs(out) {
   return (out ?? '').split(/\r?\n/).map((l) => /^(\d+)\|(\d+)\|(-?\d+)\|(.*)$/.exec(l)).filter(Boolean).map((m) => ({ pid: +m[1], ppid: +m[2], startMs: +m[3], cmd: m[4] }));
 }
 
+// King = the 3rd account (claude3.cmd); its runs are the same stream-json files as Bishop's, told apart by the `king-` file prefix.
 const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const mentions = (cmd, tok) => new RegExp(`(?<![\\w.-])${esc(tok)}(?![\\w.-])`, 'i').test(cmd);
 const sessionOf = (text) => /"session_id"\s*:\s*"([0-9a-f-]{36})"/.exec(text ?? '')?.[1];
@@ -90,7 +91,7 @@ export function probe(procs, tokens) {
   return { pids: hit.map((p) => p.pid), startMs: Math.min(...hit.map((p) => p.startMs)), testing: procs.some((p) => tree.has(p.pid) && /browser\.test/i.test(p.cmd)) };
 }
 
-const jsonlName = (file) => file.slice(0, -6).replace(/^(pip-|b(?=\d|-))/, '').replace(/^-/, '');
+const jsonlName = (file) => file.slice(0, -6).replace(/^(pip-|king-|b(?=\d|-))/, '').replace(/^-/, '');
 
 // Last "type":"result" line of a stream-json run: null (none yet) or { error }.
 function lastResult(text) {
@@ -136,8 +137,9 @@ export function findRuns(files, now, texts, procs = null) {
       const p = probes.get(f.name) ?? (!result && !doneBig ? spare.shift() : null);
       const name = jsonlName(f.name);
       const owns = [f.name];
-      if (p) rows.push({ who: 'Bishop', name, state: p?.testing ? 'testing' : 'running', age: p ? now - p.startMs : age, files: owns });
-      else rows.push({ who: 'Bishop', name, state: result ? (result.error ? 'failed' : 'done') : doneBig ? 'done' : fresh ? 'running' : 'cut off', age, files: owns });
+      const who = f.name.startsWith('king-') ? 'King' : 'Bishop'; // by file name only: a process or run text that mentions claude3 is not a King run
+      if (p) rows.push({ who, name, state: p?.testing ? 'testing' : 'running', age: p ? now - p.startMs : age, files: owns });
+      else rows.push({ who, name, state: result ? (result.error ? 'failed' : 'done') : doneBig ? 'done' : fresh ? 'running' : 'cut off', age, files: owns });
       continue;
     }
     const m = /^(?:rowan-|r)(.+)\.log$/.exec(f.name);
@@ -158,7 +160,7 @@ export function findRuns(files, now, texts, procs = null) {
 // ---- usage ----
 
 // Today's cap on the week bar (% of the weekly limit he allows himself by the end of today). null: no cap (Knight).
-// Bishop 14 % x k, week resets Mon 15:30 IST; Rook the same from its Sun 15:30 IST reset, but this week (before 2026-10-25 15:30) fixed days below.
+// Bishop 14 % x k (King: no cap), week resets Mon 15:30 IST; Rook the same from its Sun 15:30 IST reset, but this week (before 2026-10-25 15:30) fixed days below.
 // shortcut: reset days are fixed here, not read from limits.csv; move them to the csv if a reset day ever changes.
 const DAY = 86_400_000;
 const WEEK_RESET = { Rook: Date.UTC(2026, 9, 25, 10, 0), Bishop: Date.UTC(2026, 9, 26, 10, 0) }; // 15:30 IST = 10:00 UTC
@@ -179,7 +181,7 @@ export function barParts(pct, cap) {
 }
 
 // limits.csv: agent,role,model,window,used_pct,cap_pct,starts,resets,as_of. Old names (Pip, Rowan) read as Bishop, Knight.
-const CSV_NAMES = { Rook: ['Rook'], Bishop: ['Bishop', 'Pip'], Knight: ['Knight', 'Rowan'] };
+const CSV_NAMES = { Rook: ['Rook'], Bishop: ['Bishop', 'Pip'], King: ['King'], Knight: ['Knight', 'Rowan'] };
 export const resetLabel = (iso, week) => {
   const ms = Date.parse(iso ?? '');
   return Number.isNaN(ms) ? '' : `${week ? `${istDay(ms)} ` : ''}${istHM(ms)}`;

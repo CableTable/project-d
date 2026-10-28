@@ -1,5 +1,6 @@
 // Own bindings and PGP interchange. Pure; defaults live in cmdbar.js TABLE.
-import { COMMANDS, aliasScope } from './cmdbar.js';
+import { COMMANDS, aliasScope, fixedKey } from './cmdbar.js';
+export { fixedKey };
 
 export const RESERVED = {
   'Ctrl+S': 'Reserved for Save, so saving a drawing stays available.',
@@ -9,9 +10,9 @@ export const RESERVED = {
   Esc: 'Reserved for cancel / close / clear selection.', Delete: 'Reserved for deleting the selection.',
   'Ctrl+D': 'Reserved for Duplicate in a layout.',
   F2: 'Reserved for command history.', F10: 'Reserved for polar tracking.', F11: 'Reserved for object snap tracking.',
+  F3: 'Reserved for Snap.', F7: 'Reserved for Grid.', F8: 'Reserved for Ortho.', F9: 'Reserved for Wireframe.', F12: 'Reserved for Dynamic input.',
   F5: 'Reserved for the desktop reload guard.', 'Ctrl+R': 'Reserved for the desktop reload guard.',
 };
-export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'copy', 'paste', 'delete'].includes(name);
 export const aliases = (text) => [...new Set(String(text).toLowerCase().split(',').map((x) => x.trim()).filter(Boolean))];
 
 /** Canonical modifier order; Meta / Cmd share Ctrl, as in the app's existing handlers. null = malformed. */
@@ -53,8 +54,8 @@ export function bindings(overrides = {}) {
     return [c.name, { alias: Array.isArray(o?.alias) && o.alias.every((a) => typeof a === 'string') ? aliases(o.alias.join(',')) : [...c.alias],
       key: typeof o?.key === 'string' && !fixedKey(c.name) ? normalizeKey(o.key) ?? o.key : c.key }];
   }));
-  // Copy / Paste were assignable before the in-app clipboard existed.
-  for (const [name, b] of Object.entries(bound)) if (!fixedKey(name) && ['Ctrl+C', 'Ctrl+V'].includes(b.key)) b.key = '';
+  // Discard older own keys now owned by the clipboard or fixed view toggles.
+  for (const c of COMMANDS) if (bound[c.name].key !== c.key && ['Ctrl+C', 'Ctrl+V', 'F3', 'F7', 'F8', 'F9', 'F12'].includes(bound[c.name].key)) bound[c.name].key = '';
   // Existing own keys win over the newly added tab defaults on upgrade.
   for (const name of ['closetab', 'nexttab', 'previoustab']) {
     if (!Object.hasOwn(overrides?.[name] || {}, 'key') && COMMANDS.some((c) => c.name !== name && typeof overrides?.[c.name]?.key === 'string' && bound[c.name].key === bound[name].key)) bound[name].key = '';

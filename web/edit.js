@@ -14,9 +14,10 @@
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
 import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
+import { rotateRecord } from './rotate.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
-import { DEFAULT_TYPES, perpFoot, preferSnap } from './snap.js';
+import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
 
 // ---------------------------------------------------------------- the index
@@ -177,7 +178,7 @@ export function makeIndex(raw, fl, off = new Set(), hid = null) {
     if (type !== 'LINE' && Math.hypot(a[0] - b[0], a[1] - b[1]) < 1e-9 * size) continue;     // a circle: its start is no end; zero-length lines can be micro pieces
     ends[e * 4] = a[0]; ends[e * 4 + 1] = a[1]; ends[e * 4 + 2] = b[0]; ends[e * 4 + 3] = b[1];
   }
-  const ix = pickIndex(fl, space === 1), bc = new Map(), bw = [];
+  const ix = pickIndex(fl, space === 1, (i) => vis[i] === 1), bc = new Map(), bw = [];
   const at = (v) => Math.min(ix.G - 1, Math.max(0, Math.floor(v)));
   // Entity boxes share the pick grid; dimensions need their whole block box, text and hatches have no pick pieces.
   for (const e of shown) {
@@ -259,27 +260,67 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
     if (!ed.vis[sn.it] || ed.items[sn.it].e === skip) continue;
     best = preferSnap(best, sn, x, y, tol, types);
   }
-  const perp = from && types.perpendicular !== false;
-  if (types.intersection !== false || perp) {
+  const perp = from && types.perpendicular !== false, tangent = from && types.tangent !== false;
+  if (types.intersection !== false || types.apparent !== false || perp || tangent) {
     // shortcut: only the 200 pieces nearest the cursor are crossed (k^2/2 pieceInter calls per hover); raise or index them if a dense drawing misses a crossing.
     const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
     const eps = 1e-9 * (1 + Math.abs(x) + Math.abs(y));
-    if (types.intersection !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
+    if (types.intersection !== false || types.apparent !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
       for (const [px, py] of pieceInter(pieces[i], pieces[j])) {
         // a line-arc crossing lands ~1e-9 off the end point it shares: the end wins
         if (best?.kind === 'end' && Math.hypot(best.x - px, best.y - py) <= eps) continue;
-        best = preferSnap(best, { x: px, y: py, kind: 'intersection' }, x, y, tol, types);
+        best = preferSnap(best, { x: px, y: py, kind: types.intersection !== false ? 'intersection' : 'apparent' }, x, y, tol, types);
       }
     }
     if (perp) for (const p of pieces) {
       const foot = p.t === 's' && perpFoot(from, [p.x1, p.y1], [p.x2, p.y2]);
       if (foot) best = preferSnap(best, { x: foot[0], y: foot[1], kind: 'perpendicular' }, x, y, tol, types);
     }
+    if (tangent) for (const p of pieces) for (const sn of tangentPoints(from, p)) best = preferSnap(best, sn, x, y, tol, types);
   }
   if (best) return { x: best.x, y: best.y, kind: best.kind };
   if (types.near === false) return null;
   const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip);
   return p.ent && p.near ? { x: p.near[0], y: p.near[1], kind: 'near' } : null;
+}
+
+/** The object under the cursor, including a centre / insertion / node away from its outline. */
+export function snapObject(ed, x, y, tol, skip = -1, types = DEFAULT_TYPES) {
+  const visible = (i) => ed.vis[i] === 1 && ed.items[i].e !== skip;
+  const hit = pickAt(ed.ix, x, y, tol, visible);
+  if (hit.ent) return ed.items[hit.ent.it].e;
+  let best = null;
+  for (const sn of ed.ix.snaps) if (visible(sn.it)) best = preferSnap(best, sn, x, y, tol, types);
+  return best ? ed.items[best.it].e : -1;
+}
+
+export function snapReference(ed, x, y, tol, skip = -1) {
+  return piecesNear(ed.ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip)
+    .filter((p) => p.ent.t === 's' && !p.ent.curve).sort((a, b) => a.d - b.d)[0]?.ent || null;
+}
+
+/** Tab alone may visit distant candidates of this one object; normal picks keep their aperture. */
+export function snapCandidates(ed, e, x, y, tol, types = DEFAULT_TYPES, from = null) {
+  const visible = (it) => ed.vis[it] === 1;
+  const own = (it) => visible(it) && ed.items[it].e === e;
+  const candidates = ed.ix.snaps.filter((sn) => own(sn.it));
+  const pieces = ed.ix.pieces.filter((p) => own(p.it));
+  for (const p of pieces) {
+    candidates.push(...tangentPoints(from, p));
+    const foot = from && p.t === 's' && !p.curve && perpFoot(from, [p.x1, p.y1], [p.x2, p.y2]);
+    if (foot) candidates.push({ x: foot[0], y: foot[1], kind: 'perpendicular' });
+  }
+  const hit = pickAt(ed.ix, x, y, tol, own);
+  if (hit.near) candidates.push({ x: hit.near[0], y: hit.near[1], kind: 'near' });
+  if (types.intersection !== false || types.apparent !== false) {
+    // shortcut: crossings use the running snap's local 200-piece aperture; index whole-object crossings if distant ones are needed for Tab.
+    const local = piecesNear(ed.ix, x, y, tol, visible).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
+    for (const p of local.filter((p) => own(p.it))) for (const q of local) {
+      if (p === q || !visible(q.it)) continue;
+      for (const [px, py] of pieceInter(p, q)) candidates.push({ x: px, y: py, kind: types.intersection !== false ? 'intersection' : 'apparent' });
+    }
+  }
+  return orderCandidates(candidates, types, x, y);
 }
 
 // ---------------------------------------------------------------- chains
@@ -326,6 +367,16 @@ export function chainAt(ed, e, tol) {
     }
   }
   return [...seen];
+}
+
+/** Expand selected seeds to their joined chains without changing the selection. */
+export function connectedSelection(ed, sel, tol) {
+  const next = new Set();
+  for (const e of sel) {
+    if (next.has(e)) continue;
+    for (const c of chainAt(ed, e, tol)) next.add(c);
+  }
+  return next;
 }
 
 /** Entities lying fully inside the box [x0, y0, x1, y1] (any two corners). */
@@ -1001,16 +1052,17 @@ export function resizeAbout(raw, sx, sy, ax, ay, space = 0, selection = null) {
   return { entities, blocks: raw.blocks, skipped: {} };
 }
 
-/** Translate selected records; sizes, direction vectors and shared blocks stay unchanged. Copy also isolates unshared native dimension blocks. */
-export function moveEntities(raw, selection, dx, dy, copy = false) {
+function moveRecord(type, r, x, dy) {
+  if (type === 'HATCH') return moveHatch(r, x, dy);
+  if (type === 'MLEADER' || type === 'MULTILEADER') return moveMleader(r, x, dy);
+  const pts = ['ACAD_TABLE', 'WIPEOUT', 'IMAGE', 'VIEWPORT'].includes(type) ? [10] : SPEC[type]?.pts;
+  if (!pts) throw new Error('Cannot move ' + type);
+  return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
+}
+
+/** Translate selected records; sizes, direction vectors and shared blocks stay unchanged. */
+export function moveEntities(raw, selection, dx, dy) {
   if (![dx, dy].every(Number.isFinite)) throw new Error('Move needs finite distances');
-  const record = (type, r, x) => {
-    if (type === 'HATCH') return moveHatch(r, x, dy);
-    if (type === 'MLEADER' || type === 'MULTILEADER') return moveMleader(r, x, dy);
-    const pts = ['ACAD_TABLE', 'WIPEOUT', 'IMAGE', 'VIEWPORT'].includes(type) ? [10] : SPEC[type]?.pts;
-    if (!pts) throw new Error('Cannot move ' + type);
-    return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
-  };
   let blocks = raw.blocks, blockRefs;
   const movedDims = new Map();
   const countRefs = (entities) => {
@@ -1020,7 +1072,7 @@ export function moveEntities(raw, selection, dx, dy, copy = false) {
   };
   const one = (e) => {
     const x = e.flip && OCS.has(e.type) ? -dx : dx;
-    let r = record(e.type, e.r, x);
+    let r = moveRecord(e.type, e.r, x, dy);
     if (e.type === 'DIMENSION') {
       const name = fieldOf(e.r, 2), b = raw.blocks[name];
       if (b && !b.xref) {
@@ -1032,7 +1084,7 @@ export function moveEntities(raw, selection, dx, dy, copy = false) {
         let own = movedDims.get(name);
         if (!own) {
           own = name;
-          if (copy || blockRefs.get(name) > 1) {
+          if (blockRefs.get(name) > 1) {
             let n = 1;
             while (blocks['*D' + n]) n++;
             own = '*D' + n;
@@ -1047,7 +1099,7 @@ export function moveEntities(raw, selection, dx, dy, copy = false) {
         r = { ...r, v: r.v.map((v, k) => r.c[k] === 2 ? own : v) };
       }
     }
-    return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, OCS.has(kid.type) ? (+fieldOf(kid, 230) < 0 ? -dx : dx) : x)) };
+    return { ...e, r, kids: e.kids?.map((kid) => moveRecord(kid.type, kid, OCS.has(kid.type) ? (+fieldOf(kid, 230) < 0 ? -dx : dx) : x, dy)) };
   };
   const entities = raw.entities.map((e, i) => selection.has(i) ? one(e) : e);
   return { entities, blocks };
@@ -1095,26 +1147,49 @@ function moveMleader(r, dx, dy) {
   }) };
 }
 
-/** Append translated copies in drawing order, leaving the originals and shared blocks intact; copied dimensions and leaders get their own blocks. */
-export function copyEntities(raw, selection, dx, dy) {
-  const moved = moveEntities(raw, selection, dx, dy, true);
-  let blocks = moved.blocks;
-  const copies = moved.entities.filter((_, i) => selection.has(i)).map((e) => {
-    const name = e.type === 'INSERT' ? fieldOf(e.r, 2) : '';
-    if ((!DIM_BLOCK.test(name) && !LDR_BLOCK.test(name)) || !blocks[name]) return e;
-    let own;
-    if (LDR_BLOCK.test(name)) {
-      let n = 1;
-      while (blocks['PD_LDR_' + n]) n++;
-      own = 'PD_LDR_' + n;
-    } else {
-      const dim = readDim(name, blocks[name]);
-      own = freeName(blocks, dim?.kind, dim?.params.axis);
-    }
-    blocks = { ...blocks, [own]: structuredClone(blocks[name]) };
-    return { ...e, r: { ...e.r, v: e.r.v.map((v, k) => e.r.c[k] === 2 ? own : v) } };
-  });
+/** Copy and Array share one batch: select once, allocate block names once, append once. */
+export function copyMany(raw, selection, placements, pivot = [0, 0]) {
+  const selected = raw.entities.filter((_, i) => selection.has(i)), copies = [];
+  let blocks = raw.blocks;
+  const counters = new Map();
+  const ownName = (prefix) => {
+    if (blocks === raw.blocks) blocks = { ...blocks };
+    let n = counters.get(prefix) || 1;
+    while (blocks[prefix + n]) n++;
+    counters.set(prefix, n + 1);
+    return prefix + n;
+  };
+  for (const { dx = 0, dy = 0, deg = 0 } of placements) {
+    if (![dx, dy, deg, ...pivot].every(Number.isFinite)) throw new Error('Copy needs finite distances, pivot and angle');
+    const record = (type, r, flip) => {
+      const x = flip && (OCS.has(type) || type === 'VERTEX') ? -dx : dx;
+      const moved = moveRecord(type, r, x, dy);
+      return deg ? rotateRecord(type, moved, pivot, deg, flip) : moved;
+    };
+    const one = (e, dims = new Map()) => {
+      let r = record(e.type, e.r, e.flip);
+      const name = fieldOf(e.r, 2), block = raw.blocks[name];
+      if (block && !block.xref && (e.type === 'DIMENSION' || e.type === 'INSERT' && (DIM_BLOCK.test(name) || LDR_BLOCK.test(name)))) {
+        let own = dims.get(name);
+        if (!own) {
+          const prefix = e.type === 'DIMENSION' ? '*D' : LDR_BLOCK.test(name) ? 'PD_LDR_' : /^PD_DIM_[RDAHV]?/.exec(name)[0];
+          own = ownName(prefix);
+          dims.set(name, own);
+          blocks[own] = block;
+          blocks[own] = e.type === 'DIMENSION' ? { ...block, entities: block.entities.map((child) => one(child, dims)) } : structuredClone(block);
+        }
+        r = { ...r, v: r.v.map((v, k) => r.c[k] === 2 ? own : v) };
+      }
+      return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, kid.type === 'VERTEX' ? e.flip : +fieldOf(kid, 230) < 0)) };
+    };
+    for (const e of selected) copies.push(one(e));
+  }
   return { entities: [...raw.entities, ...copies], blocks };
+}
+
+/** Append one translated copy of the selection. */
+export function copyEntities(raw, selection, dx, dy) {
+  return copyMany(raw, selection, [{ dx, dy }]);
 }
 
 // ---------------------------------------------------------------- undo

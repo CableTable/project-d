@@ -1,7 +1,7 @@
 // Extend (EX): a line's, arc's or open polyline's picked end moved on to the nearest boundary ahead, the other end fixed; pure: extend.test.mjs.
 // Drawing units, y up. Boundaries are any shapes modify.js pathOf takes (line, arc, circle, polyline with bulges).
 import { shapeOf } from './grips.js';
-import { pathOf, segInter, geo, rebuilt, canModify } from './modify.js';
+import { pathOf, segInter, geo, rebuilt, canModify, trimEntity } from './modify.js';
 
 const TAU = Math.PI * 2, DEG = 180 / Math.PI;
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -81,4 +81,47 @@ export function extendEntity(ent, edges, pick) {
   const p = rayHit(from, end, shapes);
   if (!p) return none;
   return { ent: rebuilt(moveB ? { t: 'line', a: sh.a, b: p } : { t: 'line', a: p, b: sh.b }, ent) };
+}
+
+/**
+ * Quick Extend of many at once: each of `ents` that `hit` (modify.js fenceHit / windowHit) touches is extended, at the end nearest where
+ * it was touched, to the nearest of `boundaries`. Returns { changed: [{ i, ents: [the extended one] }], skipped } (skipped = touched
+ * but nothing to reach, or a closed shape).
+ */
+export function extendRegion(ents, boundaries, hit) {
+  const changed = [];
+  let skipped = 0;
+  ents.forEach((ent, i) => {
+    if (!canModify(ent)) return;
+    const at = hit(pathOf(shapeOf(ent, 1)).segs);
+    if (!at) return;
+    const segs = pathOf(shapeOf(ent, 1)).segs, ends = [segs[0].a, segs[segs.length - 1].b];
+    let r = extendEntity(ent, boundaries, at);
+    if (r.error) r = extendEntity(ent, boundaries, ends[dist(at, ends[0]) <= dist(at, ends[1]) ? 1 : 0]);       // nothing ahead at the touched end: try the other
+    if (r.ent) changed.push({ i, ents: [r.ent] }); else skipped++;
+  });
+  return { changed, skipped };
+}
+
+/** Just the stretch an extension adds, as an entity, from the entity before (`ent`) and after (`ext`): a line's new tail, an arc's new sweep, a polyline's end segment. */
+function addedPiece(ent, ext) {
+  const a = shapeOf(ent, 1), b = shapeOf(ext, 1);
+  if (a.t === 'line') return rebuilt(dist(a.a, b.a) > 1e-9 ? { t: 'line', a: b.a, b: a.a } : { t: 'line', a: a.b, b: b.b }, ent);
+  if (a.t === 'arc') return rebuilt(Math.abs(a.a1 - b.a1) > 1e-9 ? { ...a, a0: a.a1, a1: b.a1 } : { ...a, a0: b.a0, a1: a.a0 }, ent);
+  const n = b.pts.length, last = dist(a.pts[n - 1], b.pts[n - 1]) > 1e-9, si = last ? n - 2 : 0, vi = last ? n - 1 : 0;
+  if (!b.pts[si][2]) return rebuilt({ t: 'line', a: a.pts[vi], b: b.pts[vi] }, ent);          // a straight end segment: just the new stretch; a bulged one is shown whole
+  return rebuilt({ ...b, pts: [b.pts[si], b.pts[si + 1]].map((p) => p.slice(0, 3)), closed: false }, ent);
+}
+
+/**
+ * What a Quick click at `pick` would do to `ent`, for the hover preview (nothing is changed): { act: 'trim', cut } (the piece that goes),
+ * { act: 'extend', add } (the stretch that grows on) or { error }. `extend` is the action wanted (the caller has already swapped it for Shift).
+ */
+export function previewEdit(ent, edges, pick, extend, quick = true) {
+  if (extend) {
+    const r = extendEntity(ent, edges, pick);
+    return r.error ? r : { act: 'extend', add: addedPiece(ent, r.ent) };
+  }
+  const r = trimEntity(ent, edges, pick, quick);
+  return r.error ? r : { act: 'trim', cut: r.removed };
 }

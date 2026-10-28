@@ -17,6 +17,7 @@
 // before the rest) is not split into several outlines: such a step is refused, or comes out crossing itself.
 import { mapply } from './drawing.js';
 import { line, arc, circle } from './dxf-write.js';
+import { chainAt, DIM_LAYER } from './edit.js';
 
 const TAU = Math.PI * 2;
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -31,6 +32,20 @@ const wrapPi = (a) => { let r = ((a + Math.PI) % TAU + TAU) % TAU - Math.PI; if 
 const mod2pi = (a) => ((a % TAU) + TAU) % TAU;
 
 export const MITER_LIMIT = 4;
+
+/** Whether a selected piece belongs to a larger closed chain. */
+export function partialOutline(ed, sel, tol) {
+  const seen = new Set();
+  for (const e of sel) {
+    if (seen.has(e)) continue;
+    const chain = chainAt(ed, e, tol);
+    for (const c of chain) seen.add(c);
+    if (chain.every((c) => sel.has(c))) continue;
+    const an = buildLoops(segmentsFromItems(ed, chain, (e) => e.layer === DIM_LAYER || e.type === 'DIMENSION'), tol);
+    if (an.loops.length && !an.open) return true;
+  }
+  return false;
+}
 
 // ---------------------------------------------------------------- segments
 

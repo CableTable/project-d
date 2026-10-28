@@ -29,6 +29,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
+**Cursor field**: One editable or read-only box in the Dynamic input tag: Length and Angle take typing (Tab switches), Δx and Δy show live. Before the first point the editable fields are absolute X and Y; comma switches later chain points to coordinate entry. Rectangle and Rounded rectangle use Width and Height at the other corner, signed toward the cursor. Where: `DECISIONS.md`, Dynamic input (TODO 69). Avoid: Command bar.
+**Dynamic input**: The tag beside the cursor during point prompts showing length, angle, Δx and Δy (absolute X and Y before the first point; Width and Height at a rectangle's other corner), where typed numbers go instead of the command bar; F12 or DYN turns it on and off. Where: `DECISIONS.md`, Dynamic input (TODO 69); `TODO.md`, item 69. Avoid: Cursor tag, Live numbers.
 
 **Compare**: Overlays up to five drawing snapshots in different colours and highlights each ticked item's outline differences from the reference beyond a chosen tolerance. The Compare button calculates the differences and a table of signed area, perimeter and width × height changes; a move afterwards marks the result "out of date". Where: `TODO.md`, items 41 and 114; `web/compare.js`, `web/compare-list.js`.
 
@@ -39,7 +41,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
 **Extend tool**: Lengthens a drawing line to the nearest boundary edge ahead: pick the boundary edges (Enter alone = every line, arc, circle and polyline), then click near the end to move; the other end stays. One Undo per extend; repeats until Esc. Modify menu, Home / Modify ribbons, EX / EXTEND. Arcs and polylines follow in TODO 66i. Where: `web/extend.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
 
-**Copy tool**: Places repeated copies of selected drawing objects at targets measured from one base point, preserving their properties and originals. Each placement is one Undo; Enter or Esc ends. Modify menu, Home / Modify ribbons, CO / COPY. Where: `web/move.js`, `web/app.js`; `DECISIONS.md`, Copy tool (TODO 66b). Avoid: In-app clipboard (Ctrl+C).
+**Array tool**: Makes a Rectangular grid or Polar ring of plain copies of selected drawing objects, in one Undo step. The 10000-object cap includes the originals and selection size. Esc adds nothing. Where: `web/array.js`, `web/app.js`; `DECISIONS.md`, Array on a drawing (TODO 75).
+
+**Copy tool**: Copies selected drawing objects from one base point, preserving properties and originals. Single mode ends after one placement; Multiple repeats, with the mode remembered on this PC. Each placement is one Undo; Enter after a placement or Esc ends. Modify menu, Home / Modify ribbons, CO / COPY. Where: `web/move.js`, `web/app.js`; `DECISIONS.md`, Copy / Move options (TODO 155f). Avoid: In-app clipboard (Ctrl+C).
+
+**Displacement**: The x,y vector used to Move or Copy a selection. D or Enter at the base point asks for it directly (default 0,0); Enter at the first second-point prompt uses the base point itself as the vector. Where: `DECISIONS.md`, Copy / Move options (TODO 155f).
 
 **Fillet tool**: Rounds the corner between two drawing lines or arcs, or adjacent segments of one polyline, with a tangent arc of the remembered radius (R changes it; 0 or Shift-click makes a sharp corner). Separate entities keep the sides picked; arcs and polyline segments stay finite. A polyline stays one entity with the new arc stored as a bulge. One Undo per corner; repeats until Esc. Modify menu, Home / Modify ribbons, F / FILLET. Circles, non-adjacent polyline segments and mixed polyline / separate-entity picks are refused. Where: `web/fillet.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
 **Rotate tool**: Turns selected drawing objects about a snapped or typed pivot by a clicked or typed angle in degrees; counter-clockwise is positive. Shift uses 15° steps; C at Angle toggles a copy. One turn, one Undo; Esc cancels. Modify menu, Home / Modify ribbons, RO / ROTATE. On a layout those commands turn the selected part as before. Where: `web/rotate.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
@@ -89,6 +95,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Group**: A set of placed parts that selects, moves, turns and copies as one while keeping its members as parts. Where: `DECISIONS.md`, Group and Ungroup. Avoid: DXF block.
 
 **Guidelines**: Positioning guides dragged from rulers and used for snapping. Where: `TODO.md`, item 38; `web/guides.js`.
+**Alignment guide**: A temporary thin line shown while dragging parts on a layout when the selection's box lines up with the sheet, a gripper margin or another part, with the gap in mm beside it. Where: `DECISIONS.md`, Alignment guides (TODO 67); `TODO.md`, item 67. Avoid: Guidelines (those stay until removed), Smart guide, Dynamic guide.
 
 **Keep only this**: Deletes everything except the selected outline or geometry from the drawing. Where: `DECISIONS.md`, Outline. Avoid: Extract part.
 
@@ -242,7 +249,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **OTRACK**: Object-snap tracking that lines a pick up with points already acquired from drawing geometry. Where: `TODO.md`, item 21; `web/track.js`.
 
-**Outline**: A connected chain of drawing edges selected together by clicking an edge, often used as a part's outer cut shape. Where: `DECISIONS.md`, Outline. Avoid: Necessarily a single polyline.
+**Outline**: A connected chain of drawing edges, often used as a part's outer cut shape. A click picks one object; right-click → Select connected picks its chain. Where: `DECISIONS.md`, Click selects one object (TODO 155c). Avoid: Necessarily a single polyline.
 
 **POINT**: A DXF point location that is left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
 
@@ -253,7 +260,13 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
-**Snap types**: The tick list beside SNAP: end, middle, centre, point, nearest, intersection and quadrant can each be switched off. All default on; ticks are remembered on this PC, outside drawing files. Perpendicular shows as “(soon)” until built. Where: `TODO.md`, item 68; `web/snap.js`.
+**Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. All default on; ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68 and 155k; `web/snap.js`.
+
+**Snap candidate**: One enabled snap point of the object under the pointer. During a point pick, Tab moves the marker and label through these candidates and a click accepts the displayed point. Typed cursor fields keep Tab for field switching. Where: `web/edit.js`, `web/app.js`; `DECISIONS.md`, TODO 155k as built.
+
+**Acquired edge**: The most recently hovered straight edge during a point pick. Extension projects onto its infinite support beyond its ends; Parallel projects onto a line through the previous picked point in that edge's direction. Hidden geometry and flattened curves cannot supply the edge; finishing the action clears it. Where: `web/snap.js`, `web/app.js`.
+
+**Tangent snap**: An exact point on a circular circle / arc / bulge whose radius is perpendicular to the line from the previous picked point. The previous point must be outside the circle and the tangent must lie on the arc's finite sweep. Where: `web/snap.js`.
 
 **Intersection snap**: A real crossing or tangent touch of finite lines, arcs, circles or straight / bulged polyline segments, shown with an X. Candidates come from geometry within the cursor's pick tolerance; extended lines and flattened ellipse / spline curves are excluded. Where: `web/modify.js`, `web/edit.js`.
 
@@ -337,7 +350,6 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 - Should the Agents decisions and workflow summaries be reconciled? `DECISIONS.md` assigns builds to Sonnet and permits small lead edits, while `CLAUDE.md` and the current `WORKFLOW.md` role table make Knight the default builder and `CLAUDE.md` says Rook writes no code; the workflow's opening and fresh-lead prompt still assign builds to Bishop, so the role definitions above leave the disputed default and lead-edit policy unsettled and the recorded decisions take precedence.
 - Should `WORKFLOW.md` and `CLAUDE.md` state both review models consistently? The newer two-review instructions assign Opus medium to spec review and Sonnet high to standards review, while the general role descriptions call Bishop-review Opus medium throughout.
-- Can the open duplicate of TODO 65 be removed? `TODO.md` lists Contour colour and line style as both open and completed, while `DECISIONS.md` records it built; the Contour entry follows the decision.
 
 **Castle mode**: The fallback when Rook runs short of usage: Bishop-lead leads and reviews, Knight builds, only S items are taken. Where: `WORKFLOW.md`, Castle mode.
 

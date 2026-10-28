@@ -86,6 +86,8 @@ test('14-day IST tally dedupes Claude blocks and Codex totals, excludes cache re
     record('Rook', claudeEvent('2026-10-21T18:29:59Z', 'msg', { ...usage, output_tokens: 8 })),
     record('Rook', claudeEvent('2026-10-21T18:29:59Z', 'msg', usage)),
     record('Bishop', claudeEvent('2026-10-21T18:30:00Z', 'msg', usage)),
+    record('King', claudeEvent('2026-10-21T18:30:00Z', 'msg', usage)),
+    record('King', claudeEvent('2026-10-21T18:30:00Z', 'msg', { ...usage, output_tokens: 6 })), // the later, larger count wins
     record('Rook', claudeEvent('2026-10-21T18:30:00Z', 'msg', usage, 'other-request')),
     record('Rook', claudeEvent('2026-10-08T18:29:59Z', 'too-old', usage)),
     record('Rook', claudeEvent('2026-10-23T00:00:00Z', 'future', usage)),
@@ -100,17 +102,17 @@ test('14-day IST tally dedupes Claude blocks and Codex totals, excludes cache re
   const start = Date.parse('2026-10-08T18:30:00Z');
   assert.equal(result.rows.length, 13 * 24 + 2);
   assert.deepEqual(result.rows.map((row) => row.t), result.rows.map((_, i) => start + i * 3600e3));
-  assert.deepEqual(result.rows.at(-3), { t: Date.parse('2026-10-21T17:30:00Z'), Rook: 38, Bishop: 0, Knight: 30 });
-  assert.deepEqual(result.rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 35, Bishop: 35, Knight: 49 });
-  assert.deepEqual(result.rows.at(-1), { t: Date.parse('2026-10-21T19:30:00Z'), Rook: 0, Bishop: 0, Knight: 0 });
-  assert.deepEqual(result.rows[0], { t: start, Rook: 0, Bishop: 0, Knight: 0 });
+  assert.deepEqual(result.rows.at(-3), { t: Date.parse('2026-10-21T17:30:00Z'), Rook: 38, Bishop: 0, King: 0, Knight: 30 });
+  assert.deepEqual(result.rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 35, Bishop: 35, King: 36, Knight: 49 });
+  assert.deepEqual(result.rows.at(-1), { t: Date.parse('2026-10-21T19:30:00Z'), Rook: 0, Bishop: 0, King: 0, Knight: 0 });
+  assert.deepEqual(result.rows[0], { t: start, Rook: 0, Bishop: 0, King: 0, Knight: 0 });
 });
 
-test('collector uses all three transcript roots, skips stale files and tolerates partial JSONL/missing roots', async () => {
+test('collector uses all four transcript roots, skips stale files and tolerates partial JSONL/missing roots', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'projectd-tokens-'));
   try {
     assert.equal((await collectTokens(folder, now)).rows.length, 13 * 24 + 2);
-    for (const [directory, agent] of [['.claude/projects/a', 'Rook'], ['.claude-account2/projects/b', 'Bishop'], ['.codex/sessions/2026/10', 'Knight']]) {
+    for (const [directory, agent] of [['.claude/projects/a', 'Rook'], ['.claude-account2/projects/b', 'Bishop'], ['.claude-account3/projects/c', 'King'], ['.codex/sessions/2026/10', 'Knight']]) {
       const root = join(folder, directory); mkdirSync(root, { recursive: true });
       const event = agent === 'Knight' ? codexEvent('2026-10-21T19:00:00Z', { input_tokens: 20, cached_input_tokens: 5, output_tokens: 2 })
         : claudeEvent('2026-10-21T19:00:00Z', agent, { input_tokens: 10, output_tokens: 2 });
@@ -119,14 +121,14 @@ test('collector uses all three transcript roots, skips stale files and tolerates
         const time = new Date(now - (name === 'stale.jsonl' ? 16 * 864e5 : 0)); utimesSync(path, time, time);
       }
     }
-    assert.deepEqual((await collectTokens(folder, now)).rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 12, Bishop: 12, Knight: 17 });
+    assert.deepEqual((await collectTokens(folder, now)).rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 12, Bishop: 12, King: 12, Knight: 17 });
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
 test('resumed Claude transcripts count copied messages once across files in each account', async () => {
   const folder = mkdtempSync(join(tmpdir(), 'projectd-resumed-'));
   try {
-    for (const directory of ['.claude/projects/a', '.claude-account2/projects/b']) {
+    for (const directory of ['.claude/projects/a', '.claude-account2/projects/b', '.claude-account3/projects/c']) {
       const root = join(folder, directory); mkdirSync(root, { recursive: true });
       const old = claudeEvent('2026-10-21T19:00:00Z', 'old', { input_tokens: 10, output_tokens: 2 });
       const fresh = claudeEvent('2026-10-21T19:10:00Z', 'fresh', { input_tokens: 20, output_tokens: 3 });
@@ -136,7 +138,7 @@ test('resumed Claude transcripts count copied messages once across files in each
         utimesSync(path, new Date(now), new Date(now));
       }
     }
-    assert.deepEqual((await collectTokens(folder, now)).rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 35, Bishop: 35, Knight: 0 });
+    assert.deepEqual((await collectTokens(folder, now)).rows.at(-2), { t: Date.parse('2026-10-21T18:30:00Z'), Rook: 35, Bishop: 35, King: 35, Knight: 0 });
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 
@@ -150,7 +152,11 @@ test('Rook retries once, keeps full diagnostics local, and exports only fixed su
   assert.throws(() => claudeUsage('claude', () => { calls++; throw failure; }, () => {}), /^Error: Rook usage probe failed, exit 1$/);
   assert.equal(calls, 2);
   assert.throws(() => claudeUsage('claude2', () => { throw failure; }, () => {}), /Bishop usage probe failed, exit 1/);
+  assert.throws(() => claudeUsage('C:\\bin\\claude3.cmd', () => { throw failure; }, () => {}), /King usage probe failed, exit 1/);
   const limited = Object.assign(new Error('exit 1'), { status: 1, stdout: "You've hit your limit · resets tomorrow" });
+  assert.throws(() => claudeUsage('C:\\bin\\claude3.cmd', () => { throw limited; }, () => {}), /^Error: Third account: 100%, limit reached$/);
+  assert.equal(refreshFailure({ stderr: 'USAGE_ERROR: Third account: 100%, limit reached\n' }), 'Third account: 100%, limit reached');
+  assert.equal(refreshFailure({ stderr: 'USAGE_ERROR: King usage probe failed, exit 1\n' }), 'King usage probe failed, exit 1');
   assert.throws(() => claudeUsage('claude', () => { throw limited; }, () => {}), /^Error: Main account: 100%, limit reached$/);
   assert.equal(refreshFailure({ stderr: 'stack\nUSAGE_ERROR: Rook usage probe failed, exit 1\nhook JSON' }), 'Rook usage probe failed, exit 1');
   assert.equal(refreshFailure({ stderr: 'USAGE_ERROR: Main account: 100%, limit reached\n' }), 'Main account: 100%, limit reached');

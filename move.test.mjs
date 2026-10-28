@@ -1,6 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { movePoint } from './web/move.js';
+import { movePoint, movePrompt } from './web/move.js';
+
+test('Move / Copy prompts expose only their supported options and remembered mode', () => {
+  assert.equal(movePrompt('copy', 'p1', 'Multiple'), 'Specify base point or [Displacement/mOde] <Displacement>:');
+  assert.equal(movePrompt('move', 'p1'), 'Specify base point or [Displacement] <Displacement>:');
+  for (const mode of ['Single', 'Multiple']) {
+    assert.equal(movePrompt('copy', 'mode', mode), `Enter a copy mode option [Single/Multiple] <${mode}>:`);
+  }
+  for (const kind of ['move', 'copy']) {
+    assert.equal(movePrompt(kind, 'displacement'), 'Specify displacement <0,0>:');
+    assert.equal(movePrompt(kind, 'p2'), 'Specify second point or <use first point as displacement>:');
+    assert.match(movePrompt(kind, 'pick'), /^Select objects/);
+  }
+});
 
 test('Move: absolute base, relative target, signed decimals and direct distance toward cursor', () => {
   assert.deepEqual(movePoint(' -2.5, +3 '), [-2.5, 3]);

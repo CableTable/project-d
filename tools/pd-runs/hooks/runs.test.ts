@@ -94,11 +94,23 @@ test('Rook jobs: done only when the notice says it ended', async () => {
   expect(brief(v.recent)).toEqual(['Rook tests done'])
 })
 
+test('King runs: only a king- file; claude3 in a process line or in the run text stays Bishop', async () => {
+  const files = [{ name: 'king-x.jsonl', mtimeMs: min(1) }, { name: 'b1.jsonl', mtimeMs: min(1) }, { name: 'b2.jsonl', mtimeMs: min(1) }, { name: 'b3.jsonl', mtimeMs: min(1) }]
+  const texts = { 'king-x.jsonl': RESULT, 'b1.jsonl': RESULT, 'b2.jsonl': `${RESULT} claude3.cmd`, 'b3.jsonl': '{"type":"assistant"}' }
+  expect(brief(findRuns(files, NOW, texts, [])).sort()).toEqual(['Bishop 1 done', 'Bishop 2 done', 'King x done', 'Bishop 3 running'].sort())
+  const wrapper = proc(99, 1, 5, 'cmd.exe /c claude3.cmd -p --output-format stream-json > b3.jsonl')
+  expect(brief(findRuns(files, NOW, texts, [wrapper])).sort()).toEqual(['Bishop 1 done', 'Bishop 2 done', 'King x done', 'Bishop 3 running'].sort())
+  // a Bishop run that spawns a claude3 probe (node tools/rook.mjs usage) under its own process stays Bishop
+  const bishop = proc(98, 1, 5, 'cmd.exe /c claude2.cmd -p --output-format stream-json > b3.jsonl'), probe = proc(97, 98, 6, 'cmd.exe /c claude3.cmd -p')
+  expect(brief(findRuns(files, NOW, texts, [bishop, probe])).sort()).toEqual(['Bishop 1 done', 'Bishop 2 done', 'King x done', 'Bishop 3 running'].sort())
+})
+
 test('usage rows, bars, colours, IST', async () => {
-  const csv = 'agent,role,model,window,used_pct,cap_pct,starts,resets,as_of\nRook,x,x,5h,23,,a,2026-10-23T05:40:00+05:30,c\nRook,x,x,week,73,,a,2026-10-25T15:30:00+05:30,c\nPip,x,x,5h,4,,a,b,c\nRowan,x,x,week,91,,a,b,c'
-  const [rook, bishop, knight] = usageRows(csv, NOW)!
+  const csv = 'agent,role,model,window,used_pct,cap_pct,starts,resets,as_of\nRook,x,x,5h,23,,a,2026-10-23T05:40:00+05:30,c\nRook,x,x,week,73,,a,2026-10-25T15:30:00+05:30,c\nPip,x,x,5h,4,,a,b,c\nKing,x,x,week,37,,a,2026-10-26T15:30:00+05:30,c\nRowan,x,x,week,91,,a,b,c'
+  const [rook, bishop, king, knight] = usageRows(csv, NOW)!
   expect(rook).toEqual({ who: 'Rook', w5: { pct: 23, reset: '05:40' }, wk: { pct: 73, reset: 'Sun 15:30' }, cap: 83 })
   expect(knight!.cap).toBe(null)
+  expect(king).toEqual({ who: 'King', w5: { pct: null, reset: '' }, wk: { pct: 37, reset: 'Mon 15:30' }, cap: null })
   expect(bishop!.w5.pct).toBe(4)
   expect(bishop!.wk.pct).toBe(null)
   expect(knight!.wk.pct).toBe(91)

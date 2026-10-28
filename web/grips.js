@@ -14,6 +14,8 @@
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 
 export const MAX_SELECTED = 200;
+export const GRIP_SIZE = 5;                 // 155r: GRIPSIZE 5, AutoCAD's half side: the square is 2 * 5 + 1 px
+export const gripSide = (n = GRIP_SIZE) => 2 * n + 1;
 export const MAX_GRIPS = 5000;    // shortcut: hide all grips above 5000 handles; use a virtualized overlay if denser editing is needed
 /** The grips to show: all of them, or none when there are too many handles. */
 export const capGrips = (list) => (list.length > MAX_GRIPS ? [] : list);

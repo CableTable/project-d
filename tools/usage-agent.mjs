@@ -46,13 +46,13 @@ function freshTokens(usage, codex = false) {
 export async function tallyTokens(records, now) {
   // Hourly buckets aligned to IST midnight, from 13 days back to the hour holding `now`: rows[].t is the bucket start (ms), at most 14 x 24 rows.
   const HOUR = 3600e3, first = Date.parse(istDay(now - 13 * 864e5) + 'T00:00:00Z') - 19800e3;
-  const rows = Array.from({ length: Math.floor((now - first) / HOUR) + 1 }, (_, i) => ({ t: first + i * HOUR, Rook: 0, Bishop: 0, Knight: 0 }));
+  const rows = Array.from({ length: Math.floor((now - first) / HOUR) + 1 }, (_, i) => ({ t: first + i * HOUR, Rook: 0, Bishop: 0, King: 0, Knight: 0 }));
   const messages = new Map(), sessions = new Map();
   for await (const { agent, session, event } of records) {
     const time = Date.parse(event.timestamp);
     if (!Number.isFinite(time) || time > now) continue;
     const row = rows[Math.floor((time - first) / HOUR)]; // undefined before the window
-    if ((agent === 'Rook' || agent === 'Bishop') && event.type === 'assistant' && event.message?.usage) {
+    if (['Rook', 'Bishop', 'King'].includes(agent) && event.type === 'assistant' && event.message?.usage) {
       const { id, usage } = event.message;
       if (!id) continue;
       const key = `${agent}|${id}|${event.requestId || ''}`;
@@ -83,7 +83,7 @@ export async function collectTokens(home = homedir(), now = Date.now()) {
     }
   }
   async function* records() {
-    for (const [agent, directory] of [['Rook', '.claude/projects'], ['Bishop', '.claude-account2/projects'], ['Knight', '.codex/sessions']]) {
+    for (const [agent, directory] of [['Rook', '.claude/projects'], ['Bishop', '.claude-account2/projects'], ['King', '.claude-account3/projects'], ['Knight', '.codex/sessions']]) {
       for await (const path of walk(join(home, directory))) {
         const input = createReadStream(path, { encoding: 'utf8' });
         const lines = createInterface({ input, crlfDelay: Infinity });
@@ -104,7 +104,7 @@ export async function collectTokens(home = homedir(), now = Date.now()) {
 export function refreshFailure(error) {
   // Only the CLI's fixed summary crosses into Firestore; command output stays in the local log.
   const summary = String(error.stderr || '').match(/^USAGE_ERROR: (.+)$/m)?.[1];
-  return summary && /^(?:(?:Rook|Bishop|Knight) usage probe failed, exit (?:\d+|unknown)|(?:Main|Second) account: 100%, limit reached)$/.test(summary)
+  return summary && /^(?:(?:Rook|Bishop|King|Knight) usage probe failed, exit (?:\d+|unknown)|(?:Main|Second|Third) account: 100%, limit reached)$/.test(summary)
     ? summary : 'Usage refresh failed; see the local agent log';
 }
 

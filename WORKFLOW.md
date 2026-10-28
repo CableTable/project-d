@@ -14,7 +14,8 @@ briefs, reading short reports and merging.
 | Lead | main account (this session) | Opus | Plans, picks TODO items, writes briefs, reads reports (never whole diffs, logs or files), publishes mock-ups, merges. |
 | Lookup | claude2 | Haiku | Broad surveys across many files. Small lookups (one grep, one file section, one web page) Rook does itself (his OK, 2026-10-24). Replies in a few lines. |
 | Builder (**Knight**) | Codex CLI (his ChatGPT Go plan) | gpt-6.1-sol, high | THE builder (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): features and fixes, code, tests, commit. Rook pushes (no git credentials in its sandbox). |
-| Builder (Bishop) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark), and builds when its weekly usage is lower than Knight's, or a second build runs at once: code, tests, commit, push. |
+| Builder (**King**) | claude3 (3rd account, `claude3.cmd`) | Sonnet, high | His call 2026-10-28: builds only (fresh session per build, worktree `Project D extras/ProjectD-king`, same command as Bishop-build with `claude3.cmd`), and leads in Castle mode. A clone of Rook: same CLAUDE.md, WORKFLOW.md, plugins and the **same memory folder** (junctions from `~/.claude-account3/projects/*/memory` to Rook's), so a memory either writes the other reads. Builds go to Knight and King only: King 2 runs at once (folders `ProjectD-king`, `ProjectD-king2`), Knight 1 (his call 2026-10-28); Bishop builds no more. |
+| Builder (Bishop) | claude2 | Sonnet, high | Mock-ups and screenshots (light + dark) only. **No builds since 2026-10-28** (his call: King builds instead). |
 | Reviewer | claude2 | **Opus, medium** | Reviews every build's commits, read-only. Findings go back to the builder. |
 | PC tester | claude2 | Sonnet, high | Downloads the released exe and drives it (WebView2 debug port + Playwright), reports what broke. |
 | Fallback | claude2 | Opus, high | Only when Sonnet has failed at a build. |
@@ -63,6 +64,25 @@ usage-agent-install.ps1.
    any other work, and every grill round after that uses them; never questions written without them.
    **Facts first, one round at a time** (his call, 2026-10-24): every code or fact lookup a round needs finishes
    before the round is asked. Never ask a round and then replace it when a lookup comes back: two sets of questions confuse.
+   **AutoCAD check** (his call, 2026-10-27): before grilling any AutoCAD-style feature (commands, prompts, keys, snaps,
+   selection, dimensions), Pawn reads Autodesk's own help (help.autodesk.com) on how AutoCAD does it, and the round's
+   recommendations follow AutoCAD unless he decided otherwise; where ours differs, say which way is better and why (his ask 2026-10-27). Not settled by the docs: a short AutoLISP / script check
+   he runs in his AutoCAD (licence allows; he pastes the result), then, if still open, watch it in his installed AutoCAD
+   with computer use (Claude desktop app only; from the CLI, ask him to run that step there). Never reverse-engineer
+   AutoCAD's binaries (e.g. REA): Autodesk's licence forbids it.
+   From the CLI (works, 2026-10-27, AutoCAD 2027 on his PC when it is open): PowerShell COM
+   `[Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application')` reads system variables; `Documents.Add()` gives a
+   scratch drawing (never his open work); WScript.Shell SendKeys types into it; LOGFILEON / LOGFILEOFF writes the command line
+   to `%LOCALAPPDATA%AutodeskAutoCAD 2027R26.0enu<drawing>.log`: read the log, not COM busy states (unreliable).
+   Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
+   **Bishop-acad runs these checks, not Rook** (his call 2026-10-28, to save Rook's usage): Rook writes the questions
+   (what to try, which prompts / keys / screenshots), then from `Project D extras/runs<N>`:
+   `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out`.
+   The brief always says: one AutoCAD session at a time; only new scratch drawings (`Documents.Add()`), never his open
+   drawings, close scratch ones without saving; wrap SendCommand in Start-Job with a timeout (it blocks while a prompt
+   waits; Esc via SendKeys frees it); zoom before picking (off-screen picks are ignored); PrintWindow the AutoCAD window
+   only (never the whole screen), CopyFromScreen around the cursor only for Dynamic input tooltips; save facts to
+   `Project D extras/acad-<topic>.txt` (+ PNGs), add a line to `Project D extras/acad-facts.md` (the index; read it first, never retest a fact in it), and reply in at most 10 lines. Rook reads the reply, not the PNGs.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
@@ -81,7 +101,7 @@ after the reset, like Bishop. At the cap Rook finishes the step it is on, says s
 **Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
 (`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
 wait for a reset, or pause the session. **Knight builds** (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): every build or fix
-round goes to Knight. Bishop-build takes one ONLY when Knight is at 100% (its 5-hour or weekly limit) or he says to
+round goes to Knight. King-build (claude3) takes one when Knight is above 85% of its 5-hour limit (his call 2026-10-27, within Bishop's daily cap), at 100% weekly, or he says to
 run it on Bishop. Knight busy (2 runs) is not a reason: the build waits in the queue.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
@@ -201,7 +221,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 ## Keeping Rook small (his rule, 2026-10-20: Rook was on pace to hit its weekly limit by Friday)
 
-- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, and once CI is green for the
+- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; he picks which suggestions to apply), and once CI is green for the
   head commit asks his OK to merge. On his yes: `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
   (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then start the next Rook session itself
   (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
@@ -209,6 +229,9 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   **CI monitor** (his call, 2026-10-21): right after opening the session PR, bind it (ccd_pr `get_status` / `bind_pr`) and turn
   on its CI monitor (`set_monitor`); on green with his merge OK, merge at once; on red, send the failing step to a Bishop fix round. Every Rook turn re-reads the whole conversation, so a
   long one costs the most.
+  **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min,
+  re-arm on expiry). It prints each finished job and ends with `RUN <id> success|failure`. Never pipe to `jq`: it is not installed
+  here, so such a watch stays silent forever (two silent monitors on PR #25); use gh's own `--jq`.
 - **Context limit 250k** (his call, 2026-10-21): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
   automatically there. If it ever doesn't fire, Rook finishes its step at ~250k and asks him to type `/compact`.
 - **Bishop-support** (his call, 2026-10-21): an interactive claude2 (Sonnet) in a Terminal tab answers his questions while he
@@ -226,7 +249,11 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   firebase-tools@15.30.2 deploy --only hosting,firestore:rules --project project-d-usage` (usage-site/, his OK per deploy).
   The old claude.ai usage artifact is retired.
 
-## Castle mode (his call, 2026-10-21)
+## Castle mode (his call, 2026-10-21; King leads since 2026-10-28)
+
+**Since 2026-10-28 King (claude3) is the lead in this mode, not Bishop-lead:** read "Bishop-lead" below as King-lead,
+`claude2.cmd` as `claude3.cmd`, and `handover-pip.md` as `handover-king.md`. King shares Rook's memory, so it may take M / L items
+too. Bishop still reviews every build.
 
 For when Rook (main account) runs short of usage: Bishop leads and reviews, Knight builds, Rook only helps.
 
@@ -268,7 +295,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
   (Without it, claude2 reads CLAUDE.md's builder rule and tries to start claude2 itself.)
 - Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
-- Builders: tests (`npm.cmd test`, `npm.cmd run test:browser`) must pass; screenshots light + dark into `shots/` (`shots/shard-N-of-4/` through the runner).
+- Builders: `npm.cmd test` plus ONLY their own new / changed browser steps (`node browser.test.mjs <port> '<step names>'`) must pass; screenshots light + dark through those steps. **Rook runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
 - Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
 - **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in
   GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit. Review A checks the same list.

@@ -3,6 +3,8 @@
 
 /** [name, category, description, aliases, where ('draw' | 'layout' | '' = both), default key (optional)] */
 const TABLE = [
+  ['osnap', 'Edit', 'Open the Snap types tick list', ['os'], ''],
+  ['ortho', 'Edit', 'Set Ortho ON or OFF', [], ''],
   ['fill', 'Edit', 'Fill a closed outline with the current fill colour', [], 'draw'],
   ['eyedropper', 'Edit', 'Copy line and fill colours from an object to targets', [], 'draw'],
   ['readout', 'Edit', 'Show the colour under the cursor; a click copies its hex', [], ''],
@@ -26,6 +28,7 @@ const TABLE = [
   ['measure', 'Edit', 'Distance between two points', ['m', 'mea'], ''],
   ['pan', 'View', 'Drag the view around', [], ''],
   ['move', 'Edit', 'Move objects from a base point to a target', ['mv'], 'draw'],
+  ['array', 'Edit', 'Copies of the selection in columns and rows', ['ar'], 'draw'],
   ['nudge', 'Edit', 'Set the arrow-key Nudge step in mm', ['nu'], ''],
   ['offset', 'Edit', 'A parallel copy at a distance', ['o'], 'draw'],
   ['trim', 'Edit', 'Cut objects back to cutting edges', ['tr'], 'draw'],
@@ -84,6 +87,14 @@ const TABLE = [
 ];
 
 export const COMMANDS = TABLE.map(([name, cat, desc, alias, where, key = '']) => ({ name, cat, desc, alias, where, key }));
+export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'copy', 'paste', 'delete'].includes(name);
+
+/** Button name followed by its first typed alias and keyboard shortcut, when present. */
+export function tooltipText(label, command, tab = '', description = '') {
+  const alias = command?.alias.find((word) => !tab || aliasScope(command, word) === command.where || aliasScope(command, word) === tab);
+  const hints = [alias?.toUpperCase(), !fixedKey(command?.name) && command?.key].filter(Boolean);
+  return label + (hints.length ? ` (${hints.join(', ')})` : '') + (description ? `\n${description}` : '');
+}
 
 // R stays Rectangle on drawings and Rotate on layouts; RO / ROTATE work on both.
 export const aliasScope = (c, word) => c.name === 'rotate' && word === 'r' ? 'layout' : c.where;
@@ -119,13 +130,15 @@ export function suggest(text, tab = '', limit = 6, commands = COMMANDS) {
   return out.slice(0, limit).map(({ cmd, alias, hit }) => ({ cmd, alias, hit }));
 }
 
-/** The options in a prompt's [Brackets]: the last bracket with single words ("Esc" is not one). The capital letters at the start of a word are its key. → [{ word, key, rest }] */
+/** The options in a prompt's [Brackets]: the last bracket with single words ("Esc" is not one). Capitals, including internal ones, give the key. → [{ word, key, rest, prefix? }] */
 export function parseOptions(prompt) {
   const groups = [...String(prompt || '').matchAll(/\[([^\]]+)\]/g)].map((m) => m[1].split('/').map((x) => x.trim()));
   for (let i = groups.length - 1; i >= 0; i--) {
     const words = groups[i].filter((w) => /^[A-Za-z0-9]+$/.test(w) && w !== 'Esc');
     if (!words.length || words.length !== groups[i].filter((w) => w !== 'Esc').length) continue;
     return words.map((word, n) => {
+      const internal = /^[a-z]+([A-Z]+)/.exec(word);
+      if (internal) return { word, key: internal[1], prefix: word.slice(0, internal[0].length - internal[1].length), rest: word.slice(internal[0].length) };
       let len = (/^[A-Z0-9]+/.exec(word) || [word[0]])[0].length;
       while (len < word.length && words.some((o, m) => m !== n && o.toLowerCase().startsWith(word.slice(0, len).toLowerCase()) && (m < n || o.length === len))) len++;     // Steps / Sharp: the key grows until it is the only one
       return { word, key: word.slice(0, len), rest: word.slice(len) };

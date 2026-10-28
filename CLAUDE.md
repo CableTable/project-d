@@ -32,6 +32,7 @@ open a library part as a drawing (116), Clean up greyed buttons (128). Session 2
 then TODO.md "Rakshith's list".
 Session 21 (2026-10-24/25, PR #16, v0.1.95): Move (66a), nudge / nu box (66a2), ribbon + CorelDRAW-style panel + AutoCAD / CorelDRAW theme (110a-d, 94, 132; mock-up R19 Option A). **Next:** 66b Copy, then 66c-66h (decided, DECISIONS row "Copy, Rotate, Scale, Fillet, Extend"), TODO 145, 142, then the rest of "Rakshith's list".
 Session 22 (2026-10-25, PR #17): Copy (66b), Rotate (66c), Scale (66d), Fillet lines / arcs / polylines (66e-66g), Extend lines (66h), exe leftovers (145), each reviewed and fixed. **Next:** 146 (command box over the preview), 142, 143-144, 66i (Extend arcs), then the rest of "Rakshith's list". Session 23 (2026-10-25/27, PR #18): 142, 146, 78, 68a-c, 70, 147, 72, 148a. Session 24 (2026-10-27, PRs #19-#24, v0.1.153): CI flake fix, exe display fixes (152), browser suite in 4 shards (151), window / crossing selection and Alt + click cycling (71a-c), swatch strip, Fill tool, Eyedropper, colour readout (148b-d). **Next:** open bugs, then TODO.md "Rakshith's list" (148e, 153, 154 queued).
+Session 25 (2026-10-28, PR #26): AutoCAD-parity round (155a, c, f, k, o, p, q; 69a-f; 75 Array; 67a-c; 65; 73), same features in every tab decided (156). **Next:** finish 155d, 155j, 155m (branches king/155d, knight/155j, king/155m), then 156a-d, then the remaining 155 items.
 Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare, theme "Modern SaaS", Offset / Trim /
 Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close
 prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). Session 8
@@ -105,6 +106,9 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 - Say when a Windows menu path is a guess. Keep answers short, because he often reads from his phone.
 - **Backticks in every reply** (his rule, 2026-10-23): every file path, folder, branch name, commit id, PR number, ticket or TODO id, and command goes in backticks, e.g. `claude/session17`, `0172ae1`, `#11`, `T22b`, `npm test`, including short status lines.
 - Windows: PowerShell 5.1 has no `<` redirect and blocks `.ps1` shims, so use `npm.cmd` there.
+- **First action of every Rook session, whatever the starting prompt or handover file says:** the Skill tool for
+  `mattpocock-skills:grilling` AND `mattpocock-skills:domain-modeling`, before any other work; every grill round uses
+  them (his rule, 2026-10-27, after a hand-written handover left it out). A handover file Rook writes repeats this line.
 - **How a session runs: WORKFLOW.md** (the roles, the exact commands, the loop, the budgets). In short:
   **Rook** is the lead (Opus, main account, this session): plans, writes briefs, reads short reports,
   merges, and writes no code: review findings, however small, go to Knight (his call, 2026-10-20). **Bishop** is everything on the 2nd account

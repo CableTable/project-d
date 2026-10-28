@@ -373,23 +373,28 @@ export function shapeOfPiece(segs, srcType) {
   return polyOf(segs, false);
 }
 
-/**
- * The kept shapes and removed shape under `pick`, sharing the same cutting interval: { shapes, removed } | { error }.
- * An open shape loses the stretch between the two crossings round the pick (up to its end when there is only one); a circle or closed
- * polyline needs two crossings and keeps the rest as one open piece.
- */
-export function trimShape(sh, edges, pick) {
-  const P = pathOf(sh), n = P.segs.length;
-  if (P.segs.some((s) => dist(s.a, s.b) < 1e-9)) return { error: 'The polyline has a side without length' };
-  const cuts = [];
+/** Where the cutting edges cross a path (segment index + fraction), sorted, no doubles; the ends of an open path are dropped. */
+function cutParams(P, edges) {
+  const n = P.segs.length, cuts = [];
   for (const e of edges) {
     const E = pathOf(e);
     P.segs.forEach((s, i) => { for (const t of E.segs.filter((q) => dist(q.a, q.b) >= 1e-9)) for (const h of segInter(s, t)) cuts.push(i + h.fs); });
   }
   let cs = cuts.map((u) => (P.closed && u >= n - 1e-9 ? 0 : u)).sort((a, b) => a - b);
   if (!P.closed) cs = cs.filter((u) => u > 1e-7 && u < n - 1e-7);
-  cs = cs.filter((u, i) => i === 0 || u - cs[i - 1] > 1e-7);
-  if (!cs.length) return { error: 'Nothing crosses it here: pick a part between cutting edges' };
+  return cs.filter((u, i) => i === 0 || u - cs[i - 1] > 1e-7);
+}
+
+/**
+ * The kept shapes and removed shape under `pick`, sharing the same cutting interval: { shapes, removed } | { error }.
+ * An open shape loses the stretch between the two crossings round the pick (up to its end when there is only one); a circle or closed
+ * polyline needs two crossings and keeps the rest as one open piece.
+ */
+export function trimShape(sh, edges, pick, quick = false) {
+  const P = pathOf(sh), n = P.segs.length;
+  if (P.segs.some((s) => dist(s.a, s.b) < 1e-9)) return { error: 'The polyline has a side without length' };
+  const cs = cutParams(P, edges);
+  if (!cs.length) return quick ? { shapes: [], removed: sh } : { error: 'Nothing crosses it here: pick a part between cutting edges' };     // Quick: an object nothing crosses goes whole
   const up = closest(P, pick).u;
   let pieces, removed;
   if (!P.closed) {
@@ -420,10 +425,50 @@ export function offsetEntity(ent, d, at) {
   return r.error ? r : { ent: rebuilt(r.shape, ent) };
 }
 
-/** The kept entities and removed preview entity after cutting at the edges: { ents, removed } | { error }. */
-export function trimEntity(ent, edges, pick) {
+/** The kept entities and removed preview entity after cutting at the edges: { ents, removed } | { error }. `quick`: nothing crossing = the whole entity goes. */
+export function trimEntity(ent, edges, pick, quick = false) {
   if (!canModify(ent)) return { error: 'Trim takes a line, arc, circle or polyline' };
   const shapes = edges.filter((e) => e !== ent && canModify(e)).map((e) => shapeOf(e, 1));
-  const r = trimShape(shapeOf(ent, 1), shapes, pick);
+  const r = trimShape(shapeOf(ent, 1), shapes, pick, quick);
   return r.error ? r : { ents: r.shapes.map((sh) => rebuilt(sh, ent)), removed: r.removed ? rebuilt(r.removed, ent) : null };
+}
+
+// ---------------------------------------------------------------- Quick Trim by fence or crossing window
+
+const straight = (pts) => pts.slice(1).map((b, i) => ({ a: pts[i], b, bulge: 0 })).filter((l) => dist(l.a, l.b) >= 1e-9);
+const touches = (segs, lines) => { for (const s of segs) for (const l of lines) { const h = segInter(s, l); if (h.length) return h[0].p; } return null; };
+/** For trimRegion and extendRegion: where the fence (a polyline of straight segments) first crosses a piece, null when it does not. */
+export const fenceHit = (pts) => { const lines = straight(pts); return (segs) => touches(segs, lines); };
+/** For trimRegion and extendRegion: a point of the piece inside or on the crossing window of corners a and b, null when it does not touch it. */
+export function windowHit(a, b) {
+  const x0 = Math.min(a[0], b[0]), x1 = Math.max(a[0], b[0]), y0 = Math.min(a[1], b[1]), y1 = Math.max(a[1], b[1]);
+  const lines = straight([[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]), inside = (p) => p[0] >= x0 && p[0] <= x1 && p[1] >= y0 && p[1] <= y1;
+  return (segs) => (inside(segs[0].a) ? segs[0].a : touches(segs, lines));
+}
+
+/**
+ * Quick Trim of many at once: each piece of `ents` (the stretch between the `cutters`' crossings; an object nothing crosses is one piece)
+ * for which hit(segs) is true goes, and what stays is joined into as few pieces as possible.
+ * Returns { changed: [{ i, ents }] (ents = what is left of ents[i]), skipped } (a closed shape with one crossing is skipped).
+ */
+export function trimRegion(ents, cutters, hit) {
+  const changed = [], shapes = cutters.filter(canModify).map((e) => ({ e, sh: shapeOf(e, 1) }));
+  let skipped = 0;
+  ents.forEach((ent, i) => {
+    if (!canModify(ent)) return;
+    const P = pathOf(shapeOf(ent, 1)), n = P.segs.length;
+    if (P.segs.some((s) => dist(s.a, s.b) < 1e-9) || !hit(P.segs)) return;
+    const cs = cutParams(P, shapes.filter((c) => c.e !== ent).map((c) => c.sh));
+    if (P.closed && cs.length === 1) { skipped++; return; }
+    const bounds = !cs.length ? [0, n] : P.closed ? [...cs, cs[0] + n] : [0, ...cs, n];
+    let pieces = bounds.slice(1).map((u, k) => [bounds[k], u]);
+    const cut = pieces.map(([u0, u1]) => !!hit(subPath(P, u0, u1)));
+    if (!cut.includes(true)) return;
+    const s = P.closed ? (cut.indexOf(true) + 1) % pieces.length : 0;           // a closed shape: start just after a cut piece, so no run wraps
+    pieces = pieces.slice(s).concat(pieces.slice(0, s).map(([a, b]) => [a + n, b + n]));
+    const keep = cut.slice(s).concat(cut.slice(0, s)).map((c) => !c), runs = [];
+    pieces.forEach((pc, k) => { if (!keep[k]) return; if (k && keep[k - 1]) runs[runs.length - 1][1] = pc[1]; else runs.push([pc[0], pc[1]]); });
+    changed.push({ i, ents: runs.map(([u0, u1]) => shapeOfPiece(subPath(P, u0, u1), P.type)).filter(Boolean).map((sh) => rebuilt(sh, ent)) });
+  });
+  return { changed, skipped };
 }
