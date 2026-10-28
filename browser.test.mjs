@@ -3878,6 +3878,7 @@ try {
       await p.locator('.ovl [data-rot]').first().waitFor();
       assert.equal(await p.locator('.ovl [data-rot]').count(), 4);
       await pick(80, 80); await count(0);
+      await p.waitForFunction(() => !document.querySelector('.ovl [data-rot]'));   // the overlay repaints one frame after the count
       assert.equal(await p.locator('.ovl [data-rot]').count(), 0);
       await pick(100, 120); await count(1);
       const a = await point(120, 100); await p.mouse.dblclick(a.x, a.y); await count(1);
@@ -14749,6 +14750,7 @@ try {
     await page.evaluate(() => document.activeElement?.blur());
     await typeCmd('line'); await typeCmd('10,10'); await typeCmd('60,10'); await typeCmd('');
     assert.equal(await nParts(), n0 + 4); await undo(); assert.equal(await nParts(), n0 + 3, 'Undo after a reopen');
+    await page.locator('[data-tool=select]').click();   // the Line tool stays on across tabs, as on drawings: end it for the next step
   });
 
   await step('TODO 156b3a: on a layout, Trim / Extend / Fillet / Offset work on layout objects (one Undo each); a pick on a placed part is refused and the part stays; saved and reopened they are still objects', async () => {
