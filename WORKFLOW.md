@@ -128,6 +128,21 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # (each resume re-sends the whole conversation: one builder reached $22 over 3 resumed jobs, 2026-10-19).
 # --resume only to finish a run that was cut off mid-work (usage limit), then start fresh again.
 
+# King-build (claude3, Sonnet high) in its worktree ProjectD-king (session 25 retro: this block was written nowhere).
+# Its cwd is the worktree: one bare command per call, no `cd … &&`. Find code with Grep or `grep -n`, read with Read
+# offset/limit, change it with Edit (`replace_all` for repeats); never awk / node -e with braces, sed -i, python
+# heredocs or PowerShell script blocks. A throwaway script goes to a file with Write, then `node <file>`.
+R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"
+/c/Users/raksh/.local/bin/claude3.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
+  --add-dir "E:/Project B/Claude/Project D/.git" --add-dir "E:/Project B/Claude/Project D extras" \
+  --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" \
+  --allowedTools "Bash(echo:*)" "Bash(tee:*)" "Bash(npx.cmd:*)" "Bash(npm.cmd:*)" "PowerShell(Select-String:*)" \
+    "PowerShell(Select-Object:*)" "PowerShell(Write-Output:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git fetch:*)" \
+    "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git cherry-pick:*)" "Bash(git rebase:*)" "Bash(git apply:*)" \
+    "Bash(git check-ignore:*)" \
+  --output-format stream-json --verbose < "$R/b<item>.txt" > "$R/king-<item>.jsonl" 2>&1
+# The force-push and reset denies in .claude/settings.json stay.
+
 # Reviewer (Opus, medium, read-only): the reviewer agent (.claude/agents/reviewer.md: no Edit / Write tools)
 # plus the git denies for Bash, capped at $6. It runs in its OWN throwaway worktree at the commit under review, so it can
 # run the tests and time things without touching a builder's folder (2026-10-20, his call). Never add `git -C:*` to the
@@ -165,7 +180,10 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # once on account 2, so Bishop builds stay in ProjectD-s15fix unless he has trusted the clone.
 # Parallel Knight builds (2026-10-21): extra clones ProjectD-knight2 (+ -git) and ProjectD-knight3 (+ -git), set up the
 # same way. One branch per clone; cherry-pick each into the repo; TODO / DECISIONS conflicts: keep both sides, then drop
-# duplicate TODO rows. Knight runs ponytail "full" too (%APPDATA%\ponytail\config.json), like every builder.
+# duplicate TODO rows. Run two builds at once (King + Knight) only when their briefs touch different files; otherwise
+# base the 2nd build on the 1st's commit (session 25: 69e and 69f both edited web/app.js and the cherry-pick conflicted).
+# Knight says "Selected model is at capacity": wait 5 min, then a FRESH run with the brief plus the STATE line above
+# (not `exec resume`, see above). Knight runs ponytail "full" too (%APPDATA%\ponytail\config.json), like every builder.
 # Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
 codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowan" \
   --add-dir "E:/Project B/Claude/Project D extras/ProjectD-rowan-git" --add-dir "C:/Users/raksh/AppData/Local/ms-playwright" \
@@ -181,7 +199,7 @@ codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowa
 # Quick lookup: Pawn (Antigravity CLI). Reads https pages only (his settings.json allow rule), no shell,
 # writes only in its own folder; never run it in the repo, never with --dangerously-skip-permissions.
 cd ~/agy-research && "/c/Users/raksh/AppData/Local/agy/bin/agy.exe" -p "<question; max N lines; cite URLs>" --output-format json --print-timeout 10m
-# Every Pawn brief says "open https links only, skip http ones": one blocked http page ends a headless run.
+# Every Pawn brief says "open https links only, skip http ones, run no commands": one blocked action ends a headless run.
 # Big research (many sources) goes to Bishop (Sonnet + WebSearch) instead; Pawn takes quick lookups only.
 # (2026-10-19: two multi-page Pawn runs died on one blocked action each: a shell command, then a URL.)
 # follow-up: --conversation <conversation_id>; its quota: /usage inside agy (interactive only; he pastes it)
@@ -222,7 +240,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 ## Keeping Rook small (his rule, 2026-10-20: Rook was on pace to hit its weekly limit by Friday)
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; he picks which suggestions to apply), and once CI is green for the
-  head commit asks his OK to merge. On his yes: `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
+  head commit asks his OK to merge. On his yes, and only once `runs<N>/retro.out` exists (session 25 retro): `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
   (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then start the next Rook session itself
   (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
   of handing him a prompt. No scheduled or polled CI checks.
@@ -296,6 +314,11 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
 - Builders: `npm.cmd test` plus ONLY their own new / changed browser steps (`node browser.test.mjs <port> '<step names>'`) must pass; screenshots light + dark through those steps. **Rook runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
+  Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
+  Every builder brief says: "A filtered step you didn't touch fails: list it under Findings and stop; Rook runs the full suite." (until `step()` takes `needs:`)
+- **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
+  without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
+- Rook writes briefs to `runs<N>/b*.txt` with the Write tool, never a heredoc (one hung Rook in session 25).
 - Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
 - **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in
   GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit. Review A checks the same list.
