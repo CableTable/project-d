@@ -48,17 +48,22 @@ export function curveShape(ent) {
  * A chord hit `p` on shape `sh` moved onto the true curve when `sh` is an ellipse: Newton on the ellipse parameter t until
  * miss(point) = 0 (miss is zero on the line or circle being extended); `p` itself for anything else or when it does not settle nearby.
  */
-function snapOnto(sh, p, miss) {
+function snapOnto(sh, p, miss, seg) {
   const q = sh.q, det = q ? q.m[0] * q.n[1] - q.m[1] * q.n[0] : 0;
   if (!det) return p;
-  const x = p[0] - q.c[0], y = p[1] - q.c[1], t0 = Math.atan2((q.m[0] * y - q.m[1] * x) / det, (x * q.n[1] - y * q.n[0]) / det), h = 1e-6;
-  let t = t0;
+  const paramOf = (P) => {
+    const x = P[0] - q.c[0], y = P[1] - q.c[1];
+    return Math.atan2((q.m[0] * y - q.m[1] * x) / det, (x * q.n[1] - y * q.n[0]) / det);
+  };
+  const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a)), h = 1e-6, ta = paramOf(seg.a), span = wrap(paramOf(seg.b) - ta);
+  let t = paramOf(p);
   for (let i = 0; i < 8; i++) {
     const f = miss(ellAt(q, t)), df = (miss(ellAt(q, t + h)) - f) / h;
     if (!df) return p;
     t -= f / df;
   }
-  return Number.isFinite(t) && Math.abs(Math.atan2(Math.sin(t - t0), Math.cos(t - t0))) < 0.05 ? ellAt(q, t) : p;      // a chord is ~0.012 rad wide
+  const off = wrap(t - ta), e = 1e-9;      // the snap must stay on the hit chord's own stretch of the curve, else it found the far crossing
+  return Number.isFinite(t) && (span >= 0 ? off >= -e && off <= span + e : off <= e && off >= span - e) ? ellAt(q, t) : p;
 }
 /** The shape Extend measures against: a modifiable shape, an ellipse or a spline. */
 const boundaryOf = (e) => (canModify(e) ? shapeOf(e, 1) : curveShape(e));
@@ -81,7 +86,7 @@ export function rayHit(from, end, shapes) {
     if (d > 1e-9 * (1 + len) && d < bd) { bd = d; best = h.p; bs = s; }
   }
   if (best && bs.sh.q) {
-    const p = snapOnto(bs.sh, best, (P) => u[0] * (P[1] - end[1]) - u[1] * (P[0] - end[0]));
+    const p = snapOnto(bs.sh, best, (P) => u[0] * (P[1] - end[1]) - u[1] * (P[0] - end[0]), bs);
     if ((p[0] - end[0]) * u[0] + (p[1] - end[1]) * u[1] > 1e-9 * (1 + len)) best = p;          // still ahead of the end
   }
   return best;
@@ -100,7 +105,7 @@ function arcGrowth(g, atEnd, shapes) {
     const turn = (p) => { const d = ((Math.atan2(p[1] - g.c[1], p[0] - g.c[0]) - from) * dir) % TAU; return d < 0 ? d + TAU : d; };
     for (const cs of circle) for (const h of segInter(cs, bs)) {
       let d = turn(h.p);
-      if (sh.q && d > 1e-9 && d < gap - 1e-9 && (best == null || d < best)) d = turn(snapOnto(sh, h.p, (P) => Math.hypot(P[0] - g.c[0], P[1] - g.c[1]) - g.r));
+      if (sh.q && d > 1e-9 && d < gap - 1e-9 && (best == null || d < best)) d = turn(snapOnto(sh, h.p, (P) => Math.hypot(P[0] - g.c[0], P[1] - g.c[1]) - g.r, bs));
       if (d > 1e-9 && d < gap - 1e-9 && (best == null || d < best)) best = d;
     }
   }

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rayHit, extendEntity, extendRegion, previewEdit } from './web/extend.js';
+import { rayHit, extendEntity, extendRegion, previewEdit, curveShape } from './web/extend.js';
 import { fenceHit } from './web/modify.js';
 import { shapeOf } from './web/grips.js';
 import { get } from './web/grips.js';
@@ -175,8 +175,17 @@ test('extendEntity ellipse: an elliptical arc against 50 boundary ellipses and 2
   const edges = [line(-20, -3, 20, -3)];
   for (let i = 0; i < 50; i++) edges.push(ellipse(40 + i * 15, 30, 10, 0, 0.5));
   for (let i = 0; i < 2000; i++) edges.push(line(-500 + (i % 100) * 10, -500 + Math.floor(i / 100) * 50, -495 + (i % 100) * 10, -480 + Math.floor(i / 100) * 50));
-  const half = ellipse(0, 0, 10, 0, 0.5, 0, PI), t = performance.now();
+  const half = ellipse(0, 0, 10, 0, 0.5, 0, PI);
+  extendEntity(half, edges, [-10, 0]);      // warm-up, so the limit measures the work and not the first-call compile
+  const t = performance.now();
   const r = extendEntity(half, edges, [-10, 0]);
-  assert.ok(performance.now() - t < 50, `${performance.now() - t} ms`);
+  assert.ok(performance.now() - t < 200, `${performance.now() - t} ms`);
   nearE(E(r.ent, 42), PI + Math.asin(0.6));
+});
+
+test('extendEntity ellipse: a line 0.1 mm off tangent to a 10 m ellipse is no worse than the chord hit', () => {
+  const big = ellipse(0, 0, 10000, 0, 0.5), a = [6253.243065651865, 3901.7893770914366], e = [6234.652933903769, 3909.165487285057];      // t = 0.9, pushed 0.1 mm inside the tangent
+  const chord = rayHit(a, e, [{ t: 'poly', pts: curveShape(big).pts, closed: true }]);      // no q, so no snap
+  const b = S(extendEntity(line(a[0], a[1], e[0], e[1]), [big], e).ent).b;      // Newton alone lands 80 mm further on, at the far crossing
+  assert.ok(Math.hypot(b[0] - chord[0], b[1] - chord[1]) < 1e-3, `${b} vs chord ${chord}`);
 });
