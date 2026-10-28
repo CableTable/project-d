@@ -269,7 +269,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155n. Copy Array (later).
     155o. ✅ (built, King, `web/crosshair.js`) Crosshair cursor (UI check, session 25): AutoCAD draws a full crosshair 5% of the screen (CURSORSIZE 5) with a 3 px pick box; ours is the plain OS crosshair, no pick box, 7 px aperture. No decision chose ours.
     155p. ✅ (built, Knight, revised decision 2026-10-28) Snap markers: green `#00C000` outlines, about 12 px, with our text label. Dark halo kept for readability on white paper.
-    155q. Status bar: AutoCAD icon toggles, DYN before ORTHO; ours text chips SNAP GRID ORTHO POLAR DYN OTRACK. Check AutoCAD 2027 order first.
+    155q. ✅ (built, King, 2026-10-28) Status bar chips in AutoCAD's order GRID SNAP ORTHO POLAR OTRACK DYN (text chips kept).
     155r. ✅ (built, King) Window / crossing box fill: AutoCAD 25% (SELECTIONAREAOPACITY); ours 14%. Also check grip hover (ACI 11) / hot (ACI 12, red) colours and grip size 5.
     155s. Ribbon: a fold arrow per panel title (AutoCAD) vs one cycle button; extra top buttons (2D / 3D, Open, Save, PDF / Print) beside the ribbon have no decision. Selected objects as a plain blue line (not the glow) and the tab list are on purpose (DECISIONS 2026-10-24).
 155t. Dynamic input fields on the drawing (AutoCAD way): Length on a dotted dimension line along the segment, Angle on an arc, Width / Height along a rectangle's edges, Radius on the centre line, instead of one tag by the cursor. After 69c-69f. Captures: `Project D extras/acad-dyninput-2027.png`.

@@ -3753,7 +3753,7 @@ function buildStatus() {
   const TITLES = { SNAP: 'Snap (F3): on/off. Right-click: snap types', GRID: 'Grid (F7): show/hide the drawing grid', ORTHO: 'Ortho (F8): keep picked points straight along X or Y from the first point (Shift does it for one pick)',
     POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type in fields by the cursor in Line, Polyline, Rectangle, Circle, Ellipse, Arc, Measure, Dimension, Set length, Move, Copy, Rotate and Scale' };
   ui.tog = {};
-  const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['DYN', state.dynamicInput], ['OTRACK', state.otrack]].map(([t, on]) => {
+  const toggles = [['GRID', false], ['SNAP', true], ['ORTHO', false], ['POLAR', state.polar.on], ['OTRACK', state.otrack], ['DYN', state.dynamicInput]].map(([t, on]) => {
     const b = ui.tog[t] = h('button', { class: 'tog' + (on ? ' on' : ''), type: 'button', 'data-testid': 'tog-' + t.toLowerCase(), 'aria-pressed': String(on), title: TITLES[t] }, t);
     b.addEventListener('click', () => {
       if (t === 'POLAR') { polarSet(!state.polar.on); return; }
@@ -3771,7 +3771,7 @@ function buildStatus() {
     });
     return b;
   });
-  toggles[0] = buildSnapTypes();
+  toggles[1] = buildSnapTypes();                    // AutoCAD's order: GRID SNAP ORTHO POLAR OTRACK DYN (TODO 155q)
   ui.tog.POLAR.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     const r = ui.tog.POLAR.getBoundingClientRect();

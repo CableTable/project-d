@@ -567,6 +567,21 @@ try {
       await p.keyboard.press('Escape');
     } finally { await context.close(); }
   });
+  await step('TODO 155q: the status bar chips are in AutoCAD\'s order GRID SNAP ORTHO POLAR OTRACK DYN; light and dark shots', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage();
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const ids = () => p.evaluate(() => [...document.querySelectorAll('.status [data-testid^=tog-]')].map((b) => b.dataset.testid.slice(4)));
+      assert.deepEqual(await ids(), ['grid', 'snap', 'ortho', 'polar', 'otrack', 'dyn']);
+      const dir = process.env.SHOTS_DIR || 'shots';
+      mkdirSync(dir, { recursive: true });
+      await p.locator('.status').screenshot({ path: dir + '/status-light.png' });
+      await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
+      await p.waitForTimeout(150);
+      await p.locator('.status').screenshot({ path: dir + '/status-dark.png' });
+    } finally { await context.close(); }
+  });
   await step('TODO 155o-r: crosshair cursor over the canvas only, green outline snap marker of 6, box fill 25%, grip 5 with hover and hot colours', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
