@@ -29,9 +29,9 @@ export function placeMatrix(part, p) {
 /** Is the placement the identity (the part lies where it is drawn)? */
 export const isSettled = (part, p) => !p.rot && (p.sc || 1) === 1 && !p.mirrorX && !p.mirrorY && Math.abs(p.x - part.box[0]) < 1e-9 && Math.abs(p.y - part.box[1]) < 1e-9;
 
-/** A block with the placement p baked in: every point mapped, arcs turned (or swapped under a mirror), text turned and scaled, the label re-measured. */
+/** A block with the placement p baked in: every point mapped, arcs turned (or swapped under a mirror), text turned (parallel to its line, upright) and scaled, the label re-measured. */
 export function bakeBlock(block, part, p) {
-  const M = placeMatrix(part, p), k = p.sc || 1, flip = !!p.mirrorX !== !!p.mirrorY, rot = p.rot || 0;
+  const M = placeMatrix(part, p), k = p.sc || 1, flip = !!p.mirrorX !== !!p.mirrorY;
   const dir = (deg) => { const t = deg * DEG, x = M[0] * Math.cos(t) + M[2] * Math.sin(t), y = M[1] * Math.cos(t) + M[3] * Math.sin(t); return Math.atan2(y, x) / DEG; };
   let ents = block.entities.map((e) => {
     const edit = {}, has = (c) => e.r.c.includes(c);
@@ -41,10 +41,15 @@ export function bakeBlock(block, part, p) {
       if (flip) [s, t] = [t, s];
       edit[40] = field(e.r, 40) * k; edit[50] = norm(s); edit[51] = norm(t);
     }
-    if (e.type === 'TEXT') { edit[40] = field(e.r, 40) * k; if (has(50)) edit[50] = norm(field(e.r, 50) + rot); }
-    const v = e.r.v.slice();
-    for (const [c, val] of Object.entries(edit)) v[e.r.c.indexOf(+c)] = text(val);
-    return { ...e, r: { ...e.r, v } };
+    if (e.type === 'TEXT') {       // stays parallel to its line (its angle goes through the same map as the line's direction) and reads upright
+      edit[40] = field(e.r, 40) * k;
+      let a = norm(dir(has(50) ? field(e.r, 50) : 0));
+      if (a > 90 + 1e-6 && a <= 270 + 1e-6) a = norm(a - 180);
+      if (has(50) || a > 1e-9 && a < 360 - 1e-9) edit[50] = a;
+    }
+    const c = e.r.c.slice(), v = e.r.v.slice();
+    for (const [code, val] of Object.entries(edit)) { let i = c.indexOf(+code); if (i < 0) { i = c.length; c.push(+code); } v[i] = text(val); }
+    return { ...e, r: { ...e.r, c, v } };
   });
   if (k !== 1) ents = relabel(ents, k);
   return { ...block, base: [0, 0], entities: ents };

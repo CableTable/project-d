@@ -137,21 +137,24 @@ export function objectReplace(lay, view, ent, next, newId) {
 
 // ---------------------------------------------------------------- dimensions on a layout (TODO 156b2c1; layoutdim.js)
 
-/** Bakes the placement of every moved / turned / scaled / mirrored dimension into its block (a new part, the placement back to the identity). → true when any changed. */
+/** Bakes the placement of every moved / turned / scaled / mirrored dimension into its block (a new part, the placement back to the identity).
+ * Also gives a dimension a block name of its own when a placed drawing's block, or another dimension (pasted from another layout), has it: they all land in one file. → true when any changed. */
 export function settleDims(lay, newId) {
-  const taken = new Set(), names = new Set(Object.values(lay.parts).map((q) => q.name));
-  for (const q of Object.values(lay.parts)) if (q.obj) for (const n of Object.keys(q.raw.blocks || {})) taken.add(n);
+  const taken = new Set(), drawn = new Set(), owner = new Map(), names = new Set(Object.values(lay.parts).map((q) => q.name));
+  for (const q of Object.values(lay.parts)) for (const n of Object.keys(q.raw?.blocks || {})) { taken.add(n); if (!q.obj) drawn.add(n); }
   let changed = false;
   for (const p of lay.placed) {
     const part = lay.parts[p.partId];
-    if (!isDimPart(part) || isSettled(part, p)) continue;
-    const old = dimName(part), shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = turnedTag(tagOf(old), p.rot);
-    const name = !shared && tag === tagOf(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
+    if (!isDimPart(part)) continue;
+    const old = dimName(part), settled = isSettled(part, p), clash = drawn.has(old) || owner.has(old) && owner.get(old) !== p.partId;
+    if (settled && !clash) { owner.set(old, p.partId); continue; }
+    const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = settled ? tagOf(old) : turnedTag(tagOf(old), p.rot);
+    const name = !shared && !clash && tag === tagOf(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
     taken.add(name);
     const next = objectPart(newId(), shared ? nextName('Dimension', names) : part.name, { ...ent, r: { ...ent.r, v: ent.r.v.map((v, k) => (ent.r.c[k] === 2 ? name : v)) } },
-      layersOf(lay), part.raw.header, { [name]: bakeBlock(part.raw.blocks[old], part, p) });
+      layersOf(lay), part.raw.header, { [name]: settled ? part.raw.blocks[old] : bakeBlock(part.raw.blocks[old], part, p) });
     if (!next) continue;
-    names.add(next.name); lay.parts[next.id] = next;
+    names.add(next.name); lay.parts[next.id] = next; owner.set(name, next.id);
     Object.assign(p, objectPlacement(next)); delete p.sc;
     changed = true;
   }
@@ -162,23 +165,33 @@ function dropUnusedDims(lay) {
   const used = new Set(lay.placed.map((p) => p.partId));
   for (const [id, q] of Object.entries(lay.parts)) if (isDimPart(q) && !used.has(id)) delete lay.parts[id];
 }
-/** The layout's objects, dimensions included, as they are now (one entity each; a key per object: its part's name and which of that name): what followDims() compares. */
+/** The layout's objects, dimensions included, as they are now (one entity each; a key per object: its part's name and where it is placed): what followDims() compares. */
 export function linkView(lay) {
-  const keys = [], entities = [], at = [], blocks = {}, seen = new Map();
+  const keys = [], entities = [], at = [], blocks = {};
   lay.placed.forEach((p, i) => {
     const part = lay.parts[p.partId];
     if (!part || !part.obj) return;
     const dim = isDimPart(part), ent = dim ? part.raw.entities[0] : bakedEntity(part, p);
     if (!ent) return;
-    const n = (seen.get(part.name) || 0) + 1;
-    seen.set(part.name, n); keys.push(part.name + '#' + n); entities.push(ent); at.push(i);
+    keys.push({ id: part.name, at: bakeKey(p) }); entities.push(ent); at.push(i);
     if (dim) Object.assign(blocks, part.raw.blocks);
   });
   return { keys, entities, at, blocks, layers: layersOf(lay) };
 }
+const bucket = (m, k, v) => { const l = m.get(k); if (l) l.push(v); else m.set(k, [v]); };
+/** [cur index, prev index] of the same object in two linkView()s. Copies share a part name, so an object that did not move pairs with its exact twin first
+ * (deleting copy A must not make B look like A moved), the rest by name in order. */
+function pairUp(prev, cur) {
+  const exact = new Map(), byId = new Map(), out = [], rest = [], used = new Set();
+  prev.forEach((k, j) => bucket(exact, k.id + '|' + k.at, j));
+  cur.forEach((k, i) => { const l = exact.get(k.id + '|' + k.at); if (l && l.length) { const j = l.shift(); used.add(j); out.push([i, j]); } else rest.push(i); });
+  prev.forEach((k, j) => { if (!used.has(j)) bucket(byId, k.id, j); });
+  for (const i of rest) { const l = byId.get(cur[i].id); if (l && l.length) out.push([i, l.shift()]); }
+  return out.sort((a, b) => a[0] - b[0]);
+}
 /** Dimensions follow the objects they measure: `prev` and `cur` are linkView()s before and after an edit; a dimension whose end sat on a point that moved is rebuilt (drawings' linked dimensions, linked-dimensions.js). → true when any changed. */
 export function followDims(lay, prev, cur, newId) {
-  const common = cur.keys.map((k, i) => [i, prev.keys.indexOf(k)]).filter(([, j]) => j >= 0);
+  const common = pairUp(prev.keys, cur.keys);
   if (!common.length) return false;
   const before = { header: {}, layers: cur.layers, ltypes: {}, blocks: prev.blocks, entities: common.map(([, j]) => prev.entities[j]) };
   const next = { entities: common.map(([i]) => cur.entities[i]), blocks: cur.blocks }, out = followDimensions(before, next, 1);

@@ -15138,6 +15138,49 @@ try {
     text = await save(); dims = Object.values(dimsIn(text));
     for (const q of dims) assert.ok(Math.abs(q.params.a[1] - 150) < 1e-3, 'one Undo takes the line and the dimensions back');
     await page.locator('[data-tool=select]').click();
+    // review fix 1: copy the line, delete the first copy: the dimensions stay where they were (they do not jump onto the other copy)
+    const blur = () => page.evaluate(() => document.activeElement?.blur());
+    await page.keyboard.press('Escape');                                      // (the Move above is still asking for a point)
+    await click(200, 150);
+    await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('0,60');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 4, 'the line has a copy');
+    await click(200, 150); await blur(); await page.keyboard.press('Delete');
+    assert.equal(await nParts(), n0 + 3, 'and the first one is gone');
+    text = await save(); dims = Object.values(dimsIn(text));
+    assert.equal(dims.length, 2);
+    for (const q of dims) assert.ok(Math.abs(q.params.a[1] - 150) < 1e-3 && Math.abs(q.params.b[1] - 150) < 1e-3, 'the dimensions did not jump to the copy: ' + JSON.stringify(q.params));
+    // a rotated, then mirrored dimension keeps its text parallel to its line and upright
+    const textsIn = (src) => Object.entries(readDxf(src).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => {
+      const e = b.entities.find((x) => x.type === 'TEXT'), i = e.r.c.indexOf(50), q = readDim(k, b), line = Math.atan2(q.params.b[1] - q.params.a[1], q.params.b[0] - q.params.a[0]) * 180 / Math.PI;
+      return { label: e.r.v[e.r.c.indexOf(1)], angle: i < 0 ? 0 : ((+e.r.v[i] % 360) + 360) % 360, line };
+    });
+    const readable = (list, what) => { for (const q of list) { const d = (((q.angle - q.line) % 180) + 180) % 180; assert.ok((d < 1e-3 || 180 - d < 1e-3) && (q.angle <= 90 + 1e-3 || q.angle > 270 - 1e-3), `${what}: text at ${q.angle}, line at ${q.line}`); } };
+    await click(150, 190);
+    await typeCmd('ro'); await typeCmd('30');
+    text = await save();
+    assert.ok(textsIn(text).some((q) => q.angle > 1), 'a dimension was turned');
+    readable(textsIn(text), 'rotated');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+    await typeCmd('mirror'); await typeCmd('0,300'); await typeCmd('500,300'); await typeCmd('y');
+    text = await save();
+    readable(textsIn(text), 'mirrored');
+    // paste the dimensions into another layout that has a dimension of its own: all three keep their own blocks, also after save and reopen
+    await page.keyboard.press('Escape'); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
+    await t('new-layout').click();
+    await typeCmd('line'); await typeCmd('100,150'); await typeCmd('400,150'); await typeCmd('');
+    await page.keyboard.press('Escape');
+    await typeCmd('d'); await typeCmd('100,150'); await typeCmd('400,150'); await typeCmd('200,120');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Control+v');
+    const labelsOf = (src) => textsIn(src).map((q) => q.label).sort();
+    text = await save();
+    assert.deepEqual(labelsOf(text), ['200.00', '200.00', '300.00'], 'each dimension has its own block');
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'dims-lay2.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dims-lay2.dxf');
+    assert.deepEqual(labelsOf((await save())), ['200.00', '200.00', '300.00'], 'and after reopening');
+    await page.locator('[data-tool=select]').click();
   });
 
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {

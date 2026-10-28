@@ -129,6 +129,74 @@ test('moving only the dimension, or a shape it does not measure, leaves the link
   assert.ok(l);
 });
 
+const blockLabel = (b) => { const t = b.entities.find((e) => e.type === 'TEXT'); return t.r.v[t.r.c.indexOf(1)]; };
+
+test('a dimension whose block name a placed drawing already has gets a name of its own; both survive save and reopen', () => {
+  const lay = layoutWith(), mine = Ed.buildDim('aligned', { a: [0, 0], b: [10, 0], offset: 5 }, 1, 'PD_DIM_1', 2);
+  const drawing = LD.makePart('pd', 'Drawing', { header: {}, layers: { 0: { aci: 7 }, [Ed.DIM_LAYER]: { aci: 5 } }, ltypes: {}, blocks: { PD_DIM_1: mine.block }, entities: [line(0, 0, 10, 0), mine.insert] }, 1);
+  addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  lay.parts.pd = drawing; lay.placed.push(LD.objectPlacement(drawing));
+  assert.equal(LD.settleDims(lay, newId), true);
+  const name = dimName(lay.parts[lay.placed[0].partId]);
+  assert.notEqual(name, 'PD_DIM_1');
+  const raw = LD.layoutRaw(lay);
+  assert.equal(blockLabel(raw.blocks.PD_DIM_1), '10.00', 'the drawing keeps its own block');
+  assert.equal(blockLabel(raw.blocks[name]), '100.00');
+  const back = LD.layoutFromRaw(readDxf(writeDxf(raw)), 'L'), dims = Object.values(back.parts).filter((q) => q.obj && isDimPart(q));
+  assert.equal(dims.length, 1);
+  assert.equal(blockLabel(dims[0].raw.blocks[dimName(dims[0])]), '100.00');
+  assert.equal(LD.settleDims(lay, newId), false, 'settled: nothing more to do');
+});
+
+test('two dimensions with the same block name (one pasted from another layout) keep their own blocks', () => {
+  const a = layoutWith(), b = layoutWith();
+  addDim(a, 'da', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  const pb = addDim(b, 'db', [0, 0], [40, 0], 10, 'PD_DIM_1');
+  a.parts.db = b.parts.db; a.placed.push({ ...pb, y: pb.y + 50 });
+  LD.settleDims(a, newId);
+  const names = a.placed.map((p) => dimName(a.parts[p.partId]));
+  assert.equal(new Set(names).size, 2);
+  const raw = LD.layoutRaw(a), back = LD.layoutFromRaw(readDxf(writeDxf(raw)), 'L');
+  assert.deepEqual(a.placed.map((p) => blockLabel(raw.blocks[dimName(a.parts[p.partId])])), ['100.00', '40.00']);
+  assert.deepEqual(back.placed.map((p) => blockLabel(back.parts[p.partId].raw.blocks[dimName(back.parts[p.partId])])).sort(), ['100.00', '40.00']);
+});
+
+test('a turned or mirrored dimension keeps its text parallel to the line and upright', () => {
+  const angle = (lay, p) => { const part = lay.parts[p.partId], t = part.raw.blocks[dimName(part)].entities.find((e) => e.type === 'TEXT'), k = t.r.c.indexOf(50); return k < 0 ? 0 : +t.r.v[k]; };
+  const lineAngle = (lay, p) => { const m = dimOf(lay, p).params; return Math.atan2(m.b[1] - m.a[1], m.b[0] - m.a[0]) / (Math.PI / 180); };
+  const upright = (a) => a <= 90 + 1e-6 || a > 270 + 1e-6;
+  const parallel = (a, b) => { const d = (((a - b) % 180) + 180) % 180; return d < 1e-6 || 180 - d < 1e-6; };
+  for (const [rot, mirrorX] of [[0, true], [180, false], [45, false], [45, true], [200, false], [90, true], [270, false]]) {
+    const lay = layoutWith(), p = addDim(lay, 'd1', [0, 0], [100, 100], 10, 'PD_DIM_1');
+    p.rot = rot; if (mirrorX) p.mirrorX = true;
+    LD.settleDims(lay, newId);
+    const a = angle(lay, p);
+    assert.ok(upright(a), `rot ${rot} mirror ${mirrorX}: text at ${a} reads upside down`);
+    assert.ok(parallel(a, lineAngle(lay, p)), `rot ${rot} mirror ${mirrorX}: text at ${a}, line at ${lineAngle(lay, p)}`);
+  }
+  const lay = layoutWith(), p = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  p.rot = 180; LD.settleDims(lay, newId);
+  near(angle(lay, p), 0);
+});
+
+test('deleting one of two copies of a line does not move its dimension onto the other copy', () => {
+  const lay = layoutWith(), a = addLine(lay, 'l1', [0, 0], [100, 0]), d = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  const b = { ...a, y: a.y + 500 };
+  lay.placed.push(b);
+  const prev = LD.linkView(lay);
+  lay.placed.splice(lay.placed.indexOf(a), 1);
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), false);
+  near(dimOf(lay, d).params.a[1], 0);
+  // ...but moving a copy still drags its dimension
+  const lay2 = layoutWith(), a2 = addLine(lay2, 'l1', [0, 0], [100, 0]), d2 = addDim(lay2, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  const b2 = { ...a2, y: a2.y + 500 };
+  lay2.placed.push(b2);
+  const prev2 = LD.linkView(lay2);
+  a2.x += 20;
+  assert.equal(LD.followDims(lay2, prev2, LD.linkView(lay2), newId), true);
+  near(dimOf(lay2, d2).params.a[0], 20);
+});
+
 test('names: turnedTag and freeBlockName', () => {
   assert.equal(turnedTag('H', 90), 'V'); assert.equal(turnedTag('V', 270), 'H'); assert.equal(turnedTag('H', 180), 'H'); assert.equal(turnedTag('H', 45), '');
   assert.equal(turnedTag('', 90), ''); assert.equal(turnedTag('R', 45), 'R');
