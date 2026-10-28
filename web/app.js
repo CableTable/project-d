@@ -46,7 +46,7 @@ import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor
 import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
 import * as FI from './fill.js';
-import { extendEntity, extendRegion, previewEdit } from './extend.js';
+import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
 import { layoutSnap, layoutCandidates, layoutReference } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
@@ -6355,12 +6355,12 @@ function modSync(d) {
   m.edges = [...new Set(m.edges.map(back).filter(Boolean))];
 }
 const modEntAt = (d, p) => { const i = hitAt(d, p); return i >= 0 ? d.raw.entities[i] : null; };
-/** The cutting edges: the ones picked, or (Enter with none picked) every line, arc, circle and polyline showing. */
+/** The cutting edges: the ones picked, or (Enter with none picked) every line, arc, circle, polyline, ellipse and spline showing (Trim uses only the first four). */
 const trimEdges = (d, m) => {
   if (!m.all) return m.edges;
   const ix = edIndex(d), c = m.edgeCache;                       // every object showing: built once per command and drawing, not on every hover
   if (c && c.ents === d.raw.entities && c.ix === ix) return c.list;
-  const list = ix.shown.map((i) => d.raw.entities[i]).filter(MD.canModify);
+  const list = ix.shown.map((i) => d.raw.entities[i]).filter(isBoundary);
   m.edgeCache = { ents: d.raw.entities, ix, list };
   return list;
 };
@@ -6645,7 +6645,7 @@ function modUp(d, was, p, shift, crossing) {
     if (m.stage === 'edges') {
       const ent = modEntAt(d, was.p);
       if (!ent) { note(`${ext ? 'Extend' : 'Trim'}: click a ${word} edge, or press Enter to use them all`); return; }
-      if (!MD.canModify(ent)) { note(`A ${word} edge is a line, arc, circle or polyline`); return; }
+      if (!(ext ? isBoundary(ent) : MD.canModify(ent))) { note(`A ${word} edge is a line, arc, circle, ${ext ? 'ellipse, spline ' : ''}or polyline`); return; }
       m.edges = m.edges.includes(ent) ? m.edges.filter((e) => e !== ent) : [...m.edges, ent];
       note(`${m.edges.length} ${word} edge${m.edges.length === 1 ? '' : 's'}. Click more, or press Enter`); paintOverlay();
     } else if (m.cross) trimCross(d, was.p);
@@ -6930,7 +6930,7 @@ function trimUndo(d) {
 }
 /** Quick Trim (or Extend) of a whole region (a fence or a crossing window): one undo step; what the edges were stays an edge as pieces. */
 function trimRegionDo(d, hit, what) {
-  const m = state.mod, ext = m.kind === 'extend', idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && MD.canModify(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
+  const m = state.mod, ext = m.kind === 'extend', idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && (ext ? extendable : MD.canModify)(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
   const r = ext ? extendRegion(ents, trimEdges(d, m), hit) : MD.trimRegion(ents, trimEdges(d, m), hit);
   if (!r.changed.length) { note(ext ? `${what} reaches nothing to extend` + (r.skipped ? ` (${r.skipped} object${r.skipped === 1 ? '' : 's'} with no boundary ahead or closed)` : '') : `${what} crosses nothing to trim` + (r.skipped ? ` (${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone)` : '')); return false; }
   const rep = new Map(r.changed.map((c) => [idxs[c.i], c.ents]));
@@ -7037,6 +7037,7 @@ function modOvl(d, out) {
   const addEnt = (ent, cls, tid) => {
     if (m.kind === 'fillet' && ['LWPOLYLINE', 'POLYLINE'].includes(ent?.type)) add(filletPolylineShape(ent, f), cls, tid);
     else if (ent && GR.hasGrips(ent)) add(GR.shapeOf(ent, f), cls, tid);
+    else if (curveShape(ent)) add({ ...curveShape(ent), pts: curveShape(ent).pts.map((q) => [q[0] * f, q[1] * f]) }, cls, tid);       // an ellipse or spline (Extend's boundary or growing end)
   };
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) {
     if (m.p1 && m.cur) {
@@ -7067,7 +7068,7 @@ function modOvl(d, out) {
     } else if (m.erase) for (const e of m.erase) addEnt(e, 'dr-trim-cut', 'trim-erase');
     else if (m.stage === 'cut' && m.p) {
       // only the piece a click would cut, faded with a small red x by the pointer; Extend shows the stretch it would grow by
-      const e = modEntAt(d, m.p), pv = e && MD.canModify(e) ? trimPreview(d, m, e) : null;
+      const e = modEntAt(d, m.p), pv = e && (MD.canModify(e) || extendable(e)) ? trimPreview(d, m, e) : null;
       if (pv?.act === 'trim' && pv.cut) {
         const k = 1 / view.scale, [x, y] = toSheetPt(d, m.p), u = 4 * k, cx = x + 12 * k, cy = y + 12 * k;
         addEnt(pv.cut, 'dr-trim-fade', 'mod-preview');

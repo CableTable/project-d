@@ -12351,6 +12351,26 @@ try {
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/extend/);
   });
 
+  await step('TODO 155m: Extend an elliptical arc to a line; undo; a full ellipse is refused', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfEllipse(60, 40, 30, 0, 0.5, 0, Math.PI), dxfLine(0, 30, 120, 30), dxfEllipse(60, 100, 20, 0, 0.5));
+    await openGrips(writeDxf(raw), 'extend-ellipse.dxf');
+    const before = await savedDoc(), params = (e) => [41, 42].map((c) => fieldOf(e, c));
+    await extStd(); await click(10, 30); await page.keyboard.press('Enter');
+    const hover = () => hoverPreview(90, 40);
+    await hover(); assert.equal(await t('mod-preview').count(), 1, 'the new stretch of the elliptical arc is previewed');
+    await shotBoth('extend-ellipse', hover);
+    await click(90, 40);
+    const doc = await savedDoc(), [a, b] = params(doc.entities[0]), back = 2 * Math.PI - Math.asin(2 / 3);
+    assert.ok(Math.abs(a - back) < 1e-4 && Math.abs(b - Math.PI) < 1e-6, `the picked start grew back to the line: ${a}, ${b}`);
+    assert.equal(doc.entities.length, 3); assert.equal((await histLabels()).at(-1), 'Extend');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'undo puts the ellipse back');
+    await click(80, 100); assert.match(await histLine(), /closed shape/, 'a full ellipse is refused like a circle');
+    await page.keyboard.press('Escape'); await closeTabs(/extend-ellipse/);
+  });
+
   await step('TODO 146: command box clear of preview', async () => {
     await closeTabs(/./);
     const raw = newDoc(4);
