@@ -364,6 +364,22 @@ test('layout objects (TODO 156b3b): a grip edit keeps the object (slot, name, gr
   assert.deepEqual(lay.parts.n1.box, [0, 0, 100, 50], 'the first one is untouched'); assert.equal(lay.parts.n2.name, 'Line 2'); assert.equal(lay.placed[1].partId, 'n2');
 });
 
+test('layout objects (TODO 156b fixes): group and lock survive save and reopen; a trim to one piece keeps group, lock and name; an old layout without them opens', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  const mk = (id, ent, extra) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push({ ...LD.objectPlacement(o), ...extra }); };
+  mk('a', line(0, 0, 100, 0), { g: 'g1', lock: true }); mk('b', line(0, 20, 100, 20)); mk('c', circle(200, 100, 15), { g: 'g1' });
+  const raw = readDxf(writeDxf(LD.layoutRaw(lay))), back = LD.layoutFromRaw(raw);
+  assert.deepEqual(back.placed.map((p) => [p.g || null, !!p.lock]), [['g1', true], [null, false], ['g1', false]]);
+  const none = LD.newLayout('Plain'), o = LD.objectPart('o', 'o', line(0, 0, 5, 5), LD.layersOf(none));
+  none.parts.o = o; none.placed.push(LD.objectPlacement(o));
+  assert.equal(LD.readMeta(LD.layoutRaw(none)).ob, undefined, 'nothing to store: no ob in the file');
+  assert.equal(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(none)))).placed.length, 1);
+  const v = LD.objectDoc(lay), cut = line(0, 0, 40, 0);                    // a trimmed to 40 mm: one piece
+  LD.objectCommit(lay, v, [cut, v.raw.entities[1], v.raw.entities[2]], () => 'n1');
+  const piece = lay.placed.find((p) => p.partId === 'n1');
+  assert.equal(piece.g, 'g1'); assert.equal(piece.lock, true); assert.equal(lay.parts.n1.name, 'a');
+});
+
 test('layout objects (TODO 156b2): plain entities beside the INSERTs, back as objects, moved / turned ones baked in, not in the grid', () => {
   const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
   const part = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);

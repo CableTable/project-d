@@ -14941,6 +14941,81 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());
+    assert.equal(n0, 1);
+    const draw = async (...pts) => { await typeCmd('line'); for (const p of pts) await typeCmd(p); await typeCmd(''); };
+    const labels = async () => {
+      await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
+      const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
+      await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' });
+      return rows.length;
+    };
+    const gid = (s) => page.locator('[data-testid=grip]').evaluateAll((g, k) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + k)), s);
+    await draw('50,600', '300,600'); await draw('50,550', '300,550');
+    await typeCmd('polyline'); for (const p of ['600,500', '700,500', '700,600']) await typeCmd(p);
+    await click(601, 501);                                      // 1 mm from the polyline's own first point: it snaps there
+    await typeCmd(''); await blur();
+    await page.locator('[data-tool=select]').click();
+    assert.equal(await nParts(), n0 + 3);
+    // Esc cancels a hot grip with two objects selected: the next click changes nothing
+    const l0 = await labels();
+    await page.keyboard.press('Escape'); await click(175, 600); await frames(); await click(175, 550, { shift: true }); await frames(); await gripWhen(6);
+    const a = await gripBox(await gid('b'));
+    await page.mouse.click(a.x, a.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 0);
+    await click(700, 200); await frames();
+    assert.equal(await labels(), l0, 'the click after Esc did not move the grip');
+    for (const y of [600, 550]) {
+      await pick(175, y, 3);
+      const end = await gripBox(await gid('b')), want = await at(300, y);
+      assert.ok(near(end.x, want.x, 2) && near(end.y, want.y, 2), `the line at y ${y} is unchanged`);
+    }
+    // lock one object, group another with the plate: both survive a save and a reopen
+    await page.keyboard.press('Escape'); await click(175, 600); await frames();
+    await typeCmd('lock'); await blur();
+    await page.keyboard.press('Escape'); await click(175, 550); await frames();
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true, modifiers: ['Shift'] });
+    await page.keyboard.press('Control+g');
+    const kept = (text) => {
+      const back = layoutFromRaw(readDxf(text)), objs = back.placed.filter((p) => back.parts[p.partId].obj), loose = back.placed.filter((p) => !back.parts[p.partId].obj);
+      assert.equal(objs.filter((p) => p.lock).length, 1, 'one object is still locked');
+      const grouped = objs.filter((p) => p.g);
+      assert.equal(grouped.length, 1, 'one object is still in a group'); assert.equal(loose.length, 1);
+      assert.equal(loose[0].g, grouped[0].g, 'the plate is still in its group');
+    };
+    let text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    kept(text);
+    const poly = readDxf(text).entities.find((e) => e.type === 'LWPOLYLINE' && !['Sheet', 'Marks', 'Parts'].includes(e.layer)), xy = poly.r.c.map((c, i) => [c, Number(poly.r.v[i])]).filter(([c]) => c === 10 || c === 20).map(([, v]) => v);
+    assert.deepEqual(xy.slice(0, 2).map((v) => Math.round(v * 1e6) / 1e6), [600, 500]);
+    assert.deepEqual(xy.slice(-2).map((v) => Math.round(v * 1e6) / 1e6), [600, 500], 'the last point snapped to the first');
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'fixes156.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'fixes156.dxf');
+    assert.match(await prompt(), /Opened fixes156\.dxf as a layout: 1 placed part, 1 part,/, 'the open note counts parts only');
+    await t('ptab-objects').click();
+    assert.equal((await t('obj-count').textContent()).trim(), '1 placed · 1 parts');
+    await t('ptab-drawing').click();
+    text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    kept(text);
+    // Add to layout after only objects: the drawing is the step and repeat grid, not a loose part
+    await openGrips();
+    await t('new-layout').click();
+    await typeCmd('rect'); await typeCmd('100,100'); await typeCmd('200,150'); await blur();
+    await page.locator('[data-tool=select]').click();
+    await page.locator('.tabs .dtab[data-kind=drawing]').first().click();
+    await t('add-to-layout').click(); await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
+    assert.ok(await nParts() > 2, 'the grid has several copies (a loose part would be 1 + the object)');
+    // the menus enable what works on a layout
+    const enabled = async (menu, name) => { await page.locator(`[data-menu=${menu}]`).click(); const on = !(await page.getByRole('menuitem', { name, exact: true }).isDisabled()); await page.keyboard.press('Escape'); return on; };
+    assert.equal(await enabled('Draw', 'Line'), true); assert.equal(await enabled('Draw', 'Arc'), true);
+    assert.equal(await enabled('Modify', 'Trim'), true); assert.equal(await enabled('Modify', 'Rotate'), false);
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('TODO 156b1: Contour on scaled placements keeps 5 mm spacing and shares contour parts only at the same scale', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

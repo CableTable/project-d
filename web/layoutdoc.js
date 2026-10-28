@@ -101,6 +101,8 @@ const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Pol
 export function objectCommit(lay, view, entities, newId) {
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
+  const fresh = entities.filter((e) => !view.at.has(e)), one = gone.size === 1 && fresh.length === 1 ? lay.placed[[...gone][0]] : null;       // one object replaced by one piece (a trim): it keeps its group, lock and name
+  const oneName = one && lay.parts[one.partId]?.name;
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
   for (const [id, part] of Object.entries(lay.parts)) if (part.obj && !used.has(id)) delete lay.parts[id];
@@ -108,8 +110,9 @@ export function objectCommit(lay, view, entities, newId) {
   for (const e of entities) {
     if (view.at.has(e)) continue;
     e.ps = false;
-    const part = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers), pl = part && objectPlacement(part);
+    const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers), pl = part && objectPlacement(part);
     if (!part) continue;
+    if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part; lay.placed.push(pl);
     bakedCache.set(part, new Map([[bakeKey(pl), e]]));
   }
@@ -235,11 +238,12 @@ const enc = (obj) => btoa(ascii(JSON.stringify(obj)));
 const dec = (b64) => JSON.parse(atob(b64));
 
 /** The settings and placed parts as the hidden block's TEXT entities. */
-function metaEntities(lay, blockOf, ids) {
+function metaEntities(lay, blockOf, ids, ob = []) {
   const meta = {
     v: 1, app: 'Project D', name: lay.name, s: lay.s,
     parts: ids.map((id) => { const p = lay.parts[id]; return { id, name: p.name, block: blockOf[id], factor: p.factor || 1, w: p.w, h: p.h, src: p.src || '', ...(p.obj ? { obj: true } : {}) }; }),
     placed: lay.placed.filter((p) => ids.includes(p.partId)),
+    ...(ob.some((o) => o) ? { ob } : {}),       // the group / lock of each baked object, in entity order (a plain entity carries neither)
   };
   const b = enc(meta), out = [];
   for (let i = 0; i < b.length; i += CHUNK) out.push(dxfText(0, 0, 1, b.slice(i, i + CHUNK), { layer: '0' }));
@@ -248,16 +252,16 @@ function metaEntities(lay, blockOf, ids) {
 
 /** The layout as a DXF document (writeDxf's shape): everything a CAD app shows, plus the hidden PD_LAYOUT block. */
 export function layoutRaw(lay) {
-  const all = placedAll(lay), baked = [], kept = [];
+  const all = placedAll(lay), baked = [], kept = [], ob = [];
   for (const p of all) {
     const part = lay.parts[p.partId], ents = part.obj && bakeObject(part, p);
-    if (ents) baked.push(...ents); else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
+    if (ents) { baked.push(...ents); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
   }
   const ids = [...new Set([...usedIds(lay), ...kept.filter((p) => lay.parts[p.partId].obj).map((p) => p.partId)])];
   const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)), keep: ids });
   for (const [name, def] of Object.entries(layersOf(lay))) if (!(name in doc.layers)) doc.layers[name] = structuredClone(def);
   addEntities(doc, baked);
-  addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids));
+  addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids, ob));
   return doc;
 }
 
@@ -319,20 +323,21 @@ export function layoutFromRaw(raw, name) {
       ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
   for (const pm of m.parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
-  readObjects(lay, raw);
+  readObjects(lay, raw, Array.isArray(m.ob) ? m.ob : []);
   return lay;
 }
 
 /** The plain entities of the file (not the sheet, the marks or the INSERTs) become layout objects again, one each. */
-function readObjects(lay, raw) {
+function readObjects(lay, raw, ob) {
   const layers = layersOf(lay);
-  let n = 0;
+  let n = 0, k = 0;
   for (const e of raw.entities) {
     if (e.type === 'INSERT' || e.ps || isReserved(e.layer)) continue;
+    const info = ob[k++];
     if (raw.layers[e.layer] && !layers[e.layer]) layers[e.layer] = raw.layers[e.layer];
     let id; do id = 'ob' + (++n); while (lay.parts[id]);
     const part = objectPart(id, 'Object ' + n, e, layers, raw.header);
     if (!part) continue;
-    lay.parts[id] = part; lay.placed.push(objectPlacement(part));
+    lay.parts[id] = part; lay.placed.push({ ...objectPlacement(part), ...(info && typeof info.g === 'string' && info.g ? { g: info.g } : {}), ...(info && info.lock === true ? { lock: true } : {}) });
   }
 }

@@ -435,8 +435,8 @@ function buildMenus() {
     },
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
-    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, id === 'text' ? null : () => !curLay()]);
-  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
+    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
+  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay() || LAY_MODS.includes(id)]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
@@ -1688,8 +1688,8 @@ function openLayoutFile(lay, name, path, fontNote, titleBlock) {
   const doc = { name, path, openPath: path, dirty: false, lay, titleBlock, fromFile: true };
   state.panel = 'main';
   addTab(doc);
-  const used = LD.placedAll(lay, LD.gridOf(lay)).length;
-  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${Object.keys(lay.parts).length} part${Object.keys(lay.parts).length === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
+  const used = LD.placedAll(lay, LD.gridOf(lay)).filter((p) => !lay.parts[p.partId]?.obj).length, np = Object.values(lay.parts).filter((p) => !p.obj).length;
+  note(`Opened ${name} as a layout: ${used} placed part${used === 1 ? '' : 's'}, ${np} part${np === 1 ? '' : 's'}, its sheet and settings as saved` + (fontNote ? '. ' + fontNote : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
   for (const p of LD.partsForPlacement(lay)) libKeep(p, baseName(p.src || name)); // a part the library does not have yet is added to it
@@ -1704,7 +1704,7 @@ function addPlaced(lay, part, at) {
   else {
     // no place given (Add to sheet, Add to layout): the sheet's middle, then each new one 10 mm right and up from the last added,
     // never exactly on top of a copy already there, and kept on the sheet (it starts again at the middle when it would leave)
-    const last = lay.placed[lay.placed.length - 1], lp = last && lay.parts[last.partId], lb = lp && placedBox(lp, last);
+    const last = lay.placed.findLast((p) => !lay.parts[p.partId]?.obj), lp = last && lay.parts[last.partId], lb = lp && placedBox(lp, last);
     const inside = (x, y) => sg(x - part.w / 2) >= 0 && sg(y - part.h / 2) >= 0 && sg(x - part.w / 2) + part.w <= s.sheetW && sg(y - part.h / 2) + part.h <= s.sheetH;
     const taken = (x, y) => lay.placed.some((p) => p.partId === part.id && Math.abs(p.x - sg(x - part.w / 2)) < 0.01 && Math.abs(p.y - sg(y - part.h / 2)) < 0.01);
     cx = lb ? (lb[0] + lb[2]) / 2 + 10 : s.sheetW / 2; cy = lb ? (lb[1] + lb[3]) / 2 + 10 : s.sheetH / 2;
@@ -1735,7 +1735,7 @@ function addToLayout() {
   if (!part) { note('Add to layout: this drawing has nothing with a size to lay out'); return; }
   state.panel = 'main';
   const existing = targetLayout(), t = existing || freshLayout(baseName(d.name) + ' layout'), lay = t.lay;
-  const grid = !lay.s.gridPart && !lay.placed.length;
+  const grid = !lay.s.gridPart && !lay.placed.some((p) => !lay.parts[p.partId]?.obj);
   if (!grid) pushLay(t, null, '', `Add ${part.name}`);          // the first part of a layout (its grid) is not an undo step
   lay.parts[part.id] = part;
   if (grid) lay.s.gridPart = part.id; else addPlaced(lay, part);
@@ -3470,7 +3470,7 @@ function renderObjects(reveal = false) {
     filterBtns(parts.filter((p) => p.hidden).length, 0);
     ui.objToggle.replaceChildren(oIcon(om.openP.size ? CHEV_DOWN : CHEV_RIGHT, 12));
     ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, parts.length || om.query ? 'Nothing matches.' : 'No parts on this layout yet.')]));
-    ui.objCount.replaceChildren(h('b', null, placedNow.length), ' placed · ', h('b', null, Object.keys(d.lay.parts).length), ' parts'); ui.objSelN.textContent = sel.size + ' selected';
+    ui.objCount.replaceChildren(h('b', null, placedNow.filter((p) => !d.lay.parts[p.partId].obj).length), ' placed · ', h('b', null, Object.values(d.lay.parts).filter((p) => !p.obj).length), ' parts'); ui.objSelN.textContent = sel.size + ' selected';
     return;
   }
   if (!ed) {
@@ -4221,8 +4221,8 @@ function paintOverlay(gesture = false) {
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
-        const byPart = new Map();
-        for (const p of placedNow) { if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
+        const byPart = new Map(), gripped = state.grip?.next && state.grip.d.vlay === d ? state.grip.d.at.get(state.grip.ent) : -1;       // the object a grip drags is drawn by the overlay only
+        for (const p of placedNow) { if (p.src === 'loose' && p.i === gripped) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
         for (const [id, part] of Object.entries(d.lay.parts)) {
           if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
           const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
@@ -4961,6 +4961,9 @@ async function pasteSelection() {
         const { parts, placed } = structuredClone(clipboard), lay = d.lay, groups = {};
         pushLay(d, null, '', `Paste ${placed.length} parts`);
         for (const [id, part] of Object.entries(parts)) if (!lay.parts[id]) lay.parts[id] = part;
+        const own = LD.layersOf(lay), more = {};       // an object's layer comes with it (a new table, as the history holds the old one)
+        for (const part of Object.values(parts)) if (part.obj) for (const [n, def] of Object.entries(part.raw.layers)) if (!(n in own) && !(n in more)) more[n] = def;
+        if (Object.keys(more).length) lay.layers = { ...own, ...more };
         const from = lay.placed.length;
         lay.placed.push(...placed.map((p) => fresh(p, groups)));
         if (sheetSelOn()) selectSheet(false);
@@ -5060,6 +5063,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
   const ed = !d.lay && !d.cmp && edIndex(d), tol = pickTol(d), types = state.snapTypes;
   let sn = d.cmp ? state.snap && d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
+  if (state.snap && d.lay) for (const x of extra) sn = preferSnap(sn, x, ...p, tol, types);       // the tool's own points (a polyline's first point and vertices)
   if (state.snap && ed) {
     if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
     const piece = Ed.snapReference(ed, ...p, tol, skip);
@@ -7838,7 +7842,7 @@ function trackOvl(d, out, k) {
 function gripDoc() {
   const d = curDoc();
   if (!d || !d.lay) return editable();
-  if (state.mode === 'rotate') return null;
+  if (state.mode === 'rotate' || pdrag) return null;       // a part drag changes the placement on every move: no object doc to rebuild then
   const v = layObjSelDoc(d);
   return v.sel.size ? v : null;
 }
@@ -8046,7 +8050,7 @@ function editKey(e) {
     else if (sheetSelOn() && !pdrag) selectSheet(false);
     else if (curLay() && pdrag) cancelPlacedDrag();
     else if (layModLive()) modEsc(curDoc());
-    else if (curLay() && multiSel() && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
+    else if (curLay() && multiSel() && !state.grip && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }
     else if (state.match) endMatch();
