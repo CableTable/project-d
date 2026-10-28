@@ -15090,6 +15090,56 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 156b2c1: on a layout, Dimension (linear, aligned) makes a dimension object (one Undo, Esc cancels); saved with its block, reopened as an object; Move of the shape it measures carries it along', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts();
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const dimsIn = (text) => { const doc = readDxf(text); return Object.fromEntries(Object.entries(doc.blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)])); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    // a line object to measure
+    await typeCmd('line'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('');
+    assert.equal(await nParts(), n0 + 1);
+    await page.keyboard.press('Escape');
+    // Esc in the middle of the command: nothing is added
+    await typeCmd('dli'); await typeCmd('100,150');
+    assert.match(await prompt(), /Specify second extension line origin/);
+    await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 1, 'Esc mid-command adds nothing');
+    // linear dimension: first point, second point, the line's place
+    await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,190');
+    assert.match(await prompt(), /Dimension placed: 200\.00 mm, on the layer Dimensions/);
+    assert.equal(await nParts(), n0 + 2, 'the dimension is one object');
+    assert.equal((await histLabels()).at(-1), 'Dimension');
+    await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo takes the dimension away');
+    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 2, 'Redo brings it back');
+    await page.keyboard.press('Escape');
+    // an aligned one as well, then save: the blocks are in the file
+    await typeCmd('d'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('200,120');
+    assert.match(await prompt(), /Dimension placed: 200\.00 mm/);
+    assert.equal(await nParts(), n0 + 3);
+    await page.keyboard.press('Escape');
+    let text = await save(), dims = Object.values(dimsIn(text));
+    assert.equal(dims.length, 2, 'both blocks are in the file');
+    assert.deepEqual(dims.map((q) => q.kind).sort(), ['aligned', 'linear']);
+    await shotBoth('layout-dimension-objects');
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'dims-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dims-lay.dxf');
+    assert.equal(await nParts(), n0 + 3, 'the plate, the line and the two dimensions are back');
+    assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 3);
+    // Move only the line: the dimensions that measure it follow
+    await page.locator('[data-tool=select]').click();
+    await click(200, 150);
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,40');
+    text = await save(); dims = Object.values(dimsIn(text));
+    assert.equal(dims.length, 2);
+    for (const q of dims) assert.ok(Math.abs(q.params.a[1] - 190) < 1e-3 && Math.abs(q.params.b[1] - 190) < 1e-3, 'the measured points moved with the line: ' + JSON.stringify(q.params));
+    await undo();
+    text = await save(); dims = Object.values(dimsIn(text));
+    for (const q of dims) assert.ok(Math.abs(q.params.a[1] - 150) < 1e-3, 'one Undo takes the line and the dimensions back');
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());
