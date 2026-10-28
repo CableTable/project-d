@@ -93,7 +93,7 @@ usage-agent-install.ps1.
    `retro` skill over the session's commits, briefs and run reports; a King retro (`runs<N>/retro<N>king.txt`, same
    skill, over King's `king-*.jsonl` runs: permissions, wasted tokens, navigation, brief gaps); and a Rook retro
    (`runs<N>/retro<N>rook.txt`, over Rook's own transcript: wasted tokens, wrong claims, briefs that caused rework, rules
-   broken). Each skips points the earlier ones made. All suggest changes to rules, checks, briefs (not code); he picks.
+   broken). Each skips points the earlier ones made. All suggest changes to rules, checks, briefs (not code); Rook applies the ones it recommends (full control, his call 2026-10-29) and names them in one line; he can overrule.
 5. **Tickets sized for one fresh session** (his call 2026-10-20): every M / L TODO item is split into tickets
    (TODO "66a", "66b", …), each a vertical slice that one fresh builder run can finish with its context under
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
