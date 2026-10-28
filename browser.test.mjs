@@ -1633,6 +1633,101 @@ try {
       assert.equal(readDxf(await save()).layers.Untabled.tc, 0x123456, 'layers missing from an imported table still accept a colour');
     } finally { await context.close(); }
   });
+  await step('TODO 155k: Tab cycles one object, cursor typing owns Tab, Tangent picks exactly, osnap/os and ortho ON/OFF', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    await p.addInitScript(() => {
+      const fill = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'nearest', 'tangent', 'parallel', 'extension'].includes(text)) window.__snap155k = text;
+        return fill.call(this, text, ...args);
+      };
+      localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
+    });
+    const command = async (s) => { if (!await q('cmd-input').isVisible()) await q('cmd-echo').click(); await q('cmd-input').fill(s); await q('cmd-input').press('Enter'); };
+    const sheet = () => p.locator('rect.sheet').evaluate((el) => { const r = el.getBoundingClientRect(); return { x: r.x, y: r.y, scale: r.width / el.width.baseVal.value, h: el.height.baseVal.value }; });
+    const px = (r, x, y) => [r.x + x * r.scale, r.y + (r.h - y) * r.scale];
+    const label = (s) => p.waitForFunction((s) => window.__snap155k === s, s, { timeout: 3000 });
+    const hover = async (r, x, y, name) => { await p.evaluate(() => { window.__snap155k = ''; }); await p.mouse.move(...px(r, x, y)); await label(name); };
+    const preview = async () => (await q('draw-preview').getAttribute('d')).match(/-?\d+(?:\.\d+)?/g).map(Number);
+    const theme = async (s) => { await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + s + '\\b') }).click(); };
+    mkdirSync('shots-155k', { recursive: true });
+    try {
+      await p.goto(URL_); await q('snap-types-open').waitFor();
+      for (const name of ['osnap', 'os']) {
+        await command(name); await q('snap-types').waitFor({ state: 'visible' });
+        assert.equal(await q('snap-types').locator('input').count(), 14);
+        assert.ok(await q('snap-type-tangent').isChecked()); await p.keyboard.press('Escape');
+      }
+      for (const mode of ['ON', 'OFF']) {
+        await command('ortho'); assert.equal(await q('cmd-prompt').textContent(), `Enter mode [ON/OFF] <${mode === 'ON' ? 'OFF' : 'ON'}>:`);
+        await command('bad'); assert.match(await q('cmd-prompt').textContent(), /Enter mode/);
+        await command(mode); assert.equal(await q('tog-ortho').getAttribute('aria-pressed'), String(mode === 'ON'));
+      }
+      await command('ortho'); await command(''); assert.equal(await q('tog-ortho').getAttribute('aria-pressed'), 'false');
+      await command('ortho'); await p.keyboard.press('Escape'); assert.doesNotMatch(await q('cmd-prompt').textContent(), /Enter mode/);
+      const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 140, 30), dxfCircle(100, 100, 20));
+      await q('picker').setInputFiles({ name: 'snaps-155k.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snaps-155k.dxf');
+      await command('line');
+      {
+        const r = await sheet(); await p.mouse.click(...px(r, 110, 30));
+        await p.keyboard.press('Tab'); await label('end');
+        const path = await preview(); assert.ok(Math.abs(path[2] - 20) < .01, 'Tab refreshes the point prompt after a click without needing mouse movement');
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
+      }
+      for (const colour of ['light', 'dark']) {
+        await theme(colour); await command('line');
+        const r = await sheet(); await p.mouse.click(...px(r, 40, 70));
+        await hover(r, 110, 30, 'nearest');
+        await p.keyboard.press('Tab'); await label('end');
+        let path = await preview(); assert.ok(Math.abs(path[2] - 20) < .01, 'first endpoint is far from cursor');
+        await p.keyboard.press('Tab'); await label('end');
+        await p.waitForFunction(() => Math.abs(Number(document.querySelector('[data-testid=draw-preview]').getAttribute('d').match(/-?\d+(?:\.\d+)?/g)[2]) - 140) < .01);
+        path = await preview(); assert.ok(Math.abs(path[2] - 140) < .01, 'second Tab moves the endpoint marker');
+        await p.keyboard.press('Tab'); await label('middle');
+        await p.screenshot({ path: `shots-155k/tab-cycled-${colour}.png` });
+        await p.mouse.move(...px(r, 170, 60)); await hover(r, 110, 30, 'nearest');
+        await p.keyboard.press('Tab'); await label('end');
+        await p.keyboard.type('25'); await p.keyboard.press('Tab');
+        await p.waitForFunction(() => document.querySelector('[data-testid=cursor-length]').value === '25' && document.querySelector('[data-testid=cursor-angle]').classList.contains('active'));
+        assert.equal(await q('cursor-length').inputValue(), '25', 'typed length stays in cursor fields');
+        assert.equal(await q('cursor-angle').evaluate((el) => el.classList.contains('active')), true, 'Tab switches the active typed cursor field');
+        await p.keyboard.press('Escape');
+        await p.mouse.move(...px(r, 170, 60)); await hover(r, 110, 30, 'nearest');
+        for (let i = 0; i < 3; i++) await p.keyboard.press('Tab'); await label('middle');
+        if (colour === 'dark') {
+          await p.mouse.click(...px(r, 110, 30)); await p.mouse.move(...px(r, 150, 60));
+          path = await preview(); assert.ok(Math.abs(path[0] - 80) < .01 && Math.abs(path[1] - (r.h - 30)) < .01, 'click uses cycled midpoint, not raw cursor');
+        }
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
+      }
+      await command('line');
+      {
+        const r = await sheet(); await p.mouse.click(...px(r, 40, 70));
+        await hover(r, 110, 30, 'nearest'); await hover(r, 160, 30, 'extension');
+        let path = await preview(); assert.ok(Math.abs(path[2] - 160) < .01 && Math.abs(path[3] - (r.h - 30)) < .01);
+        await hover(r, 160, 70, 'parallel');
+        path = await preview(); assert.ok(Math.abs(path[3] - (r.h - 70)) < .01);
+        await hover(r, 140.3, 30.2, 'end');
+        path = await preview(); assert.ok(Math.abs(path[2] - 140) < .01 && Math.abs(path[3] - (r.h - 30)) < .01, 'endpoint wins over tracking projection');
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
+      }
+      for (const colour of ['light', 'dark']) {
+        await theme(colour); await command('line'); const r = await sheet();
+        await p.mouse.click(...px(r, 140, 100));
+        const tangent = [110, 100 + 10 * Math.sqrt(3)];
+        await hover(r, ...tangent, 'tangent'); await p.screenshot({ path: `shots-155k/tangent-${colour}.png` });
+        if (colour === 'dark') {
+          await p.mouse.click(...px(r, ...tangent)); await p.mouse.move(...px(r, 145, 140));
+          const path = await preview(); assert.ok(Math.abs(path[0] - tangent[0]) < .01 && Math.abs(path[1] - (r.h - tangent[1])) < .01, 'Tangent click accepts the exact analytic point');
+        }
+        await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
+      }
+    } finally { await context.close(); }
+  });
   await step('TODO 68a: snap per type', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -1651,7 +1746,7 @@ try {
     try {
       await p.goto(URL_); await arrow.waitFor();
       await arrow.focus(); await p.keyboard.press('Enter'); await list.waitFor({ state: 'visible' });
-      assert.equal(await list.locator('input:checked').count(), 8, 'all current and future types default on');
+      assert.equal(await list.locator('input:checked').count(), 14, 'all fourteen snap types default on');
       assert.equal(await list.locator('input:disabled').count(), 0, 'every type is live');
       await end.focus(); await p.keyboard.press('Space');
       assert.equal(await end.isChecked(), false, 'keyboard toggles a tick');
@@ -1744,6 +1839,7 @@ try {
       }
       await q('snap-types-open').click();
       await q('snap-type-intersection').uncheck();
+      await q('snap-type-apparent').uncheck();
       await p.keyboard.press('Escape');
       const pos = await hover('nearest', 65, 50);
       await pick(pos, 65 + 3 / pos.r.scale, 50);
@@ -4187,6 +4283,7 @@ try {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
     p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
     const raw = newDoc(4);
     addEntities(raw, [dxfPoly([[10, 20], [50, 20], [50, 40], [10, 40]], true), dxfCircle(30, 30, 4)]);
     const lay = newLayout('Measure layout');
@@ -4254,20 +4351,37 @@ try {
       assert.match(await readout(), /ΔX 59\.8   ΔY 119\.8/);
       await q('tog-snap').click();
       await q('snap-types-open').click();
-      for (const kind of ['end', 'mid', 'near', 'intersection', 'quadrant']) await q('snap-type-' + kind).uncheck();
+      for (const kind of ['end', 'mid', 'near', 'intersection', 'apparent', 'quadrant']) await q('snap-type-' + kind).uncheck();
+      await p.keyboard.press('Escape');
+      await clickAt(0.2, 0.2); await clickAt(199.8, 120.2);
+      assert.match(await readout(), /ΔX 199\.8   ΔY 120/, 'enabled Extension projects to x=200 beyond the acquired vertical edge: ' + await readout());
+      await q('snap-types-open').click();
+      for (const kind of ['extension', 'parallel']) await q('snap-type-' + kind).uncheck();
       await p.keyboard.press('Escape');
       await clickAt(0.2, 0.2); await clickAt(199.8, 120.2);
       assert.match(await readout(), /ΔX 199\.6   ΔY 120/, 'layout picks respect disabled part and sheet snap types');
       await clickAt(70.1, 100.1); await clickAt(199.8, 120.2);
       assert.match(await readout(), /ΔX 129\.8   ΔY 20\.2/, 'the enabled transformed centre still snaps');
       await q('snap-types-open').click();
-      for (const kind of ['end', 'mid', 'near', 'intersection', 'quadrant']) await q('snap-type-' + kind).check();
+      for (const kind of ['end', 'mid', 'near', 'intersection', 'apparent', 'quadrant', 'extension', 'parallel']) await q('snap-type-' + kind).check();
       await p.keyboard.press('Escape');
       const corner = await point(200, 120);
       await p.mouse.click(corner.x, corner.y, { button: 'right' });
       await p.getByRole('menuitem', { name: 'Measure from here', exact: true }).click();
       await clickAt(0.2, 0.2);
       assert.match(await readout(), /Distance 233\.24 mm   ΔX -200   ΔY -120/);
+      await p.keyboard.press('Escape');
+      await clickAt(100, 160);
+      const edge = await point(60, 105);
+      await p.mouse.move(edge.x, edge.y); await p.keyboard.press('Tab');
+      await p.mouse.click(edge.x, edge.y);
+      assert.match(await readout(), /ΔX -20   ΔY -80/, 'layout Measure accepts the Tab-cycled distant endpoint (80,80): ' + await readout());
+      await p.keyboard.press('Escape');
+      await clickAt(100, 160);
+      await p.mouse.move(edge.x, edge.y); await p.keyboard.press('Tab');
+      const away = await point(100, 180); await p.mouse.move(away.x, away.y);
+      await p.mouse.click(edge.x, edge.y);
+      assert.match(await readout(), /ΔX -40   ΔY -55/, 'leaving the layout object resets Tab to the ordinary nearest pick (60,105): ' + await readout());
       assert.equal(await dirty(), clean, 'Measure leaves the tab clean');
       await p.locator('[data-menu=Edit]').click();
       assert.equal(await p.getByRole('menuitem', { name: 'Undo', exact: true }).isEnabled(), false, 'Measure adds no undo step');
@@ -15024,7 +15138,7 @@ try {
     await t('ctx-menu').waitFor();
   };
   const menuRows = () => page.locator('[data-testid=ctx-menu] .mi').evaluateAll((bs) => bs.map((b) => [b.childNodes[0].textContent, b.disabled]));
-  const SNAP_ROWS = ['end', 'middle', 'centre', 'point', 'nearest', 'intersection', 'quadrant', 'perpendicular'].map((n) => ['✓ Snap: ' + n, false]);
+  const SNAP_ROWS = ['end', 'middle', 'centre', 'geometric centre', 'point', 'quadrant', 'intersection', 'extension', 'insertion', 'perpendicular', 'tangent', 'nearest', 'apparent intersection', 'parallel'].map((n) => ['✓ Snap: ' + n, false]);
 
   await step('TODO 72: Shift+right-click while a tool is on opens Enter / Cancel / Close / Undo last point and the snap types; plain right-click still finishes', async () => {
     await openGrips(); await page.evaluate(() => localStorage.removeItem('pd-snap-types'));

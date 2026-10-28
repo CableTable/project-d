@@ -16,7 +16,7 @@ import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layou
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import { cyclePick } from './selection-cycle.js';
-import { SNAP_NAME, snapTypes } from './snap.js';
+import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
 import * as UF from './unitfix.js';
 import * as CL from './cleanup.js';
@@ -48,7 +48,7 @@ import * as PR from './props.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
-import { layoutSnap } from './layoutsnap.js';
+import { layoutSnap, layoutCandidates, layoutReference } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { dropPart } from './dropin.js';
 import { copySnapshot, copyPlacedSnapshot, pasteSnapshot, partFromSnapshot } from './clipboard.js';
@@ -1299,6 +1299,7 @@ function setDimType(type) {
 }
 
 function setTool(id) {
+  state.orthoAsk = false;
   state.colourTool = null; endReadout();
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
@@ -3599,6 +3600,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
+  if (state.orthoAsk) return { label: 'ORTHO', prompt: `Enter mode [ON/OFF] <${state.ortho ? 'ON' : 'OFF'}>:`, takes: (c) => ['on', 'off'].includes(c) };
   const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
@@ -3612,6 +3614,13 @@ const pointToolAction = () => state.setlen ? lengthPoint : state.tool === 'measu
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
 function cmdEnter(raw) {
+  if (state.orthoAsk) {
+    const c = raw.trim().toLowerCase();
+    if (!['', 'on', 'off'].includes(c)) { note('Enter ON or OFF'); renderCommand(); return; }
+    state.orthoAsk = false;
+    if (c && state.ortho !== (c === 'on')) ui.tog.ORTHO.click();
+    renderCommand(); return;
+  }
   if (state.grip && editable()) { gripTyped(raw); return; }
   if (drawLive()) { drawTyped(raw); return; }
   if (modLive() && modTyped(editable(), raw)) return;
@@ -3658,6 +3667,8 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  osnap: () => document.getElementById('snap-types').showPopover(),
+  ortho: () => { state.orthoAsk = true; renderCommand(); },
   fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'), readout: () => toggleReadout(),
   dimension: () => { if (!editable()) { note('Dimensions work on a drawing tab: open a drawing first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
@@ -3703,6 +3714,7 @@ function runCommand(cmd) {
 
 /** One snap type on or off: remembered on this PC, and the Snap types popover's tick follows. */
 function setSnapType(kind, on) {
+  snapCycle = null;
   state.snapTypes[kind] = on;
   const box = document.querySelector(`[data-testid=snap-type-${kind}]`);
   if (box) box.checked = on;
@@ -4246,6 +4258,7 @@ function attachCanvasEvents() {
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
+    if (state.orthoAsk) return;
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
@@ -4283,6 +4296,8 @@ function attachCanvasEvents() {
     }
   });
   c.addEventListener('pointermove', (e) => {
+    snapPointer = { clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, buttons: e.buttons };
+    snapQuery = null;
     const p = local(e);
     if (gdrag) guideMove(e);
     if (state.sheetDrag) sheetMove(e);
@@ -4317,6 +4332,7 @@ function attachCanvasEvents() {
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
   });
   c.addEventListener('pointerleave', () => {
+    snapCycle = null; snapQuery = null; snapPointer = null;
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if (modLive() && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
@@ -4391,6 +4407,7 @@ function attachCanvasEvents() {
 
 // ---- keeping the panels in step with the layout ----
 function renderCommand() {
+  if (state.orthoAsk) { ui.hist.textContent = 'Command: ORTHO'; ui.prompt.textContent = activeCmd().prompt; return; }
   const cycling = selectionCycle && state.msg === `${selectionCycle.index + 1} of ${selectionCycle.hits.length} objects here`;
   ui.cmdUI.status(cycling ? state.msg : '');
   if (ui.keepMeas) ui.keepMeas.hidden = !(state.meas && state.meas.pts.length === 2 && editable());
@@ -4886,11 +4903,55 @@ function cycleSelect(e) {
   note(`${index + 1} of ${hits.length} objects here`);
 }
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
-const snapPoint = (d, p, skip, extra, from) => {
-  const sn = d.lay ? state.snap && layoutSnap(d.lay.parts, state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl)), state.sheetW, state.sheetH, p[0], p[1], pickTol(d), state.snapTypes, from)
-    : Ed.snapPick(edIndex(d), p[0], p[1], pickTol(d), state.snap, skip, state.snapTypes, extra, from);
+let snapQuery = null, snapCycle = null, snapPointer = null, snapRef = null;
+const snapPlaced = () => state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl));
+const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
+  const ed = !d.lay && edIndex(d), tol = pickTol(d), types = state.snapTypes;
+  let sn = d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
+    : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
+  if (state.snap && ed) {
+    if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
+    const piece = Ed.snapReference(ed, ...p, tol, skip);
+    if (piece) snapRef = { ed, piece };
+    if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
+  }
+  if (state.snap && d.lay) {
+    const placed = snapPlaced();
+    if (snapRef?.d !== d || snapRef && (!placed.includes(snapRef.pl) || d.lay.parts[snapRef.pl.partId] !== snapRef.part)) snapRef = null;
+    const ref = layoutReference(d.lay.parts, placed, ...p, tol);
+    if (ref) snapRef = { ...ref, d };
+    if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
+  }
+  snapQuery = { d, ed, p, skip, from, sn };
+  if (snapCycle) {
+    const same = snapCycle.d === d && snapCycle.ed === ed && snapCycle.skip === skip && snapCycle.from?.[0] === from?.[0] && snapCycle.from?.[1] === from?.[1];
+    const hit = same && snapObjectCandidates(snapQuery, false);
+    if (state.snap && hit && hit.object === snapCycle.object && hit.e === snapCycle.e) sn = snapCycle.candidates[snapCycle.index];
+    else snapCycle = null;
+  }
   return sn ? [sn.x, sn.y, sn.kind] : [p[0], p[1]];
 };
+function snapObjectCandidates(q, candidates = true) {
+  const { d, ed, p, skip, from } = q, tol = pickTol(d), types = state.snapTypes;
+  if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from);
+  const e = Ed.snapObject(ed, ...p, tol, skip, types);
+  return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
+}
+function snapTab(e) {
+  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || !state.snap || !snapPointer || snapPointer.buttons) return;
+  if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu], :popover-open')) return;
+  if (e.target !== document.body && !ui.canvas.contains(e.target) || e.target.closest?.('input, textarea, select, button, a, [contenteditable=true]')) return;
+  if (cursorDynamic() && DI.hasTyped(cursorInput())) return;
+  ui.canvas.dispatchEvent(new PointerEvent('pointermove', { ...snapPointer, bubbles: true }));
+  if (!snapQuery?.sn) return;
+  const q = snapQuery, hit = snapObjectCandidates(q);
+  if (!hit || hit.candidates.length < 2) return;
+  const current = snapCycle?.candidates[snapCycle.index] || q.sn;
+  const i = hit.candidates.findIndex((s) => s.kind === current.kind && Math.hypot(s.x - current.x, s.y - current.y) < 1e-9);
+  snapCycle = { ...q, ...hit, index: (i + 1) % hit.candidates.length };
+  ui.canvas.dispatchEvent(new PointerEvent('pointermove', { ...snapPointer, bubbles: true }));
+  e.preventDefault(); e.stopImmediatePropagation();
+}
 /** A Measure / Dimension / Leader pick: the snaps (any kind, Nearest too), then POLAR / OTRACK (where their guides show), else Shift / ORTHO straight from the first point (a snapped point is never bent). */
 function pickPoint(d, p, pts, shift, hover = false) {
   const q = snapPoint(d, p, undefined, undefined, pts[pts.length - 1]), base = pts.length === 1 ? pts[0] : null, straight = !!((shift || state.ortho) && base);
@@ -6152,6 +6213,7 @@ function cursorClick(d, p, shift) {
   return true;
 }
 function cursorKey(e) {
+  if (state.orthoAsk) return;
   if (!cursorDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
@@ -7165,7 +7227,7 @@ function otrackSet(on) {
 /** The hover ends (a click) and with it the lock it showed; the acquired points stay. */
 function trackStop() { const t = state.trk; clearTimeout(t.timer); t.timer = 0; t.cand = null; t.res = null; }
 /** The tool or grip action is over (or the tool changed): the acquired points go. */
-function trackClear() { trackStop(); state.trk.acq = []; }
+function trackClear() { trackStop(); state.trk.acq = []; snapCycle = null; snapQuery = null; snapRef = null; }
 /** Hovering about 0.5 s on a snap point acquires it (a small +); hovering on an acquired point releases it. */
 function trackWatch(d, q) {
   const t = state.trk, ok = state.otrack && q.length === 3 && TK.acquirable(q[2]);
@@ -7184,8 +7246,9 @@ function trackPick(d, p, q, base, straight, hover) {
   if (t.d !== d) { trackClear(); t.d = d; }
   t.res = null;
   if (hover) trackWatch(d, q);
-  if ((q.length === 3 && q[2] !== 'near') || straight) return null;
-  const inc = state.polar.on && base && q.length === 2 ? state.polar.inc : 0;       // Nearest beats POLAR (as in AutoCAD) but not OTRACK, which lines up with a point even over a line
+  const alongEdge = q[2] === 'extension' || q[2] === 'parallel';
+  if ((q.length === 3 && q[2] !== 'near' && !alongEdge) || straight) return null;
+  const inc = state.polar.on && base && (q.length === 2 || alongEdge) ? state.polar.inc : 0;       // Nearest beats POLAR; tracking can refine an Extension / Parallel projection.
   if (!inc && !(state.otrack && t.acq.length)) return null;
   t.res = TK.resolve({ p, base, inc, acq: state.otrack ? t.acq : [], tol: 8 / (view.scale * d.factor), step: 0.01 / d.factor, scale: d.factor });
   return t.res && t.res.q;
@@ -7393,6 +7456,7 @@ function editKey(e) {
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
+    if (state.orthoAsk) { e.preventDefault(); state.orthoAsk = false; ui.cmdUI.escape(); renderCommand(); return; }
     if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
     if (ui.preflight && !ui.preflight.hidden && !activeCmd() && !ui.cmdUI.isOpen()) { closePreflight(); e.preventDefault(); return; }
     const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
@@ -8851,6 +8915,7 @@ async function init() {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
     editKey(e);
   });
+  document.addEventListener('keydown', snapTab, true);
   document.addEventListener('keydown', cursorKey, true);
   renderWorkArea();
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { cssCache = null; renderWorkArea(); update(); });

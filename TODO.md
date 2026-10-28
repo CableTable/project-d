@@ -263,7 +263,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155h. Fillet Polyline (all corners at once), Trim / No trim, circles and parallel lines (M).
     155i. Explode dimensions and hatches; block attributes as AutoCAD does (M).
     155j. Mirror blocks and dimensions (M).
-    155k. Snaps: Tab cycles candidates, Tangent and the other missing types, F3 / F8 (with 73), `osnap` / `ortho` / `polar` commands (S–M).
+    155k. ✅ Snaps: Tab cycles the hovered object's candidates; all 14 snap types have ticks with exact 2D support and documented geometry limits; `osnap` / `os` opens the tick list, `ortho` asks ON / OFF. F3 / F8 come from 73; no `polar` command (AutoCAD has none). See DECISIONS "TODO 155k as built".
     155l. DIM with automatic type and hover preview (M).
     155m. Extend splines and elliptical arcs (S).
     155n. Copy Array (later).

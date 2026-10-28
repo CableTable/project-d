@@ -258,7 +258,13 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Snap**: Places a picked point on supported drawing features such as endpoints, midpoints, centres or the nearest point on a line. Where: `DECISIONS.md`, Snap. Avoid: Grid fit.
 **Nearest snap**: The lowest-priority snap: the closest point on a line, arc, circle, ellipse, polyline or spline under the pointer, drawn as an hourglass; ends, middles and centres win when they are in reach. Where: `DECISIONS.md`, Nearest snap. Avoid: On-line snap.
 
-**Snap types**: The tick list beside SNAP: end, middle, centre, point, nearest, intersection and quadrant can each be switched off. All default on; ticks are remembered on this PC, outside drawing files. Perpendicular shows as “(soon)” until built. Where: `TODO.md`, item 68; `web/snap.js`.
+**Snap types**: The tick list beside SNAP, also opened by `OSNAP` / `OS`: end, middle, centre (AutoCAD Center), geometric centre, point (AutoCAD Node), quadrant, intersection, extension, insertion, perpendicular, tangent, nearest, apparent intersection and parallel. All default on; ticks are remembered on this PC, outside drawing files. Where: `TODO.md`, items 68 and 155k; `web/snap.js`.
+
+**Snap candidate**: One enabled snap point of the object under the pointer. During a point pick, Tab moves the marker and label through these candidates and a click accepts the displayed point. Typed cursor fields keep Tab for field switching. Where: `web/edit.js`, `web/app.js`; `DECISIONS.md`, TODO 155k as built.
+
+**Acquired edge**: The most recently hovered straight edge during a point pick. Extension projects onto its infinite support beyond its ends; Parallel projects onto a line through the previous picked point in that edge's direction. Hidden geometry and flattened curves cannot supply the edge; finishing the action clears it. Where: `web/snap.js`, `web/app.js`.
+
+**Tangent snap**: An exact point on a circular circle / arc / bulge whose radius is perpendicular to the line from the previous picked point. The previous point must be outside the circle and the tangent must lie on the arc's finite sweep. Where: `web/snap.js`.
 
 **Intersection snap**: A real crossing or tangent touch of finite lines, arcs, circles or straight / bulged polyline segments, shown with an X. Candidates come from geometry within the cursor's pick tolerance; extended lines and flattened ellipse / spline curves are excluded. Where: `web/modify.js`, `web/edit.js`.
 

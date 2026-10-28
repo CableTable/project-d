@@ -17,7 +17,7 @@ import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
-import { DEFAULT_TYPES, perpFoot, preferSnap } from './snap.js';
+import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
 
 // ---------------------------------------------------------------- the index
@@ -260,27 +260,67 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
     if (!ed.vis[sn.it] || ed.items[sn.it].e === skip) continue;
     best = preferSnap(best, sn, x, y, tol, types);
   }
-  const perp = from && types.perpendicular !== false;
-  if (types.intersection !== false || perp) {
+  const perp = from && types.perpendicular !== false, tangent = from && types.tangent !== false;
+  if (types.intersection !== false || types.apparent !== false || perp || tangent) {
     // shortcut: only the 200 pieces nearest the cursor are crossed (k^2/2 pieceInter calls per hover); raise or index them if a dense drawing misses a crossing.
     const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
     const eps = 1e-9 * (1 + Math.abs(x) + Math.abs(y));
-    if (types.intersection !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
+    if (types.intersection !== false || types.apparent !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
       for (const [px, py] of pieceInter(pieces[i], pieces[j])) {
         // a line-arc crossing lands ~1e-9 off the end point it shares: the end wins
         if (best?.kind === 'end' && Math.hypot(best.x - px, best.y - py) <= eps) continue;
-        best = preferSnap(best, { x: px, y: py, kind: 'intersection' }, x, y, tol, types);
+        best = preferSnap(best, { x: px, y: py, kind: types.intersection !== false ? 'intersection' : 'apparent' }, x, y, tol, types);
       }
     }
     if (perp) for (const p of pieces) {
       const foot = p.t === 's' && perpFoot(from, [p.x1, p.y1], [p.x2, p.y2]);
       if (foot) best = preferSnap(best, { x: foot[0], y: foot[1], kind: 'perpendicular' }, x, y, tol, types);
     }
+    if (tangent) for (const p of pieces) for (const sn of tangentPoints(from, p)) best = preferSnap(best, sn, x, y, tol, types);
   }
   if (best) return { x: best.x, y: best.y, kind: best.kind };
   if (types.near === false) return null;
   const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip);
   return p.ent && p.near ? { x: p.near[0], y: p.near[1], kind: 'near' } : null;
+}
+
+/** The object under the cursor, including a centre / insertion / node away from its outline. */
+export function snapObject(ed, x, y, tol, skip = -1, types = DEFAULT_TYPES) {
+  const visible = (i) => ed.vis[i] === 1 && ed.items[i].e !== skip;
+  const hit = pickAt(ed.ix, x, y, tol, visible);
+  if (hit.ent) return ed.items[hit.ent.it].e;
+  let best = null;
+  for (const sn of ed.ix.snaps) if (visible(sn.it)) best = preferSnap(best, sn, x, y, tol, types);
+  return best ? ed.items[best.it].e : -1;
+}
+
+export function snapReference(ed, x, y, tol, skip = -1) {
+  return piecesNear(ed.ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip)
+    .filter((p) => p.ent.t === 's' && !p.ent.curve).sort((a, b) => a.d - b.d)[0]?.ent || null;
+}
+
+/** Tab alone may visit distant candidates of this one object; normal picks keep their aperture. */
+export function snapCandidates(ed, e, x, y, tol, types = DEFAULT_TYPES, from = null) {
+  const visible = (it) => ed.vis[it] === 1;
+  const own = (it) => visible(it) && ed.items[it].e === e;
+  const candidates = ed.ix.snaps.filter((sn) => own(sn.it));
+  const pieces = ed.ix.pieces.filter((p) => own(p.it));
+  for (const p of pieces) {
+    candidates.push(...tangentPoints(from, p));
+    const foot = from && p.t === 's' && !p.curve && perpFoot(from, [p.x1, p.y1], [p.x2, p.y2]);
+    if (foot) candidates.push({ x: foot[0], y: foot[1], kind: 'perpendicular' });
+  }
+  const hit = pickAt(ed.ix, x, y, tol, own);
+  if (hit.near) candidates.push({ x: hit.near[0], y: hit.near[1], kind: 'near' });
+  if (types.intersection !== false || types.apparent !== false) {
+    // shortcut: crossings use the running snap's local 200-piece aperture; index whole-object crossings if distant ones are needed for Tab.
+    const local = piecesNear(ed.ix, x, y, tol, visible).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
+    for (const p of local.filter((p) => own(p.it))) for (const q of local) {
+      if (p === q || !visible(q.it)) continue;
+      for (const [px, py] of pieceInter(p, q)) candidates.push({ x: px, y: py, kind: types.intersection !== false ? 'intersection' : 'apparent' });
+    }
+  }
+  return orderCandidates(candidates, types);
 }
 
 // ---------------------------------------------------------------- chains

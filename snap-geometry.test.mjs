@@ -65,7 +65,7 @@ test('TODO 68b: cursor grid / aperture, visibility, skip and priority apply to i
   const pick = (types, skip = -1) => snapPick(ed, .2, .1, .5, true, skip, types);
   assert.equal(piecesNear(ed.ix, .2, .1, .5).length, 2, 'only local pieces are paired');
   assert.deepEqual(pick(), { x: 0, y: 0, kind: 'intersection' });
-  assert.equal(pick(snapTypes({ intersection: false })).kind, 'near');
+  assert.equal(pick(snapTypes({ intersection: false, apparent: false })).kind, 'near');
   assert.equal(pick(undefined, 1).kind, 'near');
   ed.vis[1] = 0;
   assert.equal(pick().kind, 'near', 'hidden geometry cannot intersect');

@@ -33,7 +33,7 @@ test('TODO 68a: snap index filters every type, respects SNAP off and filters unf
     const sn = E.snapPick(ed, x, y, .5, true, -1, snapTypes({ [kind]: false }));
     assert.ok(!sn || sn.kind !== kind, kind + ' disabled');
   }
-  assert.equal(E.snapPick(ed, 100.2, 10.1, .5, true, -1, snapTypes({ end: false, intersection: false, quadrant: false })).kind, 'near');
+  assert.equal(E.snapPick(ed, 100.2, 10.1, .5, true, -1, snapTypes({ end: false, intersection: false, apparent: false, quadrant: false })).kind, 'near');
   const doc = W.newDoc(4);
   W.addEntities(doc, W.entity('POINT', [[10, 5], [20, 5]]));
   const pointRaw = D.readDxf(W.writeDxf(doc)), pointEd = E.makeIndex(pointRaw, D.flatten(pointRaw));

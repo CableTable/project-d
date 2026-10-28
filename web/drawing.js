@@ -13,6 +13,7 @@ import { closedOutline, linkFills, fillCss, fillHoles, fillOps } from './fill.js
 //   a path's ops: 0 x y (move) · 1 x y (line) · 2 cx cy r a0 a1 cw (arc; cw 1 = clockwise) · 9 (close)
 
 import { fontForStyle } from './fontsub.js';
+import { pathCentre } from './snap.js';
 export { fontOfStyle } from './fontsub.js';
 
 export class DrawingError extends Error {}
@@ -370,13 +371,15 @@ export function flatten(doc, hidden = new Set()) {
         if (!it.b) return;
         if (it.k === 't') it.font = fontForStyle(doc.styles, it.st);
         it.b = worldBox(mats[it.m], it.b);
+        if (ctx.insertions) it.insertions = ctx.insertions;
+        if (it.insertion) it.insertions = [...(it.insertions || []), mapply(mats[it.m], ...it.insertion)];
         items.push(it);
       };
       const path = (ops, extra) => {
         if (ops.length <= 3 && !(ops.length === 3 && extra?.fill)) return;
         put({ k: 'p', ...base, ops, ...extra, b: opsBox(ops, extra?.w ? extra.w / 2 : 0) });
       };
-      const inner = (lt2) => ({ layer: own, L, css, lw, lt: lt2, ps: base.ps, ei: top });
+      const inner = (lt2) => ({ layer: own, L, css, lw, lt: lt2, ps: base.ps, ei: top, insertions: ctx.insertions });
       const r = e.r, f = firsts(r);
       if (e.fill && closedOutline(e)) {
         const ops = fillOps(e, holes.get(e));
@@ -451,7 +454,7 @@ export function flatten(doc, hidden = new Set()) {
               mm = mmul(mm, [1, 0, 0, 1, col * num(f[44]), row * num(f[45])]);
               mm = mmul(mm, [sx, 0, 0, sy, -blk.base[0] * sx, -blk.base[1] * sy]);
               mats.push(mm);
-              walk(blk.entities, { m: mats.length - 1, ...inner(lt) }, depth + 1);
+              walk(blk.entities, { m: mats.length - 1, ...inner(lt), insertions: [...(ctx.insertions || []), mapply(mm, ...blk.base)] }, depth + 1);
             }
           }
           // the block's attributes (title-block fields): in the drawing's own place, not the block's
@@ -592,7 +595,7 @@ function text(base, f, attrib, put) {
   if (ha === 4) { ha = 1; va = 2; }
   const fl = num(f[71]), lines = plainText(s, false);
   const wf = num(f[41], 1) || 1;
-  textItem(base, p, h, rot, lines, Math.min(ha, 2), ['alphabetic', 'bottom', 'middle', 'top'][va] || 'alphabetic', wf, fl, (it) => put({ ...it, st: f[7] }));
+  textItem(base, p, h, rot, lines, Math.min(ha, 2), ['alphabetic', 'bottom', 'middle', 'top'][va] || 'alphabetic', wf, fl, (it) => put({ ...it, st: f[7], insertion: [num(f[10]), num(f[20])] }));
 }
 
 function mtext(base, r, f, put) {
@@ -603,7 +606,7 @@ function mtext(base, r, f, put) {
   const ap = Math.min(Math.max(num(f[71], 1), 1), 9) - 1;
   const rot = f[11] != null && (num(f[11]) || num(f[21])) ? Math.atan2(num(f[21]), num(f[11])) : num(f[50]) * DEG;
   const bold = /\\f[^;]*\|b1/.test(s);   // a bold font code: {\fArial|b1;...}
-  textItem(base, [num(f[10]), num(f[20])], h, rot, plainText(s, true), ap % 3, ['top', 'middle', 'bottom'][Math.floor(ap / 3)], 1, 0, (it) => put({ ...it, st: f[7], bold }),
+  textItem(base, [num(f[10]), num(f[20])], h, rot, plainText(s, true), ap % 3, ['top', 'middle', 'bottom'][Math.floor(ap / 3)], 1, 0, (it) => put({ ...it, st: f[7], bold, insertion: [num(f[10]), num(f[20])] }),
     { multi: 1, lh: h * 5 / 3 * (num(f[44], 1) || 1), wrap: num(f[41]) });
 }
 
@@ -752,9 +755,14 @@ export function pickIndex(fl, paper) {
   fl.items.forEach((it, idx) => {
     if (!!it.ps !== !!paper) return;
     const m = fl.mats[it.m];
+    for (const [x, y] of it.insertions || []) snaps.push({ x, y, kind: 'insertion', it: idx });
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
     if (it.k !== 'p' || it.fill) return;
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;
+    if (!it.ell && !it.spl) {
+      const centre = pathCentre(ops);
+      if (centre) { const [x, y] = mapply(m, ...centre); snaps.push({ x, y, kind: 'geometric', it: idx }); }
+    }
     const curve = !!(it.ell || it.spl), s0 = snaps.length;                 // an ellipse or spline is flattened: the joints of its pieces are no ends or middles (only its own ends are), Nearest finds the curve
     let cur = null, first = null, justMoved = false, closed = false;
     const seg = (a, b) => {

@@ -214,6 +214,11 @@ export function drawMarks(c, pts, T, dpr, accent, snapCol = '#00c000') {
     c.beginPath();
     if (k === 'end') c.rect(x - h, y - h, 2 * h, 2 * h);
     else if (k === 'centre') c.arc(x, y, h, 0, Math.PI * 2);
+    else if (k === 'tangent') { c.arc(x, y, h, 0, Math.PI * 2); c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); }
+    else if (k === 'geometric') { c.moveTo(x - h, y + h); c.lineTo(x, y - h); c.lineTo(x + h, y + h); c.closePath(); c.moveTo(x - h, y); c.lineTo(x + h, y); }
+    else if (k === 'insertion') { c.rect(x - h, y - h, 2 * h, 2 * h); c.moveTo(x - h, y); c.lineTo(x, y); c.lineTo(x, y + h); }
+    else if (k === 'extension' || k === 'apparent') { c.moveTo(x - h, y - h); c.lineTo(x + h, y + h); c.moveTo(x - h, y + h); c.lineTo(x + h, y - h); if (k === 'apparent') c.rect(x - h, y - h, 2 * h, 2 * h); }
+    else if (k === 'parallel') { c.moveTo(x - h, y + h); c.lineTo(x, y - h); c.moveTo(x, y + h); c.lineTo(x + h, y - h); }
     else if (k === 'mid') { c.moveTo(x, y - h); c.lineTo(x + h, y + h); c.lineTo(x - h, y + h); c.closePath(); }
     else if (k === 'node' || k === 'quadrant') { c.moveTo(x - h, y); c.lineTo(x, y - h); c.lineTo(x + h, y); c.lineTo(x, y + h); c.closePath(); }
     else if (k === 'intersection') { c.moveTo(x - h, y - h); c.lineTo(x + h, y + h); c.moveTo(x - h, y + h); c.lineTo(x + h, y - h); }
