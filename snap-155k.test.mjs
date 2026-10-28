@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import { flatten } from './web/drawing.js';
 import { makeIndex, snapPick, snapObject, snapCandidates, snapReference } from './web/edit.js';
-import { tangentPoints, lineSnaps, nearReference, polygonCentre, pathCentre, orderCandidates, snapTypes, SNAP_NAME } from './web/snap.js';
+import { tangentPoints, lineSnaps, polygonCentre, pathCentre, orderCandidates, snapTypes, SNAP_NAME } from './web/snap.js';
 import { layoutCandidates, layoutSnap, layoutReference } from './web/layoutsnap.js';
 import { makePart } from './web/layoutdoc.js';
 import { resolve } from './web/cmdbar.js';
@@ -100,9 +100,6 @@ test('TODO 155k: acquired straight Extension and Parallel are exact, finite ends
   assert.deepEqual(lineSnaps(p, [5, 5], null), []);
   assert.deepEqual(lineSnaps({ ...p, curve: true }, [20, 20], [0, 4]), []);
   assert.deepEqual(lineSnaps({ ...p, x2: 0, y2: 0 }, [20, 20], [0, 4]), []);
-  assert.equal(nearReference(p, [11, 11], 4), true);
-  assert.equal(nearReference(p, [20, 20], 4), false, 'distance is from the finite edge, not its infinite extension');
-  assert.equal(nearReference(p, [5, 12], 4), false);
   const ed = index(W.line(0, 0, 10, 10));
   assert.ok(snapReference(ed, 5, 5, .1)); assert.equal(snapReference(ed, 5, 5, .1, 0), null);
 });

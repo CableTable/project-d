@@ -1720,21 +1720,21 @@ try {
       }
       await command('line');
       {
-        const r = await sheet(); await p.mouse.click(...px(r, 40, 34));
-        const free = async () => {
-          await p.mouse.move(...px(r, 145, 30.8));
-          const path = await preview(); assert.ok(Math.abs(path[3] - (r.h - 30.8)) < .01, 'a quick pass cannot pull the cursor onto an extension');
+        const r = await sheet(); await p.mouse.click(...px(r, 40, 70));
+        const free = async (x = 145, y = 30.8, why = '') => {
+          await p.mouse.move(...px(r, x, y));
+          const path = await preview(); assert.ok(Math.abs(path[3] - (r.h - y)) < .01, 'a quick pass cannot pull the cursor onto an extension ' + why + path);
         };
-        await hover(r, 135, 30, 'nearest'); await free();
-        await p.waitForTimeout(600); await free();
+        await hover(r, 135, 30, 'nearest'); await free(145, 30.8, 'A');
+        await p.waitForTimeout(600); await free(145, 30.8, 'B');
         await hover(r, 135, 30, 'nearest'); await p.waitForTimeout(600);
-        await hover(r, 145, 30.8, 'extension');
-        let path = await preview(); assert.ok(Math.abs(path[2] - 145) < .01 && Math.abs(path[3] - (r.h - 30)) < .01);
-        await hover(r, 145, 34, 'parallel');
-        path = await preview(); assert.ok(Math.abs(path[3] - (r.h - 34)) < .01);
+        await hover(r, 160, 30.8, 'extension');
+        let path = await preview(); assert.ok(Math.abs(path[2] - 160) < .01 && Math.abs(path[3] - (r.h - 30)) < .01);
+        await hover(r, 160, 70.8, 'parallel');
+        path = await preview(); assert.ok(Math.abs(path[3] - (r.h - 70)) < .01);
         await hover(r, 140.3, 30.2, 'end');
         path = await preview(); assert.ok(Math.abs(path[2] - 140) < .01 && Math.abs(path[3] - (r.h - 30)) < .01, 'endpoint wins over tracking projection');
-        await p.mouse.move(...px(r, 170, 60)); await free();
+        await free(170, 60, 'C');
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
       }
       for (const colour of ['light', 'dark']) {
@@ -4404,6 +4404,11 @@ try {
       const away = await point(100, 180); await p.mouse.move(away.x, away.y);
       await p.mouse.click(edge.x, edge.y);
       assert.match(await readout(), /ΔX -40   ΔY -55/, 'leaving the layout object resets Tab to the ordinary nearest pick (60,105): ' + await readout());
+      await p.keyboard.press('Escape');
+      await clickAt(100, 160);
+      { const on = await point(60, 105); await p.mouse.move(on.x, on.y); await p.waitForTimeout(600); }
+      await clickAt(60.8, 140);
+      assert.match(await readout(), /ΔX -40   ΔY -20/, 'layout Extension works well past the end of the edge after a pause: ' + await readout());
       assert.equal(await dirty(), clean, 'Measure leaves the tab clean');
       await p.locator('[data-menu=Edit]').click();
       assert.equal(await p.getByRole('menuitem', { name: 'Undo', exact: true }).isEnabled(), false, 'Measure adds no undo step');

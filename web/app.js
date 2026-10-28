@@ -16,7 +16,7 @@ import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layou
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import { cyclePick } from './selection-cycle.js';
-import { SNAP_NAME, snapTypes, lineSnaps, nearReference, preferSnap } from './snap.js';
+import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
 import * as UF from './unitfix.js';
 import * as CL from './cleanup.js';
@@ -4908,7 +4908,7 @@ let snapPending = null, snapRefTimer = 0;
 function snapWatch(ref) {
   if (ref && snapPending && ref.ed === snapPending.ed && ref.d === snapPending.d && ref.pl === snapPending.pl && (ref.source || ref.piece) === (snapPending.source || snapPending.piece)) return;
   clearTimeout(snapRefTimer); snapRefTimer = 0; snapPending = ref;
-  if (ref) snapRefTimer = setTimeout(() => { snapRef = ref; snapRefTimer = 0; }, 500);
+  if (ref) snapRefTimer = setTimeout(() => { snapRef = ref; snapRefTimer = 0; paintOverlay(); }, 500);
 }
 const snapPlaced = () => state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl));
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
@@ -4920,7 +4920,6 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
     const piece = Ed.snapReference(ed, ...p, tol, skip);
     snapWatch(piece ? { ed, piece } : null);
-    if (snapRef && !nearReference(snapRef.piece, p, 4 * tol)) snapRef = null;
     if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
   }
   if (state.snap && d.lay) {
@@ -4928,7 +4927,6 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     if (snapRef?.d !== d || snapRef && (!placed.includes(snapRef.pl) || d.lay.parts[snapRef.pl.partId] !== snapRef.part)) snapRef = null;
     const ref = layoutReference(d.lay.parts, placed, ...p, tol);
     snapWatch(ref ? { ...ref, d } : null);
-    if (snapRef && !nearReference(snapRef.piece, p, 4 * tol)) snapRef = null;
     if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
   }
   snapQuery = { d, ed, p, skip, from, sn };

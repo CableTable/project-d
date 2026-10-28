@@ -24,13 +24,6 @@ export function orderCandidates(candidates, types = DEFAULT_TYPES, x = 0, y = 0)
     .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y) || RANK[a.kind] - RANK[b.kind] || a.x - b.x || a.y - b.y);
 }
 
-/** Keep an acquired direction only within a few apertures of its finite edge. */
-export function nearReference(piece, p, tol) {
-  const dx = piece.x2 - piece.x1, dy = piece.y2 - piece.y1, l2 = dx * dx + dy * dy;
-  const t = l2 ? Math.max(0, Math.min(1, ((p[0] - piece.x1) * dx + (p[1] - piece.y1) * dy) / l2)) : 0;
-  return Math.hypot(p[0] - piece.x1 - t * dx, p[1] - piece.y1 - t * dy) <= tol;
-}
-
 /** Exact tangents from an external point to a circular piece, clipped to its finite sweep. */
 export function tangentPoints(from, arc) {
   if (!from || arc.t !== 'a' || !(arc.r > 0)) return [];
