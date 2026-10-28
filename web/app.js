@@ -435,9 +435,9 @@ function buildMenus() {
     },
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
-    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
+    ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key, id === 'text' ? null : () => !curLay()]);
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay()]);
-  menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO', () => !curLay()]);
+  menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
@@ -659,7 +659,7 @@ function ribbonContents(kind) {
   const outlinesIcon = '<path d="M5 5h14M12 5v14" stroke-dasharray="2 1.5"/><path d="M8 19h8"/>';
   if (ribbon.tab === 'Draw') return [
     group('Draw', ...['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
-    group('Text', ribbonTool('text'), convert('Text to outlines', textToOutlines, outlinesIcon)),
+    group('Text', ribbonTool('text'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Annotate', ...['dimension', 'leader', 'balloon', 'measure'].map((id) => ribbonTool(id))),
     group('Tools', ribbonTool('select'), ribbonTool('pan'))];
   if (ribbon.tab === 'Modify') return [
@@ -667,7 +667,7 @@ function ribbonContents(kind) {
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true))),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>'),
-      convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon)),
+      convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
       op === 'boundary' ? '<path d="M4 8l8-4 8 5v8l-8 4-8-5z" stroke-dasharray="3 2"/>' : op === 'trim' ? toolIcon('trim') : '<rect x="3" y="5" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>' + (op === 'intersect' ? '<rect x="9" y="9" width="6" height="8" fill="currentColor" stroke="none" opacity=".55"/>' : ''), false, op === 'trim' ? 'shapetrim' : op, true)),
       stack(...['frontminus', 'backminus'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op), '<rect x="3" y="5" width="12" height="12" fill="currentColor" opacity=".5"/><rect x="9" y="9" width="12" height="12"/>', true, op, true)),
@@ -1310,7 +1310,6 @@ function setTool(id) {
   state.text.drag = null; state.grip = null; state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
-  if (id === 'text' && curLay()) { note('Text on a layout is not built yet (TODO 156b2b). Draw it on a drawing tab and drag the drawing in'); return; }
   if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab or a layout'); return; }
   if (state.draw && DR.toolBusy(state.draw) && drawId) drawApply(DR.toolFinish(state.draw));      // a line or polyline in progress ends (and keeps what it has)
   if (id === 'step' && !curLay()) { note('Step and repeat is on a layout tab: New layout, or Add to layout'); return; }
@@ -3693,7 +3692,7 @@ function cmdEnter(raw) {
   if (drawLive()) { drawTyped(raw); return; }
   if (modLive() && modTyped(editable(), raw)) return;
   if (layModLive() && modTyped(curDoc(), raw)) return;
-  if (state.tool === 'text' && editable() && !textEditing()) { textTyped(raw); return; }
+  if (state.tool === 'text' && (editable() || curLay()) && !textEditing()) { textTyped(raw); return; }
   const d = state.tool === 'measure' || layModLive() ? measureTarget() : editable(), pointAction = pointToolAction();
   if (d && pointAction) {
     const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw);
@@ -3782,7 +3781,7 @@ function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (editable()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab: open a drawing first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -4726,9 +4725,11 @@ function applyTrace(d, polys, name) {
 const isTextEnt = (e) => !!e && (e.type === 'TEXT' || e.type === 'MTEXT');
 /** Makes the selected texts outlines; with none selected it asks for them, and Enter then runs it. */
 async function textToOutlines() {
-  const d = editable();
+  const lay = curLay(), d = lay ? layObjSelDoc(curDoc()) : editable();      // on a layout: its objects as a drawing, the selected ones selected
   if (!d) { note('Text to outlines works on a drawing tab: open a drawing first'); return; }
+  if (lay && selItems().some((x) => !x.part.obj)) { note('Text to outlines works on layout objects, not placed parts'); return; }
   const sel = new Set([...d.sel].filter((i) => isTextEnt(d.raw.entities[i])));
+  if (lay && [...sel].some((e) => lockedEnt(d, e))) { note('A locked object: unlock it to make its text outlines'); return; }
   if (!sel.size) { setTool('select'); state.txoWait = true; note('Text to outlines: select the texts (click or drag a box), then press Enter'); return; }
   const raw = d.raw.entities, items = d.fl.items.filter((it) => it.k === 't' && sel.has(it.e)).map((it) => TO.outlineItem(it, raw[it.e])), fonts = new Map();
   const substitutions = fontSubstitutions(d.raw.styles, items);
@@ -4740,7 +4741,7 @@ async function textToOutlines() {
       if (!fonts.has(keyOf(it))) fonts.set(keyOf(it), await loadFont(fontOf(it), it.bold));
     }
   } catch { note('Text to outlines: no font file could be read'); return; }
-  if (!state.docs.includes(d) || d.raw.entities !== raw) { note('Text to outlines: the drawing changed meanwhile, run it again'); return; }
+  if (!state.docs.includes(lay ? d.vlay : d) || (lay ? layObjDoc(d.vlay) !== d : d.raw.entities !== raw)) { note('Text to outlines: the drawing changed meanwhile, run it again'); return; }
   const r = TO.outlineEntities(items, raw, (it) => fonts.get(keyOf(it)).font, 0.01 / d.factor);      // flattened to 0.01 mm, as Export for cutter
   const missing = r.missing.length ? '. Missing glyphs skipped (advance kept): ' + TO.missingGlyphsLabel(r.missing) : '';
   if ([...fonts.values()].some((f) => f.regularForBold)) r.notes.push('Bold face unavailable, used regular');
@@ -4748,9 +4749,10 @@ async function textToOutlines() {
   if (!r.ents.length) { note('Text to outlines: the selected text has no letters to outline' + missing + notes); return; }
   const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
   view.fitted = false;
+  const had = lay ? new Set(Object.keys(lay.parts)) : null;
   commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`);
-  d.txoSel = new Set(r.ents.map((_, i) => at + i));    // keep the new letters readable; a fresh selection enables their grips
-  setSel(d, d.txoSel);
+  if (lay) selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : [])));      // the new letters; commit's update() has made placedNow
+  else { d.txoSel = new Set(r.ents.map((_, i) => at + i)); setSel(d, d.txoSel); }    // keep the new letters readable; a fresh selection enables their grips
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
   const mtexts = [...r.done].filter((i) => raw[i].type === 'MTEXT').length, texts = r.texts - mtexts;
   const count = [texts ? `${texts} text${texts === 1 ? '' : 's'}` : '', mtexts ? `${mtexts} MTEXT` : ''].filter(Boolean).join(' + ');
@@ -6299,16 +6301,18 @@ function toolMenu(e) {
   return true;
 }
 /** Drawn shapes on a layout: each is a layout object on the current layer (layoutdoc.js objectPart), all in ONE undo step. */
-function layDrawCommit(d, kind, shapes, attrs) {
+function layObjectsAdd(d, label, ents) {
   const lay = d.lay, layers = LD.layersOf(lay), names = new Set(Object.values(lay.parts).map((p) => p.name));
-  const ents = shapes.map((sh) => DR.toEntity(sh, attrs, 1));
-  pushLay(d, null, '', DR.LABELS[kind]);
+  pushLay(d, null, '', label);
   for (const e of ents) {
-    const part = LD.objectPart('o' + uid(), LD.nextName(DR.LABELS[kind], names), e, layers);
+    const part = LD.objectPart('o' + uid(), LD.nextName(label, names), e, layers);
     if (!part) continue;
     names.add(part.name); lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
   }
   touch(); update();
+}
+function layDrawCommit(d, kind, shapes, attrs) {
+  layObjectsAdd(d, DR.LABELS[kind], shapes.map((sh) => DR.toEntity(sh, attrs, 1)));
   note(`${DR.LABELS[kind]} made on layer ${attrs.layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
 }
 function drawCommit(d, kind, shapes) {
@@ -7496,8 +7500,14 @@ function textPick(d, cx, cy) {
 /** Puts a text into the drawing (one undo step "Text") and selects it. */
 function textAdd(d, m) {
   const layer = curLayerName(d);
-  if (!d.raw.layers[layer]) addLayer(d.raw, layer);
-  const ent = TX.encode(m, currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour)), idx = d.raw.entities.length;
+  if (!d.lay && !d.raw.layers[layer]) addLayer(d.raw, layer);
+  const ent = TX.encode(m, currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour));
+  if (d.lay) {                                                       // a layout object on the current layer
+    view.fitted = false; layObjectsAdd(d, 'Text', [ent]);
+    note(`${TX.kindOf(m)} placed on layer ${layer}` + (m.lines.length > 1 ? ` (${m.lines.length} lines)` : '') + '. Ctrl+Z takes it back');
+    return;
+  }
+  const idx = d.raw.entities.length;
   view.fitted = false;
   commit(d, { entities: [...d.raw.entities, ent], blocks: d.raw.blocks }, 'Text');
   setSel(d, new Set([idx]));
@@ -7556,7 +7566,7 @@ function textCommit() {
   if (!ed) return;
   state.text.ed = null; ui.textEd.hidden = true; ui.textArea.blur();      // hiding alone moves focus only at the next frame: a key pressed sooner would still go to the textarea
   const lines = TX.linesOf(ui.textArea.value), d = ed.d;
-  if (!state.docs.includes(d) || !d.raw) return;
+  if (!state.docs.includes(d) || !(d.raw || d.lay)) return;
   if (ed.ldr) {                                                       // a leader's note
     if (!lines) { if (ed.e == null && state.ldr) state.ldr.pts = []; renderCommand(); renderEdit(); paintOverlay(); if (ed.e == null) note('Leader: nothing typed, so nothing was made'); return; }
     if (ed.e == null) ldrAdd(d, { ...ed.ldr, lines });
@@ -7584,7 +7594,7 @@ function textToolDown(e) {
   const d = drawTarget();
   if (!d) return;
   if (textEditing()) { textCommit(); return; }                      // clicking away only ends the one being typed
-  const p = textPick(d, e.clientX, e.clientY), hit = hitAt(d, toDrawing(d, e.clientX, e.clientY));
+  const p = textPick(d, e.clientX, e.clientY), hit = d.lay ? -1 : hitAt(d, toDrawing(d, e.clientX, e.clientY));      // (a text object on a layout is not edited here)
   if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) { textOpen(d, p, hit); return; }
   textOpen(d, p);
 }
@@ -7699,7 +7709,7 @@ function textHeightTyped(v) {
 }
 /** A property from the bar or the command line: changes the selected text (one undo step), the one being typed, and is what the next text gets. patch: { h (mm), angle, font, ha, bold }. */
 function textProp(patch) {
-  const d = editable(), c = state.text.cfg, ts = d && textSel(d);
+  const d = editable(), c = state.text.cfg, ts = d && textSel(d), f = d ? d.factor : 1;      // (on a layout there is no selected text to change: the next text gets it)
   const m = {};
   if (patch.h != null) m.h = patch.h;
   if (patch.angle != null) m.angle = patch.angle;
@@ -7719,7 +7729,7 @@ function textProp(patch) {
     if (JSON.stringify(next) !== JSON.stringify(ts.m)) { textReplace(d, ts.e, next, label); note(`${label.replace('Text ', '')} changed on the selected text. Ctrl+Z takes it back`); }
   } else if (textEditing()) {
     const ed = state.text.ed;
-    if (m.h != null) ed.m.h = m.h / d.factor;
+    if (m.h != null) ed.m.h = m.h / ed.d.factor;
     if (m.angle != null) ed.m.angle = m.angle;
     if (m.font) { ed.m.font = m.font; ed.m.styleName = m.font; }
     if (m.ha != null) ed.m.ha = m.ha;

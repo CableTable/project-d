@@ -10796,7 +10796,7 @@ try {
     p = await dimLook('PD_DIM_R1'); assert.ok(Math.abs(p.textH - 5) < 1e-5 && Math.abs(p.arrow - 3) < 1e-5, 'a radius takes the text height and arrow');
     await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
     await page.keyboard.press('Escape');
-  });
+  }, { needs: ['dimension styles: the new Format menu opens the dialog with the Standard style (arrow 2.50, text 3.50, Decimals 0.00, gap 0.80, mm, Above), a live preview and a caption', 'dimension styles: Save as preset… (a taken name refused), pick, Delete; presets are remembered on this PC and survive a reload of the page'] });
   await step('dimension styles: OK also restyles the selected dimensions (one undo step "Dimension style"); inch and Decimals 0.000 change the text; Cancel leaves them', async () => {
     await click(145, 113.3); await waitSel('1 selected');                    // the first dimension's line, off its centred text
     assert.equal(await t('dim-height').inputValue(), '5');
@@ -10833,7 +10833,7 @@ try {
     await page.screenshot({ path: shotDir + '/s13-dimstyle-applied-dark.png' });
     await menuItem('View', 'Theme: light');
     await closeTabs(/./);
-  });
+  }, { needs: ['dimension styles: new dimensions get the style (text height, arrow, gap, centred text breaking the line), also from Keep; a saved file reads back the same'] });
 
   // ---- TODO 28: leaders (mock-up R8c): a note with an arrow ----
   const ldrBlocks = async () => { const doc = await savedDoc(); return { doc, list: Object.entries(doc.blocks).filter(([k]) => /^PD_LDR_/.test(k)).map(([k, b]) => ({ name: k, model: readLeader(k, b), types: b.entities.map((e) => e.type) })) }; };
@@ -10942,7 +10942,7 @@ try {
     await page.screenshot({ path: shotDir + '/s14-leader-selected-dark.png' });
     await menuItem('View', 'Theme: light');
     await closeTabs(/./);
-  });
+  }, { needs: ['leader: a selected leader shows a grip at each point (drag one: the note follows the end), the Leader section (note, text height, arrow size, style), double-click edits the note, Delete'] });
 
   // ---- TODO 29: inspection balloons (mock-ups R9a and R9c Option B): by hand on a vector PDF, a two-page one, and a picture-only page ----
   const balPdf = () => {
@@ -14890,6 +14890,54 @@ try {
     assert.equal(await nParts(), n0 + 2, 'the objects and the plate are back');
     assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
     assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 2);
+    await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156b2b: on a layout, Text makes a text object (one Undo, saved as a plain TEXT, reopened as an object); Text to outlines works on it, a placed part is refused', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts();
+    assert.equal(n0, 1);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const plainOf = (text) => readDxf(text).entities.filter((e) => e.type !== 'INSERT' && !['Sheet', 'Marks', 'Parts'].includes(e.layer));
+    await typeCmd('text'); assert.equal(await t('tool-chip').textContent(), 'Tool: Text');
+    await typeCmd('300,300'); await typeNote('BO');
+    assert.equal(await nParts(), n0 + 1, 'the text is on the sheet');
+    assert.equal((await histLabels()).at(-1), 'Text');
+    assert.match(await prompt(), /^TEXT placed on layer 0/);
+    await undo(); assert.equal(await nParts(), n0, 'one Undo takes the text away');
+    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 1, 'Redo brings it back');
+    await page.locator('[data-tool=select]').click();
+    // saved as a plain TEXT, reopened as an object (not a part)
+    let text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    assert.deepEqual(plainOf(text).map((e) => e.type), ['TEXT']);
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'texts-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'texts-lay.dxf');
+    assert.equal(await nParts(), n0 + 1); assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
+    assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 1);
+    // the plate and the text together: Text to outlines refuses (the plate is a placed part), nothing changes
+    await page.keyboard.press('Control+a');
+    const pAll = await pos();
+    await typeCmd('txo');
+    assert.match(await prompt(), /Text to outlines works on layout objects, not placed parts/);
+    assert.equal(await nParts(), n0 + 1); assert.deepEqual(await pos(), pAll);
+    await page.keyboard.press('Escape');
+    // the text alone: B and O become 5 outline objects, one history step, one Undo
+    await click(305, 304);
+    await typeCmd('txo');
+    await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
+    assert.equal(await nParts(), n0 + 5, 'the text is gone, its 5 outlines are objects');
+    assert.equal((await histLabels()).at(-1), 'Text to outlines × 1');
+    await undo(); assert.equal(await nParts(), n0 + 1);
+    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 5);
+    text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    assert.deepEqual(plainOf(text).map((e) => e.type), Array(5).fill('LWPOLYLINE'));
+    await shotBoth('layout-text-objects');
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'texts-lay2.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'texts-lay2.dxf');
+    assert.equal(await nParts(), n0 + 5, 'the outlines and the plate are back');
+    assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 5);
     await page.locator('[data-tool=select]').click();
   });
 

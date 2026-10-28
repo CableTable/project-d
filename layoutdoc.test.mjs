@@ -6,6 +6,7 @@ import { writeDxf, newDoc, addEntities, rect, line, circle, insert, addBlock } f
 import { placedMat, placedBox, placement1, buildLayoutDoc } from './web/apply.js';
 import * as LD from './web/layoutdoc.js';
 import * as P from './web/place.js';
+import * as TX from './web/text.js';
 import { planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
@@ -399,6 +400,22 @@ test('layout objects (TODO 156b2): plain entities beside the INSERTs, back as ob
   const oldBack = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(old))));
   assert.equal(oldBack.placed.length, 1);
   assert.equal(Object.keys(oldBack.parts).length, 1);
+});
+
+test('layout objects (TODO 156b2b): a TEXT and an MTEXT among the objects are saved as plain entities, come back as objects with their lines, and a move is baked in', () => {
+  const lay = LD.newLayout('Texts'), layers = LD.layersOf(lay);
+  const m = { type: 'TEXT', x: 100, y: 50, h: 10, lines: ['HELLO'], angle: 0, ha: 0, font: 'Standard', styleName: 'Standard', bold: false };
+  const mk = (id, ent) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push(LD.objectPlacement(o)); return lay.placed.at(-1); };
+  const t1 = mk('t1', TX.encode(m, { layer: '0' }));
+  mk('t2', TX.encode({ ...m, type: 'MTEXT', y: 200, lines: ['ONE', 'TWO'] }, { layer: '0' }));
+  t1.x += 40; t1.y -= 10;                                             // moved by 40, -10
+  const raw = LD.layoutRaw(lay), plain = raw.entities.filter((e) => e.type !== 'INSERT' && !LD.isReserved(e.layer));
+  assert.deepEqual(plain.map((e) => e.type), ['TEXT', 'MTEXT']);
+  const back = LD.layoutFromRaw(readDxf(writeDxf(raw))), objs = back.placed.filter((p) => back.parts[p.partId].obj);
+  assert.equal(objs.length, 2); assert.equal(back.placed.length, 2);
+  const msgs = objs.map((p) => TX.decode(back.parts[p.partId].raw.entities[0]));
+  assert.deepEqual(msgs.map((x) => x.lines), [['HELLO'], ['ONE', 'TWO']]);
+  near(msgs[0].x, 140); near(msgs[0].y, 40);
 });
 
 console.log(n + ' tests passed');
