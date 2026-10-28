@@ -6623,8 +6623,7 @@ function arrayTyped(d, raw, c) {
       return true;
     }
   }
-  if (m.stage === 'opts') { note('Unknown option. ' + arrayPrompt(d, m).prompt); renderCommand(); return true; }
-  if (DR.parseInput(raw).kind === 'word') return false;
+  if (m.stage === 'opts' || DR.parseInput(raw).kind === 'word') { note('Unknown option. ' + arrayPrompt(d, m).prompt); renderCommand(); return true; }
   note(`I do not understand "${raw.trim()}". ${m.stage === 'type' ? 'Type R for Rectangular or PO for Polar' : 'Type x,y or click'}`); return true;
 }
 /** Polar's centre point is set (clicked or typed): the default ring shows at once. */

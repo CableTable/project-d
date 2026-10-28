@@ -11610,8 +11610,18 @@ try {
     await openGrips(writeDxf(raw), 'array.dxf');
     const before = await savedDoc(), blur = () => page.evaluate(() => document.activeElement?.blur());
     const xy = (e) => [fieldOf(e, 10), fieldOf(e, 20)];
+    for (const [word, expected] of [['Rectangular', /Enter an option/], ['Polar', /Specify center point of array/]]) {
+      await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd(word);
+      assert.match(await prompt(), expected);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
+      await page.keyboard.press('Escape'); await blur();
+    }
     await page.keyboard.press('Control+a');
     await typeCmd('ar');
+    assert.match(await prompt(), /Enter array type \[Rectangular\/POlar\] <Rectangular>:/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
+    await typeCmd('c');
+    assert.match(await histLine(), /Unknown option/);
     assert.match(await prompt(), /Enter array type \[Rectangular\/POlar\] <Rectangular>:/);
     assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
     assert.equal(await page.locator('nav.rail [data-tool=array]').count(), 0);
@@ -11644,7 +11654,7 @@ try {
     assert.equal((await savedDoc()).entities.length, 4, 'COL 2 R 2 gives 4');
     await blur(); await page.keyboard.press('Control+z');
 
-    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('r'); await typeCmd('cou');
+    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('R'); await typeCmd('cou');
     assert.match(await prompt(), /Enter the number of columns <4>:/);
     await typeCmd('2'); assert.match(await prompt(), /Enter the number of rows <3>:/);
     await typeCmd('2'); assert.match(await prompt(), /Enter an option/);
@@ -11688,8 +11698,12 @@ try {
     const r3 = (v) => Math.round(v * 1000) / 1000 + 0;
     const seg = (e) => [fieldOf(e, 10), fieldOf(e, 20), fieldOf(e, 11), fieldOf(e, 21)].map(r3);
     const polar = async (...words) => { await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('po'); await typeCmd('0,0'); for (const w of words) await typeCmd(w); };
-    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('po');
+    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('PO');
     assert.match(await prompt(), /Specify center point of array/);
+    await typeCmd('l');
+    assert.match(await histLine(), /Unknown option/);
+    assert.match(await prompt(), /Specify center point of array/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
     await page.mouse.move(500, 400); await typeCmd('0,0');
     for (const word of ['a', 'c', 'co', 'l', 'nonsense']) {
       await typeCmd(word);
