@@ -282,6 +282,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M). Grilled 2026-10-28 (DECISIONS "Compare editable"), split:
       156c1. ✅ (built, Knight, 2026-10-28) Snapshot link to its drawing tab; Modify / Draw / grips on the picked snapshot go to that tab (file + Undo); differences recalculated; closed tab or library part = read-only with a message (M).
       156c2. Layers panel for the picked snapshot and Contour in Compare (result to the source drawing) (S).
+      156c3. Compare: Ctrl+Z on a Line with only its first point drops that point, as on a drawing tab or layout (review rvmerge, Low, 2026-10-28) (XS).
     156d. Guides, Layers (+ Add), Contour, Measure in every tab (S–M). Grilled 2026-10-28 (DECISIONS "Guides, Layers, Measure in every tab"):
       156d1. ✅ (built, Knight, 2026-10-28) Guides on drawing tabs (remembered per file on this PC, never in the DXF) and in Compare; Measure in Compare across all snapshots (S). Layouts' "+ Add layer" goes with 156b2; Compare Layers / Contour with 156c2.
     155p. ✅ (built, Knight, revised decision 2026-10-28) Snap markers: green `#00C000` outlines, about 12 px, with our text label. Dark halo kept for readability on white paper.
