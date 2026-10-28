@@ -3436,6 +3436,14 @@ try {
   const pdfText = (dl) => dl.text;
   const boxes = (txt) => [...txt.matchAll(/\/MediaBox \[0 0 ([\d.]+) ([\d.]+)\]/g)].map((m) => [Number(m[1]) / (72 / 25.4), Number(m[2]) / (72 / 25.4)]);
   const dialog = page.locator('[data-testid=pdf-dialog]');
+  const pdfLayout = async () => {
+    const lay = newLayout('Mirror PDF'), raw = newDoc(4);
+    addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+    lay.parts.p = makePart('p', 'Plate', raw);
+    lay.placed = [{ partId: 'p', x: 200, y: 200, rot: 0 }];
+    await t('picker').setInputFiles({ name: 'mirror-pdf.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'mirror-pdf.dxf');
+  };
   const openPdf = async () => { await t('pdf-open').click(); await dialog.waitFor(); await page.waitForFunction(() => { const c = document.querySelector('[data-testid=pdf-preview]'); return c && c.width > 100; }); };
   afterStep = async () => {
     await closeModals();
@@ -3519,6 +3527,7 @@ try {
   });
 
   await step('Mirror off, Negative on, one page per colour off change the output', async () => {
+    if (only) await pdfLayout();
     await openPdf();
     await t('pdf-mirror').uncheck();
     const plain = pdfText(await downloaded(() => t('pdf-go').click()));
@@ -5514,6 +5523,7 @@ try {
   });
 
   await step('review: PDF dialog: a greyed Mirror and Negative show unticked and do not apply', async () => {
+    if (only) await pdfLayout();
     await t('pdf-open').click();
     const dialog = t('pdf-dialog');
     await dialog.waitFor();
@@ -5849,6 +5859,7 @@ try {
   });
 
   await step('placing: Mirror X flips left to right, Mirror Y top to bottom; twice is the start; the Rotate/Mirror sections do the same', async () => {
+    await freshLayoutWithPlate();
     await partTab(); await t('pa').fill('0'); await t('pa').press('Enter');
     await partTab(); await t('pa').fill('30'); await t('pa').press('Enter');
     const start = [await pos(), await angleNow(), Number(await t('pw').inputValue())];
@@ -6209,6 +6220,7 @@ try {
   });
 
   await step('TODO 36: dragging any selected part moves them all; arrows nudge, Mirror and Delete act on all; a click on one of them selects just it', async () => {
+    await threeParts();
     await dragMm([40, 650], [960, 150]);
     assert.equal(await t('pp-name').textContent(), '3 parts');
     const before = await selBoxes();
@@ -12613,6 +12625,50 @@ try {
     await page.locator('[data-tool=mirror]').click();
     await page.keyboard.press('Escape');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc with nothing selected ends Mirror');
+  });
+
+  await step('TODO 155j: Mirror blocks, dimensions, hatches and half ellipses; Erase No / Yes, independent dimension blocks and one undo', async () => {
+    const raw = newDoc(4);
+    addBlock(raw, 'mirror-part', [dxfLine(0, 0, 60, 0), dxfLine(60, 0, 60, 35), dxfLine(60, 35, 40, 35)]);
+    addEntities(raw, dxfInsert('mirror-part', 30, 30));
+    const dim = buildDim('aligned', { a: [30, 30], b: [90, 30], offset: -12, textH: 4 }, 1, 'PD_DIM_1');
+    Object.assign(raw, addDimension(raw, dim));
+    addEntities(raw, entity('HATCH', [[10, 0], [20, 0], [30, 0], [2, 'ANSI31'], [70, 0], [71, 0], [91, 1],
+      [92, 2], [72, 0], [73, 1], [93, 4], [10, 30], [20, 90], [10, 80], [20, 90], [10, 80], [20, 130], [10, 30], [20, 130], [97, 0],
+      [75, 0], [76, 1], [52, 45], [41, 1], [77, 0], [78, 1], [53, 45], [43, 0], [44, 0], [45, -3], [46, 3], [79, 0], [98, 0]]),
+    dxfEllipse(130, 60, 20, 8, .5, 0, Math.PI));
+    const native = buildDim('aligned', { a: [30, 165], b: [90, 165], offset: 12, textH: 4 }, 1, '*D1');
+    raw.blocks['*D1'] = native.block;
+    addEntities(raw, entity('DIMENSION', [[2, '*D1'], [70, 1], [10, 30], [20, 177], [13, 30], [23, 165], [14, 90], [24, 165]]));
+    await openGrips(writeDxf(raw), 'mirror155j.dxf');
+    const before = await savedDoc();
+    for (const erase of [false, true]) {
+      await page.keyboard.press('Control+a'); await typeCmd('mi');
+      await typeCmd('200,0'); await typeCmd('200,100');
+      assert.match(await prompt(), /Erase source objects/);
+      await t(erase ? 'mirror-yes' : 'mirror-no').click();
+      assert.match(await prompt(), /^Mirrored 5/); assert.doesNotMatch(await histLine(), /not mirrored yet|left out/);
+      const saved = await savedDoc(), copies = saved.entities.slice(erase ? 0 : 5);
+      assert.equal(saved.entities.length, erase ? 5 : 10);
+      assert.deepEqual(copies.map((e) => e.type), ['INSERT', 'INSERT', 'HATCH', 'ELLIPSE', 'DIMENSION']);
+      assert.equal(copies[0].r.v[copies[0].r.c.indexOf(2)], 'mirror-part');
+      assert.equal(fieldOf(copies[0], 41), -1); assert.ok(saved.blocks['mirror-part'], 'Erase Yes keeps the shared block');
+      for (const i of [1, 4]) {
+        const name = copies[i].r.v[copies[i].r.c.indexOf(2)];
+        assert.notEqual(name, i === 1 ? 'PD_DIM_1' : '*D1');
+        const fl = flatten({ ...saved, entities: [copies[i]] }), tx = fl.items.find((it) => it.k === 't'), m = fl.mats[tx.m];
+        assert.equal(tx.mx, 1); assert.equal(tx.my, 1);
+        assert.ok(m[0] * Math.cos(tx.rot) + m[2] * Math.sin(tx.rot) >= -1e-6, 'dimension text is upright');
+      }
+      assert.equal(fieldOf(copies[2], 53), 45, 'hatch direction stays');
+      assert.ok(Math.abs(fieldOf(copies[3], 41) - Math.PI) < 1e-6);
+      assert.equal(fieldOf(copies[3], 42), 0);
+      assert.equal((await histLabels()).at(-1), 'Mirror');
+      if (!erase) { await page.keyboard.press('Escape'); await page.keyboard.press('Control+0'); await shotBoth('todo155j-mirrored'); }
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'one undo restores every source');
+      assert.deepEqual(Object.keys((await savedDoc()).blocks), Object.keys(before.blocks), 'undo removes the private dimension blocks');
+    }
   });
 
   await step('Trim: Ctrl+Z after trimming a cutting edge gives the edge back, so the same edge set still cuts', async () => {

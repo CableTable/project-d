@@ -6859,15 +6859,17 @@ function extendDo(d, idx, p) {
 /** Mirror: the second point is picked, now Yes (the sources go) or No (they stay). One undo step. */
 function modAnswer(d, erase) {
   const m = state.mod, at = new Map(d.raw.entities.map((e, i) => [e, i])), done = [], made = [], skipped = [];
+  let blocks = d.raw.blocks;
   for (const ent of m.objs) {
     if (!at.has(ent)) continue;
-    const r = MD.mirrorEntity(ent, m.p1, m.p2);
+    const r = MD.mirrorEntity(ent, m.p1, m.p2, blocks);
+    if (r.blocks) blocks = r.blocks;
     if (r.ent) { made.push(r.ent); done.push(at.get(ent)); } else skipped.push(r.skip);
   }
   if (!made.length) { setTool('select'); note('Mirror: nothing could be mirrored' + (skipped.length ? ' (' + skipped[0] + ')' : '')); return; }
-  const base = erase ? Ed.removeEntities(d.raw, new Set(done)) : { entities: d.raw.entities, blocks: d.raw.blocks }, first = base.entities.length;
+  const gone = new Set(erase ? done : []), base = d.raw.entities.filter((_, i) => !gone.has(i)), first = base.length;
   view.fitted = false;
-  commit(d, { entities: [...base.entities, ...made], blocks: base.blocks }, 'Mirror');
+  commit(d, { entities: [...base, ...made], blocks }, 'Mirror');
   setTool('select'); setSel(d, new Set(made.map((_, i) => first + i)));
   note(`Mirrored ${made.length}${erase ? ', the sources erased' : ''}` + (skipped.length ? `; ${skipped.length} left out (${[...new Set(skipped)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }
@@ -6920,7 +6922,7 @@ function modOvl(d, out) {
     const a = m.p1, b = m.stage === 'erase' ? m.p2 : m.stage === 'p2' ? m.cur : null;
     if (a && b && Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-9) {
       add({ t: 'line', a: [a[0] * f, a[1] * f], b: [b[0] * f, b[1] * f] }, 'dr-guide', 'mod-line');
-      for (const e of m.objs.slice(0, 300)) { const r = MD.mirrorEntity(e, a, b); if (r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
+      for (const e of m.objs.slice(0, 300)) { const r = MD.mirrorEntity(e, a, b, d.raw.blocks); if (r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
     }
   }
 }

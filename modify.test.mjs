@@ -3,7 +3,10 @@ import assert from 'node:assert/strict';
 import * as M from './web/modify.js';
 import { shapeOf, get } from './web/grips.js';
 import { extendEntity, extendRegion, previewEdit } from './web/extend.js';
-import { entity, line, circle, arc, lwpoly, text, mtext, ellipse, insert, rect, roundRect } from './web/dxf-write.js';
+import { entity, line, circle, arc, lwpoly, text, mtext, ellipse, insert, rect, roundRect, newDoc, addBlock, addEntities, writeDxf } from './web/dxf-write.js';
+import { readDxf, flatten, mapply } from './web/drawing.js';
+import { addDimension, buildDim, dimOfEntity, freeName, moveEntities } from './web/edit.js';
+import { followDimensions } from './web/linked-dimensions.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -275,7 +278,7 @@ test('Mirror: line, circle, arc, polyline (bulges flip) in a vertical and a slop
   assert.ok(M.mirrorEntity(line(0, 0, 1, 1), [2, 2], [2, 2]).skip);
 });
 
-test('Mirror: text keeps reading the same way (only its place moves); a whole ellipse mirrors; blocks are skipped', () => {
+test('Mirror: text keeps reading the same way (only its place moves); a whole ellipse mirrors', () => {
   const t = text(10, 5, 4, 'ABC', { ...base, rot: 30 });
   const m = M.mirrorEntity(t, [0, 0], [0, 1]);
   assert.equal(get(m.ent.r, 10), -10); assert.equal(get(m.ent.r, 20), 5);
@@ -286,8 +289,185 @@ test('Mirror: text keeps reading the same way (only its place moves); a whole el
   const e = M.mirrorEntity(ellipse(10, 0, 5, 2, 0.5), [0, 0], [0, 1]);
   assert.equal(get(e.ent.r, 10), -10); assert.equal(get(e.ent.r, 11), -5); assert.equal(get(e.ent.r, 21), -2 + 4 === 2 ? 2 : get(e.ent.r, 21));
   assert.equal(get(e.ent.r, 21), 2);
-  assert.match(M.mirrorEntity(insert('B', 0, 0), [0, 0], [0, 1]).skip, /blocks/);
-  assert.ok(M.mirrorEntity(ellipse(0, 0, 5, 2, 0.5, 0, 1), [0, 0], [0, 1]).skip);
+});
+
+const value = (e, c) => e.r.v[e.r.c.indexOf(c)];
+const roundTrip = (raw) => readDxf(writeDxf(raw));
+const reflected = (p, a, b) => M.mirrorShape({ t: 'line', a: p, b: p }, a, b).a;
+const worldPoints = (raw) => {
+  const fl = flatten(raw);
+  return fl.items.filter((it) => it.k === 'p').flatMap((it) => {
+    const pts = [];
+    for (let k = 0; k < it.ops.length;) {
+      const op = it.ops[k++];
+      if (op === 0 || op === 1) { pts.push(mapply(fl.mats[it.m], it.ops[k], it.ops[k + 1])); k += 2; }
+      else break;
+    }
+    return pts;
+  });
+};
+
+test('TODO 155j: INSERT shares its definition, mirrors signed scales, rotation, nested blocks, arrays and attributes; DXF round trip', () => {
+  for (const flip of [false, true]) for (const sx of [2, -2]) for (const sy of [3, -3]) {
+    const raw = newDoc(4);
+    addBlock(raw, 'nested', [line(1, 2, 4, 5)]);
+    addBlock(raw, 'B', [insert('nested', 5, 7, { rot: 23 }), line(10, 20, 30, 20)], [2, 3]);
+    const src = insert('B', 40, 50, { sx, sy, rot: 37, cols: 2, rows: 2, dx: 12, dy: 18 });
+    if (flip) { src.flip = true; src.r.c.push(210, 220, 230); src.r.v.push('0', '0', '-1'); }
+    src.kids = [{ ...text(60, 70, 2, 'ATTR').r, type: 'ATTRIB' }];
+    raw.entities = [src];
+    const before = structuredClone(raw), a = [3, 8], b = [17, 19], result = M.mirrorEntity(src, a, b, raw.blocks);
+    assert.equal(value(result.ent, 2), 'B'); assert.equal(result.blocks, undefined);
+    near(get(result.ent.r, 41), -sx); near(get(result.ent.r, 42), sy);
+    near(get(result.ent.r, 50), ((2 * Math.atan2(11, flip ? -14 : 14) * 180 / Math.PI - 37 + 180) % 360 + 360) % 360);
+    const expected = worldPoints(raw).map((p) => reflected(p, a, b));
+    for (const mirrored of [{ ...raw, entities: [result.ent] }, roundTrip({ ...raw, entities: [result.ent] })]) {
+      worldPoints(mirrored).forEach((p, i) => nearPt(p, expected[i], 2e-5));
+      const kid = mirrored.entities[0].kids[0];
+      nearPt([get(kid, 10), get(kid, 20)], reflected([60, 70], a, b), 2e-5);
+      assert.equal(kid.v[kid.c.indexOf(1)], 'ATTR');
+    }
+    assert.deepEqual(raw, before);
+  }
+});
+
+test('TODO 155j: elliptical arcs swap and negate parameters, preserve ratio and the mirrored sweep, including wrapped arcs and DXF', () => {
+  for (const [start, end] of [[0, Math.PI], [.3, 2.7], [5.2, .8], [0, Math.PI * 2]]) {
+    const src = ellipse(10, 20, 8, 3, .4, start, end), a = [3, 5], b = [12, 9];
+    const mirrored = M.mirrorEntity(src, a, b).ent;
+    const raw = newDoc(4); addEntities(raw, mirrored);
+    for (const e of [mirrored, roundTrip(raw).entities[0]]) {
+      near(get(e.r, 40), .4); nearPt([get(e.r, 10), get(e.r, 20)], reflected([10, 20], a, b));
+      let t0 = get(e.r, 41), t1 = get(e.r, 42); if (t1 <= t0) t1 += 2 * Math.PI;
+      const oldEnd = end <= start ? end + 2 * Math.PI : end;
+      near(t1 - t0, oldEnd - start, 2e-6);
+      for (const f of [0, .25, .5, 1]) {
+        const t = oldEnd - (oldEnd - start) * f, s = t0 + (t1 - t0) * f;
+        const original = [10 + 8 * Math.cos(t) - 3 * .4 * Math.sin(t), 20 + 3 * Math.cos(t) + 8 * .4 * Math.sin(t)];
+        const q = [get(e.r, 10) + get(e.r, 11) * Math.cos(s) - get(e.r, 21) * .4 * Math.sin(s), get(e.r, 20) + get(e.r, 21) * Math.cos(s) + get(e.r, 11) * .4 * Math.sin(s)];
+        nearPt(q, reflected(original, a, b), 1e-5);
+      }
+    }
+  }
+});
+
+test('TODO 155j: hatch outer and island loops, bulges, pattern direction, origin and seeds; solid fill; DXF round trip', () => {
+  for (const solid of [0, 1]) {
+    const src = entity('HATCH', [[10, 0], [20, 0], [30, 0], [2, solid ? 'SOLID' : 'ANSI31'], [70, solid], [71, 0], [91, 2],
+      [92, 2], [72, 1], [73, 1], [93, 3], [10, 2], [20, 3], [42, .5], [10, 8], [20, 3], [42, 0], [10, 8], [20, 9], [42, 0], [97, 0],
+      [92, 2], [72, 0], [73, 1], [93, 3], [10, 4], [20, 4], [10, 5], [20, 4], [10, 5], [20, 5], [97, 0],
+      [75, 0], [76, 1], [52, 45], [41, 1], [77, 0], [78, 1], [53, 45], [43, 2], [44, 3], [45, 0], [46, 2], [79, 2], [49, 3], [49, -1], [98, 1], [10, 6], [20, 7]]);
+    const before = structuredClone(src), a = [1, 2], b = [7, 11], result = M.mirrorEntity(src, a, b).ent;
+    const raw = newDoc(4); addEntities(raw, result);
+    for (const copy of [result, roundTrip(raw).entities[0]]) {
+      for (const code of [52, 53, 45, 46, 49, 70]) assert.equal(value(copy, code), value(src, code));
+      near(get(copy.r, 42), -.5);
+      nearPt([get(copy.r, 43), get(copy.r, 44)], reflected([2, 3], a, b), 1e-6);
+      const xs = copy.r.c.flatMap((c, i) => c === 10 ? [i] : []).slice(1);
+      xs.forEach((k, i) => nearPt([+copy.r.v[k], +copy.r.v[k + 1]], reflected([[2, 3], [8, 3], [8, 9], [4, 4], [5, 4], [5, 5], [6, 7]][i], a, b), 1e-6));
+      assert.ok(flatten({ ...raw, entities: [copy] }).items.length);
+    }
+    assert.deepEqual(src, before);
+  }
+});
+
+test('TODO 155j: hatch circular and elliptical edges reverse direction; spline weights stay', () => {
+  for (const ccw of [0, 1]) {
+    const src = entity('HATCH', [[2, 'SOLID'], [70, 1], [91, 1], [92, 0], [93, 3],
+      [72, 2], [10, 2], [20, 3], [40, 4], [50, 20], [51, 100], [73, ccw],
+      [72, 3], [10, 4], [20, 5], [11, 6], [21, 2], [40, .5], [50, 30], [51, 90], [73, ccw],
+      [72, 4], [94, 2], [73, 1], [74, 0], [95, 6], [96, 3], ...[0, 0, 0, 1, 1, 1].map((n) => [40, n]),
+      [10, 1], [20, 2], [42, 1], [10, 3], [20, 4], [42, .5], [10, 5], [20, 6], [42, 1], [97, 0], [97, 0], [75, 0], [98, 0]]);
+    const copy = M.mirrorEntity(src, [0, 0], [1, 1]).ent;
+    near(get(copy.r, 50), ((20 - (ccw ? 1 : -1) * 90) % 360 + 360) % 360);
+    assert.equal(get(copy.r, 73), 1 - ccw); assert.equal(get(copy.r, 73, 1), 1 - ccw); assert.equal(get(copy.r, 73, 2), 1);
+    nearPt([get(copy.r, 11), get(copy.r, 21)], [2, 6]);
+    assert.equal(get(copy.r, 42, 1), .5);
+    const twice = M.mirrorEntity(copy, [0, 0], [1, 1]).ent;
+    src.r.c.forEach((code, i) => { if (code !== 2 && code !== 8) near(+twice.r.v[i], +src.r.v[i]); });
+  }
+});
+
+test('TODO 155j: every PD dimension kind owns a block; geometry reflects, text reads upright, links follow the copy after DXF', () => {
+  for (const [kind, params] of [['aligned', { a: [10, 20], b: [70, 40], offset: 10 }], ['linear', { a: [10, 20], b: [70, 40], offset: 10, axis: 'h' }],
+    ['radius', { c: [20, 30], r: 10, p: [40, 50] }], ['diameter', { a: [10, 20], b: [70, 40] }], ['angle', { v: [20, 30], r: 15, a0: 20, a1: 100 }]]) {
+    for (const axis of [[[0, 0], [0, 1]], [[3, 5], [9, 13]]]) {
+      const raw = newDoc(4), name = freeName({}, kind, params.axis), built = buildDim(kind, { ...params, textH: 2, gap: 1 }, 1, name, 3);
+      Object.assign(raw, addDimension(raw, built));
+      const before = structuredClone(raw), result = M.mirrorEntity(raw.entities[0], ...axis, raw.blocks);
+      assert.ok(result.ent, result.skip); assert.notEqual(value(result.ent, 2), name);
+      assert.equal(get(result.ent.r, 41), 1, 'dimension INSERT has no reversed text transform');
+      const next = { ...raw, entities: [result.ent], blocks: result.blocks };
+      for (const mirrored of [next, roundTrip(next)]) {
+        const fl = flatten(mirrored), tx = fl.items.find((it) => it.k === 't'), mat = fl.mats[tx.m], a = tx.rot;
+        assert.equal(tx.mx, 1); assert.equal(tx.my, 1);
+        assert.ok(mat[0] * Math.cos(a) + mat[2] * Math.sin(a) >= -1e-6, 'text is not upside down');
+        assert.ok(dimOfEntity(mirrored, 0), 'dimension stays editable and linkable');
+        assert.equal(dimOfEntity(mirrored, 0).kind, kind);
+      }
+      // Match straight geometry separately; angular arcs are checked by their saved parameters below.
+      if (kind !== 'angle') worldPoints(next).forEach((p, i) => nearPt(p, reflected(worldPoints(raw)[i], ...axis)));
+      else { const m = dimOfEntity(next, 0); near(m.params.a0, 80); near(m.params.a1, 160); }
+      assert.deepEqual(raw, before);
+      if (kind === 'aligned') {
+        const shape = M.mirrorEntity(line(...params.a, ...params.b), ...axis).ent;
+        const linked = roundTrip({ ...next, entities: [shape, result.ent] });
+        const moved = followDimensions(linked, moveEntities(linked, new Set([0]), 8, 6));
+        const p = dimOfEntity(moved, 1).params, old = dimOfEntity(linked, 1).params;
+        assert.notDeepEqual(p.a, old.a); assert.notDeepEqual(p.b, old.b);
+        assert.equal(moved.blocks[name], linked.blocks[name], 'source block stays independent');
+      }
+    }
+  }
+});
+
+test('TODO 155j: native DIMENSION definition points, independent geometry and readable text survive DXF', () => {
+  const raw = newDoc(4), built = buildDim('aligned', { a: [10, 20], b: [70, 40], offset: 10, textH: 2 }, 1, '*D1');
+  raw.blocks['*D1'] = built.block;
+  const src = entity('DIMENSION', [[2, '*D1'], [70, 1], [10, 10], [20, 30], [11, 40], [21, 40], [13, 10], [23, 20], [14, 70], [24, 40], [53, 0]]);
+  raw.entities = [src, src];
+  const before = structuredClone(raw), result = M.mirrorEntity(src, [0, 0], [0, 1], raw.blocks);
+  assert.equal(value(result.ent, 2), '*D2');
+  for (const x of [10, 11, 13, 14]) near(get(result.ent.r, x), -get(src.r, x));
+  near(get(result.ent.r, 53), 0);
+  const second = M.mirrorEntity(src, [0, 0], [0, 1], result.blocks);
+  assert.equal(value(second.ent, 2), '*D3');
+  const copy = roundTrip({ ...raw, entities: [result.ent], blocks: second.blocks });
+  worldPoints(copy).forEach((p, i) => nearPt(p, [-worldPoints({ ...raw, entities: [src] })[i][0], worldPoints({ ...raw, entities: [src] })[i][1]], 2e-6));
+  const tx = flatten(copy).items.find((it) => it.k === 't');
+  assert.equal(tx.mx, 1); assert.equal(tx.my, 1); assert.ok(Math.cos(tx.rot) >= 0);
+  assert.deepEqual(raw, before);
+});
+
+test('TODO 155j: native dimension MTEXT retains attachment and readable direction vectors', () => {
+  const raw = newDoc(4), tx = mtext(40, 20, 3, '60.00', { attach: 5 });
+  tx.r.c.push(11, 21); tx.r.v.push(String(Math.cos(200 * Math.PI / 180)), String(Math.sin(200 * Math.PI / 180)));
+  addBlock(raw, '*D1', [line(10, 20, 70, 20), tx]);
+  const src = entity('DIMENSION', [[2, '*D1'], [70, 0], [10, 40], [20, 20]]), result = M.mirrorEntity(src, [0, 0], [0, 1], raw.blocks);
+  const copy = result.blocks['*D2'].entities[1];
+  assert.equal(get(copy.r, 71), 5); near(get(copy.r, 50), 340);
+  const read = roundTrip({ ...raw, entities: [result.ent], blocks: result.blocks }), item = flatten(read).items.find((it) => it.k === 't');
+  assert.ok(Math.cos(item.rot) >= 0); assert.equal(item.mx, 1); assert.equal(item.my, 1);
+});
+
+test('TODO 155j: translated, rotated and scaled PD dimensions reflect in their insert frame and remain upright', () => {
+  const raw = newDoc(4), built = buildDim('aligned', { a: [10, 20], b: [70, 40], offset: 10, textH: 2 }, 1, 'PD_DIM_1');
+  raw.blocks[built.name] = built.block;
+  raw.entities = [insert(built.name, 40, 50, { sx: 2, sy: 3, rot: 137 })];
+  const a = [3, 5], b = [9, 13], result = M.mirrorEntity(raw.entities[0], a, b, raw.blocks), copy = roundTrip({ ...raw, entities: [result.ent], blocks: result.blocks });
+  worldPoints(copy).forEach((p, i) => nearPt(p, reflected(worldPoints(raw)[i], a, b), 2e-5));
+  const fl = flatten(copy), tx = fl.items.find((it) => it.k === 't'), m = fl.mats[tx.m];
+  assert.ok(m[0] * Math.cos(tx.rot) + m[2] * Math.sin(tx.rot) >= -1e-6);
+  assert.ok(m[0] * m[3] - m[1] * m[2] > 0, 'text has no reflected parent matrix');
+});
+
+test('TODO 155j: malformed ellipse and recursive native dimension blocks are refused without changing the source', () => {
+  assert.ok(M.mirrorEntity(entity('ELLIPSE', [[10, 0], [20, 0]]), [0, 0], [0, 1]).skip);
+  const raw = newDoc(4), dim = entity('DIMENSION', [[2, '*D1'], [70, 0], [10, 0], [20, 0]]);
+  addBlock(raw, '*D1', [dim]); raw.entities = [dim];
+  const before = structuredClone(raw);
+  assert.match(M.mirrorEntity(dim, [0, 0], [0, 1], raw.blocks).skip, /nested too deeply/);
+  assert.deepEqual(raw, before);
 });
 
 test('a polyline keeps its constant width and elevation through Mirror, Offset and Trim', () => {
