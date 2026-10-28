@@ -98,7 +98,7 @@ async function runStep(page, { name, fn, afterStep }, shotDir) {
     await fn();
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
-    assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), /Specify/, `${name} left a command running`);
+    assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), /Specify|Next point|Click inside|Select destination|Type the text|Esc (?:ends|cancels)[).:\s]*$/, `${name} left a command running`);
     console.log('ok', name);
   } catch (e) {
     failed++;
