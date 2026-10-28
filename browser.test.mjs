@@ -11447,7 +11447,6 @@ try {
     assert.match(await prompt(), /Enter array type \[Rectangular\/POlar\] <Rectangular>:/);
     assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
     assert.equal(await page.locator('nav.rail [data-tool=array]').count(), 0);
-    await typeCmd('po'); assert.match(await prompt(), /Enter array type/, 'Polar is not built: the type prompt stays');
     await typeCmd('');
     assert.match(await prompt(), /Enter an option \[COUnt\/Spacing\/COLumns\/Rows\/Exit\] <Exit>:/);
     await page.locator('button:text-is("Fit")').click(); await page.mouse.move(600, 500); for (let k = 0; k < 4; k++) await page.mouse.wheel(0, 300);       // zoomed out: all 12 shapes in view for the pictures
@@ -11490,6 +11489,64 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.deepEqual((await savedDoc()).entities, before.entities, 'Esc adds nothing');
     await closeTabs(/array/);
+  });
+
+  await step('TODO 75 T2: Array (AR) Polar: centre, 6 items over 360° turned as they go, I 8, ROT N keeps orientation, a partial angle both ways, one undo step, Esc adds nothing', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    addEntities(raw, dxfLine(40, 0, 60, 0, { layer: 'Cut', aci: 3 }));
+    await openGrips(writeDxf(raw), 'polar.dxf');
+    const before = await savedDoc(), blur = () => page.evaluate(() => document.activeElement?.blur());
+    const r3 = (v) => Math.round(v * 1000) / 1000 + 0;
+    const seg = (e) => [fieldOf(e, 10), fieldOf(e, 20), fieldOf(e, 11), fieldOf(e, 21)].map(r3);
+    const polar = async (...words) => { await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('po'); await typeCmd('0,0'); for (const w of words) await typeCmd(w); };
+    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('po');
+    assert.match(await prompt(), /Specify center point of array/);
+    await page.mouse.move(500, 400); await typeCmd('0,0');
+    assert.match(await prompt(), /Enter an option \[Items\/Angle to fill\/ROTate items\/Exit\] <Exit>:/);
+    await page.locator('button:text-is("Fit")').click(); await page.mouse.move(600, 500); for (let k = 0; k < 4; k++) await page.mouse.wheel(0, 300);
+    await page.mouse.move(1, 1); await page.waitForTimeout(300);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+      await page.screenshot({ path: `${shotDir}/todo75b-polar-preview-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'the preview adds nothing');
+    await typeCmd('');
+    const full = await savedDoc();
+    assert.equal(full.entities.length, 6, '6 items by default');
+    assert.deepEqual(full.entities[0], before.entities[0]);
+    assert.deepEqual(full.entities.slice(1).map(seg), [60, 120, 180, 240, 300].map((deg) => {
+      const c = Math.cos(deg * Math.PI / 180), s = Math.sin(deg * Math.PI / 180);
+      return [40 * c, 40 * s, 60 * c, 60 * s].map(r3);
+    }), 'every 60°, turned about the centre');
+    assert.ok(full.entities.every((e) => e.layer === 'Cut' && e.aci === 3), 'the copies keep layer and colour');
+    assert.equal((await histLabels()).at(-1), 'Array');
+    await blur(); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one Ctrl+Z removes all 5 copies');
+
+    await polar('i 8'); await typeCmd('');
+    assert.equal((await savedDoc()).entities.length, 8, 'I 8 gives 8');
+    await blur(); await page.keyboard.press('Control+z');
+
+    await polar('i 4', 'rot n'); assert.match(await prompt(), /Enter an option/); await typeCmd('');
+    assert.deepEqual((await savedDoc()).entities.slice(1).map(seg), [[-10, 50, 10, 50], [-60, 0, -40, 0], [-10, -50, 10, -50]], 'ROT N: still horizontal, the middle of the line goes round');
+    await blur(); await page.keyboard.press('Control+z');
+
+    await polar('i 3 a 180 x');
+    assert.deepEqual((await savedDoc()).entities.slice(1).map(seg), [[0, 40, 0, 60], [-40, 0, -60, 0]], 'a partial angle: the last item is at the fill angle');
+    await blur(); await page.keyboard.press('Control+z');
+    await polar('i 3 a -90 x');
+    assert.deepEqual((await savedDoc()).entities.slice(1).map(seg), [[28.284, -28.284, 42.426, -42.426], [0, -40, 0, -60]], 'negative = clockwise');
+    await blur(); await page.keyboard.press('Control+z');
+
+    await polar('rot'); assert.match(await prompt(), /Rotate arrayed items\? \[Yes\/No\] <Yes>:/);
+    await typeCmd('no'); assert.match(await prompt(), /Enter an option/);
+    await typeCmd('i 0'); assert.match(await prompt(), /Enter an option/);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'Esc adds nothing');
+    await closeTabs(/polar/);
   });
 
   await step('TODO 66c: Rotate', async () => {

@@ -4092,7 +4092,8 @@ function paintOverlay(gesture = false) {
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); ui.cmdUI.place(); return; }
-    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur } : null);
+    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
+      : modLive() && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
@@ -6265,7 +6266,7 @@ function modEnter(d) {
 /** Words the Trim / Extend that is on takes itself (modTyped), so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
   const m = state.mod;
-  if (modLive() && m.kind === 'array') return m.stage !== 'pick' && (!!m.ask || !!AR.parseLine(c) || (m.stage === 'type' && /^(r|re|rect|rectangular|po|pol|polar)$/.test(c)));
+  if (modLive() && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts' && (!!m.ask || !!AR.parseLine(c, m.type));
   if (!modLive() || !['trim', 'extend'].includes(m.kind)) return false;
   if (m.askMode || m.fence || m.cross || m.erase) return true;
   const own = m.kind === 'extend' ? ['b', 'boundary', 'boundary edges'] : ['t', 'cutting', 'cutting edges', 'r', 'erase'];
@@ -6391,6 +6392,7 @@ function modHover(d, cx, cy, shift) {
     m.cur = snapPoint(d, p, undefined, undefined, m.p1);
     if (m.p1) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], scaleMatrix(m.p1, scaleDistance(m.p1, m.cur)))];
   }
+  if (m.kind === 'array' && m.stage === 'center') m.cur = snapPoint(d, p);
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
   paintOverlay();
 }
@@ -6440,7 +6442,8 @@ function modUp(d, was, p, shift, crossing) {
     else if (Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) < 1e-9) note('Click a point away from the pivot');
     else transformDo(d, rotationAngle(m.p1, q, shift || was.shift));
   } else if (m.kind === 'array') {
-    note(modPrompt(d).prompt);
+    if (m.stage === 'center') arrayCenter(d, snapPoint(d, was.p));
+    else note(modPrompt(d).prompt);
   } else {
     mirrorPoint(d, was.p, shift || was.shift);
   }
@@ -6460,24 +6463,30 @@ function arrayTake(d) {
   if (!d.sel.size) { note('Array: pick at least one object first'); return; }
   if (moveLocked(d, d.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   const m = state.mod;
-  m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = 'type'; m.ask = null;
+  m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = 'type'; m.ask = null; m.type = 'rect'; m.center = null; m.move = null;
   m.preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
-  m.cfg = AR.rectDefaults(drawingBoxMm(m.preview, d.factor));
+  const box = drawingBoxMm(m.preview, d.factor);
+  m.cfg = AR.rectDefaults(box);
+  m.base = box ? [(box[0] + box[2]) / 2 / d.factor, (box[1] + box[3]) / 2 / d.factor] : [0, 0];      // the point Polar carries round when Rotate items is off (AutoCAD: the centroid)
   state.msg = 'Array: Enter takes Rectangular'; renderCommand(); paintOverlay();
 }
-const ARRAY_ASK = { cols: 'Enter the number of columns', rows: 'Enter the number of rows', dx: 'Specify the distance between columns', dy: 'Specify the distance between rows' };
+const ARRAY_ASK = { cols: 'Enter the number of columns', rows: 'Enter the number of rows', dx: 'Specify the distance between columns', dy: 'Specify the distance between rows',
+  items: 'Enter number of items in array', fill: 'Specify the angle to fill (+=ccw, -=cw)', rotate: 'Rotate arrayed items? [Yes/No]' };
 function arrayPrompt(d, m) {
   const status = `Command: ARRAY   ${m.sel?.size ?? d.sel.size} selected`;
   if (m.stage === 'pick') return { status, prompt: 'Select objects (click or drag a box), then Enter:' };
   if (m.stage === 'type') return { status, prompt: 'Enter array type [Rectangular/POlar] <Rectangular>:' };
-  const c = m.cfg;
-  if (m.ask) return { status: 'Command: ARRAY   Rectangular', prompt: `${ARRAY_ASK[m.ask[0]]} <${mmText(c[m.ask[0]])}>:` };
+  if (m.stage === 'center') return { status: 'Command: ARRAY   Polar', prompt: 'Specify center point of array (click or x,y):' };
+  const c = m.cfg, polar = m.type === 'polar';
+  if (m.ask) return { status: `Command: ARRAY   ${polar ? 'Polar' : 'Rectangular'}`, prompt: `${ARRAY_ASK[m.ask[0]]} <${m.ask[0] === 'rotate' ? (c.rotate ? 'Yes' : 'No') : mmText(c[m.ask[0]])}>:` };
+  if (polar) return { status: `Command: ARRAY   Polar: ${c.items} items, fill ${mmText(c.fill)}°, rotate items ${c.rotate ? 'on' : 'off'}`, prompt: 'Enter an option [Items/Angle to fill/ROTate items/Exit] <Exit>:' };
   return { status: `Command: ARRAY   Rectangular: ${c.cols} columns × ${c.rows} rows, spacing ${mmText(c.dx)} × ${mmText(c.dy)} mm`, prompt: 'Enter an option [COUnt/Spacing/COLumns/Rows/Exit] <Exit>:' };
 }
 /** The preview of all the copies: the selection drawn once per offset (one matrix each), tinted. */
 function arrayPreview(d) {
   const m = state.mod, base = [d.factor, 0, 0, -d.factor, 0, state.sheetH];
-  const slots = AR.rectOffsets(m.cfg).map(([x, y]) => mmul(base, [1, 0, 0, 1, x / d.factor, y / d.factor]));
+  const slots = m.type === 'polar' ? AR.polarPlacements(m.center, m.base, m.cfg).map(({ deg, dx, dy }) => mmul(base, m.cfg.rotate ? rotationMatrix(m.center, deg) : [1, 0, 0, 1, dx, dy]))
+    : AR.rectOffsets(m.cfg).map(([x, y]) => mmul(base, [1, 0, 0, 1, x / d.factor, y / d.factor]));
   m.move = slots.length ? { preview: m.preview, items: m.preview.items, dx: 0, dy: 0, slots } : null;
   renderCommand(); paintOverlay();
 }
@@ -6485,6 +6494,7 @@ function arrayEnter(d) {
   const m = state.mod;
   if (m.stage === 'pick') arrayTake(d);
   else if (m.stage === 'type') { m.stage = 'opts'; note('Rectangular: Enter adds the copies shown; type an option to change them'); arrayPreview(d); }
+  else if (m.stage === 'center') note(modPrompt(d).prompt);
   else if (m.ask) { m.ask = m.ask.length > 1 ? m.ask.slice(1) : null; renderCommand(); }
   else arrayDo(d);
 }
@@ -6493,13 +6503,20 @@ function arrayTyped(d, raw, c) {
   const m = state.mod;
   if (m.stage === 'type') {
     if (/^(r|re|rect|rectangular)$/.test(c)) { arrayEnter(d); return true; }
-    if (/^(po|pol|polar)$/.test(c)) { note('Polar array comes next: not built yet. Enter takes Rectangular'); return true; }
+    if (/^(po|pol|polar)$/.test(c)) {
+      m.type = 'polar'; m.cfg = AR.polarDefaults(); m.stage = 'center'; m.cur = null;
+      note('Polar: click the center point of the array, or type x,y'); renderCommand(); paintOverlay(); return true;
+    }
+  } else if (m.stage === 'center') {
+    const q = DR.typedPoint(DR.parseInput(raw), null);
+    if (q) { arrayCenter(d, q.map((v) => v / d.factor)); return true; }
   } else if (m.ask) {
-    const r = AR.withField(m.cfg, m.ask[0], Number(c));
+    const yn = m.ask[0] === 'rotate' ? AR.yesNo(c) : null;
+    const r = m.ask[0] === 'rotate' && yn === null ? { error: 'Type Yes or No' } : AR.withField(m.cfg, m.ask[0], m.ask[0] === 'rotate' ? +yn : Number(c));
     if (r.error) { note(r.error); return true; }
     m.cfg = r.cfg; m.ask = m.ask.length > 1 ? m.ask.slice(1) : null; arrayPreview(d); return true;
   } else {
-    const steps = AR.parseLine(c);
+    const steps = AR.parseLine(c, m.type);
     if (steps) {
       const r = AR.applyLine(m.cfg, steps);
       if (r.error) { note(r.error); return true; }
@@ -6509,15 +6526,22 @@ function arrayTyped(d, raw, c) {
     }
   }
   if (DR.parseInput(raw).kind === 'word') return false;
-  note(`I do not understand "${raw.trim()}". ${m.stage === 'type' ? 'Type R for Rectangular' : m.ask ? 'Type a number' : 'Type COUnt, Spacing, COLumns, Rows or Exit'}`); return true;
+  note(`I do not understand "${raw.trim()}". ${m.stage === 'type' ? 'Type R for Rectangular or PO for Polar' : m.stage === 'center' ? 'Type x,y or click' : m.ask ? 'Type ' + (m.ask[0] === 'rotate' ? 'Yes or No' : 'a number') : m.type === 'polar' ? 'Type Items, Angle, ROTate or Exit' : 'Type COUnt, Spacing, COLumns, Rows or Exit'}`); return true;
+}
+/** Polar's centre point is set (clicked or typed): the default ring shows at once. */
+function arrayCenter(d, q) {
+  const m = state.mod;
+  m.center = q.slice(0, 2); m.stage = 'opts'; state.pointLast = m.center;
+  note('Polar: Enter adds the copies shown; type Items, Angle or ROTate to change them'); arrayPreview(d);
 }
 function arrayDo(d) {
   const m = state.mod;
   if (m.raw !== d.raw.entities) { setTool('select'); note('Drawing changed: start Array again'); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
-  if (m.cfg.cols * m.cfg.rows === 1) { note('Array: 1 column × 1 row adds nothing. Change COUnt, or Esc cancels'); return; }
+  const polar = m.type === 'polar', added = polar ? m.cfg.items - 1 : m.cfg.cols * m.cfg.rows - 1;
+  if (!added) { note(polar ? 'Array: 1 item adds nothing. Change Items, or Esc cancels' : 'Array: 1 column × 1 row adds nothing. Change COUnt, or Esc cancels'); return; }
   try {
-    const next = AR.arrayRect(d.raw, m.sel, m.cfg, d.factor), sel = m.sel, added = m.cfg.cols * m.cfg.rows - 1;
+    const next = polar ? AR.arrayPolar(d.raw, m.sel, m.center, m.base, m.cfg) : AR.arrayRect(d.raw, m.sel, m.cfg, d.factor), sel = m.sel;
     view.fitted = false;
     commit(d, next, 'Array');
     setTool('select'); setSel(d, sel);
