@@ -4132,6 +4132,7 @@ try {
     const dir = process.env.SHOTS_DIR || 'shots';
     mkdirSync(dir, { recursive: true });
     await page.waitForTimeout(600);
+    // shortcut: edit: Unit fix is unmapped; add the earlier layout/PDF command-history chain before filtering checkToasts.
     const checkToasts = async () => {
       const canvas = await t('canvas').boundingBox(), fade = await t('cmd-fade').boundingBox();
       assert.ok(Math.abs(fade.x + fade.width / 2 - canvas.x - canvas.width / 2) < 1, 'toasts centred in the canvas');
@@ -16710,7 +16711,7 @@ try {
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
-  for (const entry of only ? expandNeeds(steps, only) : steps.filter(({ name }) => selectStep(name))) await runStep(entry);
+  for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(entry);
 } catch (e) {
   failed++;
   console.log('FAIL', e.stack || e);
