@@ -4456,7 +4456,7 @@ function attachCanvasEvents() {
   c.addEventListener('pointerleave', () => {
     snapCycle = null; snapQuery = null; snapPointer = null; snapRef = null; snapWatch(null);
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
-    if (modLive() && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
+    if ((modLive() || layModLive()) && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
   const end = () => { pan = null; c.classList.remove('panning'); };
   c.addEventListener('pointerup', (e) => {
@@ -4990,7 +4990,7 @@ async function pasteSelection() {
 function edIndex(d) { if (!d.ed) d.ed = Ed.makeIndex(d.raw, d.fl, d.off, hidIdx(d)); return d.ed; }
 /** The entity under a point, unless its layer is locked (Objects tab): a locked layer is drawn and snapped to, but cannot be picked. -1 if none. */
 function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)); return e >= 0 && lockedEnt(d, e) ? -1 : e; }
-const lockedEnt = (d, e) => !!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer);
+const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
 /** Builds the index once the page has painted, so the first click is quick. */
 function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
 function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; cmpRefresh(d); warm(d); renderEdit(); }
@@ -5256,7 +5256,17 @@ function showRubber(drag, e) {
 function hideRubber() { if (ui.rubber) ui.rubber.hidden = true; }
 
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. */
-function commit(d, next, label) { d.hist.push(snapshotOf(d), label); d.newLayer = null; restore(d, next); }
+function commit(d, next, label) {
+  if (d.vlay) { layObjCommit(d, next, label); return; }
+  d.hist.push(snapshotOf(d), label); d.newLayer = null; restore(d, next);
+}
+/** A drawing-tab command on a layout's objects (layObjDoc) is done: the layout takes the objects it left, in one undo step. */
+function layObjCommit(v, next, label) {
+  const d = v.vlay;
+  pushLay(d, null, '', label);
+  LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid());
+  touch(); update();
+}
 function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
@@ -5302,6 +5312,7 @@ function deleteSelection() {
   note(`Deleted ${n}. Ctrl+Z brings them back`);
 }
 function undo(d) {
+  if (d.vlay) { undoLay(); return; }
   if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }   // a Line with only its first point: nothing made to undo
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
@@ -6337,6 +6348,7 @@ function drawOvl() {
     tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, single: DI.isSingle(DI.inputMode(CT)) ? DI.inputMode(CT) : null, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
   }
   if (d && !d.lay && modLive()) modOvl(d, out);
+  else if (d && d.lay && layModLive() && OBJ_MODS.includes(state.mod.kind)) modOvl(layObjDoc(d), out);
   if (d && !d.lay && editable() === d) {
     const bt = balOvl(d, out, 1 / view.scale), tt = state.drawingRotate ? null : textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
     if (state.drawingRotate) drawingRotateOverlay(out);
@@ -6491,13 +6503,34 @@ function cursorKey(e) {
 // ---- Offset, Trim and Mirror (modify.js) ----
 const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
-const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror'];      // the modify commands that also work on a layout's placed parts (TODO 156b1)
+const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
+const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
+const objViews = new WeakMap();
+/** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
+function layObjDoc(d) {
+  const skip = (id) => !!state.hidden.parts || partHid({ partId: id }), sig = LD.objectSig(d.lay, skip), c = objViews.get(d);
+  if (c && c.sig === sig) return c.v;
+  const v = { ...LD.objectDoc(d.lay, skip), vlay: d, name: d.name, factor: 1, sel: new Set(), hid: null, locked: null, ed: null, hist: { labels: () => layHist(d).labels() } };
+  objViews.set(d, { sig, v });
+  return v;
+}
+/** The doc a modify tool reads: on a layout, Trim / Extend / Fillet / Offset get the objects-as-a-drawing; every other case the doc itself. */
+const mdoc = (d) => (d.lay && state.mod && OBJ_MODS.includes(state.mod.kind) ? layObjDoc(d) : d);
+const inPoly = (poly, [x, y]) => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const [xi, yi] = poly[i], [xj, yj] = poly[j]; if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) c = !c; } return c; };
+/** A pick on a placed part (and on no object) in an object tool: refused, the tool waits for another pick. Parts are not cutting edges or boundaries either (they are not in the objects' drawing). */
+function partRefused(v, m, p) {
+  const lay = v.vlay.lay;
+  if (m.fence || m.cross || state.hidden.parts || hitAt(v, p) >= 0 || Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(v)) >= 0) return false;
+  if (!placedNow.some((q) => { const part = lay.parts[q.partId]; return part && !part.obj && !partHid(q) && inPoly(PL.corners(part, q), p); })) return false;
+  note(`${modLabel(m.kind)} works on layout objects, not placed parts`);
+  return true;
+}
 let copyMode = 'Multiple';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
 /** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: quick ? 'cut' : kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: editable()?.hist ? editable().hist.labels().past.length : 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
+const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: quick ? 'cut' : kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: historyOf(editable() || curDoc())?.labels().past.length ?? 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
 const modLive = () => !!(state.mod && state.modDoc === editable() && editable());
 const offDistU = (d) => state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
@@ -6531,7 +6564,7 @@ function trimPreview(d, m, e) {
 /** A modify tool just chosen: Offset reads its remembered distance; Mirror takes the selection if there is one. */
 function modStart(id) {
   const m = state.mod, d = editable() || curDoc();
-  if (d.lay) { layModStart(id); return; }
+  if (d.lay && !OBJ_MODS.includes(id)) { layModStart(id); return; }
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
   else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line, arc or polyline segment (radius ${mmText(state.filR)} mm; R changes it)`; }
@@ -6550,6 +6583,7 @@ function refPrompt(m) {
   return `${lead}: Specify the new ${turn ? 'angle' : 'length'} or [Points / Esc] ${turn ? '<0>' : '<1.0000>'}: (${turn ? 'degrees' : 'mm'} or click${turn ? '; Shift = 15°' : ''})`;
 }
 function modPrompt(d) {
+  d = mdoc(d);
   if (d.lay) d = { sel: new Set(selIdxs()) };               // a layout: only how many are selected is read
 
   const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
@@ -6577,6 +6611,7 @@ function modPrompt(d) {
 }
 
 function modEsc(d) {
+  d = mdoc(d);
   if (d.lay && !(state.mod.kind === 'array' && state.mod.ask)) { const was = state.mod; setTool('select'); note(modLabel(was.kind) + (was.kind === 'array' && was.stage !== 'pick' ? ' cancelled: nothing added' : ' ended')); return; }
   const m = state.mod;
   const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
@@ -6591,6 +6626,7 @@ function modEsc(d) {
   setTool('select'); note(was[0].toUpperCase() + was.slice(1) + ' ended');
 }
 function modEnter(d) {
+  d = mdoc(d);
   if (d.lay && state.mod.stage === 'pick') { layTake(d); return; }
   const m = state.mod;
   if (['move', 'copy'].includes(m.kind)) {
@@ -6636,12 +6672,13 @@ function modTakes(c) {
   const m = state.mod;
   if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
   if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
-  if (!modLive() || !['trim', 'extend'].includes(m.kind)) return false;
+  if (!(modLive() || layModLive()) || !['trim', 'extend'].includes(m.kind)) return false;
   if (m.askMode || m.fence || m.cross || m.erase) return true;
   const own = m.kind === 'extend' ? ['b', 'boundary', 'boundary edges'] : ['t', 'cutting', 'cutting edges', 'r', 'erase'];
   return c === 'o' || (c.length > 1 && 'mode'.startsWith(c)) || (m.quick && m.stage === 'cut' && ['u', 'undo', 'c', 'crossing', ...own].includes(c)) || (m.stage === 'edges' && (c === 'a' || c === 'all'));
 }
 function modTyped(d, raw) {
+  d = mdoc(d);
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
@@ -6751,9 +6788,10 @@ window.addEventListener('blur', trimShiftKey);
 /** Shift changes and window blur update the Trim / Extend hover preview without moving the mouse. */
 function trimShiftKey(e) {
   const m = state.mod, shift = e.type === 'blur' ? false : e.shiftKey;
-  if ((e.key === 'Shift' || e.type === 'blur') && m && modLive() && (m.kind === 'trim' || m.kind === 'extend') && m.shift !== shift) { m.shift = shift; paintOverlay(); }
+  if ((e.key === 'Shift' || e.type === 'blur') && m && (modLive() || layModLive()) && (m.kind === 'trim' || m.kind === 'extend') && m.shift !== shift) { m.shift = shift; paintOverlay(); }
 }
 function modHover(d, cx, cy, shift) {
+  d = mdoc(d);
   const m = state.mod, p = toDrawing(d, cx, cy);
   m.p = p; m.shift = shift;
   if (m.kind === 'trim' || m.kind === 'extend') m.client = [cx, cy];
@@ -6784,10 +6822,12 @@ function modHover(d, cx, cy, shift) {
   paintOverlay();
 }
 function modUp(d, was, p, shift, crossing) {
+  d = mdoc(d);
   const m = state.mod;
   if (!d.lay) modSync(d);
   if (['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (was.moved) return;
+  if (d.vlay && partRefused(d, m, was.p)) return;
   if (m.kind === 'offset') {
     if (m.stage === 'obj') {
       const ent = modEntAt(d, was.p);

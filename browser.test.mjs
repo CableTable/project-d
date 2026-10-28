@@ -11185,9 +11185,8 @@ try {
     await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
     await t('new-layout').click();
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
-    await page.locator('[data-tool=trim]').click();
-    assert.match(await prompt(), /^Trim works on a drawing tab/);
-    assert.notEqual(await t('tool-chip').textContent(), 'Tool: Trim');
+    await page.locator('[data-tool=trim]').click();                  // TODO 156b3a: Trim works on a layout's objects now
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Trim');
     await page.locator('[data-tool=select]').click();
     await closeTabs(/Layout/);
   });
@@ -14750,6 +14749,78 @@ try {
     await page.evaluate(() => document.activeElement?.blur());
     await typeCmd('line'); await typeCmd('10,10'); await typeCmd('60,10'); await typeCmd('');
     assert.equal(await nParts(), n0 + 4); await undo(); assert.equal(await nParts(), n0 + 3, 'Undo after a reopen');
+  });
+
+  await step('TODO 156b3a: on a layout, Trim / Extend / Fillet / Offset work on layout objects (one Undo each); a pick on a placed part is refused and the part stays; saved and reopened they are still objects', async () => {
+    await freshLayoutWithPlate();
+    const val = (e, c) => Number(e.r.v[e.r.c.indexOf(c)]);
+    const n0 = await nParts(), p0 = await pos();
+    assert.equal(n0, 1);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const draw = async (...pts) => { await typeCmd('line'); for (const p of pts) await typeCmd(p); await typeCmd(''); };
+    await draw('50,600', '300,600'); await draw('150,550', '150,650'); await draw('50,500', '300,500');       // A crossed by B; G below them
+    await draw('700,200', '850,200'); await draw('700,200', '700,350');                                        // H1 and H2 meet in a corner
+    await typeCmd('circle'); await typeCmd('800,600'); await typeCmd('40');
+    assert.equal(await nParts(), n0 + 6);
+    const labels = async () => {      // the steps done so far (not the undone ones)
+      await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
+      const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
+      await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' });
+      return rows.slice(1);
+    };
+    const l0 = (await labels()).length;
+    // Trim (Quick: every object is a cutting edge): the part of A right of B goes
+    await typeCmd('trim'); await typeCmd('o'); await typeCmd('q');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Trim');
+    assert.match(await prompt(), /Select object to trim/);
+    await click(250, 600);
+    assert.equal((await labels()).at(-1), 'Trim');
+    await page.keyboard.press('Escape');
+    // Extend: the lower end of B goes on to G
+    await typeCmd('extend'); await click(150, 553);
+    assert.equal((await labels()).at(-1), 'Extend');
+    await page.keyboard.press('Escape');
+    // Fillet the corner of H1 and H2
+    await typeCmd('fillet'); await typeCmd('r'); await typeCmd('10');
+    await click(780, 200); await click(700, 300);
+    assert.equal((await labels()).at(-1), 'Fillet');
+    assert.equal(await nParts(), n0 + 7, 'two lines became two lines and an arc');
+    await page.keyboard.press('Escape');
+    // Offset the circle 15 mm outwards
+    await typeCmd('offset'); await typeCmd('15'); await click(840, 600); await click(880, 600);
+    assert.equal((await labels()).at(-1), 'Offset');
+    assert.equal(await nParts(), n0 + 8);
+    await page.keyboard.press('Escape');
+    assert.equal((await labels()).length, l0 + 4, 'one history step per command');
+    // one Undo each
+    for (const [k, name] of [[3, 'Offset'], [2, 'Fillet'], [1, 'Extend']]) { await undo(); const l = await labels(); assert.equal(l.length, l0 + k, 'one Undo takes back ' + name + ' only'); }
+    assert.equal(await nParts(), n0 + 6);
+    for (let k = 0; k < 3; k++) await page.keyboard.press('Control+y');
+    assert.equal((await labels()).length, l0 + 4); assert.equal(await nParts(), n0 + 8);
+    // a pick on the placed part: refused, nothing changes, the tool waits
+    for (const tool of ['trim', 'fillet', 'offset']) {
+      const Tool = tool[0].toUpperCase() + tool.slice(1);
+      await typeCmd(tool); await click(p0[0] + 10, p0[1] + 10);
+      assert.match(await histLine(), new RegExp(Tool + ' works on layout objects, not placed parts'));
+      assert.equal(await t('tool-chip').textContent(), 'Tool: ' + Tool);
+      assert.equal((await labels()).length, l0 + 4); assert.deepEqual(await pos(), p0);
+      await page.keyboard.press('Escape');
+    }
+    await page.locator('[data-tool=select]').click();
+    await shotBoth('layout-modify-objects');
+    // saved as plain entities, reopened as objects
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text, saved = readDxf(text);
+    const plain = saved.entities.filter((e) => e.type !== 'INSERT' && !['Sheet', 'Marks', 'Parts'].includes(e.layer));
+    assert.deepEqual(plain.map((e) => e.type).sort(), ['ARC', 'CIRCLE', 'CIRCLE', 'LINE', 'LINE', 'LINE', 'LINE', 'LINE']);
+    const lineA = plain.find((e) => e.type === 'LINE' && val(e, 20) === 600 && val(e, 21) === 600);
+    assert.deepEqual([val(lineA, 10), val(lineA, 11)].sort((a, b) => a - b), [50, 150], 'A was cut at B');
+    assert.ok(plain.some((e) => e.type === 'CIRCLE' && val(e, 40) === 55), 'the offset circle');
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'objects2.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects2.dxf');
+    assert.equal(await nParts(), n0 + 8, 'the objects and the plate are back');
+    assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
+    assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((p) => p.obj).length, 8);
   });
 
   await step('TODO 156b1: Contour on scaled placements keeps 5 mm spacing and shares contour parts only at the same scale', async () => {

@@ -69,6 +69,52 @@ function bakeObject(part, p) {
   try { return explodeInsert(insert('O', p.x, p.y, { layer: e.layer, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini).entities; } catch { return null; }
 }
 
+// Trim / Extend / Fillet / Offset on layout objects run the drawing tab's code on objectDoc(): the objects as one little drawing (sheet mm,
+// one entity per placed object); what they leave is objectCommit()ed back as objects. Placed parts are not in it.
+const bakedCache = new WeakMap();      // part → Map(placement key → entity): the same entity each time, so a command can hold on to it between two steps
+const bakeKey = (p) => [p.x, p.y, p.rot || 0, p.sc || 1, p.mirrorX ? 1 : 0, p.mirrorY ? 1 : 0].join('|');
+function bakedEntity(part, p) {
+  let byKey = bakedCache.get(part);
+  if (!byKey) bakedCache.set(part, byKey = new Map());
+  const key = bakeKey(p);
+  if (!byKey.has(key)) { const ents = bakeObject(part, p); byKey.set(key, ents && ents.length === 1 ? { ...ents[0], ps: false } : null); }
+  return byKey.get(key);
+}
+/** What objectDoc() would be made of, as text: when it is the same, so is the drawing (and the entities in it). `skip(partId)` leaves an object out (hidden). */
+export const objectSig = (lay, skip) => lay.placed.map((p) => { const part = lay.parts[p.partId]; return part && part.obj && !skip(p.partId) ? `${p.partId}|${bakeKey(p)}${p.lock ? 'L' : ''}` : '-'; }).join(';');
+/** The layout's objects as a drawing: { raw, fl, off, at (entity → its index in lay.placed), lockedEnts }. An object Explode cannot carry is left out. */
+export function objectDoc(lay, skip = () => false) {
+  const entities = [], at = new Map(), lockedEnts = new Set();
+  lay.placed.forEach((p, i) => {
+    const part = lay.parts[p.partId];
+    let ent = part && part.obj && !skip(p.partId) ? bakedEntity(part, p) : null;
+    if (!ent) return;
+    if (at.has(ent)) ent = { ...ent };            // an exact copy on top of it: an entity of its own
+    entities.push(ent); at.set(ent, i);
+    if (p.lock) lockedEnts.add(ent);
+  });
+  const raw = { header: {}, layers: layersOf(lay), ltypes: {}, blocks: {}, entities }, fl = flatten(raw);
+  return { raw, fl, off: startHidden(fl), at, lockedEnts };
+}
+const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline' };
+/** What a command left of objectDoc(lay) (`entities`): objects whose entity is gone are removed (and their part, if nothing else is placed from it), each new entity becomes an object. */
+export function objectCommit(lay, view, entities, newId) {
+  const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
+  for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
+  lay.placed = lay.placed.filter((_, i) => !gone.has(i));
+  const used = new Set(lay.placed.map((p) => p.partId));
+  for (const [id, part] of Object.entries(lay.parts)) if (part.obj && !used.has(id)) delete lay.parts[id];
+  const names = new Set(Object.values(lay.parts).map((p) => p.name));
+  for (const e of entities) {
+    if (view.at.has(e)) continue;
+    e.ps = false;
+    const part = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers), pl = part && objectPlacement(part);
+    if (!part) continue;
+    names.add(part.name); lay.parts[part.id] = part; lay.placed.push(pl);
+    bakedCache.set(part, new Map([[bakeKey(pl), e]]));
+  }
+}
+
 // ---------------------------------------------------------------- parts
 
 /** Parts offered for placing or the library; linked contours stay with their source part. */

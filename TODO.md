@@ -275,6 +275,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
       156b1. ✅ (built, Knight, 2026-10-28; full browser suite pending with Rook) Move / Copy / Rotate / Scale / Mirror / Array commands on whole placed parts (Scale = placement scale, W / H editable; Array = separate placed parts) (M).
       156b2. ✅ (built, King, 2026-10-28; full browser suite pending with Rook) Draw on layouts: layout objects (S–M). Left as **156b2b**: Text and Dimension on a layout (the Text tool is tied to a drawing's `raw`; refused with a note), Text to outlines / Break Apart on objects.
       156b3. Trim / Extend / Fillet / Offset / Shaping / grips on layout objects (M).
+        156b3a. ✅ (built, King, 2026-10-28) Trim / Extend / Fillet / Offset on layout objects: the drawing tab's code runs on `layoutdoc.js objectDoc()` (the objects as one little drawing), the result is `objectCommit()`ed back as objects, one Undo per step. A pick on a placed part says "<Tool> works on layout objects, not placed parts"; parts are not cutting edges / boundaries (not in that drawing).
+        156b3b. Grips and Shaping on layout objects (open).
     156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M). Grilled 2026-10-28 (DECISIONS "Compare editable"), split:
       156c1. ✅ (built, Knight, 2026-10-28) Snapshot link to its drawing tab; Modify / Draw / grips on the picked snapshot go to that tab (file + Undo); differences recalculated; closed tab or library part = read-only with a message (M).
       156c2. Layers panel for the picked snapshot and Contour in Compare (result to the source drawing) (S).

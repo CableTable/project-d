@@ -325,6 +325,28 @@ test('TODO 127: anchored grids derive identically after save and reopen, without
   }
 });
 
+test('layout objects as a drawing (TODO 156b3a): parts left out, the same entities each time, a result becomes objects, a copy keeps its part', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  lay.parts.p1 = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);
+  lay.placed.push(placement1('p1', 100, 50));
+  const o = LD.objectPart('o1', 'Line 1', line(0, 0, 100, 0), layers);
+  lay.parts.o1 = o; lay.placed.push(LD.objectPlacement(o), { ...LD.objectPlacement(o), y: 50 });      // the line, and a copy of it 50 up
+  const v = LD.objectDoc(lay), [a, b] = v.raw.entities;
+  assert.equal(v.raw.entities.length, 2, 'the plate is not in it');
+  assert.deepEqual(v.fl.boxes.model, [0, 0, 100, 50]);
+  assert.equal(LD.objectSig(lay, () => false), LD.objectSig(lay, () => false));
+  assert.notEqual(LD.objectSig(lay, () => false), LD.objectSig(lay, (id) => id === 'o1'));
+  assert.deepEqual(LD.objectDoc(lay).raw.entities, [a, b]);
+  assert.ok(LD.objectDoc(lay).raw.entities.every((e, i) => e === v.raw.entities[i]), 'the same entity objects');
+  const cut = line(0, 50, 40, 50);                                     // the copy trimmed to 40 mm: its entity is replaced
+  LD.objectCommit(lay, v, [a, cut], () => 'n1');
+  assert.equal(lay.placed.length, 3); assert.ok(lay.parts.o1, 'the first object still uses o1'); assert.equal(lay.parts.n1.name, 'Line 2');
+  const v2 = LD.objectDoc(lay);
+  assert.ok(v2.raw.entities.includes(a) && v2.raw.entities.includes(cut), 'both are still the same entity objects');
+  LD.objectCommit(lay, v2, [cut], () => 'n2');                         // Erased
+  assert.equal(lay.placed.length, 2); assert.equal(lay.parts.o1, undefined, 'a part nothing is placed from goes'); assert.ok(lay.parts.p1, 'a real part is never removed');
+});
+
 test('layout objects (TODO 156b2): plain entities beside the INSERTs, back as objects, moved / turned ones baked in, not in the grid', () => {
   const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
   const part = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);
