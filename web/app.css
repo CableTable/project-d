@@ -180,8 +180,8 @@ select.fld { font-family: var(--sans); }
 .canvas > :not(svg, canvas, .ovl, .rubber, .canvas-notices, .xhair) { cursor: default; }
 .xhair { position: absolute; left: 0; top: 0; width: 1px; height: 1px; z-index: 4; pointer-events: none; mix-blend-mode: difference; }       /* white lines, inverted by the background: reads in light and dark */
 .xhair i { position: absolute; background: #fff; }
-.xh-h { left: calc(var(--ax, 0px) * -1); width: calc(var(--ax, 0px) * 2 + 1px); top: 0; height: 1px; }
-.xh-v { top: calc(var(--ay, 0px) * -1); height: calc(var(--ay, 0px) * 2 + 1px); left: 0; width: 1px; }
+.xh-h { left: calc(var(--arm, 0px) * -1); width: calc(var(--arm, 0px) * 2 + 1px); top: 0; height: 1px; }
+.xh-v { top: calc(var(--arm, 0px) * -1); height: calc(var(--arm, 0px) * 2 + 1px); left: 0; width: 1px; }
 .xh-box { left: calc(var(--pb) / -2 + .5px); top: calc(var(--pb) / -2 + .5px); width: var(--pb); height: var(--pb); background: none !important; border: 1px solid #fff; box-sizing: border-box; }
 .canvas.pan { cursor: grab; } .canvas.panning { cursor: grabbing; }
 .canvas svg { display: block; width: 100%; height: 100%; }

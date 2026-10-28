@@ -463,8 +463,10 @@ try {
       await at(40, 35);
       await xh.waitFor({ state: 'visible' });
       const cv = await p.getByTestId('canvas').boundingBox(), arm = await xh.locator('.xh-h').boundingBox(), vert = await xh.locator('.xh-v').boundingBox(), box = await xh.locator('.xh-box').boundingBox();
-      assert.ok(Math.abs(arm.width - (2 * Math.round(cv.width * .05) + 1)) <= 1, `horizontal arms are 5% of the canvas width each: ${arm.width} for ${cv.width}`);
-      assert.ok(Math.abs(vert.height - (2 * Math.round(cv.height * .05) + 1)) <= 1, `vertical arms are 5% of the canvas height each: ${vert.height} for ${cv.height}`);
+      const armPx = await p.evaluate(() => Math.round(screen.height * .05));
+      assert.ok(Math.abs(arm.width - (2 * armPx + 1)) <= 1, `horizontal arms are 5% of the screen height each: ${arm.width} for ${armPx}`);
+      assert.ok(Math.abs(vert.height - (2 * armPx + 1)) <= 1, `vertical arms are the same length: ${vert.height} for ${armPx}`);
+      assert.ok(Math.abs(arm.width - vert.height) <= 1, 'the crosshair is square');
       assert.equal(Math.round(box.width), 7, 'PICKBOX 3 is the half side: a 7 px square');
       assert.equal(await p.getByTestId('canvas').evaluate((el) => getComputedStyle(el).cursor), 'none');
       const pt = await atPoint(40, 35);
@@ -480,6 +482,15 @@ try {
       await xh.waitFor({ state: 'hidden' });
       await p.mouse.move(cv.x + cv.width / 2, cv.y + cv.height / 2, { steps: 3 }); await xh.waitFor({ state: 'visible' });
       const zb = await p.locator('.zoombox button').first().boundingBox();
+      await p.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2, { steps: 3 });
+      await xh.waitFor({ state: 'hidden' });
+      await p.mouse.move(cv.x + cv.width / 2, cv.y + cv.height / 2, { steps: 3 }); await xh.waitFor({ state: 'visible' });
+      const rt = await p.getByTestId('ruler-top').boundingBox();
+      await p.mouse.move(rt.x + rt.width / 2, rt.y + rt.height / 2, { steps: 3 });
+      await xh.waitFor({ state: 'hidden' });
+      await p.mouse.move(cv.x + cv.width / 2, cv.y + cv.height / 2, { steps: 3 }); await xh.waitFor({ state: 'visible' });
+      const cls = (c, on) => p.getByTestId('canvas').evaluate((el, a) => el.classList.toggle(a[0], a[1]), [c, on]);   // a mode change under a still pointer
+      for (const c of ['pan', 'panning']) { await cls(c, true); await xh.waitFor({ state: 'hidden' }); await cls(c, false); await xh.waitFor({ state: 'visible' }); }
       await p.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2, { steps: 3 });
       await xh.waitFor({ state: 'hidden' });
       const panel = await p.locator('.panel').first().boundingBox();
