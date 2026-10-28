@@ -43,8 +43,13 @@ export function bakeBlock(block, part, p) {
     }
     if (e.type === 'TEXT') {       // stays parallel to its line (its angle goes through the same map as the line's direction) and reads upright
       edit[40] = field(e.r, 40) * k;
-      let a = norm(dir(has(50) ? field(e.r, 50) : 0));
+      const a0 = has(50) ? field(e.r, 50) : 0, va = has(73) ? field(e.r, 73) : 0, up = (d) => [-Math.sin(d * DEG), Math.cos(d * DEG)];
+      let a = norm(dir(a0));
       if (a > 90 + 1e-6 && a <= 270 + 1e-6) a = norm(a - 180);
+      if (va === 1 || va === 3) {   // the text keeps to its own side of the line: bottom-aligned (1) when it now reads away from the line, top-aligned (3) when towards it
+        const [ux, uy] = up(a0), s = va === 1 ? 1 : -1, [vx, vy] = up(a);
+        edit[73] = s * (vx * (M[0] * ux + M[2] * uy) + vy * (M[1] * ux + M[3] * uy)) > 0 ? 1 : 3;
+      }
       if (has(50) || a > 1e-9 && a < 360 - 1e-9) edit[50] = a;
     }
     const c = e.r.c.slice(), v = e.r.v.slice();
@@ -65,7 +70,7 @@ export function turnedTag(tag, rot) {
 /** The first free PD_DIM_<tag>n among the names in `taken` (a Set). */
 export function freeBlockName(taken, tag = '') {
   let n = 1;
-  while (taken.has(`PD_DIM_${tag}${n}`)) n++;
+  while (taken.has(`PD_DIM_${tag}${n}`) || taken.has(`pd_dim_${tag}${n}`.toLowerCase())) n++;   // block names ignore case (apply.js mergePart); settleDims stores them lower-case
   return `PD_DIM_${tag}${n}`;
 }
 /** The tag letter ('' | H | V | R | D | A) of a PD_DIM block name. */

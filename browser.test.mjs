@@ -15145,6 +15145,20 @@ try {
     await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('0,60');
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     assert.equal(await nParts(), n0 + 4, 'the line has a copy');
+    // review fix 2: a grip edit of the line (it shares its part with the copy) is followed by its dimensions; one Undo takes both back
+    const gid2 = (k) => page.locator('[data-testid=grip]').evaluateAll((g, w) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + w)), k);
+    await page.keyboard.press('Escape'); await click(200, 150); await frames(); await gripWhen(3);
+    const endGrip = await gripBox(await gid2('b'));
+    await page.mouse.click(endGrip.x, endGrip.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+    await click(360, 150); await frames();
+    text = await save(); dims = Object.values(dimsIn(text));
+    assert.equal(dims.length, 2);
+    for (const q of dims) assert.ok(Math.abs(q.params.b[0] - 360) < 1, 'the dimension follows the grip edit of a line that has a copy: ' + JSON.stringify(q.params));
+    await page.keyboard.press('Escape'); await blur(); await undo();
+    text = await save(); dims = Object.values(dimsIn(text));
+    for (const q of dims) assert.ok(Math.abs(q.params.b[0] - 300) < 1e-3, 'one Undo takes the line and the dimensions back');
+    await page.keyboard.press('Escape');
     await click(200, 150); await blur(); await page.keyboard.press('Delete');
     assert.equal(await nParts(), n0 + 3, 'and the first one is gone');
     text = await save(); dims = Object.values(dimsIn(text));
@@ -15155,16 +15169,24 @@ try {
       const e = b.entities.find((x) => x.type === 'TEXT'), i = e.r.c.indexOf(50), q = readDim(k, b), line = Math.atan2(q.params.b[1] - q.params.a[1], q.params.b[0] - q.params.a[0]) * 180 / Math.PI;
       return { label: e.r.v[e.r.c.indexOf(1)], angle: i < 0 ? 0 : ((+e.r.v[i] % 360) + 360) % 360, line };
     });
+    const keepsSide = (src, what) => {                   // the text lies wholly on one side of its dimension line (73: 1 = bottom-aligned, 3 = top-aligned)
+      for (const [k, b] of Object.entries(readDxf(src).blocks).filter(([n]) => /^PD_DIM_/.test(n))) {
+        const ln = b.entities.find((x) => x.type === 'LINE'), tx = b.entities.find((x) => x.type === 'TEXT'), f = (e, c) => { const i = e.r.c.indexOf(c); return i < 0 ? (c === 73 ? 1 : 0) : +e.r.v[i]; };
+        const L = Math.atan2(f(ln, 21) - f(ln, 20), f(ln, 11) - f(ln, 10)), n = [-Math.sin(L), Math.cos(L)], ang = f(tx, 50) * Math.PI / 180, up = [-Math.sin(ang), Math.cos(ang)];
+        const d0 = (f(tx, 10) - f(ln, 10)) * n[0] + (f(tx, 20) - f(ln, 20)) * n[1], d1 = d0 + (f(tx, 73) === 3 ? -1 : 1) * f(tx, 40) * (up[0] * n[0] + up[1] * n[1]);
+        assert.ok(d0 * d1 > 0, `${what}: ${k} text runs from ${d0.toFixed(2)} to ${d1.toFixed(2)} across its dimension line`);
+      }
+    };
     const readable = (list, what) => { for (const q of list) { const d = (((q.angle - q.line) % 180) + 180) % 180; assert.ok((d < 1e-3 || 180 - d < 1e-3) && (q.angle <= 90 + 1e-3 || q.angle > 270 - 1e-3), `${what}: text at ${q.angle}, line at ${q.line}`); } };
     await click(150, 190);
     await typeCmd('ro'); await typeCmd('30');
     text = await save();
     assert.ok(textsIn(text).some((q) => q.angle > 1), 'a dimension was turned');
-    readable(textsIn(text), 'rotated');
+    readable(textsIn(text), 'rotated'); keepsSide(text, 'rotated');
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
     await typeCmd('mirror'); await typeCmd('0,300'); await typeCmd('500,300'); await typeCmd('y');
     text = await save();
-    readable(textsIn(text), 'mirrored');
+    readable(textsIn(text), 'mirrored'); keepsSide(text, 'mirrored');
     // paste the dimensions into another layout that has a dimension of its own: all three keep their own blocks, also after save and reopen
     await page.keyboard.press('Escape'); await page.keyboard.press('Control+a'); await page.keyboard.press('Control+c');
     await t('new-layout').click();

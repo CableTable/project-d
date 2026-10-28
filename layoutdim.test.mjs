@@ -197,10 +197,42 @@ test('deleting one of two copies of a line does not move its dimension onto the 
   near(dimOf(lay2, d2).params.a[0], 20);
 });
 
+test('a mirrored or half-turned dimension keeps its text on its own side of the dimension line', () => {
+  // [y of the dimension line, y of the text's middle] read from the block (text 73: 1 = bottom-aligned, 3 = top-aligned)
+  const sides = (lay, p) => {
+    const b = lay.parts[p.partId].raw.blocks[dimName(lay.parts[p.partId])], ln = b.entities.find((e) => e.type === 'LINE'), t = b.entities.find((e) => e.type === 'TEXT');
+    const f = (e, c) => +e.r.v[e.r.c.indexOf(c)], h = f(t, 40), va = f(t, 73), y = f(t, 20);
+    const lo = va === 3 ? y - h : y, hi = lo + h, ly = f(ln, 20);
+    assert.ok(lo >= ly - 1e-6 || hi <= ly + 1e-6, `text ${lo}..${hi} crosses the dimension line at ${ly}`);
+    return Math.sign((lo + hi) / 2 - ly);
+  };
+  const lay0 = layoutWith(), p0 = addDim(lay0, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  const own = sides(lay0, p0);
+  for (const [name, set, want] of [['rot 180', (p) => { p.rot = 180; }, -own], ['mirrorY', (p) => { p.mirrorY = true; }, -own], ['mirrorX', (p) => { p.mirrorX = true; }, own]]) {
+    const lay = layoutWith(), p = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+    set(p); LD.settleDims(lay, newId);
+    assert.equal(sides(lay, p), want, name);
+  }
+});
+
+test('a grip edit on a copy that shares its part keeps its dimension following', () => {
+  const lay = layoutWith(), a = addLine(lay, 'l1', [0, 0], [100, 0]), d = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  const b = { ...a, y: a.y + 500 };
+  lay.placed.push(b);
+  LD.settleDims(lay, newId);
+  const prev = LD.linkView(lay), view = LD.objectDoc(lay), ent = view.raw.entities.find((e) => e.type === 'LINE');
+  assert.ok(LD.objectReplace(lay, view, ent, line(0, 0, 160, 0), newId));
+  assert.equal(new Set([lay.placed[0], lay.placed[2]].map((q) => lay.parts[q.partId].name)).size, 2);   // the edited copy got a part name of its own
+  LD.settleDims(lay, newId);
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+  near(dimOf(lay, d).params.b[0], 160);
+});
+
 test('names: turnedTag and freeBlockName', () => {
   assert.equal(turnedTag('H', 90), 'V'); assert.equal(turnedTag('V', 270), 'H'); assert.equal(turnedTag('H', 180), 'H'); assert.equal(turnedTag('H', 45), '');
   assert.equal(turnedTag('', 90), ''); assert.equal(turnedTag('R', 45), 'R');
   assert.equal(freeBlockName(new Set(['PD_DIM_1', 'PD_DIM_2']), ''), 'PD_DIM_3');
+  assert.equal(freeBlockName(new Set(['pd_dim_1', 'pd_dim_h1']), ''), 'PD_DIM_2'); assert.equal(freeBlockName(new Set(['pd_dim_h1']), 'H'), 'PD_DIM_H2');
 });
 
 console.log(n + ' tests');

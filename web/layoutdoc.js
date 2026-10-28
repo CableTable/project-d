@@ -141,20 +141,20 @@ export function objectReplace(lay, view, ent, next, newId) {
  * Also gives a dimension a block name of its own when a placed drawing's block, or another dimension (pasted from another layout), has it: they all land in one file. → true when any changed. */
 export function settleDims(lay, newId) {
   const taken = new Set(), drawn = new Set(), owner = new Map(), names = new Set(Object.values(lay.parts).map((q) => q.name));
-  for (const q of Object.values(lay.parts)) for (const n of Object.keys(q.raw?.blocks || {})) { taken.add(n); if (!q.obj) drawn.add(n); }
+  for (const q of Object.values(lay.parts)) for (const n of Object.keys(q.raw?.blocks || {})) { taken.add(n.toLowerCase()); if (!q.obj) drawn.add(n.toLowerCase()); }   // block names ignore case
   let changed = false;
   for (const p of lay.placed) {
     const part = lay.parts[p.partId];
     if (!isDimPart(part)) continue;
-    const old = dimName(part), settled = isSettled(part, p), clash = drawn.has(old) || owner.has(old) && owner.get(old) !== p.partId;
-    if (settled && !clash) { owner.set(old, p.partId); continue; }
+    const old = dimName(part), lo = old.toLowerCase(), settled = isSettled(part, p), clash = drawn.has(lo) || owner.has(lo) && owner.get(lo) !== p.partId;
+    if (settled && !clash) { owner.set(lo, p.partId); continue; }
     const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = settled ? tagOf(old) : turnedTag(tagOf(old), p.rot);
     const name = !shared && !clash && tag === tagOf(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
-    taken.add(name);
+    taken.add(name.toLowerCase());
     const next = objectPart(newId(), shared ? nextName('Dimension', names) : part.name, { ...ent, r: { ...ent.r, v: ent.r.v.map((v, k) => (ent.r.c[k] === 2 ? name : v)) } },
       layersOf(lay), part.raw.header, { [name]: settled ? part.raw.blocks[old] : bakeBlock(part.raw.blocks[old], part, p) });
     if (!next) continue;
-    names.add(next.name); lay.parts[next.id] = next; owner.set(name, next.id);
+    names.add(next.name); lay.parts[next.id] = next; owner.set(name.toLowerCase(), next.id);
     Object.assign(p, objectPlacement(next)); delete p.sc;
     changed = true;
   }
@@ -181,17 +181,20 @@ export function linkView(lay) {
 const bucket = (m, k, v) => { const l = m.get(k); if (l) l.push(v); else m.set(k, [v]); };
 /** [cur index, prev index] of the same object in two linkView()s. Copies share a part name, so an object that did not move pairs with its exact twin first
  * (deleting copy A must not make B look like A moved), the rest by name in order. */
-function pairUp(prev, cur) {
-  const exact = new Map(), byId = new Map(), out = [], rest = [], used = new Set();
+function pairUp(pv, cv) {
+  const prev = pv.keys, cur = cv.keys, exact = new Map(), byId = new Map(), out = [], rest = [], used = new Set();
   prev.forEach((k, j) => bucket(exact, k.id + '|' + k.at, j));
   cur.forEach((k, i) => { const l = exact.get(k.id + '|' + k.at); if (l && l.length) { const j = l.shift(); used.add(j); out.push([i, j]); } else rest.push(i); });
   prev.forEach((k, j) => { if (!used.has(j)) bucket(byId, k.id, j); });
-  for (const i of rest) { const l = byId.get(cur[i].id); if (l && l.length) out.push([i, l.shift()]); }
+  const left = [];
+  for (const i of rest) { const l = byId.get(cur[i].id); if (l && l.length) { const j = l.shift(); used.add(j); out.push([i, j]); } else left.push(i); }
+  // a grip edit renames the part of a copy that shares one (objectReplace keeps the slot), so what is left pairs by slot
+  for (const i of left) { const j = prev.findIndex((_, j) => !used.has(j) && pv.at[j] === cv.at[i]); if (j >= 0) { used.add(j); out.push([i, j]); } }
   return out.sort((a, b) => a[0] - b[0]);
 }
 /** Dimensions follow the objects they measure: `prev` and `cur` are linkView()s before and after an edit; a dimension whose end sat on a point that moved is rebuilt (drawings' linked dimensions, linked-dimensions.js). → true when any changed. */
 export function followDims(lay, prev, cur, newId) {
-  const common = pairUp(prev.keys, cur.keys);
+  const common = pairUp(prev, cur);
   if (!common.length) return false;
   const before = { header: {}, layers: cur.layers, ltypes: {}, blocks: prev.blocks, entities: common.map(([, j]) => prev.entities[j]) };
   const next = { entities: common.map(([i]) => cur.entities[i]), blocks: cur.blocks }, out = followDimensions(before, next, 1);
