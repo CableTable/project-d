@@ -133,7 +133,7 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # offset/limit, change it with Edit (`replace_all` for repeats); never awk / node -e with braces, sed -i, python
 # heredocs or PowerShell script blocks. A throwaway script goes to a file with Write, then `node <file>`.
 R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"
-/c/Users/raksh/.local/bin/claude3.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
+/c/Users/raksh/.local/bin/claude3.cmd -p --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
   --add-dir "E:/Project B/Claude/Project D/.git" --add-dir "E:/Project B/Claude/Project D extras" \
   --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" \
   --allowedTools "Bash(echo:*)" "Bash(tee:*)" "Bash(npx.cmd:*)" "Bash(npm.cmd:*)" "PowerShell(Select-String:*)" \
