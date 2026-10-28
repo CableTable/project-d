@@ -134,7 +134,7 @@ for (const kind of ['rect', 'rrect']) test(`TODO 69c: ${kind} first corner, sign
     const result = toolPointInput(toolKeys(T, text), T);
     assert.equal(result.point, null); assert.match(result.why, new RegExp(label));
   }
-  assert.equal(inputMode(createTool('circle')), null);
+  assert.equal(inputMode(createTool('circle')), 'xy', 'Circle joined in TODO 69f');
 });
 
 test('TODO 69d: Measure types its first point only, then shows a read-only length', () => {
@@ -203,4 +203,60 @@ test('TODO 69e: a single-number field ignores point text and Tab keeps it active
   const t = inputKey(keys('45', false, s), 'Tab', false);
   assert.equal(t.active, 0); assert.deepEqual(t.locked, [true, false]);
   assert.equal(escapeInput(t, false).mode, 'angle'); assert.equal(escapeInput(s, false), null);
+});
+
+test('TODO 69f: Circle types its centre then one Radius (Diameter after D); a zero or negative one is refused', () => {
+  const T = createTool('circle');
+  assert.equal(inputMode(T), 'xy'); toolHover(T, [5, 5]);
+  toolType(T, toolPointInput(toolKeys(T, '10,20'), T).text);
+  assert.deepEqual(T.pts, [[10, 20]]); toolHover(T, [10, 60]);
+  assert.equal(inputMode(T), 'radius'); assert.equal(anchorOf(T)[0], 10); assert.equal(firstPoint(T), false);
+  let r = toolPointInput(toolKeys(T, ''), T);
+  assert.deepEqual(r.labels, ['Radius']); near(r.live, [40]);
+  r = toolPointInput(toolKeys(T, '25'), T); near([r.value], [25]); near(r.point, [10, 45]);
+  for (const bad of ['0', '-5']) { r = toolPointInput(toolKeys(T, bad), T); assert.match(r.why, /Radius must be more than 0/); assert.equal(r.point, null); assert.notEqual(r.errors[0], ''); }
+  T.dia = true;
+  r = toolPointInput(toolKeys(T, ''), T); assert.deepEqual(r.labels, ['Diameter']); near(r.live, [80]);
+  assert.equal(toolType(T, toolPointInput(toolKeys(T, '25'), T).text).made[0].r, 12.5, 'a typed Diameter 25 is a radius of 12.5');
+  const U = createTool('circle'); toolType(U, '0,0'); toolHover(U, [0, 3]);
+  assert.equal(toolType(U, toolPointInput(toolKeys(U, '25'), U).text).made[0].r, 25);
+});
+
+test('TODO 69f: Ellipse types the centre, Length + Angle of axis 1 from it, then one Length for the other half-axis', () => {
+  const T = createTool('ellipse'); toolHover(T, [1, 1]);
+  toolType(T, toolPointInput(toolKeys(T, '10,10'), T).text);
+  toolHover(T, [30, 10]);
+  assert.equal(inputMode(T), 'polar'); near(anchorOf(T), [10, 10]);
+  const r = toolPointInput(toolKeys(T, ''), T); assert.deepEqual(r.labels, ['Length', 'Angle']); near(r.live, [20, 0]);
+  for (const bad of ['0', '-4']) assert.match(toolPointInput(toolKeys(T, bad), T).why, /Length must be more than 0/);
+  toolType(T, toolPointInput(keys('40<90', false, createInput(false, 'polar')), T).text);
+  near(T.pts[1], [10, 50]);
+  toolHover(T, [25, 10]);
+  assert.equal(inputMode(T), 'length'); near(anchorOf(T), [10, 10]);
+  const one = toolPointInput(toolKeys(T, ''), T); assert.deepEqual(one.labels, ['Length']); near(one.live, [15]);
+  assert.match(toolPointInput(toolKeys(T, '0'), T).why, /Length must be more than 0/);
+  const e = toolType(T, toolPointInput(toolKeys(T, '15'), T).text).made[0];
+  assert.equal(e.t, 'ellipse'); near(e.c, [10, 10]); near([e.ratio], [15 / 40]);
+});
+
+test('TODO 69f: Arc types its first point, then Length + Angle from the previous point twice', () => {
+  const T = createTool('arc'); toolHover(T, [1, 1]);
+  toolType(T, toolPointInput(toolKeys(T, '0,0'), T).text);
+  toolHover(T, [10, 0]); assert.equal(inputMode(T), 'polar');
+  toolType(T, toolPointInput(keys('10<0', false, createInput(false, 'polar')), T).text);
+  near(T.pts[1], [10, 0]);
+  toolHover(T, [10, 10]); assert.equal(inputMode(T), 'polar'); near(anchorOf(T), [10, 0]);
+  assert.match(toolPointInput(keys('0', false, createInput(false, 'polar')), T).why, /Length must be more than 0/);
+  const made = toolType(T, toolPointInput(keys('10<90', false, createInput(false, 'polar')), T).text).made[0];
+  assert.equal(made.t, 'arc'); near([made.r], [Math.hypot(5, 5)]);                 // (0,0) (10,0) (10,10) lie on a circle about (5,5)
+  assert.equal(inputMode(T), 'xy', 'the next arc starts with X / Y again');
+});
+
+test('TODO 69f: the one-number Circle / Ellipse fields ignore point text; Esc clears before cancelling', () => {
+  for (const mode of ['radius', 'length']) {
+    const s = createInput(false, mode);
+    for (const key of [',', '@', '#', '<']) assert.equal(inputKey(s, key, false), null, key);
+    const t = keys('5', false, s);
+    assert.equal(escapeInput(t, false).mode, mode); assert.equal(escapeInput(s, false), null);
+  }
 });

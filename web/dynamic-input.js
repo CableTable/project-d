@@ -7,19 +7,24 @@ export const hasTyped = (s) => !!(s.prefix || s.values.some(Boolean));
 const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Measure, Dimension, Set length and the Modify tools are shown by app.js as tools of mm points; Measure types only its first point, its second is a read-only length.
 // Move / Copy take a base point only (their target stays the prompt); Rotate then types an Angle, Scale a Factor: one number, no point.
-const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'], move: ['xy'], copy: ['xy'], rotate: ['xy', 'angle'], scale: ['xy', 'factor'] };
-export const isSingle = (mode) => mode === 'angle' || mode === 'factor';
+// Circle types its centre then one Radius; Ellipse its centre, Length + Angle of axis 1, then one Length (the other half-axis); Arc its first point, then Length + Angle from the previous point twice.
+const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'], move: ['xy'], copy: ['xy'], rotate: ['xy', 'angle'], scale: ['xy', 'factor'],
+  circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
+export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length'].includes(mode);
 export const inputMode = (T) => STAGES[T.kind] ? STAGES[T.kind][T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
   ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
 export const readOnlyLength = (T) => T.kind === 'measure' && T.pts.length === 1;
 
-/** Rectangles anchor at the first corner, chains at their latest vertex, a dimension line's place at nothing (absolute X / Y). */
-export const anchorOf = (T) => rectangle(T) ? T.pts[0] : T.kind === 'dimension' && T.pts.length === 2 ? undefined : T.pts.at(-1);
+/** Rectangles anchor at the first corner, an ellipse's last half-axis at its centre, chains at their latest vertex, a dimension line's place at nothing (absolute X / Y). */
+export const anchorOf = (T) => rectangle(T) || (T.kind === 'ellipse' && T.pts.length === 2) ? T.pts[0] : T.kind === 'dimension' && T.pts.length === 2 ? undefined : T.pts.at(-1);
 export const firstPoint = (T) => !anchorOf(T);
 export function toolPointInput(s, T) {
   const last = anchorOf(T);
-  if (isSingle(s.mode)) return valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1);
+  if (isSingle(s.mode)) return valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1, T.dia);
   const result = pointInput(s, last, T.hover || last || [0, 0], T.kind === 'dimension' ? 'Distance' : 'Length');
+  if (s.mode === 'polar' && ['ellipse', 'arc'].includes(T.kind) && s.values[0] && !(+s.values[0] > 0) && !result.errors[0]) {   // no axis or chord of 0 or less
+    result.errors[0] = result.why = 'Length must be more than 0'; result.point = null;
+  }
   // Rectangle's command-bar grammar takes sizes even when cursor entry used absolute X / Y.
   if (rectangle(T) && last && result.point) result.text = '@' + result.point.map((v, i) => (v - last[i]).toLocaleString('en-US', { useGrouping: false, maximumSignificantDigits: 21 })).join(',');
   return result;
@@ -73,12 +78,15 @@ export function pointInput(s, last, mouse, lengthLabel = 'Length') {
   return { text, point, live, labels, errors, why: errors.find(Boolean) || (point ? '' : 'Point coordinates must be finite') };
 }
 
-/** The one number of Rotate (degrees from the pivot) or Scale (a factor); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. */
-function valueInput(s, base, mouse, unit) {
-  const factor = s.mode === 'factor', label = factor ? 'Factor' : 'Angle', typed = s.values[0];
-  const live = [factor ? dist(base, mouse) / unit : angleOf(base, mouse)];
+const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length' };
+/** The one number of Rotate (degrees from the pivot), Scale (a factor), Circle (radius, or diameter after D) or an ellipse's last half-axis (mm); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. A length also gives `point`, along the mouse's way, so the tool's own preview follows it. */
+function valueInput(s, base, mouse, unit, dia) {
+  const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
+  const live = [mode === 'angle' ? angleOf(base, mouse) : dist(base, mouse) / unit * (label === 'Diameter' ? 2 : 1)];
   const bad = typed && (parseInput(typed).kind !== 'len' || !Number.isFinite(+typed)) ? `${label} must be a finite number` : '';
   const value = typed ? +typed : live[0];
-  const error = bad || (factor && !(value > 0) ? 'Factor must be more than 0' : '');
-  return { value: error ? null : value, point: null, live, labels: [label], errors: [error, ''], text: String(value), why: error };
+  const error = bad || (mode !== 'angle' && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
+  const point = (mode === 'radius' || mode === 'length') && !error ? alongTo(base, mouse, value) : null;
+  return { value: error ? null : value, point, live, labels: [label], errors: [error, ''], text: String(value), why: error };
 }
+const alongTo = (a, b, v) => { const d = dist(a, b), u = d > 1e-9 ? [(b[0] - a[0]) / d, (b[1] - a[1]) / d] : [1, 0]; return [a[0] + u[0] * v, a[1] + u[1] * v]; };

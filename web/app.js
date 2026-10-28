@@ -3739,7 +3739,7 @@ function buildStatus() {
   ui.coords = h('span', { class: 'mono coords', 'data-testid': 'coords', style: 'white-space:pre' }, 'X 0.00   Y 0.00 mm');
   loadTrack();
   const TITLES = { SNAP: 'Snap (F3): on/off. Right-click: snap types', GRID: 'Grid (F7): show/hide the drawing grid', ORTHO: 'Ortho (F8): keep picked points straight along X or Y from the first point (Shift does it for one pick)',
-    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type in fields by the cursor in Line, Polyline, Rectangle, Measure, Dimension, Set length, Move, Copy, Rotate and Scale' };
+    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type in fields by the cursor in Line, Polyline, Rectangle, Circle, Ellipse, Arc, Measure, Dimension, Set length, Move, Copy, Rotate and Scale' };
   ui.tog = {};
   const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['DYN', state.dynamicInput], ['OTRACK', state.otrack]].map(([t, on]) => {
     const b = ui.tog[t] = h('button', { class: 'tog' + (on ? ' on' : ''), type: 'button', 'data-testid': 'tog-' + t.toLowerCase(), 'aria-pressed': String(on), title: TITLES[t] }, t);
@@ -6019,7 +6019,7 @@ function drawOvl() {
       tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: T.hover[0], y: T.hover[1] };
       if (dynamic) {
         tip.fields = DR.dynamicInput(T.pts.at(-1) || [0, 0], pv.at, state.dp);
-        tip.dynamic = dynamic;
+        tip.dynamic = dynamic; tip.single = DI.isSingle(DI.inputMode(T)) ? DI.inputMode(T) : null;
         tip.tracking = state.trk.res?.text;
       }
     }
@@ -6063,7 +6063,7 @@ function drawOvl() {
         const angular = tip.single ? tip.single === 'angle' : input.mode === 'polar' && i === 1;
         let rounded = +data.live[i].toFixed(state.dp);
         if (angular) rounded %= 360;
-        field.value = input.values[i] || (rounded === 0 ? 0 : rounded).toFixed(state.dp) + (angular ? '°' : tip.single ? '' : ' mm');
+        field.value = input.values[i] || (rounded === 0 ? 0 : rounded).toFixed(state.dp) + (angular ? '°' : tip.single === 'factor' ? '' : ' mm');
         field.style.width = Math.max(9, field.value.length + 2) + 'ch';
         field.previousElementSibling.textContent = data.labels[i]; field.setAttribute('aria-label', data.labels[i]);
         field.classList.toggle('active', input.active === i); field.setAttribute('aria-invalid', String(!!data.errors[i]));

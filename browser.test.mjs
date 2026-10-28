@@ -15970,6 +15970,99 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 69f: Circle Radius, Ellipse and Arc Length + Angle, F12 off, Esc once keeps the command', async () => {
+    const setup = async () => {
+      await open70([dxfLine(0, 0, 100, 100)]);                       // the view fits the drawing: points up to 100 stay on screen
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+      await t('decimals').selectOption('2');
+    };
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x + 4, p.y + 4); await page.mouse.move(p.x, p.y); await frames(); };    // two moves: the pointer may already be there
+    const label = async (id) => t(id).getAttribute('aria-label');
+    const point = async (x, y) => { await page.keyboard.type(String(x)); await page.keyboard.press('Tab'); await page.keyboard.type(String(y)); await page.keyboard.press('Enter'); };
+    const polar = async (len, ang) => { await page.keyboard.type(String(len)); await page.keyboard.press('Tab'); await page.keyboard.type(String(ang)); await page.keyboard.press('Enter'); };
+    const centre = async (tool) => { await typeCmd(tool); await move(80, 60); await point(40, 40); await move(70, 40); };
+    const last = async () => (await savedDoc()).entities.at(-1);
+    const noFields = async (why) => { for (const id of ['cursor-length', 'cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, `${why}: ${id} is hidden`); };
+    // Circle: X / Y at the centre, then ONE Radius field
+    await setup();
+    await typeCmd('circle'); await move(80, 60);
+    assert.equal(await label('cursor-length'), 'X'); assert.equal(await label('cursor-angle'), 'Y');
+    await point(40, 40); await move(70, 40);
+    assert.equal(await label('cursor-length'), 'Radius'); assert.equal(await t('cursor-length').isVisible(), true);
+    assert.equal(await t('cursor-angle').isVisible(), false); assert.equal(await t('cursor-dx').isVisible(), false);
+    await page.keyboard.type('0'); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-invalid'), 'true');
+    await page.keyboard.press('Enter'); assert.match(await prompt(), /Radius/, 'a zero radius does nothing');
+    await page.keyboard.press('Backspace'); await page.keyboard.type('25'); await frames();
+    assert.equal(await t('cursor-length').inputValue(), '25');
+    const rshot = await page.locator('[data-testid=draw-preview]').count();
+    assert.equal(rshot, 1, 'the preview circle follows the typed radius');
+    await shotBoth('dynamic-input69f-circle-radius', async () => {
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      await centre('circle'); await page.keyboard.type('25'); await frames();
+    }, async () => { for (let i = 0; i < 2; i++) await page.keyboard.press('Escape'); });
+    await centre('circle'); await page.keyboard.type('25'); await page.keyboard.press('Enter');
+    let e = await last();
+    assert.equal(e.type, 'CIRCLE'); near70([10, 20, 40].map((c) => fieldOf(e, c)), [40, 40, 25]);
+    // the D option stays in the command box and the field becomes a Diameter
+    await setup();
+    await centre('circle'); await typeCmd('d'); await frames();
+    assert.equal(await label('cursor-length'), 'Diameter');
+    await page.keyboard.type('10'); await page.keyboard.press('Enter');
+    e = await last(); near70([10, 20, 40].map((c) => fieldOf(e, c)), [40, 40, 5]);
+    // Ellipse: X / Y, then Length + Angle from the centre, then ONE Length
+    await setup();
+    await typeCmd('ellipse'); await move(80, 60);
+    assert.equal(await label('cursor-length'), 'X'); await point(40, 40); await move(70, 40);
+    assert.equal(await label('cursor-length'), 'Length'); assert.equal(await label('cursor-angle'), 'Angle');
+    await page.keyboard.type('20'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await frames();
+    await shotBoth('dynamic-input69f-ellipse-2nd', async () => {
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      await centre('ellipse'); await page.keyboard.type('20'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await frames();
+    }, async () => { for (let i = 0; i < 2; i++) await page.keyboard.press('Escape'); });
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await setup();
+    await centre('ellipse'); await page.keyboard.type('0'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-invalid'), 'true');
+    await page.keyboard.press('Enter'); assert.match(await prompt(), /End of axis 1/, 'a zero axis does nothing');
+    await page.keyboard.press('Escape'); await frames();
+    await page.keyboard.type('20'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await page.keyboard.press('Enter');
+    await move(60, 50);
+    assert.match(await prompt(), /Other half-axis/);
+    assert.equal(await label('cursor-length'), 'Length'); assert.equal(await t('cursor-angle').isVisible(), false);
+    await page.keyboard.type('10'); await page.keyboard.press('Enter');
+    e = await last();
+    assert.equal(e.type, 'ELLIPSE'); near70([10, 20, 11, 21, 40].map((c) => fieldOf(e, c)), [40, 40, 20, 0, .5]);
+    // Arc: X / Y, then Length + Angle from the previous point twice
+    await setup();
+    await typeCmd('arc'); await move(80, 60);
+    assert.equal(await label('cursor-length'), 'X'); await point(20, 20); await move(50, 20);
+    assert.equal(await label('cursor-length'), 'Length'); assert.equal(await label('cursor-angle'), 'Angle');
+    await polar(20, 0); await move(60, 50);
+    assert.equal(await label('cursor-length'), 'Length'); assert.equal(await t('cursor-angle').isVisible(), true);
+    await polar(20, 90);
+    e = await last();
+    assert.equal(e.type, 'ARC'); near70([10, 20, 40].map((c) => fieldOf(e, c)), [30, 30, Math.hypot(10, 10)]);
+    // Esc once clears the typing and keeps the command; the second Esc ends it
+    await setup();
+    await centre('circle'); await page.keyboard.type('25'); await frames();
+    await page.keyboard.press('Escape'); await frames();
+    assert.notEqual(await t('cursor-length').inputValue(), '25'); assert.match(await prompt(), /Radius/);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.match(await histLine(), /Command: SELECT/, 'Esc ends Circle once the typing is gone');
+    // F12 off: no fields, and typing goes to the command box
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), false);
+    for (const tool of ['circle', 'ellipse', 'arc']) {
+      await typeCmd(tool); await move(80, 60);
+      await noFields(tool + ' with F12 off');
+      await page.keyboard.type('10,20'); assert.equal(await cmdLine().inputValue(), '10,20'); await cmdLine().fill('');
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    }
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), true);
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;
