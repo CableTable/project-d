@@ -3602,16 +3602,18 @@ function activeCmd() {
   return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes };
 }
 
+/** The function that takes a picked or typed point for the point tool that is on (Set length, Measure, Dimension, Leader, Balloon, Mirror), or null. */
+const pointToolAction = () => state.setlen ? lengthPoint : state.tool === 'measure' ? measurePoint
+  : state.dim ? dimensionPoint : state.ldr && !textEditing() ? ldrPoint
+    : state.bal ? balClick : modLive() && state.mod.kind === 'mirror' && ['p1', 'p2'].includes(state.mod.stage) ? mirrorPoint : null;
+
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
 function cmdEnter(raw) {
   if (state.grip && editable()) { gripTyped(raw); return; }
   if (drawLive()) { drawTyped(raw); return; }
   if (modLive() && modTyped(editable(), raw)) return;
   if (state.tool === 'text' && editable() && !textEditing()) { textTyped(raw); return; }
-  const d = state.tool === 'measure' ? measureTarget() : editable();
-  const pointAction = state.setlen ? lengthPoint : state.tool === 'measure' ? measurePoint
-    : state.dim ? dimensionPoint : state.ldr && !textEditing() ? ldrPoint
-      : state.bal ? balClick : modLive() && state.mod.kind === 'mirror' && ['p1', 'p2'].includes(state.mod.stage) ? mirrorPoint : null;
+  const d = state.tool === 'measure' ? measureTarget() : editable(), pointAction = pointToolAction();
   if (d && pointAction) {
     const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw);
     if (inp.kind === 'xy' || inp.kind === 'polar') {
@@ -4327,7 +4329,8 @@ function attachCanvasEvents() {
     if (was && d && e.button === 0) {
       hideRubber();
       const p = toDrawing(d, e.clientX, e.clientY);
-      if (state.setlen) { if (!was.moved) lengthPoint(d, p, e.shiftKey); }
+      if ((state.setlen || state.tool === 'measure' ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
+      else if (state.setlen) { if (!was.moved) lengthPoint(d, p, e.shiftKey); }
       else if (state.tool === 'measure') { if (!was.moved) measurePoint(d, p, e.shiftKey); }
       else if (state.tool === 'dimension') dimensionPoint(d, p, e.shiftKey);
       else if (state.tool === 'leader') ldrPoint(d, p, e.shiftKey);
@@ -6016,6 +6019,11 @@ function drawOvl() {
       }
     }
   }
+  const CT = d && !state.draw && cursorTool();                       // Measure, Dimension, Set length: the same cursor fields
+  if (CT?.hover && (DI.inputMode(CT) !== null || DI.readOnlyLength(CT))) {
+    const only = DI.readOnlyLength(CT), dynamic = only ? null : cursorPoint(), typed = dynamic?.point && DI.hasTyped(cursorInput());
+    tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
+  }
   if (d && !d.lay && modLive()) modOvl(d, out);
   if (d && !d.lay && editable()) {
     const bt = balOvl(d, out, 1 / view.scale), tt = textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
@@ -6040,7 +6048,12 @@ function drawOvl() {
     ui.dynamicTrack.textContent = tip.tracking || ''; ui.dynamicTrack.hidden = !tip.tracking;
     for (const [key, value] of Object.entries(tip.fields)) {
       const field = ui.cursorFields[key];
-      if (field.tagName === 'INPUT') {
+      field.parentElement.hidden = !!tip.only && key !== 'length';
+      if (field.tagName === 'INPUT' && tip.only) {                      // Measure's second point: its length, to read and not to type
+        field.value = value; field.style.width = Math.max(9, value.length + 2) + 'ch';
+        field.previousElementSibling.textContent = 'Length'; field.setAttribute('aria-label', 'Length');
+        field.classList.remove('active'); field.setAttribute('aria-invalid', 'false'); field.nextElementSibling.hidden = true;
+      } else if (field.tagName === 'INPUT') {
         const i = key === 'length' ? 0 : 1, input = cursorInput(), data = tip.dynamic;
         const angular = input.mode === 'polar' && i === 1;
         let rounded = +data.live[i].toFixed(state.dp);
@@ -6069,30 +6082,56 @@ function drawKey(e, k) {
   return false;
 }
 
-const cursorDynamic = () => state.dynamicInput && drawLive() && DI.inputMode(state.draw) !== null;
-const cursorInput = () => state.draw.cursorInput ||= DI.createInput(!state.draw.pts.length, DI.inputMode(state.draw));
-const cursorPoint = () => DI.toolPointInput(cursorInput(), state.draw);
+/** What owns the cursor fields now: the draw tool itself, or Measure / Dimension / Set length seen as a tool of mm points (y up), so one system serves all. */
+function cursorTool() {
+  if (!state.dynamicInput) return null;
+  if (state.draw) return drawLive() ? state.draw : null;
+  const A = state.setlen || state.meas || state.dim, kind = state.setlen ? 'setlen' : state.meas ? 'measure' : state.dim && ['aligned', 'linear'].includes(state.dimType) ? 'dimension' : null;
+  const d = kind && (kind === 'measure' ? measureTarget() : editable());
+  if (!d) return null;
+  const f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
+  return { kind, A, d, f, pts: A.pts.map(mm), hover: mm(kind === 'dimension' && A.pts.length === 2 ? A.cursor : A.hover) };
+}
+const cursorDynamic = () => { const T = cursorTool(); return !!T && DI.inputMode(T) !== null; };
+const cursorHolder = (T) => T.A || T;
+/** The typing state; a new one whenever the tool has moved on to its next point. */
+function cursorInput() {
+  const T = cursorTool(), H = cursorHolder(T);
+  if (H.cursorInput?.n !== T.pts.length) H.cursorInput = Object.assign(DI.createInput(DI.firstPoint(T), DI.inputMode(T)), { n: T.pts.length });
+  return H.cursorInput;
+}
+const cursorPoint = () => DI.toolPointInput(cursorInput(), cursorTool());
 function cursorCommit() {
-  const result = cursorPoint();
+  const T = cursorTool(), result = cursorPoint();
   if (result.why) { note(result.why); paintOverlay(); return; }
-  trackStop(); drawTyped(result.text);
+  trackStop();
+  if (T.A) pointToolAction()(T.d, result.point.map((v) => v / T.f), false, true);
+  else drawTyped(result.text);
+}
+/** A click while cursor fields hold typing: the pointer fills the rest. → true when it committed (or said why not) */
+function cursorClick(d, p, shift) {
+  const T = cursorTool();
+  if (!T?.A || !DI.hasTyped(cursorInput())) return false;
+  if (T.kind === 'dimension' && T.pts.length === 2) T.A.cursor = p; else T.A.hover = pickPoint(d, p, T.A.pts, shift, true);
+  cursorCommit();
+  return true;
 }
 function cursorKey(e) {
   if (!cursorDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
   if (field && (field !== ui.cmd || ui.cmd.value)) return;
-  const input = cursorInput();
+  const input = cursorInput(), T = cursorTool();
   if (['Tab', 'Backspace'].includes(e.key) && !DI.hasTyped(input)) {
     const onCanvas = e.target === document.body || (ui.canvas.contains(e.target) && !field && !e.target.closest?.('button, [role=button], dialog, [role=dialog]'));
     if (!onCanvas) return;
   }
   if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
   else {
-    const next = DI.inputKey(input, e.key, !state.draw.pts.length);
+    const next = DI.inputKey(input, e.key, DI.firstPoint(T));
     if (!next) return;
-    state.draw.cursorInput = e.key === 'Escape' ? null : next;
-    if (!state.draw.hover) DR.toolHover(state.draw, [0, 0]);
+    cursorHolder(T).cursorInput = e.key === 'Escape' ? null : next;
+    if (!T.hover) { if (T.A) { T.A.hover ||= [0, 0]; T.A.cursor ||= [0, 0]; } else DR.toolHover(state.draw, [0, 0]); }
     if (e.key === 'Escape') state.msg = null;
     paintOverlay(); renderCommand();
   }
@@ -6959,7 +6998,7 @@ function loadTrack() {
 const saveTrack = () => { try { localStorage.setItem(TRK_SAVED, JSON.stringify({ polar: state.polar.on, inc: state.polar.inc, otrack: state.otrack })); } catch { /* ignore */ } };
 function chip(name, on) { const b = ui.tog[name]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
 function dynamicInputSet(on) {
-  if (state.draw) state.draw.cursorInput = null;
+  for (const a of [state.draw, state.setlen, state.meas, state.dim]) if (a) a.cursorInput = null;
   state.dynamicInput = on; chip('DYN', on); paintOverlay();
   note(on ? 'Dynamic input on' : 'Dynamic input off');
   viewStore.put({ id: 'dynamicInput', on }).catch(() => note('Could not remember Dynamic input; it still applies until the app closes'));

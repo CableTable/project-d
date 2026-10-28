@@ -15618,6 +15618,82 @@ try {
     await t('ptab-drawing').click();
   });
 
+  await step('TODO 69d: Measure read-only length, Dimension Distance + Angle then X / Y, Set length typed length, F12 off', async () => {
+    await open70([dxfLine(0, 0, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await t('decimals').selectOption('2');
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const label = async (id) => t(id).getAttribute('aria-label');
+    const point = async (x, y) => { await page.keyboard.type(String(x)); await page.keyboard.press('Tab'); await page.keyboard.type(String(y)); await page.keyboard.press('Enter'); };
+    // Measure: X / Y at the first point, then only a read-only length by the cursor
+    await page.locator('[data-tool=measure]').click();
+    await move(80, 60);
+    assert.equal(await label('cursor-length'), 'X'); assert.equal(await label('cursor-angle'), 'Y');
+    await point(20, 25); await frames();
+    await move(60, 65);
+    assert.equal(await label('cursor-length'), 'Length');
+    assert.equal(await t('cursor-length').getAttribute('readonly'), '');
+    assert.ok(Math.abs(parseFloat(await t('cursor-length').inputValue()) - Math.hypot(40, 40)) < 1.5, await t('cursor-length').inputValue());
+    for (const id of ['cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, id + ' is hidden at the second point');
+    await page.keyboard.type('5'); assert.equal(await cmdLine().inputValue(), '5', 'typing still goes to the command box');
+    await cmdLine().fill('');
+    await typeCmd('@40,40');
+    assert.match(await prompt(), /Distance 56\.57 mm/);
+    await shotBoth('dynamic-input69d-measure', async () => {
+      await page.keyboard.press('Escape'); await page.locator('[data-tool=measure]').click();
+      await move(80, 60); await point(20, 25); await move(60, 65);
+    }, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
+    await page.locator('[data-tool=select]').click();
+    // Dimension: X / Y, then Distance + Angle, then X / Y for the dimension line
+    const startDim = async () => {
+      await typeCmd('dimension');                                   // the command is always Aligned; the button keeps the last type
+      await move(80, 60); assert.equal(await label('cursor-length'), 'X');
+      await point(10, 10); await move(110, 90);
+    };
+    await startDim();
+    assert.equal(await label('cursor-length'), 'Distance'); assert.equal(await label('cursor-angle'), 'Angle');
+    await page.keyboard.type('40'); await page.keyboard.press('Tab'); await page.keyboard.type('90'); await frames();
+    assert.equal(await page.locator('.cursor-lock:not([hidden])').count(), 1);
+    await page.keyboard.press('Enter');
+    await move(40, 40);
+    assert.equal(await label('cursor-length'), 'X'); assert.equal(await label('cursor-angle'), 'Y');
+    assert.equal(await t('cursor-dx').isVisible(), true);
+    await point(30, 30);
+    const dim = Object.entries((await savedDoc()).blocks).map(([n, b]) => readDim(n, b)).find(Boolean);
+    assert.ok(['aligned', 'linear'].includes(dim.kind), dim.kind);
+    near70(dim.params.a.slice(0, 2), [10, 10]); near70(dim.params.b.slice(0, 2), [10, 50]);
+    assert.match((await histLabels()).at(-1), /dimension/i);
+    await shotBoth('dynamic-input69d-dimension', async () => {
+      await startDim(); await page.keyboard.type('40'); await frames();
+      assert.equal(await t('cursor-length').inputValue(), '40');
+    }, async () => { for (let i = 0; i < 3; i++) await page.keyboard.press('Escape'); });
+    await page.locator('[data-tool=select]').click();
+    // Set length: the same fields as Line, then the real length is typed as before
+    await t('set-length').click();
+    await move(80, 60); assert.equal(await label('cursor-length'), 'X');
+    await point(10, 10); await move(110, 90);
+    assert.equal(await label('cursor-length'), 'Length'); assert.equal(await label('cursor-angle'), 'Angle');
+    await page.keyboard.type('50'); await page.keyboard.press('Tab'); await page.keyboard.type('0'); await page.keyboard.press('Enter');
+    await page.waitForFunction(() => /50 mm measured/.test(document.querySelector('[data-testid=measured]')?.textContent || ''));
+    await t('real-length').fill('25'); await t('real-length').press('Enter');
+    assert.match(await prompt(), /Scaled ×0\.5/);
+    // F12 off: no cursor fields, typing goes to the command box
+    await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), false);
+    for (const tool of ['measure', 'dimension']) {
+      await page.locator(`[data-tool=${tool}]`).click(); await move(80, 60);
+      assert.equal(await t('cursor-length').isVisible(), false, tool + ': F12 off hides the fields');
+      await page.keyboard.type('10,20'); assert.equal(await cmdLine().inputValue(), '10,20'); await cmdLine().fill('');
+      await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    }
+    await t('set-length').click(); await move(80, 60);
+    assert.equal(await t('cursor-length').isVisible(), false, 'Set length: F12 off hides the fields');
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), true);
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

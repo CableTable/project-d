@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createTool, toolType, toolHover, dynamicInput } from './web/draw.js';
-import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput } from './web/dynamic-input.js';
+import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput, anchorOf, firstPoint, readOnlyLength } from './web/dynamic-input.js';
 
 test('Dynamic input: translated points, signed deltas and all angle quadrants', () => {
   assert.deepEqual(dynamicInput([10, 20], [13, 24], 2), { length: '5.00 mm', angle: '53.13°', dx: '3.00 mm', dy: '4.00 mm' });
@@ -135,4 +135,43 @@ for (const kind of ['rect', 'rrect']) test(`TODO 69c: ${kind} first corner, sign
     assert.equal(result.point, null); assert.match(result.why, new RegExp(label));
   }
   assert.equal(inputMode(createTool('circle')), null);
+});
+
+test('TODO 69d: Measure types its first point only, then shows a read-only length', () => {
+  const T = { kind: 'measure', pts: [], hover: [30, 40] };
+  assert.equal(inputMode(T), 'xy'); assert.equal(firstPoint(T), true); assert.equal(readOnlyLength(T), false);
+  near(toolPointInput(toolKeys(T, '10,20'), T).point, [10, 20]);
+  T.pts = [[5, 5]];
+  assert.equal(inputMode(T), null, 'no field to type in at the second point'); assert.equal(readOnlyLength(T), true);
+  T.pts = [[5, 5], [8, 9]];
+  assert.equal(inputMode(T), null); assert.equal(readOnlyLength(T), false);
+});
+
+test('TODO 69d: Set length follows Line: X / Y, then Length + Angle from the first point, then none', () => {
+  const T = { kind: 'setlen', pts: [], hover: [30, 40] };
+  assert.equal(inputMode(T), 'xy'); assert.equal(firstPoint(T), true);
+  T.pts = [[10, 10]];
+  assert.equal(inputMode(T), 'polar'); assert.deepEqual(anchorOf(T), [10, 10]);
+  const h = Math.hypot(20, 30);
+  near(toolPointInput(toolKeys(T, '50'), T).point, [10 + 50 * 20 / h, 10 + 50 * 30 / h]);
+  near(toolPointInput(keys('90', false, inputKey(toolKeys(T, '10'), 'Tab', false)), T).point, [10, 20]);
+  T.pts = [[10, 10], [20, 20]];
+  assert.equal(inputMode(T), null, 'the real length is typed in the panel');
+});
+
+test('TODO 69d: Dimension: X / Y, then Distance + Angle from the first point, then absolute X / Y for the dimension line', () => {
+  const T = { kind: 'dimension', pts: [], hover: [30, 40] };
+  assert.equal(inputMode(T), 'xy'); assert.equal(firstPoint(T), true);
+  near(toolPointInput(toolKeys(T, '10,20'), T).point, [10, 20]);
+  T.pts = [[10, 20]];
+  assert.equal(inputMode(T), 'polar'); assert.deepEqual(anchorOf(T), [10, 20]); assert.equal(firstPoint(T), false);
+  let s = inputKey(toolKeys(T, '40'), 'Tab', false); s = keys('90', false, s);
+  assert.deepEqual(toolPointInput(s, T).labels, ['Distance', 'Angle']);
+  near(toolPointInput(s, T).point, [10, 60]);
+  T.pts = [[10, 20], [10, 60]];
+  assert.equal(inputMode(T), 'xy', 'the dimension line place is an absolute X / Y');
+  assert.equal(anchorOf(T), undefined); assert.equal(firstPoint(T), true);
+  const r = toolPointInput(toolKeys(T, '25,30'), T);
+  assert.deepEqual(r.labels, ['X', 'Y']); near(r.point, [25, 30]);
+  near(toolPointInput(toolKeys(T, '25'), T).point, [25, 40]);
 });
