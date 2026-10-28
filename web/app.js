@@ -40,7 +40,7 @@ import * as GR from './grips.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
-import { movePoint } from './move.js';
+import { movePoint, movePrompt } from './move.js';
 import { rotateEntities, rotationAngle, rotationMatrix } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './scale.js';
 import { filletEntities, filletPolylineShape } from './fillet.js';
@@ -6155,12 +6155,12 @@ function drawKey(e, k) {
   return false;
 }
 
-/** What owns the cursor fields now: the draw tool itself, or Measure / Dimension / Set length seen as a tool of mm points (y up), so one system serves all. */
+/** Cursor fields use one tool of mm points (y up), including Move / Copy's base point. */
 function cursorTool() {
   if (!state.dynamicInput) return null;
   if (state.draw) return drawLive() ? state.draw : null;
   const m = state.mod;
-  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && m.stage !== 'pick') {       // base point, then Rotate's angle / Scale's factor
+  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
     const d = editable(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
     return { kind: m.kind, A: m, mod: true, d, f, pts: m.p1 ? [mm(m.p1)] : [], hover: mm(m.cur) };
   }
@@ -6248,6 +6248,8 @@ function cursorKey(e) {
 
 // ---- Offset, Trim and Mirror (modify.js) ----
 const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
+const COPY_MODE_SAVED = 'pd-copy-mode';
+let copyMode = 'Multiple';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
@@ -6299,7 +6301,7 @@ function modPrompt(d) {
   const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Esc] (positive number or click):` };
   if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Esc] (degrees or click; Shift = 15°):` };
-  if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point or x,y:' : 'Target, dx,dy or distance:' + (m.kind === 'copy' ? ' Enter ends:' : '') };
+  if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode) };
   if (m.kind === 'array') return arrayPrompt(d, m);
   if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):` };
   if (m.kind === 'offset') return { status: `Command: OFFSET   Distance <${mmText(state.offDist)}> mm`, prompt: m.stage === 'obj' ? `Select the object to offset, or type the distance <${mmText(state.offDist)}>:` : `Click the side to offset to (or type a new distance <${mmText(state.offDist)}>):` };
@@ -6335,12 +6337,21 @@ function modEsc(d) {
 }
 function modEnter(d) {
   const m = state.mod;
+  if (['move', 'copy'].includes(m.kind)) {
+    if (m.stage === 'pick') moveTake(d);
+    else if (m.stage === 'mode') { m.stage = 'p1'; note(modPrompt(d).prompt); }
+    else if (m.stage === 'p1') { moveTo(d, [0, 0]); m.stage = 'displacement'; note(modPrompt(d).prompt); }
+    else if (m.stage === 'displacement') moveTo(d, [0, 0]);
+    else if (!m.placed) moveTo(d, m.p1.map((v) => v * 2));
+    else modEsc(d);
+    return;
+  }
   if (m.askMode) { trimMode(m.quick); return; }
   if (m.fence) { trimFenceRun(d); return; }
   if (m.erase) { trimEraseRun(d); return; }
   if (m.cross) { modEsc(d); return; }
   if (m.kind === 'array') { arrayEnter(d); return; }
-  if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) { if (m.stage === 'pick') moveTake(d); else if (m.kind === 'copy') modEsc(d); else note(modPrompt(d).prompt); return; }
+  if (['rotate', 'scale'].includes(m.kind)) { if (m.stage === 'pick') moveTake(d); else note(modPrompt(d).prompt); return; }
   if (m.kind === 'offset' || m.kind === 'fillet') { modEsc(d); return; }
   if (m.kind === 'extend') {
     if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc or open polyline to extend`); paintOverlay(); }
@@ -6359,9 +6370,10 @@ function modEnter(d) {
   else note('Mirror: click the ' + (m.stage === 'p1' ? 'first' : 'second') + ' point of the mirror line');
 }
 /** The command line while a modify tool is on. True when it took the text. */
-/** Words the Trim / Extend that is on takes itself (modTyped), so the command bar does not read them as commands (o is mOde, not OFFSET). */
+/** Words the active modify tool takes itself, so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
   const m = state.mod;
+  if (modLive() && ['move', 'copy'].includes(m.kind)) return true;
   if (modLive() && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!modLive() || !['trim', 'extend'].includes(m.kind)) return false;
   if (m.askMode || m.fence || m.cross || m.erase) return true;
@@ -6371,6 +6383,19 @@ function modTakes(c) {
 function modTyped(d, raw) {
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (['move', 'copy'].includes(m.kind)) {
+    m.cursorInput = null;
+    if (m.stage === 'mode') {
+      const mode = /^(s|single)$/.test(c) ? 'Single' : /^(m|multiple)$/.test(c) ? 'Multiple' : null;
+      if (!mode) { note('Unknown option: ' + raw.trim()); ui.cmdUI.message(state.msg); return true; }
+      copyMode = mode;
+      try { localStorage.setItem(COPY_MODE_SAVED, mode); } catch { /* applies for this session */ }
+      m.stage = 'p1'; note(modPrompt(d).prompt); paintOverlay(); return true;
+    }
+    if (m.stage === 'p1' && m.kind === 'copy' && (c === 'o' || c === 'mode')) { m.stage = 'mode'; note(modPrompt(d).prompt); paintOverlay(); return true; }
+    if (m.stage === 'p1' && (c === 'd' || c === 'displacement')) { modEnter(d); return true; }
+    if (DR.parseInput(raw).kind === 'word') { note('Unknown option: ' + raw.trim()); ui.cmdUI.message(state.msg); return true; }
+  }
   if (m.kind === 'array' && m.stage !== 'pick') return arrayTyped(d, raw, c);
   if (m.kind === 'fillet') {
     if (!m.askR && (c === 'r' || c === 'radius')) { m.askR = true; note(`Fillet radius <${mmText(state.filR)}> mm: type it`); return true; }
@@ -6421,7 +6446,6 @@ function modTyped(d, raw) {
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     const mm = (p) => p && p.slice(0, 2).map((v) => v * d.factor);
     const q = movePoint(raw, mm(m.p1), mm(m.cur), mm(state.pointLast));
-    if (!q && DR.parseInput(raw).kind === 'word') return false;
     if (q) moveTo(d, q.map((v) => v / d.factor));
     else note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'dx,dy or a positive distance toward the cursor'}`);
     return true;
@@ -6524,6 +6548,7 @@ function modUp(d, was, p, shift, crossing) {
     else if (m.fence) trimFencePoint(d, was.p);
     else editDo(d, was.p, shift || was.shift);
   } else if (['move', 'copy'].includes(m.kind)) {
+    if (m.stage === 'mode') return;
     moveTo(d, movePick(d, was.p, shift || was.shift));
   } else if (m.kind === 'scale') {
     const q = snapPoint(d, was.p, undefined, undefined, m.p1);
@@ -6652,6 +6677,7 @@ function moveTake(d) {
   if (moveLocked(d, d.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   const m = state.mod;
   m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = 'p1';
+  if (m.kind === 'copy') ui.cmdUI.message(`Current settings:  Copy mode = ${copyMode}`);
   state.msg = `${label}: ${m.kind === 'rotate' ? 'pivot' : 'base point'} or x,y`; renderCommand(); paintOverlay();
 }
 function movePick(d, p, shift, hover = false) {
@@ -6687,7 +6713,7 @@ function moveTo(d, q) {
     state.pointLast = m.p1;
     const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
     m.move = { preview, items: preview.items, dx: 0, dy: 0 };
-    note(`${label}: target, dx,dy or distance${copy ? '. Enter or Esc ends' : ''}`); paintOverlay(); return;
+    note(movePrompt(m.kind, m.stage, copyMode)); paintOverlay(); return;
   }
   const dx = q[0] - m.p1[0], dy = q[1] - m.p1[1];
   try {
@@ -6695,9 +6721,10 @@ function moveTo(d, q) {
     view.fitted = false;
     if (copy || dx || dy) commit(d, copy ? next : followDimensions(d.raw, next, d.factor), label);
     state.pointLast = q.slice(0, 2);
-    if (copy) m.raw = d.raw.entities; else setTool('select');
+    const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
+    if (again) { m.raw = d.raw.entities; m.placed = true; } else setTool('select');
     setSel(d, m.sel);
-    note(copy ? 'Copy placed. Next target from the same base; Enter or Esc ends. Ctrl+Z removes the last copy' : 'Selection moved. Ctrl+Z takes it back');
+    note(copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
   } catch (err) { note(err.message); }
 }
 
@@ -8894,6 +8921,7 @@ async function init() {
   state.text.cfg = loadTextCfg();
   state.dimStyles = loadDimStyles();
   try { const v = localStorage.getItem('pd-dimtype'); if (DIM_TYPES.some((x) => x[0] === v)) state.dimType = v; } catch { /* ignore */ }
+  try { if (localStorage.getItem(COPY_MODE_SAVED) === 'Single') copyMode = 'Single'; } catch { /* default Multiple */ }
   const cmdLog = buildCommand();                           // before the canvas: the bar, the fade and the history sit on it
   try { const v = Number(localStorage.getItem('pd-baldock-height')); if (Number.isFinite(v) && v >= 90) state.balDock.h = Math.min(v, window.innerHeight * 0.6); } catch { /* ignore */ }
   const balDock = buildBalloonDock();                      // before the canvas: its picture-only chip and sheet switcher sit on the canvas

@@ -130,13 +130,15 @@ export function suggest(text, tab = '', limit = 6, commands = COMMANDS) {
   return out.slice(0, limit).map(({ cmd, alias, hit }) => ({ cmd, alias, hit }));
 }
 
-/** The options in a prompt's [Brackets]: the last bracket with single words ("Esc" is not one). The capital letters at the start of a word are its key. → [{ word, key, rest }] */
+/** The options in a prompt's [Brackets]: the last bracket with single words ("Esc" is not one). Capitals, including internal ones, give the key. → [{ word, key, rest, prefix? }] */
 export function parseOptions(prompt) {
   const groups = [...String(prompt || '').matchAll(/\[([^\]]+)\]/g)].map((m) => m[1].split('/').map((x) => x.trim()));
   for (let i = groups.length - 1; i >= 0; i--) {
     const words = groups[i].filter((w) => /^[A-Za-z0-9]+$/.test(w) && w !== 'Esc');
     if (!words.length || words.length !== groups[i].filter((w) => w !== 'Esc').length) continue;
     return words.map((word, n) => {
+      const internal = /^[a-z]+([A-Z]+)/.exec(word);
+      if (internal) return { word, key: internal[1], prefix: word.slice(0, internal[0].length - internal[1].length), rest: word.slice(internal[0].length) };
       let len = (/^[A-Z0-9]+/.exec(word) || [word[0]])[0].length;
       while (len < word.length && words.some((o, m) => m !== n && o.toLowerCase().startsWith(word.slice(0, len).toLowerCase()) && (m < n || o.length === len))) len++;     // Steps / Sharp: the key grows until it is the only one
       return { word, key: word.slice(0, len), rest: word.slice(len) };

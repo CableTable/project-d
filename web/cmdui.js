@@ -85,7 +85,7 @@ export function buildCmdUI(hooks) {
     lab.hidden = !act; if (act) lab.textContent = act.label;
     promptEl.hidden = !act; promptEl.textContent = act ? act.prompt : '';
     chips.hidden = !opts.length;
-    chips.replaceChildren(...opts.map((o) => h('button', { class: 'chip' + (o === hit ? ' hit' : ''), type: 'button', 'aria-label': 'Option ' + o.word, 'data-testid': 'cmd-chip', onmousedown: (e) => e.preventDefault(), onclick: () => chip(o) }, h('b', null, o.key), o.rest)));
+    chips.replaceChildren(...opts.map((o) => h('button', { class: 'chip' + (o === hit ? ' hit' : ''), type: 'button', 'aria-label': 'Option ' + o.word, 'data-testid': 'cmd-chip', onmousedown: (e) => e.preventDefault(), onclick: () => chip(o) }, o.prefix || '', h('b', null, o.key), o.rest)));
     sugg = hit || (act && act.takes && act.takes(text.toLowerCase())) ? [] : suggest(input.value, tab);
     hi = Math.max(0, Math.min(hi, sugg.length - 1));
     rows.hidden = !sugg.length;
@@ -227,6 +227,7 @@ export function buildCmdUI(hooks) {
 
   return {
     hist, prompt, log, input, bar, fade, drawer, acts, echo, hint,
+    message: (text) => addLine(text),
     status: (text) => {
       hint.classList.toggle('cycling', !!text);
       hint.replaceChildren(...(text ? [text] : ['Just start typing on the drawing · ', h('kbd', null, 'F2'), ' history']));

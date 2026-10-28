@@ -98,6 +98,11 @@ test('parseOptions: the words in the last [bracket], with the underlined letters
   assert.deepEqual(CB.parseOptions('Click an outline to select it. [Extract / Keep only / Measure]:'), [], 'a phrase is not a one-word option');
   assert.deepEqual(CB.parseOptions('Select the object to offset:'), []);
   assert.deepEqual(CB.parseOptions(''), []);
+  const mode = CB.parseOptions('Specify base point or [Displacement/mOde] <Displacement>:');
+  assert.deepEqual(mode.map((o) => o.key), ['D', 'O']);
+  assert.equal(CB.matchOption(mode, 'o').word, 'mOde');
+  assert.equal(CB.matchOption(mode, 'mode').word, 'mOde');
+  assert.equal(mode[1].prefix + mode[1].key + mode[1].rest, 'mOde');
 });
 
 test('matchOption: the key or the whole word, any case', () => {

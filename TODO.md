@@ -258,7 +258,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155c. ✅ (built, 2026-10-28, Knight) A click selects one object; Shift / Ctrl toggle per object. Right-click → Select connected picks the joined chain.
     155d. Rotate and Scale Reference option (M).
     155e. Grip modes: Space / Enter cycles Stretch, Move, Rotate, Scale, Mirror; C copy, B base point, grip menu; Shift for several hot grips; grips on text, ellipse, hatch and blocks (M–L, split when grilled).
-    155f. Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).
+    155f. ✅ (built, 2026-10-28, Knight) Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).
     155g. Offset Through, Erase, Layer and Multiple options; offset ellipses and splines (M).
     155h. Fillet Polyline (all corners at once), Trim / No trim, circles and parallel lines (M).
     155i. Explode dimensions and hatches; block attributes as AutoCAD does (M).

@@ -3,6 +3,14 @@ import assert from 'node:assert/strict';
 import { createTool, toolType, toolHover, dynamicInput } from './web/draw.js';
 import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput, anchorOf, firstPoint, readOnlyLength } from './web/dynamic-input.js';
 
+test('Move / Copy cursor fields stay at the base point', () => {
+  for (const kind of ['move', 'copy']) {
+    assert.equal(inputMode({ kind, pts: [] }), 'xy');
+    assert.equal(inputMode({ kind, pts: [[10, 5]] }), null);
+    assert.deepEqual(toolPointInput(keys('10,5', true), { kind, pts: [], hover: [99, 99] }).point, [10, 5]);
+  }
+});
+
 test('Dynamic input: translated points, signed deltas and all angle quadrants', () => {
   assert.deepEqual(dynamicInput([10, 20], [13, 24], 2), { length: '5.00 mm', angle: '53.13°', dx: '3.00 mm', dy: '4.00 mm' });
   for (const [point, angle] of [[[1, 0], 0], [[1, 1], 45], [[0, 1], 90], [[-1, 1], 135], [[-1, 0], 180], [[-1, -1], 225], [[0, -1], 270], [[1, -1], 315]]) {

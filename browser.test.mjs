@@ -563,7 +563,7 @@ try {
       await start([40, 40], [20, 20]); await finish(); await selected(3);
       assert.match(await q('cmd-hist').textContent(), /3 entities touching the box/);
       await p.keyboard.press('Enter');
-      assert.match(await q('cmd-prompt').textContent(), /Base point or x,y:/);
+      assert.match(await q('cmd-prompt').textContent(), /Specify base point or \[Displacement\] <Displacement>:/);
       await p.keyboard.press('Escape');
     } finally { await context.close(); }
   });
@@ -848,7 +848,7 @@ try {
       await pick(120, 170); await selected([4]);
       assert.match(await q('cmd-prompt').textContent(), /Select objects/);
       await p.keyboard.press('Enter');
-      assert.match(await q('cmd-prompt').textContent(), /Base point or x,y:/);
+      assert.match(await q('cmd-prompt').textContent(), /Specify base point or \[Displacement\] <Displacement>:/);
       await p.keyboard.press('Escape');
       const canvas = await q('canvas').boundingBox(); await p.mouse.click(canvas.x + 80, canvas.y + 50);
       await pick(); await note(1); await selected([1]);
@@ -8759,6 +8759,7 @@ try {
   });
 
   await step('Grips: the middle grip moves the line ("Move ΔX … ΔY …"); ORTHO keeps it straight; the line keeps its length', async () => {
+    await openGrips();
     await pick(70, 30, 3);
     await dragGripTo('0:m', 90, 60, { hold: true });
     await page.waitForFunction(() => /^Move ΔX /.test(document.querySelector('[data-testid=draw-tip]').textContent));
@@ -11360,6 +11361,86 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/trim-invalidation/);
   });
 
+  await step('TODO 155f: Copy modes, displacement and Move / Copy second-point Enter', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 60, 50));
+    const start = async (kind = 'copy') => {
+      await openGrips(writeDxf(raw), 'options155f.dxf');
+      await page.keyboard.press('Control+a'); await typeCmd(kind);
+    };
+    const mode = async (value) => { await typeCmd('o'); assert.match(await prompt(), /Enter a copy mode option/); await typeCmd(value); };
+    const xy = (e) => [fieldOf(e, 10), fieldOf(e, 20)];
+    const selectedTool = () => t('tool-chip').textContent();
+
+    await start();
+    assert.equal(await prompt(), 'Specify base point or [Displacement/mOde] <Displacement>:');
+    assert.match(await t('cmd-fade').textContent(), /Current settings:  Copy mode = Multiple/);
+    await mode('Single'); await typeCmd('0,0'); await typeCmd('10,5');
+    assert.deepEqual((await savedDoc()).entities.map(xy), [[20, 30], [30, 35]]);
+    assert.equal(await selectedTool(), 'Tool: Select', 'Single ends after one copy');
+
+    await typeCmd('copy'); await typeCmd('mode');
+    assert.equal(await prompt(), 'Enter a copy mode option [Single/Multiple] <Single>:');
+    for (const word of ['unknown', 'constructor']) {
+      await typeCmd(word); assert.match(await histLine(), /Unknown option/);
+      assert.ok((await t('cmd-fade').textContent()).includes('Unknown option: ' + word));
+    }
+    await typeCmd(''); await typeCmd('0,0'); await typeCmd('5,0');
+    assert.equal(await selectedTool(), 'Tool: Select', 'Enter keeps remembered Single');
+    await page.reload(); await t('count').waitFor({ state: 'attached' });
+    await start(); await typeCmd('o');
+    assert.match(await prompt(), /<Single>:/, 'mode survives restart');
+    await typeCmd('m'); await typeCmd('0,0'); await typeCmd('10,5'); await typeCmd('20,10');
+    assert.equal(await selectedTool(), 'Tool: Copy', 'Multiple keeps going');
+    assert.deepEqual((await savedDoc()).entities.map(xy), [[20, 30], [30, 35], [40, 40]]);
+    await typeCmd(''); assert.equal(await selectedTool(), 'Tool: Select', 'Enter after placements ends Multiple');
+
+    for (const kind of ['copy', 'move']) {
+      for (const option of ['d', 'displacement', '']) {
+        await start(kind); await typeCmd(option);
+        assert.equal(await prompt(), 'Specify displacement <0,0>:');
+        await typeCmd('10,5');
+        const doc = await savedDoc();
+        assert.equal(doc.entities.length, kind === 'copy' ? 2 : 1);
+        assert.deepEqual(xy(doc.entities.at(-1)), [30, 35], kind + ' ' + option);
+        await page.keyboard.press('Escape');
+      }
+      await start(kind);
+      for (const word of ['array', 'line', 'unknown']) {
+        await typeCmd(word); assert.match(await histLine(), /Unknown option/);
+        assert.ok((await t('cmd-fade').textContent()).includes('Unknown option: ' + word));
+        assert.equal(await selectedTool(), 'Tool: ' + (kind === 'copy' ? 'Copy' : 'Move'));
+      }
+      const pt = await at(40, 40); await page.mouse.move(pt.x, pt.y); await frames();
+      assert.equal(await t('cursor-length').getAttribute('aria-label'), 'X');
+      assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Y');
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.keyboard.type('10,5'); await page.keyboard.press('Enter');
+      assert.equal(await prompt(), 'Specify second point or <use first point as displacement>:');
+      await t('cursor-length').waitFor({ state: 'hidden' });
+      await typeCmd('');
+      const doc = await savedDoc();
+      assert.equal(doc.entities.length, kind === 'copy' ? 2 : 1);
+      assert.deepEqual(xy(doc.entities.at(-1)), [30, 35], 'Enter uses base 10,5 as displacement');
+      await page.keyboard.press('Escape');
+
+      await start(kind); await typeCmd(''); await typeCmd('');
+      const zero = await savedDoc();
+      assert.equal(zero.entities.length, kind === 'copy' ? 2 : 1);
+      assert.deepEqual(xy(zero.entities.at(-1)), [20, 30], 'displacement defaults to 0,0');
+    }
+
+    await start();
+    await page.waitForTimeout(400);
+    await shotBoth('todo155f-copy-prompt', async () => {
+      await page.keyboard.press('F2'); await t('cmd-history').waitFor({ state: 'visible' });
+      const history = await t('cmd-history-line').allTextContents();
+      assert.ok(history.some((v) => v.includes('Current settings:  Copy mode = Multiple')));
+      assert.ok(history.some((v) => v.includes('Specify base point or [Displacement/mOde] <Displacement>:')));
+      assert.ok(await t('cmd-history-line').last().evaluate((el) => el.scrollWidth <= el.clientWidth), 'full Copy prompt fits the history');
+    }, async () => { await page.keyboard.press('F2'); });
+    await page.keyboard.press('Escape');
+  });
+
   await step('TODO 66a: Move', async () => {
     await menuItem('View', 'Theme: light');
     const raw = newDoc(4);
@@ -11375,9 +11456,9 @@ try {
       await page.keyboard.press('Control+a');
     };
     await page.keyboard.press('Control+a'); await waitSel('5 selected');
-    await typeCmd('mv'); assert.match(await prompt(), /Base point or x,y:/);
+    await typeCmd('mv'); assert.match(await prompt(), /Specify base point or \[Displacement\] <Displacement>:/);
     await typeCmd('1,'); assert.match(await histLine(), /I do not understand/);
-    await click(20, 30); assert.match(await prompt(), /Target, dx,dy or distance:/);
+    await click(20, 30); assert.match(await prompt(), /Specify second point or <use first point as displacement>:/);
     const target = await at(50, 50); await page.mouse.move(target.x, target.y); await frames();
     assert.equal(await t('mod-line').count(), 1);
     // A ghost of the block is painted at the cursor displacement, not only grippable lines.
@@ -11387,7 +11468,7 @@ try {
       return canvas.getContext('2d').getImageData(x - 3, y - 3, 7, 7).data.some((v, i) => i % 4 === 3 && v > 0);
     }, ghost), 'the block ghost is drawn');
     await shotBoth('move', async () => { const p = await at(50, 50); await page.mouse.move(p.x, p.y); await frames(); });
-    await typeCmd('bad'); assert.match(await histLine(), /Unknown command/);
+    await typeCmd('bad'); assert.match(await histLine(), /Unknown option/);
     await typeCmd('10,-5');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select'); await waitSel('5 selected');
     const moved = await savedDoc();
@@ -11405,11 +11486,12 @@ try {
     const direct = await savedDoc(), dx = fieldOf(direct.entities[0], 10) - 20, dy = fieldOf(direct.entities[0], 20) - 30;
     assert.ok(Math.abs(Math.hypot(dx, dy) - 25) < 1e-5, `direct distance: dx=${dx}, dy=${dy}, hist=${await histLine()}`); assert.ok(Math.abs(dx / dy - 4 / 3) < .03);
     await undoMove();
-    // A typed command replaces Move at either point prompt without editing the drawing.
+    // Option words stay in Move at either point prompt without editing the drawing.
     for (const [stage, alias, tool] of [['base', 'l', 'Line'], ['target', 'o', 'Offset']]) {
       await typeCmd('mv'); if (stage === 'target') await typeCmd('0,0');
       await typeCmd(alias);
-      assert.equal(await t('tool-chip').textContent(), 'Tool: ' + tool);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Move', tool + ' stays an option word');
+      assert.match(await histLine(), /Unknown option/);
       await page.keyboard.press('Escape');
       assert.deepEqual((await savedDoc()).entities, before.entities);
     }
@@ -11465,11 +11547,11 @@ try {
     const before = await savedDoc(), blur = () => page.evaluate(() => document.activeElement?.blur());
     const xy = (e) => [fieldOf(e, 10), fieldOf(e, 20)];
     await page.keyboard.press('Control+a');
-    await typeCmd('co'); assert.match(await prompt(), /Base point or x,y:/);
+    await typeCmd('co'); assert.match(await prompt(), /Specify base point or \[Displacement\/mOde\] <Displacement>:/);
     assert.equal(await t('tool-chip').textContent(), 'Tool: Copy');
     assert.equal(await page.locator('nav.rail [data-tool=copy]').count(), 0);
     await typeCmd('0,0'); await typeCmd('10,-5');
-    assert.match(await prompt(), /Target, dx,dy or distance:.*Enter ends/);
+    assert.match(await prompt(), /Specify second point or <use first point as displacement>:/);
     await typeCmd('20,15');
     const twice = await savedDoc();
     assert.equal(twice.entities.length, 3, 'two placements add exactly two entities');
@@ -11479,7 +11561,7 @@ try {
     await blur(); await page.keyboard.press('Control+z');
     assert.deepEqual((await savedDoc()).entities, twice.entities.slice(0, 2), 'Undo during Copy removes the last placement');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Copy');
-    assert.match(await prompt(), /Target, dx,dy or distance:/);
+    assert.match(await prompt(), /Specify second point or <use first point as displacement>:/);
     await click(60, 50);
     const resumed = await savedDoc();
     assert.equal(resumed.entities.length, 3, 'a click after Undo places another copy');
@@ -12976,6 +13058,7 @@ try {
   });
 
   await step('Objects tab: right-click a row: Select, Zoom to, Hide, Lock layer, Move to layer…, Show all hidden; right-click a layer: Rename…', async () => {
+    await openObjects();
     await oRow('Circle Ø40').click({ button: 'right' });
     assert.deepEqual(await ctxItems(), ['Select', 'Zoom to', 'Hide', 'Lock layer Cut', 'Move to layer…', 'Show all hidden']);
     assert.equal(await selCount(), '1 selected', 'the row is selected first');
@@ -15259,7 +15342,7 @@ try {
   await step('TODO 72: the menu in Move, Measure and Dimension has Cancel and the snap types; a snap row ticks the type and the Snap types list follows', async () => {
     await openGrips();
     await click(70, 30); await waitSel('1 selected');
-    await typeCmd('mv'); assert.match(await prompt(), /Base point/);
+    await typeCmd('mv'); assert.match(await prompt(), /Specify base point/);
     await shiftRight(110, 60);
     assert.deepEqual(await menuRows(), [['Cancel', false], ...SNAP_ROWS]);
     await page.getByRole('menuitem', { name: '✓ Snap: end', exact: true }).click();
