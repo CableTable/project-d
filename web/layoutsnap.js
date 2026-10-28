@@ -38,7 +38,7 @@ export function layoutSnap(parts, placed, W, H, x, y, tol, types = DEFAULT_TYPES
 }
 
 /** One placed object's candidates, transformed back into sheet millimetres. */
-export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT_TYPES, from = null) {
+export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT_TYPES, from = null, candidates = true) {
   let best = null;
   for (const pl of placed) {
     const part = parts[pl.partId];
@@ -51,7 +51,7 @@ export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT
     if (best && d >= best.distance) continue;
     const e = snapObject(ed, ...p, localTol, -1, types);
     if (e < 0) continue;
-    best = { object: pl, e, distance: d, candidates: snapCandidates(ed, e, ...p, localTol, types, from && toPart(part, pl, ...from)).map(world) };
+    best = { object: pl, e, distance: d, candidates: candidates ? snapCandidates(ed, e, ...p, localTol, types, from && toPart(part, pl, ...from)).map(world) : [] };
   }
   if (best) return best;
   const edges = [[[0, 0], [W, 0]], [[W, 0], [W, H]], [[0, H], [W, H]], [[0, 0], [0, H]]];
@@ -60,7 +60,7 @@ export function layoutCandidates(parts, placed, W, H, x, y, tol, types = DEFAULT
     const t = l2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / l2)) : 0;
     const q = { x: a[0] + t * dx, y: a[1] + t * dy, kind: 'near' }, d = Math.hypot(x - q.x, y - q.y);
     if (d > tol || best && d >= best.distance) continue;
-    best = { object: 'sheet', e, distance: d, candidates: orderCandidates([{ x: a[0], y: a[1], kind: 'end' }, { x: b[0], y: b[1], kind: 'end' }, { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid' }, q], types) };
+    best = { object: 'sheet', e, distance: d, candidates: candidates ? orderCandidates([{ x: a[0], y: a[1], kind: 'end' }, { x: b[0], y: b[1], kind: 'end' }, { x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2, kind: 'mid' }, q], types, x, y) : [] };
   }
   return best;
 }
@@ -76,7 +76,7 @@ export function layoutReference(parts, placed, x, y, tol) {
     const dx = b[0] - a[0], dy = a[1] - b[1], l2 = dx * dx + dy * dy;
     const t = l2 ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y + a[1]) * dy) / l2)) : 0;
     const d = Math.hypot(x - a[0] - t * dx, y + a[1] - t * dy);
-    if (!best || d < best.d) best = { d, pl, part, piece: { t: 's', x1: a[0], y1: -a[1], x2: b[0], y2: -b[1] } };
+    if (!best || d < best.d) best = { d, pl, part, source: piece, piece: { t: 's', x1: a[0], y1: -a[1], x2: b[0], y2: -b[1] } };
   }
   return best;
 }

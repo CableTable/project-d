@@ -16,7 +16,7 @@ import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layou
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
 import { cyclePick } from './selection-cycle.js';
-import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
+import { SNAP_NAME, snapTypes, lineSnaps, nearReference, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
 import * as UF from './unitfix.js';
 import * as CL from './cleanup.js';
@@ -4332,7 +4332,7 @@ function attachCanvasEvents() {
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
   });
   c.addEventListener('pointerleave', () => {
-    snapCycle = null; snapQuery = null; snapPointer = null;
+    snapCycle = null; snapQuery = null; snapPointer = null; snapRef = null; snapWatch(null);
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if (modLive() && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
@@ -4904,22 +4904,31 @@ function cycleSelect(e) {
 }
 /** The point to use for a click: snapped (with its kind) when SNAP is on and something is near, else the exact point. */
 let snapQuery = null, snapCycle = null, snapPointer = null, snapRef = null;
+let snapPending = null, snapRefTimer = 0;
+function snapWatch(ref) {
+  if (ref && snapPending && ref.ed === snapPending.ed && ref.d === snapPending.d && ref.pl === snapPending.pl && (ref.source || ref.piece) === (snapPending.source || snapPending.piece)) return;
+  clearTimeout(snapRefTimer); snapRefTimer = 0; snapPending = ref;
+  if (ref) snapRefTimer = setTimeout(() => { snapRef = ref; snapRefTimer = 0; }, 500);
+}
 const snapPlaced = () => state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl));
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
+  if (state.trk.d !== d) { trackClear(); state.trk.d = d; }
   const ed = !d.lay && edIndex(d), tol = pickTol(d), types = state.snapTypes;
   let sn = d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
   if (state.snap && ed) {
     if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
     const piece = Ed.snapReference(ed, ...p, tol, skip);
-    if (piece) snapRef = { ed, piece };
+    snapWatch(piece ? { ed, piece } : null);
+    if (snapRef && !nearReference(snapRef.piece, p, 4 * tol)) snapRef = null;
     if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
   }
   if (state.snap && d.lay) {
     const placed = snapPlaced();
     if (snapRef?.d !== d || snapRef && (!placed.includes(snapRef.pl) || d.lay.parts[snapRef.pl.partId] !== snapRef.part)) snapRef = null;
     const ref = layoutReference(d.lay.parts, placed, ...p, tol);
-    if (ref) snapRef = { ...ref, d };
+    snapWatch(ref ? { ...ref, d } : null);
+    if (snapRef && !nearReference(snapRef.piece, p, 4 * tol)) snapRef = null;
     if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
   }
   snapQuery = { d, ed, p, skip, from, sn };
@@ -4933,7 +4942,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
 };
 function snapObjectCandidates(q, candidates = true) {
   const { d, ed, p, skip, from } = q, tol = pickTol(d), types = state.snapTypes;
-  if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from);
+  if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, candidates);
   const e = Ed.snapObject(ed, ...p, tol, skip, types);
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
 }
@@ -7225,7 +7234,7 @@ function otrackSet(on) {
   note(on ? 'Object snap tracking on' : 'Object snap tracking off');
 }
 /** The hover ends (a click) and with it the lock it showed; the acquired points stay. */
-function trackStop() { const t = state.trk; clearTimeout(t.timer); t.timer = 0; t.cand = null; t.res = null; }
+function trackStop() { const t = state.trk; clearTimeout(t.timer); t.timer = 0; t.cand = null; t.res = null; snapWatch(null); }
 /** The tool or grip action is over (or the tool changed): the acquired points go. */
 function trackClear() { trackStop(); state.trk.acq = []; snapCycle = null; snapQuery = null; snapRef = null; }
 /** Hovering about 0.5 s on a snap point acquires it (a small +); hovering on an acquired point releases it. */
@@ -7243,7 +7252,6 @@ function trackWatch(d, q) {
  */
 function trackPick(d, p, q, base, straight, hover) {
   const t = state.trk;
-  if (t.d !== d) { trackClear(); t.d = d; }
   t.res = null;
   if (hover) trackWatch(d, q);
   const alongEdge = q[2] === 'extension' || q[2] === 'parallel';
@@ -8800,7 +8808,13 @@ function cmpGlow(c, out) {
 }
 
 /** A Compare side's snap index: the editor's own snap points and pick grid (edit.js snapPick), built once per side. */
-const cmpSnapEd = (sd) => sd.sn || (sd.sn = { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1), items: sd.fl.items, vis: Uint8Array.from(sd.fl.items, (it) => (itemVisible(it, sd.off) ? 1 : 0)) });
+const cmpSnapEd = (sd) => {
+  if (!sd.sn) {
+    const vis = Uint8Array.from(sd.fl.items, (it) => (itemVisible(it, sd.off) ? 1 : 0));
+    sd.sn = { ix: pickIndex(sd.fl, spaceOf(sd.fl) === 1, (i) => vis[i] === 1), items: sd.fl.items, vis };
+  }
+  return sd.sn;
+};
 /** The snap near sheet point p (mm) on a side drawn at offset o (follows the SNAP button): { x, y (mm), kind } or null. */
 function cmpSnap(sd, o, p) {
   const f = sd.factor, sn = Ed.snapPick(cmpSnapEd(sd), (p[0] - o[0]) / f, (p[1] - o[1]) / f, 7 / (view.scale * f), state.snap, -1, state.snapTypes);

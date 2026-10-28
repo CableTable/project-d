@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import { flatten } from './web/drawing.js';
 import { makeIndex, snapPick, snapObject, snapCandidates, snapReference } from './web/edit.js';
-import { tangentPoints, lineSnaps, polygonCentre, pathCentre, orderCandidates, snapTypes, SNAP_NAME } from './web/snap.js';
+import { tangentPoints, lineSnaps, nearReference, polygonCentre, pathCentre, orderCandidates, snapTypes, SNAP_NAME } from './web/snap.js';
 import { layoutCandidates, layoutSnap, layoutReference } from './web/layoutsnap.js';
 import { makePart } from './web/layoutdoc.js';
 import { resolve } from './web/cmdbar.js';
@@ -51,6 +51,9 @@ test('TODO 155k: Tangent clips arcs/bulges to their sweep, works in transformed 
 test('TODO 155k: exact polygon area centroid, winding and degeneracy; curved/open/self-crossing paths are refused', () => {
   const triangle = [[0, 0], [6, 0], [0, 3]];
   close(polygonCentre(triangle), [2, 1]); close(polygonCentre([...triangle].reverse()), [2, 1]);
+  close(polygonCentre([[0, 0], [0, 0], [6, 0], [6, 0], [0, 3], [0, 0]]), [2, 1]);
+  const repeated = index(W.lwpoly([[0, 0], [6, 0], [6, 0], [6, 6], [0, 6], [0, 0]], { closed: true }));
+  assert.deepEqual(snapPick(repeated, 3, 3, .1, true, -1, only('geometric')), { x: 3, y: 3, kind: 'geometric' });
   close(polygonCentre(triangle.map(([x, y]) => [x + 1e8, y - 1e8])), [1e8 + 2, -1e8 + 1]);
   assert.equal(polygonCentre([[0, 0], [1, 0], [2, 0]]), null);
   assert.equal(polygonCentre([[0, 0], [3, 3], [0, 3], [3, 0]]), null);
@@ -66,17 +69,24 @@ test('TODO 155k: exact polygon area centroid, winding and degeneracy; curved/ope
 
 test('TODO 155k: text, nested block and array insertion points include base/rotation/scale; hidden members cannot snap', () => {
   const raw = W.newDoc(4);
-  W.addBlock(raw, 'inner', [W.line(4, 6, 14, 6)], [4, 6]);
+  W.addBlock(raw, 'inner', [W.line(4, 6, 14, 6, { layer: 'First' }), W.line(4, 7, 14, 7)], [4, 6]);
   W.addBlock(raw, 'outer', [W.insert('inner', 2, 3)]);
   W.addEntities(raw, W.insert('outer', 20, 30, { sx: 2, sy: 2, rot: 90 }), W.text(50, 60, 3, 'Text'), W.insert('inner', 80, 90, { cols: 2, dx: 15 }));
   const attributed = W.insert('inner', 110, 120, { sx: 2, sy: 2 });
   attributed.kids = [W.entity('ATTRIB', [[10, 130], [20, 140], [40, 3], [1, 'Attribute']]).r];
   W.addEntities(raw, attributed, W.entity('TEXT', [[10, 150], [20, 60], [11, 160], [21, 60], [72, 1], [40, 3], [1, 'Centred']]), W.mtext(55, 65, 3, 'Mtext'));
   const ed = makeIndex(raw, flatten(raw));
-  for (const p of [[20, 30], [14, 34], [50, 60], [80, 90], [95, 90], [130, 140], [150, 60], [55, 65]]) {
+  for (const p of [[20, 30], [14, 34], [50, 60], [80, 90], [95, 90], [130, 140], [160, 60], [55, 65]]) {
     const sn = snapPick(ed, ...p, .01, true, -1, only('insertion'));
     assert.ok(sn, 'insertion ' + p); close([sn.x, sn.y], p);
   }
+  assert.equal(snapPick(ed, 150, 60, .01, true, -1, only('insertion')), null, 'justified TEXT uses 11/21');
+  assert.equal(ed.ix.snaps.filter((p) => p.kind === 'insertion').length, 9, 'one snap per INSERT / array cell plus each text anchor');
+  for (const [x, y] of [[20, 30], [14, 34], [80, 90], [95, 90], [110, 120]]) {
+    assert.equal(ed.ix.snaps.filter((p) => p.kind === 'insertion' && p.x === x && p.y === y).length, 1);
+  }
+  const off = makeIndex(raw, flatten(raw), new Set([ed.fl.layers.findIndex((l) => l.name === 'First')]));
+  assert.ok(snapPick(off, 20, 30, .01, true, -1, only('insertion')), 'a visible member keeps the block insertion when the first member layer is off');
   assert.equal(snapPick(ed, 50, 60, .01, true, 1, only('insertion')), null);
   const hidden = makeIndex(raw, flatten(raw), new Set(), new Set([0]));
   assert.equal(snapPick(hidden, 20, 30, .01, true, -1, only('insertion')), null);
@@ -90,6 +100,9 @@ test('TODO 155k: acquired straight Extension and Parallel are exact, finite ends
   assert.deepEqual(lineSnaps(p, [5, 5], null), []);
   assert.deepEqual(lineSnaps({ ...p, curve: true }, [20, 20], [0, 4]), []);
   assert.deepEqual(lineSnaps({ ...p, x2: 0, y2: 0 }, [20, 20], [0, 4]), []);
+  assert.equal(nearReference(p, [11, 11], 4), true);
+  assert.equal(nearReference(p, [20, 20], 4), false, 'distance is from the finite edge, not its infinite extension');
+  assert.equal(nearReference(p, [5, 12], 4), false);
   const ed = index(W.line(0, 0, 10, 10));
   assert.ok(snapReference(ed, 5, 5, .1)); assert.equal(snapReference(ed, 5, 5, .1, 0), null);
 });
@@ -104,10 +117,12 @@ test('TODO 155k: Apparent intersection is a real finite 2D crossing and obeys it
 test('TODO 155k: deterministic whole-object Tab order, distant ends, duplicates, ticks, visibility and object isolation', () => {
   const ed = index(W.line(0, 0, 100, 0), W.line(0, 30, 100, 30));
   assert.equal(snapObject(ed, 31, .1, .5), 0);
-  assert.deepEqual(snapCandidates(ed, 0, 31, .1, .5).map((p) => [p.kind, p.x, p.y]), [['end', 0, 0], ['end', 100, 0], ['mid', 50, 0], ['near', 31, 0]]);
+  assert.deepEqual(snapCandidates(ed, 0, 31, .1, .5).map((p) => [p.kind, p.x, p.y]), [['near', 31, 0], ['mid', 50, 0], ['end', 0, 0], ['end', 100, 0]]);
+  assert.deepEqual(snapCandidates(ed, 0, 10, .1, .5).map((p) => [p.kind, p.x]), [['near', 10], ['end', 0], ['mid', 50], ['end', 100]]);
+  assert.deepEqual(snapCandidates(ed, 0, 90, .1, .5).map((p) => [p.kind, p.x]), [['near', 90], ['end', 100], ['mid', 50], ['end', 0]], 'order follows the cursor at either end');
   const candidates = snapCandidates(ed, 0, 31, .1, .5, snapTypes({ end: false }));
-  assert.deepEqual(candidates.map((p) => p.kind), ['mid', 'near']);
-  assert.deepEqual(orderCandidates([...candidates].reverse().concat(candidates)), candidates);
+  assert.deepEqual(candidates.map((p) => p.kind), ['near', 'mid']);
+  assert.deepEqual(orderCandidates([...candidates].reverse().concat(candidates), undefined, 31, .1), candidates);
   ed.vis[0] = 0; assert.equal(snapObject(ed, 31, .1, .5), -1); assert.deepEqual(snapCandidates(ed, 0, 31, .1, .5), []);
   assert.equal(resolve('os').name, 'osnap'); assert.equal(resolve('ortho').name, 'ortho'); assert.equal(resolve('polar'), null);
 });
@@ -118,7 +133,9 @@ test('TODO 155k: layout Tab order and Tangent use transformed sheet coordinates'
   const hit = layoutCandidates(parts, placed, 500, 400, 150, 162, .1);
   assert.ok(hit); assert.equal(hit.e, 0); assert.ok(hit.candidates.filter((p) => p.kind === 'end').length === 2);
   const edge = layoutCandidates({}, [], 500, 400, 123, 0, .1);
-  assert.deepEqual(edge.candidates.map((p) => p.kind), ['end', 'end', 'mid', 'near']);
+  assert.deepEqual(edge.candidates.map((p) => p.kind), ['near', 'end', 'mid', 'end']);
+  assert.deepEqual(layoutCandidates(parts, placed, 500, 400, 150, 162, .1, undefined, null, false), { ...hit, candidates: [] });
+  assert.deepEqual(layoutCandidates({}, [], 500, 400, 123, 0, .1, undefined, null, false), { ...edge, candidates: [] });
   const tangent = layoutSnap(parts, placed, 500, 400, 85, 200 + 5 * Math.sqrt(3), .01, only('tangent'), [70, 200]);
   assert.ok(tangent); assert.equal(tangent.kind, 'tangent');
   const ref = layoutReference(parts, placed, 150, 162, .1);

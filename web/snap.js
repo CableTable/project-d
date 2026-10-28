@@ -18,9 +18,17 @@ export function perpFoot(from, a, b) {
 const RANK = Object.fromEntries(['end', 'centre', 'node', 'mid', 'intersection', 'quadrant', 'perpendicular', 'tangent', 'geometric', 'insertion', 'extension', 'parallel', 'apparent', 'near'].map((k, i) => [k, i]));
 
 /** Stable Tab order, with duplicate points of the same type removed (polyline joints, block contents). */
-export function orderCandidates(candidates, types = DEFAULT_TYPES) {
+export function orderCandidates(candidates, types = DEFAULT_TYPES, x = 0, y = 0) {
   return candidates.filter((p) => types[p.kind] !== false).sort((a, b) => RANK[a.kind] - RANK[b.kind] || a.x - b.x || a.y - b.y)
-    .filter((p, i, all) => !i || p.kind !== all[i - 1].kind || Math.hypot(p.x - all[i - 1].x, p.y - all[i - 1].y) > 1e-9);
+    .filter((p, i, all) => !i || p.kind !== all[i - 1].kind || Math.hypot(p.x - all[i - 1].x, p.y - all[i - 1].y) > 1e-9)
+    .sort((a, b) => Math.hypot(a.x - x, a.y - y) - Math.hypot(b.x - x, b.y - y) || RANK[a.kind] - RANK[b.kind] || a.x - b.x || a.y - b.y);
+}
+
+/** Keep an acquired direction only within a few apertures of its finite edge. */
+export function nearReference(piece, p, tol) {
+  const dx = piece.x2 - piece.x1, dy = piece.y2 - piece.y1, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((p[0] - piece.x1) * dx + (p[1] - piece.y1) * dy) / l2)) : 0;
+  return Math.hypot(p[0] - piece.x1 - t * dx, p[1] - piece.y1 - t * dy) <= tol;
 }
 
 /** Exact tangents from an external point to a circular piece, clipped to its finite sweep. */
@@ -49,6 +57,8 @@ export function lineSnaps(piece, p, from) {
 
 /** Area centroid of a simple straight polygon; refuse degenerate or self-crossing outlines. */
 export function polygonCentre(points) {
+  points = points.filter((p, i) => !i || p[0] !== points[i - 1][0] || p[1] !== points[i - 1][1]);
+  if (points.length > 1 && points.at(-1)[0] === points[0][0] && points.at(-1)[1] === points[0][1]) points.pop();
   if (points.length < 3) return null;
   const [ox, oy] = points[0];
   points = points.map(([x, y]) => [x - ox, y - oy]);

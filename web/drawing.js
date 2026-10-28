@@ -333,7 +333,7 @@ export function flatten(doc, hidden = new Set()) {
     layerAt.set(name, layers.length - 1);
     return layers.length - 1;
   };
-  const mats = [IDENT], items = [], left = {}, vports = [];
+  const mats = [IDENT], items = [], insertions = [], left = {}, vports = [];
   let truncated = false;
   const skip = (type) => { left[type] = (left[type] || 0) + 1; };
 
@@ -371,15 +371,13 @@ export function flatten(doc, hidden = new Set()) {
         if (!it.b) return;
         if (it.k === 't') it.font = fontForStyle(doc.styles, it.st);
         it.b = worldBox(mats[it.m], it.b);
-        if (ctx.insertions) it.insertions = ctx.insertions;
-        if (it.insertion) it.insertions = [...(it.insertions || []), mapply(mats[it.m], ...it.insertion)];
         items.push(it);
       };
       const path = (ops, extra) => {
         if (ops.length <= 3 && !(ops.length === 3 && extra?.fill)) return;
         put({ k: 'p', ...base, ops, ...extra, b: opsBox(ops, extra?.w ? extra.w / 2 : 0) });
       };
-      const inner = (lt2) => ({ layer: own, L, css, lw, lt: lt2, ps: base.ps, ei: top, insertions: ctx.insertions });
+      const inner = (lt2) => ({ layer: own, L, css, lw, lt: lt2, ps: base.ps, ei: top });
       const r = e.r, f = firsts(r);
       if (e.fill && closedOutline(e)) {
         const ops = fillOps(e, holes.get(e));
@@ -454,7 +452,9 @@ export function flatten(doc, hidden = new Set()) {
               mm = mmul(mm, [1, 0, 0, 1, col * num(f[44]), row * num(f[45])]);
               mm = mmul(mm, [sx, 0, 0, sy, -blk.base[0] * sx, -blk.base[1] * sy]);
               mats.push(mm);
-              walk(blk.entities, { m: mats.length - 1, ...inner(lt), insertions: [...(ctx.insertions || []), mapply(mm, ...blk.base)] }, depth + 1);
+              const start = items.length;
+              walk(blk.entities, { m: mats.length - 1, ...inner(lt) }, depth + 1);
+              insertions.push({ p: mapply(mm, ...blk.base), start, end: items.length });
             }
           }
           // the block's attributes (title-block fields): in the drawing's own place, not the block's
@@ -517,7 +517,7 @@ export function flatten(doc, hidden = new Set()) {
   for (const v of vports) boxes.paper = unionBox(boxes.paper, [v.cx - v.w / 2, v.cy - v.h / 2, v.cx + v.w / 2, v.cy + v.h / 2]);
   for (const it of items) layers[it.L[0]].n++;
   for (const l of layers) delete l.lt;
-  return { units, layers, items, mats, vports, boxes, left, truncated };
+  return { units, layers, items, insertions, mats, vports, boxes, left, truncated };
 }
 
 /** A filled arrowhead at `tip`, pointing away from `from`. */
@@ -595,7 +595,7 @@ function text(base, f, attrib, put) {
   if (ha === 4) { ha = 1; va = 2; }
   const fl = num(f[71]), lines = plainText(s, false);
   const wf = num(f[41], 1) || 1;
-  textItem(base, p, h, rot, lines, Math.min(ha, 2), ['alphabetic', 'bottom', 'middle', 'top'][va] || 'alphabetic', wf, fl, (it) => put({ ...it, st: f[7], insertion: [num(f[10]), num(f[20])] }));
+  textItem(base, p, h, rot, lines, Math.min(ha, 2), ['alphabetic', 'bottom', 'middle', 'top'][va] || 'alphabetic', wf, fl, (it) => put({ ...it, st: f[7], insertion: p }));
 }
 
 function mtext(base, r, f, put) {
@@ -750,12 +750,18 @@ const similar = (m) => Math.abs(m[0] * m[0] + m[1] * m[1] - m[2] * m[2] - m[3] *
  * The pickable pieces of one space (the model, or the sheet): straight pieces, arcs, and snap points (ends,
  * middles, centres, points), in the drawing's own coordinates, on a grid for quick lookups.
  */
-export function pickIndex(fl, paper) {
+export function pickIndex(fl, paper, visible = () => true) {
   const pieces = [], snaps = [];
+  for (const { p: [x, y], start, end } of fl.insertions || []) {
+    for (let it = start; it < end; it++) if (!!fl.items[it].ps === !!paper && visible(it)) {
+      snaps.push({ x, y, kind: 'insertion', it });
+      break;
+    }
+  }
   fl.items.forEach((it, idx) => {
     if (!!it.ps !== !!paper) return;
     const m = fl.mats[it.m];
-    for (const [x, y] of it.insertions || []) snaps.push({ x, y, kind: 'insertion', it: idx });
+    if (it.insertion) { const [x, y] = mapply(m, ...it.insertion); snaps.push({ x, y, kind: 'insertion', it: idx }); }
     if (it.k === 'n') { const [x, y] = mapply(m, it.x, it.y); snaps.push({ x, y, kind: 'node', it: idx }); return; }
     if (it.k !== 'p' || it.fill) return;
     const ops = it.ops, sim = similar(m), sc = mscale(m), flipped = m[0] * m[3] - m[1] * m[2] < 0;

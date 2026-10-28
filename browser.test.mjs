@@ -1641,7 +1641,7 @@ try {
     await p.addInitScript(() => {
       const fill = CanvasRenderingContext2D.prototype.fillText;
       CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
-        if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'nearest', 'tangent', 'parallel', 'extension'].includes(text)) window.__snap155k = text;
+        if (this.canvas.dataset.testid === 'drawing' && ['end', 'middle', 'nearest', 'perpendicular', 'tangent', 'parallel', 'extension'].includes(text)) window.__snap155k = text;
         return fill.call(this, text, ...args);
       };
       localStorage.setItem('pd-track', JSON.stringify({ polar: false, inc: 15, otrack: false }));
@@ -1671,11 +1671,25 @@ try {
       const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 140, 30), dxfCircle(100, 100, 20));
       await q('picker').setInputFiles({ name: 'snaps-155k.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
       await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'snaps-155k.dxf');
+      {
+        const r = await sheet(); await p.mouse.move(...px(r, 170, 160));
+        await p.evaluate(() => document.activeElement.blur());
+        await p.keyboard.press('Tab');
+        assert.equal(await p.evaluate(() => document.activeElement !== document.body && document.activeElement.matches('button, input, select, a, [tabindex]')), true, 'Tab moves focus when nothing is under the cursor');
+      }
       await command('line');
       {
+        const r = await sheet();
+        await hover(r, 135, 30, 'nearest'); await p.waitForTimeout(600);
+        await hover(r, 145, 30.8, 'extension');
+        await p.keyboard.press('Escape'); await command('line');
+      }
+      {
         const r = await sheet(); await p.mouse.click(...px(r, 110, 30));
+        await p.keyboard.press('Tab'); await label('perpendicular');
+        await p.keyboard.press('Tab'); await label('nearest');
         await p.keyboard.press('Tab'); await label('end');
-        const path = await preview(); assert.ok(Math.abs(path[2] - 20) < .01, 'Tab refreshes the point prompt after a click without needing mouse movement');
+        const path = await preview(); assert.ok(Math.abs(path[2] - 140) < .01, 'Tab refreshes the point prompt after a click without needing mouse movement');
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
       }
       for (const colour of ['light', 'dark']) {
@@ -1683,12 +1697,12 @@ try {
         const r = await sheet(); await p.mouse.click(...px(r, 40, 70));
         await hover(r, 110, 30, 'nearest');
         await p.keyboard.press('Tab'); await label('end');
-        let path = await preview(); assert.ok(Math.abs(path[2] - 20) < .01, 'first endpoint is far from cursor');
-        await p.keyboard.press('Tab'); await label('end');
-        await p.waitForFunction(() => Math.abs(Number(document.querySelector('[data-testid=draw-preview]').getAttribute('d').match(/-?\d+(?:\.\d+)?/g)[2]) - 140) < .01);
-        path = await preview(); assert.ok(Math.abs(path[2] - 140) < .01, 'second Tab moves the endpoint marker');
+        let path = await preview(); assert.ok(Math.abs(path[2] - 140) < .01, 'nearest endpoint comes first');
         await p.keyboard.press('Tab'); await label('middle');
         await p.screenshot({ path: `shots-155k/tab-cycled-${colour}.png` });
+        await p.keyboard.press('Tab'); await label('perpendicular');
+        await p.keyboard.press('Tab'); await label('end');
+        path = await preview(); assert.ok(Math.abs(path[2] - 20) < .01, 'the farthest endpoint follows the closer midpoint and perpendicular');
         await p.mouse.move(...px(r, 170, 60)); await hover(r, 110, 30, 'nearest');
         await p.keyboard.press('Tab'); await label('end');
         await p.keyboard.type('25'); await p.keyboard.press('Tab');
@@ -1697,7 +1711,7 @@ try {
         assert.equal(await q('cursor-angle').evaluate((el) => el.classList.contains('active')), true, 'Tab switches the active typed cursor field');
         await p.keyboard.press('Escape');
         await p.mouse.move(...px(r, 170, 60)); await hover(r, 110, 30, 'nearest');
-        for (let i = 0; i < 3; i++) await p.keyboard.press('Tab'); await label('middle');
+        for (let i = 0; i < 2; i++) await p.keyboard.press('Tab'); await label('middle');
         if (colour === 'dark') {
           await p.mouse.click(...px(r, 110, 30)); await p.mouse.move(...px(r, 150, 60));
           path = await preview(); assert.ok(Math.abs(path[0] - 80) < .01 && Math.abs(path[1] - (r.h - 30)) < .01, 'click uses cycled midpoint, not raw cursor');
@@ -1706,13 +1720,21 @@ try {
       }
       await command('line');
       {
-        const r = await sheet(); await p.mouse.click(...px(r, 40, 70));
-        await hover(r, 110, 30, 'nearest'); await hover(r, 160, 30, 'extension');
-        let path = await preview(); assert.ok(Math.abs(path[2] - 160) < .01 && Math.abs(path[3] - (r.h - 30)) < .01);
-        await hover(r, 160, 70, 'parallel');
-        path = await preview(); assert.ok(Math.abs(path[3] - (r.h - 70)) < .01);
+        const r = await sheet(); await p.mouse.click(...px(r, 40, 34));
+        const free = async () => {
+          await p.mouse.move(...px(r, 145, 30.8));
+          const path = await preview(); assert.ok(Math.abs(path[3] - (r.h - 30.8)) < .01, 'a quick pass cannot pull the cursor onto an extension');
+        };
+        await hover(r, 135, 30, 'nearest'); await free();
+        await p.waitForTimeout(600); await free();
+        await hover(r, 135, 30, 'nearest'); await p.waitForTimeout(600);
+        await hover(r, 145, 30.8, 'extension');
+        let path = await preview(); assert.ok(Math.abs(path[2] - 145) < .01 && Math.abs(path[3] - (r.h - 30)) < .01);
+        await hover(r, 145, 34, 'parallel');
+        path = await preview(); assert.ok(Math.abs(path[3] - (r.h - 34)) < .01);
         await hover(r, 140.3, 30.2, 'end');
         path = await preview(); assert.ok(Math.abs(path[2] - 140) < .01 && Math.abs(path[3] - (r.h - 30)) < .01, 'endpoint wins over tracking projection');
+        await p.mouse.move(...px(r, 170, 60)); await free();
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape'); await command('select');
       }
       for (const colour of ['light', 'dark']) {
@@ -4354,7 +4376,7 @@ try {
       for (const kind of ['end', 'mid', 'near', 'intersection', 'apparent', 'quadrant']) await q('snap-type-' + kind).uncheck();
       await p.keyboard.press('Escape');
       await clickAt(0.2, 0.2); await clickAt(199.8, 120.2);
-      assert.match(await readout(), /ΔX 199\.8   ΔY 120/, 'enabled Extension projects to x=200 beyond the acquired vertical edge: ' + await readout());
+      assert.match(await readout(), /ΔX 199\.6   ΔY 120/, 'passing over a layout edge does not acquire Extension: ' + await readout());
       await q('snap-types-open').click();
       for (const kind of ['extension', 'parallel']) await q('snap-type-' + kind).uncheck();
       await p.keyboard.press('Escape');
@@ -4375,7 +4397,7 @@ try {
       const edge = await point(60, 105);
       await p.mouse.move(edge.x, edge.y); await p.keyboard.press('Tab');
       await p.mouse.click(edge.x, edge.y);
-      assert.match(await readout(), /ΔX -20   ΔY -80/, 'layout Measure accepts the Tab-cycled distant endpoint (80,80): ' + await readout());
+      assert.match(await readout(), /ΔX -40   ΔY -60/, 'layout Measure accepts the closest Tab candidate, the midpoint (60,100): ' + await readout());
       await p.keyboard.press('Escape');
       await clickAt(100, 160);
       await p.mouse.move(edge.x, edge.y); await p.keyboard.press('Tab');
