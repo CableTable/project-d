@@ -3264,12 +3264,12 @@ function searchEsc(input) {
 }
 /** The Layers search: the filter is kept per tab (d.layerQuery) and only hides rows; it never touches a layer's state. */
 function layerSearchInit() {
-  ui.layerSearch.addEventListener('input', () => { const d = curDoc(); if (d) { d.layerQuery = ui.layerSearch.value; renderLayers(); } });
+  ui.layerSearch.addEventListener('input', () => { const d = curDoc(); if (d) { d.layerQuery = ui.layerSearch.value; renderLayers(); } else ui.layerSearch.value = ''; });
   searchEsc(ui.layerSearch);
 }
 function renderLayers() {
   const d = curDoc(), q = d && d.layerQuery || '';
-  if (document.activeElement !== ui.layerSearch) ui.layerSearch.value = q;
+  if (ui.layerSearch.value !== q) ui.layerSearch.value = q;       // also while the box has focus (Ctrl+Tab to another tab): typed text is already in d.layerQuery
   ui.layerRows.replaceChildren(...layerRows().filter((l) => OB.nameMatches(l.name, q)).map((l) => {
     const isFile = l.fileLayer != null;
     const hid = l.bg ? !d.bg.visible : isFile ? d.off.has(l.fileLayer) : l.id && state.hidden[l.id];
@@ -3305,7 +3305,7 @@ const omOf = (d) => d.om || (d.om = { open: null, openB: new Set(), show: new Ma
 
 function buildObjects() {
   ui.objSearch = h('input', { type: 'text', placeholder: 'Search objects…', 'aria-label': 'Search objects', 'data-testid': 'obj-search', autocomplete: 'off', spellcheck: 'false' });
-  ui.objSearch.addEventListener('input', () => { const d = curDoc(); if (d) { omOf(d).query = ui.objSearch.value; renderObjects(); } });
+  ui.objSearch.addEventListener('input', () => { const d = curDoc(); if (d) { omOf(d).query = ui.objSearch.value; renderObjects(); } else ui.objSearch.value = ''; });
   searchEsc(ui.objSearch);
   const filt = (id, text) => (ui['objF' + id] = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-filter-' + id, 'data-filter': id, 'aria-pressed': 'false', onclick: () => { const d = curDoc(); if (d) { omOf(d).filter = id; renderObjects(); } } }, text));
   ui.objToggle = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-toggle', 'aria-label': 'Expand or collapse all', title: 'Expand or collapse all', onclick: objToggleAll });
@@ -3371,7 +3371,7 @@ function renderObjects(reveal = false) {
   objSigLast = sig;
   if (lay) {
     const om = omOf(d), hp = d.hiddenParts || new Set(), parts = OB.partsTree(d.lay, placedNow, hp, om.query);
-    if (document.activeElement !== ui.objSearch) ui.objSearch.value = om.query;
+    if (ui.objSearch.value !== om.query) ui.objSearch.value = om.query;
     const shown = om.filter === 'hidden' ? parts.filter((p) => p.hidden) : parts, sel = new Set(selIdxs());
     for (const p of shown) {
       const open = !!om.query || om.openP.has(p.id);
@@ -3388,14 +3388,14 @@ function renderObjects(reveal = false) {
     return;
   }
   if (!ed) {
-    filterBtns(0, 0);
+    filterBtns(0, 0); ui.objSearch.value = '';
     ui.objTree.replaceChildren(h('div', { class: 'omempty' }, 'Open a drawing to see its objects.'));
     ui.objCount.textContent = ''; ui.objSelN.textContent = '';
     return;
   }
   const om = omOf(d);
   if (!om.open) { const names = d.fl.layers.map((l) => l.name), cur = curLayerName(d); om.open = new Set([names.includes(cur) ? cur : names[0]].filter(Boolean)); }       // the current layer is open, else the first
-  if (document.activeElement !== ui.objSearch) ui.objSearch.value = om.query;
+  if (ui.objSearch.value !== om.query) ui.objSearch.value = om.query;
   let tree = OB.buildTree(d.raw, d.fl, objOpts(d, om));
   if (reveal && d.sel.size && d.sel.size <= 50) {                        // an object picked on the sheet: its layer opens and its row is listed
     let again = false;

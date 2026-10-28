@@ -15224,12 +15224,27 @@ try {
     // per tab: another tab has its own (empty) filter
     await t('layer-search').fill('door');
     assert.deepEqual(await names(), ['Door']);
-    await openGrips(objDoc(), 'objects2.dxf');
+    await t('picker').setInputFiles({ name: 'objects2.dxf', mimeType: 'text/plain', buffer: Buffer.from(objDoc(), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects2.dxf');
+    await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]') && document.querySelector('[data-testid=gap-count]').textContent !== '…');
     assert.equal(await t('layer-search').inputValue(), '', 'a new tab starts unfiltered');
-    // Objects: layers are matched by name too
+    // switching away and back keeps each tab's filter; with the cursor still in the box (Ctrl+Tab) the box shows the new tab's text
+    await t('layer-search').fill('cut');
+    await page.keyboard.press('Control+Tab');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'walls.dxf');
+    assert.equal(await t('layer-search').inputValue(), 'door', 'Ctrl+Tab with the cursor in the box: the box shows the other tab\'s filter');
+    assert.deepEqual(await names(), ['Door'], 'the first tab still shows only Door');
+    await page.keyboard.press('Control+Tab');
+    assert.equal(await t('layer-search').inputValue(), 'cut');
+    assert.deepEqual(await names(), ['Cut']);
+    // Objects: layers are matched by name too, and the box follows the tab as well
     await t('ptab-objects').click(); await t('objects-panel').waitFor();
     await t('obj-search').fill('ENGR');
     assert.deepEqual(await oLayers(), ['Engrave']);
+    await page.keyboard.press('Control+Tab');
+    assert.equal(await t('obj-search').inputValue(), '', 'the first tab has its own (empty) Objects search');
+    await page.keyboard.press('Control+Tab');
+    assert.equal(await t('obj-search').inputValue(), 'ENGR');
     await t('obj-search').press('Escape');
     assert.equal(await t('obj-search').inputValue(), '');
     assert.deepEqual(await oLayers(), ['Cut', 'Engrave']);
