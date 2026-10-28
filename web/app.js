@@ -126,7 +126,7 @@ function icon(inner, { size = 20, width = 1.6, cap, join, label, box = 24 } = {}
 // ---- tools (same order and icons as the mock-up) ----
 const TOOLS = [
   { id: 'select', label: 'Select', join: 'round', svg: '<path d="M5 3l13 8-6 1.5L9 19z"/>' },
-  { id: 'pan', label: 'Pan', cap: 'round', svg: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>' },
+  { id: 'pan', label: 'Pan', description: 'Drag the view with the middle mouse button', cap: 'round', svg: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>' },
   { sep: true },
   { id: 'line', label: 'Line', svg: '<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.8"/><circle cx="19" cy="5" r="1.8"/>' },
   { id: 'polyline', label: 'Polyline', join: 'round', svg: '<path d="M3 18l5-9 5 6 7-10"/>' },
@@ -152,7 +152,7 @@ const TOOLS = [
   { id: 'mirror', label: 'Mirror', join: 'round', svg: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6zM15 7l6 10h-6z"/>' },
   { sep: true },
   { id: 'step', label: 'Step and repeat', svg: '<rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/>' },
-  { id: 'nest', label: 'Auto-nest', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
+  { id: 'nest', label: 'Auto-nest', description: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
 const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
@@ -609,18 +609,18 @@ function buildRibbon() {
   });
   return ui.ribbon;
 }
-const commandTooltip = (label, name = label.toLowerCase().replace(/[^a-z]/g, '')) => CB.tooltipText(label, CB.resolve(name === 'rect' ? 'rectangle' : name, curLay() ? 'layout' : 'draw', ownCommands), curLay() ? 'layout' : 'draw');
-function ribbonButton(label, svg, action, { small = false, enabled = () => true, pressed, command } = {}) {
-  const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title: commandTooltip(label, command),
+const commandTooltip = (label, name = label.toLowerCase().replace(/[^a-z]/g, ''), description = '') => CB.tooltipText(label, CB.resolve(name === 'rect' ? 'rectangle' : name, curLay() ? 'layout' : 'draw', ownCommands), curLay() ? 'layout' : 'draw', description);
+function ribbonButton(label, svg, action, { small = false, enabled = () => true, pressed, command, description = '' } = {}) {
+  const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title: commandTooltip(label, command, description),
     'aria-label': label, onclick: (e) => { if (e.currentTarget.dataset.held) { delete e.currentTarget.dataset.held; return; } action(e); closeRibbon(); renderRibbon(); } },
   icon(svg, { size: small ? 15 : 30, width: 1.5, cap: 'round', join: 'round' }), h('span', null, label));
-  b.ribbonSync = () => { b.title = commandTooltip(b.getAttribute('aria-label'), command); b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
+  b.ribbonSync = () => { b.title = commandTooltip(b.getAttribute('aria-label'), command, description); b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
   return b;
 }
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : setTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable() || (id === 'contour' && !!curLay()), pressed: () => state.tool === id, command: id });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable() || (id === 'contour' && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -1213,10 +1213,11 @@ function buildPartRibbon() {
   ui.pa = pfield({ 'data-lockable': '1', 'data-testid': 'pa', 'aria-label': 'Angle', title: 'Angle in degrees, anticlockwise. The part turns about its pivot (the centre unless you moved it). Type a value and press Enter' }, showAngle, setAngleText);
   ui.barNudge = pfield({ 'data-testid': 'nudge-step', 'aria-label': 'Nudge step in mm', title: 'How far an arrow key moves the part, in mm (Shift + arrow: 10 times this)' }, showNudge, setNudgeText);
   const mirror = (axis, id) => {
-    const b = ribbonButton('Mirror ' + axis.toUpperCase(), TOOLS.find((t) => t.id === 'mirror').svg, () => mirrorSel(axis), { command: 'm' + axis });
+    const b = ribbonButton('Mirror ' + axis.toUpperCase(), TOOLS.find((t) => t.id === 'mirror').svg, () => mirrorSel(axis), { command: 'm' + axis, description: axis === 'x' ? 'Mirror X: flip the part left to right about its centre' : 'Mirror Y: flip the part top to bottom about its centre' });
     b.dataset.testid = id; return b;
   };
-  const gbtn = (id, label, svg, action) => { const b = ribbonButton(label, svg, action, { enabled: () => id !== 'bar-group' || selItems().length > 1 }); b.dataset.testid = id; ui[id] = b; return b; };
+  // renderProps updates these changing names, descriptions and disabled states together.
+  const gbtn = (id, label, svg, action) => { const b = ribbonButton(label, svg, action); delete b.ribbonSync; b.dataset.testid = id; ui[id] = b; return b; };
   ui.pfields = h('div', { class: 'ribbon-page' },
     ribbonGroup('Position', ribbonStack(ribbonField('Name', ui.partName), ribbonField('X mm', ui.px), ribbonField('Y mm', ui.py)),
       ribbonStack(propField('W', 'pw'), propField('H', 'ph'))),
@@ -1255,7 +1256,7 @@ function buildRail() {
   const items = TOOLS.filter((t) => !['copy', 'rotate', 'scale', 'fillet', 'extend'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
-    const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
+    const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id, t.description), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
     b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (t.id === 'step' && curLay()) DO.step(); else if (!b.dataset.held) setTool(t.id); delete b.dataset.held; });
     ui.toolBtns[t.id] = b;
     if (t.id === 'dimension') dimButton(b);
@@ -1264,7 +1265,7 @@ function buildRail() {
   return h('nav', { class: 'rail', 'aria-label': 'Tools' }, items);
 }
 function paintRailTooltips() {
-  for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id);
+  for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
   paintDimButton();
 }
 /** The Dimension button: shows the type last used, with a corner triangle (or press and hold) that opens the flyout of types. */
@@ -1414,7 +1415,7 @@ function buildPanel() {
     ribbonGroup('Sheet', ribbonStack(ribbonField('Size', ui.preset),
       numField('Width', 'sheetW', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }),
       numField('Height', 'sheetH', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) })),
-      ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, pressed: sheetSelOn })),
+      ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, description: 'Or click the sheet edge. Drag a side handle to resize.', pressed: sheetSelOn })),
     ribbonGroup('Grippers, mm', ribbonStack(numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }),
       numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop })), ribbonStack(numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight }))),
     ribbonGroup('Marks', check('crop', 'Crop marks'), check('reg', 'Reg marks')),
@@ -4462,9 +4463,9 @@ function renderProps() {
     ui['grp-group'].disabled = !many || whole; ui['grp-ungroup'].disabled = !hasGroup; ui['grp-lock'].disabled = allLocked; ui['grp-unlock'].disabled = !locked;
     ui.dupAxisBtns.forEach((btn) => { const on = btn.dataset.axis === state.dupAxis; btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); });
     // Part ribbon: Group / Ungroup (several selected) and Lock / Unlock
-    const gs = whole ? ['Ungroup', 'ungroup'] : ['Group', 'group'], ls = allLocked ? ['Unlock', 'unlock'] : ['Lock', 'lock'];
-    ui['bar-group'].disabled = !many; ui['bar-group'].replaceChildren(icon(ICONS[gs[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, gs[0])); ui['bar-group'].title = commandTooltip(gs[0], gs[1]); ui['bar-group'].setAttribute('aria-label', gs[0]);
-    ui['bar-lock'].replaceChildren(icon(ICONS[ls[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, ls[0])); ui['bar-lock'].title = commandTooltip(ls[0], ls[1]); ui['bar-lock'].setAttribute('aria-label', ls[0]);
+    const gs = whole ? ['Ungroup', 'ungroup'] : ['Group', 'group', 'Group the selected parts'], ls = allLocked ? ['Unlock', 'unlock'] : ['Lock', 'lock', 'Lock: it cannot be moved, turned, mirrored or deleted'];
+    ui['bar-group'].disabled = !many; ui['bar-group'].replaceChildren(icon(ICONS[gs[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, gs[0])); ui['bar-group'].title = commandTooltip(gs[0], gs[1], gs[2]); ui['bar-group'].setAttribute('aria-label', gs[0]);
+    ui['bar-lock'].replaceChildren(icon(ICONS[ls[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, ls[0])); ui['bar-lock'].title = commandTooltip(ls[0], ls[1], ls[2]); ui['bar-lock'].setAttribute('aria-label', ls[0]);
   }
   ui.hintPill.hidden = !p;
   ui.hintPill.textContent = state.mode === 'rotate' ? 'Drag a corner arrow to turn · Shift = 15° steps · drag ◎ to move the pivot · Esc = done'
@@ -8633,6 +8634,7 @@ async function init() {
     }
   }, true);
   document.addEventListener('keydown', (e) => {
+    if (e.key === 'F3' || e.key === 'F7') e.preventDefault(); // Suppress WebView2 find / caret browsing even in fields and dialogs.
     if (e.key === 'Escape' && selectionCycle) { selectionCycle = null; renderCommand(); }
   }, true);
   document.addEventListener('keydown', (e) => {

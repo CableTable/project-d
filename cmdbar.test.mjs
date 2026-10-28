@@ -1,6 +1,7 @@
 // cmdbar.js — the floating command bar: aliases, autocomplete, option chips, keys, placement.   node cmdbar.test.mjs
 import assert from 'node:assert/strict';
 import * as CB from './web/cmdbar.js';
+import { fixedKey } from './web/shortcuts.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -9,13 +10,20 @@ test('tooltip text uses the command aliases and keys, with no empty brackets', (
   const tip = (label, name) => CB.tooltipText(label, CB.resolve(name));
   assert.equal(tip('Line', 'line'), 'Line (L)');
   assert.equal(tip('Wireframe', 'wireframe'), 'Wireframe (F9)');
-  assert.equal(tip('Copy', 'copy'), 'Copy (CO, Ctrl+C)');
+  assert.equal(tip('Copy', 'copy'), 'Copy (CO)');
+  for (const c of CB.COMMANDS.filter((c) => fixedKey(c.name))) {
+    assert.equal(CB.tooltipText(c.name, c), c.name + (c.alias.length ? ` (${c.alias[0].toUpperCase()})` : ''));
+  }
   assert.equal(tip('Rectangle', 'rect'), 'Rectangle (REC)');
   assert.equal(tip('Pan', 'pan'), 'Pan');
   assert.equal(tip('Show guides', 'unknown'), 'Show guides');
   assert.equal(CB.tooltipText('Line', { alias: ['ln'], key: 'F6' }), 'Line (LN, F6)');
   assert.equal(CB.tooltipText('Rotate', CB.resolve('rotate'), 'draw'), 'Rotate (RO)');
   assert.equal(CB.tooltipText('Rotate', CB.resolve('rotate'), 'layout'), 'Rotate (R)');
+  assert.equal(CB.tooltipText('Copy', { ...CB.resolve('copy'), alias: ['cp'] }), 'Copy (CP)');
+  assert.equal(CB.tooltipText('Mirror X', CB.resolve('mx'), 'layout', 'Mirror X: flip the part left to right about its centre'),
+    'Mirror X\nMirror X: flip the part left to right about its centre');
+  assert.equal(CB.tooltipText('Line', CB.resolve('line'), 'draw', 'Straight segments'), 'Line (L)\nStraight segments');
 });
 
 test('every name and alias is lower case, and no command repeats a word on the same tab', () => {

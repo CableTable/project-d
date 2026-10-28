@@ -84,12 +84,13 @@ const TABLE = [
 ];
 
 export const COMMANDS = TABLE.map(([name, cat, desc, alias, where, key = '']) => ({ name, cat, desc, alias, where, key }));
+export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'copy', 'paste', 'delete'].includes(name);
 
 /** Button name followed by its first typed alias and keyboard shortcut, when present. */
-export function tooltipText(label, command, tab = '') {
+export function tooltipText(label, command, tab = '', description = '') {
   const alias = command?.alias.find((word) => !tab || aliasScope(command, word) === command.where || aliasScope(command, word) === tab);
-  const hints = [alias?.toUpperCase(), command?.key].filter(Boolean);
-  return label + (hints.length ? ` (${hints.join(', ')})` : '');
+  const hints = [alias?.toUpperCase(), !fixedKey(command?.name) && command?.key].filter(Boolean);
+  return label + (hints.length ? ` (${hints.join(', ')})` : '') + (description ? `\n${description}` : '');
 }
 
 // R stays Rectangle on drawings and Rotate on layouts; RO / ROTATE work on both.

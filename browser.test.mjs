@@ -153,7 +153,9 @@ try {
       const ribbonLine = p.locator('.ribbon-body').getByRole('button', { name: 'Line', exact: true });
       await ribbonLine.hover(); assert.equal(await ribbonLine.getAttribute('title'), 'Line (L)');
       await p.locator('[data-ribbon-tab=Modify]').click();
-      assert.equal(await p.locator('.ribbon-body').getByRole('button', { name: 'Copy', exact: true }).getAttribute('title'), 'Copy (CO, Ctrl+C)');
+      assert.equal(await p.locator('.ribbon-body').getByRole('button', { name: 'Copy', exact: true }).getAttribute('title'), 'Copy (CO)');
+      await p.locator('[data-tool=pan]').hover();
+      assert.equal(await p.locator('[data-tool=pan]').getAttribute('title'), 'Pan\nDrag the view with the middle mouse button');
       await p.locator('[data-ribbon-tab=View]').click();
       const wire = p.locator('.ribbon-body').getByRole('button', { name: 'Wireframe', exact: true });
       await wire.hover(); assert.equal(await wire.getAttribute('title'), 'Wireframe (F9)');
@@ -190,6 +192,33 @@ try {
       }
       assert.equal(await field.inputValue(), '2');
       await p.keyboard.press('Escape');
+      await p.locator('[data-tab=objects]').click();
+      const search = q('obj-search');
+      await search.fill('Layer');
+      const toggles = () => Promise.all(keys.map(([, id]) => on(id)));
+      const beforeSearch = await toggles();
+      for (const [key] of keys) {
+        if (key === 'F3' || key === 'F7') assert.equal(await search.evaluate((el, key) => {
+          const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+          el.dispatchEvent(e); return e.defaultPrevented;
+        }, key), true, key + ' prevents browser action in the object / layer search');
+        await search.press(key);
+        assert.deepEqual(await toggles(), beforeSearch, key + ' toggles nothing in search');
+      }
+      assert.equal(await search.inputValue(), 'Layer');
+      await q('cmd-echo').click(); await q('cmd-input').fill('shortcuts'); await q('cmd-input').press('Enter');
+      const dialog = q('shortcuts-dialog');
+      await dialog.waitFor();
+      const beforeDialog = await toggles();
+      for (const [key] of keys) {
+        if (key === 'F3' || key === 'F7') assert.equal(await dialog.evaluate((el, key) => {
+          const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+          el.dispatchEvent(e); return e.defaultPrevented;
+        }, key), true, key + ' prevents browser action with a dialog open');
+        await p.keyboard.press(key);
+        assert.deepEqual(await toggles(), beforeDialog, key + ' toggles nothing in a dialog');
+      }
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
       await p.evaluate(() => document.activeElement.blur());
       for (const [key, id] of keys) {
         const before = await on(id);
@@ -208,6 +237,28 @@ try {
       await p.locator('[data-ribbon-tab=View]').click();
       await wire.click(); const before = await on('wireframe');
       await p.keyboard.press('F9'); assert.notEqual(await on('wireframe'), before, 'F9 and ribbon use the same Wireframe toggle');
+      const lay = newLayout('Tooltip help 73'), raw = newDoc(4);
+      addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      lay.parts.plate = makePart('plate', 'Plate', raw);
+      lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }];
+      await q('picker').setInputFiles({ name: 'tooltip-help73.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.locator('.dtab.on .tname').filter({ hasText: 'tooltip-help73.dxf' }).waitFor();
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.keyboard.press('Control+a');
+        await p.locator('[data-ribbon-tab=Part]').click();
+        for (const [axis, help] of [['X', 'left to right'], ['Y', 'top to bottom']]) {
+          const mirror = p.locator('.ribbon-body').getByRole('button', { name: 'Mirror ' + axis, exact: true });
+          await mirror.hover();
+          assert.equal(await mirror.getAttribute('title'), `Mirror ${axis}\nMirror ${axis}: flip the part ${help} about its centre`);
+        }
+        assert.equal(await q('bar-group').getAttribute('title'), 'Group (G, Ctrl+G)\nGroup the selected parts');
+        assert.equal(await q('bar-lock').getAttribute('title'), 'Lock\nLock: it cannot be moved, turned, mirrored or deleted');
+        await p.locator('[data-ribbon-tab=Layout]').click();
+        const sheet = p.locator('.ribbon-body').getByRole('button', { name: 'Select sheet', exact: true });
+        await sheet.hover();
+        assert.equal(await sheet.getAttribute('title'), 'Select sheet\nOr click the sheet edge. Drag a side handle to resize.');
+      }
     } finally { await context.close(); }
   });
   await step('TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo', async () => {
