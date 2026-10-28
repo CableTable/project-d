@@ -35,7 +35,7 @@ briefs, reading short reports and merging.
 4. **Review:** a Bishop-review session on the build's commits (ranked findings, "ship as is" / "fix first").
 5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run.
 6. **As built:** every UI build gets an AB board (mockups/R<n>_AB_*.html, local), drawn from the screenshots (his call, 2026-10-20).
-7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR). CI publishes the exe.
+7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR, or Rook's call under full control, CLAUDE.md). CI publishes the exe.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
    Bishop-test downloads the release into `shots/exe/`, starts it with `WEBVIEW2_USER_DATA_FOLDER` (an isolated profile:
    never his real library or recovery copies) and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9233`,
@@ -77,7 +77,7 @@ usage-agent-install.ps1.
    scratch drawing (never his open work); WScript.Shell SendKeys types into it; LOGFILEON / LOGFILEOFF writes the command line
    to `%LOCALAPPDATA%AutodeskAutoCAD 2027R26.0enu<drawing>.log`: read the log, not COM busy states (unreliable).
    Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
-   **Bishop-acad runs these checks, not Rook** (his call 2026-10-28, to save Rook's usage): Rook writes the questions
+   **An acad run (claude2 or claude3, whichever has the most 5-hour headroom; same command with `claude3.cmd`) runs these checks, not Rook** (his call 2026-10-28, to save Rook's usage): Rook writes the questions
    (what to try, which prompts / keys / screenshots), then from `Project D extras/runs<N>`:
    `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out`.
    The brief always says: one AutoCAD session at a time; only new scratch drawings (`Documents.Add()`), never his open
@@ -101,7 +101,7 @@ usage-agent-install.ps1.
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
    (`rook.mjs result` shows it) means the ticket was too big: split the rest further.
    A ticket is one tool family or one command, plus its save / reopen; a brief listing more than ~5 behaviours is two
-   tickets (session 26 retro: every King build peaked 171k-216k). Builders make a WIP commit of each passing slice
+   tickets (session 26 retro: every King build peaked 171k-216k). Count behaviours, not numbered lines: each transform family, output format and follow trigger is one (156b2c1: 5 lines, ~9 behaviours, peak 217k). Builders make a WIP commit of each passing slice
    (said in the report's first line), so a cut-off run loses nothing.
 **Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. This week (49% on Tue 21:45):
 by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. From next week: 14% × k by the end of day k
@@ -158,11 +158,12 @@ R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Projec
 # plus the git denies for Bash, capped at $6. It runs in its OWN throwaway worktree at the commit under review, so it can
 # run the tests and time things without touching a builder's folder (2026-10-20, his call). Never add `git -C:*` to the
 # allowlist: `git -C … commit/push` would slip past the commit and push denies.
-WT="E:/Project B/Claude/ProjectD-review"; git worktree add --detach "$WT" <sha>; cd "$WT"; npm.cmd ci --silent  # once per review
+# ProjectD-review is a permanent worktree (made once, trusted on account 2); never remove it (session 27: removing it lost the trust).
+WT="E:/Project B/Claude/ProjectD-review"; git -C "$WT" switch --detach <sha>; cd "$WT"; npm.cmd ci --silent  # once per review
 $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 \
   --disallowedTools Agent "Bash(git commit:*)" "Bash(git push:*)" "Bash(git add:*)" "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git stash:*)" "Bash(git restore:*)" "Bash(git pull:*)" \
   $OUT < review.txt > rev.jsonl
-cd -; git worktree remove --force "$WT"                     # after the review
+cd -
 # A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-review.
 
 # Lookup (Haiku)
@@ -178,6 +179,9 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # Knight-build (2026-10-20): its own clone ProjectD-rowan, git folder ProjectD-rowan-git (Codex blocks any
 # folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
+# Before a Knight build: `git status --porcelain` in the clone must be empty; leftovers -> `git stash -u -m "<run>"`, never a commit.
+# CI-only red: `gh run download <id> -n browser-failure-shard-<N>` into runs<N>/ before the fix brief; local shards match CI's, so suspect Linux / timing, not order.
+# A step red in the full suite but green alone: append "<date> <step> <shard>" to runs<N>/flakes.txt; a 2nd hit becomes a TODO.
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
 # FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
 # `git switch -c <branch> <sha>`. Rook's full-suite script checks out by sha too. After: Rook pushes.
@@ -255,7 +259,11 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 ## Keeping Rook small (his rule, 2026-10-20: Rook was on pace to hit its weekly limit by Friday)
 
-- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; he picks which suggestions to apply), and once CI is green for the
+- **His new rule** (session 27 retro): in the same turn, grep CLAUDE.md, WORKFLOW.md, AGENTS.md, .claude/agents/ and memory/ for the old wording, change every hit, and list the files in the reply.
+- A plan for him stops at this PR's merge; later items are listed under "session <N+1>".
+- Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
+
+- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
   head commit asks his OK to merge. On his yes, and only once `runs<N>/retro.out` exists (session 25 retro): `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
   (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then start the next Rook session itself
   (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
