@@ -153,7 +153,7 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
     71b. ✅ (built, Knight) (after 71a) Apply the same window / crossing feedback to layout parts without selecting hidden or locked parts, with unit and browser checks for rotated parts and additive selection.
     71c. ✅ (built, Knight) Cycle overlapping drawing objects with repeated Alt + click using stable hit order, highlighting the current candidate and resetting on a new location or edit, with unit and browser tests on duplicate lines.
 72. ✅ (built, session 23) **Right-click while drawing** (S): during a tool, right-click finishes (Enter); a menu with Cancel, Close, Undo last point and the snap list. Grill done (2026-10-26): Shift+right-click menu, see DECISIONS.
-73. **Tooltips and F-keys** (S): tooltip = name + alias + key; add F3 snap, F8 ortho, F9 grid; optional "show labels" on the rail.
+73. ✅ (built, Knight) **Tooltips and F-keys** (S): rail and ribbon tooltips use COMMANDS for alias + key; F3 snap, F8 Ortho, F7 grid; F9 stays Wireframe, F12 stays Dynamic input. No "show labels" option. See DECISIONS "Tooltips and F-keys (TODO 73, grilled)".
 74. ✅ (built, session 23) **More zooms** (S): Zoom Window, Zoom Selection, Zoom Previous (Z W, Z S, Z P). Grill done (2026-10-26): see DECISIONS "More zooms (TODO 74)".
 75. **Array on a drawing** (M): rows / columns / spacing, plus polar (holes in a ring); step and repeat today is layouts only.
     75a. Add a rectangular array of selected drawing objects with validated rows, columns and spacing, preview, Apply / Cancel and one-step undo, with geometry and browser Save / reopen tests.

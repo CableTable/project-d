@@ -5,6 +5,19 @@ import * as CB from './web/cmdbar.js';
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
 
+test('tooltip text uses the command aliases and keys, with no empty brackets', () => {
+  const tip = (label, name) => CB.tooltipText(label, CB.resolve(name));
+  assert.equal(tip('Line', 'line'), 'Line (L)');
+  assert.equal(tip('Wireframe', 'wireframe'), 'Wireframe (F9)');
+  assert.equal(tip('Copy', 'copy'), 'Copy (CO, Ctrl+C)');
+  assert.equal(tip('Rectangle', 'rect'), 'Rectangle (REC)');
+  assert.equal(tip('Pan', 'pan'), 'Pan');
+  assert.equal(tip('Show guides', 'unknown'), 'Show guides');
+  assert.equal(CB.tooltipText('Line', { alias: ['ln'], key: 'F6' }), 'Line (LN, F6)');
+  assert.equal(CB.tooltipText('Rotate', CB.resolve('rotate'), 'draw'), 'Rotate (RO)');
+  assert.equal(CB.tooltipText('Rotate', CB.resolve('rotate'), 'layout'), 'Rotate (R)');
+});
+
 test('every name and alias is lower case, and no command repeats a word on the same tab', () => {
   for (const tab of ['draw', 'layout']) {
     const seen = new Map();

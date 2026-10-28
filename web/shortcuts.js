@@ -9,6 +9,7 @@ export const RESERVED = {
   Esc: 'Reserved for cancel / close / clear selection.', Delete: 'Reserved for deleting the selection.',
   'Ctrl+D': 'Reserved for Duplicate in a layout.',
   F2: 'Reserved for command history.', F10: 'Reserved for polar tracking.', F11: 'Reserved for object snap tracking.',
+  F3: 'Reserved for Snap.', F7: 'Reserved for Grid.', F8: 'Reserved for Ortho.', F12: 'Reserved for Dynamic input.',
   F5: 'Reserved for the desktop reload guard.', 'Ctrl+R': 'Reserved for the desktop reload guard.',
 };
 export const fixedKey = (name) => ['save', 'saveas', 'undo', 'redo', 'copy', 'paste', 'delete'].includes(name);

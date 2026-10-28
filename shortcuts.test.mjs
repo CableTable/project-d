@@ -18,7 +18,7 @@ test('key strings and events normalize to the same modifier order, including Cmd
 });
 
 test('every reserved key has a reason; bare and Shift letters/digits cannot be keys', () => {
-  assert.deepEqual(Object.keys(SC.RESERVED).sort(), ['Ctrl+C', 'Ctrl+V', 'Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Esc', 'Delete', 'F2', 'F10', 'F11', 'F5', 'Ctrl+R', 'Ctrl+D'].sort());
+  assert.deepEqual(Object.keys(SC.RESERVED).sort(), ['Ctrl+C', 'Ctrl+V', 'Ctrl+S', 'Ctrl+Shift+S', 'Ctrl+Z', 'Ctrl+Y', 'Ctrl+Shift+Z', 'Esc', 'Delete', 'F2', 'F3', 'F7', 'F8', 'F10', 'F11', 'F12', 'F5', 'Ctrl+R', 'Ctrl+D'].sort());
   assert.ok(SC.keyReason('Ctrl+D'));
   for (const key of ['w', 'Shift+W', '1', 'Shift+2', 'Space', 'Enter', 'Tab', 'Backspace', 'ArrowUp', 'Shift+ArrowLeft']) assert.match(SC.keyReason(key), /typing and drawing/);
   for (const key of ['Ctrl+Alt+W', 'Alt+W', 'F6', 'Ctrl+Shift+1', 'Shift+F6']) assert.equal(SC.keyReason(key), '');

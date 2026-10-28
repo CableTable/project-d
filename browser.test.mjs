@@ -138,6 +138,78 @@ try {
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
   if (shard) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
+  await step('TODO 73: hover tooltips teach aliases and keys; F3 / F7 / F8 flip chips, F9 Wireframe and F12 Dynamic input; fields keep their keys', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const on = (id) => q(id).getAttribute('aria-pressed');
+    const keys = [['F3', 'tog-snap'], ['F7', 'tog-grid'], ['F8', 'tog-ortho'], ['F9', 'wireframe'], ['F12', 'tog-dyn']];
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' }); await q('new-tab').click();
+      const line = p.locator('[data-tool=line]');
+      await line.hover(); assert.equal(await line.getAttribute('title'), 'Line (L)');
+      await p.locator('[data-ribbon-tab=Draw]').click();
+      const ribbonLine = p.locator('.ribbon-body').getByRole('button', { name: 'Line', exact: true });
+      await ribbonLine.hover(); assert.equal(await ribbonLine.getAttribute('title'), 'Line (L)');
+      await p.locator('[data-ribbon-tab=Modify]').click();
+      assert.equal(await p.locator('.ribbon-body').getByRole('button', { name: 'Copy', exact: true }).getAttribute('title'), 'Copy (CO, Ctrl+C)');
+      await p.locator('[data-ribbon-tab=View]').click();
+      const wire = p.locator('.ribbon-body').getByRole('button', { name: 'Wireframe', exact: true });
+      await wire.hover(); assert.equal(await wire.getAttribute('title'), 'Wireframe (F9)');
+      for (const [key, id] of keys) {
+        await p.evaluate(() => document.activeElement.blur());
+        const before = await on(id);
+        await p.keyboard.press(key); assert.notEqual(await on(id), before, key);
+        if (key === 'F7') {
+          assert.equal(await q('drawing-grid').isVisible(), true);
+          const size = await q('drawing-grid').evaluate((el) => parseFloat(el.style.backgroundSize));
+          assert.ok(size >= 16, 'grid stays legible at this zoom');
+        }
+        await p.keyboard.press(key); assert.equal(await on(id), before, key + ' restores');
+      }
+      assert.equal(await q('drawing-grid').isVisible(), false);
+      await q('cmd-echo').click(); await q('cmd-input').fill('li');
+      for (const [key, id] of keys) {
+        const before = await on(id);
+        assert.equal(await q('cmd-input').evaluate((el, key) => {
+          const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+          el.dispatchEvent(e); return e.defaultPrevented;
+        }, key), true, key + ' prevents browser action in the command bar');
+        assert.notEqual(await on(id), before, key + ' works in the command bar');
+        await q('cmd-input').press(key); assert.equal(await on(id), before);
+        assert.equal(await q('cmd-input').inputValue(), 'li');
+      }
+      await p.keyboard.press('Escape');
+      await p.keyboard.press('F2');
+      const field = p.getByRole('textbox', { name: 'Filter history', exact: true });
+      await field.fill('2');
+      for (const [key, id] of keys) {
+        const before = await on(id);
+        await field.press(key); assert.equal(await on(id), before, key + ' leaves other input alone');
+      }
+      assert.equal(await field.inputValue(), '2');
+      await p.keyboard.press('Escape');
+      await p.evaluate(() => document.activeElement.blur());
+      for (const [key, id] of keys) {
+        const before = await on(id);
+        assert.equal(await p.locator('body').evaluate((el, key) => {
+          const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+          el.dispatchEvent(e); return e.defaultPrevented;
+        }, key), true, key + ' prevents browser action on the drawing');
+        assert.notEqual(await on(id), before);
+        await p.keyboard.press(key); assert.equal(await on(id), before);
+      }
+      await q('tog-snap').click(); assert.equal(await on('tog-snap'), 'false');
+      await p.keyboard.press('F3'); assert.equal(await on('tog-snap'), 'true', 'F3 uses the SNAP master toggle');
+      await q('tog-polar').click();
+      if (await on('tog-polar') !== 'true') await q('tog-polar').click();
+      await p.keyboard.press('F8'); assert.equal(await on('tog-polar'), 'false', 'Ortho still turns Polar off');
+      await p.locator('[data-ribbon-tab=View]').click();
+      await wire.click(); const before = await on('wireframe');
+      await p.keyboard.press('F9'); assert.notEqual(await on('wireframe'), before, 'F9 and ribbon use the same Wireframe toggle');
+    } finally { await context.close(); }
+  });
   await step('TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
@@ -2285,12 +2357,12 @@ try {
         await p.screenshot({ path: `${shotDir}/todo118-shortcuts-${theme}.png` });
       }
       await dialog.getByRole('searchbox').fill('');
-      for (const [name, key] of [['Close tab', 'Control+Alt+w'], ['Next tab', 'F6'], ['Previous tab', 'F7'], ['Properties', 'Control+Tab']]) {
+      for (const [name, key] of [['Close tab', 'Control+Alt+w'], ['Next tab', 'F6'], ['Previous tab', 'F4'], ['Properties', 'Control+Tab']]) {
         await dialog.getByRole('button', { name: name + ' key', exact: true }).click(); await p.keyboard.press(key);
       }
       await dialog.getByRole('button', { name: 'Save', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
       await p.keyboard.press('F6'); assert.equal(await active(), names[2]);
-      await p.keyboard.press('F7'); assert.equal(await active(), names[1]);
+      await p.keyboard.press('F4'); assert.equal(await active(), names[1]);
       await p.keyboard.press('Control+Tab'); assert.equal(await active(), names[1], 'own Properties key wins over default next');
       await p.keyboard.press('Control+Alt+w'); assert.equal(await tabs.count(), 2, 'own close key closes clean layout');
       await openShortcuts();
@@ -2964,7 +3036,7 @@ try {
 
   await step('tools: every rail tool is built (none greyed); Auto-nest opens its dialog and does not become the tool; Select/Step work', async () => {
     const line = page.locator('[data-tool=nest]');
-    assert.equal(await line.getAttribute('title'), 'Auto-nest mixed parts');
+    assert.equal(await line.getAttribute('title'), 'Auto-nest (N)');
     assert.equal(await line.getAttribute('aria-disabled'), null);
     assert.equal(await page.locator('nav.rail button.off').count(), 0, 'nothing is greyed');
     await line.click();
@@ -4804,18 +4876,20 @@ try {
   const entitiesN = async () => Number((await t('entities').textContent()).replace(/\D/g, ''));
   const hasText = async (re) => re.test(await page.locator('body').innerText());
 
-  await step('review: status bar: GRID is greyed and never on; the layer shown is the selection\'s; no fixed Scale 1:1', async () => {
+  await step('review: status bar: GRID toggles the display; the layer shown is the selection\'s; no fixed Scale 1:1', async () => {
     await closeTabs(/./);
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
     for (const id of ['tog-grid']) {
-      assert.equal(await t(id).getAttribute('aria-disabled'), 'true', id);
+      assert.equal(await t(id).getAttribute('aria-disabled'), null, id);
       assert.equal(await t(id).getAttribute('aria-pressed'), 'false', id + ' is not on');
-      assert.equal(await t(id).getAttribute('title'), 'Not built yet');
+      assert.match(await t(id).getAttribute('title'), /Grid \(F7\)/);
       assert.ok(!(await t(id).getAttribute('class')).split(' ').includes('on'), id);
       await t(id).click({ force: true });
-      assert.equal(await t(id).getAttribute('aria-pressed'), 'false', id + ' still not on after a click');
+      assert.equal(await t(id).getAttribute('aria-pressed'), 'true', id + ' on after a click');
+      assert.equal(await t('drawing-grid').isVisible(), true);
+      await t(id).click();
     }
     for (const id of ['tog-ortho', 'tog-polar', 'tog-otrack']) assert.equal(await t(id).getAttribute('aria-disabled'), null, id + ' works');
     assert.equal(await t('layer-info').textContent(), 'Layer: —', 'nothing selected');
@@ -5855,7 +5929,7 @@ try {
     await fourParts();
     await dragMm([40, 500], [960, 150]);
     assert.equal(await t('pp-name').textContent(), '3 parts');
-    assert.equal(await t('bar-group').getAttribute('title'), 'Group the selected parts (Ctrl+G)');
+    assert.equal(await t('bar-group').getAttribute('title'), 'Group (G, Ctrl+G)');
     await page.keyboard.press('Control+g');
     assert.match(await prompt(), /^Grouped 3 parts: a click on one selects the group, and it moves, turns and copies as one \(Ctrl\+Shift\+G ungroups\):?$/);
     assert.equal(await t('placed-name').textContent(), 'Group of 3');
@@ -7537,7 +7611,7 @@ try {
       assert.equal(await b.getAttribute('aria-disabled'), null, id + ' is built');
       titles[id] = await b.getAttribute('title');
     }
-    assert.deepEqual([titles.line, titles.polyline, titles.rect, titles.circle, titles.ellipse, titles.arc], ['Line (L)', 'Polyline (PL)', 'Rectangle (R)', 'Circle (C)', 'Ellipse (EL)', 'Arc (A)']);
+    assert.deepEqual([titles.line, titles.polyline, titles.rect, titles.circle, titles.ellipse, titles.arc], ['Line (L)', 'Polyline (PL)', 'Rectangle (REC)', 'Circle (C)', 'Ellipse (EL)', 'Arc (A)']);
     // a layout tab: the tools say so and do not become the tool
     await t('new-layout').click();
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
@@ -8959,7 +9033,7 @@ try {
     await threeParts();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 0, 'not selected yet');
     assert.equal(await t('sheet-select').textContent(), 'Select sheet');
-    assert.match(await t('sheet-select').getAttribute('title'), /Or click the sheet edge\. Drag a side handle to resize\./);
+    assert.equal(await t('sheet-select').getAttribute('title'), 'Select sheet');
     await layoutTab(); await t('sheet-select').click();
     assert.equal(await page.locator('[data-testid=sheet-handle]').count(), 4);
     assert.deepEqual(await page.locator('[data-sheet-handle]').evaluateAll((g) => g.map((x) => x.dataset.sheetHandle).sort()), ['bottom', 'left', 'right', 'top']);

@@ -95,6 +95,7 @@ function showShortcuts() {
     if (Object.keys(overrides).length) await shortcutStore.put({ id: 'own', overrides });
     else await shortcutStore.del('own');
     ownBindings = SC.bindings(draft); ownCommands = SC.commandsFor(ownBindings);
+    paintRailTooltips(); renderRibbon();
     note('Shortcuts saved: aliases + keys apply now');
   });
 }
@@ -124,35 +125,35 @@ function icon(inner, { size = 20, width = 1.6, cap, join, label, box = 24 } = {}
 
 // ---- tools (same order and icons as the mock-up) ----
 const TOOLS = [
-  { id: 'select', label: 'Select', title: 'Select (S)', join: 'round', svg: '<path d="M5 3l13 8-6 1.5L9 19z"/>' },
-  { id: 'pan', label: 'Pan', title: 'Pan (middle mouse)', cap: 'round', svg: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>' },
+  { id: 'select', label: 'Select', join: 'round', svg: '<path d="M5 3l13 8-6 1.5L9 19z"/>' },
+  { id: 'pan', label: 'Pan', cap: 'round', svg: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>' },
   { sep: true },
-  { id: 'line', label: 'Line', title: 'Line (L)', svg: '<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.8"/><circle cx="19" cy="5" r="1.8"/>' },
-  { id: 'polyline', label: 'Polyline', title: 'Polyline (PL)', join: 'round', svg: '<path d="M3 18l5-9 5 6 7-10"/>' },
-  { id: 'rect', label: 'Rectangle', title: 'Rectangle (R)', svg: '<rect x="3.5" y="6" width="17" height="12"/>' },
-  { id: 'rrect', label: 'Rounded rectangle', title: 'Rounded rectangle', svg: '<rect x="3.5" y="6" width="17" height="12" rx="4"/>' },
-  { id: 'circle', label: 'Circle', title: 'Circle (C)', svg: '<circle cx="12" cy="12" r="8"/>' },
-  { id: 'ellipse', label: 'Ellipse', title: 'Ellipse (EL)', svg: '<ellipse cx="12" cy="12" rx="9" ry="6"/>' },
-  { id: 'arc', label: 'Arc', title: 'Arc (A)', svg: '<path d="M4 17a8.5 8.5 0 0 1 16 0"/>' },
-  { id: 'text', label: 'Text', title: 'Text (T)', cap: 'round', svg: '<path d="M5 6h14M12 6v13"/>' },
-  { id: 'dimension', label: 'Dimension', title: 'Dimension (D)', cap: 'round', svg: '<path d="M4 8v10M20 8v10M4 13h16M4 13l3-2M4 13l3 2M20 13l-3-2M20 13l-3 2"/>' },
-  { id: 'leader', label: 'Leader', title: 'Leader (LE)', cap: 'round', join: 'round', svg: '<path d="M5 19l3.2-6.5M5 19l6-3M8 12.5L12 8h8"/>' },
-  { id: 'balloon', label: 'Balloon', title: 'Balloon (B)', cap: 'round', join: 'round', svg: '<circle cx="14.5" cy="9" r="6"/><path d="M13.3 7l1.4-1v6.2M10.2 13.4L4.5 20"/>' },
+  { id: 'line', label: 'Line', svg: '<path d="M6 18L18 6"/><circle cx="5" cy="19" r="1.8"/><circle cx="19" cy="5" r="1.8"/>' },
+  { id: 'polyline', label: 'Polyline', join: 'round', svg: '<path d="M3 18l5-9 5 6 7-10"/>' },
+  { id: 'rect', label: 'Rectangle', svg: '<rect x="3.5" y="6" width="17" height="12"/>' },
+  { id: 'rrect', label: 'Rounded rectangle', svg: '<rect x="3.5" y="6" width="17" height="12" rx="4"/>' },
+  { id: 'circle', label: 'Circle', svg: '<circle cx="12" cy="12" r="8"/>' },
+  { id: 'ellipse', label: 'Ellipse', svg: '<ellipse cx="12" cy="12" rx="9" ry="6"/>' },
+  { id: 'arc', label: 'Arc', svg: '<path d="M4 17a8.5 8.5 0 0 1 16 0"/>' },
+  { id: 'text', label: 'Text', cap: 'round', svg: '<path d="M5 6h14M12 6v13"/>' },
+  { id: 'dimension', label: 'Dimension', cap: 'round', svg: '<path d="M4 8v10M20 8v10M4 13h16M4 13l3-2M4 13l3 2M20 13l-3-2M20 13l-3 2"/>' },
+  { id: 'leader', label: 'Leader', cap: 'round', join: 'round', svg: '<path d="M5 19l3.2-6.5M5 19l6-3M8 12.5L12 8h8"/>' },
+  { id: 'balloon', label: 'Balloon', cap: 'round', join: 'round', svg: '<circle cx="14.5" cy="9" r="6"/><path d="M13.3 7l1.4-1v6.2M10.2 13.4L4.5 20"/>' },
   { sep: true },
-  { id: 'move', label: 'Move', title: 'Move (MV)', svg: '<path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>' },
-  { id: 'copy', label: 'Copy', title: 'Copy (CO)', svg: '<rect x="4" y="8" width="11" height="12" rx="1.5"/><path d="M9 8V4h11v12h-5"/>' },
-  { id: 'rotate', label: 'Rotate', title: 'Rotate (RO)', svg: '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>' },
-  { id: 'scale', label: 'Scale', title: 'Scale (SC)', svg: '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>' },
-  { id: 'fillet', label: 'Fillet', title: 'Fillet (F)', svg: '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>' },
-  { id: 'offset', label: 'Offset', title: 'Offset (O)', svg: '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>' },
-  { id: 'contour', label: 'Contour', title: 'Contour (CT)', svg: '<rect x="3" y="3" width="18" height="18" rx="5"/><rect x="6.5" y="6.5" width="11" height="11" rx="3"/><rect x="10" y="10" width="4" height="4" rx="1"/>' },
-  { id: 'trim', label: 'Trim', title: 'Trim (TR)', cap: 'round', svg: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.5L20 17M8.2 15.5L20 7"/>' },
-  { id: 'extend', label: 'Extend', title: 'Extend (EX)', svg: '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>' },
-  { id: 'mirror', label: 'Mirror', title: 'Mirror (MI)', join: 'round', svg: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6zM15 7l6 10h-6z"/>' },
+  { id: 'move', label: 'Move', svg: '<path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>' },
+  { id: 'copy', label: 'Copy', svg: '<rect x="4" y="8" width="11" height="12" rx="1.5"/><path d="M9 8V4h11v12h-5"/>' },
+  { id: 'rotate', label: 'Rotate', svg: '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>' },
+  { id: 'scale', label: 'Scale', svg: '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>' },
+  { id: 'fillet', label: 'Fillet', svg: '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>' },
+  { id: 'offset', label: 'Offset', svg: '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>' },
+  { id: 'contour', label: 'Contour', svg: '<rect x="3" y="3" width="18" height="18" rx="5"/><rect x="6.5" y="6.5" width="11" height="11" rx="3"/><rect x="10" y="10" width="4" height="4" rx="1"/>' },
+  { id: 'trim', label: 'Trim', cap: 'round', svg: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.5L20 17M8.2 15.5L20 7"/>' },
+  { id: 'extend', label: 'Extend', svg: '<path d="M4 4v16M8 12h12M16 8l4 4-4 4"/>' },
+  { id: 'mirror', label: 'Mirror', join: 'round', svg: '<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7L3 17h6zM15 7l6 10h-6z"/>' },
   { sep: true },
-  { id: 'step', label: 'Step and repeat', title: 'Step and repeat', svg: '<rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/>' },
-  { id: 'nest', label: 'Auto-nest', title: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
-  { id: 'measure', label: 'Measure', title: 'Measure (M)', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
+  { id: 'step', label: 'Step and repeat', svg: '<rect x="3.5" y="3.5" width="7" height="7" rx="1"/><rect x="13.5" y="3.5" width="7" height="7" rx="1"/><rect x="3.5" y="13.5" width="7" height="7" rx="1"/><rect x="13.5" y="13.5" width="7" height="7" rx="1"/>' },
+  { id: 'nest', label: 'Auto-nest', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
+  { id: 'measure', label: 'Measure', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
 const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
@@ -207,6 +208,7 @@ const state = {
   hidden: { parts: false, marks: false, dims: false },
   docs: [], doc: 0,
   snap: true,                      // the SNAP toggle in the status bar (kept for the session)
+  grid: false,
   snapTypes: snapTypes(),          // per-type ticks, remembered on this PC
   ortho: false,                    // the ORTHO toggle: a sticky Shift (picks kept straight along X or Y from the first point)
   dynamicInput: true,
@@ -607,17 +609,18 @@ function buildRibbon() {
   });
   return ui.ribbon;
 }
-function ribbonButton(label, svg, action, { small = false, enabled = () => true, pressed, title = label } = {}) {
-  const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title,
+const commandTooltip = (label, name = label.toLowerCase().replace(/[^a-z]/g, '')) => CB.tooltipText(label, CB.resolve(name === 'rect' ? 'rectangle' : name, curLay() ? 'layout' : 'draw', ownCommands), curLay() ? 'layout' : 'draw');
+function ribbonButton(label, svg, action, { small = false, enabled = () => true, pressed, command } = {}) {
+  const b = h('button', { type: 'button', class: small ? 'ribbon-small' : 'ribbon-big', title: commandTooltip(label, command),
     'aria-label': label, onclick: (e) => { if (e.currentTarget.dataset.held) { delete e.currentTarget.dataset.held; return; } action(e); closeRibbon(); renderRibbon(); } },
   icon(svg, { size: small ? 15 : 30, width: 1.5, cap: 'round', join: 'round' }), h('span', null, label));
-  b.ribbonSync = () => { b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
+  b.ribbonSync = () => { b.title = commandTooltip(b.getAttribute('aria-label'), command); b.disabled = !enabled(); if (pressed) b.setAttribute('aria-pressed', String(pressed())); };
   return b;
 }
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : setTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable() || (id === 'contour' && !!curLay()), pressed: () => state.tool === id, title: t.title });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable() || (id === 'contour' && !!curLay()), pressed: () => state.tool === id, command: id });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -644,18 +647,18 @@ function ribbonContents(kind) {
       btn('Snap to guides', '<rect x="4" y="4" width="16" height="16"/><circle cx="12" cy="12" r="3"/>', toggleGuideSnap, { enabled: () => !!curLay(), pressed: () => ribbon.guideSnap }),
       btn('Lock guides', LOCK, () => setGuidesLock(!curLay().s.guidesLock), { enabled: () => !!curLay(), pressed: () => !!curLay()?.s.guidesLock }),
       btn('Clear all guides', '<path d="M6 6l12 12M18 6L6 18"/>', clearGuides, { enabled: () => !!curLay()?.s.guides.length })),
-    group('Navigate', btn('Fit to window', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit),
+    group('Navigate', btn('Fit to window', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit, { command: 'fit' }),
       btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe })),
-    group('Windows', btn('Properties panel', '<rect x="3" y="4" width="18" height="16"/><path d="M15 4v16"/>', toggleProps, { pressed: () => state.propsOn }),
+    group('Windows', btn('Properties panel', '<rect x="3" y="4" width="18" height="16"/><path d="M15 4v16"/>', toggleProps, { pressed: () => state.propsOn, command: 'properties' }),
       btn('Tool rail', '<rect x="3" y="4" width="18" height="16"/><path d="M8 4v16"/>', toggleRail, { pressed: () => ribbon.rail }),
       btn('Swatch strip', '<rect x="8" y="3" width="8" height="18"/><path d="M8 9h8M8 15h8"/>', toggleStrip, { pressed: () => strip.on })),
     group('Theme', ...['system', 'light', 'dark'].map((mode) => btn(mode[0].toUpperCase() + mode.slice(1), themeIcon, () => setTheme(mode), { pressed: () => (document.documentElement.dataset.theme || 'system') === mode })))];
   if (ribbon.tab === 'Output') return [
     group('Save', btn('Save', saveIcon, () => save(false)), btn('Save As…', saveIcon, () => save(true))),
-    group('Print', btn('PDF / Print…', '<rect x="6" y="3" width="12" height="6"/><rect x="4" y="9" width="16" height="8"/><rect x="7" y="14" width="10" height="7"/>', exportPdf)),
+    group('Print', btn('PDF / Print…', '<rect x="6" y="3" width="12" height="6"/><rect x="4" y="9" width="16" height="8"/><rect x="7" y="14" width="10" height="7"/>', exportPdf, { command: 'pdf' })),
     group('Cutter', btn('Export for cutter…', '<path d="M5 12v8h14v-8M12 3v12M8 7l4-4 4 4"/>', exportCutter))];
   const toolIcon = (id) => TOOLS.find((t) => t.id === id).svg;
-  const convert = (label, action, svg, small = false) => btn(label, svg, action, { small, enabled: () => !!editable() });
+  const convert = (label, action, svg, small = false, command) => btn(label, svg, action, { small, command: command || (label === 'Text to outlines' ? 'textoutlines' : undefined), enabled: () => !!editable() });
   const outlinesIcon = '<path d="M5 5h14M12 5v14" stroke-dasharray="2 1.5"/><path d="M8 19h8"/>';
   if (ribbon.tab === 'Draw') return [
     group('Draw', ...['line', 'polyline', 'rect', 'rrect', 'circle', 'ellipse', 'arc'].map((id) => ribbonTool(id))),
@@ -669,8 +672,8 @@ function ribbonContents(kind) {
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>'),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon)),
     group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
-      op === 'boundary' ? '<path d="M4 8l8-4 8 5v8l-8 4-8-5z" stroke-dasharray="3 2"/>' : op === 'trim' ? toolIcon('trim') : '<rect x="3" y="5" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>' + (op === 'intersect' ? '<rect x="9" y="9" width="6" height="8" fill="currentColor" stroke="none" opacity=".55"/>' : ''))),
-      stack(...['frontminus', 'backminus'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op), '<rect x="3" y="5" width="12" height="12" fill="currentColor" opacity=".5"/><rect x="9" y="9" width="12" height="12"/>', true)),
+      op === 'boundary' ? '<path d="M4 8l8-4 8 5v8l-8 4-8-5z" stroke-dasharray="3 2"/>' : op === 'trim' ? toolIcon('trim') : '<rect x="3" y="5" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>' + (op === 'intersect' ? '<rect x="9" y="9" width="6" height="8" fill="currentColor" stroke="none" opacity=".55"/>' : ''), false, op === 'trim' ? 'shapetrim' : op)),
+      stack(...['frontminus', 'backminus'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op), '<rect x="3" y="5" width="12" height="12" fill="currentColor" opacity=".5"/><rect x="9" y="9" width="12" height="12"/>', true, op)),
         btn('Keep originals', copy, toggleShapingKeep, { small: true, pressed: () => state.shapingKeepOriginals })))];
   if (ribbon.tab === 'Annotate') return [
     group('Text', ribbonTool('text')),
@@ -697,8 +700,8 @@ function ribbonContents(kind) {
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
-      btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary),
-      btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart)),
+      btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
+      btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
     group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('contour'))];
   if (kind === 'drawing') {
     groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
@@ -1210,7 +1213,7 @@ function buildPartRibbon() {
   ui.pa = pfield({ 'data-lockable': '1', 'data-testid': 'pa', 'aria-label': 'Angle', title: 'Angle in degrees, anticlockwise. The part turns about its pivot (the centre unless you moved it). Type a value and press Enter' }, showAngle, setAngleText);
   ui.barNudge = pfield({ 'data-testid': 'nudge-step', 'aria-label': 'Nudge step in mm', title: 'How far an arrow key moves the part, in mm (Shift + arrow: 10 times this)' }, showNudge, setNudgeText);
   const mirror = (axis, id) => {
-    const b = ribbonButton('Mirror ' + axis.toUpperCase(), TOOLS.find((t) => t.id === 'mirror').svg, () => mirrorSel(axis), { title: axis === 'x' ? 'Mirror X: flip the part left to right about its centre' : 'Mirror Y: flip the part top to bottom about its centre' });
+    const b = ribbonButton('Mirror ' + axis.toUpperCase(), TOOLS.find((t) => t.id === 'mirror').svg, () => mirrorSel(axis), { command: 'm' + axis });
     b.dataset.testid = id; return b;
   };
   const gbtn = (id, label, svg, action) => { const b = ribbonButton(label, svg, action, { enabled: () => id !== 'bar-group' || selItems().length > 1 }); b.dataset.testid = id; ui[id] = b; return b; };
@@ -1252,13 +1255,17 @@ function buildRail() {
   const items = TOOLS.filter((t) => !['copy', 'rotate', 'scale', 'fillet', 'extend'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
-    const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : t.title, 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
+    const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
     b.addEventListener('click', () => { if (off) note(t.label + ': not built yet'); else if (t.id === 'nest') openNestDialog(); else if (t.id === 'step' && curLay()) DO.step(); else if (!b.dataset.held) setTool(t.id); delete b.dataset.held; });
     ui.toolBtns[t.id] = b;
     if (t.id === 'dimension') dimButton(b);
     return b;
   });
   return h('nav', { class: 'rail', 'aria-label': 'Tools' }, items);
+}
+function paintRailTooltips() {
+  for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id);
+  paintDimButton();
 }
 /** The Dimension button: shows the type last used, with a corner triangle (or press and hold) that opens the flyout of types. */
 function dimButton(b) {
@@ -1274,9 +1281,9 @@ function dimButton(b) {
   paintDimButton();
 }
 function paintDimButton() {
-  const b = ui.toolBtns.dimension, [, name, cmd, svg] = dimTypeRow(state.dimType), t = TOOLS.find((x) => x.id === 'dimension');
+  const b = ui.toolBtns.dimension, [, name, , svg] = dimTypeRow(state.dimType), t = TOOLS.find((x) => x.id === 'dimension');
   b.replaceChildren(state.dimType === 'aligned' ? icon(t.svg, { cap: t.cap }) : icon(svg, { box: 20, cap: 'round', join: 'round' }), h('span', { class: 'flyout', 'data-testid': 'dim-flyout', title: 'Dimension types' }, icon('<path d="M7 0v7H0z" fill="currentColor" stroke="none"/>', { size: 7, box: 7 })));
-  b.title = state.dimType === 'aligned' ? t.title : `Dimension · ${name} (${cmd})`;
+  b.title = state.dimType === 'aligned' ? commandTooltip(t.label, 'dimension') : commandTooltip(`Dimension · ${name}`, Object.keys(DIM_OF).find((n) => DIM_OF[n] === state.dimType));
   b.setAttribute('aria-label', 'Dimension');
 }
 /** A type picked in the flyout, or typed (DLI, DRA, DDI, DAN): remembered, and the Dimension tool starts with it. */
@@ -1330,6 +1337,7 @@ function buildCanvas() {
   ui.svg = s('svg', { role: 'img', 'aria-label': 'Sheet with the parts laid out' });
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
   ui.dcanvas = h('canvas', { class: 'drawing-layer', 'data-testid': 'drawing' });
+  ui.gridDisplay = h('div', { class: 'drawing-grid', hidden: true, 'aria-hidden': 'true', 'data-testid': 'drawing-grid' });
   ui.picker = h('input', { type: 'file', accept: '.dxf,.pdf,.json', hidden: true, 'data-testid': 'picker', multiple: true });
   ui.picker.addEventListener('change', async () => { const files = [...ui.picker.files]; ui.picker.value = ''; for (const f of balFirst(files)) await openPicked(f); });   // emptied, so the same file can be picked again
   ui.bgPicker = h('input', { type: 'file', accept: '.png,.jpg,.jpeg,.pdf', hidden: true, 'data-testid': 'bg-picker' });
@@ -1372,7 +1380,7 @@ function buildCanvas() {
   });
   ui.textArea.addEventListener('input', placeTextEditor);
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
-  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
+  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
@@ -1406,7 +1414,7 @@ function buildPanel() {
     ribbonGroup('Sheet', ribbonStack(ribbonField('Size', ui.preset),
       numField('Width', 'sheetW', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripLeft + state.gripRight) }),
       numField('Height', 'sheetH', { min: 1, cap: () => MAX_SHEET, floor: () => Math.max(1, state.gripTop + state.gripBottom) })),
-      ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, title: 'Or click the sheet edge. Drag a side handle to resize.', pressed: sheetSelOn })),
+      ui.sheetSelBtn = ribbonButton('Select sheet', '<rect x="3" y="4" width="18" height="16"/>', () => selectSheet(!sheetSelOn()), { small: true, pressed: sheetSelOn })),
     ribbonGroup('Grippers, mm', ribbonStack(numField('Top', GRIP_KEYS.top, { cap: () => state.sheetH - state.gripBottom }), numField('Right', GRIP_KEYS.right, { cap: () => state.sheetW - state.gripLeft }),
       numField('Bottom', GRIP_KEYS.bottom, { cap: () => state.sheetH - state.gripTop })), ribbonStack(numField('Left', GRIP_KEYS.left, { cap: () => state.sheetW - state.gripRight }))),
     ribbonGroup('Marks', check('crop', 'Crop marks'), check('reg', 'Reg marks')),
@@ -3720,20 +3728,18 @@ function buildSnapTypes() {
 
 function buildStatus() {
   ui.coords = h('span', { class: 'mono coords', 'data-testid': 'coords', style: 'white-space:pre' }, 'X 0.00   Y 0.00 mm');
-  // GRID is not built: greyed, never "on". SNAP, ORTHO, POLAR (F10) and OTRACK (F11) work.
   loadTrack();
-  const TITLES = { SNAP: 'Snap on/off. Right-click: snap types', GRID: 'Not built yet', ORTHO: 'Keep picked points straight along X or Y from the first point (Shift does it for one pick)',
+  const TITLES = { SNAP: 'Snap (F3): on/off. Right-click: snap types', GRID: 'Grid (F7): show/hide the drawing grid', ORTHO: 'Ortho (F8): keep picked points straight along X or Y from the first point (Shift does it for one pick)',
     POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type cursor fields during Line’s point prompts' };
   ui.tog = {};
   const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['DYN', state.dynamicInput], ['OTRACK', state.otrack]].map(([t, on]) => {
-    const off = t === 'GRID';
-    const b = ui.tog[t] = h('button', { class: 'tog' + (on ? ' on' : '') + (off ? ' off' : ''), type: 'button', 'data-testid': 'tog-' + t.toLowerCase(), 'aria-pressed': String(on), 'aria-disabled': off ? 'true' : null, title: TITLES[t] }, t);
+    const b = ui.tog[t] = h('button', { class: 'tog' + (on ? ' on' : ''), type: 'button', 'data-testid': 'tog-' + t.toLowerCase(), 'aria-pressed': String(on), title: TITLES[t] }, t);
     b.addEventListener('click', () => {
-      if (off) return;
       if (t === 'POLAR') { polarSet(!state.polar.on); return; }
       if (t === 'OTRACK') { otrackSet(!state.otrack); return; }
       if (t === 'DYN') { dynamicInputSet(!state.dynamicInput); return; }
       chip(t, !b.classList.contains('on'));
+      if (t === 'GRID') { state.grid = b.classList.contains('on'); ui.gridDisplay.hidden = !state.grid; note(state.grid ? 'Grid on' : 'Grid off'); }
       const clear = () => { for (const a of [state.setlen, state.meas, state.dim, state.ldr]) if (a) a.hover = null; paintOverlay(); };
       if (t === 'SNAP') { state.snap = b.classList.contains('on'); clear(); drawAlignmentGuides(); note(state.snap ? 'Snap on: ticked snap types' : 'Snap off: the exact point you click'); }
       if (t === 'ORTHO') {
@@ -3998,6 +4004,9 @@ const canvasSize = () => { const r = ui.canvas.getBoundingClientRect(); return {
 
 function applyView(gesture = false) {
   const { w, h: ch } = canvasSize();
+  const step = G.rulerTicks(0, 0, view.scale, 16).major * view.scale;
+  ui.gridDisplay.style.backgroundSize = `${step}px ${step}px`;
+  ui.gridDisplay.style.backgroundPosition = `${-view.ox * view.scale - step / 2}px ${(state.sheetH - view.oy) * view.scale - step / 2}px`;
   ui.svg.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`);
   ui.ovl.setAttribute('viewBox', `${view.ox} ${view.oy} ${w / view.scale} ${ch / view.scale}`); ui.ovl.setAttribute('preserveAspectRatio', 'none');
   ui.grips.setAttribute('viewBox', `0 0 ${w} ${ch}`);
@@ -4453,9 +4462,9 @@ function renderProps() {
     ui['grp-group'].disabled = !many || whole; ui['grp-ungroup'].disabled = !hasGroup; ui['grp-lock'].disabled = allLocked; ui['grp-unlock'].disabled = !locked;
     ui.dupAxisBtns.forEach((btn) => { const on = btn.dataset.axis === state.dupAxis; btn.classList.toggle('on', on); btn.setAttribute('aria-pressed', String(on)); });
     // Part ribbon: Group / Ungroup (several selected) and Lock / Unlock
-    const gs = whole ? ['Ungroup', 'ungroup', 'Ungroup (Ctrl+Shift+G)'] : ['Group', 'group', 'Group the selected parts (Ctrl+G)'], ls = allLocked ? ['Unlock', 'unlock', 'Unlock'] : ['Lock', 'lock', 'Lock: it cannot be moved, turned, mirrored or deleted'];
-    ui['bar-group'].disabled = !many; ui['bar-group'].replaceChildren(icon(ICONS[gs[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, gs[0])); ui['bar-group'].title = gs[2]; ui['bar-group'].setAttribute('aria-label', gs[0]);
-    ui['bar-lock'].replaceChildren(icon(ICONS[ls[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, ls[0])); ui['bar-lock'].title = ls[2]; ui['bar-lock'].setAttribute('aria-label', ls[0]);
+    const gs = whole ? ['Ungroup', 'ungroup'] : ['Group', 'group'], ls = allLocked ? ['Unlock', 'unlock'] : ['Lock', 'lock'];
+    ui['bar-group'].disabled = !many; ui['bar-group'].replaceChildren(icon(ICONS[gs[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, gs[0])); ui['bar-group'].title = commandTooltip(gs[0], gs[1]); ui['bar-group'].setAttribute('aria-label', gs[0]);
+    ui['bar-lock'].replaceChildren(icon(ICONS[ls[1]], { size: 30, cap: 'round', join: 'round' }), h('span', { class: 't' }, ls[0])); ui['bar-lock'].title = commandTooltip(ls[0], ls[1]); ui['bar-lock'].setAttribute('aria-label', ls[0]);
   }
   ui.hintPill.hidden = !p;
   ui.hintPill.textContent = state.mode === 'rotate' ? 'Drag a corner arrow to turn · Shift = 15° steps · drag ◎ to move the pivot · Esc = done'
@@ -7173,6 +7182,12 @@ function selectAll() {
 
 function editKey(e) {
   if (document.querySelector('[data-testid=pdf-dialog]')) return;
+  const inField = e.target?.closest?.('input, textarea, select');
+  if (['F3', 'F7', 'F8', 'F9', 'F12'].includes(e.key) && ((inField && e.target !== ui.cmd) || e.target?.isContentEditable)) return;
+  if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+    const chipName = { F3: 'SNAP', F7: 'GRID', F8: 'ORTHO' }[e.key];
+    if (chipName) { e.preventDefault(); ui.tog[chipName].click(); return; }
+  }
   if (e.key === 'F12' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); dynamicInputSet(!state.dynamicInput); return; }
   if ((e.key === 'F10' || e.key === 'F11') && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); if (e.key === 'F10') polarSet(!state.polar.on); else otrackSet(!state.otrack); return; }
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
@@ -7213,12 +7228,11 @@ function editKey(e) {
     return;
   }
   const key = SC.eventKey(e), own = ownCommands.find((c) => c.key && c.key === key && !SC.fixedKey(c.name));
-  const inField = e.target && e.target.closest && e.target.closest('input, textarea, select');
   if (key === 'Ctrl+C' || key === 'Ctrl+V') {
     if (inField || e.target?.isContentEditable) return;
     e.preventDefault(); if (key === 'Ctrl+C') copySelection(); else pasteSelection(); return;
   }
-  if (own && (!inField || own.name === 'properties')) { e.preventDefault(); runCommand(own); return; }       // Properties' key works in a field too, as Ctrl+1 always did
+  if (own && (!inField || own.name === 'properties' || (e.target === ui.cmd && /^F\d+$/.test(key)))) { e.preventDefault(); runCommand(own); return; }       // Function keys also work while typing a command.
   if (inField || e.target?.isContentEditable) return;
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
