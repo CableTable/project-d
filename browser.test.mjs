@@ -15952,6 +15952,24 @@ try {
     }, async () => { for (let i = 0; i < 2; i++) await page.keyboard.press('Escape'); });
     await start('scale'); await page.keyboard.type('2'); await page.keyboard.press('Enter');
     near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+    // A point typed at the Rotate angle prompt reaches the command box whole; the guide follows a typed angle; a click keeps it
+    await setup();
+    await start('rotate'); await page.keyboard.type('10,0'); await frames();
+    assert.equal(await cmdLine().inputValue(), '10,0', 'the point is in the command box, not split with the Angle field');
+    await page.keyboard.press('Enter');
+    const turn = Math.atan2(0 - 30, 10 - 20), [rx, ry] = [40, 20];
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 20 + rx * Math.cos(turn) - ry * Math.sin(turn), 30 + rx * Math.sin(turn) + ry * Math.cos(turn)]);
+    await setup();
+    await start('rotate'); await page.keyboard.type('90'); await frames();
+    const [gx, gy, gxx, gyy] = (await t('mod-line').getAttribute('d')).match(/-?[\d.]+/g).map(Number);
+    assert.ok(Math.abs(gxx - gx) < 0.5 && gyy < gy, 'the guide points straight up at a typed 90');
+    const click = await at(70, 40); await page.mouse.click(click.x, click.y); await frames();
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 0, 70]);
+    // A second Copy goes on after a typed base point
+    await setup();
+    await page.keyboard.press('Control+a'); await typeCmd('copy'); await move(80, 60); await point(20, 30); await move(90, 70);
+    await typeCmd('@10,0'); await typeCmd('@20,0'); await typeCmd('');
+    assert.equal((await savedDoc()).entities.length, 3);
     // Esc once clears the typing and keeps the command; the second Esc ends it
     await setup();
     await start('rotate'); await page.keyboard.type('45'); await frames();

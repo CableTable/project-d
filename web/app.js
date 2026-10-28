@@ -6132,12 +6132,15 @@ function modCursorCommit(T, result) {
   if (!m.p1) (['move', 'copy'].includes(m.kind) ? moveTo : transformBase)(T.d, to);
   else transformDo(T.d, result.value);
 }
+/** The typed Rotate angle or Scale factor; null when nothing valid is typed (the mouse's value stays). */
+function modTypedValue() {
+  const m = state.mod, T = m?.p1 && modLive() && ['rotate', 'scale'].includes(m.kind) && cursorTool();
+  return T && DI.hasTyped(cursorInput()) ? cursorPoint().value ?? null : null;
+}
 /** The Rotate / Scale ghost for the typed angle or factor; null when nothing valid is typed (the mouse's ghost stays). */
 function modTypedSlots(d) {
-  const m = state.mod, T = m?.p1 && modLive() && ['rotate', 'scale'].includes(m.kind) && cursorTool();
-  if (!T || !DI.hasTyped(cursorInput())) return null;
-  const r = cursorPoint();
-  return r.value == null ? null : [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], m.kind === 'scale' ? scaleMatrix(m.p1, r.value) : rotationMatrix(m.p1, r.value))];
+  const m = state.mod, v = modTypedValue();
+  return v == null ? null : [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], m.kind === 'scale' ? scaleMatrix(m.p1, v) : rotationMatrix(m.p1, v))];
 }
 /** A click while cursor fields hold typing: the pointer fills the rest. → true when it committed (or said why not) */
 function cursorClick(d, p, shift) {
@@ -6160,6 +6163,10 @@ function cursorKey(e) {
   }
   if (e.key === 'Enter' && DI.hasTyped(input)) cursorCommit();
   else {
+    if (T.mod && DI.isSingle(input.mode) && /^[,<]$/.test(e.key) && input.values[0]) {      // a point typed at the Rotate / Scale prompt moves whole to the command box
+      const seed = input.values[0] + e.key;
+      cursorHolder(T).cursorInput = null; e.preventDefault(); e.stopPropagation(); ui.cmdUI.open(seed); paintOverlay(); renderCommand(); return;
+    }
     const next = DI.inputKey(input, e.key, DI.firstPoint(T));
     if (!next) return;
     cursorHolder(T).cursorInput = e.key === 'Escape' ? null : next;
@@ -6780,7 +6787,11 @@ function modOvl(d, out) {
     else if (ent && GR.hasGrips(ent)) add(GR.shapeOf(ent, f), cls, tid);
   };
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) {
-    if (m.p1 && m.cur) add({ t: 'line', a: m.p1.map((v) => v * f), b: m.cur.slice(0, 2).map((v) => v * f) }, 'dr-guide', 'mod-line');
+    if (m.p1 && m.cur) {
+      const typed = m.kind === 'rotate' ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
+      const end = typed == null ? m.cur.slice(0, 2) : [m.p1[0] + len * Math.cos(typed * Math.PI / 180), m.p1[1] + len * Math.sin(typed * Math.PI / 180)];
+      add({ t: 'line', a: m.p1.map((v) => v * f), b: end.map((v) => v * f) }, 'dr-guide', 'mod-line');
+    }
   } else if (m.kind === 'offset') {
     if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canModify(e)) addEnt(e, 'dr-guide'); }
     else if (m.ent) { addEnt(m.ent, 'dr-guide'); const r = m.p ? MD.offsetEntity(m.ent, offDistU(d), m.p) : null; if (r && r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
