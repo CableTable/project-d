@@ -285,6 +285,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
       156c3. Compare: Ctrl+Z on a Line with only its first point drops that point, as on a drawing tab or layout (review rvmerge, Low, 2026-10-28) (XS).
     156d. Guides, Layers (+ Add), Contour, Measure in every tab (S–M). Grilled 2026-10-28 (DECISIONS "Guides, Layers, Measure in every tab"):
       156d1. ✅ (built, Knight, 2026-10-28) Guides on drawing tabs (remembered per file on this PC, never in the DXF) and in Compare; Measure in Compare across all snapshots (S). Layouts' "+ Add layer" goes with 156b2; Compare Layers / Contour with 156c2.
+    157. **UI colours match AutoCAD** (M, grilled 2026-10-28, DECISIONS "UI colours match AutoCAD"; next session). Facts so far: ours `runs26/q-colours.out`, AutoCAD per web `runs26/pawn-acadcolours.json` (documented vs measured; snap marker colour conflicts). 155r already gives the 25% box fill.
+      157a. Bishop-acad: screenshots of his AutoCAD, dark and light (ribbon, panel titles, file tabs, palettes, command line, status bar, grips, snap marker), picked hex values to `Project D extras/acad-colours.txt` + acad-facts line (S).
+      157b. Build: theme tokens for both modes from 157a; drawing area unchanged; before / after screenshots light and dark (S–M).
     155p. ✅ (built, Knight, revised decision 2026-10-28) Snap markers: green `#00C000` outlines, about 12 px, with our text label. Dark halo kept for readability on white paper.
     155q. ✅ (built, King, 2026-10-28) Status bar chips in AutoCAD's order GRID SNAP ORTHO POLAR OTRACK DYN (text chips kept).
     155r. ✅ (built, King) Window / crossing box fill: AutoCAD 25% (SELECTIONAREAOPACITY); ours 14%. Also check grip hover (ACI 11) / hot (ACI 12, red) colours and grip size 5.
