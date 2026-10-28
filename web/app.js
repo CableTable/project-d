@@ -1893,10 +1893,20 @@ function redoLay() {
 /** The undo history of a tab: a drawing's, a layout's, or null. */
 const historyDocs = (d) => d?.cmp ? [d, cmpSourceTab(cmpSelected(d.cmp))].filter(Boolean) : [d];
 const historyOf = (d) => (!d ? null : d.cmp ? Ed.combinedHistory(historyDocs(d).map((x) => x.hist)) : d.lay ? layHist(d) : d.hist || null);
+function pushHistory(d, snapshot, label) {
+  for (const tab of state.docs) if (tab.cmp) {
+    if (tab === d) cmpSourceTab(cmpSelected(tab.cmp))?.hist?.clearRedo();
+    else if (tab.cmp.items.some((item) => cmpSourceTab(item) === d)) tab.hist?.clearRedo();
+  }
+  d.hist.push(snapshot, label);
+}
 function undoCurrent(forward = false) {
   const tab = curDoc(), hist = historyOf(tab);
   const d = tab?.cmp ? historyDocs(tab).find((x) => x.hist && x.hist === hist[forward ? 'redoHistory' : 'undoHistory']) : editable();
-  if (d) { if (forward) redo(d); else undo(d); }
+  if (d) {
+    if (tab?.cmp && d !== tab && !cmpEdit()) return;
+    if (forward) redo(d); else undo(d);
+  }
   else if (tab?.cmp) { if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit(); }
   else if (forward) redoLay(); else undoLay();
 }
@@ -1913,7 +1923,7 @@ function showHistory() {
       const forward = r > now;
       for (let i = 0; i < Math.abs(r - now); i++) {
         const current = historyOf(d), target = historyDocs(d).find((x) => x.hist && x.hist === current[forward ? 'redoHistory' : 'undoHistory']);
-        if (!target) break;
+        if (!target || target !== d && !cmpEdit()) break;
         const st = target.hist[forward ? 'redo' : 'undo'](snapshotOf(target));
         if (st) restore(target, st);
       }
@@ -2355,7 +2365,7 @@ function guideMark(g) {
 }
 function guideCommit(g) {
   if (g.d.lay) gCommit(g);
-  else { g.d.hist.push(g.snap, g.label); rememberGuides(g.d); }
+  else { pushHistory(g.d, g.snap, g.label); rememberGuides(g.d); }
 }
 function snapGuideBox(box, options) {
   const gs = guideTarget().s;
@@ -3303,7 +3313,7 @@ function addLayerNow() {
     return;
   }
   const name = Ed.newLayerName(allLayerNames(d));
-  d.hist.push(snapshotOf(d), 'Add layer ' + name);
+  pushHistory(d, snapshotOf(d), 'Add layer ' + name);
   d.raw.layers = { ...d.raw.layers };
   addLayer(d.raw, name, { aci: 7 });
   (d.addedLayers || (d.addedLayers = new Set())).add(name);
@@ -4771,7 +4781,7 @@ function breakApartSelected() {
   if (!d) { note('Break Apart: open a drawing or layout first'); return; }
   const r = breakApart(d.raw, d.sel, d.locked);
   if (r.error) { note('Break Apart: ' + r.error); return; }
-  d.hist.push({ ...snapshotOf(d), sel: [...d.sel] }, 'Break Apart');
+  pushHistory(d, { ...snapshotOf(d), sel: [...d.sel] }, 'Break Apart');
   restore(d, r);
   setSel(d, r.selected);
   note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
@@ -5001,7 +5011,7 @@ function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)
 const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
 /** Builds the index once the page has painted, so the first click is quick. */
 function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
-function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; cmpRefresh(d); warm(d); renderEdit(); }
+function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
 function toDrawing(d, cx, cy) {
@@ -5267,7 +5277,7 @@ function hideRubber() { if (ui.rubber) ui.rubber.hidden = true; }
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. */
 function commit(d, next, label) {
   if (d.vlay) { layObjCommit(d, next, label); return; }
-  d.hist.push(snapshotOf(d), label); d.newLayer = null; restore(d, next);
+  pushHistory(d, snapshotOf(d), label); d.newLayer = null; restore(d, next);
 }
 /** A drawing-tab command on a layout's objects (layObjDoc) is done: the layout takes the objects it left, in one undo step. */
 function layObjCommit(v, next, label) {
@@ -5297,14 +5307,14 @@ function restore(d, st) {
   if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
   if (!layerTableChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
-    d.dirty = true; cmpRefresh(d); showDoc(); return;
+    d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   restoreBg(d, st);
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw, d.hid);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
-  cmpRefresh(d);
+  if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
   if (st.sel) setSel(d, new Set(st.sel));
@@ -5347,7 +5357,7 @@ function redo(d) { const st = d.hist.redo(snapshotOf(d)); if (!st) { note('Nothi
 function scaleDrawing(d, s, label = 'Scale') {
   if (sizeTarget(d) === 'bg') {
     state.setlen = null; if (ui.realLen) ui.realLen.blur();
-    d.hist.push(snapshotOf(d), `${label} background ×${s.toFixed(3)}`);
+    pushHistory(d, snapshotOf(d), `${label} background ×${s.toFixed(3)}`);
     d.bg = Ed.bgScaled(d.bg, s);
     if (view.fitted) fit(); else paintOverlay();
     renderEdit();
@@ -5369,7 +5379,7 @@ function unitFix(fix) {
   state.setlen = null; if (ui.realLen) ui.realLen.blur();
   const was = UF.unitFixSize(before, 1);
   if (sizeTarget(d) === 'bg') {
-    d.hist.push(snapshotOf(d), `Unit fix ${fix.text} background`);
+    pushHistory(d, snapshotOf(d), `Unit fix ${fix.text} background`);
     d.bg = UF.bgUnitFixed(d.bg, fix.s);
     if (view.fitted) fit(); else paintOverlay();
     renderEdit();
@@ -5718,7 +5728,7 @@ function balTexts(d) {
 
 /** A balloon change as ONE labelled undo step (the set is immutable, so the history keeps the old one); sel: the balloon selected afterwards. */
 function balApply(d, set, label, sel = state.balSel) {
-  d.hist.push(snapshotOf(d), label);
+  pushHistory(d, snapshotOf(d), label);
   d.balloons = set; d.dirty = true; state.balSel = sel;
   renderTabs(); renderEdit(); renderCommand(); paintOverlay();
 }
@@ -9198,7 +9208,7 @@ function cmpEdit() {
   note(item?.part ? 'Open the part as a drawing to edit' : item ? `Open ${item.name} to edit` : 'Pick a snapshot to edit');
   return null;
 }
-/** Refresh changed linked artwork and measurements together, even while a source tab is current. */
+/** Refresh changed linked artwork and measurements on return to Compare; closeTab also captures the final copy. */
 function cmpRefresh(d) {
   if (!d.tabId) return;
   const next = cmpSourceState(d);

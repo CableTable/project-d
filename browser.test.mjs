@@ -4567,6 +4567,14 @@ try {
   await step('TODO 156c1 fixes: Compare orders guide and drawing Undo, refreshes source edits and refuses hidden edits', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    await p.addInitScript(() => {
+      const clone = window.structuredClone;
+      window.snapshotClones = 0;
+      window.structuredClone = (value, ...options) => {
+        if (Array.isArray(value?.items) && Array.isArray(value?.layers) && value.mats) window.snapshotClones++;
+        return clone(value, ...options);
+      };
+    });
     p.on('pageerror', (e) => errors.push(String(e)));
     p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
     const first = newDoc(4), second = newDoc(4);
@@ -4637,13 +4645,38 @@ try {
       await q('hist-row').filter({ hasText: 'Start' }).click(); assert.equal(await q('guide-pos').count(), 0, 'history jumps across both histories');
       await history(); await q('hist-row').filter({ hasText: 'Move guide' }).click(); assert.equal(await guide(), 55);
       await tab('second-156c1-fixes').click(); assert.deepEqual(flatten(await saveDoc()).items, drawingBefore, 'drawing 2 artwork is unchanged after guide Undo/Redo');
+      await tab('Compare').click();
+      const beforeNewLine = await differences();
+      const drawLine = async () => {
+        await command('line'); await command('20,60'); await command('60,60'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      };
+      await drawLine();
+      assert.notDeepEqual(await differences(), beforeNewLine);
+      await p.keyboard.press('Control+z');
+      assert.deepEqual(await differences(), beforeNewLine, 'Undo takes the newest drawing step before older guide steps');
+      assert.equal(await guide(), 55);
+      await p.keyboard.press('Control+y'); assert.notDeepEqual(await differences(), beforeNewLine);
+      await p.keyboard.press('Control+z'); await dragGuide(55, 60);
+      await p.keyboard.press('Control+y');
+      assert.deepEqual(await differences(), beforeNewLine, 'a new guide edit clears the drawing redo');
+      assert.equal(await guide(), 60);
+      await p.keyboard.press('Control+z'); await drawLine();
+      await p.keyboard.press('Control+y'); assert.equal(await guide(), 55, 'a new drawing edit clears the old guide redo');
+      await p.keyboard.press('Control+z'); assert.deepEqual(await differences(), beforeNewLine);
+      await history();
+      assert.equal(await q('hist-row').filter({ hasText: 'Move guide' }).count(), 1, 'the abandoned guide redo stays discarded after Undo');
+      await q('hist-close').click();
+      await dragGuide(55, 60); await dragGuide(60, 55);
       for (const picked of [2, 1]) {
         await tab('Compare').click(); await q('cmp-name-' + picked).click(); await q('cmp-run').click();
         const before = await differences(), metrics = await q('cmp-result').allTextContents();
         assert.ok(await circleInk() > 0, 'drawing 2 circle is visible before source edit');
         await tab('second-156c1-fixes').click(); await p.locator('[data-tool=select]').click(); await p.keyboard.press('Escape');
+        await p.evaluate(() => { window.snapshotClones = 0; });
         await click(34, 40); await p.keyboard.press('Delete');
+        assert.equal(await p.evaluate(() => window.snapshotClones), 0, 'source edits defer snapshot cloning while Compare is hidden');
         await tab('Compare').click();
+        assert.equal(await p.evaluate(() => window.snapshotClones), 1, 'returning to Compare rebuilds the changed snapshot once');
         assert.notDeepEqual(await differences(), before, 'source edit recalculates Differences with snapshot ' + picked + ' picked');
         assert.notDeepEqual(await q('cmp-result').allTextContents(), metrics, 'metrics refresh too');
         assert.equal(await circleInk(), 0, 'drawing 2 snapshot loses its circle, including when not picked');
@@ -4656,15 +4689,38 @@ try {
       await command('line'); assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
       await click(40, 65); assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
       await p.keyboard.press('Delete'); assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
+      await p.keyboard.press('Control+z'); assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
+      await history(); await q('hist-row').filter({ hasText: 'Start' }).click();
+      assert.equal(await q('cmd-prompt').textContent(), hiddenMessage, 'history jumps also refuse hidden linked drawing steps');
       assert.deepEqual(await differences(), hiddenDiff);
+      await dragGuide(55, 60); await p.keyboard.press('Control+z'); assert.equal(await guide(), 55, 'hidden snapshots still allow Compare guide Undo');
+      await q('cmp-eye').nth(1).click(); await p.keyboard.press('Control+z');
+      const hiddenRedoDiff = await differences();
+      await q('cmp-eye').nth(1).click(); await p.keyboard.press('Control+y');
+      assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
+      assert.deepEqual(await differences(), hiddenRedoDiff, 'hidden drawing Redo changes nothing');
       await q('cmp-eye').nth(1).click();
+      await p.keyboard.press('Control+y');
       await tab('second-156c1-fixes').click(); const closedDrawing = await saveDoc();
       assert.equal(closedDrawing.entities.length, 2, 'hidden clicks and commands made no edit');
       await tab('Compare').click(); await q('cmp-name-2').click();
       await tab('second-156c1-fixes').locator('.x').click();
       await tab('Compare').click(); assert.equal(await circleInk(), 0, 'closed copy retains the refreshed artwork');
+      const closedMetrics = await q('cmp-result').allTextContents();
+      await open('second-156c1-fixes.dxf', first); await p.keyboard.press('Control+a'); await p.keyboard.press('Delete');
+      await tab('Compare').click();
+      assert.deepEqual(await q('cmp-result').allTextContents(), closedMetrics, 'a closed snapshot stays frozen when a same-name replacement is edited');
       await dragGuide(55, 60); await p.keyboard.press('Control+z'); assert.equal(await guide(), 55, 'closed copy uses Compare guide Undo');
       await p.keyboard.press('Control+y'); assert.equal(await guide(), 60);
+      await tab('first-156c1-fixes').click(); await p.keyboard.press('Control+a'); await q('bar-extract').click();
+      await q('name-input').fill('Part 156c1 fixes'); await q('name-ok').click(); await q('name-dialog').waitFor({ state: 'detached' });
+      await tab('Compare').click(); await q('cmp-add-library').click();
+      await p.getByRole('menuitem', { name: 'Part 156c1 fixes', exact: true }).click(); await q('cmp-run').click();
+      const partMetrics = await q('cmp-result').allTextContents();
+      await dragGuide(60, 65); await p.keyboard.press('Control+z'); assert.equal(await guide(), 60, 'library snapshot uses Compare guide Undo');
+      await p.keyboard.press('Control+y'); assert.equal(await guide(), 65);
+      assert.deepEqual(await q('cmp-result').allTextContents(), partMetrics, 'library artwork stays unchanged by guide history');
+      await history(); assert.equal(await q('hist-row').filter({ hasText: 'Line' }).count(), 0, 'library snapshot history has no linked drawing steps'); await q('hist-close').click();
       for (const theme of ['light', 'dark']) {
         await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
         await p.screenshot({ path: `${shotDir}/todo156c1-fixes-${theme}.png` });
@@ -10188,12 +10244,13 @@ try {
     assert.equal(await t('cmp-result').nth(2).locator('th').textContent(), partName);
     const colours = await t('cmp-item').locator('.cswatch').evaluateAll((rs) => rs.map((r) => getComputedStyle(r).backgroundColor));
     assert.equal(new Set(colours).size, 3);
-    // Editing an open source after adding it cannot change the Compare snapshot.
+    // An open source remains linked: deleting its artwork refreshes the snapshot on return.
     await page.locator('.tabs .dtab', { hasText: 'plate-b.dxf' }).click();
     await page.keyboard.press('Control+a'); await page.keyboard.press('Delete');
     await menuItem('File', 'Compare drawings…'); await t('cmp-run').click();
-    assert.equal(await t('cmp-table').textContent(), resultText, 'source edits leave snapshot measurements intact');
-    assert.equal(await cmpCount(), '2 differences');
+    assert.notEqual(await t('cmp-table').textContent(), resultText, 'source edits refresh snapshot measurements');
+    assert.deepEqual(await t('cmp-result').first().locator('td').allTextContents(), ['0.00', '0.00', '0.00 × 0.00'], 'the empty reference has zero measurement deltas');
+    assert.equal(await cmpCount(), '6 differences', 'both remaining snapshots differ from the empty reference in all three outlines');
   });
 
   await step('Compare: a library card dropped on the canvas or the panel joins Compare; five is the limit; a hint follows the pointer (T49)', async () => {

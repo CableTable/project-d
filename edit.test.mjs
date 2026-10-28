@@ -598,6 +598,16 @@ test('TODO 156c1 fixes: combined histories undo newest edits and redo in the sam
   assert.equal(E.combinedHistory([compare, null]).canUndo, false);
 });
 
+test('TODO 156c1 fixes: clearing redo preserves past steps and later Undo can still be redone', () => {
+  const h = E.createHistory();
+  h.push('start', 'Draw'); h.push('drawn', 'Move'); h.undo('moved');
+  h.clearRedo();
+  assert.deepEqual(h.labels(), { past: ['Draw'], future: [] });
+  assert.equal(h.redo('drawn'), null);
+  assert.equal(h.undo('drawn'), 'start');
+  assert.equal(h.redo('start'), 'drawn');
+});
+
 test('history labels (TODO 30): old pushes get "Edit"; labels(); undoMany / redoMany jump several steps and back', () => {
   const h = E.createHistory();
   h.push('s0', 'Delete 3'); h.push('s1', 'Set length ×2.000'); h.push('s2');
