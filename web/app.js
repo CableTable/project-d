@@ -6342,7 +6342,7 @@ function modEnter(d) {
     else if (m.stage === 'mode') { m.stage = 'p1'; note(modPrompt(d).prompt); }
     else if (m.stage === 'p1') { moveTo(d, [0, 0]); m.stage = 'displacement'; note(modPrompt(d).prompt); }
     else if (m.stage === 'displacement') moveTo(d, [0, 0]);
-    else if (!m.placed) moveTo(d, m.p1.map((v) => v * 2));
+    else if (!m.placed) { m.stage = 'displacement'; moveTo(d, m.p1.map((v) => v * 2)); }      // <use first point as displacement> places once and ends, even in Multiple
     else modEsc(d);
     return;
   }
@@ -6373,7 +6373,7 @@ function modEnter(d) {
 /** Words the active modify tool takes itself, so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
   const m = state.mod;
-  if (modLive() && ['move', 'copy'].includes(m.kind)) return true;
+  if (modLive() && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
   if (modLive() && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!modLive() || !['trim', 'extend'].includes(m.kind)) return false;
   if (m.askMode || m.fence || m.cross || m.erase) return true;
@@ -6383,7 +6383,7 @@ function modTakes(c) {
 function modTyped(d, raw) {
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
-  if (['move', 'copy'].includes(m.kind)) {
+  if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     m.cursorInput = null;
     if (m.stage === 'mode') {
       const mode = /^(s|single)$/.test(c) ? 'Single' : /^(m|multiple)$/.test(c) ? 'Multiple' : null;

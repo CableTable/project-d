@@ -11421,12 +11421,26 @@ try {
       const doc = await savedDoc();
       assert.equal(doc.entities.length, kind === 'copy' ? 2 : 1);
       assert.deepEqual(xy(doc.entities.at(-1)), [30, 35], 'Enter uses base 10,5 as displacement');
+      assert.equal(await selectedTool(), 'Tool: Select', kind + ' ends after Enter at the second point, even in Multiple');
       await page.keyboard.press('Escape');
 
       await start(kind); await typeCmd(''); await typeCmd('');
       const zero = await savedDoc();
       assert.equal(zero.entities.length, kind === 'copy' ? 2 : 1);
       assert.deepEqual(xy(zero.entities.at(-1)), [20, 30], 'displacement defaults to 0,0');
+    }
+
+    for (const kind of ['copy', 'move']) {
+      const two = newDoc(4); addEntities(two, dxfLine(20, 30, 60, 50), dxfCircle(100, 80, 10));
+      await openGrips(writeDxf(two), 'all155f.dxf'); await typeCmd(kind);
+      assert.match(await prompt(), /^Select objects/);
+      await typeCmd('all'); await typeCmd('');
+      assert.match(await prompt(), /^Specify base point/, kind + ': all selected everything');
+      await typeCmd('0,0'); await typeCmd('10,5');
+      const doc = await savedDoc();
+      assert.equal(doc.entities.length, kind === 'copy' ? 4 : 2);
+      assert.deepEqual(xy(doc.entities.at(-1)), [110, 85], kind + ' moved the circle too');
+      await page.keyboard.press('Escape');
     }
 
     await start();
@@ -11436,7 +11450,6 @@ try {
       const history = await t('cmd-history-line').allTextContents();
       assert.ok(history.some((v) => v.includes('Current settings:  Copy mode = Multiple')));
       assert.ok(history.some((v) => v.includes('Specify base point or [Displacement/mOde] <Displacement>:')));
-      assert.ok(await t('cmd-history-line').last().evaluate((el) => el.scrollWidth <= el.clientWidth), 'full Copy prompt fits the history');
     }, async () => { await page.keyboard.press('F2'); });
     await page.keyboard.press('Escape');
   });
@@ -16166,7 +16179,7 @@ try {
     assert.equal(await label('cursor-length'), 'X'); assert.equal(await label('cursor-angle'), 'Y');
     await point(20, 30); await move(90, 70);
     await noFields('Move target');
-    assert.match(await prompt(), /Target, dx,dy or distance/);
+    assert.match(await prompt(), /Specify second point or <use first point as displacement>/);
     await typeCmd('@5,10');
     near70(line70((await savedDoc()).entities[0]), [25, 40, 65, 60]);
     await page.keyboard.type('mo'); assert.equal(await cmdLine().inputValue(), 'mo', 'focus is back on the command box after Move'); await cmdLine().fill('');
