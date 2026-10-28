@@ -101,6 +101,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **In-app clipboard**: The session-only snapshot of selected drawing objects or placed parts taken with Ctrl+C. Ctrl+V pastes at the same coordinates and true size. Drawing objects pasted on a layout become a new Parts library part; copied placed parts keep their library links on a layout and become plain drawing objects on a drawing tab or PDF sheet, with rotation and mirrors applied. It remembers drawing source names at Ctrl+C, survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first, Ctrl+C on layout tabs.
 
+**Layout object**: A line, arc, text or other drawing object drawn straight onto a layout sheet, not part of any part, such as a setup line, note or frame. Where: `DECISIONS.md`, Tools on Layouts. Avoid: Loose part (a placed part outside the step and repeat grid).
+
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
 
 **Padlock**: The W / H proportions control: locked scales both sides together; unlocked changes each side independently. It starts locked and applies to selection size or the whole drawing when nothing is selected. Where: Drawing size fields; `web/app.js`. Avoid: Layer Lock.
