@@ -221,7 +221,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 ## Keeping Rook small (his rule, 2026-10-20: Rook was on pace to hit its weekly limit by Friday)
 
-- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, and once CI is green for the
+- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; he picks which suggestions to apply), and once CI is green for the
   head commit asks his OK to merge. On his yes: `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
   (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then start the next Rook session itself
   (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
