@@ -210,6 +210,7 @@ select.fld { font-family: var(--sans); }
 .part-line { fill: none; stroke: var(--partline); stroke-width: 1; }
 .part-body { fill: var(--part); stroke: var(--partline); stroke-width: 1.2; }
 .part-hit { fill: transparent; stroke: none; cursor: move; }
+.part-hit.ob { fill: none; stroke: transparent; stroke-width: 14px; vector-effect: non-scaling-stroke; pointer-events: stroke; }       /* a layout object: only its own lines catch a click */
 .marks { stroke: var(--mark); stroke-width: 1.2; fill: none; }
 .sel-box { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; pointer-events: none; }
 .grip-sq { fill: var(--accent); pointer-events: none; }

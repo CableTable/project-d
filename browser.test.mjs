@@ -8333,11 +8333,10 @@ try {
     // a layout tab: the tools say so and do not become the tool
     await t('new-layout').click();
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
-    await page.locator('[data-tool=line]').click();
-    assert.match(await prompt(), /^Drawing tools work on a drawing tab:?$/);
-    assert.notEqual(await t('tool-chip').textContent(), 'Tool: Line');
-    await typeCmd('c');
-    assert.match(await prompt(), /^Drawing tools work on a drawing tab:?$/);
+    await page.locator('[data-tool=line]').click();                  // TODO 156b2: Draw tools work on a layout now (they make layout objects)
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Line');
+    await page.locator('[data-tool=circle]').click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Circle');
     await closeTabs(/layout/i);
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'drawing');
     // the empty tab
@@ -14691,6 +14690,66 @@ try {
     await page.locator('[data-group=parts] .part-hit').last().click({ force: true });
     [w1, h1] = await wh(); approx(w1, w0 * 2, 0.02, 'reopened W'); approx(h1, h0 * 2, 0.02, 'reopened H');
     await shotBoth('layout-modify');
+  });
+
+  await step('TODO 156b2: on a layout, Draw tools make layout objects on the sheet; they select with a part, move with it, are saved as plain entities, reopen as objects (not parts), nest ignores them, one Undo each', async () => {
+    await freshLayoutWithPlate();
+    const val = (e, c) => Number(e.r.v[e.r.c.indexOf(c)]);
+    const nestRows = async () => { await t('nest').click(); const n = await page.locator('[data-testid^=nest-row-]').count(); await t('nest-cancel').click(); return n; };
+    const rows0 = await nestRows(), n0 = await nParts();
+    assert.equal(n0, 1);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await typeCmd('line'); assert.match(await prompt(), /^Specify first point/);
+    await typeCmd('50,50'); await typeCmd('150,100'); await typeCmd('');
+    assert.equal(await nParts(), n0 + 1, 'the line is on the sheet');
+    assert.equal((await histLabels()).at(-1), 'Line');
+    await typeCmd('circle'); await typeCmd('800,500'); await typeCmd('40');
+    assert.equal(await nParts(), n0 + 2); assert.equal((await histLabels()).at(-1), 'Circle');
+    await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo takes the circle away');
+    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 2, 'Redo brings it back');
+    // layers: the Layers panel lists the layer of the objects; + Add makes a new current layer that the next shape goes on
+    assert.equal(await page.locator('.layer', { hasText: '0' }).locator('[data-testid=layer-current]').count(), 1);
+    await t('layer-add').click();
+    assert.equal(await page.locator('.layer.current .nm, .layer.current input').count() > 0, true, 'a new current layer');
+    await typeCmd('line'); await typeCmd('300,50'); await typeCmd('400,50'); await typeCmd('');   // a horizontal line has no height: still selectable
+    assert.equal(await nParts(), n0 + 3);
+    await page.locator('[data-tool=select]').click();
+    await click(350, 50); await page.waitForFunction(() => document.querySelectorAll('[data-group=tools] .sel-box').length === 1);
+    await page.keyboard.press('Delete'); assert.equal(await nParts(), n0 + 2, 'Delete removes the object');
+    await undo(); assert.equal(await nParts(), n0 + 3);
+    await page.keyboard.press('Escape');
+    // select the line, the circle and the plate together: a click on the line, Shift-click on the circle's edge and on the plate
+    const picked = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-group=tools] .sel-box').length === k, n, { timeout: 5000 }).catch(async (e) => { throw new Error('waiting for ' + n + ' picked, there are ' + (await page.locator('[data-group=tools] .sel-box').count()) + '; ' + (await prompt())); });
+    await click(350, 50); await picked(1);
+    await click(100, 75, { shift: true }); await picked(2);
+    await click(840, 500, { shift: true }); await picked(3);
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true, modifiers: ['Shift'] }); await picked(4);
+    assert.match(await t('sel-readout').textContent(), /^4 parts/);
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('20,30');
+    assert.match((await histLabels()).at(-1), /^Move/);
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text, saved = readDxf(text);
+    const plain = saved.entities.filter((e) => e.type !== 'INSERT' && !['Sheet', 'Marks', 'Parts'].includes(e.layer));
+    assert.deepEqual(plain.map((e) => e.type).sort(), ['CIRCLE', 'LINE', 'LINE']);
+    assert.equal(saved.entities.filter((e) => e.type === 'INSERT').length, 1, 'only the plate is an INSERT');
+    const diag = plain.find((e) => e.type === 'LINE' && val(e, 20) !== val(e, 21));
+    assert.deepEqual([val(diag, 10), val(diag, 20), val(diag, 11), val(diag, 21)], [70, 80, 170, 130], 'moved with the plate: baked into the entity');
+    const circ = plain.find((e) => e.type === 'CIRCLE');
+    assert.deepEqual([val(circ, 10), val(circ, 20), val(circ, 40)], [820, 530, 40]);
+    assert.ok(plain.some((e) => e.layer !== '0'), 'the object drawn after + Add is on the added layer');
+    // reopen: still objects, not parts
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'objects.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'objects.dxf');
+    assert.equal(await nParts(), n0 + 3, 'the three objects and the plate are back');
+    assert.equal(await page.locator('.prow[data-part-id]').count(), 1, 'the Parts list holds only the plate');
+    const back = layoutFromRaw(readDxf(text));
+    assert.equal(Object.values(back.parts).filter((p) => p.obj).length, 3);
+    assert.equal(await nestRows(), rows0, 'Auto-nest does not offer the objects');
+    await click(840, 530);
+    await shotBoth('layout-objects');
+    await page.evaluate(() => document.activeElement?.blur());
+    await typeCmd('line'); await typeCmd('10,10'); await typeCmd('60,10'); await typeCmd('');
+    assert.equal(await nParts(), n0 + 4); await undo(); assert.equal(await nParts(), n0 + 3, 'Undo after a reopen');
   });
 
   await step('TODO 156b1: Contour on scaled placements keeps 5 mm spacing and shares contour parts only at the same scale', async () => {

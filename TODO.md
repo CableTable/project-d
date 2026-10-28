@@ -273,7 +273,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     156a. ✅ (built, Knight, 2026-10-28) Corner-arrow rotate on drawings: second click toggles grips / arrows, Shift = 15°, ◎ pivot (S).
     156b. Tools on Layouts: whole-part Move / Copy / Rotate / Scale / Mirror / Array; Trim / Extend / Fillet / Offset / Shaping / grips on loose layout objects (M). Grilled 2026-10-28 (DECISIONS "Tools on Layouts"), split:
       156b1. ✅ (built, Knight, 2026-10-28; full browser suite pending with Rook) Move / Copy / Rotate / Scale / Mirror / Array commands on whole placed parts (Scale = placement scale, W / H editable; Array = separate placed parts) (M).
-      156b2. Draw on layouts: layout objects (S–M).
+      156b2. ✅ (built, King, 2026-10-28; full browser suite pending with Rook) Draw on layouts: layout objects (S–M). Left as **156b2b**: Text and Dimension on a layout (the Text tool is tied to a drawing's `raw`; refused with a note), Text to outlines / Break Apart on objects.
       156b3. Trim / Extend / Fillet / Offset / Shaping / grips on layout objects (M).
     156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M). Grilled 2026-10-28 (DECISIONS "Compare editable"), split:
       156c1. ✅ (built, Knight, 2026-10-28) Snapshot link to its drawing tab; Modify / Draw / grips on the picked snapshot go to that tab (file + Undo); differences recalculated; closed tab or library part = read-only with a message (M).

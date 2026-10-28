@@ -27,7 +27,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
-import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex } from './drawing.js';
+import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex, arcSweep } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -982,7 +982,7 @@ function showDoc() {
   ribbon.context = null;
   state.gapSel = null; gapSig = ''; hideMenu();
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
-  state.setlen = null; state.grip = null; trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== editable()) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
+  state.setlen = null; state.grip = null; trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== (editable() || curLay() && curDoc())) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable() || curLay() && curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
   syncFields(); renderTabs(); applyKind(); update();
   if (view.fitted) fit(); else applyView();
 }
@@ -1310,7 +1310,8 @@ function setTool(id) {
   state.text.drag = null; state.grip = null; state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
-  if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab'); return; }
+  if (id === 'text' && curLay()) { note('Text on a layout is not built yet (TODO 156b2b). Draw it on a drawing tab and drag the drawing in'); return; }
+  if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab or a layout'); return; }
   if (state.draw && DR.toolBusy(state.draw) && drawId) drawApply(DR.toolFinish(state.draw));      // a line or polyline in progress ends (and keeps what it has)
   if (id === 'step' && !curLay()) { note('Step and repeat is on a layout tab: New layout, or Add to layout'); return; }
   state.tool = id;
@@ -1325,7 +1326,7 @@ function setTool(id) {
   if (id === 'pan') state.msg = 'Drag to pan';
   state.meas = id === 'measure' ? { pts: [], hover: null } : null;
   if (ui.textHint) ui.textHint.hidden = id !== 'text';
-  state.draw = DR.KINDS.includes(id) ? DR.createTool(id, state.drawCfg) : null; state.drawDoc = state.draw ? editable() : null; state.drawHover = null;
+  state.draw = DR.KINDS.includes(id) ? DR.createTool(id, state.drawCfg) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
   state.mod = MOD_KINDS.includes(id) ? newMod(id) : null; state.modDoc = state.mod ? editable() || curDoc() : null;
   if (state.mod) modStart(id);
   state.dim = id === 'dimension' ? newDim() : null; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
@@ -1787,7 +1788,7 @@ function openNestDialog(counts = null, autoRun = false) {
     if (!thumb) { if (!nestThumbs.has(part.id)) nestThumbs.set(part.id, thumbFor(part)); thumb = nestThumbs.get(part.id); }
     return { id: part.id, name: part.name, w: part.w, h: part.h, thumb, count: counts ? (counts[part.id] || 0) : (inLayout ? 1 : 0), outline: () => outlineFor(part) };
   });
-  const fixed = LD.placedAll(lay, null).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
+  const fixed = LD.placedAll(lay, null).filter((pl) => !lay.parts[pl.partId].obj).map((pl) => { const part = lay.parts[pl.partId]; return outlineFor(part).map(([u, v]) => PL.toSheet(pl, u, v)); });
   const area = { x: s.gripLeft, y: s.gripBottom, w: s.sheetW - s.gripLeft - s.gripRight, h: s.sheetH - s.gripTop - s.gripBottom };
   if (!(area.w > 0 && area.h > 0)) { note('Auto-nest: the grippers leave no room on the sheet'); return; }
   openNest({
@@ -1853,7 +1854,7 @@ let lastPush = { key: '', t: 0, d: null };
 const r2 = (v) => Math.round(v * 100) / 100;
 const fmt1 = (v) => Number(v).toFixed(1);
 const centrePivot = () => ({ kind: 'centre', x: 0, y: 0 });
-const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts },
+const laySnap = (lay) => ({ sw: lay.s.sheetW, sh: lay.s.sheetH, s: structuredClone(lay.s), placed: lay.placed.map((p) => ({ ...p })), gridPart: lay.s.gridPart, parts: { ...lay.parts }, layers: LD.layersOf(lay),
   lsel: lay === (curLay() || {}) ? selIdxs().map((i) => placedNow[i]).filter((p) => p.src === 'loose').map((p) => p.i) : [] });      // lsel: which loose parts were selected (undo brings the selection back)
 const layHist = (d) => d.lhist || (d.lhist = Ed.createHistory());
 /** Keeps the layout as it is now for undo; the same key within 0.8 s (arrow key held down) keeps only the first. */
@@ -1868,17 +1869,20 @@ function layRestore(d, st, dirty = true) {
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
-  d.lay.placed = st.placed; d.lay.parts = st.parts; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
+  d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (!sameSet) picksArr = [];
   d.dirty = dirty; renderTabs(); update(sized && view.fitted);
 }
 function undoLay() {
   const d = curDoc();
+
   if (!d?.lay) { if (d?.hist) undo(d); return; }
+  if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }       // a Line with only its first point: nothing made to undo
   const st = layHist(d).undo(laySnap(d.lay));
   if (!st) { note('Nothing to undo'); return; }
   layRestore(d, st); note('Undone');
+  if (state.draw) { renderCommand(); paintOverlay(); }
 }
 function redoLay() {
   const d = curDoc();
@@ -2731,13 +2735,13 @@ function renderStep() {
 function renderPartsList() {
   const lay = curLay();
   const uses = LD.usesOf(placedNow);
-  ui.partRows.replaceChildren(...(lay ? Object.values(lay.parts) : []).map((p) =>
+  ui.partRows.replaceChildren(...(lay ? Object.values(lay.parts).filter((p) => !p.obj) : []).map((p) =>
     h('div', { class: 'prow', 'data-part-id': p.id },
       h('span', { class: 'nm' }, p.name),
       h('span', { class: 'lbl mono', 'data-testid': 'part-size', title: 'Size in mm, and how many copies are on the layout' }, `${fmtSize(p.w)} × ${fmtSize(p.h)} · ${uses[p.id] || 0} ${(uses[p.id] || 0) === 1 ? 'copy' : 'copies'}`),
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Take ' + p.name + ' off this layout', 'data-part-remove': p.id, onclick: () => removeFromLayout(p.id) }, '×'))));
   if (!lay) return;
-  if (!Object.keys(lay.parts).length) ui.partRows.append(h('span', { class: 'lbl' }, 'None yet.'));
+  if (!Object.values(lay.parts).some((p) => !p.obj)) ui.partRows.append(h('span', { class: 'lbl' }, 'None yet.'));
 }
 
 // ---- the Parts library: saved parts, inside the app (IndexedDB), each as its DXF text with a name, size and thumbnail ----
@@ -3259,11 +3263,16 @@ const sheetDimCount = () => 2 + (selBoxDown() ? 1 : 0);
 function layerRows() {
   const d = curDoc();
   if (d && d.lay) {                                                  // a layout: the placed parts and the marks (the parts' own layers are inside the parts)
-    const marksCount = placedNow.length ? (state.crop ? 4 : 0) + (state.reg ? 4 : 0) : 0;
+    const objs = placedNow.filter((p) => d.lay.parts[p.partId].obj), shownParts = placedNow.length - objs.length;
+    const marksCount = shownParts ? (state.crop ? 4 : 0) + (state.reg ? 4 : 0) : 0;
+    const cur = curLayerName(d), layers = LD.layersOf(d.lay);       // the layers of the layout objects: listed once something is on them (or they were added), to pick as the current one
+    const onLayer = (n) => objs.filter((p) => d.lay.parts[p.partId].raw.entities[0].layer === n).length;
+    const objRows = Object.entries(layers).filter(([n]) => onLayer(n) || n !== '0').map(([n, def]) => ({ name: n, color: ink(layerCss(def), isDark()), count: onLayer(n), eye: EYE, live: false, lay: true, cur: n === cur }));
     return [
-      { id: 'parts', name: 'Parts', color: 'var(--partline)', count: placedNow.length, on: true, live: true, eye: EYE },
+      { id: 'parts', name: 'Parts', color: 'var(--partline)', count: shownParts, on: true, live: true, eye: EYE },
       { id: 'marks', name: 'Marks', color: 'var(--mark)', count: marksCount, live: true, eye: LOCK },
       { id: 'dims', name: 'Dimensions', color: 'var(--accent)', count: sheetDimCount(), live: true, eye: EYE },
+      ...objRows,
     ];
   }
   // a drawing tab: the open file's own layers
@@ -3284,7 +3293,16 @@ const allLayerNames = (d) => [...Object.keys(d.raw.layers), ...d.fl.layers.map((
 /** + Add: a new layer with the first free name (Layer1, Layer2…); it becomes the current layer, and its name is ready to type over. One undo step. */
 function addLayerNow() {
   const d = drawTarget();
-  if (!d) { note('Add layer: open a drawing tab first (a layout has its own layers)'); return; }
+  if (!d) { note('Add layer: open a drawing tab or a layout first'); return; }
+  if (d.lay) {                                                       // a layout: the layer of its objects, picked as the current one
+    const name = Ed.newLayerName([...Object.keys(LD.layersOf(d.lay)), ...LD.RESERVED_LAYERS]);
+    pushLay(d, null, '', 'Add layer ' + name);
+    d.lay.layers = { ...LD.layersOf(d.lay) }; addLayer(d.lay, name, { aci: 7 });
+    d.curLayer = name; d.dirty = true; d.layerQuery = '';
+    renderLayers(); renderTabs(); renderCommand();
+    note(`Added ${name}: it is the current layer. New shapes go on it. Ctrl+Z takes it away`);
+    return;
+  }
   const name = Ed.newLayerName(allLayerNames(d));
   d.hist.push(snapshotOf(d), 'Add layer ' + name);
   d.raw.layers = { ...d.raw.layers };
@@ -3351,9 +3369,9 @@ function renderLayers() {
         renderLayers(); applyHidden(); renderStatus();       // (renderLayers also redraws the Objects tab)
       });
     }
-    const pick = isFile || l.added || l.zero;
+    const pick = isFile || l.added || l.zero || l.lay;
     const row = h('div', { class: 'layer' + (l.on ? ' on' : '') + (hid ? ' hidden-layer' : '') + (l.cur ? ' current' : ''), 'data-file-layer': isFile ? l.fileLayer : null, 'data-layer-name': pick || l.cur ? l.name : null, title: pick || l.cur ? 'Click to make this the current layer: new shapes and text go on it' : null },
-      pick ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
+      pick && !l.lay ? addedSwatch(d, l) : h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + l.color }),
       l.added ? addedName(d, l) : h('span', { class: 'nm' }, l.name), l.cur ? h('span', { class: 'chip', 'data-testid': 'layer-current' }, 'current') : null, l.chip ? h('span', { class: 'chip', 'data-testid': 'layer-new' }, l.chip) : null, h('span', { class: 'lbl mono' }, l.count), vis);
     if (pick) row.addEventListener('click', (e) => { if (e.target.closest('.vis') || e.target.closest('input')) return; d.curLayer = l.name; renderLayers(); renderCommand(); renderEdit(); note(`Current layer: ${l.name}. New shapes and text go on it`); });
     return row;
@@ -3978,7 +3996,7 @@ function dimensions() {
 /** The sheet (on a layout tab) with its grippers, usable area, a hit box per placed part, the marks, the dimensions and the gaps. */
 function drawSheet() {
   const lay = curLay(), { sheetW: W, sheetH: H } = state, L = layout, area = L.area;
-  const parts = lay ? placedNow.map((p, i) => (partHid(p) ? null : s('g', { 'data-i': i }, s('polygon', { class: 'part-hit', points: polyPoints(PL.corners(lay.parts[p.partId], p), H) })))).filter(Boolean) : [];
+  const parts = lay ? placedNow.map((p, i) => (partHid(p) ? null : s('g', { 'data-i': i }, lay.parts[p.partId].obj ? objHit(lay.parts[p.partId], p, H) : s('polygon', { class: 'part-hit', points: polyPoints(PL.corners(lay.parts[p.partId], p), H) })))).filter(Boolean) : [];
   ui.gParts = s('g', { 'data-group': 'parts' }, parts);
   ui.gTools = s('g', { class: 'ptools', 'data-group': 'tools' });
   ui.gMarks = s('g', { class: 'marks', 'data-group': 'marks' }, lay ? marks(lay) : []);
@@ -3999,6 +4017,24 @@ function drawSheet() {
   drawAlignmentGuides();
   drawRulers();
   applyHidden();
+}
+
+/** The hit target of a layout object: its own lines and arcs (a stroke 14 px wide), so a click inside a frame still reaches what is under it. */
+function objHit(part, p, H) {
+  let dd = '';
+  for (const it of part.fl.items) {
+    const o = it.ops;
+    for (let i = 0; o && i < o.length;) {
+      if (o[i] === 0 || o[i] === 1) { dd += (o[i] ? 'L' : 'M') + o[i + 1] + ' ' + o[i + 2]; i += 3; }
+      else if (o[i] === 2) {
+        const [cx, cy, r, a0, a1, cw] = o.slice(i + 1, i + 7), [a, sw] = arcSweep(a0, a1, cw), n = Math.max(2, Math.ceil(Math.abs(sw) / (Math.PI / 18)));
+        for (let k = 0; k <= n; k++) dd += (k ? 'L' : 'M') + (cx + r * Math.cos(a + sw * k / n)) + ' ' + (cy + r * Math.sin(a + sw * k / n));
+        i += 7;
+      } else i++;
+    }
+  }
+  if (!dd) return s('polygon', { class: 'part-hit ob', points: polyPoints(PL.corners(part, p), H) });
+  return s('path', { class: 'part-hit ob', d: dd, transform: `matrix(${placedMat(part, p, H).join(' ')})` });
 }
 
 /** Points of an SVG polygon from sheet points (mm, y up). */
@@ -4394,7 +4430,7 @@ function attachCanvasEvents() {
       applyView(true);
     }
     const d = state.tool === 'measure' ? measureTarget() : editable();
-    if (state.draw && d && state.drawDoc === editable()) drawHoverAt(d, e.clientX, e.clientY, e.shiftKey);
+    if (drawLive()) drawHoverAt(state.drawDoc, e.clientX, e.clientY, e.shiftKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
@@ -4519,7 +4555,7 @@ function renderCommand() {
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
   if (layModLive()) { const mp = modPrompt(curDoc()); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
-  if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(ed)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
+  if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(state.drawDoc)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
   const gp = lay && lay.parts[lay.s.gridPart];
   const rs = state.mode === 'rotate' ? selectedPlaced() : null, rp = rs && pivotPoint(rs.part, rs.p);
   const nSel = lay ? selIdxs().length : 0, gd = state.guideDrag && guideTarget()?.s.guides[state.guideDrag.idx];
@@ -6167,20 +6203,21 @@ function ensureScratch(d) {
   d.hist = Ed.createHistory(); d.sel = new Set(); d.hl = []; d.ed = null; warm(d);
   update();
 }
-/** The drawing tab the drawing tools work on (an empty tab is made into one), or null on a layout. */
+/** The tab the drawing tools work on: a drawing tab (an empty tab is made into one), or a layout (its objects are drawn on the sheet, in mm). */
 function drawTarget() {
   const d = curDoc();
-  if (!d || d.lay) return null;
+  if (!d) return null;
   if (d.cmp) return cmpEdit();
+  if (d.lay) { d.factor = 1; return d; }                              // layout coordinates are in mm
   if (!d.raw) ensureScratch(d);
   return editable();
 }
 /** The layer new shapes go on: the one picked in the Layers panel, else "0". */
 function curLayerName(d) {
-  const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
+  const names = d.lay ? new Set(Object.keys(LD.layersOf(d.lay))) : new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
   return d.curLayer && names.has(d.curLayer) ? d.curLayer : '0';
 }
-const drawLive = () => !!(state.draw && state.drawDoc === editable() && editable());
+const drawLive = () => !!(state.draw && state.drawDoc === (editable() || curLay() && curDoc()));
 
 /** The point for a pick (mm, y up, with its snap kind): the drawing's snaps, the tool's own points, then Shift / ORTHO along X or Y. */
 function drawPick(d, cx, cy, shift, hover) {
@@ -6214,7 +6251,7 @@ function drawClick(e) {
 function drawApply(r) {
   const T = state.draw, d = state.drawDoc;
   if (!T || !d) return;
-  if (r.undoSeg) { undo(d); return; }                               // U in a Line: the last segment's step is taken back (undo() steps the tool back too)
+  if (r.undoSeg) { if (d.lay) undoLay(); else undo(d); return; }                             // U in a Line: the last segment's step is taken back (undo() steps the tool back too)
   if (r.made) trackClear();                                         // the tool action is over: the acquired points go
   if (T.kind === 'rrect' && T.radius !== state.drawCfg.radius) { state.drawCfg.radius = T.radius; try { localStorage.setItem('pd-rradius', String(T.radius)); } catch { /* ignore */ } }
   if (r.made && r.made.length) { drawCommit(d, T.kind, r.made); return; }
@@ -6230,7 +6267,8 @@ function toolMenu(e) {
   const rows = [];
   if (T) {
     rows.push(['Enter', () => { state.msg = null; drawFinish(); }, 'Enter']);
-    rows.push(['Cancel', () => { const d = state.drawDoc, before = d.raw.entities.length; if (DR.toolBusy(T)) drawFinish(); const made = d.raw.entities.length > before && state.msg; setTool('select'); note(made || 'Cancelled'); }]);   // setTool clears the msg: keep drawCommit's "made on layer" line
+    const count = (d) => (d.lay ? d.lay.placed.length : d.raw.entities.length);
+    rows.push(['Cancel', () => { const d = state.drawDoc, before = count(d); if (DR.toolBusy(T)) drawFinish(); const made = count(d) > before && state.msg; setTool('select'); note(made || 'Cancelled'); }]);   // setTool clears the msg: keep drawCommit's "made on layer" line
     if (T.kind === 'polyline') rows.push(['Close', () => drawTyped('c'), null, T.pts.length >= 3]);
     rows.push(['Undo last point', () => drawTyped('u'), null, DR.toolBusy(T)]);
   } else rows.push(['Cancel', () => { setTool('select'); note('Cancelled'); }]);
@@ -6238,10 +6276,24 @@ function toolMenu(e) {
   popMenu(e.clientX, e.clientY, rows);
   return true;
 }
+/** Drawn shapes on a layout: each is a layout object on the current layer (layoutdoc.js objectPart), all in ONE undo step. */
+function layDrawCommit(d, kind, shapes, attrs) {
+  const lay = d.lay, layers = LD.layersOf(lay), names = new Set(Object.values(lay.parts).map((p) => p.name));
+  const ents = shapes.map((sh) => DR.toEntity(sh, attrs, 1));
+  pushLay(d, null, '', DR.LABELS[kind]);
+  for (const e of ents) {
+    const part = LD.objectPart('o' + uid(), LD.nextName(DR.LABELS[kind], names), e, layers);
+    if (!part) continue;
+    names.add(part.name); lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
+  }
+  touch(); update();
+  note(`${DR.LABELS[kind]} made on layer ${attrs.layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
+}
 function drawCommit(d, kind, shapes) {
   const layer = curLayerName(d);
-  if (!d.raw.layers[layer]) addLayer(d.raw, layer);
   const attrs = currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour);
+  if (d.lay) { view.fitted = false; layDrawCommit(d, kind, shapes, attrs); return; }
+  if (!d.raw.layers[layer]) addLayer(d.raw, layer);
   const ents = shapes.map((sh) => DR.toEntity(sh, attrs, d.factor));
   view.fitted = false;                                              // the view stays where it is while he draws
   commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks }, DR.LABELS[kind]);
@@ -6263,8 +6315,9 @@ function drawOvl() {
   if (!ui.ovl) return;
   const tab = curDoc(), d = state.tool === 'measure' && tab?.cmp ? tab : editable() || tab, H = state.sheetH, out = [], grips = [];
   let tip = null;
+
   if (tab?.cmp?.show && !tab.cmp.moving && tab.cmp.res && !tab.cmp.stale) cmpGlow(tab.cmp, out);
-  if (d && !d.lay && drawLive()) {
+  if (d && drawLive()) {
     const T = state.draw, dynamic = cursorDynamic() && T.hover ? cursorPoint() : null;
     const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
     for (const g of pv.guides) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));

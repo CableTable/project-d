@@ -325,4 +325,42 @@ test('TODO 127: anchored grids derive identically after save and reopen, without
   }
 });
 
+test('layout objects (TODO 156b2): plain entities beside the INSERTs, back as objects, moved / turned ones baked in, not in the grid', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  const part = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);
+  lay.parts.p1 = part; lay.placed.push(placement1('p1', 100, 50));
+  const mk = (id, ent) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push(LD.objectPlacement(o)); return lay.placed.at(-1); };
+  mk('o1', line(10, 10, 60, 40));
+  const c = mk('o2', circle(200, 100, 15));
+  c.x += 30; c.y -= 10;                                              // moved by 30, -10
+  const raw = LD.layoutRaw(lay);
+  assert.equal(raw.entities.filter((e) => e.type === 'INSERT').length, 1, 'objects are not INSERTs');
+  const plain = raw.entities.filter((e) => e.type !== 'INSERT' && !LD.isReserved(e.layer));
+  assert.deepEqual(plain.map((e) => e.type), ['LINE', 'CIRCLE']);
+  assert.equal(LD.readMeta(raw).placed.length, 1, 'the JSON holds no copy of the objects');
+  const back = LD.layoutFromRaw(readDxf(writeDxf(raw)));
+  const objs = back.placed.filter((p) => back.parts[p.partId].obj);
+  assert.equal(objs.length, 2);
+  assert.equal(back.placed.length, 3);
+  assert.equal(LD.partsForPlacement(back).length, 1, 'objects are not parts of the library');
+  assert.deepEqual(LD.placedAll(back).map((p) => p.partId).sort(), ['ob1', 'ob2', 'p1']);
+  const circ = back.parts[objs[1].partId];
+  near(placedBox(circ, objs[1])[0], 215); near(placedBox(circ, objs[1])[1], 75);       // the circle's box: 215..245 x 75..105 after the move
+  // turned and scaled objects are baked: a line from (0,0) to (10,0) turned 90° about its corner, scaled ×2
+  const l2 = LD.newLayout('Turned'), t = LD.objectPart('t', 't', line(0, 0, 10, 0), LD.layersOf(l2));
+  l2.parts.t = t; l2.placed.push({ ...LD.objectPlacement(t), x: 50, y: 50, rot: 90, sc: 2 });
+  const e = LD.layoutRaw(l2).entities.find((x) => x.type === 'LINE' && !LD.isReserved(x.layer));
+  const f = flatten({ ...LD.layoutRaw(l2), entities: [e] }).boxes.model;
+  near(f[0], 50); near(f[1], 50); near(f[2], 50); near(f[3], 70);
+  // the grid ignores objects; an old layout (no layers table, no objects) still opens and saves
+  const g = LD.newLayout('Grid'); g.parts.p1 = part; g.s.gridPart = 'p1'; g.s.sheetW = 300; g.s.sheetH = 200;
+  const count = LD.gridOf(g).count, big = LD.objectPart('big', 'big', rect(0, 0, 290, 190), LD.layersOf(g));
+  g.parts.big = big; g.placed.push(LD.objectPlacement(big));
+  assert.equal(LD.gridOf(g).count, count);
+  const old = LD.newLayout('Old'); delete old.layers; old.parts.p1 = part; old.placed.push(placement1('p1', 5, 5));
+  const oldBack = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(old))));
+  assert.equal(oldBack.placed.length, 1);
+  assert.equal(Object.keys(oldBack.parts).length, 1);
+});
+
 console.log(n + ' tests passed');

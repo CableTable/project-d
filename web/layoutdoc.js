@@ -13,7 +13,8 @@
 // PD_LAYOUT that nothing inserts: a few TEXT entities, each holding up to 200 characters of base64 of a JSON text. Other CAD
 // apps ignore (or at most list) an unused block; our reader (drawing.js readDxf) keeps it, and layoutFromRaw() reads it back.
 import { readDxf, flatten } from './drawing.js';
-import { writeDxf, text as dxfText, addBlock } from './dxf-write.js';
+import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
+import { explodeInsert } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
@@ -39,12 +40,41 @@ export const newSettings = (over = {}) => ({ ...DEFAULTS, extraRows: [], extraCo
 /** An empty layout. */
 export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed: [] });
 
+// ---------------------------------------------------------------- layout objects
+// A layout object (a line, circle… drawn on the sheet) is held as a part with part.obj = true: one entity, in sheet mm, placed at its
+// own extents' corner. So select, snap, Move / Copy / Rotate / Scale / Mirror / Array, paint and Undo are the placed parts' code.
+// In the file it is a plain entity on its layer (the placement is baked in with Explode's maths); Sheet, Marks and Parts are ours.
+
+export const RESERVED_LAYERS = ['Sheet', 'Marks', 'Parts'];
+export const isReserved = (name) => RESERVED_LAYERS.some((n) => n.toLowerCase() === String(name).toLowerCase());
+/** The layers of the layout's objects (a raw layer table: name → def); an old layout has just "0". */
+export function layersOf(lay) {
+  if (!lay.layers) lay.layers = newDoc(4).layers;
+  return lay.layers;
+}
+/** A layout object from one entity (sheet mm; `layers` is the layer table), or null when it has no extents. */
+export function objectPart(id, name, ent, layers, header = {}) {
+  const raw = { header: { ...header }, layers, ltypes: {}, blocks: {}, entities: [{ ...ent, ps: false }] };
+  const fl = flatten(raw), box = fl.boxes && fl.boxes.model;
+  if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
+  return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
+}
+/** A new object's placement: its extents' lower-left corner is where the entity already is. */
+export const objectPlacement = (part) => placement1(part.id, part.box[0], part.box[1]);
+/** A placed object as plain entities (its placement baked in), or null when Explode cannot carry that kind (it is then kept as a block). */
+function bakeObject(part, p) {
+  const e = part.raw.entities[0], mini = newDoc(4), k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * k, sy = (p.mirrorY ? -1 : 1) * k;
+  mini.layers = part.raw.layers;
+  addBlock(mini, 'O', [e], [part.box[0], part.box[1]]);
+  try { return explodeInsert(insert('O', p.x, p.y, { layer: e.layer, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini).entities; } catch { return null; }
+}
+
 // ---------------------------------------------------------------- parts
 
 /** Parts offered for placing or the library; linked contours stay with their source part. */
 export function partsForPlacement(lay) {
   const ctParts = new Set(lay.placed.filter((q) => q.ct).map((q) => q.partId));
-  return Object.values(lay.parts).filter((p) => !ctParts.has(p.id));
+  return Object.values(lay.parts).filter((p) => !ctParts.has(p.id) && !p.obj);
 }
 
 /** A part keeps drawing blocks, never the source file's PDF title settings. */
@@ -101,7 +131,7 @@ export function nextName(base, taken) {
 /** The grid of the layout's step-and-repeat part (a stepRepeat result), or null when no part is picked. */
 export function gridOf(lay) {
   const p = lay.s.gridPart && lay.parts[lay.s.gridPart];
-  const placed = lay.placed.filter((pl) => lay.parts[pl.partId]).map((pl) => {
+  const placed = lay.placed.filter((pl) => lay.parts[pl.partId] && !lay.parts[pl.partId].obj).map((pl) => {       // layout objects are not in the grid's way
     const [x0, y0, x1, y1] = boxOfPlaced(lay, pl);
     return { ...pl, box: [x0, lay.s.sheetH - y1, x1, lay.s.sheetH - y0] };
   });
@@ -123,8 +153,8 @@ export function usesOf(list) {
   return n;
 }
 
-/** The ids of the parts the layout uses (placed, or the grid's): the others are not written to the file. */
-export const usedIds = (lay) => [...new Set([...(lay.s.gridPart ? [lay.s.gridPart] : []), ...lay.placed.map((p) => p.partId)])].filter((id) => lay.parts[id]);
+/** The ids of the parts the layout uses (placed, or the grid's): the others are not written to the file. Layout objects are plain entities, not parts. */
+export const usedIds = (lay) => [...new Set([...(lay.s.gridPart ? [lay.s.gridPart] : []), ...lay.placed.map((p) => p.partId)])].filter((id) => lay.parts[id] && !lay.parts[id].obj);
 
 /** The box [x0, y0, x1, y1] (mm, y up) of a placed part on the sheet. */
 export const boxOfPlaced = (lay, p) => placedBox(lay.parts[p.partId], p);
@@ -148,7 +178,7 @@ const dec = (b64) => JSON.parse(atob(b64));
 function metaEntities(lay, blockOf, ids) {
   const meta = {
     v: 1, app: 'Project D', name: lay.name, s: lay.s,
-    parts: ids.map((id) => { const p = lay.parts[id]; return { id, name: p.name, block: blockOf[id], factor: p.factor || 1, w: p.w, h: p.h, src: p.src || '' }; }),
+    parts: ids.map((id) => { const p = lay.parts[id]; return { id, name: p.name, block: blockOf[id], factor: p.factor || 1, w: p.w, h: p.h, src: p.src || '', ...(p.obj ? { obj: true } : {}) }; }),
     placed: lay.placed.filter((p) => ids.includes(p.partId)),
   };
   const b = enc(meta), out = [];
@@ -158,8 +188,15 @@ function metaEntities(lay, blockOf, ids) {
 
 /** The layout as a DXF document (writeDxf's shape): everything a CAD app shows, plus the hidden PD_LAYOUT block. */
 export function layoutRaw(lay) {
-  const list = placedAll(lay), ids = usedIds(lay);
-  const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: list, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: marksOf(lay, list), keep: ids });
+  const all = placedAll(lay), baked = [], kept = [];
+  for (const p of all) {
+    const part = lay.parts[p.partId], ents = part.obj && bakeObject(part, p);
+    if (ents) baked.push(...ents); else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
+  }
+  const ids = [...new Set([...usedIds(lay), ...kept.filter((p) => lay.parts[p.partId].obj).map((p) => p.partId)])];
+  const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)), keep: ids });
+  for (const [name, def] of Object.entries(layersOf(lay))) if (!(name in doc.layers)) doc.layers[name] = structuredClone(def);
+  addEntities(doc, baked);
   addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids));
   return doc;
 }
@@ -221,5 +258,21 @@ export function layoutFromRaw(raw, name) {
     .map((p) => ({ ...placement1(p.partId, +p.x, +p.y, num(p.rot, 0), p.mirrorX, p.mirrorY), ...(typeof p.g === 'string' && p.g ? { g: p.g } : {}), ...(p.lock === true ? { lock: true } : {}), ...(num(p.sc, 1, 1e-6) !== 1 ? { sc: num(p.sc, 1, 1e-6) } : {}),
       ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
+  for (const pm of m.parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
+  readObjects(lay, raw);
   return lay;
+}
+
+/** The plain entities of the file (not the sheet, the marks or the INSERTs) become layout objects again, one each. */
+function readObjects(lay, raw) {
+  const layers = layersOf(lay);
+  let n = 0;
+  for (const e of raw.entities) {
+    if (e.type === 'INSERT' || e.ps || isReserved(e.layer)) continue;
+    if (raw.layers[e.layer] && !layers[e.layer]) layers[e.layer] = raw.layers[e.layer];
+    let id; do id = 'ob' + (++n); while (lay.parts[id]);
+    const part = objectPart(id, 'Object ' + n, e, layers, raw.header);
+    if (!part) continue;
+    lay.parts[id] = part; lay.placed.push(objectPlacement(part));
+  }
 }
