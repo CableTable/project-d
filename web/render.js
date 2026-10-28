@@ -177,7 +177,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
 }
 
 /** The dimension being placed or moved (edit.js dimGeometry, drawing units): its lines, arrowheads and text, in the dimension colour. */
-function drawDimPreview(c, g, T, dpr, accent) {
+export function drawDimPreview(c, g, T, dpr, accent) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.4 * dpr; c.setLineDash([]);
   const P = (x, y) => mapply(T, x, y);

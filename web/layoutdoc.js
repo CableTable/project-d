@@ -18,7 +18,9 @@ import { explodeInsert } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
-import { keepOnly, DIM_LAYER } from './edit.js';
+import { keepOnly, DIM_LAYER, DIM_BLOCK } from './edit.js';
+import { followDimensions } from './linked-dimensions.js';
+import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName, tagOf } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
 import { TITLE_BLOCK } from './pdf-export.js';
 import { colourKey, withColour } from './props.js';
@@ -52,9 +54,9 @@ export function layersOf(lay) {
   if (!lay.layers) lay.layers = newDoc(4).layers;
   return lay.layers;
 }
-/** A layout object from one entity (sheet mm; `layers` is the layer table), or null when it has no extents. */
-export function objectPart(id, name, ent, layers, header = {}) {
-  const raw = { header: { ...header }, layers, ltypes: {}, blocks: {}, entities: [{ ...ent, ps: false }] };
+/** A layout object from one entity (sheet mm; `layers` is the layer table; `blocks`: the one a dimension's INSERT names), or null when it has no extents. */
+export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
+  const raw = { header: { ...header }, layers, ltypes: {}, blocks, entities: [{ ...ent, ps: false }] };
   const fl = flatten(raw), box = fl.boxes && fl.boxes.model;
   if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
   return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
@@ -63,6 +65,7 @@ export function objectPart(id, name, ent, layers, header = {}) {
 export const objectPlacement = (part) => placement1(part.id, part.box[0], part.box[1]);
 /** A placed object as plain entities (its placement baked in), or null when Explode cannot carry that kind (it is then kept as a block). */
 function bakeObject(part, p) {
+  if (isDimPart(part)) return isSettled(part, p) ? [part.raw.entities[0]] : null;       // a dimension is settled (settleDims) before it is baked
   const e = part.raw.entities[0], mini = newDoc(4), k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * k, sy = (p.mirrorY ? -1 : 1) * k;
   mini.layers = part.raw.layers;
   addBlock(mini, 'O', [e], [part.box[0], part.box[1]]);
@@ -77,7 +80,7 @@ function bakedEntity(part, p) {
   let byKey = bakedCache.get(part);
   if (!byKey) bakedCache.set(part, byKey = new Map());
   const key = bakeKey(p);
-  if (!byKey.has(key)) { const ents = bakeObject(part, p); byKey.set(key, ents && ents.length === 1 ? { ...ents[0], ps: false } : null); }
+  if (!byKey.has(key)) { const ents = bakeObject(part, p); byKey.set(key, ents && ents.length === 1 && !isDimPart(part) ? { ...ents[0], ps: false } : null); }       // (a dimension is not in the objects' drawing)
   return byKey.get(key);
 }
 /** What objectDoc() would be made of, as text: when it is the same, so is the drawing (and the entities in it). `skip(partId)` leaves an object out (hidden). */
@@ -130,6 +133,69 @@ export function objectReplace(lay, view, ent, next, newId) {
   lay.parts[part.id] = part; lay.placed[i] = pl;
   bakedCache.set(part, new Map([[bakeKey(pl), next]]));
   return true;
+}
+
+// ---------------------------------------------------------------- dimensions on a layout (TODO 156b2c1; layoutdim.js)
+
+/** Bakes the placement of every moved / turned / scaled / mirrored dimension into its block (a new part, the placement back to the identity). → true when any changed. */
+export function settleDims(lay, newId) {
+  const taken = new Set(), names = new Set(Object.values(lay.parts).map((q) => q.name));
+  for (const q of Object.values(lay.parts)) if (q.obj) for (const n of Object.keys(q.raw.blocks || {})) taken.add(n);
+  let changed = false;
+  for (const p of lay.placed) {
+    const part = lay.parts[p.partId];
+    if (!isDimPart(part) || isSettled(part, p)) continue;
+    const old = dimName(part), shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = turnedTag(tagOf(old), p.rot);
+    const name = !shared && tag === tagOf(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
+    taken.add(name);
+    const next = objectPart(newId(), shared ? nextName('Dimension', names) : part.name, { ...ent, r: { ...ent.r, v: ent.r.v.map((v, k) => (ent.r.c[k] === 2 ? name : v)) } },
+      layersOf(lay), part.raw.header, { [name]: bakeBlock(part.raw.blocks[old], part, p) });
+    if (!next) continue;
+    names.add(next.name); lay.parts[next.id] = next;
+    Object.assign(p, objectPlacement(next)); delete p.sc;
+    changed = true;
+  }
+  dropUnusedDims(lay);
+  return changed;
+}
+function dropUnusedDims(lay) {
+  const used = new Set(lay.placed.map((p) => p.partId));
+  for (const [id, q] of Object.entries(lay.parts)) if (isDimPart(q) && !used.has(id)) delete lay.parts[id];
+}
+/** The layout's objects, dimensions included, as they are now (one entity each; a key per object: its part's name and which of that name): what followDims() compares. */
+export function linkView(lay) {
+  const keys = [], entities = [], at = [], blocks = {}, seen = new Map();
+  lay.placed.forEach((p, i) => {
+    const part = lay.parts[p.partId];
+    if (!part || !part.obj) return;
+    const dim = isDimPart(part), ent = dim ? part.raw.entities[0] : bakedEntity(part, p);
+    if (!ent) return;
+    const n = (seen.get(part.name) || 0) + 1;
+    seen.set(part.name, n); keys.push(part.name + '#' + n); entities.push(ent); at.push(i);
+    if (dim) Object.assign(blocks, part.raw.blocks);
+  });
+  return { keys, entities, at, blocks, layers: layersOf(lay) };
+}
+/** Dimensions follow the objects they measure: `prev` and `cur` are linkView()s before and after an edit; a dimension whose end sat on a point that moved is rebuilt (drawings' linked dimensions, linked-dimensions.js). → true when any changed. */
+export function followDims(lay, prev, cur, newId) {
+  const common = cur.keys.map((k, i) => [i, prev.keys.indexOf(k)]).filter(([, j]) => j >= 0);
+  if (!common.length) return false;
+  const before = { header: {}, layers: cur.layers, ltypes: {}, blocks: prev.blocks, entities: common.map(([, j]) => prev.entities[j]) };
+  const next = { entities: common.map(([i]) => cur.entities[i]), blocks: cur.blocks }, out = followDimensions(before, next, 1);
+  if (out === next) return false;
+  let changed = false;
+  common.forEach(([i]) => {
+    const p = lay.placed[cur.at[i]], part = lay.parts[p.partId];
+    if (!isDimPart(part)) return;
+    const name = dimName(part), block = out.blocks[name];
+    if (!block || block === part.raw.blocks[name]) return;
+    const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1;
+    const made = objectPart(newId(), shared ? nextName('Dimension', new Set(Object.values(lay.parts).map((q) => q.name))) : part.name, part.raw.entities[0], layersOf(lay), part.raw.header, { [name]: block });
+    if (!made) return;
+    lay.parts[made.id] = made; Object.assign(p, objectPlacement(made)); changed = true;
+  });
+  dropUnusedDims(lay);
+  return changed;
 }
 
 // ---------------------------------------------------------------- parts
@@ -252,15 +318,16 @@ function metaEntities(lay, blockOf, ids, ob = []) {
 
 /** The layout as a DXF document (writeDxf's shape): everything a CAD app shows, plus the hidden PD_LAYOUT block. */
 export function layoutRaw(lay) {
-  const all = placedAll(lay), baked = [], kept = [], ob = [];
+  const all = placedAll(lay), baked = [], kept = [], ob = [], dimBlocks = {};
   for (const p of all) {
     const part = lay.parts[p.partId], ents = part.obj && bakeObject(part, p);
-    if (ents) { baked.push(...ents); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
+    if (ents) { baked.push(...ents); if (isDimPart(part)) Object.assign(dimBlocks, part.raw.blocks); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
   }
   const ids = [...new Set([...usedIds(lay), ...kept.filter((p) => lay.parts[p.partId].obj).map((p) => p.partId)])];
   const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)), keep: ids });
   for (const [name, def] of Object.entries(layersOf(lay))) if (!(name in doc.layers)) doc.layers[name] = structuredClone(def);
   addEntities(doc, baked);
+  for (const [n, b] of Object.entries(dimBlocks)) addBlock(doc, n, b.entities, b.base);
   addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids, ob));
   return doc;
 }
@@ -329,7 +396,9 @@ export function layoutFromRaw(raw, name) {
 
 /** The plain entities of the file (not the sheet, the marks or the INSERTs) become layout objects again, one each. */
 function readObjects(lay, raw, ob, count) {
-  const layers = layersOf(lay), plain = raw.entities.filter((e) => e.type !== 'INSERT' && !e.ps && !isReserved(e.layer));
+  const layers = layersOf(lay), insName = (e) => String(e.r.v[e.r.c.indexOf(2)] ?? '').trim();
+  const isDim = (e) => e.type === 'INSERT' && DIM_BLOCK.test(insName(e)) && !!raw.blocks[insName(e)];
+  const plain = raw.entities.filter((e) => (e.type !== 'INSERT' || isDim(e)) && !e.ps && !isReserved(e.layer));
   // shortcut: equal-count outside reordering remains positional, use stable entity IDs if that must be detected
   if (count !== plain.length) ob = [];       // outside edits can shift the positional group / lock metadata
   let n = 0, k = 0;
@@ -337,7 +406,7 @@ function readObjects(lay, raw, ob, count) {
     const info = ob[k++];
     if (raw.layers[e.layer] && !layers[e.layer]) layers[e.layer] = raw.layers[e.layer];
     let id; do id = 'ob' + (++n); while (lay.parts[id]);
-    const part = objectPart(id, 'Object ' + n, e, layers, raw.header);
+    const part = objectPart(id, 'Object ' + n, e, layers, raw.header, isDim(e) ? { [insName(e)]: raw.blocks[insName(e)] } : {});
     if (!part) continue;
     lay.parts[id] = part; lay.placed.push({ ...objectPlacement(part), ...(info && typeof info.g === 'string' && info.g ? { g: info.g } : {}), ...(info && info.lock === true ? { lock: true } : {}) });
   }
