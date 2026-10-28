@@ -17,7 +17,12 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 
 ## Tests (both must pass before you commit)
 - `npm.cmd test` (eslint + unit tests)
-- `node browser.test.mjs <port>` (Playwright, Chromium; `npm.cmd run test:browser` exits 1 on npm's notice inside the sandbox)
+- While working: your new / changed steps, `node browser.test.mjs <port> '<step names>'`. Once before commit: the full
+  suite, `node tools/browser-parallel.mjs <port>` (`npm.cmd run test:browser` exits 1 on npm's notice inside the sandbox).
+- A failing step you didn't touch (filtered or full): rerun it alone on the base; if it fails there too, note it as a
+  filter artifact or old failure and go on.
+- `browser.test.mjs` starts and stops its own server: start no other, end no process (no taskkill / Stop-Process).
+- A new mode or command gets checks for Esc mid-command, one Undo, and an edit to its source after it ran.
 
 ## Interrupted run
 If you are resuming a run that was cut off (usage limit), first look at `git status` / the diff and rerun the tests,

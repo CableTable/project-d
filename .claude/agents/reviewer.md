@@ -17,3 +17,4 @@ time a finding; never write to files in the repo. Plain commands only: `git show
 2. Verify each finding in the code before reporting it; flag only real problems (correctness, data loss, security, house rules), no style padding.
 3. Reply: "severity · file:line · problem · fix", most severe first, then test gaps, then "ship as is" or "fix first", then what you didn't check.
    A changed input, pick point or expected value in an existing browser step is a finding unless the brief asked for it: say what the old value caught.
+   A new mode or command: list which of these browser checks it lacks: Esc mid-command, one Undo, an edit to its source after it ran.

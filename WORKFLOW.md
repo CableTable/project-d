@@ -89,12 +89,17 @@ usage-agent-install.ps1.
    each in its own folder (ProjectD-review, or ProjectD-fixC when free).
 3. **PR body in the `pr` skill's shape**: a summary visual (file tree / call tree / diff), before / after evidence
    (tests, screenshots), and a merge-danger call: one-way or two-way door, plus blast radius.
-4. **Retro at session end**: before the merge, a Bishop run of the `retro` skill over the session's commits, briefs and
-   run reports suggests changes to rules, checks, briefs (not code); he picks which to apply.
+4. **Retro at session end** (two runs, his call 2026-10-28): before the merge, a Bishop run of the `retro` skill over the
+   session's commits, briefs and run reports, AND a King retro (`runs<N>/retro<N>king.txt`, same skill, over King's
+   `king-*.jsonl` runs: permissions, wasted tokens, navigation, brief gaps). Both suggest changes to rules, checks,
+   briefs (not code); he picks which to apply.
 5. **Tickets sized for one fresh session** (his call 2026-10-20): every M / L TODO item is split into tickets
    (TODO "66a", "66b", …), each a vertical slice that one fresh builder run can finish with its context under
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
    (`rook.mjs result` shows it) means the ticket was too big: split the rest further.
+   A ticket is one tool family or one command, plus its save / reopen; a brief listing more than ~5 behaviours is two
+   tickets (session 26 retro: every King build peaked 171k-216k). Builders make a WIP commit of each passing slice
+   (said in the report's first line), so a cut-off run loses nothing.
 **Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. This week (49% on Tue 21:45):
 by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. From next week: 14% × k by the end of day k
 after the reset, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
@@ -135,7 +140,7 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"
 /c/Users/raksh/.local/bin/claude3.cmd -p --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
   --add-dir "E:/Project B/Claude/Project D/.git" --add-dir "E:/Project B/Claude/Project D extras" \
-  --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" \
+  --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" \
   --allowedTools "Bash(echo:*)" "Bash(tee:*)" "Bash(npx.cmd:*)" "Bash(npm.cmd:*)" "PowerShell(Select-String:*)" \
     "PowerShell(Select-Object:*)" "PowerShell(Write-Output:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git fetch:*)" \
     "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git cherry-pick:*)" "Bash(git rebase:*)" "Bash(git apply:*)" \
@@ -167,7 +172,10 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # Knight-build (2026-10-20): its own clone ProjectD-rowan, git folder ProjectD-rowan-git (Codex blocks any
 # folder named .git, so the clone uses --separate-git-dir). Elevated sandbox (his one-time admin setup, 2026-10-20:
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
-# Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> origin/claude/session<N>. After: Rook pushes.
+# Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
+# FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
+# `git switch -c <branch> <sha>`. Rook's full-suite script checks out by sha too. After: Rook pushes.
+# Builders never start a server or end a process: browser.test.mjs starts and stops its own (taskkill would kill Rook's suites).
 # If package-lock.json changed since its last build, Rook runs `npm.cmd ci` in ProjectD-rowan first (its sandbox cannot
 # install: EPERM on the npm cache; session 12 lost a Knight round to a missing imagetracerjs).
 # If Codex blocks Knight's commit ("COMMIT_EDITMSG: Permission denied"), the cause is a stale COMMIT_EDITMSG in the
@@ -182,6 +190,8 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # same way. One branch per clone; cherry-pick each into the repo; TODO / DECISIONS conflicts: keep both sides, then drop
 # duplicate TODO rows. Run two builds at once (King + Knight) only when their briefs touch different files; otherwise
 # base the 2nd build on the 1st's commit (session 25: 69e and 69f both edited web/app.js and the cherry-pick conflicted).
+# Every UI ticket touches web/app.js (session 26 retro): parallel builds only when one of them stays out of web/;
+# otherwise the 2nd build starts from the 1st's commit, or waits.
 # Knight says "Selected model is at capacity": wait 5 min, then a FRESH run with the brief plus the STATE line above
 # (not `exec resume`, see above). Knight runs ponytail "full" too (%APPDATA%\ponytail\config.json), like every builder.
 # Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
@@ -313,7 +323,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
   (Without it, claude2 reads CLAUDE.md's builder rule and tries to start claude2 itself.)
 - Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
-- Builders: `npm.cmd test` plus ONLY their own new / changed browser steps (`node browser.test.mjs <port> '<step names>'`) must pass; screenshots light + dark through those steps. **Rook runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
+- Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then once before commit the full suite `node tools/browser-parallel.mjs <port>` (pass / fail lines only; session 26 retro, his OK). A failing step they didn't touch: rerun it alone on the base; failing there too means it predates the build: note it and go on. Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
@@ -321,6 +331,8 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
 - **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in
   GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit. Review A checks the same list.
+  A new mode or command also gets browser checks for Esc mid-command, one Undo, and an edit to its source after it ran
+  (session 26 retro: most High / Medium findings were in those paths).
 - **Time limits:** the full browser suite runs in the background with a 25-min limit (it takes ~20 min); any run
   stops and reports at 60 min. A WIP commit of untested code says so in the report's first line.
 - **Browser steps set their own theme** (light, then dark) at the start; never rely on the step before. Counts that
