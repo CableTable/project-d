@@ -92,7 +92,7 @@ const steps = [];
 function step(name, fn, { needs = [] } = {}) {
   steps.push({ name, fn, needs, afterStep });
 }
-async function runStep(page, { name, fn, afterStep }) {
+async function runStep(page, { name, fn, afterStep }, shotDir) {
   const started = performance.now();
   try {
     await fn();
@@ -100,7 +100,18 @@ async function runStep(page, { name, fn, afterStep }) {
     await page.keyboard.press('Escape');
     assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), /Specify/, `${name} left a command running`);
     console.log('ok', name);
-  } catch (e) { failed++; console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim()); try { await afterStep(); } catch { /* best effort */ } }
+  } catch (e) {
+    failed++;
+    console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim());
+    try { console.log('  prompt:', await page.getByTestId('cmd-prompt').textContent()); }
+    catch (err) { console.log('  prompt: unavailable:', err.message); }
+    if (process.argv.includes('--shots')) {
+      const safeName = name.replace(/[^a-zA-Z0-9_-]+/g, '-').slice(0, 120);
+      try { await page.screenshot({ path: join(shotDir, `FAIL-${safeName}.png`) }); }
+      catch (err) { console.log('  failure screenshot:', err.message); }
+    }
+    try { await afterStep(); } catch { /* best effort */ }
+  }
   finally { timings[name] = Math.round((performance.now() - started) / 10) / 100; }
 }
 
@@ -17649,7 +17660,7 @@ try {
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
-  for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry);
+  for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {
   failed++;
   console.log('FAIL', e.stack || e);
