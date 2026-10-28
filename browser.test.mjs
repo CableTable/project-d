@@ -723,16 +723,32 @@ try {
       await p.mouse.click(sheet.x + 40 * sheet.width / w, sheet.y + (h - 20) * sheet.width / w);
       await p.locator('[data-testid=grip]').first().waitFor({ state: 'visible' });
       const bg = (sel) => p.locator(sel).first().evaluate((el) => getComputedStyle(el).backgroundColor);
-      await q('cmd-echo').click(); await q('cmd-input').waitFor({ state: 'visible' });
-      for (const [theme, ribbon, frame, command] of [['light', 'rgb(245, 245, 245)', 'rgb(217, 217, 217)', 'rgb(242, 242, 242)'], ['dark', 'rgb(59, 68, 83)', 'rgb(34, 41, 51)', 'rgb(43, 47, 54)']]) {
+      await q('cmd-echo').click(); await q('cmd-input').fill('mo'); await p.locator('.cb-rows .r.hi').waitFor({ state: 'visible' });
+      const css = (sel, prop) => p.locator(sel).first().evaluate((el, prop) => getComputedStyle(el)[prop], prop);
+      for (const [theme, ribbon, frame, command, row, link] of [['light', 'rgb(245, 245, 245)', 'rgb(217, 217, 217)', 'rgb(242, 242, 242)', 'rgb(214, 230, 247)', 'rgb(27, 92, 158)'], ['dark', 'rgb(59, 68, 83)', 'rgb(34, 41, 51)', 'rgb(43, 47, 54)', 'rgb(20, 81, 110)', 'rgb(219, 238, 255)']]) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
         assert.equal(await bg('.ribbon-body'), ribbon, `${theme}: ribbon`);
         assert.equal(await bg('.status'), frame, `${theme}: status bar`);
         assert.equal(await bg('.tabsrow'), frame, `${theme}: file tab row`);
         assert.equal(await bg('.dtab.on'), ribbon, `${theme}: active file tab`);
         assert.equal(await bg('[data-testid=cmd-bar]'), command, `${theme}: the command bar keeps its own colour`);
+        assert.equal(await bg('.cb-rows .r.hi'), row, `${theme}: the highlighted suggestion row keeps its old colour`);
+        assert.equal(await p.evaluate(() => { const a = document.createElement('a'); a.href = '#'; document.body.append(a); const c = getComputedStyle(a).color; a.remove(); return c; }), link, `${theme}: links stay blue`);
+        await p.screenshot({ path: `shots-157b/after-cmdbox-${theme}.png` });
         assert.equal(await p.locator('[data-testid=grip]').first().evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 127, 255)', `${theme}: grip`);
         await p.screenshot({ path: `${shotDir}/todo157b-chrome-${theme}.png` });
+      }
+      await p.keyboard.press('Escape'); await p.locator('[data-tool=line]').click();
+      const cv = await p.locator('[data-testid=canvas]').boundingBox();
+      await p.mouse.click(cv.x + cv.width * .35, cv.y + cv.height * .55); await p.mouse.move(cv.x + cv.width * .55, cv.y + cv.height * .4);
+      await p.locator('.drawtip.dynamic-input input.cursor-field').first().waitFor({ state: 'visible' });
+      await p.keyboard.press('5'); await p.locator('input.cursor-field.active').waitFor({ state: 'visible' });
+      for (const [theme, box, outline, hint] of [['light', 'rgb(242, 242, 242)', 'rgb(27, 92, 158)', 'rgb(107, 107, 107)'], ['dark', 'rgb(43, 47, 54)', 'rgb(140, 204, 255)', 'rgb(155, 162, 172)']]) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        assert.equal(await bg('.drawtip.dynamic-input'), box, `${theme}: the cursor command box keeps its old colour`);
+        assert.equal(await css('input.cursor-field.active', 'outlineColor'), outline, `${theme}: the active cursor field keeps its blue outline`);
+        assert.equal(await css('.status .cb-hint', 'color'), hint, `${theme}: the status hint keeps its old colour`);
+        await p.screenshot({ path: `shots-157b/after-cursorbox-${theme}.png` });
       }
       assert.deepEqual(errs, []);
     } finally { await context.close(); }
