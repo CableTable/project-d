@@ -4406,6 +4406,73 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 156d1 fixes: Save As keeps guides; Compare explains Select for snapshot moves; Snap off leaves Measure unsnapped', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const raw = newDoc(4); addEntities(raw, [dxfPoly([[10, 20], [40, 20], [40, 40], [10, 40]], true)]);
+    const other = newDoc(4); addEntities(other, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], true)]);
+    const open = async (name, doc) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name }) });
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const click = async (x, y) => { const a = await point(x, y); await p.mouse.click(a.x, a.y); };
+    const vals = () => q('guide-pos').evaluateAll((es) => es.map((e) => Number(e.value)));
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('original-156d1-fixes.dxf', raw);
+      await q('guide-position').fill('25'); await q('guide-add-v').click();
+      await p.evaluate(() => {
+        window.__saved = {};
+        window.__TAURI__ = {
+          dialog: { save: async () => 'C:/drawings/renamed-156d1-fixes.dxf', open: async () => 'C:/drawings/renamed-156d1-fixes.dxf' },
+          fs: { exists: async () => false, writeTextFile: async (path, text) => { window.__saved = { path, text }; }, readFile: async () => new TextEncoder().encode(window.__saved.text) },
+        };
+      });
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Save As…', exact: true }).click();
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'renamed-156d1-fixes.dxf');
+      assert.deepEqual(await vals(), [25]);
+      await p.locator('.dtab.on .x').click(); await q('open').click(); await q('guide-pos').waitFor();
+      assert.deepEqual(await vals(), [25], 'Save As remembers guides at the new path');
+      await q('guide-pos').fill('26'); await q('guide-pos').press('Enter');
+      await p.locator('.dtab.on .x').click(); await q('open').click(); await q('guide-pos').waitFor();
+      assert.deepEqual(await vals(), [26], 'later guide edits keep using the new path');
+      await p.locator('.dtab.on .x').click(); await p.evaluate(() => { delete window.__TAURI__; });
+      await open('original-156d1-fixes.dxf', raw);
+      assert.deepEqual(await vals(), [25], 'original file keeps its own guides');
+      await q('guide-del').click(); await open('other-156d1-fixes.dxf', other);
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-name-2').click(); await q('cmp-lineup-manual').click();
+      await tab('original-156d1-fixes.dxf').click(); await command('line'); await tab('Compare').click();
+      assert.match(await p.locator('[data-tool=line]').getAttribute('class'), /\bon\b/, 'Line keeps editing meaning in Compare');
+      assert.match(await q('cmp-hint').textContent(), /Use Select to drag the selected snapshot or arrow-nudge it/);
+      await p.locator('[data-tool=select]').click();
+      const from = await point(70, 60), to = await point(82, 68);
+      await p.mouse.move(from.x, from.y); await p.mouse.down(); await p.mouse.move(to.x, to.y, { steps: 3 }); await p.mouse.up();
+      assert.match(await q('cmp-hint').textContent(), /moved X 12.00, Y 8.00/);
+      await p.keyboard.press('ArrowRight'); assert.match(await q('cmd-prompt').textContent(), /nudged 1 mm/);
+      await command('measure'); await click(53.5, 48.5); await click(69.5, 79.5);
+      assert.match(await q('cmd-prompt').textContent(), /ΔX 17(?:\.0+)?\s+ΔY 32(?:\.0+)?/, 'Snap on picks snapshot endpoints');
+      await q('tog-snap').click(); assert.equal(await q('tog-snap').getAttribute('aria-pressed'), 'false');
+      await command('measure'); await click(53.5, 48.5); await click(69.5, 79.5);
+      assert.match(await q('cmd-prompt').textContent(), /ΔX 16(?:\.0+)?\s+ΔY 31(?:\.0+)?/, 'Snap off keeps raw picks near snapshot endpoints');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo156d1-fixes-${theme}.png` });
+      }
+    } finally { await context.close(); }
+  });
+
   await step('TODO 156c1: picked Compare snapshot edits its linked tab in drawing coordinates, Undo, differences and read-only copies', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
@@ -6721,6 +6788,7 @@ try {
     const rp = await rulerPoint('top', 300);
     await page.mouse.move(rp.x, rp.y); await page.mouse.down(); await page.mouse.move(rp.x, rp.y + 60, { steps: 3 }); await page.mouse.up();
     assert.match(await prompt(), /^Guide Y .* placed/);
+    await t('guide-del').click();
     await closeTabs(/outline/);
     await t('new-layout').click();                                // nothing placed yet: the bar says where 0,0 is
     assert.equal(await t('propbar').count(), 0);

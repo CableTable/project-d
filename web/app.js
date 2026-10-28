@@ -3143,6 +3143,7 @@ async function save(forceAs) {
       download(name, text);
     }
     d.name = name; d.path = path; d.dirty = false; d.saved = true;
+    d.guideFile = G.fileKey(path, name); rememberGuides(d);
     const balloonsSaved = d.lay || await balSave(d) !== false;
     d.dirty = !balloonsSaved;
     if (balloonsSaved) dropCopy(d);
@@ -4979,7 +4980,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
   const item = cmpEditingItem(d);
   if (item) {
     const mm = CMP.comparePoint(item, p), tol = 7 / view.scale;
-    const sn = cmpDoc().cmp.items.filter((it) => it.visible).reduce((best, it) => {
+    const sn = state.snap && cmpDoc().cmp.items.filter((it) => it.visible).reduce((best, it) => {
       const hit = it === item ? Ed.snapPick(edIndex(d), ...p, pickTol(d), state.snap, skip, state.snapTypes, extra, from) : null;
       const candidate = it === item ? hit && { ...hit, x: hit.x * item.factor + item.offset[0], y: hit.y * item.factor + item.offset[1] } : cmpSnap(it, it.offset, mm);
       return preferSnap(best, candidate, ...mm, tol, state.snapTypes);
@@ -4992,7 +4993,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     return p.slice(0, 2);
   }
   const ed = !d.lay && !d.cmp && edIndex(d), tol = pickTol(d), types = state.snapTypes;
-  let sn = d.cmp ? d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
+  let sn = d.cmp ? state.snap && d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
   if (state.snap && ed) {
     if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
@@ -5117,7 +5118,8 @@ function moveSelectionTo(g, e) {
   const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
   g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
   g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
-  const box = OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
+  const gs = guideTarget().s;
+  const box = state.snap && ribbon.guideSnap && gs.guidesShow && gs.guides.length && OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
   if (box) {
     const hit = snapGuideBox(box.map((v, i) => (v + (i % 2 ? g.dy : g.dx)) * f), { skipX: straight && g.dx === 0, skipY: straight && g.dy === 0 });
     g.dx += hit.dx / f; g.dy += hit.dy / f;
@@ -9172,7 +9174,7 @@ function renderCompare() {
     } }, '×'))));
   for (const b of ui.cmpAdd) b.disabled = c.items.length >= CMP.MAX_ITEMS;
   for (const b of ui.cmpModes) { const on = b.dataset.m === c.mode; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
-  ui.cmpHint.textContent = `Drag the selected drawing (SNAP follows the status bar), or use the arrow keys (${state.nudge} mm). ` +
+  ui.cmpHint.textContent = `Use Select to drag the selected snapshot or arrow-nudge it (${state.nudge} mm; SNAP follows the status bar). Draw tools edit its linked drawing. ` +
     (selected ? `Selected: ${selected.name} · moved X ${fmt(selected.offset[0])}, Y ${fmt(selected.offset[1])} mm` : 'Add drawings to compare');
   if (document.activeElement !== ui.cmpTol) ui.cmpTol.value = String(c.tol);
   ui.cmpShow.checked = c.show;
