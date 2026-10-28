@@ -1,39 +1,46 @@
 /* Project D: R19 AutoCAD dark / CorelDRAW light palette. */
 :root {
-  --app: #e6e6e6; --panel: #f2f2f2; --ribbon: #f6f6f6; --ctx: #2f9e6f;
-  --line: #cfcfcf; --line2: #dedede; --text: #262626; --muted: #6b6b6b; --mutedink: #626262;
+  --app: #d9d9d9; --panel: #f5f5f5; --ribbon: #f5f5f5; --panel-head: #d9d9d9; --ctx: #2f9e6f;
+  --line: #cfcfcf; --line2: #dedede; --text: #3c3c3c; --muted: #62625f; --mutedink: #595959;
   --canvas: #e9e9e9; --sheet: #ffffff; --sheetline: #9a9a9a; --part: #ffffff; --partline: #1d1d1d;
-  --accent: #2f7bd0; --accentink: #000000; --accenttext: #1b5c9e; --sel: #d6e6f7;
+  --accent: #2f7bd0; --accentink: #000000; --accenttext: #4d4d4d; --sel: #cce6ff;
   --mark: #c2410c; --grip: rgba(47, 123, 208, .10);
-  --snap-mark: #00c000; --grip-hover: #ff7f7f; --grip-hot: #cc0000;       /* AutoCAD's green snap outline and ACI 11 / 12 grips, the same in light and dark */
+  --snap-mark: #029d03; --grip-cold: #007fff; --grip-hover: #ff7f7f; --grip-hot: #a50000; --box-window: #0064f8;       /* 157b: AutoCAD's snap outline, GRIPCOLOR 150, GRIPHOVER 11, GRIPHOT 12 and window box, the same in light and dark */
   --field: #ffffff; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #1d7a3a; --pdpaper: #ffffff;
   --r: 5px; --dim: #0f766e;
-  --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #188344; --edge-opacity: .35;
+  --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #00f434; --edge-opacity: .35;
   --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, 'DejaVu Sans Mono', monospace;
   color-scheme: light;
 }
 :root[data-theme='dark'] {
-  --app: #262a31; --panel: #2b2f36; --ribbon: #3b4048; --ctx: #2fb7a3;
-  --line: #1c1f24; --line2: #4b515b; --text: #e6e8eb; --muted: #9ba2ac; --mutedink: #b1b7c0;
+  --app: #222933; --panel: #3b4453; --ribbon: #3b4453; --panel-head: #2e3440; --ctx: #2fb7a3;
+  --line: #37404e; --line2: #4b515b; --text: #f5f5f5; --muted: #b5b2ad; --mutedink: #b1b7c0;
   --canvas: #212830; --sheet: #212830; --sheetline: #4b515b; --part: #212830; --partline: #eef1f4;
-  --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
-  --accent: #0696d7; --accentink: #000000; --accenttext: #8cccff; --sel: #14516e;
+  --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #00f434; --edge-opacity: .8;
+  --accent: #0696d7; --accentink: #000000; --accenttext: #ffffff; --sel: #4a6c96;
   --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
-  --field: #23272d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
+  --field: #4e5a6e; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
   color-scheme: dark;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --app: #262a31; --panel: #2b2f36; --ribbon: #3b4048; --ctx: #2fb7a3;
-    --line: #1c1f24; --line2: #4b515b; --text: #e6e8eb; --muted: #9ba2ac; --mutedink: #b1b7c0;
+    --app: #222933; --panel: #3b4453; --ribbon: #3b4453; --panel-head: #2e3440; --ctx: #2fb7a3;
+    --line: #37404e; --line2: #4b515b; --text: #f5f5f5; --muted: #b5b2ad; --mutedink: #b1b7c0;
     --canvas: #212830; --sheet: #212830; --sheetline: #4b515b; --part: #212830; --partline: #eef1f4;
-    --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8;
-    --accent: #0696d7; --accentink: #000000; --accenttext: #8cccff; --sel: #14516e;
+    --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #00f434; --edge-opacity: .8;
+    --accent: #0696d7; --accentink: #000000; --accenttext: #ffffff; --sel: #4a6c96;
     --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
-    --field: #23272d; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
+    --field: #4e5a6e; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
     color-scheme: dark;
   }
+}
+
+/* 157b: the command line, command box and floating command bar keep the colours they had before the AutoCAD tokens (his call, 2026-10-28) */
+:root .cbar, :root .cfade, :root .cdrawer, :root .cb-echo { --panel: #f2f2f2; --app: #e6e6e6; --text: #262626; --muted: #6b6b6b; --sel: #d6e6f7; --accenttext: #1b5c9e; }
+:root[data-theme='dark'] .cbar, :root[data-theme='dark'] .cfade, :root[data-theme='dark'] .cdrawer, :root[data-theme='dark'] .cb-echo { --panel: #2b2f36; --app: #262a31; --line: #1c1f24; --text: #e6e8eb; --muted: #9ba2ac; --field: #23272d; --sel: #14516e; --accenttext: #8cccff; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .cbar, :root:not([data-theme='light']) .cfade, :root:not([data-theme='light']) .cdrawer, :root:not([data-theme='light']) .cb-echo { --panel: #2b2f36; --app: #262a31; --line: #1c1f24; --text: #e6e8eb; --muted: #9ba2ac; --field: #23272d; --sel: #14516e; --accenttext: #8cccff; }
 }
 
 * { box-sizing: border-box; }
@@ -71,7 +78,7 @@ a { color: var(--accenttext); } a:hover { color: var(--text); }
 .ribbon-body[hidden], .ribbon-titles[hidden], .ribbon-group[hidden], .rail[hidden] { display: none; }
 .ribbon-group { display: flex; flex: none; flex-direction: column; border-right: 1px solid var(--line2); padding: 3px 6px 0; }
 .ribbon-groupbody { display: flex; flex: 1; align-items: start; gap: 2px; }
-.ribbon-gtitle { height: 16px; line-height: 16px; margin: 0 -6px; text-align: center; font-size: 10.5px; color: var(--muted); background: rgba(128,128,128,.12); }
+.ribbon-gtitle { height: 16px; line-height: 16px; margin: 0 -6px; text-align: center; font-size: 10.5px; color: var(--muted); }       /* 157b: AutoCAD's panel title has no band of its own */
 .ribbon button { color: var(--text); }
 .ribbon-big, .ribbon-small { display: flex; align-items: center; gap: 6px; background: none; border: 0; border-radius: 3px; cursor: pointer; }
 .ribbon-big { flex-direction: column; gap: 3px; width: 54px; padding: 5px 2px; font-size: 11px; line-height: 1.15; text-align: center; }
@@ -162,16 +169,16 @@ select.fld { font-family: var(--sans); }
 .canvas { user-select: none; flex: 1; min-width: 0; position: relative; background: var(--canvas); overflow: hidden; touch-action: none; }
 .canvas.part { background: var(--sheet); }
 .canvas[data-work-area='Light'] {
-  --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #188344; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
+  --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #00f434; --edge-opacity: .35; --hot: #d92d20; --mark: #c2410c; --dim: #0f766e; --guide: #0f766e;
   background: #e9e9e9;
 }
 .canvas.part[data-work-area='Light'] { background: #ffffff; }
 .canvas[data-work-area='Dark'] {
-  --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #5cdb8b; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
+  --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #00f434; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
   background: #212830;
 }
-.canvas[data-work-area='Light'] > .ovl { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; }
-.canvas[data-work-area='Dark'] > .ovl { --muted: #9ba2ac; --partline: #eef1f4; --sheet: #212830; }
+.canvas[data-work-area='Light'] > .ovl, .canvas[data-work-area='Light'] > .rubber { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; }
+.canvas[data-work-area='Dark'] > .ovl, .canvas[data-work-area='Dark'] > .rubber { --muted: #9ba2ac; --partline: #eef1f4; --sheet: #212830; }
 .status .work-area { display: inline-flex; align-items: center; justify-content: center; }
 /* Drawing feedback has its own accent; panels and menus keep the UI accent. */
 .canvas > svg, .canvas > .ovl, .canvas > .rubber { --accent: var(--selection); }
@@ -255,7 +262,7 @@ select.fld { font-family: var(--sans); }
 .panel-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; z-index: 5; }
 .panel-resize::before { content: ''; position: absolute; left: 2px; top: calc(50% - 17px); height: 34px; width: 2px; background: var(--line2); box-shadow: 3px 0 var(--line2); border-radius: 2px; }
 .panel-resize:hover, .panel-resize:focus-visible { background: var(--sel); outline: 1px solid var(--accent); }
-.panel-top { display: flex; align-items: center; height: 30px; padding: 0 4px 0 6px; background: var(--app); border-bottom: 1px solid var(--line); flex-shrink: 0; gap: 2px; }
+.panel-top { display: flex; align-items: center; height: 30px; padding: 0 4px 0 6px; background: var(--panel-head); border-bottom: 1px solid var(--line); flex-shrink: 0; gap: 2px; }
 .panel-hide, .panel-show { display: flex; align-items: center; justify-content: center; flex-shrink: 0; width: 22px; height: 22px; border: 1px solid var(--line2); border-radius: 3px; color: var(--muted); background: var(--app); cursor: pointer; }
 .panel-show { margin: 4px; }
 .panel section { display: flex; flex-direction: column; gap: 6px; }
@@ -301,8 +308,8 @@ select.fld { font-family: var(--sans); }
 
 /* editing the opened drawing */
 [hidden] { display: none !important; }
-.rubber { position: absolute; z-index: 3; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 25%, transparent); }       /* 155r: SELECTIONAREAOPACITY 25 */
-.canvas > .rubber.crossing { --accent: var(--crossing); border-style: dashed; }
+.rubber { position: absolute; z-index: 3; pointer-events: none; border: 1px solid var(--partline); background: color-mix(in srgb, var(--box-window) 25%, transparent); }       /* 155r: SELECTIONAREAOPACITY 25; 157b: AutoCAD's white edge (the drawing's own contrast colour, so it shows on a light canvas too) */
+.canvas > .rubber.crossing { background: color-mix(in srgb, var(--crossing) 25%, transparent); border-style: dashed; }
 .drawbox .layers-head { gap: 2px; }
 .drawbox .layers-head .tog { margin-left: 0; }
 .drawbox .tools { margin-left: auto; display: flex; gap: 2px; }
@@ -638,8 +645,8 @@ input.cursor-field[aria-invalid='true'] { border-color: #dc2626; outline: 1px so
 .ovl .tx-base { fill: none; stroke: var(--mark); stroke-width: 1; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
 
 /* Grips (grips.js; mock-up R5c): blue squares, the hot grip red, the dragged shape dashed over a dashed ghost of what it was */
-.ovl .gr { fill: var(--accent); stroke: var(--accentink); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
-.ovl .gr.hover { fill: var(--grip-hover); stroke: var(--grip-hover); }       /* 155r: GRIPHOVER ACI 11 #ff7f7f, GRIPHOT ACI 12 #cc0000 */
+.ovl .gr { fill: var(--grip-cold); stroke: var(--muted); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
+.ovl .gr.hover { fill: var(--grip-hover); stroke: var(--grip-hover); }       /* 155r: GRIPHOVER ACI 11 #ff7f7f, GRIPHOT ACI 12 #a50000 */
 .ovl .gr.hot { fill: var(--grip-hot); stroke: var(--grip-hot); }
 .ovl .gr-tick { stroke: var(--hot); stroke-width: 1.2; fill: none; vector-effect: non-scaling-stroke; }
 .ovl .gr-cross { stroke: var(--accent); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }

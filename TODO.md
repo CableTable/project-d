@@ -286,8 +286,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     156d. Guides, Layers (+ Add), Contour, Measure in every tab (S–M). Grilled 2026-10-28 (DECISIONS "Guides, Layers, Measure in every tab"):
       156d1. ✅ (built, Knight, 2026-10-28) Guides on drawing tabs (remembered per file on this PC, never in the DXF) and in Compare; Measure in Compare across all snapshots (S). Layouts' "+ Add layer" goes with 156b2; Compare Layers / Contour with 156c2.
     157. **UI colours match AutoCAD** (M, grilled 2026-10-28, DECISIONS "UI colours match AutoCAD"; next session). Facts so far: ours `runs26/q-colours.out`, AutoCAD per web `runs26/pawn-acadcolours.json` (documented vs measured; snap marker colour conflicts). 155r already gives the 25% box fill.
-      157a. Bishop-acad: screenshots of his AutoCAD, dark and light (ribbon, panel titles, file tabs, palettes, command line, status bar, grips, snap marker), picked hex values to `Project D extras/acad-colours.txt` + acad-facts line (S).
-      157b. Build: theme tokens for both modes from 157a; drawing area unchanged; before / after screenshots light and dark (S–M).
+      157a. ✅ (measured 2026-10-28, `acad-colours.txt`) Bishop-acad: screenshots of his AutoCAD, dark and light (ribbon, panel titles, file tabs, palettes, command line, status bar, grips, snap marker), picked hex values to `Project D extras/acad-colours.txt` + acad-facts line (S).
+      157b. ✅ (built, King, 2026-10-28; command bar kept as ours) Build: theme tokens for both modes from 157a; drawing area unchanged; before / after screenshots light and dark (S–M).
 - [x] 158. Browser test hardening (session 26 retro, his OK 2026-10-28):
       158a. ✅ (built, Knight, 2026-10-28) `runStep` (browser.test.mjs ~95): after a passing step press Escape twice and fail with "<name> left a command running" if the prompt still reads "Specify" (check the prompt element first) (S).
       158b. ✅ (built, Knight, 2026-10-28) Flaky `TODO 156a` step: `pivotPoint` (browser.test.mjs ~9161) read null on CI run 40703400524 (passed on 6ea7e68); wait for the pivot before reading it (XS).

@@ -557,7 +557,7 @@ try {
           await start(crossing ? [40, 40] : [20, 20], crossing ? [20, 20] : [40, 40]);
           const s = await style();
           assert.equal(s.border, crossing ? 'dashed' : 'solid');
-          const expected = theme === 'light' ? (crossing ? '#188344' : '#2f7bd0') : (crossing ? '#5cdb8b' : '#60a5fa');
+          const expected = theme === 'light' ? '#1d1d1d' : '#eef1f4';       // 157b: the edge is the drawing's contrast colour (AutoCAD's white on dark)
           assert.equal(s.colour, `rgb(${expected.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16)).join(', ')})`);
           assert.notEqual(s.tint, 'rgba(0, 0, 0, 0)');
           assert.ok(contrastRatio(expected, theme === 'light' ? '#ffffff' : '#212830') >= 3, 'box border reads on the work area');
@@ -661,7 +661,7 @@ try {
         const b = c.getBoundingClientRect(), k = c.width / b.width, cx = (pt.x - b.x) * k, cy = (pt.y - b.y) * k, R = Math.round(10 * k);
         const d = c.getContext('2d').getImageData(Math.round(cx) - R, Math.round(cy) - R, 2 * R, 2 * R).data;
         let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1, inside = 0;
-        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 6 && Math.abs(d[i + 1] - 192) < 6 && d[i + 2] < 6) { const n = i / 4, x = n % (2 * R), y = Math.floor(n / (2 * R)); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); if (Math.abs(x - R) < 3 * k && Math.abs(y - R) < 3 * k) inside++; }
+        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && Math.abs(d[i] - 2) < 6 && Math.abs(d[i + 1] - 157) < 6 && Math.abs(d[i + 2] - 3) < 6) { const n = i / 4, x = n % (2 * R), y = Math.floor(n / (2 * R)); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); if (Math.abs(x - R) < 3 * k && Math.abs(y - R) < 3 * k) inside++; }
         return x1 < 0 ? null : { w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k, inside };
       }, pt);
       for (const theme of ['light', 'dark']) {
@@ -694,16 +694,45 @@ try {
         const side = await p.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
         assert.equal(side, 11);
         const fill = (loc) => loc.evaluate((el) => getComputedStyle(el).fill);
-        assert.ok(!['rgb(255, 127, 127)', 'rgb(204, 0, 0)'].includes(await fill(p.locator('[data-testid=grip]').first())), 'a grip at rest keeps the selection colour');
+        assert.ok(await fill(p.locator('[data-testid=grip]').first()) === 'rgb(0, 127, 255)', 'a grip at rest is GRIPCOLOR 150 (157b)');
         const gr = await at(60, 20, 4);
         await p.waitForFunction(() => document.querySelector('[data-testid=grip].hover'));
         assert.equal(await fill(p.locator('[data-testid=grip].hover')), 'rgb(255, 127, 127)');
         await p.screenshot({ path: `${shotDir}/todo155r-grip-hover-${theme}.png`, clip: { x: gr.x - 80, y: gr.y - 60, width: 160, height: 120 } });
         await p.mouse.down(); await p.mouse.move(gr.x + 30, gr.y + 20, { steps: 4 });
         await p.getByTestId('grip-hot').waitFor();
-        assert.equal(await fill(p.getByTestId('grip-hot')), 'rgb(204, 0, 0)');
+        assert.equal(await fill(p.getByTestId('grip-hot')), 'rgb(165, 0, 0)');
         await p.keyboard.press('Escape'); await p.mouse.up();
         await p.keyboard.press('Escape');
+      }
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
+  await step('TODO 157b: the chrome, grips and snap marker take AutoCAD\'s colours in both themes; the command bar keeps its own', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const doc = newDoc(4);
+      addEntities(doc, dxfLine(20, 20, 60, 20));
+      await q('picker').setInputFiles({ name: 'look-157.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'look-157.dxf');
+      await p.locator('[data-tool=select]').click();
+      const sheet = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), h = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
+      await p.mouse.click(sheet.x + 40 * sheet.width / w, sheet.y + (h - 20) * sheet.width / w);
+      await p.locator('[data-testid=grip]').first().waitFor({ state: 'visible' });
+      const bg = (sel) => p.locator(sel).first().evaluate((el) => getComputedStyle(el).backgroundColor);
+      await q('cmd-echo').click(); await q('cmd-input').waitFor({ state: 'visible' });
+      for (const [theme, ribbon, frame, command] of [['light', 'rgb(245, 245, 245)', 'rgb(217, 217, 217)', 'rgb(242, 242, 242)'], ['dark', 'rgb(59, 68, 83)', 'rgb(34, 41, 51)', 'rgb(43, 47, 54)']]) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        assert.equal(await bg('.ribbon-body'), ribbon, `${theme}: ribbon`);
+        assert.equal(await bg('.status'), frame, `${theme}: status bar`);
+        assert.equal(await bg('.tabsrow'), frame, `${theme}: file tab row`);
+        assert.equal(await bg('.dtab.on'), ribbon, `${theme}: active file tab`);
+        assert.equal(await bg('[data-testid=cmd-bar]'), command, `${theme}: the command bar keeps its own colour`);
+        assert.equal(await p.locator('[data-testid=grip]').first().evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 127, 255)', `${theme}: grip`);
+        await p.screenshot({ path: `${shotDir}/todo157b-chrome-${theme}.png` });
       }
       assert.deepEqual(errs, []);
     } finally { await context.close(); }
@@ -763,7 +792,7 @@ try {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
         for (const crossing of [false, true]) {
           await clear(); await start(crossing ? [210, 110] : [130, 70], crossing ? [130, 70] : [210, 110]);
-          const s = await style(), colour = theme === 'light' ? (crossing ? '#188344' : '#2f7bd0') : (crossing ? '#5cdb8b' : '#60a5fa');
+          const s = await style(), colour = theme === 'light' ? '#1d1d1d' : '#eef1f4';       // 157b
           assert.equal(s[0], crossing ? 'dashed' : 'solid');
           assert.equal(s[1], `rgb(${colour.match(/[a-f\d]{2}/gi).map((c) => parseInt(c, 16)).join(', ')})`);
           assert.notEqual(s[2], 'rgba(0, 0, 0, 0)');
@@ -2884,8 +2913,8 @@ try {
         await theme(mode);
         const c = await tokens();
         assert.deepEqual([c.app, c.panel, c.ribbon, c.line, c.line2, c.text, c.muted, c.accent, c.sel, c.canvas, c.ctx], mode === 'light'
-          ? ['#e6e6e6', '#f2f2f2', '#f6f6f6', '#cfcfcf', '#dedede', '#262626', '#6b6b6b', '#2f7bd0', '#d6e6f7', '#e9e9e9', '#2f9e6f']
-          : ['#262a31', '#2b2f36', '#3b4048', '#1c1f24', '#4b515b', '#e6e8eb', '#9ba2ac', '#0696d7', '#14516e', '#212830', '#2fb7a3']);
+          ? ['#d9d9d9', '#f5f5f5', '#f5f5f5', '#cfcfcf', '#dedede', '#3c3c3c', '#62625f', '#2f7bd0', '#cce6ff', '#e9e9e9', '#2f9e6f']       // 157b: AutoCAD Light
+          : ['#222933', '#3b4453', '#3b4453', '#37404e', '#4b515b', '#f5f5f5', '#b5b2ad', '#0696d7', '#4a6c96', '#212830', '#2fb7a3']);
         for (const bg of ['app', 'panel', 'ribbon', 'sel']) {
           assert.ok(contrastRatio(c.text, c[bg]) >= 4.5, `body text on ${bg}`);
           assert.ok(contrastRatio(c.accenttext, c[bg]) >= 4.5, `blue text on ${bg}`);
@@ -4169,8 +4198,8 @@ try {
       assert.ok(Math.abs(fade.x + fade.width / 2 - canvas.x - canvas.width / 2) < 1, 'toasts centred in the canvas');
       assert.ok(fade.y + fade.height < canvas.y + canvas.height, 'toasts above the status bar');
       assert.equal(await t('cmd-fade').locator('.cb-fade-rows > div').evaluateAll((rows) => rows.length === 3 && rows.every((row) => {
-        const css = getComputedStyle(row), panel = getComputedStyle(document.querySelector('.panel'));
-        return css.opacity === '1' && css.color === panel.color && css.backgroundColor === panel.backgroundColor && css.borderTopStyle === 'solid' && parseFloat(css.borderTopWidth) >= 1;
+        const css = getComputedStyle(row), panel = getComputedStyle(document.querySelector('.cbar')), ink = getComputedStyle(document.querySelector('.cb-in input'));       // 157b: the command bar keeps its own colours
+        return css.opacity === '1' && css.color === ink.color &&css.backgroundColor === panel.backgroundColor && css.borderTopStyle === 'solid' && parseFloat(css.borderTopWidth) >= 1;
       })), true, 'all three toast rows use opaque theme panel/text colours and a border');
     };
     await checkToasts();
@@ -5613,7 +5642,7 @@ try {
     await page.locator('[data-menu=View]').click();
     await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: dark\\b') }).click();
     const dark = await bg();
-    assert.notEqual(light, dark); assert.equal(dark, 'rgb(38, 42, 49)');
+    assert.notEqual(light, dark); assert.equal(dark, 'rgb(34, 41, 51)');
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     await page.screenshot({ path: shotDir + '/a-dark.png' });
     await page.locator('[data-menu=View]').click();
@@ -5624,7 +5653,7 @@ try {
   await step('prefers-color-scheme: dark is followed', async () => {
     const p2 = await (await browser.newContext({ colorScheme: 'dark' })).newPage();
     await p2.goto(URL_);
-    assert.equal(await p2.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(38, 42, 49)');
+    assert.equal(await p2.evaluate(() => getComputedStyle(document.body).backgroundColor), 'rgb(34, 41, 51)');
   });
 
   await step('Parts library with no storage (private mode, blocked): a part is still kept in memory and the app says so; nothing breaks', async () => {
@@ -15854,7 +15883,7 @@ try {
         await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a'); await frame();
         assert.ok(await pixels(selection) > 400, 'selected lines follow the work area');
         const grip = q('grip').first(); await grip.waitFor();
-        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), area === 'Dark' ? 'rgb(96, 165, 250)' : 'rgb(47, 123, 208)');
+        assert.equal(await grip.evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 127, 255)', 'grips are GRIPCOLOR 150 on both work areas (157b)');
         const hover = await p.evaluate(() => {
           const svg = document.querySelector('.ovl svg'), edge = document.createElementNS(svg.namespaceURI, 'path');
           edge.setAttribute('class', 'dr-edge'); svg.append(edge);
@@ -15866,7 +15895,7 @@ try {
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await p.locator('[data-tool=line]').click();
         await p.mouse.move(endpoint.x + endpoint.width / 2, endpoint.y + endpoint.height / 2); await frame();
-        assert.ok(await pixels('00c000') > 10, 'green snap marker is visible on both work areas');
+        assert.ok(await pixels('029d03') > 10,'green snap marker is visible on both work areas');
         await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
         await q('new-layout').click(); await frame();
         assert.equal(await q('canvas').evaluate((el) => el.dataset.workArea), undefined, 'layout tabs follow the app theme entirely');
@@ -15905,13 +15934,13 @@ try {
       if (theme === 'light') {
         assert.equal(c.background, 'rgb(255, 255, 255)');
         assert.deepEqual([c.surround, c.sheet, c.part, c.selection, c.accent, c.panel, c.paper],
-          ['#e9e9e9', '#ffffff', '#ffffff', '#2f7bd0', '#2f7bd0', '#f2f2f2', '#ffffff']);
-        assert.equal(c.grip, 'rgb(47, 123, 208)');
+          ['#e9e9e9', '#ffffff', '#ffffff', '#2f7bd0', '#2f7bd0', '#f5f5f5', '#ffffff']);
+        assert.equal(c.grip, 'rgb(0, 127, 255)');
       } else {
         assert.equal(c.background, 'rgb(33, 40, 48)');
         assert.deepEqual([c.surround, c.sheet, c.part], ['#212830', '#212830', '#212830']);
-        assert.deepEqual([c.accent, c.panel, c.paper], ['#0696d7', '#2b2f36', '#f4f5f6'], 'R19 UI and unchanged PDF preview paper');
-        assert.equal(c.grip, 'rgb(96, 165, 250)');
+        assert.deepEqual([c.accent, c.panel, c.paper], ['#0696d7', '#3b4453', '#f4f5f6'], 'R19 UI and unchanged PDF preview paper');
+        assert.equal(c.grip, 'rgb(0, 127, 255)');
         for (const name of ['selection', 'hot', 'mark', 'muted', 'guide']) {
           assert.ok(contrastRatio(c[name], '#212830') >= 4.5, `${name} ${c[name]} contrasts at least 4.5:1 with model space`);
         }
@@ -15921,7 +15950,7 @@ try {
           const cs = getComputedStyle(edge), result = { colour: cs.stroke, opacity: +cs.strokeOpacity };
           edge.remove(); return result;
         });
-        assert.equal(hover.colour, c.grip, 'hover and grips use the drawing selection colour');
+        assert.equal(hover.colour, 'rgb(96, 165, 250)', 'the hover glow uses the drawing selection colour');
         assert.ok(contrastRatio(c.selection, '#212830', hover.opacity) >= 3, 'translucent graphical hover contrasts at least 3:1 on model space');
       }
       assert.ok(await accentWhen((n) => n > 100) > 100, 'selected line is painted in the selection token');
