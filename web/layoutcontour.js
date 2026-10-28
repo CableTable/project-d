@@ -66,7 +66,7 @@ const r6 = (v) => Math.round(v * 1e6) / 1e6;
 /** Where the contour part goes so its rings lie on the source part's outline: the source's turn and mirror, and its corner moved by the boxes' difference. */
 export function contourPlacement(srcPart, srcPl, ctPart) {
   const f = srcPart.factor || 1, u = (ctPart.box[0] - srcPart.box[0]) * f, v = (ctPart.box[1] - srcPart.box[1]) * f;
-  const th = (srcPl.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), p = u * (srcPl.mirrorX ? -1 : 1), q = v * (srcPl.mirrorY ? -1 : 1);
+  const th = (srcPl.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), k = srcPl.sc || 1, p = u * k * (srcPl.mirrorX ? -1 : 1), q = v * k * (srcPl.mirrorY ? -1 : 1);
   return placement1(ctPart.id, r6(srcPl.x + co * p - si * q), r6(srcPl.y + si * p + co * q), srcPl.rot, srcPl.mirrorX, srcPl.mirrorY);
 }
 

@@ -165,6 +165,27 @@ test('round trip: write, read, and the layout is back — settings, parts and ev
   assert.equal(readDxf(again).entities.filter((e) => e.type === 'INSERT').length, 7);
 });
 
+test('TODO 156b1: a scaled placement is the INSERT scale, and the scale comes back from the file', () => {
+  const lay = sample();
+  lay.placed.push({ ...placement1('a', 300, 200, 30, false, true), sc: 2.5 });
+  const raw = LD.layoutRaw(lay), ins = raw.entities.filter((e) => e.type === 'INSERT');
+  const text = writeDxf(raw, { escapeUnicode: true }), back = LD.layoutFromRaw(readDxf(text), 'Scaled');
+  const sc = back.placed.at(-1);
+  near(sc.sc, 2.5); assert.equal(sc.mirrorY, true); near(sc.rot, 30);
+  assert.equal(back.placed[0].sc, undefined, 'an unscaled part has no sc');
+  assert.deepEqual(back.placed, lay.placed);
+  const e = readDxf(text).entities.filter((x) => x.type === 'INSERT').at(-1);
+  assert.equal(ins.length, 8);
+  near(Number(e.r.v[e.r.c.indexOf(42)]), -2.5, 1e-6);       // Y scale = mirror x sc
+  near(Number(e.r.v[e.r.c.indexOf(41)]), 2.5, 1e-6);
+  const againRaw = readDxf(writeDxf(LD.layoutRaw(back))), again = LD.layoutFromRaw(againRaw);
+  assert.deepEqual(again.placed, lay.placed, 'reopening and saving keeps the placement scale');
+  near(again.parts.a.w, lay.parts.a.w); near(again.parts.a.h, lay.parts.a.h);
+  const againInsert = againRaw.entities.filter((x) => x.type === 'INSERT').at(-1);
+  near(Number(againInsert.r.v[againInsert.r.c.indexOf(41)]), 2.5);
+  near(Number(againInsert.r.v[againInsert.r.c.indexOf(42)]), -2.5);
+});
+
 test('the settings need several TEXT chunks when long, and still round-trip (many extra gaps, a long name)', () => {
   const lay = sample();
   lay.s.extraRows = Array.from({ length: 60 }, (_, i) => ({ after: i + 1, mm: i + 0.5 }));

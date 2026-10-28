@@ -378,13 +378,6 @@ function select(options, value, onchange, attrs = {}) {
   return el;
 }
 
-/** W and H of the selected placed part: read-only, because a part is scaled with its drawing (Set length / Width / Height there), not on the layout. */
-function propField(label, id, cls = '') {
-  const input = h('input', { class: 'fld ' + cls, readonly: true, 'data-testid': id, title: 'Read-only: parts are scaled per drawing (Width / Height or Set length on the drawing tab), not on the layout', 'aria-label': label });
-  ui[id] = input;
-  return h('label', { class: 'lbl inline' }, label, input);
-}
-
 // ---- selected placed-part fields (ribbon and right panel): applied on Enter or leaving the field ----
 const placedFields = [];            // [{ input, show (→ text), enabled (→ bool) }]
 /**
@@ -624,7 +617,7 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
   const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : setTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable() || (id === 'contour' && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() && !cmpDoc() : !!editable() || (id === 'contour' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -983,7 +976,7 @@ function showDoc() {
   ribbon.context = null;
   state.gapSel = null; gapSig = ''; hideMenu();
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
-  state.setlen = null; state.grip = null; trackClear(); if (state.mod && state.modDoc !== curDoc()) { state.mod = newMod(state.mod.kind); state.modDoc = curDoc(); } if (state.draw && state.drawDoc !== curDoc()) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
+  state.setlen = null; state.grip = null; trackClear(); if (state.mod && state.modDoc !== curDoc()) { state.mod = newMod(state.mod.kind); state.modDoc = curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== curDoc()) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
   syncFields(); renderTabs(); applyKind(); update();
   if (view.fitted) fit(); else applyView();
 }
@@ -1224,7 +1217,7 @@ function buildPartRibbon() {
   const gbtn = (id, label, svg, action) => { const b = ribbonButton(label, svg, action); delete b.ribbonSync; b.dataset.testid = id; ui[id] = b; return b; };
   ui.pfields = h('div', { class: 'ribbon-page' },
     ribbonGroup('Position', ribbonStack(ribbonField('Name', ui.partName), ribbonField('X mm', ui.px), ribbonField('Y mm', ui.py)),
-      ribbonStack(propField('W', 'pw'), propField('H', 'ph'))),
+      ribbonStack(sizeField('W', 'pw', 'w'), sizeField('H', 'ph', 'h'))),
     ribbonGroup('Rotate', ribbonStack(ribbonField('Angle', ui.pa), ribbonField('Pivot', ui.partPivot = select([['centre', 'Centre'], ['bl', 'Bottom-left'], ['custom', 'Custom']], 'centre', setPivotKind, { 'aria-label': 'Part pivot' })),
       ribbonButton('Rotate 90°', '<path d="M20 12a8 8 0 1 1-3-6M20 4v5h-5"/>', () => setAngleText(selItems().length > 1 ? '90' : String((selectedPlaced()?.p.rot || 0) + 90)), { small: true, enabled: () => !selItems().some((x) => x.p.lock) }))),
     ribbonGroup('Mirror', mirror('x', 'bar-mirror-x'), mirror('y', 'bar-mirror-y')),
@@ -1304,7 +1297,7 @@ function setTool(id) {
   state.colourTool = null; endReadout();
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
-  if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
+  if (MOD_KINDS.includes(id) && !editable() && !(curLay() && LAY_MODS.includes(id))) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
   state.text.drag = null; state.grip = null; state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
@@ -1972,7 +1965,7 @@ function selectedPlaced() {
   const d = curDoc(), lay = d && d.lay, p = lay && state.sel >= 0 && placedNow[state.sel], part = p && lay.parts[p.partId];
   return part ? { d, lay, p, part } : null;
 }
-const placementOf = (p) => ({ ...placement1(p.partId, p.x, p.y, p.rot, p.mirrorX, p.mirrorY), ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}), ...(p.cid ? { cid: p.cid } : {}), ...(p.ct ? { ct: p.ct } : {}) });
+const placementOf = (p) => ({ ...placement1(p.partId, p.x, p.y, p.rot, p.mirrorX, p.mirrorY), ...(p.sc && p.sc !== 1 ? { sc: p.sc } : {}), ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}), ...(p.cid ? { cid: p.cid } : {}), ...(p.ct ? { ct: p.ct } : {}) });
 /** The turn's pivot of the selected part as a sheet point (mm, y up). */
 const pivotPoint = (part, pl) => PL.pivotOf(part, pl, state.pivot.kind, [state.pivot.x, state.pivot.y]);
 const showBox = (i) => { if (multiSel()) { const b = selBox(); return b ? fmt(b[i]) : '—'; } const s = selectedPlaced(); return s ? fmt(placedBox(s.part, s.p)[i]) : '—'; };
@@ -3595,7 +3588,7 @@ function buildCommand() {
   ui.cmdUI = buildCmdUI({ commands: () => ownCommands, tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(ownCommands.find((x) => x.name === name)), canvas: () => ui.canvas, previewBounds, say: note });
   ui.hist = ui.cmdUI.hist; ui.prompt = ui.cmdUI.prompt; ui.cmd = ui.cmdUI.input;
   ui.keepMeas = h('button', { class: 'btn sm', type: 'button', hidden: true, 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
-  ui.modAsk = h('span', { hidden: true, class: 'modask' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-yes', onclick: () => { if (modLive()) modAnswer(editable(), true); } }, 'Yes'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-no', onclick: () => { if (modLive()) modAnswer(editable(), false); } }, 'No'));
+  ui.modAsk = h('span', { hidden: true, class: 'modask' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-yes', onclick: () => { if (modLive() || layModLive()) modAnswer(editable() || curDoc(), true); } }, 'Yes'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-no', onclick: () => { if (modLive() || layModLive()) modAnswer(editable() || curDoc(), false); } }, 'No'));
   ui.cmdUI.acts.append(ui.keepMeas, ui.modAsk);
   return ui.cmdUI.log;
 }
@@ -3611,7 +3604,7 @@ function activeCmd() {
 /** The function that takes a picked or typed point for the point tool that is on (Set length, Measure, Dimension, Leader, Balloon, Mirror), or null. */
 const pointToolAction = () => state.setlen ? lengthPoint : state.tool === 'measure' ? measurePoint
   : state.dim ? dimensionPoint : state.ldr && !textEditing() ? ldrPoint
-    : state.bal ? balClick : modLive() && state.mod.kind === 'mirror' && ['p1', 'p2'].includes(state.mod.stage) ? mirrorPoint : null;
+    : state.bal ? balClick : (modLive() || layModLive()) && state.mod.kind === 'mirror' && ['p1', 'p2'].includes(state.mod.stage) ? mirrorPoint : null;
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
 function cmdEnter(raw) {
@@ -3625,8 +3618,9 @@ function cmdEnter(raw) {
   if (state.grip && editable()) { gripTyped(raw); return; }
   if (drawLive()) { drawTyped(raw); return; }
   if (modLive() && modTyped(editable(), raw)) return;
+  if (layModLive() && modTyped(curDoc(), raw)) return;
   if (state.tool === 'text' && editable() && !textEditing()) { textTyped(raw); return; }
-  const d = state.tool === 'measure' ? measureTarget() : editable(), pointAction = pointToolAction();
+  const d = state.tool === 'measure' || layModLive() ? measureTarget() : editable(), pointAction = pointToolAction();
   if (d && pointAction) {
     const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw);
     if (inp.kind === 'xy' || inp.kind === 'polar') {
@@ -3714,7 +3708,7 @@ function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw') { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (editable()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab: open a drawing first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -3991,6 +3985,7 @@ function drawTools() {
     out.push(s('g', { class: 'padlock', 'data-locked': '1', transform: `translate(${b[2]} ${H - b[3]}) scale(${k})` }, s('rect', { class: 'padlock-bg', x: -13, y: -13, width: 26, height: 26, rx: 5 }),
       s('g', { transform: 'translate(-9 -9) scale(0.75)' }, s('rect', { x: 5, y: 11, width: 14, height: 9, rx: 2 }), s('path', { d: 'M8 11V8a4 4 0 0 1 8 0v3' }))));
   }
+  if (layModLive()) for (const gh of state.mod.ghosts || []) out.push(s('polygon', { class: 'ghost', points: poly(PL.corners(gh.part, gh.pl).map(Y)) }));       // what the running command would make
   const items = selItems();
   if (items.length > 1) {                                           // several selected: each outline, the box round them with its readout, and the pick-order numbers
     const ghosts = pdrag && pdrag.ghosts;
@@ -4120,8 +4115,8 @@ function paintOverlay(gesture = false) {
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); ui.cmdUI.place(); return; }
-    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
-      : modLive() && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
+    const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
+      : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
@@ -4264,7 +4259,7 @@ function attachCanvasEvents() {
       e.preventDefault(); e.stopImmediatePropagation();
     }
   }, true);
-  let pan = null, drag = null, lrub = null, wheelAt = 0;                        // lrub: a rubber band started on an empty bit of a layout's sheet
+  let pan = null, drag = null, lrub = null, lmod = null, wheelAt = 0;                        // lrub: a rubber band started on an empty bit of a layout's sheet
   c.addEventListener('wheel', (e) => {
     e.preventDefault();
     const p = local(e);
@@ -4306,10 +4301,10 @@ function attachCanvasEvents() {
         }
         capture(c, e);
       }
-      if (curLay() && (state.tool === 'select' || state.tool === 'step' || state.tool === 'contour')) {
+      if (curLay() && (state.tool === 'select' || state.tool === 'step' || state.tool === 'contour' || (layModLive() && state.mod.stage === 'pick'))) {
         if (placedDown(e)) { capture(c, e); }
         else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; capture(c, e); }
-      }
+      } else if (layModLive()) { lmod = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; capture(c, e); }
     }
   });
   c.addEventListener('pointermove', (e) => {
@@ -4330,6 +4325,8 @@ function attachCanvasEvents() {
     const d = state.tool === 'measure' ? measureTarget() : editable();
     if (state.draw && d && state.drawDoc === curDoc()) drawHoverAt(d, e.clientX, e.clientY, e.shiftKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
+    else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
+    if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
     if (state.text.drag) textDragMove(e);
     if (state.grip) gripMove(e); else gripHoverAt(e);
     if (state.balDrag) balMove(e);
@@ -4362,6 +4359,7 @@ function attachCanvasEvents() {
     if (state.grip) gripUp(e);
     if (state.balDrag) balUp();
     if (pdrag) placedUp();
+    if (lmod) { const r = lmod; lmod = null; if (!r.moved && e.button === 0 && layModLive()) { const ld = curDoc(); modUp(ld, { p: toDrawing(ld, r.x, r.y), moved: false, shift: r.shift }, toDrawing(ld, e.clientX, e.clientY), e.shiftKey, false); } }
     if (state.drawingRotate?.drag) drawingRotateUp(e);
     if (lrub) { const r = lrub; lrub = null; hideRubber(); if (r.zoom) zoomWindowUp(r, e); else layoutBoxSelect(r, e); }
     const was = drag; drag = null;
@@ -4401,7 +4399,7 @@ function attachCanvasEvents() {
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
   c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
-  c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
+  c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
@@ -4409,6 +4407,7 @@ function attachCanvasEvents() {
     const gh = e.target.closest && e.target.closest('[data-guide]');
     if (state.draw && !curLay()) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
+    if (layModLive()) { modEnter(curDoc()); return; }
     if (gh && curLay()) { guideMenu(e, Number(gh.dataset.guide)); return; }
     if (curLay()) { layoutMenu(e); return; }
     const d = editable();
@@ -4430,7 +4429,7 @@ function renderCommand() {
   const cycling = selectionCycle && state.msg === `${selectionCycle.index + 1} of ${selectionCycle.hits.length} objects here`;
   ui.cmdUI.status(cycling ? state.msg : '');
   if (ui.keepMeas) ui.keepMeas.hidden = !(state.meas && state.meas.pts.length === 2 && editable());
-  if (ui.modAsk) ui.modAsk.hidden = !(modLive() && state.mod.kind === 'mirror' && state.mod.stage === 'erase');
+  if (ui.modAsk) ui.modAsk.hidden = !((modLive() || layModLive()) && state.mod.kind === 'mirror' && state.mod.stage === 'erase');
   const cm = cmpDoc();
   if (cm) { cmpCommand(cm.cmp); return; }
   if (state.dsOpen) { ui.hist.textContent = 'Command: DIMSTYLE   Dimension style'; ui.prompt.textContent = 'Preset, arrow size, text height, decimals, gap, units and text position. OK applies, Esc cancels:'; return; }
@@ -4447,6 +4446,7 @@ function renderCommand() {
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
   if (state.grip && ed) { const gg = state.grip; ui.hist.textContent = `Command: ${GR.commandOf(gg.ent, gg.id)}   ${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = gg.id.startsWith('e') ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):'; return; }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
+  if (layModLive()) { const mp = modPrompt(curDoc()); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(ed)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
   const gp = lay && lay.parts[lay.s.gridPart];
@@ -4490,9 +4490,6 @@ function renderProps() {
   ui.partName.title = ui.partName.textContent;
   ui.ppLock.hidden = !allLocked;
   const b = many ? selBox() : part && placedBox(part, p);
-  ui.pw.value = b ? fmt(b[2] - b[0]) : '—';
-  ui.ph.value = b ? fmt(b[3] - b[1]) : '—';
-  for (const k of ['pw', 'ph']) ui[k].disabled = !p;
   for (const f of placedFields) {                                   // the typed fields show the part's values, except the one being typed in
     f.input.disabled = !p || !f.enabled() || (locked && f.input.dataset.lockable === '1') || (many && /^rot-p[xy]$/.test(f.input.dataset.testid));
     if (document.activeElement !== f.input) f.input.value = p ? f.show() : '—';
@@ -6337,6 +6334,7 @@ function cursorKey(e) {
 // ---- Offset, Trim and Mirror (modify.js) ----
 const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
+const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror'];      // the modify commands that also work on a layout's placed parts (TODO 156b1)
 let copyMode = 'Multiple';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
@@ -6375,7 +6373,8 @@ function trimPreview(d, m, e) {
 
 /** A modify tool just chosen: Offset reads its remembered distance; Mirror takes the selection if there is one. */
 function modStart(id) {
-  const m = state.mod, d = editable();
+  const m = state.mod, d = editable() || curDoc();
+  if (d.lay) { layModStart(id); return; }
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
   else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line, arc or polyline segment (radius ${mmText(state.filR)} mm; R changes it)`; }
@@ -6394,6 +6393,8 @@ function refPrompt(m) {
   return `${lead}: Specify the new ${turn ? 'angle' : 'length'} or [Points / Esc] ${turn ? '<0>' : '<1.0000>'}: (${turn ? 'degrees' : 'mm'} or click${turn ? '; Shift = 15°' : ''})`;
 }
 function modPrompt(d) {
+  if (d.lay) d = { sel: new Set(selIdxs()) };               // a layout: only how many are selected is read
+
   const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
   if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
@@ -6419,6 +6420,7 @@ function modPrompt(d) {
 }
 
 function modEsc(d) {
+  if (d.lay && !(state.mod.kind === 'array' && state.mod.ask)) { const was = state.mod; setTool('select'); note(modLabel(was.kind) + (was.kind === 'array' && was.stage !== 'pick' ? ' cancelled: nothing added' : ' ended')); return; }
   const m = state.mod;
   const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
   if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
@@ -6432,6 +6434,7 @@ function modEsc(d) {
   setTool('select'); note(was[0].toUpperCase() + was.slice(1) + ' ended');
 }
 function modEnter(d) {
+  if (d.lay && state.mod.stage === 'pick') { layTake(d); return; }
   const m = state.mod;
   if (['move', 'copy'].includes(m.kind)) {
     if (m.stage === 'pick') moveTake(d);
@@ -6474,8 +6477,8 @@ function modEnter(d) {
 /** Words the active modify tool takes itself, so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
   const m = state.mod;
-  if (modLive() && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
-  if (modLive() && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
+  if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
+  if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!modLive() || !['trim', 'extend'].includes(m.kind)) return false;
   if (m.askMode || m.fence || m.cross || m.erase) return true;
   const own = m.kind === 'extend' ? ['b', 'boundary', 'boundary edges'] : ['t', 'cutting', 'cutting edges', 'r', 'erase'];
@@ -6615,15 +6618,17 @@ function modHover(d, cx, cy, shift) {
   if (m.kind === 'scale' && m.stage !== 'pick') {
     m.cur = snapPoint(d, p, undefined, undefined, m.p1);
     const k = m.ref ? (m.ref.step === 'new' ? referenceFactor(m.ref.value, scaleDistance(m.p1, m.cur)) : null) : m.p1 && scaleDistance(m.p1, m.cur);
-    if (m.p1 && k != null) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], scaleMatrix(m.p1, k))];
+    m.hoverK = m.p1 ? k : null;
+    if (m.p1 && k != null && m.move) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], scaleMatrix(m.p1, k))];
   }
   if (m.kind === 'array' && m.stage === 'center') m.cur = snapPoint(d, p);
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
+  if (d.lay) { m.ghosts = layGhosts(m); drawTools(); }
   paintOverlay();
 }
 function modUp(d, was, p, shift, crossing) {
   const m = state.mod;
-  modSync(d);
+  if (!d.lay) modSync(d);
   if (['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (was.moved) return;
   if (m.kind === 'offset') {
@@ -6688,6 +6693,7 @@ function mirrorPoint(d, p, shift = false, typed = false) {
 
 /** Array: the selection taken, its default grid set, the preview of every copy; Enter / a typed option / Exit then adds them in one step. */
 function arrayTake(d) {
+  if (d.lay) { layTake(d); return; }
   if (!d.sel.size) { note('Array: pick at least one object first'); return; }
   if (moveLocked(d, d.sel, 'array')) { const msg = state.msg; setTool('select'); note(msg); return; }
   const m = state.mod;
@@ -6717,6 +6723,7 @@ function arrayPreview(d) {
   if (checked.error) { m.move = null; note(checked.error); renderCommand(); paintOverlay(); return; }
   const slots = m.type === 'polar' ? AR.polarPlacements(m.center, m.base, m.cfg).map(({ deg, dx, dy }) => mmul(base, m.cfg.rotate ? rotationMatrix(m.center, deg) : [1, 0, 0, 1, dx, dy]))
     : AR.rectOffsets(m.cfg).map(([x, y]) => mmul(base, [1, 0, 0, 1, x / d.factor, y / d.factor]));
+  if (d.lay) { m.ghosts = layGhosts(m); m.move = null; drawTools(); renderCommand(); return; }
   m.move = slots.length ? { preview: m.preview, items: m.preview.items, dx: 0, dy: 0, slots } : null;
   renderCommand(); paintOverlay();
 }
@@ -6766,6 +6773,7 @@ function arrayCenter(d, q) {
 }
 function arrayDo(d) {
   const m = state.mod;
+  if (d.lay) { layArrayDo(d); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note('Drawing changed: start Array again'); return; }
   if (moveLocked(d, m.sel, 'array')) { const msg = state.msg; setTool('select'); note(msg); return; }
   const polar = m.type === 'polar', added = polar ? m.cfg.items - 1 : m.cfg.cols * m.cfg.rows - 1;
@@ -6792,6 +6800,7 @@ function movePick(d, p, shift, hover = false) {
   return m.p1 && (shift || state.ortho) ? Ed.orthoLock(m.p1, q) : q;
 }
 function transformBase(d, q) {
+  if (d.lay) { const m = state.mod; m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; note('Scale: positive factor or click. C toggles a copy'); paintOverlay(); return; }
   const m = state.mod;
   m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
   const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
@@ -6801,7 +6810,7 @@ function transformBase(d, q) {
 /** Reference (R at the angle / factor prompt): reference angle or length first, then the new one; typed, or two picked points (Set length's pick). Lengths are drawing units inside, mm when typed. */
 function refStart(d) {
   const m = state.mod;
-  m.ref = { step: 'ref', pts: [], value: null }; m.move.slots = null;
+  m.ref = { step: 'ref', pts: [], value: null }; if (m.move) m.move.slots = null;
   note(modPrompt(d).prompt); paintOverlay();
 }
 /** The reference value, or the new one, is known (degrees / drawing units). */
@@ -6847,6 +6856,7 @@ function refTyped(d, raw, c) {
 function transformDo(d, value) {
   const m = state.mod, scaling = m.kind === 'scale', label = scaling ? 'Scale' : 'Rotate';
   if (m.ref) { value = scaling ? referenceFactor(m.ref.value, value) : referenceTurn(m.ref.value, value); if (value == null) { note('The new length must be above 0'); return; } }
+  if (d.lay) { layScaleDo(d, value); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   try {
@@ -6860,6 +6870,7 @@ function transformDo(d, value) {
 }
 function moveTo(d, q) {
   const m = state.mod, copy = m.kind === 'copy', label = copy ? 'Copy' : 'Move';
+  if (d.lay) { layMoveTo(d, q); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   if (m.stage === 'p1') {
@@ -6881,6 +6892,124 @@ function moveTo(d, q) {
     note(copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
   } catch (err) { note(err.message); }
 }
+
+// ---- Move, Copy, Scale, Mirror and Array on a layout (TODO 156b1): the drawing tab's commands, applied to the selected placed parts ----
+// Same prompts, base point, typed values and options as a drawing tab (the code above runs them: d.lay branches only change the "apply to" step).
+function layModLive() { return !!(state.mod && state.modDoc === curDoc() && curLay() && LAY_MODS.includes(state.mod.kind)); }
+const modLabel = (kind) => TOOLS.find((t) => t.id === kind).label;
+/** Is the selection still the one the command took (a Ctrl+Z or another click in between would change it)? */
+function layStill() {
+  const m = state.mod, now = selItems();
+  return !!m.items && now.length === m.items.length && now.every((x, k) => x.i === m.items[k].i && PL.samePlacement(placementOf(x.p), m.items[k].orig));
+}
+function layStale() { const label = modLabel(state.mod.kind); setTool('select'); note(`Layout changed: start ${label} again`); }
+/** Enter on the selection: the parts the command works on are taken (Move and Scale refuse a locked part; copies are allowed). */
+function layTake(d) {
+  const m = state.mod, label = modLabel(m.kind), now = selItems();
+  d.factor = 1;                                                    // the commands above read d.factor: a layout is in mm
+  if (!now.length) { note(`${label}: pick at least one object first`); return; }
+  if (['move', 'scale'].includes(m.kind) && now.some((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
+  m.items = now.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) }));
+  m.sel = new Set(m.items.map((x) => x.i)); m.keep = selIdxs(); m.main = state.sel; m.objs = m.items;
+  if (m.kind === 'array') {
+    const b = selBox();
+    m.stage = 'type'; m.ask = null; m.type = 'rect'; m.center = null; m.move = null;
+    m.cfg = AR.rectDefaults(b); m.base = [(b[0] + b[2]) / 2, (b[1] + b[3]) / 2];
+    state.msg = 'Array: Enter takes Rectangular';
+  } else {
+    m.stage = 'p1';
+    state.msg = m.kind === 'mirror' ? `${m.items.length} selected: click the first point of the mirror line` : `${label}: base point or x,y`;
+    if (m.kind === 'copy') ui.cmdUI.message(`Current settings:  Copy mode = ${copyMode}`);
+  }
+  renderCommand(); paintOverlay();
+}
+function layModStart(id) {
+  curDoc().factor = 1;
+  if (selIdxs().length) layTake(curDoc()); else state.msg = `${modLabel(id)}: select the objects, then press Enter`;
+}
+/**
+ * The placements the running command would make: one list for each result (a placement per taken part). Move / Copy: arg = the target point;
+ * Scale: the factor; Mirror: the second point of the line; Array: nothing (the grid is m.cfg).
+ */
+function layResults(m, arg) {
+  const its = m.items, one = (f) => [its.map((x) => f(x.part, x.orig))];
+  if (m.kind === 'move' || m.kind === 'copy') return one((part, pl) => PL.translate(pl, arg[0] - m.p1[0], arg[1] - m.p1[1]));
+  if (m.kind === 'scale') return one((part, pl) => PL.scaleAbout(part, pl, m.p1, arg));
+  if (m.kind === 'mirror') return one((part, pl) => PL.mirrorAboutLine(part, pl, m.p1, arg));
+  if (m.type === 'polar') return AR.polarPlacements(m.center, m.base, m.cfg).map(({ deg, dx, dy }) => its.map((x) => (m.cfg.rotate ? PL.rotateAbout(x.part, x.orig, m.center, deg) : PL.translate(x.orig, dx, dy))));
+  return AR.rectOffsets(m.cfg).map(([dx, dy]) => its.map((x) => PL.translate(x.orig, dx, dy)));
+}
+/** The outlines drawn while the command waits for its next click (at most 400, so a big Array stays quick). */
+function layGhosts(m) {
+  if (!m.items || m.stage === 'pick') return null;
+  let res = null;
+  if (['move', 'copy'].includes(m.kind) && m.p1 && m.cur) res = layResults(m, m.cur);
+  else if (m.kind === 'scale' && m.p1 && m.hoverK > 0) res = layResults(m, m.hoverK);
+  else if (m.kind === 'mirror' && m.stage === 'p2' && m.cur) res = layResults(m, m.cur);
+  else if (m.kind === 'mirror' && m.stage === 'erase') res = layResults(m, m.p2);
+  else if (m.kind === 'array' && m.stage === 'opts' && !m.cfg.error) res = layResults(m);
+  return res && res.slice(0, 400).flatMap((list) => list.map((pl, k) => ({ part: m.items[k].part, pl })));
+}
+function layMoveTo(d, q) {
+  const m = state.mod, copy = m.kind === 'copy', label = modLabel(m.kind);
+  if (!layStill()) { layStale(); return; }
+  if (m.stage === 'p1') { m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; state.pointLast = m.p1; note(movePrompt(m.kind, m.stage, copyMode)); paintOverlay(); return; }
+  const to = layResults(m, q)[0], r = editSelected((part, pl, c) => to[c.k], { copy, label });
+  state.pointLast = q.slice(0, 2);
+  const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
+  if (copy && r) { selectMany(m.keep, m.main); update(); }          // the originals stay selected, as on a drawing
+  if (again) m.placed = true; else setTool('select');
+  const text = copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back';
+  if (r) afterEdit(r, text); else note(text);
+}
+function layScaleDo(d, k) {
+  const m = state.mod;
+  if (!layStill()) { layStale(); return; }
+  if (!(k >= 1e-4 && k <= 1e4)) { note('The scale factor must be between 0.0001 and 10000'); return; }
+  const to = layResults(m, k)[0], r = editSelected((part, pl, c) => to[c.k], { copy: m.copy, label: 'Scale' });
+  setTool('select');
+  const text = `Selection scaled${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`;
+  if (r) afterEdit(r, text); else note('Scale factor 1: nothing changed');
+}
+function layMirrorDo(d, erase) {
+  const m = state.mod;
+  if (!layStill()) { layStale(); return; }
+  if (erase && m.items.some((x) => x.orig.lock)) { setTool('select'); note(LOCKED); return; }
+  const to = layResults(m, m.p2)[0], r = editSelected((part, pl, c) => to[c.k], { copy: !erase, label: 'Mirror' });
+  setTool('select');
+  if (r) afterEdit(r, `Mirrored${erase ? '' : ' as a copy'}. Ctrl+Z takes it back`); else note('Mirror: nothing changed');
+}
+/** Array: separate placed parts, copies of the selection outside the grid, one Undo (Step and repeat stays the live grid). */
+function layArrayDo(d) {
+  const m = state.mod, lay = d.lay;
+  if (!layStill()) { layStale(); return; }
+  const polar = m.type === 'polar', added = polar ? m.cfg.items - 1 : m.cfg.cols * m.cfg.rows - 1;
+  if (!added) { note(polar ? 'Array: 1 item adds nothing. Change Items, or Esc cancels' : 'Array: 1 column × 1 row adds nothing. Change COUnt, or Esc cancels'); return; }
+  const g = startGesture(d, `Array ${m.items.length > 1 ? `${m.items.length} parts` : m.items[0].part.name}`);
+  gMark(g);
+  for (const list of layResults(m)) { const gm = {}; for (const pl of list) lay.placed.push(fresh(pl, gm)); }
+  gCommit(g);
+  setTool('select'); selectMany(m.keep, m.main); update();
+  note(`Array added ${added} ${added === 1 ? 'copy' : 'copies'}. Ctrl+Z takes them all back`);
+}
+const showSize = (axis) => { const b = selBox(); return b ? fmt(axis === 'w' ? b[2] - b[0] : b[3] - b[1]) : '—'; };
+/** W or H typed on the Part tab: the selection is scaled evenly (the placement's scale) so that side has that length; the lower-left of its box stays. → '' or what is wrong. */
+function setBoxSize(axis, text) {
+  const v = PL.parseMm(text), b = selBox(), name = axis.toUpperCase();
+  if (v == null || !(v > 0)) return `${name} must be a number above 0 in mm`;
+  if (!b) return '';
+  const cur = axis === 'w' ? b[2] - b[0] : b[3] - b[1], k = v / cur;
+  if (!(cur > 1e-9)) return `${name} is 0: the part cannot be scaled to a size`;
+  if (!(k >= 1e-4 && k <= 1e4)) return `${name} would scale the part by ${+k.toPrecision(3)}: the factor must be between 0.0001 and 10000`;
+  const r = editSelected((part, pl) => PL.scaleAbout(part, pl, [b[0], b[1]], k), { label: 'Scale' });
+  if (r) { const nb = A.unionBox(r.items.map((x, j) => placedBox(x.part, r.nexts[j]))); afterEdit(r, `${r.name} scaled ×${+k.toPrecision(6)}: W ${fmt(nb[2] - nb[0])} × H ${fmt(nb[3] - nb[1])} mm`); }
+  return '';
+}
+function sizeField(label, id, axis) {
+  ui[id] = pfield({ 'data-lockable': '1', 'data-testid': id, 'aria-label': label, title: `${label}: the size of the part's box on the sheet, in mm. Type a value and press Enter to scale the part evenly (the lower-left of the box stays)` }, () => showSize(axis), (t) => setBoxSize(axis, t));
+  return labelled(label, ui[id]);
+}
+
 
 function offsetDo(d, p) {
   const m = state.mod, r = MD.offsetEntity(m.ent, offDistU(d), p);
@@ -7016,6 +7145,7 @@ function extendDo(d, idx, p) {
 }
 /** Mirror: the second point is picked, now Yes (the sources go) or No (they stay). One undo step. */
 function modAnswer(d, erase) {
+  if (d.lay) { layMirrorDo(d, erase); return; }
   const m = state.mod, at = new Map(d.raw.entities.map((e, i) => [e, i])), done = [], made = [], skipped = [];
   let blocks = d.raw.blocks;
   for (const ent of m.objs) {
@@ -7619,6 +7749,7 @@ function gripOvl(d, out, k, grips) {
 /** Keys on a layout tab: undo / redo, and for the selected placed part Delete, Ctrl+D and the arrow keys. → true when the key was used. */
 function layoutKey(e, mod, k) {
   if (!curLay()) return false;
+  if (layModLive() && e.key === 'Enter') { e.preventDefault(); modEnter(curDoc()); return true; }
   if (sheetSelOn() && !(mod && !e.altKey && (k === 'z' || k === 'y'))) return false;      // the sheet is selected: the arrow keys and Delete are not for the part behind it
   if (mod && !e.altKey && k === 'z') { e.preventDefault(); if (e.shiftKey) redoLay(); else undoLay(); return true; }
   if (mod && !e.altKey && !e.shiftKey && k === 'y') { e.preventDefault(); redoLay(); return true; }
@@ -7670,6 +7801,7 @@ function editKey(e) {
     else if (state.sheetDrag) sheetCancel();
     else if (sheetSelOn() && !pdrag) selectSheet(false);
     else if (curLay() && pdrag) cancelPlacedDrag();
+    else if (layModLive()) modEsc(curDoc());
     else if (curLay() && multiSel() && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }

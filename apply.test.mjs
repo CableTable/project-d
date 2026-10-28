@@ -134,6 +134,21 @@ test('a drawing with no extents is not a part', () => {
   assert.equal(A.partFromDrawing('x.dxf', doc, fl, 1), null);
 });
 
+test('TODO 156b1: scaled, turned and mirrored placements round-trip as INSERT scales, including inch parts', () => {
+  for (const file of ['sample.dxf', 'inch.dxf']) {
+    const { raw, fl } = load(file), factor = unitFactor(fl.units);
+    const part = A.partFromDrawing(file, raw, fl, factor);
+    const pl = { ...A.placement1('p', 300, 200, 90, true, false), sc: 2.5 };
+    const { doc } = A.buildLayoutDoc({ parts: { p: part }, placed: [pl], ...base });
+    const back = D.readDxf(W.writeDxf(doc)), ins = inserts(back);
+    assert.equal(ins.length, 1);
+    near(+pair(ins[0], 41), -factor * pl.sc); near(+pair(ins[0], 42), factor * pl.sc);
+    near(+pair(ins[0], 50), pl.rot); near(+pair(ins[0], 10), pl.x); near(+pair(ins[0], 20), pl.y);
+    const expected = A.placedBox(part, pl), actual = partsBox(back);
+    actual.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-3, `${file}: saved box ${i}`));
+  }
+});
+
 test('preview slots: each copy lands on its slot, its base where Apply puts the INSERT (also rotated)', () => {
   const { raw, fl } = load('sample.dxf');
   const part = A.partFromDrawing('sample.dxf', raw, fl, unitFactor(fl.units));

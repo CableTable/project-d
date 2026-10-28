@@ -5521,14 +5521,14 @@ try {
     await shotBoth('slot-width');
   });
 
-  await step('review: the read-only Part ribbon numbers (W, H) are not drawn as inputs; X, Y and Angle are, and say what they are', async () => {
+  await step('review: the Part ribbon numbers (W, H) are editable scale inputs; X, Y and Angle are inputs, and say what they are', async () => {
     const bg = await t('pw').evaluate((e) => getComputedStyle(e).backgroundColor);
-    assert.match(bg, /^rgba\(0, 0, 0, 0\)|^transparent/, 'no white input look: ' + bg);
-    assert.match(await t('pw').getAttribute('title'), /Read-only: parts are scaled per drawing/);
-    assert.match(await t('ph').getAttribute('title'), /Read-only: parts are scaled per drawing/);
+    assert.doesNotMatch(bg, /^rgba\(0, 0, 0, 0\)|^transparent/, 'W is typed, so it looks like an input: ' + bg);
+    assert.match(await t('pw').getAttribute('title'), /Type a value and press Enter to scale the part evenly/);
+    assert.match(await t('ph').getAttribute('title'), /Type a value and press Enter to scale the part evenly/);
     const bgx = await t('px').evaluate((e) => getComputedStyle(e).backgroundColor);
     assert.doesNotMatch(bgx, /^rgba\(0, 0, 0, 0\)|^transparent/, 'X is typed, so it looks like an input: ' + bgx);
-    assert.equal(await t('px').isEditable(), true); assert.equal(await t('pw').isEditable(), false);
+    assert.equal(await t('px').isEditable(), true); assert.equal(await t('pw').isEditable(), true);
     assert.match(await t('px').getAttribute('title'), /lower-left of the part's box/);
   });
 
@@ -5657,7 +5657,16 @@ try {
     assert.equal(await t('hint-pill').textContent(), 'Ctrl-drag = copy · Ctrl+Shift-drag = copy straight (along X or Y)');
     assert.equal(await page.locator('[data-group=tools] .grip-sq rect').count(), 8, 'handles at the four corners and four mid-sides');
     assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 0, 'no turn arrows until the part is clicked again');
-    assert.equal(await t('pw').isEditable(), false); assert.equal(await t('ph').isEditable(), false);
+    assert.equal(await t('pw').isEditable(), true); assert.equal(await t('ph').isEditable(), true);
+    for (const id of ['pw', 'ph']) {
+      const w = Number(await t('pw').inputValue()), h = Number(await t('ph').inputValue());
+      await t(id).fill(String((id === 'pw' ? w : h) * 1.5)); await t(id).press('Enter');
+      approx(Number(await t('pw').inputValue()), w * 1.5, 0.02, `${id}: W scales uniformly`);
+      approx(Number(await t('ph').inputValue()), h * 1.5, 0.02, `${id}: H scales uniformly`);
+      await t(id).evaluate((e) => e.blur()); await page.keyboard.press('Control+z');
+      approx(Number(await t('pw').inputValue()), w, 0.02, `${id}: Undo restores W`);
+      approx(Number(await t('ph').inputValue()), h, 0.02, `${id}: Undo restores H`);
+    }
     for (const id of ['px', 'py', 'pw', 'ph', 'pa']) assert.ok(!/Build B/.test((await t(id).getAttribute('title')) || ''), id);
     assert.ok(!/Build B/.test(await page.locator('body').innerHTML()), 'no "Build B" placeholder wording left');
     assert.equal(await t('bar-mirror-x').textContent(), 'Mirror X'); assert.equal(await t('bar-mirror-y').textContent(), 'Mirror Y');
@@ -14268,6 +14277,73 @@ try {
     assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'LINE']);
     await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT', 'LINE']);
     await closeTabs(/./);
+  });
+
+  await step('TODO 156b1: on a layout, Move, Copy, Mirror, Scale and Array work on the selected placed parts, one Undo each; W / H in the Part tab scale; a saved scale reopens', async () => {
+    await freshLayoutWithPlate();
+    await partTab(); await t('px').fill('100'); await t('px').press('Enter'); await partTab(); await t('py').fill('100'); await t('py').press('Enter');
+    await t('panel-library').click();
+    await libCard('Dial').locator('[data-testid=lib-add]').click();
+    await t('ptab-drawing').click();
+    await partTab(); await t('px').fill('400'); await t('px').press('Enter'); await partTab(); await t('py').fill('300'); await t('py').press('Enter');
+    const blur = () => page.evaluate(() => document.activeElement?.blur());
+    const undo = async () => { await blur(); await page.keyboard.press('Control+z'); };
+    const rawText = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const placedNow = async () => layoutFromRaw(readDxf(await rawText())).placed;
+    const wh = async () => { await partTab(); return [Number(await t('pw').inputValue()), Number(await t('ph').inputValue())]; };
+    for (const id of ['move', 'copy', 'scale', 'mirror', 'array']) assert.equal(await page.locator(`[data-tool=${id}][disabled], [data-tool=${id}][aria-disabled=true]`).count(), 0, `${id} is not greyed on a layout`);
+    const [x0, y0] = await pos(), [w0, h0] = await wh(), n0 = await nParts();
+    assert.equal(await t('pw').isEditable(), true, 'W is typeable now'); assert.equal(await t('ph').isEditable(), true);
+    // Move: base point, then a typed target
+    await typeCmd('move'); assert.match(await prompt(), /^Specify base point or \[Displacement\]/); await typeCmd('0,0'); await typeCmd('120,0');
+    assert.deepEqual(await pos(), [x0 + 120, y0]); assert.equal(await nParts(), n0);
+    assert.equal((await histLabels()).at(-1), 'Move Dial');
+    await undo(); assert.deepEqual(await pos(), [x0, y0], 'one Undo takes the move back');
+    // a locked part is refused with the usual words
+    await menuItem('Layout', 'Lock');
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('50,0');
+    assert.deepEqual(await pos(), [x0, y0], 'locked: not moved');
+    await menuItem('Layout', 'Unlock');
+    // Copy: the original stays, one more part
+    await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('0,100');
+    assert.equal(await nParts(), n0 + 1, 'a copy is placed'); assert.equal((await histLabels()).at(-1), 'Copy Dial');
+    await undo(); assert.equal(await nParts(), n0, 'one Undo removes the copy');
+    // Mirror about a vertical line x = 300: the part flips and lands on the other side (Erase source? Yes)
+    const before = await placedNow();
+    await page.keyboard.press('Escape'); await typeCmd('mirror'); await typeCmd('300,0'); await typeCmd('300,10');
+    assert.match(await prompt(), /Erase source/); await typeCmd('y');
+    let now = await placedNow();
+    assert.equal(now.length, before.length); assert.ok(now.at(-1).x < before.at(-1).x, 'it moved to the left of the line');
+    assert.notEqual(Boolean(now.at(-1).mirrorY), Boolean(before.at(-1).mirrorY), 'and is mirrored');
+    await undo(); assert.deepEqual(await placedNow(), before, 'one Undo');
+    // Scale 2 about the part's own position: W and H double, the placement carries sc = 2
+    await typeCmd('scale'); await typeCmd(`${x0},${y0}`); await typeCmd('2');
+    let [w1, h1] = await wh(); approx(w1, w0 * 2, 0.02, 'W doubled'); approx(h1, h0 * 2, 0.02, 'H doubled');
+    now = await placedNow(); assert.equal(now.at(-1).sc, 2); assert.equal(now.at(-1).rot, before.at(-1).rot);
+    assert.equal((await histLabels()).at(-1), 'Scale Dial');
+    await undo(); [w1, h1] = await wh(); approx(w1, w0, 0.02, 'W back'); assert.equal((await placedNow()).at(-1).sc, undefined);
+    // typing W in the Part tab scales evenly
+    await partTab(); await t('pw').fill(String(w0 * 1.5)); await t('pw').press('Enter');
+    [w1, h1] = await wh(); approx(w1, w0 * 1.5, 0.02, 'W typed'); approx(h1, h0 * 1.5, 0.02, 'H follows');
+    await undo(); [w1] = await wh(); approx(w1, w0, 0.02, 'W typed: one Undo');
+    // Array 2 x 2: three separate placed parts, one Undo
+    await typeCmd('ar'); await typeCmd('R'); await typeCmd('cou'); await typeCmd('2'); await typeCmd('2'); await typeCmd('');
+    assert.equal(await nParts(), n0 + 3, '2 x 2 adds 3 parts'); assert.equal((await placedNow()).length, before.length + 3);
+    assert.equal((await histLabels()).at(-1), 'Array Dial');
+    await undo(); assert.equal(await nParts(), n0, 'one Undo removes all three');
+    // a saved scale comes back
+    await typeCmd('scale'); await typeCmd(`${x0},${y0}`); await typeCmd('2');
+    const text = await rawText();
+    const saved = readDxf(text), scaled = saved.entities.filter((e) => e.type === 'INSERT').at(-1);
+    assert.equal(layoutFromRaw(saved).placed.at(-1).sc, 2);
+    for (const code of [41, 42]) assert.equal(Number(scaled.r.v[scaled.r.c.indexOf(code)]), 2, `saved INSERT scale ${code}`);
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'scaled.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'scaled.dxf');
+    assert.equal((await placedNow()).at(-1).sc, 2, 'reopened: still scaled');
+    await page.locator('[data-group=parts] .part-hit').last().click({ force: true });
+    [w1, h1] = await wh(); approx(w1, w0 * 2, 0.02, 'reopened W'); approx(h1, h0 * 2, 0.02, 'reopened H');
+    await shotBoth('layout-modify');
   });
 
   await step('TODO 124: Break Apart via Ctrl+K and BREAKAPART separates a group and a block of outlines, selects results, Undo restores selection; plain line explains no change', async () => {

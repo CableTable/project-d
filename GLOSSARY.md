@@ -131,7 +131,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Part tab**: The ribbon context tab that appears and selects itself when placed parts are selected on a layout. It holds their name, position, size, angle, mirror, nudge, group and lock controls. Where: `DECISIONS.md`, Ribbon; `web/app.js`.
 
-**Placed part**: One positioned, rotated or mirrored copy of a part on a layout sheet. Where: `DECISIONS.md`, Placed part: X, Y, W, H, Angle. Avoid: The library part itself.
+**Placed part**: One positioned, rotated, mirrored or uniformly scaled copy of a part on a layout sheet. Its placement scale is saved in the INSERT; typing W or H in the Part tab scales both sides together. Where: `DECISIONS.md`, Placed part: X, Y, W, H, Angle and Tools on Layouts. Avoid: The library part itself.
 
 **Preflight**: An optional drawing check for duplicates, open cut paths, tiny gaps, off-sheet parts, wide lines and live text that warns without blocking export. Where: `DECISIONS.md`, Cleanup / Preflight placement and Preflight: warn, not block.
 

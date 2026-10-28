@@ -272,7 +272,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     156. Same features in every tab (DECISIONS "Same features in every tab"): audit Drawings / Layouts / Compare for tools that work in only one, then close each gap. 156a: corner-arrow rotate (Shift = 15°, ◎ pivot) on drawing selections (grill first).
     156a. ✅ (built, Knight, 2026-10-28) Corner-arrow rotate on drawings: second click toggles grips / arrows, Shift = 15°, ◎ pivot (S).
     156b. Tools on Layouts: whole-part Move / Copy / Rotate / Scale / Mirror / Array; Trim / Extend / Fillet / Offset / Shaping / grips on loose layout objects (M). Grilled 2026-10-28 (DECISIONS "Tools on Layouts"), split:
-      156b1. Move / Copy / Rotate / Scale / Mirror / Array commands on whole placed parts (Scale = placement scale, W / H editable; Array = separate placed parts) (M).
+      156b1. ✅ (built, Knight, 2026-10-28; full browser suite pending with Rook) Move / Copy / Rotate / Scale / Mirror / Array commands on whole placed parts (Scale = placement scale, W / H editable; Array = separate placed parts) (M).
       156b2. Draw on layouts: layout objects (S–M).
       156b3. Trim / Extend / Fillet / Offset / Shaping / grips on layout objects (M).
     156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M).
