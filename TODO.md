@@ -290,7 +290,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
       157b. Build: theme tokens for both modes from 157a; drawing area unchanged; before / after screenshots light and dark (S–M).
 - [ ] 158. Browser test hardening (session 26 retro, his OK 2026-10-28):
       158a. ✅ (built, Knight, 2026-10-28) `runStep` (browser.test.mjs ~95): after a passing step press Escape twice and fail with "<name> left a command running" if the prompt still reads "Specify" (check the prompt element first) (S).
-      158b. Flaky `TODO 156a` step: `pivotPoint` (browser.test.mjs ~9161) read null on CI run 40703400524 (passed on 6ea7e68); wait for the pivot before reading it (XS).
+      158b. ✅ (built, Knight, 2026-10-28) Flaky `TODO 156a` step: `pivotPoint` (browser.test.mjs ~9161) read null on CI run 40703400524 (passed on 6ea7e68); wait for the pivot before reading it (XS).
       158c. `runStep` catch (browser.test.mjs ~97): on a failed step save `FAIL-<step>.png` to the shots folder (when `--shots` is on) and print the prompt line's text (session 26 King retro) (XS).
     155p. ✅ (built, Knight, revised decision 2026-10-28) Snap markers: green `#00C000` outlines, about 12 px, with our text label. Dark halo kept for readability on white paper.
     155q. ✅ (built, King, 2026-10-28) Status bar chips in AutoCAD's order GRID SNAP ORTHO POLAR OTRACK DYN (text chips kept).

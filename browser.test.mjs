@@ -9182,9 +9182,17 @@ try {
     const before = await savedDoc();
     await click(45, 30); await gripWhen(3);
     await click(45, 30); await frames();
-    const arrows = page.locator('.ovl [data-rot]'), pivot = page.locator('.ovl [data-pivot]');
+    const arrows = page.locator('.ovl [data-rot]');
     assert.equal(await arrows.count(), 4); await gripWhen(0);
-    const pivotPoint = async () => { const b = await pivot.boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+    const pivotPoint = async () => {
+      const point = await page.waitForFunction(() => {
+        const el = document.querySelector('.ovl [data-pivot]');
+        if (!el) return null;
+        const b = el.getBoundingClientRect();
+        return b.width && b.height ? { x: b.x + b.width / 2, y: b.y + b.height / 2 } : null;
+      });
+      return point.jsonValue();
+    };
     const arrow = () => arrows.first().evaluate((el) => {
       const q = el.getPointAtLength(el.getTotalLength() / 2), p = new DOMPoint(q.x, q.y).matrixTransform(el.getScreenCTM());
       return { x: p.x, y: p.y };
