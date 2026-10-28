@@ -14867,6 +14867,8 @@ try {
     await page.keyboard.press('Delete'); assert.equal(await nParts(), n0 + 2, 'Delete removes the object');
     await undo(); assert.equal(await nParts(), n0 + 3);
     await page.keyboard.press('Escape');
+    // The deselected line's midpoint grip clears on the next paint and can intercept the next pick.
+    await page.waitForFunction(() => !document.querySelector('[data-grip]'));
     // select the line, the circle and the plate together: a click on the line, Shift-click on the circle's edge and on the plate
     const picked = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-group=tools] .sel-box').length === k, n, { timeout: 5000 }).catch(async (e) => { throw new Error('waiting for ' + n + ' picked, there are ' + (await page.locator('[data-group=tools] .sel-box').count()) + '; ' + (await prompt())); });
     await click(350, 50); await picked(1);
