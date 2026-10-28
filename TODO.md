@@ -266,6 +266,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155k. ✅ Snaps: Tab cycles the hovered object's candidates; all 14 snap types have ticks with exact 2D support and documented geometry limits; `osnap` / `os` opens the tick list, `ortho` asks ON / OFF. F3 / F8 come from 73; no `polar` command (AutoCAD has none). See DECISIONS "TODO 155k as built".
     155l. DIM with automatic type and hover preview (M).
     155m. Extend splines and elliptical arcs (S). (elliptical arcs built; ellipses and splines also work as boundaries; splines still wait for the AutoCAD test)
+    155m2. Extend to an ellipse: a line within ~0.02 mm of tangent can snap to the far crossing; solve line vs ellipse as a quadratic and take the nearer root (review `runs26/rv155mfix2.out`, Low) (S).
     155n. Copy Array (later).
     155o. ✅ (built, King, `web/crosshair.js`) Crosshair cursor (UI check, session 25): AutoCAD draws a full crosshair 5% of the screen (CURSORSIZE 5) with a 3 px pick box; ours is the plain OS crosshair, no pick box, 7 px aperture. No decision chose ours.
     156. Same features in every tab (DECISIONS "Same features in every tab"): audit Drawings / Layouts / Compare for tools that work in only one, then close each gap. 156a: corner-arrow rotate (Shift = 15°, ◎ pivot) on drawing selections (grill first).
