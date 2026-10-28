@@ -64,6 +64,8 @@ usage-agent-install.ps1.
    any other work, and every grill round after that uses them; never questions written without them.
    **Facts first, one round at a time** (his call, 2026-10-24): every code or fact lookup a round needs finishes
    before the round is asked. Never ask a round and then replace it when a lookup comes back: two sets of questions confuse.
+   **Full control** (his call, 2026-10-29): the round is still written, to `runs<N>/grill-<item>.md`, but Rook takes its
+   own recommended answers and goes on without waiting; he can overrule any answer later. He is told only of major changes.
    **AutoCAD check** (his call, 2026-10-27): before grilling any AutoCAD-style feature (commands, prompts, keys, snaps,
    selection, dimensions), Pawn reads Autodesk's own help (help.autodesk.com) on how AutoCAD does it, and the round's
    recommendations follow AutoCAD unless he decided otherwise; where ours differs, say which way is better and why (his ask 2026-10-27). Not settled by the docs: a short AutoLISP / script check
