@@ -3645,7 +3645,7 @@ try {
     await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
   });
 
-  // ---- editing: pick the outline by its chain, Keep only, size, Set length, undo, Save, Apply (fixtures/outline.dxf: a 100 × 60 plate)
+  // ---- editing: select an object or its connected outline, Keep only, size, Set length, undo, Save, Apply (fixtures/outline.dxf: a 100 × 60 plate)
   const sheetPx = async () => {
     const b = await page.locator('rect.sheet').boundingBox();
     const w = Number(await panelControl(page, page.locator('[data-key=sheetW]')).inputValue()), hh = Number(await panelControl(page, page.locator('[data-key=sheetH]')).inputValue());
@@ -3657,6 +3657,12 @@ try {
     const p = await at(x, y);
     if (opts.shift) await page.keyboard.down('Shift');
     try { await page.mouse.click(p.x, p.y); } finally { if (opts.shift) await page.keyboard.up('Shift'); }
+  };
+  const clickConnected = async (x, y, opts = {}) => {
+    await click(x, y, opts);
+    const p = await at(x, y);
+    await page.mouse.click(p.x, p.y, { button: 'right' });
+    await page.getByRole('menuitem', { name: 'Select connected', exact: true }).click();
   };
   const selCount = async () => (await t('sel-count').textContent()).trim();
   const waitSel = (txt) => page.waitForFunction((x) => document.querySelector('[data-testid=sel-count]').textContent.trim() === x, txt, { timeout: 8000 }).catch(async (e) => { throw new Error('waiting for ' + txt + ', it says ' + (await t('sel-count').textContent()) + ' / ' + (await t('cmd-prompt').textContent())); });
@@ -3677,6 +3683,74 @@ try {
   const waitSize = (w, h2) => page.waitForFunction(([a, b]) => document.querySelector('[data-testid=dw]').value === a && document.querySelector('[data-testid=dh]').value === b, [w, h2]);
   const entitiesNow = async () => (await t('entities').textContent()).trim();
 
+  await step('TODO 155c: click selects one object; Shift / Ctrl toggle objects; Select connected, Esc, Contour, Extract and Shaping', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const doc = newDoc();
+      for (const points of [[[100, 100], [200, 100], [200, 160], [100, 160]], [[150, 130], [270, 130], [270, 210], [150, 210]]]) {
+        points.forEach((a, i) => { const b = points[(i + 1) % points.length]; addEntities(doc, dxfLine(a[0], a[1], b[0], b[1])); });
+      }
+      await q('picker').setInputFiles({ name: 'select-155c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'select-155c.dxf');
+      await p.locator('[data-tool=select]').click();
+      const point = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), hh = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
+        return { x: b.x + x * b.width / w, y: b.y + (hh - y) * b.width / w };
+      };
+      const pick = async (x, y, key) => {
+        const a = await point(x, y);
+        if (key) await p.keyboard.down(key);
+        try { await p.mouse.click(a.x, a.y); } finally { if (key) await p.keyboard.up(key); }
+      };
+      const count = (n) => p.waitForFunction((n) => document.querySelector('[data-testid=sel-count]').textContent.trim() === `${n} selected`, n, { timeout: 8000 }).catch(async () => { throw new Error(`Expected ${n} selected; got ${await q('sel-count').textContent()} / ${await q('cmd-prompt').textContent()}`); });
+      const menu = async (x, y) => { const a = await point(x, y); await p.mouse.click(a.x, a.y, { button: 'right' }); await q('ctx-menu').waitFor(); };
+      const connected = async (x, y) => { await menu(x, y); await p.getByRole('menuitem', { name: 'Select connected', exact: true }).click(); };
+      await pick(120, 100); await count(1);
+      await pick(100, 120, 'Shift'); await count(2);
+      await pick(120, 100, 'Control'); await count(1);
+      await pick(100, 120, 'Shift'); await count(0);
+      // Right-click also picks an unselected seed; both themes show the actual menu.
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await menu(120, 100); await count(1);
+        await p.screenshot({ path: `${shotDir}/155c-select-connected-${theme}.png` });
+        await p.getByRole('menuitem', { name: 'Select connected', exact: true }).click(); await count(4);
+        await p.keyboard.press('Escape'); await count(0);
+      }
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      await pick(120, 100); await connected(120, 100); await count(4);
+      await pick(120, 100, 'Control'); await count(3); // only one member is removed
+      await connected(80, 80); await count(4); // empty space uses the selected seeds
+      await pick(100, 120); await count(1); // clicking an already selected member narrows the selection
+      const a = await point(120, 100); await p.mouse.dblclick(a.x, a.y); await count(1);
+      assert.equal(await p.getByRole('dialog').count(), 0, 'double-click adds no Quick Properties flow');
+      await connected(120, 100); await count(4);
+      // Extraction still sees the complete outline through explicit chain selection.
+      await q('bar-extract').click(); await q('name-dialog').waitFor();
+      assert.match(await q('name-dialog').textContent(), /100\.00 × 60\.00 mm/);
+      await q('name-cancel').click();
+      // Contour also accepts the connected LINE outline while the panel is open.
+      await p.locator('[data-tool=contour]').click();
+      await pick(120, 100); await count(1);
+      assert.equal(await q('contour-apply').isDisabled(), true);
+      await connected(120, 100); await count(4);
+      assert.equal(await q('contour-apply').isDisabled(), false);
+      await q('contour-apply').click();
+      assert.match(await q('cmd-prompt').textContent(), /^Contour: 1 new outline/);
+      await q('contour-close').click(); await p.keyboard.press('Control+z');
+      // The smaller outline is picked last: chain expansion must retain Trim's target.
+      await pick(230, 130); await pick(100, 120, 'Shift'); await connected(100, 120); await count(8);
+      await p.locator('[data-menu=Modify]').click();
+      await p.getByRole('menuitem', { name: 'Shaping: Trim', exact: true }).click();
+      assert.match(await q('cmd-prompt').textContent(), /^Trim: 2 outlines → 1 outline, area 4500\.00 mm²/);
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
+
   await step('edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
@@ -3690,13 +3764,14 @@ try {
     assert.match(await t('cmd-hist').textContent(), /Command: SELECT/);
   });
 
-  await step('edit: one click on the outline selects the whole loop (8 entities), drawn in the accent colour', async () => {
+  await step('edit: Select connected selects the whole loop (8 entities), drawn in the accent colour', async () => {
     assert.equal(await accentWhen((n) => n === 0), 0);
-    await click(50, 0);
+    await clickConnected(50, 0);
     await waitSel('8 selected');
-    assert.ok((await accentWhen((n) => n > 150)) > 150, 'selection not drawn in the accent colour');
-    assert.equal(await t('selrow').isVisible(), true);
     assert.match(await t('cmd-prompt').textContent(), /8 entities joined end to end selected/);
+    assert.ok((await accentWhen((n) => n > 150)) > 150, 'selection not drawn in the accent colour');
+    await t('selrow').waitFor();
+    assert.equal(await t('selrow').isVisible(), true);
     await page.screenshot({ path: shotDir + '/s5-selected-light.png' });
   });
 
@@ -3709,7 +3784,7 @@ try {
     await waitSel('0 selected');
     assert.equal(await t('selrow').isVisible(), false);
     assert.equal(await accentWhen((n) => n === 0), 0, 'highlight gone');
-    await click(50, 0); await waitSel('8 selected');
+    await clickConnected(50, 0); await waitSel('8 selected');
     await click(115, 45); await waitSel('0 selected');          // empty space
   });
 
@@ -3769,7 +3844,7 @@ try {
   });
 
   await step('edit: Keep only this leaves just the outline; the size is the plate\'s 100 × 60', async () => {
-    await click(50, 0); await waitSel('8 selected');
+    await clickConnected(50, 0); await waitSel('8 selected');
     await t('keep-only').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 8');
     await waitSize('100', '60');
@@ -3934,7 +4009,7 @@ try {
 
   await step('view: edits on a drawing tab, then Add to layout: the layout tab has the sheet, grippers and step and repeat, no part tools', async () => {
     await closeTabs(/layout/);
-    await click(50, 0); await waitSel('8 selected');
+    await clickConnected(50, 0); await waitSel('8 selected');
     await page.screenshot({ path: shotDir + '/s7-part-selected-light.png' });
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
     await page.screenshot({ path: shotDir + '/s7-part-selected-dark.png' });
@@ -4324,7 +4399,7 @@ try {
     assert.equal(await page.locator('.tabs .dtab.on').getAttribute('data-kind'), 'drawing');
     await inkedWhen((n) => n > 150);
     assert.deepEqual(await sizeNow(), ['175', '80'], 'the drawing: 5 to 180, 20 to 100');
-    await click(100, 20); await waitSel('8 selected');           // the plate's bottom edge: its four sides and four corners, nothing else
+    await clickConnected(100, 20); await waitSel('8 selected');           // the plate's bottom edge: its four sides and four corners, nothing else
     await t('keep-only').click();
     await waitSize('160', '80');
     await page.screenshot({ path: shotDir + '/s9-pdf-light.png' });
@@ -4603,7 +4678,7 @@ try {
     assert.match(await page.locator('[data-testid=outlines] .orow').first().textContent(), /Outline 1.*100 × 60/, 'the biggest outline first');
     assert.equal(await t('sel-name').textContent(), 'Nothing selected');
     assert.equal(await t('bar-extract').isDisabled(), true); assert.equal(await t('bar-keep').isDisabled(), true);
-    await click(50, 0); await waitSel('8 selected');
+    await clickConnected(50, 0); await waitSel('8 selected');
     assert.equal(await t('selbar').isVisible(), true);
     assert.equal(await t('sel-name').textContent(), 'Outline 1');
     assert.equal(await t('sel-layer').textContent(), 'layer 0');
@@ -4613,7 +4688,7 @@ try {
     const p = await at(50, 0);
     await shotBoth('extract-menu', async () => { await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForSelector('[data-testid=ctx-menu]'); }, async () => { await page.keyboard.press('Escape'); });
     await page.mouse.click(p.x, p.y, { button: 'right' });
-    assert.deepEqual(await ctxItems(), ['Extract part…', 'Keep only this', 'Measure from here', 'Delete']);
+    assert.deepEqual(await ctxItems(), ['Extract part…', 'Keep only this', 'Select connected', 'Measure from here', 'Delete']);
     await page.getByRole('menuitem', { name: 'Extract part…' }).click();
     await nameDlg.waitFor();
     assert.equal(await nameDlg.getAttribute('aria-label'), 'Extract part');
@@ -4945,7 +5020,7 @@ try {
     for (const id of ['tog-ortho', 'tog-polar', 'tog-otrack']) assert.equal(await t(id).getAttribute('aria-disabled'), null, id + ' works');
     assert.equal(await t('layer-info').textContent(), 'Layer: —', 'nothing selected');
     assert.ok(!(await hasText(/Scale 1:1/)), 'no fixed scale text');
-    await click(50, 0); await waitSel('8 selected');
+    await clickConnected(50, 0); await waitSel('8 selected');
     assert.equal(await t('layer-info').textContent(), 'Layer: 0');
     await page.keyboard.press('Escape'); await waitSel('0 selected');
     assert.equal(await t('layer-info').textContent(), 'Layer: —');
@@ -5060,14 +5135,14 @@ try {
     for (const id of ['bar-keep', 'bar-extract', 'keep-only', 'extract']) assert.equal(await t(id).isDisabled() , id === 'extract' ? false : true, id);
     const p = await at(50, -25);
     await page.mouse.click(p.x, p.y, { button: 'right' }); await page.waitForSelector('[data-testid=ctx-menu]');
-    assert.deepEqual(await ctxItems(), ['Measure from here', 'Delete'], 'no Extract or Keep for a dimension');
+    assert.deepEqual(await ctxItems(), ['Select connected', 'Measure from here', 'Delete'], 'no Extract or Keep for a dimension');
     await page.keyboard.press('Escape');
     await t('extract').click();
     assert.match(await t('cmd-prompt').textContent(), /a kept dimension is not part of a part/);
     assert.equal(await page.locator('.layer', { hasText: 'Dimensions' }).locator('.mono').textContent(), '1', 'a dimension counts as one entity in Layers');
     assert.equal(await entitiesN(), n0 + 1, 'and one in the Entities readout');
     // the selection of the plate and a dimension together: the size is the plate's
-    await click(50, 0, { shift: true });
+    await clickConnected(50, 0, { shift: true });
     await waitSel('9 selected');
     assert.deepEqual([await t('sel-w').inputValue(), await t('sel-h').inputValue()], ['100.00', '60.00']);
     await page.keyboard.press('Escape'); await waitSel('0 selected');
@@ -6502,7 +6577,7 @@ try {
     assert.equal(await t('sel-contour').textContent(), 'Contour: Outside · 5.0 mm · 1 step · Sharp');
     assert.equal(await t('cmd-hist').textContent(), 'Command: CONTOUR   Outside · 5.00 mm · 1 step · Sharp corners');
     assert.equal(await prompt(), 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:');
-    assert.equal(await t('contour-hint').textContent(), 'Pick a closed outline in the drawing: click one of its edges.');
+    assert.equal(await t('contour-hint').textContent(), 'Select a closed outline: right-click an edge → Select connected, or drag a box.');
     assert.equal(await t('contour-apply').isDisabled(), true);
     // pick the rounded rectangle (its straight bottom edge): the preview appears on the sheet
     await click(150, 100);
@@ -6562,7 +6637,7 @@ try {
     const canvas = await rectOf(t('canvas'));
     await page.mouse.move(box1.x + 60, box1.y + 12); await page.mouse.down(); await page.mouse.move(canvas.x + 60, canvas.y + 12, { steps: 4 }); await page.mouse.up();
     // an outline that is not closed says so
-    await click(550, 100); await waitSel('2 selected');
+    await clickConnected(550, 100); await waitSel('2 selected');
     assert.match(await t('contour-hint').textContent(), /^That is not a closed outline \(2 pieces left open\)\. Join the tiny gaps, or pick a closed one\.$/);
     assert.equal(await t('contour-apply').isDisabled(), true);
     // Close puts the Select tool back; Esc with nothing selected does too
@@ -6807,9 +6882,9 @@ try {
       await t('gap-method').selectOption(method);
       await t('gap-join').click();
       assert.match(await t('cmd-prompt').textContent(), new RegExp(`^Joined 2 gaps \\(${label}\\)`), method);
-      await click(50, 0); await waitSel(pieces + ' selected');
+      await clickConnected(50, 0); await waitSel(pieces + ' selected');
       await page.keyboard.press('Control+z');
-      await click(50, 0); await waitSel('8 selected');                          // one Undo took the lot back
+      await clickConnected(50, 0); await waitSel('8 selected');                          // one Undo took the lot back
       await page.keyboard.press('Escape');
     }
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-gapmethod')), 'bezier', 'remembered');
@@ -6831,13 +6906,13 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '1');
     await t('gap-tol').fill('0.01'); await t('gap-tol').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
-    await click(50, 0); await waitSel('8 selected');
+    await clickConnected(50, 0); await waitSel('8 selected');
     await t('gap-join').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '0');
     assert.match(await t('cmd-prompt').textContent(), /Joined 2 gaps/);
     assert.doesNotMatch(await t('cmd-prompt').textContent(), /micro pieces removed/, 'no removal message when none were removed');
     assert.equal(await t('gap-join').isDisabled(), true);
-    await click(50, 0); await waitSel('8 selected');
+    await clickConnected(50, 0); await waitSel('8 selected');
     assert.equal(await t('sel-area').textContent(), 'Area 5914.16 mm² · Perimeter 302.83 mm', 'the perimeter now includes the 0.01 mm the gaps hid');
     await shotBoth('tiny-gaps-joined');
     await page.keyboard.press('Control+z');
@@ -13109,13 +13184,13 @@ try {
       let n = 0; for (let i = 3; i < pixels.length; i += 4) if (pixels[i]) n++;
       return n;
     });
-    const clickPoint = async (x, y) => {
+    const clickPoint = async (x, y, opts = {}) => {
       const pt = await p.evaluate(([x, y]) => {
         const svg = document.querySelector('[data-testid=canvas] > svg'), v = svg.viewBox.baseVal, b = svg.getBoundingClientRect();
         const h = +document.querySelector('[data-key=sheetH]').value;
         return { x: b.x + (x - v.x) * b.width / v.width, y: b.y + (h - y - v.y) * b.height / v.height };
       }, [x, y]);
-      await p.mouse.click(pt.x, pt.y);
+      await p.mouse.click(pt.x, pt.y, opts);
     };
     try {
       await p.goto(URL_); await q('wireframe').waitFor();
@@ -13170,7 +13245,8 @@ try {
       };
       await q('picker').setInputFiles('fixtures/outline.dxf');
       await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
-      await clickPoint(50, 0);
+      await clickPoint(50, 0, { button: 'right' });
+      await p.getByRole('menuitem', { name: 'Select connected', exact: true }).click();
       await p.waitForFunction(() => !document.querySelector('[data-testid=bar-extract]').disabled);
       await q('bar-extract').click();
       await q('name-input').fill('Plate A'); await p.keyboard.press('Enter');

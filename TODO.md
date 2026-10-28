@@ -255,7 +255,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155a. ✅ (built, King T1-T4) Quick-mode Trim / Extend (TRIMEXTENDMODE 1, AutoCAD's default: click what to trim, every object an edge), plus Fence, Crossing, eRase, Undo and Edge options (M). Tested in his AutoCAD 2027 (command log, 2026-10-27): TRIM starts straight at "Select object to trim or shift-select to extend [cuTting edges/Crossing/mOde/Project/eRase]" (Undo added after the first cut); each click cuts the piece between the nearest crossings; a line that crosses nothing is deleted whole; a click on empty space starts a fence; mOde switches Quick / Standard (Standard = ours today); EXTEND Quick stops at the nearest object, Shift = trim.
 155a2. (after 155a) Freehand fence path in Quick Trim / Extend: press and drag on empty space draws a path; everything it crosses is trimmed (AutoCAD way). His ask 2026-10-27.
     155b. ❌ (won't do: he keeps our decided aliases, 2026-10-27) Command aliases to acad.pgp: M Move, P Pan, D Dimstyle, S Stretch, E Erase, R Redraw, CP Copy, DLI / DAL; revisit the deliberate M = Measure and MV = Move (S–M).
-    155c. A click selects one object, not the whole chain of joined lines (S–M).
+    155c. ✅ (built, 2026-10-28, Knight) A click selects one object; Shift / Ctrl toggle per object. Right-click → Select connected picks the joined chain.
     155d. Rotate and Scale Reference option (M).
     155e. Grip modes: Space / Enter cycles Stretch, Move, Rotate, Scale, Mirror; C copy, B base point, grip menu; Shift for several hot grips; grips on text, ellipse, hatch and blocks (M–L, split when grilled).
     155f. Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).

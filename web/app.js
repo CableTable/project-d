@@ -2760,7 +2760,7 @@ function renderLibrary() {
   }));
   const n = lib.items.length;
   ui.libFoot.textContent = (lib.q ? `${shown.length} of ${n} parts` : `${n} part${n === 1 ? '' : 's'}`) + (lib.failed ? ' · storage is not available here, so parts last until the app is closed.' : ' · saved inside the app.') + ' Drag a card onto the sheet, or Add to sheet.';
-  if (!n) ui.libList.append(h('span', { class: 'lbl' }, 'Nothing saved yet. Click an outline in a drawing and press Extract part….'));
+  if (!n) ui.libList.append(h('span', { class: 'lbl' }, 'Nothing saved yet. Select an outline (right-click → Select connected), then Extract part….'));
   else if (!shown.length) ui.libList.append(h('span', { class: 'lbl', 'data-testid': 'lib-nomatch' }, `No part matches "${ui.libSearch.value.trim()}"`));
 }
 
@@ -2839,7 +2839,7 @@ async function exportPart(rec) {
 async function extractPart() {
   const d = editable();
   if (!d) { note('Extract part: open a drawing first'); return; }
-  if (!d.sel.size) { note('Extract part: click an outline in the drawing first'); return; }
+  if (!d.sel.size) { note('Extract part: select an outline first (right-click → Select connected)'); return; }
   if (!selHasPart(d)) { note('Extract part: a kept dimension is not part of a part. Select the outline'); return; }
   const raw = LD.extractRaw(d.raw, d.sel), part = raw && LD.makePart(uid(), '', raw, d.factor, baseName(d.name));
   if (!part) { note('Extract part: the selection has no size (kept dimensions are not part of a part)'); return; }
@@ -4370,7 +4370,7 @@ function attachCanvasEvents() {
     const p = toDrawing(d, e.clientX, e.clientY), hit = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d));
     if (hit >= 0 && !d.sel.has(hit)) clickSelect(d, p, false);
     if (!d.sel.size) return;
-    const items = [['Measure from here', () => { setTool('measure'); measurePoint(d, p, false); }], ['Delete', deleteSelection]];
+    const items = [['Select connected', () => selectConnected(d)], ['Measure from here', () => { setTool('measure'); measurePoint(d, p, false); }], ['Delete', deleteSelection]];
     popMenu(e.clientX, e.clientY, selHasPart(d) ? [['Extract part…', extractPart], ['Keep only this', keepSelection], ...items] : items);   // a dimension alone is not a part
   });
   new ResizeObserver(() => { if (view.fitted) fit(); else applyView(); }).observe(c);
@@ -4406,7 +4406,7 @@ function renderCommand() {
   ui.hist.textContent = gd ? `Command: GUIDE   Dragging a ${gd.axis === 'y' ? 'horizontal' : 'vertical'} guide from the ${gd.axis === 'y' ? 'top' : 'left'} ruler (Esc cancels)` : rs ? `Command: ROTATE   Pivot: ${fmt(rp[0])}, ${fmt(rp[1])}` : (state.tool === 'select' || state.tool === 'step') && nSel > 1 ? `Command: SELECT   ${wholeGroup() ? `Group of ${nSel}` : `${nSel} parts selected`} (Shift-click adds or removes a part)` : state.tool === 'step' && lay
     ? `Command: STEP   Part: ${gp ? gp.name : '(none)'}   Gap X <5>: ${state.gapX}   Gap Y <5>: ${state.gapY}   Click a gap between rows or columns for extra room`
     : state.tool === 'contour' && (ed || lay) ? 'Command: CONTOUR   ' + contourCommandText()
-    : state.tool === 'select' && ed ? 'Command: SELECT   Click an edge: its whole outline. Shift adds or removes, drag a box, Esc clears. Right-click: Extract part…'
+    : state.tool === 'select' && ed ? 'Command: SELECT   Click an object to select it. Shift / Ctrl adds or removes, drag a box, Esc clears. Right-click: Select connected / Extract part…'
     : state.tool === 'dimension' && ed ? 'Command: ' + dimTypeRow(state.dimType)[4]
     : state.tool === 'leader' && ed ? 'Command: LEADER'
     : state.tool === 'balloon' && ed ? `Command: BALLOON   next no. ${balOf(ed).next}`
@@ -4423,7 +4423,7 @@ function renderCommand() {
       : `${placedNow.length} placed part${placedNow.length === 1 ? '' : 's'}. Pick a part for step and repeat, or add one from the Parts library:`)
     : state.tool === 'balloon' && ed ? balPrompt()
     : ed && ed.sel.size ? `${ed.sel.size} selected. [Extract / Keep only / Measure]:`
-    : ed ? 'Click an outline to select it. [Extract / Keep only / Measure]:' : '';
+    : ed ? 'Click an object; right-click → Select connected for its outline. [Extract / Keep only / Measure]:' : '';
 }
 
 /**
@@ -4644,7 +4644,7 @@ function shapeSelection(op) {
   const plain = [...d.sel].filter((e) => d.raw.entities[e].type !== 'INSERT'), blocks = d.sel.size - plain.length;   // a block's outlines can't be replaced one by one
   const found = plain.length ? Ed.outlineLoops(edIndex(d), plain, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
   const skipped = (found && found.open ? `; ${found.open} open outline${found.open === 1 ? '' : 's'} skipped` : '') + (blocks ? `; ${blocks} block${blocks === 1 ? '' : 's'} skipped: explode ${blocks === 1 ? 'it' : 'them'} first` : '');
-  if (!found || found.loops.length < 2) { note(`${name}: select at least 2 closed outlines (click one, Shift+click the others, or drag a box)` + skipped); return; }
+  if (!found || found.loops.length < 2) { note(`${name}: select at least 2 closed outlines (right-click → Select connected, or drag a box)` + skipped); return; }
   const r = SH.shape(op, found.loops, d.sel.has(d.lastPick) ? found.loops.findIndex((l) => l.ents.has(d.lastPick)) : -1);
   if (r.error) { note(r.error + skipped); return; }
   if (r.untouched.length === r.operands.length) { note(`${name}: no outline is overlapped by one in front, nothing changed` + skipped); return; }
@@ -4741,7 +4741,7 @@ function renderGaps() {
   mark();
 }
 
-// ---- editing the opened drawing: pick by chain, Keep only, Delete, size, Set length, undo (edit.js is the logic) ----
+// ---- editing the opened drawing: pick objects, Keep only, Delete, size, Set length, undo (edit.js is the logic) ----
 /** What the size fields and Set length act on: the drawing, or the background (always, when it is all the tab has). */
 const sizeTarget = (d) => (d.bg && (!d.box || d.scaleTarget === 'bg') ? 'bg' : 'drawing');
 const sizeBox = (d) => (sizeTarget(d) === 'bg' ? Ed.bgBox(d.bg) : partBox(d));
@@ -4928,16 +4928,27 @@ function nudgeDrawing(d, dir, big) {
   } catch (err) { note(err.message); }
 }
 
-/** A click: the edge under it with everything joined to it end to end; Shift adds it or, if it is in already, takes it out. */
+/** A click picks one object; Shift / Ctrl toggles just that object. */
 function clickSelect(d, p, shift) {
   const ed = edIndex(d), e = Ed.hitEntity(ed, p[0], p[1], pickTol(d));
   if (e >= 0 && lockedEnt(d, e)) { note(`Layer ${d.raw.entities[e].layer} is locked: unlock it in the Objects tab to pick this`); return; }
   if (e < 0) { if (!shift && d.sel.size) setSel(d, new Set()); return; }
-  const chain = Ed.chainAt(ed, e, Ed.chainTol(drawBox(d.fl), d.factor)).filter((c) => !lockedEnt(d, c)), next = new Set(shift ? d.sel : []);
-  if (shift && d.sel.has(e)) for (const c of chain) next.delete(c); else for (const c of chain) next.add(c);
+  const next = new Set(shift ? d.sel : []);
+  if (shift && d.sel.has(e)) next.delete(e); else next.add(e);
   setSel(d, next);
   if (next.has(e)) d.lastPick = e;
-  note(chain.length > 1 ? `${chain.length} entities joined end to end` + (shift ? '' : ' selected') : '1 entity selected');
+  note(`${next.size} ${next.size === 1 ? 'entity' : 'entities'} selected`);
+}
+/** Expand selected seeds with the existing chain finder, retaining Shaping's last picked target. */
+function selectConnected(d) {
+  const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor), next = new Set(), last = d.lastPick;
+  for (const e of d.sel) {
+    if (next.has(e)) continue;
+    for (const c of Ed.chainAt(ed, e, tol)) if (!lockedEnt(d, c)) next.add(c);
+  }
+  setSel(d, next);
+  if (next.has(last)) d.lastPick = last;
+  note(`${next.size} ${next.size === 1 ? 'entity' : 'entities'} joined end to end selected`);
 }
 /** A dragged window or crossing box, chosen by the screen drag direction. */
 function boxSelect(d, a, b, add, crossing) {
@@ -7326,7 +7337,7 @@ function buildDrawingSection() {
   ui.outSec = h('section', { class: 'outbox', hidden: true, 'data-testid': 'outlines-panel' },
     h('h2', { class: 'sec' }, 'Outlines in this drawing'), ui.outList,
     btn('Extract part…', 'extract', extractPart, 'btn primary'),
-    h('span', { class: 'lbl' }, 'Click an outline in the drawing, then Extract part…, or right-click it.'));
+    h('span', { class: 'lbl' }, 'Select an outline (right-click → Select connected), then Extract part….'));
   ui.tinySec = h('section', { 'data-testid': 'tiny-panel', hidden: true }, h('h2', { class: 'sec' }, 'Tiny gaps'), ui.gapRow, ui.gapReason);
   ui.dupsSec = h('section', { 'data-testid': 'duplicates-panel', hidden: true }, h('h2', { class: 'sec' }, 'Duplicates'), h('div', { class: 'row' }, ui.duplicateRemove, ui.duplicateCount), ui.duplicateReason);
   return h('div', { class: 'contents' }, buildPropsSection(), ...buildBalloonPanel(), ui.drawSec, ui.tinySec, ui.dupsSec, ui.outSec);
@@ -8019,7 +8030,7 @@ function renderContour() {
   state.layCt = lay && res && cfg.live ? cc.polys : null;
   const made = res ? (cc.made ?? res.made) : 0;
   ui.ctApply.disabled = made === 0;
-  ui.ctHint.textContent = lay ? layContourHint(cc, made) : cc.kind === 'none' ? 'Pick a closed outline in the drawing: click one of its edges.'
+  ui.ctHint.textContent = lay ? layContourHint(cc, made) : cc.kind === 'none' ? 'Select a closed outline: right-click an edge → Select connected, or drag a box.'
     : cc.kind === 'big' ? 'That selection is too big for a contour. Pick one outline.'
     : cc.kind === 'open' ? `That is not a closed outline (${cc.an.open} piece${cc.an.open === 1 ? '' : 's'} left open). Join the tiny gaps, or pick a closed one.`
     : made ? `Apply makes ${made} new outline${made === 1 ? '' : 's'} on the layer Contour. The part itself is not changed.` : 'Nothing to make with these values.';
@@ -8124,12 +8135,12 @@ function renderSelection(d) {
   ui.outList.replaceChildren(...(outs ? outs.map((o, k) => h('button', { class: 'orow', type: 'button', 'data-outline': k + 1, onclick: () => setSel(d, new Set(o.set)) },
     h('span', { class: 'nm' }, 'Outline ' + (k + 1)), h('span', { class: 'lbl mono' }, `${fmtSize(o.w)} × ${fmtSize(o.h)}`),
     (d.savedAs || []).includes(sizeKey(o.w, o.h)) ? h('span', { class: 'chip' }, 'saved') : null)) : [h('span', { class: 'lbl' }, 'Reading the drawing…')]));
-  if (outs && !outs.length) ui.outList.append(h('span', { class: 'lbl' }, ed6000(d) ? 'Too many pieces to list. Click an outline in the drawing.' : 'No outlines found. Click a shape in the drawing.'));
+  if (outs && !outs.length) ui.outList.append(h('span', { class: 'lbl' }, ed6000(d) ? 'Too many pieces to list. Right-click an edge → Select connected.' : 'No outlines found. Click a shape in the drawing.'));
   // Keep only and Extract part act on geometry: a selection of kept dimensions alone has none (they are not part of a part)
   const noPart = !n || !selHasPart(d);
   ui.barKeep.disabled = ui.barExtract.disabled = ui['keep-only'].disabled = noPart;
   ui.barKeep.title = ui.barExtract.title = ui['keep-only'].title = n && noPart ? 'A kept dimension is not part of a part' : '';
-  if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'click an outline in the drawing'; ui.selArea.textContent = ''; return; }
+  if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
   const ed = edIndex(d);
   const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
   ui.selName.textContent = k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';        // one wording with the panel's count ("1 selected")
