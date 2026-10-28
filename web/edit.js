@@ -328,6 +328,16 @@ export function chainAt(ed, e, tol) {
   return [...seen];
 }
 
+/** Expand selected seeds to their joined chains without changing the selection. */
+export function connectedSelection(ed, sel, tol) {
+  const next = new Set();
+  for (const e of sel) {
+    if (next.has(e)) continue;
+    for (const c of chainAt(ed, e, tol)) next.add(c);
+  }
+  return next;
+}
+
 /** Entities lying fully inside the box [x0, y0, x1, y1] (any two corners). */
 export function inBox(ed, b) {
   const [x0, y0, x1, y1] = selectionBox(b), out = [];

@@ -3751,6 +3751,66 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 155c fixes: Extract part takes the whole joined outline; Select connected first; Contour partial-outline hint', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      p.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const doc = newDoc(), points = [[100, 100], [200, 100], [200, 160], [100, 160]];
+      points.forEach((a, i) => { const b = points[(i + 1) % points.length]; addEntities(doc, dxfLine(a[0], a[1], b[0], b[1])); });
+      addEntities(doc, [dxfLine(260, 100, 300, 100), dxfLine(300, 100, 300, 140)]);
+      await q('picker').setInputFiles({ name: '155c-fixes.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === '155c-fixes.dxf');
+      await p.locator('[data-tool=select]').click();
+      const pick = async (x, y, button = 'left') => {
+        const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), hh = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
+        await p.mouse.click(b.x + x * b.width / w, b.y + (hh - y) * b.width / w, { button });
+      };
+      const count = (n) => p.waitForFunction((n) => document.querySelector('[data-testid=sel-count]').textContent.trim() === `${n} selected`, n);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await pick(120, 100); await count(1);
+        await pick(120, 100, 'right'); await q('ctx-menu').waitFor();
+        assert.deepEqual(await p.getByRole('menuitem').allTextContents(), ['Select connected', 'Extract part…', 'Keep only this', 'Measure from here', 'Delete']);
+        await p.screenshot({ path: `${shotDir}/155c-fixes-menu-${theme}.png` });
+        await p.keyboard.press('Escape');
+        await p.locator('[data-tool=contour]').click();
+        assert.equal(await q('contour-hint').textContent(), 'Only part of an outline is selected: right-click → Select connected.');
+        assert.equal(await q('contour-apply').isDisabled(), true);
+        await p.screenshot({ path: `${shotDir}/155c-fixes-contour-${theme}.png` });
+        await pick(120, 100, 'right'); await p.getByRole('menuitem', { name: 'Select connected', exact: true }).click();
+        await count(4); assert.equal(await q('contour-apply').isDisabled(), false);
+        assert.match(await q('contour-hint').textContent(), /^Apply makes/);
+        await q('contour-close').click();
+      }
+      await pick(280, 100); await p.locator('[data-tool=contour]').click();
+      assert.match(await q('contour-hint').textContent(), /not a closed outline.*Join the tiny gaps/);
+      await q('contour-close').click();
+      for (const [x, y, name] of [[120, 100, 'Horizontal edge'], [100, 120, 'Vertical edge']]) {
+        await pick(x, y); await count(1);
+        await q('bar-extract').click(); await q('name-dialog').waitFor(); await count(4);
+        assert.match(await q('name-dialog').textContent(), /100\.00 × 60\.00 mm/);
+        await q('name-input').fill(name); await q('name-ok').click(); await q('name-dialog').waitFor({ state: 'detached' });
+        await p.waitForFunction((name) => {
+          const note = document.querySelector('[data-testid=cmd-prompt]').textContent;
+          return note.includes(`Part ${name} saved to the Parts library:`) && note.includes('Extract part: took the whole joined outline (4 pieces)');
+        }, name);
+        const stored = await p.evaluate(async (name) => (await (await import('./partstore.js')).loadParts()).find((part) => part.name === name), name);
+        const raw = readDxf(stored.dxf);
+        assert.equal(raw.entities.length, 4); assert.ok(raw.entities.every((e) => e.type === 'LINE'));
+        assert.deepEqual([stored.w, stored.h], [100, 60]);
+        assert.equal((await q('entities').textContent()).trim(), 'Entities 6', 'extraction leaves the source intact');
+      }
+      await pick(120, 100); await count(1); await q('bar-keep').click();
+      assert.equal((await q('entities').textContent()).trim(), 'Entities 1', 'Keep only keeps exactly the selected edge');
+      await p.keyboard.press('Control+z');
+      assert.equal((await q('entities').textContent()).trim(), 'Entities 6');
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
+
   await step('edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));

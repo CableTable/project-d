@@ -14,6 +14,17 @@ const near = (a, b, m, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * (1 + Ma
 const types = (raw, list) => list.map((i) => raw.entities[i].type);
 const asc = (a) => [...a].sort((x, y) => x - y);
 
+test('TODO 155c fixes: expand every selected chain once, retaining isolated selections and the input', () => {
+  const raw = W.newDoc();
+  W.addEntities(raw, [W.line(0, 0, 10, 0), W.line(10, 0, 10, 10), W.line(10, 10, 0, 10), W.line(0, 10, 0, 0),
+    W.line(20, 0, 30, 0), W.line(30, 0, 30, 10), W.circle(50, 50, 2)]);
+  const ed = E.makeIndex(raw, D.flatten(raw)), sel = new Set([0, 1, 4, 6]);
+  assert.deepEqual(asc(E.connectedSelection(ed, sel, .01)), [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual([...sel], [0, 1, 4, 6]);
+  assert.deepEqual(asc(E.connectedSelection(ed, new Set([0, 1, 2, 3]), .01)), [0, 1, 2, 3]);
+  assert.deepEqual([...E.connectedSelection(ed, new Set(), .01)], []);
+});
+
 test('TODO 68a: snap index filters every type, respects SNAP off and filters unfinished tool ends too', () => {
   const { snapTypes } = SNAP;
   const { raw, fl } = load('outline.dxf'), ed = E.makeIndex(raw, fl);

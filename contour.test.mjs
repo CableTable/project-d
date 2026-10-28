@@ -10,6 +10,21 @@ function test(name, fn) { fn(); n++; console.log('ok', name); }
 const near = (a, b, m, eps = 1e-6) => assert.ok(Math.abs(a - b) <= eps * (1 + Math.abs(b)), `${m || ''} ${a} !~ ${b}`);
 const PI = Math.PI;
 
+test('TODO 155c fixes: partial closed outlines differ from real open chains and unrelated closed selections', () => {
+  const doc = W.newDoc();
+  W.addEntities(doc, [W.line(0, 0, 10, 0), W.line(10, 0, 10, 10), W.line(10, 10, 0, 10), W.line(0, 10, 0, 0),
+    W.line(20, 0, 30, 0), W.line(30, 0, 30, 10), W.circle(50, 50, 2)]);
+  const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+  for (const i of [0, 1]) assert.equal(C.partialOutline(ed, new Set([i]), .01), true, 'horizontal or vertical edge');
+  assert.equal(C.partialOutline(ed, new Set([0, 1, 2, 3]), .01), false, 'already complete');
+  assert.equal(C.partialOutline(ed, new Set([4]), .01), false, 'a genuinely open chain');
+  assert.equal(C.partialOutline(ed, new Set([4, 6]), .01), false, 'an unrelated selected circle cannot close the open chain');
+  assert.equal(C.partialOutline(ed, new Set([0, 6]), .01), true, 'a full loop and a partial loop');
+  W.addEntities(doc, [W.line(10, 10, 15, 10), W.line(15, 10, 15, 15), W.line(15, 15, 10, 15), W.line(10, 15, 10, 10)]);
+  const joined = D.readDxf(W.writeDxf(doc));
+  assert.equal(C.partialOutline(E.makeIndex(joined, D.flatten(joined)), new Set([0, 1, 2, 3]), .01), true, 'a selected loop can still be part of a larger joined outline');
+});
+
 const poly = (pts) => pts.map((p, i) => C.seg(p, pts[(i + 1) % pts.length]));
 const rect = (x, y, w, h) => poly([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]);
 const BU = Math.tan(PI / 8);

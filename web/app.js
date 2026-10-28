@@ -2841,6 +2841,9 @@ async function extractPart() {
   if (!d) { note('Extract part: open a drawing first'); return; }
   if (!d.sel.size) { note('Extract part: select an outline first (right-click → Select connected)'); return; }
   if (!selHasPart(d)) { note('Extract part: a kept dimension is not part of a part. Select the outline'); return; }
+  const whole = Ed.connectedSelection(edIndex(d), d.sel, Ed.chainTol(drawBox(d.fl), d.factor));
+  const expanded = whole.size > d.sel.size ? `Extract part: took the whole joined outline (${whole.size} pieces)` : '';
+  if (expanded) { setSel(d, whole); note(expanded); }
   const raw = LD.extractRaw(d.raw, d.sel), part = raw && LD.makePart(uid(), '', raw, d.factor, baseName(d.name));
   if (!part) { note('Extract part: the selection has no size (kept dimensions are not part of a part)'); return; }
   const name = await askName({
@@ -2855,7 +2858,7 @@ async function extractPart() {
   const ok = await libAdd({ id: part.id, name, w: part.w, h: part.h, dxf: report.text, thumb: thumbFor(part), source: part.src, t: Date.now() });
   d.savedAs = (d.savedAs || []).concat(sizeKey(part.w, part.h));
   renderEdit();
-  note(`Part ${name} saved to the Parts library: ${fmt(part.w)} × ${fmt(part.h)} mm` + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
+  note(`Part ${name} saved to the Parts library: ${fmt(part.w)} × ${fmt(part.h)} mm` + (expanded ? '; ' + expanded : '') + saveReportNote(report) + (ok ? '' : KEPT_ONLY_NOW));
 }
 const sizeKey = (w, h) => fmt(w) + 'x' + fmt(h);
 
@@ -4371,7 +4374,9 @@ function attachCanvasEvents() {
     if (hit >= 0 && !d.sel.has(hit)) clickSelect(d, p, false);
     if (!d.sel.size) return;
     const items = [['Select connected', () => selectConnected(d)], ['Measure from here', () => { setTool('measure'); measurePoint(d, p, false); }], ['Delete', deleteSelection]];
-    popMenu(e.clientX, e.clientY, selHasPart(d) ? [['Extract part…', extractPart], ['Keep only this', keepSelection], ...items] : items);   // a dimension alone is not a part
+    const partial = Ed.connectedSelection(edIndex(d), d.sel, Ed.chainTol(drawBox(d.fl), d.factor)).size > d.sel.size;
+    const actions = selHasPart(d) ? [['Extract part…', extractPart], ['Keep only this', keepSelection]] : [];   // a dimension alone is not a part
+    popMenu(e.clientX, e.clientY, partial ? [items[0], ...actions, ...items.slice(1)] : [...actions, ...items]);
   });
   new ResizeObserver(() => { if (view.fitted) fit(); else applyView(); }).observe(c);
 }
@@ -4941,11 +4946,8 @@ function clickSelect(d, p, shift) {
 }
 /** Expand selected seeds with the existing chain finder, retaining Shaping's last picked target. */
 function selectConnected(d) {
-  const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor), next = new Set(), last = d.lastPick;
-  for (const e of d.sel) {
-    if (next.has(e)) continue;
-    for (const c of Ed.chainAt(ed, e, tol)) if (!lockedEnt(d, c)) next.add(c);
-  }
+  const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor), last = d.lastPick;
+  const next = new Set([...Ed.connectedSelection(ed, d.sel, tol)].filter((c) => !lockedEnt(d, c)));
   setSel(d, next);
   if (next.has(last)) d.lastPick = last;
   note(`${next.size} ${next.size === 1 ? 'entity' : 'entities'} joined end to end selected`);
@@ -7978,7 +7980,8 @@ function contourLoops(d) {
   const ed = edIndex(d), tol = Ed.chainTol(drawBox(d.fl), d.factor);
   const segs = d.sel.size > 4000 ? null : CT.segmentsFromItems(ed, d.sel, (e) => e.layer === Ed.DIM_LAYER || e.type === 'DIMENSION');
   const r = segs ? CT.buildLoops(segs, tol) : { loops: [], open: 0 };
-  return (d.cAn = { ed: d.ed, sig, loops: r.loops, open: r.open, big: !segs, n: segs ? segs.length : 0 });
+  const partial = !!segs && CT.partialOutline(ed, d.sel, tol);
+  return (d.cAn = { ed: d.ed, sig, loops: r.loops, open: r.open, partial, big: !segs, n: segs ? segs.length : 0 });
 }
 /** The contour for the selection and the panel's values: { kind: 'none' | 'big' | 'open' | 'ok', an, res (CT.contour's result) }. */
 function contourCompute(d) {
@@ -8032,6 +8035,7 @@ function renderContour() {
   ui.ctApply.disabled = made === 0;
   ui.ctHint.textContent = lay ? layContourHint(cc, made) : cc.kind === 'none' ? 'Select a closed outline: right-click an edge → Select connected, or drag a box.'
     : cc.kind === 'big' ? 'That selection is too big for a contour. Pick one outline.'
+    : cc.an.partial ? 'Only part of an outline is selected: right-click → Select connected.'
     : cc.kind === 'open' ? `That is not a closed outline (${cc.an.open} piece${cc.an.open === 1 ? '' : 's'} left open). Join the tiny gaps, or pick a closed one.`
     : made ? `Apply makes ${made} new outline${made === 1 ? '' : 's'} on the layer Contour. The part itself is not changed.` : 'Nothing to make with these values.';
   const warn = lay ? (cc.warn || '') : res && res.stopped ? `Step ${res.stopped.step} would close up: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '';
