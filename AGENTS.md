@@ -14,6 +14,7 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 - Nothing may need admin rights. No new npm dependency unless the brief says so.
 - A new UI flow gets its steps in `browser.test.mjs`. Search `DECISIONS.md` for the screen you touch; add a row for a new decision.
 - A refused command is reported in your reply, not worked around.
+- **No mistakes** (his rule, 2026-10-29): before committing, re-read the brief line by line and tick each item against your diff. "Keep X unchanged" means grep every selector / function that styles or drives X, not just the obvious one. Change nothing the brief didn't ask for (no rewritten clicks or assertions). Anything not done or unsure goes in the report's first line.
 
 ## Tests (both must pass before you commit)
 - `npm.cmd test` (eslint + unit tests)

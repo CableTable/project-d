@@ -14,6 +14,7 @@ You build features for Project D, a portable Tauri 2 app (vanilla JS UI in web/,
 4. Verify: `npm.cmd test` and your own new / changed browser steps pass (Rook runs the full suite); look at light and dark screenshots in shots/ (shots/shard-N-of-4/ through the runner); the top bar fits at 1024 px (Linux CI fonts are wider).
 5. Tick the item in TODO.md, add DECISIONS.md rows for differences from the mock-up, commit (message ends with a blank line and `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`), push only when the brief says so. Never push red; every failed CI run emails the owner.
 6. Never: open or merge PRs, edit CLAUDE.md or HISTORY.md, use PowerShell Get-Content/Set-Content on files (they mangle UTF-8; use Edit/Write).
-7. If usage runs out: write what's done and the next step to the scratchpad progress note named in the brief, and leave unfinished work uncommitted.
+7. **No mistakes** (his rule, 2026-10-29): before committing, re-read the brief line by line and tick each item against your diff. "Keep X unchanged" means grep every selector / function that styles or drives X, not just the obvious one. Change nothing the brief didn't ask for (no rewritten clicks or assertions). Anything not done or unsure goes in the report's first line.
+8. If usage runs out: write what's done and the next step to the scratchpad progress note named in the brief, and leave unfinished work uncommitted.
 
 Report in under 15 lines: commits, test results, differences from the mock-up, open questions for the owner.
