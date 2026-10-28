@@ -11435,6 +11435,63 @@ try {
     await closeTabs(/copy/);
   });
 
+  await step('TODO 75 T1: Array (AR): Rectangular 4 x 3 preview, Enter adds 11 plain copies in one undo step, COU / COL / R / S words, negative spacing, Esc adds nothing', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4); addLayer(raw, 'Cut');
+    addEntities(raw, dxfPoly([[20, 20], [60, 20], [60, 40], [20, 40]], { closed: true, layer: 'Cut', aci: 3 }));
+    await openGrips(writeDxf(raw), 'array.dxf');
+    const before = await savedDoc(), blur = () => page.evaluate(() => document.activeElement?.blur());
+    const xy = (e) => [fieldOf(e, 10), fieldOf(e, 20)];
+    await page.keyboard.press('Control+a');
+    await typeCmd('ar');
+    assert.match(await prompt(), /Enter array type \[Rectangular\/POlar\] <Rectangular>:/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
+    assert.equal(await page.locator('nav.rail [data-tool=array]').count(), 0);
+    await typeCmd('po'); assert.match(await prompt(), /Enter array type/, 'Polar is not built: the type prompt stays');
+    await typeCmd('');
+    assert.match(await prompt(), /Enter an option \[COUnt\/Spacing\/COLumns\/Rows\/Exit\] <Exit>:/);
+    await page.locator('button:text-is("Fit")').click(); await page.mouse.move(600, 500); for (let k = 0; k < 4; k++) await page.mouse.wheel(0, 300);       // zoomed out: all 12 shapes in view for the pictures
+    await page.mouse.move(1, 1); await page.waitForTimeout(300);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+      await page.screenshot({ path: `${shotDir}/todo75a-array-preview-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'the preview adds nothing');
+    await typeCmd('');
+    const full = await savedDoc();
+    assert.equal(full.entities.length, 12, '4 x 3 = 12 objects');
+    assert.deepEqual(full.entities[0], before.entities[0], 'the original stays unchanged');
+    assert.deepEqual(full.entities.slice(1).map(xy), [80, 140, 200].map((x) => [x, 20]).concat([20, 80, 140, 200].map((x) => [x, 50]), [20, 80, 140, 200].map((x) => [x, 80])), 'spacing is 1.5 x the 40 x 20 selection: 60 and 30');
+    assert.ok(full.entities.every((e) => e.layer === 'Cut' && e.aci === 3), 'the copies keep layer and colour');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.equal((await histLabels()).at(-1), 'Array');
+    await blur(); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'one Ctrl+Z removes all 11 copies');
+
+    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd(''); await typeCmd('col 2 r 2');
+    assert.match(await prompt(), /Enter an option/);
+    await typeCmd('');
+    assert.equal((await savedDoc()).entities.length, 4, 'COL 2 R 2 gives 4');
+    await blur(); await page.keyboard.press('Control+z');
+
+    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('r'); await typeCmd('cou');
+    assert.match(await prompt(), /Enter the number of columns <4>:/);
+    await typeCmd('2'); assert.match(await prompt(), /Enter the number of rows <3>:/);
+    await typeCmd('2'); assert.match(await prompt(), /Enter an option/);
+    await typeCmd('0'); assert.match(await prompt(), /Enter an option/, 'an option word is needed, a bare number is refused');
+    await typeCmd('s -100 -50'); await typeCmd('x');
+    assert.deepEqual((await savedDoc()).entities.map(xy), [[20, 20], [-80, 20], [20, -30], [-80, -30]], 'negative spacing goes left and down');
+    await blur(); await page.keyboard.press('Control+z');
+
+    await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('');
+    await typeCmd('rows 0'); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'Esc adds nothing');
+    await closeTabs(/array/);
+  });
+
   await step('TODO 66c: Rotate', async () => {
     await closeTabs(/./);
     const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 60, 50, { layer: 'Cut', colour: 3 }));
