@@ -41,8 +41,8 @@ import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
-import { rotateEntities, rotationAngle, rotationMatrix } from './rotate.js';
-import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './scale.js';
+import { rotateEntities, rotationAngle, rotationMatrix, referenceTurn } from './rotate.js';
+import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
 import * as FI from './fill.js';
@@ -200,6 +200,7 @@ const state = {
   tool: 'select', msg: null,             // (sel, below: the selected placed part of the open layout, an index into placedNow; picks: the whole selection when it is several)
   mode: 'select',                        // 'select' (size handles) or 'rotate' (turn arrows and the pivot) for the selected placed part
   pivot: { kind: 'centre', x: 0, y: 0 }, // the turn's pivot: 'centre', 'bl' (the part's own lower-left corner) or 'custom' (x, y: sheet mm, y up)
+  lref: null,                            // Rotate Reference on a placed part: { step: 'ref' | 'new', value } (typed degrees)
   rotCopy: false,                        // the command line's Copy: the next typed angle turns a copy
   layCt: null,                           // Contour on a layout: the preview rings (sheet mm, y up) or null
   contourCfg: null,                      // Contour's last values (loaded in init): { dir: 'inside' | 'outside', dist (mm), steps, corners: 'sharp' | 'rounded', live }
@@ -2623,7 +2624,7 @@ function placedUp() {
     if (!p.copy && selIdxs().length > 1) { selectMany(groupIdxs(p.hitI), p.hitI); update(); return; }
     if (p.wasSel && !p.copy) {
       if (selectedPlaced().p.lock) { note(LOCKED); return; }
-      state.mode = state.mode === 'rotate' ? 'select' : 'rotate'; state.pivot = centrePivot(); state.rotCopy = false;
+      state.mode = state.mode === 'rotate' ? 'select' : 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null;
       update();
       if (state.mode === 'select') note('Rotate done');
     }
@@ -3639,6 +3640,14 @@ function cmdEnter(raw) {
   if (state.txoWait) { state.txoWait = false; if (!c) { textToOutlines(); return; } }          // "Select text": Enter runs it, a typed command replaces it
   if (!c) return;
   if (state.mode === 'rotate' && curLay() && selectedPlaced()) {
+    const lr = state.lref;
+    if (!lr && (c === 'reference' || c === 'r')) { state.lref = { step: 'ref', value: 0 }; state.msg = null; renderCommand(); return; }
+    if (lr && PL.parseAngle(c) != null) {
+      const v = PL.parseAngle(c), rs = selectedPlaced();
+      if (lr.step === 'ref') { state.lref = { step: 'new', value: v }; state.msg = null; renderCommand(); return; }
+      const copy = state.rotCopy; state.rotCopy = false; state.lref = null;
+      const why = setAngleText(String(+(rs.p.rot + v - lr.value).toFixed(6)), copy); if (why) note(why); return;
+    }
     if (c === 'pivot' || c === 'p') { note('Pivot: drag ◎ on the sheet, or pick Custom in the Rotate section and type its X and Y'); return; }
     if (c === 'copy' || c === 'c') { state.rotCopy = !state.rotCopy; renderCommand(); note(state.rotCopy ? 'Copy on: the angle you type now turns a copy, and the part stays' : 'Copy off'); return; }
     if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
@@ -3683,7 +3692,7 @@ const DO = {
   rotate: () => {
     if (!curLay()) { setTool('rotate'); return; }
     const sp = selectedPlaced();
-    if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; update(); return; }
+    if (sp) { if (sp.p.lock) { note(LOCKED); return; } state.mode = 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null; update(); return; }
     const order = ['best', '0', '90'];
     state.rotate = order[(order.indexOf(state.rotate) + 1) % 3];
     ui.rotate.value = state.rotate;
@@ -4104,7 +4113,7 @@ function paintOverlay(gesture = false) {
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
     if (d && d.cmp) { cmpPaint(c, d.cmp, base); ui.cmdUI.place(); return; }
-    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
+    const L2 = state.setlen || state.meas || state.dim || state.ldr || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : modLive() && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
@@ -4444,7 +4453,8 @@ function renderCommand() {
   const word = state.fit ? 'fit' : 'placed';
   ui.prompt.textContent = gd ? `${gd.axis.toUpperCase()} position <${fmt(gd.mm)}>:` : state.msg ? state.msg
     : state.tool === 'measure' && measureTarget() ? (state.meas?.pts.length === 2 ? Ed.formatMeasure(state.meas.result) : state.meas?.pts.length ? 'Measure: now the second point' : 'Measure: click the first point (it snaps to ends and centres)')
-    : rs ? `Angle <${fmt(rs.p.rot)}>: ${state.rotCopy ? 'Copy on. ' : ''}[Pivot / Copy / Esc]:`
+    : rs && state.lref ? `Angle: Specify the ${state.lref.step === 'ref' ? 'reference' : 'new'} angle <0>: (degrees)`
+    : rs ? `Angle <${fmt(rs.p.rot)}>: ${state.rotCopy ? 'Copy on. ' : ''}[Pivot / Copy / Reference / Esc]:`
     : state.tool === 'contour' && (ed || lay) ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
     : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:')
     : lay ? (gp
@@ -5950,16 +5960,22 @@ function ldrFieldTyped(which) {
   if (ldrReplace(d, sl.e, m, label)) note(`${label}. Ctrl+Z takes it back`);
 }
 function cancelSetlen() { state.setlen = null; note('Set length cancelled'); renderEdit(); paintOverlay(); }
+/** Set length and Scale Reference share this: one more picked point goes into L.pts; with two in, L.measured is their distance (mm). → 'first' | 'same' | 'done' */
+function lengthPick(d, L, p, shift, typed) {
+  L.pts.push(typed ? p : pickPoint(d, p, L.pts, shift)); L.hover = null;
+  state.pointLast = L.pts.at(-1).slice(0, 2);
+  if (L.pts.length === 1) return 'first';
+  L.measured = Math.hypot(L.pts[1][0] - L.pts[0][0], L.pts[1][1] - L.pts[0][1]) * d.factor;
+  if (!(L.measured > 1e-9)) { L.pts = []; L.measured = null; return 'same'; }
+  return 'done';
+}
 function lengthPoint(d, p, shift = false, typed = false) {
   const L = state.setlen;
   if (L.pts.length >= 2) { note('Set length: type the new length'); return; }
-  L.pts.push(typed ? p : pickPoint(d, p, L.pts, shift)); L.hover = null;
-  state.pointLast = L.pts.at(-1).slice(0, 2);
-  if (L.pts.length === 1) note('Set length: now the second point');
-  else {
-    L.measured = Math.hypot(L.pts[1][0] - L.pts[0][0], L.pts[1][1] - L.pts[0][1]) * d.factor;
-    if (!(L.measured > 1e-9)) { L.pts = []; L.measured = null; note('Set length: those are the same point, pick two'); } else note(`Set length: ${fmtSize(L.measured)} mm measured. Type the real length`);
-  }
+  const r = lengthPick(d, L, p, shift, typed);
+  if (r === 'first') note('Set length: now the second point');
+  else if (r === 'same') note('Set length: those are the same point, pick two');
+  else note(`Set length: ${fmtSize(L.measured)} mm measured. Type the real length`);
   renderEdit(); paintOverlay();
   if (L.measured) { ui.realLen.focus(); ui.realLen.select(); }
 }
@@ -6160,7 +6176,7 @@ function cursorTool() {
   if (!state.dynamicInput) return null;
   if (state.draw) return drawLive() ? state.draw : null;
   const m = state.mod;
-  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
+  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && !m.ref && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
     const d = editable(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
     return { kind: m.kind, A: m, mod: true, d, f, pts: m.p1 ? [mm(m.p1)] : [], hover: mm(m.cur) };
   }
@@ -6297,10 +6313,18 @@ function modStart(id) {
   else if (d.sel.size) { m.objs = [...d.sel].map((i) => d.raw.entities[i]); m.stage = 'p1'; state.msg = `${d.sel.size} selected: click the first point of the mirror line`; }
   else state.msg = 'Mirror: select the objects, then press Enter';
 }
+/** Rotate / Scale Reference: the prompt of its current step (AutoCAD's words), or null when Reference is not on. */
+function refPrompt(m) {
+  const R = m.ref, turn = m.kind === 'rotate', lead = turn ? 'Angle' : 'Scale factor';
+  if (!R) return null;
+  if (R.step === 'newpts' || R.pts.length) return `${lead}: Specify ${R.pts.length ? 'second' : 'first'} point:`;
+  if (R.step === 'ref') return turn ? 'Angle: Specify the reference angle <0>: (degrees, or click two points)' : 'Scale factor: Specify reference length <1.0000>: (mm, or click two points)';
+  return `${lead}: Specify the new ${turn ? 'angle' : 'length'} or [Points / Esc] ${turn ? '<0>' : '<1.0000>'}: (${turn ? 'degrees' : 'mm'} or click${turn ? '; Shift = 15°' : ''})`;
+}
 function modPrompt(d) {
   const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
-  if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Esc] (positive number or click):` };
-  if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Esc] (degrees or click; Shift = 15°):` };
+  if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
+  if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode) };
   if (m.kind === 'array') return arrayPrompt(d, m);
   if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):` };
@@ -6351,7 +6375,12 @@ function modEnter(d) {
   if (m.erase) { trimEraseRun(d); return; }
   if (m.cross) { modEsc(d); return; }
   if (m.kind === 'array') { arrayEnter(d); return; }
-  if (['rotate', 'scale'].includes(m.kind)) { if (m.stage === 'pick') moveTake(d); else note(modPrompt(d).prompt); return; }
+  if (['rotate', 'scale'].includes(m.kind)) {
+    if (m.stage === 'pick') moveTake(d);
+    else if (m.ref && m.ref.step !== 'newpts' && !m.ref.pts.length) refGot(d, m.kind === 'scale' ? 1 / d.factor : 0);      // Enter takes the default <0> / <1.0000>
+    else note(modPrompt(d).prompt);
+    return;
+  }
   if (m.kind === 'offset' || m.kind === 'fillet') { modEsc(d); return; }
   if (m.kind === 'extend') {
     if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc or open polyline to extend`); paintOverlay(); }
@@ -6407,7 +6436,9 @@ function modTyped(d, raw) {
     if (!m.askR && DR.parseInput(raw).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". ${m.askR ? 'Type a radius of 0 or more' : 'Type R to change the radius'}`); return true;
   }
+  if (m.ref && refTyped(d, raw, c)) return true;
   if (m.kind === 'scale' && m.stage !== 'pick') {
+    if (m.stage === 'p2' && !m.ref && (c === 'r' || c === 'reference')) { refStart(d); return true; }
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Scale a copy: on' : 'Scale a copy: off'); return true; }
     if (m.stage === 'p1') {
       const q = DR.typedPoint(DR.parseInput(raw), null);
@@ -6426,6 +6457,7 @@ function modTyped(d, raw) {
     note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'a number above 0'}`); return true;
   }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
+    if (m.stage === 'p2' && !m.ref && (c === 'r' || c === 'reference')) { refStart(d); return true; }
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Rotate a copy: on' : 'Rotate a copy: off'); return true; }
     if (m.stage === 'p1') {
       const q = DR.typedPoint(DR.parseInput(raw), null);
@@ -6499,18 +6531,19 @@ function modHover(d, cx, cy, shift) {
   }
   if (m.kind === 'rotate' && m.stage !== 'pick') {
     m.cur = snapPoint(d, p, undefined, undefined, m.p1);
-    if (m.p1) {
+    if (m.p1 && !(m.ref && m.ref.step !== 'new')) {
       m.angle = rotationAngle(m.p1, m.cur, shift);
       if (shift) {
         const r = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]), a = m.angle * Math.PI / 180;
         m.cur = [m.p1[0] + r * Math.cos(a), m.p1[1] + r * Math.sin(a)];
       }
-      m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], rotationMatrix(m.p1, m.angle))];
+      m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, m.angle) : m.angle))];
     }
   }
   if (m.kind === 'scale' && m.stage !== 'pick') {
     m.cur = snapPoint(d, p, undefined, undefined, m.p1);
-    if (m.p1) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], scaleMatrix(m.p1, scaleDistance(m.p1, m.cur)))];
+    const k = m.ref ? (m.ref.step === 'new' ? referenceFactor(m.ref.value, scaleDistance(m.p1, m.cur)) : null) : m.p1 && scaleDistance(m.p1, m.cur);
+    if (m.p1 && k != null) m.move.slots = [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], scaleMatrix(m.p1, k))];
   }
   if (m.kind === 'array' && m.stage === 'center') m.cur = snapPoint(d, p);
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
@@ -6553,6 +6586,7 @@ function modUp(d, was, p, shift, crossing) {
   } else if (m.kind === 'scale') {
     const q = snapPoint(d, was.p, undefined, undefined, m.p1);
     if (m.stage === 'p1') transformBase(d, q);
+    else if (m.ref) refClick(d, was.p, q, shift || was.shift);
     else {
       const factor = scaleDistance(m.p1, q);
       if (factor > 0) transformDo(d, factor); else note('Pick a point away from the base');
@@ -6560,6 +6594,7 @@ function modUp(d, was, p, shift, crossing) {
   } else if (m.kind === 'rotate') {
     const q = snapPoint(d, was.p, undefined, undefined, m.p1);
     if (m.stage === 'p1') transformBase(d, q);
+    else if (m.ref) refClick(d, was.p, q, shift || was.shift);
     else if (Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) < 1e-9) note('Click a point away from the pivot');
     else transformDo(d, rotationAngle(m.p1, q, shift || was.shift));
   } else if (m.kind === 'array') {
@@ -6691,8 +6726,55 @@ function transformBase(d, q) {
   m.move = { preview, items: preview.items, dx: 0, dy: 0 };
   note(m.kind === 'scale' ? 'Scale: positive factor or click. C toggles a copy' : 'Rotate: angle in degrees or click. Shift = 15°; C toggles a copy'); paintOverlay();
 }
+/** Reference (R at the angle / factor prompt): reference angle or length first, then the new one; typed, or two picked points (Set length's pick). Lengths are drawing units inside, mm when typed. */
+function refStart(d) {
+  const m = state.mod;
+  m.ref = { step: 'ref', pts: [], value: null }; m.move.slots = null;
+  note(modPrompt(d).prompt); paintOverlay();
+}
+/** The reference value, or the new one, is known (degrees / drawing units). */
+function refGot(d, v) {
+  const m = state.mod, R = m.ref;
+  if (R.step === 'new' || R.step === 'newpts') { transformDo(d, v); return; }
+  if (m.kind === 'scale' && !(v > 1e-9)) { note('The reference length must be above 0'); return; }
+  R.value = v; R.step = 'new'; R.pts = []; R.measured = null;
+  note(modPrompt(d).prompt); paintOverlay();
+}
+function refPoint(d, p, shift = false, typed = false) {
+  const R = state.mod.ref, r = lengthPick(d, R, p, shift, typed);
+  if (r === 'same') { note('Those are the same point: pick two'); return; }
+  if (r === 'first') { note(modPrompt(d).prompt); paintOverlay(); return; }
+  const [a, b] = R.pts;
+  R.pts = []; refGot(d, state.mod.kind === 'scale' ? R.measured / d.factor : rotationAngle(a, b));
+}
+function refClick(d, p, q, shift) {
+  const m = state.mod, scaling = m.kind === 'scale';
+  if (m.ref.step !== 'new') { refPoint(d, p, shift); return; }
+  if (scaleDistance(m.p1, q) < 1e-9) { note(scaling ? 'Pick a point away from the base' : 'Click a point away from the pivot'); return; }
+  refGot(d, scaling ? scaleDistance(m.p1, q) : rotationAngle(m.p1, q, shift));
+}
+/** What is typed at a Reference step. → true when taken (false lets a command word through) */
+function refTyped(d, raw, c) {
+  const m = state.mod, R = m.ref, scaling = m.kind === 'scale', f = d.factor;
+  if (R.step === 'new' && (c === 'p' || c === 'points')) { R.step = 'newpts'; R.pts = []; note(modPrompt(d).prompt); paintOverlay(); return true; }
+  const inp = DR.parseInput(raw), from = (R.pts.at(-1) || m.p1).map((v) => v * f), q = DR.typedPoint(inp, from);
+  if (q) {
+    const p = q.map((v) => v / f);
+    if (R.step === 'new') { if (DR.dist(m.p1, p) > 1e-9) refGot(d, scaling ? scaleDistance(m.p1, p) : rotationAngle(m.p1, p)); else note('Type a point away from the ' + (scaling ? 'base' : 'pivot')); }
+    else refPoint(d, p, false, true);
+    return true;
+  }
+  if (inp.kind === 'word') return false;
+  if (R.step === 'newpts' || R.pts.length) { note('Pick two points, or Esc cancels'); return true; }
+  const v = scaling ? Number(raw.trim().replace(',', '.')) : PL.parseAngle(raw);
+  if (v == null || !Number.isFinite(v)) { note(`I do not understand "${raw.trim()}". Type ${scaling ? 'a length in mm' : 'degrees'}, or click two points`); return true; }
+  if (scaling && !(v > 0)) { note(`The ${R.step === 'ref' ? 'reference' : 'new'} length must be above 0`); return true; }
+  refGot(d, scaling ? v / f : v);
+  return true;
+}
 function transformDo(d, value) {
   const m = state.mod, scaling = m.kind === 'scale', label = scaling ? 'Scale' : 'Rotate';
+  if (m.ref) { value = scaling ? referenceFactor(m.ref.value, value) : referenceTurn(m.ref.value, value); if (value == null) { note('The new length must be above 0'); return; } }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
   if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   try {
@@ -6886,9 +6968,10 @@ function modOvl(d, out) {
   };
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) {
     if (m.p1 && m.cur) {
-      const typed = m.kind === 'rotate' ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
+      const R = m.ref, typed = m.kind === 'rotate' && !R ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
       const end = typed == null ? m.cur.slice(0, 2) : [m.p1[0] + len * Math.cos(typed * Math.PI / 180), m.p1[1] + len * Math.sin(typed * Math.PI / 180)];
-      add({ t: 'line', a: m.p1.map((v) => v * f), b: end.map((v) => v * f) }, 'dr-guide', 'mod-line');
+      const from = R && R.step !== 'new' ? R.pts[0] : m.p1;
+      if (from) add({ t: 'line', a: from.map((v) => v * f), b: end.map((v) => v * f) }, 'dr-guide', 'mod-line');
     }
   } else if (m.kind === 'offset') {
     if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canModify(e)) addEnt(e, 'dr-guide'); }

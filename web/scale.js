@@ -8,6 +8,9 @@ export function scaleFactor(text) {
   return /^[+]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i.test(text.trim()) && Number.isFinite(+text) && +text > 0 ? +text : null;
 }
 
+/** Reference: new length / reference length; null unless both are above 0 (a zero reference cannot scale). */
+export const referenceFactor = (reference, next) => reference > 0 && next > 0 && Number.isFinite(reference) && Number.isFinite(next) ? next / reference : null;
+
 export const scaleDistance = (base, point) => Math.hypot(point[0] - base[0], point[1] - base[1]);
 export const scaleMatrix = ([x, y], factor) => [factor, 0, 0, factor, x * (1 - factor), y * (1 - factor)];
 

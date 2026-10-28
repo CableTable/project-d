@@ -9,6 +9,9 @@ export function rotationAngle(pivot, point, shift = false) {
   return shift ? Math.round(a / 15) * 15 : a;
 }
 
+/** Reference: the turn that takes the reference angle to the new angle (degrees). */
+export const referenceTurn = (reference, next) => next - reference;
+
 /** Cached drawing ghosts use the same canvas placement path as layout parts. */
 export function rotationMatrix([x, y], degrees) {
   const a = degrees * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);

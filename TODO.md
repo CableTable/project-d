@@ -256,7 +256,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 155a2. (after 155a) Freehand fence path in Quick Trim / Extend: press and drag on empty space draws a path; everything it crosses is trimmed (AutoCAD way). His ask 2026-10-27.
     155b. ❌ (won't do: he keeps our decided aliases, 2026-10-27) Command aliases to acad.pgp: M Move, P Pan, D Dimstyle, S Stretch, E Erase, R Redraw, CP Copy, DLI / DAL; revisit the deliberate M = Measure and MV = Move (S–M).
     155c. ✅ (built, 2026-10-28, Knight) A click selects one object; Shift / Ctrl toggle per object. Right-click → Select connected picks the joined chain.
-    155d. Rotate and Scale Reference option (M).
+    155d. ✅ (built, 2026-10-28, King) Rotate and Scale Reference option (M). A placed part's Rotate in a layout takes typed degrees only (no picked points).
     155e. Grip modes: Space / Enter cycles Stretch, Move, Rotate, Scale, Mirror; C copy, B base point, grip menu; Shift for several hot grips; grips on text, ellipse, hatch and blocks (M–L, split when grilled).
     155f. ✅ (built, 2026-10-28, Knight) Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).
     155g. Offset Through, Erase, Layer and Multiple options; offset ellipses and splines (M).

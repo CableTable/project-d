@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import { flatten, mapply, readDxf } from './web/drawing.js';
-import { rotateEntities, rotationAngle, rotationMatrix } from './web/rotate.js';
+import { rotateEntities, rotationAngle, rotationMatrix, referenceTurn } from './web/rotate.js';
 import { addDimension, buildDim } from './web/edit.js';
 
 const value = (e, code) => +e.r.v[e.r.c.indexOf(code)];
@@ -170,4 +170,11 @@ test('Rotate angle convention, Shift steps, negative / full turns and invalid in
   }
   for (const [p, a] of [[null, 90], [[NaN, 0], 90], [pivot, Infinity]]) assert.throws(() => rotateEntities(raw, new Set([0]), p, a), /finite/);
   assert.throws(() => rotateEntities({ ...raw, entities: [make('UNKNOWN', points)] }, new Set([0]), pivot, 90));
+});
+
+test('Reference: the turn is the new angle minus the reference angle', () => {
+  assert.equal(referenceTurn(30, 90), 60);
+  assert.equal(referenceTurn(0, 0), 0);
+  assert.equal(referenceTurn(90, 30), -60);
+  assert.equal(referenceTurn(rotationAngle([0, 0], [1, 1]), rotationAngle([0, 0], [0, 1])), 45);
 });

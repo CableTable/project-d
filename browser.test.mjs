@@ -5797,7 +5797,7 @@ try {
     assert.equal(await page.locator('[data-group=tools] [data-pivot]').count(), 1);
     assert.equal(await page.locator('[data-group=tools] .grip-sq').count(), 0, 'the handles give way to the arrows');
     assert.match(await t('cmd-hist').textContent(), /^Command: ROTATE {3}Pivot: [\d.]+, [\d.]+$/);
-    assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Esc\]:?$/);
+    assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Reference \/ Esc\]:?$/);
     // turn by hand: drag a corner arrow 20° anticlockwise about the pivot
     const turn = async (deg, keys = [], shot = '') => {
       const a = await arrowPoint(0), pv = await pivotPx(), r = Math.hypot(a.x - pv.x, a.y - pv.y), a0 = Math.atan2(a.y - pv.y, a.x - pv.x);
@@ -11481,6 +11481,102 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('TODO 155d: Rotate and Scale Reference option (typed values, picked points, Points, Copy, zero refused, one undo step; Set length unchanged)', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 60, 30));
+    const end = (doc, i = 0) => [fieldOf(doc.entities[i], 11), fieldOf(doc.entities[i], 21)];
+    const angleOf = (doc, i = 0) => Math.atan2(fieldOf(doc.entities[i], 21) - 30, fieldOf(doc.entities[i], 11) - 20) * 180 / Math.PI;
+    const start = async (kind, base = '20,30') => {
+      await closeTabs(/./); await openGrips(writeDxf(raw), 'ref155d.dxf');
+      await page.keyboard.press('Control+a'); await typeCmd(kind); await typeCmd(base);
+    };
+    const closeEnough = (got, want, tol, what) => assert.ok(Math.abs(got - want) <= tol, `${what}: got ${got}, wanted ${want}`);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+
+    await start('ro');
+    assert.match(await prompt(), /^Angle: \[Copy \/ Reference \/ Esc\]/);
+    await page.keyboard.press('x'); await t('cmd-bar').waitFor(); await page.keyboard.press('Backspace');       // any key opens the bar during a command
+    assert.deepEqual(await t('cmd-chip').allTextContents(), ['Copy', 'Reference']);
+    await typeCmd('r'); assert.match(await prompt(), /^Angle: Specify the reference angle <0>:/);
+    await typeCmd('30'); assert.match(await prompt(), /Specify the new angle or \[Points \/ Esc\] <0>:/);
+    await shotBoth('rotate-reference', async () => { await hoverPreview(20, 60); });
+    await typeCmd('90');
+    let doc = await savedDoc();
+    closeEnough(end(doc)[0], 40, 1e-6, 'x after typed 30 -> 90'); closeEnough(end(doc)[1], 30 + 40 * Math.sin(Math.PI / 3), 1e-6, 'y after typed 30 -> 90');
+    assert.equal((await histLabels()).at(-1), 'Rotate');
+    await undo(); doc = await savedDoc(); assert.deepEqual(end(doc), [60, 30], 'one Ctrl+Z takes the whole Rotate back');
+
+    await start('ro'); await typeCmd('reference'); await typeCmd('30'); await typeCmd('p');
+    assert.match(await prompt(), /first point/); await typeCmd('0,0'); assert.match(await prompt(), /second point/); await typeCmd('10,10');
+    doc = await savedDoc(); closeEnough(angleOf(doc), 15, 1e-6, 'new angle from two typed points (45) minus reference 30');
+
+    await start('ro'); await typeCmd('r'); await typeCmd('0,0'); await typeCmd('10,10');
+    assert.match(await prompt(), /Specify the new angle/); await typeCmd('90');
+    doc = await savedDoc(); closeEnough(angleOf(doc), 45, 1e-6, 'reference from two typed points (45), new 90');
+
+    await start('ro'); await typeCmd('r');
+    await click(30, 40); assert.match(await prompt(), /second point/); await click(50, 60); assert.match(await prompt(), /Specify the new angle/);
+    await click(20, 60);
+    doc = await savedDoc(); closeEnough(angleOf(doc), 45, 1.5, 'picked reference line (45) then a click straight up from the pivot (90)');
+
+    await start('ro'); await typeCmd('r'); await typeCmd('10'); await typeCmd('p');
+    await click(30, 40); await click(30, 60);
+    doc = await savedDoc(); closeEnough(angleOf(doc), 80, 1.5, 'Points for the new angle: a vertical line (90) minus reference 10');
+
+    await start('ro'); await typeCmd('r'); await typeCmd('');
+    assert.match(await prompt(), /Specify the new angle/); await typeCmd('45');
+    doc = await savedDoc(); closeEnough(angleOf(doc), 45, 1e-6, 'Enter takes the default reference 0');
+
+    await start('ro'); await typeCmd('c'); assert.match(await prompt(), /Copy on/); await typeCmd('r'); await typeCmd('30'); await typeCmd('90');
+    doc = await savedDoc(); assert.equal(doc.entities.length, 2, 'Copy keeps the original'); assert.deepEqual(end(doc, 0), [60, 30]);
+    closeEnough(angleOf(doc, 1), 60, 1e-6, 'the copy is turned 60');
+    await page.keyboard.press('Escape');
+
+    await start('sc');
+    assert.match(await prompt(), /^Scale factor: \[Copy \/ Reference \/ Esc\]/);
+    await typeCmd('r'); assert.match(await prompt(), /^Scale factor: Specify reference length <1\.0000>:/);
+    await typeCmd('0'); assert.match(await histLine(), /reference length must be above 0/);
+    assert.match(await prompt(), /Specify reference length/); assert.deepEqual(end(await savedDoc()), [60, 30]);
+    await typeCmd('10'); assert.match(await prompt(), /Specify the new length or \[Points \/ Esc\] <1\.0000>:/);
+    await typeCmd('25');
+    doc = await savedDoc(); assert.deepEqual(end(doc), [120, 30], 'typed 10 -> 25 scales by 2.5 about the base');
+    assert.equal((await histLabels()).at(-1), 'Scale');
+    await undo(); doc = await savedDoc(); assert.deepEqual(end(doc), [60, 30], 'one Ctrl+Z takes the whole Scale back');
+
+    await start('sc'); await typeCmd('r'); await typeCmd('10'); await typeCmd('p'); await typeCmd('100,100'); await typeCmd('125,100');
+    assert.deepEqual(end(await savedDoc()), [120, 30], 'Points for the new length: 25 / 10');
+
+    await start('sc'); await typeCmd('r'); await typeCmd('0'); await typeCmd('-3');
+    assert.match(await prompt(), /Specify reference length/); await typeCmd('abc'); assert.match(await histLine(), /Unknown command/);
+    await typeCmd('10'); await typeCmd('0'); assert.match(await histLine(), /new length must be above 0/);
+    assert.match(await prompt(), /Specify the new length/); assert.deepEqual(end(await savedDoc()), [60, 30]);
+    await page.keyboard.press('Escape');
+
+    await start('sc'); await typeCmd('r');
+    await click(30, 50); assert.match(await prompt(), /second point/); await click(40, 50); assert.match(await prompt(), /Specify the new length/);
+    await click(20, 55);
+    doc = await savedDoc(); closeEnough(end(doc)[0], 120, 2, 'picked reference 10, new length 25 picked from the base');
+
+    await start('sc'); await typeCmd('c'); await typeCmd('r'); await typeCmd('10'); await typeCmd('20');
+    doc = await savedDoc(); assert.equal(doc.entities.length, 2, 'Scale Copy with Reference keeps the original'); assert.deepEqual(end(doc, 0), [60, 30]); assert.deepEqual(end(doc, 1), [100, 30]);
+    await page.keyboard.press('Escape');
+
+    // a placed part in a layout: typed degrees, relative to the reference
+    const lay = newLayout('Ref layout'), partDoc = newDoc(4);
+    addEntities(partDoc, dxfPoly([[0, 0], [40, 0], [40, 20], [0, 20]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', partDoc);
+    lay.placed = [{ partId: 'plate', x: 100, y: 100, rot: 0 }];
+    await t('picker').setInputFiles({ name: 'ref-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.locator('.dtab.on .tname').filter({ hasText: 'ref-layout.dxf' }).waitFor();
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    await typeCmd('ro'); assert.match(await prompt(), /\[Pivot \/ Copy \/ Reference \/ Esc\]/);
+    await typeCmd('r'); assert.match(await prompt(), /Specify the reference angle <0>:/);
+    await typeCmd('30'); assert.match(await prompt(), /Specify the new angle <0>:/); await typeCmd('90');
+    assert.equal(await t('rot-angle').inputValue(), '60°');
+    await page.keyboard.press('Escape'); await closeTabs(/ref-layout/);
+  });
+
   await step('TODO 66a: Move', async () => {
     await menuItem('View', 'Theme: light');
     const raw = newDoc(4);
@@ -11969,7 +12065,7 @@ try {
     await t('picker').setInputFiles({ name: 'rotate-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
     await page.locator('.dtab.on .tname').filter({ hasText: 'rotate-layout.dxf' }).waitFor();
     await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
-    await typeCmd('ro'); assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Esc\]:?$/);
+    await typeCmd('ro'); assert.match(await prompt(), /^Angle <0\.00>: \[Pivot \/ Copy \/ Reference \/ Esc\]:?$/);
     await typeCmd('90'); assert.equal(await t('rot-angle').inputValue(), '90°');
     await page.keyboard.press('Escape'); await closeTabs(/rotate-layout/);
   });
