@@ -6,10 +6,13 @@
 //   canModify(ent)                     → can Offset / Trim take this entity? (LINE, ARC, CIRCLE, LWPOLYLINE in the plane)
 //   offsetEntity(ent, d, at)           → { ent } | { error }   the copy d away on the side of the point `at`; a polyline is joined with mitres
 //   trimEntity(ent, edges, pick)       → { ents, removed } | { error }  the kept pieces and the piece under `pick` that goes
-//   mirrorEntity(ent, p1, p2, blocks)  → { ent, blocks? } | { skip }    reflection; dimensions return their private blocks
+//   mirrorEntity(ent, p1, p2, blocks)  → { ent, blocks? } | { skip }    reflection; dimensions and leaders return private blocks
 //   mirrorShape(sh, p1, p2) / offsetShape(sh, d, at) / trimShape(sh, edgeShapes, pick) are the same on shapes.
 import { shapeOf, hasGrips, num, at as atCode, get, withValues } from './grips.js';
 import { toEntity } from './draw.js';
+import { LDR_BLOCK } from './edit.js';
+import * as L from './leader.js';
+import { insert } from './dxf-write.js';
 
 const TAU = Math.PI * 2, DEG = 180 / Math.PI;
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -260,6 +263,18 @@ export function mirrorEntity(ent, p1, p2, blocks = {}, depth = 0) {
   }
   if (ent.type === 'INSERT' || ent.type === 'DIMENSION') {
     const name = field(r, 2), dim = ent.type === 'DIMENSION' || /^PD_DIM_/.test(name);
+    if (ent.type === 'INSERT' && LDR_BLOCK.test(name)) {
+      const block = blocks[name], model = !block?.xref && L.read(name, block);
+      if (!model) return { skip: 'the leader has no block geometry' };
+      const angle = (get(r, 50) ?? 0) / DEG, c = Math.cos(angle), s = Math.sin(angle);
+      model.pts = model.pts.map(([x, y]) => {
+        x = (x - block.base[0]) * (get(r, 41) ?? 1); y = (y - block.base[1]) * (get(r, 42) ?? 1);
+        const wx = (get(r, 10) ?? 0) + c * x - s * y, wy = (get(r, 20) ?? 0) + s * x + c * y;
+        return reflect([ent.flip ? -wx : wx, wy], p1, p2);
+      });
+      const built = L.build(model, L.freeName(blocks));
+      return built ? { ent: insert(built.name, 0, 0, ent), blocks: { ...blocks, [built.name]: built.block } } : { skip: 'the leader has invalid geometry' };
+    }
     let mirrored = mirrorRecord(ent, p1, p2);
     mirrored.kids = ent.kids?.map((kid) => mirrorRecord({ type: kid.type, r: kid, flip: (get(kid, 230) ?? 1) < 0 }, p1, p2).r);
     if (!dim) return { ent: mirrored };

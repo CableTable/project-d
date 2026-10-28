@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { browserArgs, shardSelector } from './tools/browser-shards.mjs';
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
-import { read as readLeader } from './web/leader.js';
+import { read as readLeader, build as buildLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
@@ -12574,6 +12574,7 @@ try {
     const doc0 = newDoc(4);
     addEntities(doc0, dxfLine(20, 30, 60, 50, { layer: 'Cut' }), dxfCircle(100, 80, 10, { layer: 'Cut' }), dxfText(30, 10, 5, 'ABC', { layer: 'Cut' }));
     await openGrips(writeDxf(doc0), 'mirror.dxf');
+    await page.getByRole('button', { name: 'Zoom out', exact: true }).click({ clickCount: 3 }); await frames();
     await page.keyboard.press('Control+a');
     assert.match(await selCount(), /3/);
     await page.locator('[data-tool=mirror]').click();
@@ -12581,7 +12582,7 @@ try {
     await click(150, 0);
     assert.match(await prompt(), /Specify second point of mirror line/);
     const p2 = await at(150, 100); await page.mouse.move(p2.x, p2.y); await frames();
-    assert.ok(await t('mod-preview').count() >= 2, 'the mirrored copies show before the click');
+    assert.ok(+(await t('drawing').getAttribute('data-preview')) >= 2, 'the mirrored copies show before the click');
     await shotBoth('mirror', async () => { const q = await at(150, 100); await page.mouse.move(q.x, q.y); await frames(); }, async () => {});
     await click(150, 100);
     assert.match(await prompt(), /Erase source objects\? \[Yes \/ No\] <No>/);
@@ -12627,7 +12628,7 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc with nothing selected ends Mirror');
   });
 
-  await step('TODO 155j: Mirror blocks, dimensions, hatches and half ellipses; Erase No / Yes, independent dimension blocks and one undo', async () => {
+  await step('TODO 155j: Mirror blocks, dimensions, leaders, hatches and half ellipses; Erase No / Yes, independent annotation blocks and one undo', async () => {
     const raw = newDoc(4);
     addBlock(raw, 'mirror-part', [dxfLine(0, 0, 60, 0), dxfLine(60, 0, 60, 35), dxfLine(60, 35, 40, 35)]);
     addEntities(raw, dxfInsert('mirror-part', 30, 30));
@@ -12640,17 +12641,22 @@ try {
     const native = buildDim('aligned', { a: [30, 165], b: [90, 165], offset: 12, textH: 4 }, 1, '*D1');
     raw.blocks['*D1'] = native.block;
     addEntities(raw, entity('DIMENSION', [[2, '*D1'], [70, 1], [10, 30], [20, 177], [13, 30], [23, 165], [14, 90], [24, 165]]));
+    Object.assign(raw, addDimension(raw, buildLeader({ pts: [[110, 110], [130, 140], [155, 140]], lines: ['Read this note'], textH: 4, arrow: 2.5 }, 'PD_LDR_1')));
     await openGrips(writeDxf(raw), 'mirror155j.dxf');
     const before = await savedDoc();
     for (const erase of [false, true]) {
+      await page.getByRole('button', { name: 'Zoom out', exact: true }).click({ clickCount: 3 }); await frames();
       await page.keyboard.press('Control+a'); await typeCmd('mi');
       await typeCmd('200,0'); await typeCmd('200,100');
       assert.match(await prompt(), /Erase source objects/);
+      await frames();
+      assert.equal(+(await t('drawing').getAttribute('data-preview')), flatten(raw).items.length, 'the ghost draws every block member, including dimension and leader notes');
+      if (!erase) await shotBoth('todo155j-preview');
       await t(erase ? 'mirror-yes' : 'mirror-no').click();
-      assert.match(await prompt(), /^Mirrored 5/); assert.doesNotMatch(await histLine(), /not mirrored yet|left out/);
-      const saved = await savedDoc(), copies = saved.entities.slice(erase ? 0 : 5);
-      assert.equal(saved.entities.length, erase ? 5 : 10);
-      assert.deepEqual(copies.map((e) => e.type), ['INSERT', 'INSERT', 'HATCH', 'ELLIPSE', 'DIMENSION']);
+      assert.match(await prompt(), /^Mirrored 6/); assert.doesNotMatch(await histLine(), /not mirrored yet|left out/);
+      const saved = await savedDoc(), copies = saved.entities.slice(erase ? 0 : 6);
+      assert.equal(saved.entities.length, erase ? 6 : 12);
+      assert.deepEqual(copies.map((e) => e.type), ['INSERT', 'INSERT', 'HATCH', 'ELLIPSE', 'DIMENSION', 'INSERT']);
       assert.equal(copies[0].r.v[copies[0].r.c.indexOf(2)], 'mirror-part');
       assert.equal(fieldOf(copies[0], 41), -1); assert.ok(saved.blocks['mirror-part'], 'Erase Yes keeps the shared block');
       for (const i of [1, 4]) {
@@ -12663,6 +12669,15 @@ try {
       assert.equal(fieldOf(copies[2], 53), 45, 'hatch direction stays');
       assert.ok(Math.abs(fieldOf(copies[3], 41) - Math.PI) < 1e-6);
       assert.equal(fieldOf(copies[3], 42), 0);
+      const leaderName = copies[5].r.v[copies[5].r.c.indexOf(2)], leader = readLeader(leaderName, saved.blocks[leaderName]);
+      assert.notEqual(leaderName, 'PD_LDR_1'); assert.deepEqual(leader.lines, ['Read this note']);
+      assert.deepEqual(leader.pts, [[290, 110], [270, 140], [245, 140]]);
+      const tx = flatten({ ...saved, entities: [copies[5]] }).items.find((it) => it.k === 't');
+      assert.equal(tx.mx, 1); assert.equal(tx.my, 1); assert.equal(tx.rot, 0);
+      for (const [name, i] of [['PD_DIM_1', 1], ['*D1', 4], ['PD_LDR_1', 5]]) {
+        if (erase) assert.equal(saved.blocks[name], undefined, 'Erase Yes removes the unused source block');
+        else assert.deepEqual(flatten({ ...saved, entities: [saved.entities[i]] }), flatten({ ...before, entities: [before.entities[i]] }), 'Erase No leaves the source geometry and note unchanged');
+      }
       assert.equal((await histLabels()).at(-1), 'Mirror');
       if (!erase) { await page.keyboard.press('Escape'); await page.keyboard.press('Control+0'); await shotBoth('todo155j-mirrored'); }
       await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');

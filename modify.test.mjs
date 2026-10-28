@@ -5,8 +5,9 @@ import { shapeOf, get } from './web/grips.js';
 import { extendEntity, extendRegion, previewEdit } from './web/extend.js';
 import { entity, line, circle, arc, lwpoly, text, mtext, ellipse, insert, rect, roundRect, newDoc, addBlock, addEntities, writeDxf } from './web/dxf-write.js';
 import { readDxf, flatten, mapply } from './web/drawing.js';
-import { addDimension, buildDim, dimOfEntity, freeName, moveEntities } from './web/edit.js';
+import { addDimension, buildDim, dimOfEntity, freeName, moveEntities, removeEntities } from './web/edit.js';
 import { followDimensions } from './web/linked-dimensions.js';
+import * as L from './web/leader.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -419,6 +420,55 @@ test('TODO 155j: every PD dimension kind owns a block; geometry reflects, text r
       }
     }
   }
+});
+
+test('TODO 155j: mirrored leaders own their block, reflect world points and keep readable, independently editable notes', () => {
+  for (const lines of [['Read this'], ['Read this', 'Second line']]) for (const transformed of [false, true]) {
+    const raw = newDoc(4), built = L.build({ pts: [[10, 20], [30, 40], [60, 40]], lines, textH: 3, arrow: 2 }, 'PD_LDR_1');
+    Object.assign(raw, addDimension(raw, built));
+    if (transformed) raw.entities = [insert(built.name, 40, 50, { sx: 2, sy: 3, rot: 37, layer: 'Dimensions', aci: 3 })];
+    const before = structuredClone(raw), a = [3, 5], b = [3, 10], result = M.mirrorEntity(raw.entities[0], a, b, raw.blocks);
+    assert.ok(result.ent, result.skip);
+    const name = value(result.ent, 2);
+    assert.notEqual(name, built.name); assert.equal(result.blocks[built.name], raw.blocks[built.name]);
+    nearPt([get(result.ent.r, 10), get(result.ent.r, 20)], [0, 0]);
+    assert.equal(get(result.ent.r, 41), null); assert.equal(get(result.ent.r, 50), null);
+    assert.equal(result.ent.aci, raw.entities[0].aci);
+    const src = flatten(raw), paths = src.items.filter((it) => it.k === 'p'), mat = src.mats[paths[0].m];
+    const expected = L.read(built.name, built.block).pts.map((p) => reflected(mapply(mat, ...p), a, b));
+    for (const copy of [{ ...raw, entities: [result.ent], blocks: result.blocks }, roundTrip({ ...raw, entities: [result.ent], blocks: result.blocks })]) {
+      const model = L.ofEntity(copy, 0).model;
+      model.pts.forEach((p, i) => nearPt(p, expected[i], 2e-5)); assert.deepEqual(model.lines, lines);
+      const fl = flatten(copy), tx = fl.items.find((it) => it.k === 't'), m = fl.mats[tx.m];
+      assert.equal(tx.mx, 1); assert.equal(tx.my, 1); near(tx.rot, 0); assert.ok(m[0] > 0 && m[3] > 0);
+      assert.equal(L.sideOf(model.pts), -1, 'the note lands left of the reflected end');
+      const edited = L.replace(copy, name, { ...model, lines: ['Changed copy'] });
+      assert.deepEqual(L.read(built.name, edited.blocks[built.name]).lines, lines);
+      assert.deepEqual(L.read(name, edited.blocks[name]).lines, ['Changed copy']);
+    }
+    assert.deepEqual(raw, before);
+  }
+  assert.match(M.mirrorEntity(insert('PD_LDR_1', 0, 0), [0, 0], [0, 1]).skip, /leader/);
+});
+
+test('TODO 155j: Erase Yes removes unused source annotation blocks and retains blocks used by mirrored copies', () => {
+  const raw = newDoc(4);
+  Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [10, 20], b: [70, 40], offset: 10, textH: 2 }, 1, 'PD_DIM_1')));
+  Object.assign(raw, addDimension(raw, L.build({ pts: [[10, 20], [30, 40]], lines: ['Note'], textH: 3, arrow: 2 }, 'PD_LDR_1')));
+  addBlock(raw, '*D1', [line(10, 20, 70, 40), text(40, 30, 2, '60')]);
+  addBlock(raw, 'shared', [line(0, 0, 10, 0)]);
+  addEntities(raw, entity('DIMENSION', [[2, '*D1'], [70, 0], [10, 40], [20, 30]]), insert('shared', 0, 0));
+  const before = structuredClone(raw), copies = [];
+  let blocks = raw.blocks;
+  for (const ent of raw.entities) {
+    const r = M.mirrorEntity(ent, [0, 0], [0, 1], blocks);
+    assert.ok(r.ent, r.skip); copies.push(r.ent); blocks = r.blocks || blocks;
+  }
+  const out = removeEntities({ entities: [...raw.entities, ...copies], blocks }, new Set(raw.entities.map((_, i) => i)));
+  assert.deepEqual(out.entities, copies);
+  for (const name of ['PD_DIM_1', 'PD_LDR_1', '*D1']) assert.equal(out.blocks[name], undefined);
+  for (const ent of copies) assert.ok(out.blocks[value(ent, 2)], 'every mirrored block remains available');
+  assert.equal(out.blocks.shared, raw.blocks.shared); assert.deepEqual(raw, before);
 });
 
 test('TODO 155j: native DIMENSION definition points, independent geometry and readable text survive DXF', () => {

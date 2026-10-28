@@ -4141,8 +4141,8 @@ function paintOverlay(gesture = false) {
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
       dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-    const move = state.entityDrag || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale'].includes(state.mod.kind) ? state.mod.move : null);
-    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+    const move = state.entityDrag || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
+    c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
     ui.cmdUI.place();
     c.dataset.drawn = drawn || 0;
     if (heavy(performance.now() - t0, drawn || 0)) {
@@ -6867,9 +6867,10 @@ function modAnswer(d, erase) {
     if (r.ent) { made.push(r.ent); done.push(at.get(ent)); } else skipped.push(r.skip);
   }
   if (!made.length) { setTool('select'); note('Mirror: nothing could be mirrored' + (skipped.length ? ' (' + skipped[0] + ')' : '')); return; }
-  const gone = new Set(erase ? done : []), base = d.raw.entities.filter((_, i) => !gone.has(i)), first = base.length;
+  // Include the copies so cleanup keeps shared blocks that they still use.
+  const next = { entities: [...d.raw.entities, ...made], blocks }, out = erase ? Ed.removeEntities(next, new Set(done)) : next, first = out.entities.length - made.length;
   view.fitted = false;
-  commit(d, { entities: [...base, ...made], blocks }, 'Mirror');
+  commit(d, out, 'Mirror');
   setTool('select'); setSel(d, new Set(made.map((_, i) => first + i)));
   note(`Mirrored ${made.length}${erase ? ', the sources erased' : ''}` + (skipped.length ? `; ${skipped.length} left out (${[...new Set(skipped)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }
@@ -6920,9 +6921,18 @@ function modOvl(d, out) {
     }
   } else if (m.stage === 'p1' || m.stage === 'p2' || m.stage === 'erase') {
     const a = m.p1, b = m.stage === 'erase' ? m.p2 : m.stage === 'p2' ? m.cur : null;
+    m.move = null;
     if (a && b && Math.hypot(b[0] - a[0], b[1] - a[1]) > 1e-9) {
       add({ t: 'line', a: [a[0] * f, a[1] * f], b: [b[0] * f, b[1] * f] }, 'dr-guide', 'mod-line');
-      for (const e of m.objs.slice(0, 300)) { const r = MD.mirrorEntity(e, a, b, d.raw.blocks); if (r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
+      let blocks = d.raw.blocks;
+      const entities = [];
+      for (const e of m.objs.slice(0, 300)) {
+        const r = MD.mirrorEntity(e, a, b, blocks);
+        if (r.blocks) blocks = r.blocks;
+        if (r.ent) entities.push(r.ent);
+      }
+      const preview = flatten({ ...d.raw, entities, blocks });
+      m.move = { preview, items: preview.items, dx: 0, dy: 0 };
     }
   }
 }
