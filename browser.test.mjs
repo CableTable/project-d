@@ -3874,7 +3874,11 @@ try {
       await pick(120, 100); await connected(120, 100); await count(4);
       await pick(120, 100, 'Control'); await count(3); // only one member is removed
       await connected(80, 80); await count(4); // empty space uses the selected seeds
-      await pick(100, 120); await count(1); // clicking an already selected member narrows the selection
+      await pick(100, 120); await count(4); // a selected member turns on rotate arrows for the whole selection
+      await p.locator('.ovl [data-rot]').first().waitFor();
+      assert.equal(await p.locator('.ovl [data-rot]').count(), 4);
+      await pick(80, 80); await count(0);
+      await pick(100, 120); await count(1);
       const a = await point(120, 100); await p.mouse.dblclick(a.x, a.y); await count(1);
       assert.equal(await p.getByRole('dialog').count(), 0, 'double-click adds no Quick Properties flow');
       await connected(120, 100); await count(4);
@@ -3920,6 +3924,7 @@ try {
       const count = (n) => p.waitForFunction((n) => document.querySelector('[data-testid=sel-count]').textContent.trim() === `${n} selected`, n);
       for (const theme of ['light', 'dark']) {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await pick(80, 80);
         await pick(120, 100); await count(1);
         await pick(120, 100, 'right'); await q('ctx-menu').waitFor();
         assert.deepEqual(await p.getByRole('menuitem').allTextContents(), ['Select connected', 'Extract part…', 'Keep only this', 'Measure from here', 'Delete']);
@@ -3938,6 +3943,7 @@ try {
       assert.match(await q('contour-hint').textContent(), /not a closed outline.*Join the tiny gaps/);
       await q('contour-close').click();
       for (const [x, y, name] of [[120, 100, 'Horizontal edge'], [100, 120, 'Vertical edge']]) {
+        await pick(80, 80);
         await pick(x, y); await count(1);
         await q('bar-extract').click(); await q('name-dialog').waitFor(); await count(4);
         assert.match(await q('name-dialog').textContent(), /100\.00 × 60\.00 mm/);
@@ -3952,7 +3958,7 @@ try {
         assert.deepEqual([stored.w, stored.h], [100, 60]);
         assert.equal((await q('entities').textContent()).trim(), 'Entities 6', 'extraction leaves the source intact');
       }
-      await pick(120, 100); await count(1); await q('bar-keep').click();
+      await pick(80, 80); await pick(120, 100); await count(1); await q('bar-keep').click();
       assert.equal((await q('entities').textContent()).trim(), 'Entities 1', 'Keep only keeps exactly the selected edge');
       await p.keyboard.press('Control+z');
       assert.equal((await q('entities').textContent()).trim(), 'Entities 6');

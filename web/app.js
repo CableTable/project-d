@@ -4455,7 +4455,7 @@ function renderCommand() {
   ui.hist.textContent = gd ? `Command: GUIDE   Dragging a ${gd.axis === 'y' ? 'horizontal' : 'vertical'} guide from the ${gd.axis === 'y' ? 'top' : 'left'} ruler (Esc cancels)` : rs ? `Command: ROTATE   Pivot: ${fmt(rp[0])}, ${fmt(rp[1])}` : (state.tool === 'select' || state.tool === 'step') && nSel > 1 ? `Command: SELECT   ${wholeGroup() ? `Group of ${nSel}` : `${nSel} parts selected`} (Shift-click adds or removes a part)` : state.tool === 'step' && lay
     ? `Command: STEP   Part: ${gp ? gp.name : '(none)'}   Gap X <5>: ${state.gapX}   Gap Y <5>: ${state.gapY}   Click a gap between rows or columns for extra room`
     : state.tool === 'contour' && (ed || lay) ? 'Command: CONTOUR   ' + contourCommandText()
-    : state.tool === 'select' && ed ? 'Command: SELECT   Click an object to select it. Shift / Ctrl adds or removes, drag a box, Esc clears. Right-click: Select connected / Extract part…'
+    : state.tool === 'select' && ed ? 'Command: SELECT   Click an unselected object to select it; click a selected object for rotate arrows. To pick one, click empty space first or Shift+click the others away. Shift / Ctrl adds or removes, drag a box, Esc clears. Right-click: Select connected / Extract part…'
     : state.tool === 'dimension' && ed ? 'Command: ' + dimTypeRow(state.dimType)[4]
     : state.tool === 'leader' && ed ? 'Command: LEADER'
     : state.tool === 'balloon' && ed ? `Command: BALLOON   next no. ${balOf(ed).next}`
@@ -5081,7 +5081,7 @@ function nudgeDrawing(d, dir, big) {
   } catch (err) { note(err.message); }
 }
 
-/** A click picks one object; Shift / Ctrl toggles just that object. */
+/** A click picks an unselected object or toggles rotate arrows for the selection; Shift / Ctrl toggles just that object. */
 function clickSelect(d, p, shift) {
   const ed = edIndex(d), e = Ed.hitEntity(ed, p[0], p[1], pickTol(d));
   if (e >= 0 && lockedEnt(d, e)) { note(`Layer ${d.raw.entities[e].layer} is locked: unlock it in the Objects tab to pick this`); return; }

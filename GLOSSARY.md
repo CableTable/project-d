@@ -251,7 +251,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **OTRACK**: Object-snap tracking that lines a pick up with points already acquired from drawing geometry. Where: `TODO.md`, item 21; `web/track.js`.
 
-**Outline**: A connected chain of drawing edges, often used as a part's outer cut shape. A click picks one object; right-click → Select connected picks its chain. Where: `DECISIONS.md`, Click selects one object (TODO 155c). Avoid: Necessarily a single polyline.
+**Outline**: A connected chain of drawing edges, often used as a part's outer cut shape. A click on an unselected object picks it; clicking a selected object keeps the whole selection and toggles corner rotate arrows. To pick one, click empty space first or Shift+click the others away. Right-click → Select connected picks its chain. Where: `DECISIONS.md`, Click selects one object (TODO 155c) and Click on an object already in the selection (156a vs 155c). Avoid: Necessarily a single polyline.
 
 **POINT**: A DXF point location that is left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
 
