@@ -33,6 +33,9 @@ function rectSize(r) {
   return ok ? [Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)] : null;
 }
 
+/** The search boxes' rule (Layers, Objects): ignores case, matches any part of the name, no wildcards; an empty query matches all. */
+export const nameMatches = (name, query) => String(name).toLowerCase().includes(String(query || '').trim().toLowerCase());
+
 export function iconOf(ent) {
   switch (ent.type) {
     case 'LINE': return 'line';
@@ -103,7 +106,7 @@ export function buildTree(raw, fl, o = {}) {
     const pool = filter === 'hidden' ? hidList : filter === 'locked' ? (isLocked ? list : []) : list;
     if (filter === 'hidden' && !layerHidden && !pool.length) continue;
     if (filter === 'locked' && !isLocked) continue;
-    const found = q ? pool.filter((e) => labelOf(raw.entities[e], factor, raw.blocks).toLowerCase().includes(q)) : pool;
+    const found = q && !nameMatches(name, q) ? pool.filter((e) => nameMatches(labelOf(raw.entities[e], factor, raw.blocks), q)) : pool;
     if (q && !found.length) continue;
     const cap = Math.max(CAP, show.get(name) || 0), isOpen = !!q || open.has(name);
     const rows = isOpen ? found.slice(0, cap).map((e) => {
@@ -153,7 +156,7 @@ export function partsTree(lay, placed, hidden = new Set(), query = '') {
     const mine = placed.map((p, k) => ({ p, k })).filter((x) => x.p.partId === id);
     if (!mine.length) continue;
     const places = mine.map(({ p, k }) => ({ k, src: p.src, i: p.i, label: `X ${t(p.x)} · Y ${t(p.y)}` + (p.rot ? ` · ${t(p.rot)}°` : ''), locked: !!p.lock }));
-    const shown = q && !part.name.toLowerCase().includes(q) ? places.filter((x) => x.label.toLowerCase().includes(q)) : places;
+    const shown = q && !nameMatches(part.name, q) ? places.filter((x) => nameMatches(x.label, q)) : places;
     if (q && !shown.length) continue;
     out.push({ id, name: part.name, w: part.w, h: part.h, count: mine.length, hidden: hidden.has(id), places: shown });
   }

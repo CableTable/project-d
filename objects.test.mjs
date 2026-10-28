@@ -141,4 +141,22 @@ test('renameLayer: also the layer of a POLYLINE\'s VERTEX records (an old-style 
   assert.deepEqual(raw.entities[0].kids.map((k) => k.v[k.c.indexOf(8)]), ['Cut', 'Cut'], 'the original is not touched');
 });
 
+test('Objects search (TODO 77): a layer whose name matches stays with all its objects', () => {
+  const { raw, fl } = sample();
+  const t = O.buildTree(raw, fl, { query: 'ENGR' });
+  assert.deepEqual(t.layers.map((l) => l.name), ['Engrave']);
+  assert.equal(t.layers[0].rows.length, 2);
+});
+
+test('nameMatches (TODO 77): any part, ignores case, trims, no wildcards, empty matches all', () => {
+  assert.ok(O.nameMatches('Outer wall', 'wall'));
+  assert.ok(O.nameMatches('Outer wall', 'WALL'));
+  assert.ok(O.nameMatches('outer WALL', ' Er W '));
+  assert.ok(O.nameMatches('Cut', ''));
+  assert.ok(O.nameMatches('Cut', undefined));
+  assert.ok(!O.nameMatches('Outer wall', 'door'));
+  assert.ok(!O.nameMatches('Outer wall', 'o*wall'), 'a * is just a character');
+  assert.ok(O.nameMatches('a*b', '*'));
+});
+
 console.log(n + ' tests passed');

@@ -870,6 +870,7 @@ button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 .omtop { padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; border-bottom: 1px solid var(--line); flex-shrink: 0; }
 .osr { display: flex; align-items: center; gap: 6px; height: 26px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); padding: 0 7px; color: var(--muted); }
 .osr:focus-within { border-color: var(--accent); color: var(--text); }
+.lsr { margin: 4px 10px 6px; }
 .osr input { flex: 1; min-width: 0; border: 0; background: none; color: inherit; font: 12px var(--mono); outline: 0; padding: 0; }
 .ofs { display: flex; gap: 4px; align-items: center; }
 .ofb { height: 20px; padding: 0 8px; border: 0; border-radius: var(--r); background: none; color: var(--muted); font: 600 11px var(--sans); display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }

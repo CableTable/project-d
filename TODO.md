@@ -165,7 +165,7 @@ From the UI research (Pip, 2026-10-20, ranked; page https://claude.ai/artifact/V
     76d. (after 76c, T22) A dimension across a rectangle's two sides drives its size: the right or top side moves, the left and bottom stay fixed. Moved after the session 17 features: needs 76a–c, and T22 is covered by 105a / 105b meanwhile.
 
 From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/Sp3eoq15FKgsVFQpxmpPd7; his picks):
-77. **Layer search box** (S): a small search box above the Layers list and the Objects tree; matches show, the rest hide (QCAD forum, 7 Oct 2026).
+77. ✅ **Layer search box** (S, built 2026-10-28; the Objects box already existed, so it gained Esc-clears and matching layer names; the Layers filter is kept per tab and + Add clears it): a small search box above the Layers list and the Objects tree; matches show, the rest hide (QCAD forum, 7 Oct 2026).
 78. ✅ **Trim preview** (M, built 2026-10-25): the piece that will go is thick red (`--hot`), with a faint blue glow on the whole hovered object (`--selection`, 35%); picked cutting edges stay blue. Preview and click share the cutting interval. No crossing gives glow only; leaving the object / canvas or Esc clears both. Uses TODO 146's shared bounds to keep the command box clear. **= ticket T54; S23: next after 144.**
     78a. ✅ LINE preview shares the trim calculation; unit and browser checks cover selected edges, all edges, one / two edges, no cut, locked layers, click agreement and Undo.
     78b. ✅ Arcs, circles and polylines use the same calculation, including bulges, multiple intersections and closed wraps; geometry and browser checks, light / dark screenshots with a thin pale polyline.

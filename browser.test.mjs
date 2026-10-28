@@ -15185,6 +15185,57 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 77: the Layers and Objects search boxes hide non-matching rows, ignore case, Esc restores, no layer state changes, kept per tab', async () => {
+    const doc = newDoc(4);
+    addLayer(doc, 'Outer wall', { aci: 7 }); addLayer(doc, 'Inner Wall', { aci: 5 }); addLayer(doc, 'Door', { aci: 1 });
+    addEntities(doc, dxfLine(0, 0, 100, 0, { layer: 'Outer wall' }), dxfLine(0, 10, 100, 10, { layer: 'Inner Wall' }), dxfLine(0, 20, 100, 20, { layer: 'Door' }));
+    await openGrips(writeDxf(doc), 'walls.dxf');
+    const names = () => page.locator('.layers-rows .layer .nm').allTextContents();
+    await t('ptab-layers').click();
+    assert.deepEqual(await names(), ['Outer wall', 'Inner Wall', 'Door', '0']);
+    const cur = await page.locator('.layer.current .nm').textContent();
+    await t('layer-search').fill('wall');
+    assert.deepEqual(await names(), ['Outer wall', 'Inner Wall'], 'any part of the name, either case');
+    await t('layer-search').fill('WALL ');
+    assert.deepEqual(await names(), ['Outer wall', 'Inner Wall']);
+    await t('layer-search').fill('o*');
+    assert.deepEqual(await names(), [], 'no wildcards');
+    await t('layer-search').fill('wall');
+    for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.locator('.layers').screenshot({ path: `${shotDir}/k77-layer-search-${th}.png` }); }
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
+    // hiding a layer through the filtered list: the filter stays, the state is only the layer's
+    await page.locator('.layers-rows .layer', { hasText: 'Outer wall' }).locator('.vis').click();
+    assert.deepEqual(await names(), ['Outer wall', 'Inner Wall'], 'the filter survives the list re-rendering');
+    assert.equal(await t('layer-search').inputValue(), 'wall');
+    await page.locator('.layers-rows .layer', { hasText: 'Outer wall' }).locator('.vis').click();
+    // Esc clears and shows all; the current layer is as before
+    await t('layer-search').press('Escape');
+    assert.equal(await t('layer-search').inputValue(), '');
+    assert.deepEqual(await names(), ['Outer wall', 'Inner Wall', 'Door', '0']);
+    assert.equal(await page.locator('.layer.current .nm').textContent(), cur, 'current layer unchanged');
+    assert.equal(await page.locator('.layers-rows .layer.hidden-layer').count(), 0, 'nothing left hidden');
+    // + Add while filtered: the new row is shown
+    await t('layer-search').fill('wall');
+    await t('layer-add').click();
+    assert.equal(await t('layer-search').inputValue(), '');
+    assert.equal(await t('layer-name').inputValue(), 'Layer1');
+    await t('layer-name').press('Enter');
+    await page.keyboard.press('Control+z');
+    // per tab: another tab has its own (empty) filter
+    await t('layer-search').fill('door');
+    assert.deepEqual(await names(), ['Door']);
+    await openGrips(objDoc(), 'objects2.dxf');
+    assert.equal(await t('layer-search').inputValue(), '', 'a new tab starts unfiltered');
+    // Objects: layers are matched by name too
+    await t('ptab-objects').click(); await t('objects-panel').waitFor();
+    await t('obj-search').fill('ENGR');
+    assert.deepEqual(await oLayers(), ['Engrave']);
+    await t('obj-search').press('Escape');
+    assert.equal(await t('obj-search').inputValue(), '');
+    assert.deepEqual(await oLayers(), ['Cut', 'Engrave']);
+    await t('ptab-drawing').click();
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;

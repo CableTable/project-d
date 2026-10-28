@@ -1481,6 +1481,7 @@ function buildPanel() {
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
         h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
+      h('div', { class: 'osr lsr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.layerSearch = h('input', { type: 'text', placeholder: 'Search layers…', 'aria-label': 'Search layers', 'data-testid': 'layer-search', autocomplete: 'off', spellcheck: 'false' })),
       ui.layerRows),
     buildObjects());
   // Reuse the existing controls and their validation; only their docker and section containers change.
@@ -1488,6 +1489,7 @@ function buildPanel() {
   ui.dockerPanes.drawing.append(ui.placedSecs[0], ui.propSec, ui.partsSec, ui.guideSec, ...ui.placedSecs.slice(1), ui.drawSec, ui.tinySec, ui.dupsSec, ui.outSec, ui.balSelBox, ui.balNumBox, ui.cmpSec, ui.diffSec);
   ui.dockerPanes.objects.append(ui.objPanel);
   ui.dockerPanes.layers.append(ui.layersSec);
+  layerSearchInit();
   ui.dockerPanes.library.append(ui.libSec);
   ui.dockerPanes.step.append(ui.stepSec, ui.gapSec, ui.stepFoot);
   ui.panelScroll.replaceChildren(...Object.values(ui.dockerPanes));
@@ -3219,7 +3221,7 @@ function addLayerNow() {
   d.raw.layers = { ...d.raw.layers };
   addLayer(d.raw, name, { aci: 7 });
   (d.addedLayers || (d.addedLayers = new Set())).add(name);
-  d.curLayer = name; d.dirty = true;
+  d.curLayer = name; d.dirty = true; d.layerQuery = '';         // the new row must show
   renderLayers(); renderTabs(); renderCommand(); renderEdit();
   const inp = ui.layerRows.querySelector('[data-testid=layer-name]');
   if (inp) { inp.focus(); inp.select(); }
@@ -3256,9 +3258,19 @@ function addedSwatch(d, l) {
     } });
 }
 
+/** Esc in a search box clears it (and does not reach the shortcuts). */
+function searchEsc(input) {
+  input.addEventListener('keydown', (e) => { if (e.key === 'Escape' && input.value) { e.stopPropagation(); input.value = ''; input.dispatchEvent(new Event('input')); } });
+}
+/** The Layers search: the filter is kept per tab (d.layerQuery) and only hides rows; it never touches a layer's state. */
+function layerSearchInit() {
+  ui.layerSearch.addEventListener('input', () => { const d = curDoc(); if (d) { d.layerQuery = ui.layerSearch.value; renderLayers(); } });
+  searchEsc(ui.layerSearch);
+}
 function renderLayers() {
-  const d = curDoc();
-  ui.layerRows.replaceChildren(...layerRows().map((l) => {
+  const d = curDoc(), q = d && d.layerQuery || '';
+  if (document.activeElement !== ui.layerSearch) ui.layerSearch.value = q;
+  ui.layerRows.replaceChildren(...layerRows().filter((l) => OB.nameMatches(l.name, q)).map((l) => {
     const isFile = l.fileLayer != null;
     const hid = l.bg ? !d.bg.visible : isFile ? d.off.has(l.fileLayer) : l.id && state.hidden[l.id];
     const label = hid ? 'Hidden' : l.eye === LOCK ? 'Locked' : 'Visible';
@@ -3294,6 +3306,7 @@ const omOf = (d) => d.om || (d.om = { open: null, openB: new Set(), show: new Ma
 function buildObjects() {
   ui.objSearch = h('input', { type: 'text', placeholder: 'Search objects…', 'aria-label': 'Search objects', 'data-testid': 'obj-search', autocomplete: 'off', spellcheck: 'false' });
   ui.objSearch.addEventListener('input', () => { const d = curDoc(); if (d) { omOf(d).query = ui.objSearch.value; renderObjects(); } });
+  searchEsc(ui.objSearch);
   const filt = (id, text) => (ui['objF' + id] = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-filter-' + id, 'data-filter': id, 'aria-pressed': 'false', onclick: () => { const d = curDoc(); if (d) { omOf(d).filter = id; renderObjects(); } } }, text));
   ui.objToggle = h('button', { class: 'ofb', type: 'button', 'data-testid': 'obj-toggle', 'aria-label': 'Expand or collapse all', title: 'Expand or collapse all', onclick: objToggleAll });
   ui.objTree = h('div', { class: 'otree', role: 'tree', 'aria-label': 'Objects', 'data-testid': 'obj-tree' });
