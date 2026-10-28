@@ -3739,7 +3739,7 @@ function buildStatus() {
   ui.coords = h('span', { class: 'mono coords', 'data-testid': 'coords', style: 'white-space:pre' }, 'X 0.00   Y 0.00 mm');
   loadTrack();
   const TITLES = { SNAP: 'Snap (F3): on/off. Right-click: snap types', GRID: 'Grid (F7): show/hide the drawing grid', ORTHO: 'Ortho (F8): keep picked points straight along X or Y from the first point (Shift does it for one pick)',
-    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type cursor fields during Line’s point prompts' };
+    POLAR: 'Polar tracking (F10): picks lock onto the angles of the increment from the last point. Right-click: the increment', OTRACK: 'Object snap tracking (F11): hover on a snap point to acquire it, then line up with it', DYN: 'Dynamic input (F12): type in fields by the cursor in Line, Polyline, Rectangle, Measure, Dimension, Set length, Move, Copy, Rotate and Scale' };
   ui.tog = {};
   const toggles = [['SNAP', true], ['GRID', false], ['ORTHO', false], ['POLAR', state.polar.on], ['DYN', state.dynamicInput], ['OTRACK', state.otrack]].map(([t, on]) => {
     const b = ui.tog[t] = h('button', { class: 'tog' + (on ? ' on' : ''), type: 'button', 'data-testid': 'tog-' + t.toLowerCase(), 'aria-pressed': String(on), title: TITLES[t] }, t);
@@ -4130,7 +4130,7 @@ function paintOverlay(gesture = false) {
       accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
       dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
     const move = state.entityDrag || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale'].includes(state.mod.kind) ? state.mod.move : null);
-    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
+    if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
     ui.cmdUI.place();
     c.dataset.drawn = drawn || 0;
     if (heavy(performance.now() - t0, drawn || 0)) {
@@ -4334,7 +4334,7 @@ function attachCanvasEvents() {
     if (was && d && e.button === 0) {
       hideRubber();
       const p = toDrawing(d, e.clientX, e.clientY);
-      if ((state.setlen || state.tool === 'measure' ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
+      if ((state.setlen || state.tool === 'measure' || modLive() ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
       else if (state.setlen) { if (!was.moved) lengthPoint(d, p, e.shiftKey); }
       else if (state.tool === 'measure') { if (!was.moved) measurePoint(d, p, e.shiftKey); }
       else if (state.tool === 'dimension') dimensionPoint(d, p, e.shiftKey);
@@ -6027,7 +6027,7 @@ function drawOvl() {
   const CT = d && !state.draw && cursorTool();                       // Measure, Dimension, Set length: the same cursor fields
   if (CT?.hover && (DI.inputMode(CT) !== null || DI.readOnlyLength(CT))) {
     const only = DI.readOnlyLength(CT), dynamic = only ? null : cursorPoint(), typed = dynamic?.point && DI.hasTyped(cursorInput());
-    tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
+    tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, single: DI.isSingle(DI.inputMode(CT)) ? DI.inputMode(CT) : null, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
   }
   if (d && !d.lay && modLive()) modOvl(d, out);
   if (d && !d.lay && editable()) {
@@ -6053,17 +6053,17 @@ function drawOvl() {
     ui.dynamicTrack.textContent = tip.tracking || ''; ui.dynamicTrack.hidden = !tip.tracking;
     for (const [key, value] of Object.entries(tip.fields)) {
       const field = ui.cursorFields[key];
-      field.parentElement.hidden = !!tip.only && key !== 'length';
+      field.parentElement.hidden = (!!tip.only && key !== 'length') || (!!tip.single && key !== (tip.single === 'angle' ? 'angle' : 'length'));
       if (field.tagName === 'INPUT' && tip.only) {                      // Measure's second point: its length, to read and not to type
         field.value = value; field.style.width = Math.max(9, value.length + 2) + 'ch';
         field.previousElementSibling.textContent = 'Length'; field.setAttribute('aria-label', 'Length');
         field.classList.remove('active'); field.setAttribute('aria-invalid', 'false'); field.nextElementSibling.hidden = true;
       } else if (field.tagName === 'INPUT') {
-        const i = key === 'length' ? 0 : 1, input = cursorInput(), data = tip.dynamic;
-        const angular = input.mode === 'polar' && i === 1;
+        const i = tip.single || key === 'length' ? 0 : 1, input = cursorInput(), data = tip.dynamic;
+        const angular = tip.single ? tip.single === 'angle' : input.mode === 'polar' && i === 1;
         let rounded = +data.live[i].toFixed(state.dp);
         if (angular) rounded %= 360;
-        field.value = input.values[i] || (rounded === 0 ? 0 : rounded).toFixed(state.dp) + (angular ? '°' : ' mm');
+        field.value = input.values[i] || (rounded === 0 ? 0 : rounded).toFixed(state.dp) + (angular ? '°' : tip.single ? '' : ' mm');
         field.style.width = Math.max(9, field.value.length + 2) + 'ch';
         field.previousElementSibling.textContent = data.labels[i]; field.setAttribute('aria-label', data.labels[i]);
         field.classList.toggle('active', input.active === i); field.setAttribute('aria-invalid', String(!!data.errors[i]));
@@ -6091,6 +6091,11 @@ function drawKey(e, k) {
 function cursorTool() {
   if (!state.dynamicInput) return null;
   if (state.draw) return drawLive() ? state.draw : null;
+  const m = state.mod;
+  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && m.stage !== 'pick') {       // base point, then Rotate's angle / Scale's factor
+    const d = editable(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
+    return { kind: m.kind, A: m, mod: true, d, f, pts: m.p1 ? [mm(m.p1)] : [], hover: mm(m.cur) };
+  }
   const A = state.setlen || state.meas || state.dim, kind = state.setlen ? 'setlen' : state.meas ? 'measure' : state.dim && ['aligned', 'linear'].includes(state.dimType) ? 'dimension' : null;
   const d = kind && (kind === 'measure' ? measureTarget() : editable());
   if (!d) return null;
@@ -6117,14 +6122,29 @@ function cursorCommit(shift = false) {
   const T = cursorTool(), result = cursorPoint();
   if (result.why) { note(result.why); paintOverlay(); return; }
   trackStop();
-  if (T.A) pointToolAction()(T.d, result.point.map((v) => v / T.f), shift, true);
+  if (T.mod) modCursorCommit(T, result);
+  else if (T.A) pointToolAction()(T.d, result.point.map((v) => v / T.f), shift, true);
   else drawTyped(result.text);
+}
+/** Enter on the cursor fields of Move / Copy / Rotate / Scale: the base point, or Rotate's angle / Scale's factor. */
+function modCursorCommit(T, result) {
+  const m = T.A, to = result.point?.map((v) => v / T.f);
+  if (!m.p1) (['move', 'copy'].includes(m.kind) ? moveTo : transformBase)(T.d, to);
+  else transformDo(T.d, result.value);
+}
+/** The Rotate / Scale ghost for the typed angle or factor; null when nothing valid is typed (the mouse's ghost stays). */
+function modTypedSlots(d) {
+  const m = state.mod, T = m?.p1 && modLive() && ['rotate', 'scale'].includes(m.kind) && cursorTool();
+  if (!T || !DI.hasTyped(cursorInput())) return null;
+  const r = cursorPoint();
+  return r.value == null ? null : [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], m.kind === 'scale' ? scaleMatrix(m.p1, r.value) : rotationMatrix(m.p1, r.value))];
 }
 /** A click while cursor fields hold typing: the pointer fills the rest. → true when it committed (or said why not) */
 function cursorClick(d, p, shift) {
   const T = cursorTool();
   if (!T?.A || !DI.hasTyped(cursorInput())) return false;
-  if (T.kind === 'dimension' && T.pts.length === 2) T.A.cursor = p; else T.A.hover = pickPoint(d, p, T.A.pts, shift, true);
+  if (T.mod) { if (!T.A.p1) T.A.cur = pickPoint(d, p, [], shift, true); }                  // a typed angle / factor stands; a base point's other coordinate comes from the click
+  else if (T.kind === 'dimension' && T.pts.length === 2) T.A.cursor = p; else T.A.hover = pickPoint(d, p, T.A.pts, shift, true);
   cursorCommit(shift);
   return true;
 }
@@ -6143,7 +6163,7 @@ function cursorKey(e) {
     const next = DI.inputKey(input, e.key, DI.firstPoint(T));
     if (!next) return;
     cursorHolder(T).cursorInput = e.key === 'Escape' ? null : next;
-    if (!T.hover) { if (T.A) { T.A.hover ||= [0, 0]; T.A.cursor ||= [0, 0]; } else DR.toolHover(state.draw, [0, 0]); }
+    if (!T.hover) { if (T.mod) T.A.cur ||= [0, 0]; else if (T.A) { T.A.hover ||= [0, 0]; T.A.cursor ||= [0, 0]; } else DR.toolHover(state.draw, [0, 0]); }
     if (e.key === 'Escape') state.msg = null;
     paintOverlay(); renderCommand();
   }
@@ -7114,7 +7134,7 @@ function loadTrack() {
 const saveTrack = () => { try { localStorage.setItem(TRK_SAVED, JSON.stringify({ polar: state.polar.on, inc: state.polar.inc, otrack: state.otrack })); } catch { /* ignore */ } };
 function chip(name, on) { const b = ui.tog[name]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
 function dynamicInputSet(on) {
-  for (const a of [state.draw, state.setlen, state.meas, state.dim]) if (a) a.cursorInput = null;
+  for (const a of [state.draw, state.setlen, state.meas, state.dim, state.mod]) if (a) a.cursorInput = null;
   state.dynamicInput = on; chip('DYN', on); paintOverlay();
   note(on ? 'Dynamic input on' : 'Dynamic input off');
   viewStore.put({ id: 'dynamicInput', on }).catch(() => note('Could not remember Dynamic input; it still applies until the app closes'));

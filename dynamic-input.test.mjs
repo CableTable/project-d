@@ -175,3 +175,32 @@ test('TODO 69d: Dimension: X / Y, then Distance + Angle from the first point, th
   assert.deepEqual(r.labels, ['X', 'Y']); near(r.point, [25, 30]);
   near(toolPointInput(toolKeys(T, '25'), T).point, [25, 40]);
 });
+
+test('TODO 69e: Move / Copy type only the base point; Rotate then types one Angle, Scale one Factor', () => {
+  for (const kind of ['move', 'copy']) {
+    const T = { kind, pts: [], hover: [30, 40] };
+    assert.equal(inputMode(T), 'xy'); near(toolPointInput(toolKeys(T, '10,20'), T).point, [10, 20]);
+    T.pts = [[10, 20]];
+    assert.equal(inputMode(T), null, 'the target stays the prompt');
+  }
+  const R = { kind: 'rotate', pts: [[10, 20]], hover: [10, 50] };
+  assert.equal(inputMode(R), 'angle'); assert.equal(firstPoint(R), false);
+  let r = toolPointInput(toolKeys(R, ''), R);
+  assert.deepEqual(r.labels, ['Angle']); near([r.value], [90]);
+  r = toolPointInput(toolKeys(R, '-30'), R); near([r.value], [-30]); assert.equal(r.point, null); assert.equal(r.why, '');
+  assert.equal(toolPointInput(toolKeys(R, '1.2.3'), R).value, null);
+  assert.match(toolPointInput(toolKeys(R, '1.2.3'), R).why, /Angle must be a finite number/);
+  const S = { kind: 'scale', pts: [[10, 20]], hover: [10, 70], f: 25.4 };
+  assert.equal(inputMode(S), 'factor');
+  r = toolPointInput(toolKeys(S, ''), S); assert.deepEqual(r.labels, ['Factor']); near([r.live[0]], [50 / 25.4]);
+  near([toolPointInput(toolKeys(S, '2'), S).value], [2]);
+  for (const bad of ['0', '-2']) assert.match(toolPointInput(toolKeys(S, bad), S).why, /Factor must be more than 0/);
+});
+
+test('TODO 69e: a single-number field ignores point text and Tab keeps it active; Esc clears before cancelling', () => {
+  const s = createInput(false, 'angle');
+  for (const key of [',', '@', '#', '<']) assert.equal(inputKey(s, key, false), null, key);
+  const t = inputKey(keys('45', false, s), 'Tab', false);
+  assert.equal(t.active, 0); assert.deepEqual(t.locked, [true, false]);
+  assert.equal(escapeInput(t, false).mode, 'angle'); assert.equal(escapeInput(s, false), null);
+});

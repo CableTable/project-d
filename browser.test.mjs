@@ -15895,6 +15895,81 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 69e: Move / Copy base point X / Y, Rotate Angle, Scale Factor, F12 off, Esc once keeps the command', async () => {
+    const setup = async () => {
+      await open70([dxfLine(20, 30, 60, 50)]);
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+      await t('decimals').selectOption('2');
+    };
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const label = async (id) => t(id).getAttribute('aria-label');
+    const point = async (x, y) => { await page.keyboard.type(String(x)); await page.keyboard.press('Tab'); await page.keyboard.type(String(y)); await page.keyboard.press('Enter'); };
+    const start = async (tool) => { await page.keyboard.press('Control+a'); await typeCmd(tool); await move(80, 60); await point(20, 30); await move(60, 30); };
+    const noFields = async (why) => { for (const id of ['cursor-length', 'cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, `${why}: ${id} is hidden`); };
+    await setup();
+    // Move: X / Y at the base point, then only the prompt; a typed @dx,dy still works in the command box
+    await page.keyboard.press('Control+a'); await typeCmd('move'); await move(80, 60);
+    assert.equal(await label('cursor-length'), 'X'); assert.equal(await label('cursor-angle'), 'Y');
+    await point(20, 30); await move(90, 70);
+    await noFields('Move target');
+    assert.match(await prompt(), /Target, dx,dy or distance/);
+    await typeCmd('@5,10');
+    near70(line70((await savedDoc()).entities[0]), [25, 40, 65, 60]);
+    await page.keyboard.type('mo'); assert.equal(await cmdLine().inputValue(), 'mo', 'focus is back on the command box after Move'); await cmdLine().fill('');
+    // Copy follows Move
+    await setup();
+    await page.keyboard.press('Control+a'); await typeCmd('copy'); await move(80, 60);
+    assert.equal(await label('cursor-length'), 'X');
+    await point(20, 30); await move(90, 70); await noFields('Copy target');
+    await typeCmd('@10,0'); await typeCmd('');
+    assert.equal((await savedDoc()).entities.length, 2);
+    // Rotate: an Angle field after the pivot; typed 90 rotates
+    await setup();
+    await start('rotate');
+    assert.equal(await label('cursor-angle'), 'Angle'); assert.equal(await t('cursor-angle').isVisible(), true);
+    assert.equal(await t('cursor-length').isVisible(), false); assert.equal(await t('cursor-dx').isVisible(), false);
+    await page.keyboard.type('90'); await frames();
+    assert.equal(await t('cursor-angle').inputValue(), '90');
+    await shotBoth('dynamic-input69e-rotate', async () => {
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      await start('rotate'); await page.keyboard.type('90'); await frames();
+    }, async () => { for (let i = 0; i < 2; i++) await page.keyboard.press('Escape'); });
+    await start('rotate'); await page.keyboard.type('90'); await page.keyboard.press('Enter');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 0, 70]);
+    await page.keyboard.type('sc'); assert.equal(await cmdLine().inputValue(), 'sc', 'focus is back on the command box after Rotate'); await cmdLine().fill('');
+    // Scale: a Factor field after the base point; typed 2 scales
+    await setup();
+    await start('scale');
+    assert.equal(await label('cursor-length'), 'Factor'); assert.equal(await t('cursor-angle').isVisible(), false);
+    await page.keyboard.type('0'); await frames();
+    assert.equal(await t('cursor-length').getAttribute('aria-invalid'), 'true');
+    await page.keyboard.press('Enter'); assert.match(await prompt(), /Scale factor/, 'a zero factor does nothing');
+    await page.keyboard.press('Backspace'); await page.keyboard.type('2'); await frames();
+    await shotBoth('dynamic-input69e-scale', async () => {
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      await start('scale'); await page.keyboard.type('2'); await frames();
+    }, async () => { for (let i = 0; i < 2; i++) await page.keyboard.press('Escape'); });
+    await start('scale'); await page.keyboard.type('2'); await page.keyboard.press('Enter');
+    near70(line70((await savedDoc()).entities[0]), [20, 30, 100, 70]);
+    // Esc once clears the typing and keeps the command; the second Esc ends it
+    await setup();
+    await start('rotate'); await page.keyboard.type('45'); await frames();
+    await page.keyboard.press('Escape'); await frames();
+    assert.notEqual(await t('cursor-angle').inputValue(), '45'); assert.match(await prompt(), /Angle/);
+    await page.keyboard.press('Escape'); assert.match(await histLine(), /Command: SELECT/, 'the second Esc ends Rotate');
+    // F12 off: no fields, and typing goes to the command box
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), false);
+    for (const tool of ['move', 'rotate']) {
+      await page.keyboard.press('Control+a'); await typeCmd(tool); await move(80, 60);
+      await noFields(tool + ' with F12 off');
+      await page.keyboard.type('10,20'); assert.equal(await cmdLine().inputValue(), '10,20'); await cmdLine().fill('');
+      await page.keyboard.press('Escape');
+    }
+    await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), true);
+    await closeTabs(/./);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
 } catch (e) {
   failed++;
