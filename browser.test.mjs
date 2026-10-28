@@ -14990,6 +14990,14 @@ try {
     };
     const histLabels = labels;      // this step counts only the steps not undone
     const gid = (s) => page.locator('[data-testid=grip]').evaluateAll((g, k) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + k)), s);
+    const waitForEnd = async (x, y) => {
+      await page.waitForFunction(({ x, y }) => {
+        const el = document.querySelector('[data-testid=grip][data-grip$=":b"]');
+        if (!el) return false;
+        const r = el.getBoundingClientRect();
+        return Math.abs(r.x + r.width / 2 - x) < 2 && Math.abs(r.y + r.height / 2 - y) < 2;
+      }, await at(x, y));
+    };
     const rectAt = async (x, y, w, hh) => { await typeCmd('rect'); await typeCmd(`${x},${y}`); await typeCmd(`${w},${hh}`); };
     await draw('50,600', '300,600');
     await rectAt(50, 300, 100, 80); await rectAt(120, 320, 100, 80);
@@ -15001,12 +15009,14 @@ try {
     await t('grip-hint').waitFor({ state: 'visible' });
     await dragGripTo(await gid('b'), 300, 650);
     await frames(); await gripWhen(3);
+    await waitForEnd(300, 650);
     const end = await gripBox(await gid('b')), want = await at(300, 650);
     assert.ok(near(end.x, want.x, 2) && near(end.y, want.y, 2), `the end grip is where it was dropped: ${JSON.stringify([end, want])} ${await histLine()} ${(await histLabels()).at(-1)} ${await t('cmd-fade').textContent()} ${await page.evaluate(() => document.querySelector('[data-testid=tog-ORTHO],[data-testid=ORTHO]')?.outerHTML)}`);
     assert.equal((await histLabels()).length, l0 + 1, 'one history step for the grip edit');
     assert.equal(await nParts(), n0 + 3, 'the same object, not a new one');
     await undo(); assert.equal((await histLabels()).length, l0, 'one Undo takes it back');
     await page.keyboard.press('Escape'); await click(175, 600); await frames(); await gripWhen(3);
+    await waitForEnd(300, 600);
     const back = await gripBox(await gid('b')), was = await at(300, 600);
     assert.ok(near(back.x, was.x, 2) && near(back.y, was.y, 2), 'the end is back');
     // Shaping: the two rectangles weld into one outline; Keep originals adds it on top
