@@ -92,9 +92,15 @@ const steps = [];
 function step(name, fn, { needs = [] } = {}) {
   steps.push({ name, fn, needs, afterStep });
 }
-async function runStep({ name, fn, afterStep }) {
+async function runStep(page, { name, fn, afterStep }) {
   const started = performance.now();
-  try { await fn(); console.log('ok', name); } catch (e) { failed++; console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim()); try { await afterStep(); } catch { /* best effort */ } }
+  try {
+    await fn();
+    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');
+    assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), /Specify/, `${name} left a command running`);
+    console.log('ok', name);
+  } catch (e) { failed++; console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim()); try { await afterStep(); } catch { /* best effort */ } }
   finally { timings[name] = Math.round((performance.now() - started) / 10) / 100; }
 }
 
@@ -672,6 +678,7 @@ try {
         const mid = await atPoint(40, 20); await p.mouse.click(mid.x, mid.y);
         await p.waitForFunction(() => document.querySelectorAll('[data-testid=grip]').length >= 2);
         await p.locator('[data-testid=grip]').first().waitFor({ state: 'visible' });
+        await p.waitForFunction(() => Math.round(document.querySelector('[data-testid=grip]')?.getBoundingClientRect().width) === 11);
         const side = await p.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
         assert.equal(side, 11);
         const fill = (loc) => loc.evaluate((el) => getComputedStyle(el).fill);
@@ -3066,6 +3073,7 @@ try {
     const want = stepRepeat({ ...base, rotate: '90' });
     const r = await readout();
     assert.equal(r.count, want.count); assert.match(r.grid, new RegExp(`${want.cols} × ${want.rows}`));
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     assert.equal(await t('pa').inputValue(), '270°', 'turned 90° clockwise = 270° anticlockwise, as in a DXF');
     await t('rotate').selectOption('0');
   }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
@@ -3102,6 +3110,7 @@ try {
     await t('align').selectOption('topleft');
     const want = stepRepeat({ ...base, gripTop: 30, gripBottom: 0, align: 'topleft' });
     assert.equal((await readout()).count, want.count);
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
     assert.equal(await t('px').inputValue(), want.positions[0].x.toFixed(2));
     assert.equal(await t('py').inputValue(), (700 - want.positions[0].y - 80).toFixed(2), 'Y is from the sheet\'s bottom-left, like the cursor');
     assert.equal(await page.locator('.grip-band').count(), 1); assert.equal(await page.locator('.grip-band').getAttribute('data-edge'), 'top');
@@ -3491,6 +3500,7 @@ try {
 
   await step('screenshots 1440 × 900 of the dialog over the layout, light and dark', async () => {
     const dir = process.env.SHOTS_DIR || 'shots';
+    await openPdf();
     await page.waitForTimeout(150);
     await page.screenshot({ path: dir + '/s4-light.png' });
     await closePdf();
@@ -3993,6 +4003,7 @@ try {
   }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
   await step('edit: Shift+click adds a shape and takes it out again; Esc clears; a click on empty space clears', async () => {
+    await clickConnected(50, 0); await waitSel('8 selected');
     await click(38, 30, { shift: true });              // the dial
     await waitSel('9 selected');
     await click(38, 30, { shift: true });
@@ -5800,6 +5811,7 @@ try {
   });
 
   await step('review: layout: the Dimensions row is the real count; the parts list says copies; Apply stays in view; each Add puts a new copy 10 mm further on', async () => {
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     assert.equal(await page.locator('.layer', { hasText: 'Dimensions' }).locator('.mono').textContent(), '3', 'sheet width and height, and the selected part\'s width');
     assert.match((await partRows())[0], /^outline\|272 × 120 · \d+ copies$/);
     await shotBoth('layout-review');
@@ -5915,6 +5927,7 @@ try {
   });
 
   await step('review: the Part ribbon numbers (W, H) are editable scale inputs; X, Y and Angle are inputs, and say what they are', async () => {
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     const bg = await t('pw').evaluate((e) => getComputedStyle(e).backgroundColor);
     assert.doesNotMatch(bg, /^rgba\(0, 0, 0, 0\)|^transparent/, 'W is typed, so it looks like an input: ' + bg);
     assert.match(await t('pw').getAttribute('title'), /Type a value and press Enter to scale the part evenly/);
@@ -6109,6 +6122,7 @@ try {
   });
 
   await step('placing: Ctrl-drag copies (the original stays); Ctrl+Shift-drag copies straight', async () => {
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     const [x0, y0] = await pos();
     await dragMm([x0 + 50, y0 + 30], [x0 + 50, y0 - 120], ['Control']);
     assert.equal(await nParts(), 2);
@@ -6128,7 +6142,7 @@ try {
   });
 
   await step('placing: arrow keys nudge by the step, Shift+arrow by 10 times; the step field is remembered; not while typing', async () => {
-    await click(450 + 50, 320 + 30);
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     const p0 = await pos();
     await page.keyboard.press('ArrowRight');
     assert.deepEqual(await pos(), [p0[0] + 1, p0[1]]);
@@ -6170,6 +6184,7 @@ try {
   });
 
   await step('placing: typed X, Y and Angle apply on Enter; bad input says so and snaps back; W and H stay read-only', async () => {
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     await partTab(); await t('px').fill('100'); await t('px').press('Enter');
     await partTab(); await t('py').fill('50.5'); await t('py').press('Enter');
     assert.deepEqual(await pos(), [100, 50.5]);
@@ -6203,6 +6218,7 @@ try {
   });
 
   await step('placing: click again to turn it by hand (arrows, pivot, ghost, Shift snaps to 15°); click once more or Esc ends', async () => {
+    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
     const q = await partPoint(0.5);
     await page.mouse.click(q.x, q.y);
     assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 4, 'four turn arrows');
@@ -6541,6 +6557,7 @@ try {
   }, { needs: ['TODO 36: Shift-click adds and removes parts; a rubber band selects the parts fully inside; the pick-order numbers, the box and its readout, the Arrange section'] });
 
   await step('TODO 110c: the Part ribbon Rotate 90° turns a multi-selection by 90° whatever the main part\'s angle; Nudge moves it', async () => {
+    await page.evaluate(() => document.activeElement.blur()); await page.keyboard.press('Control+a');
     const rb = page.locator('.ribbon-body');
     await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');         // the main part is now at 90°
     await partTab(); await rb.getByRole('button', { name: 'Rotate 90°', exact: true }).click();
@@ -6551,6 +6568,7 @@ try {
   }, { needs: ['Select all in a layout: Ctrl+A and Edit → Select all pick every placed part; Delete removes them all as one step; Ctrl+Z brings them back'] });
 
   await step('TODO 36: Align left / centre / right / top / middle / bottom, relative to the selection, the sheet and the first selected', async () => {
+    await page.evaluate(() => document.activeElement.blur()); await page.keyboard.press('Control+a');
     const before = await selBoxes();
     const w = (b) => b[2] - b[0], hh = (b) => b[3] - b[1];
     const near = (a, b, m) => approx(a, b, 0.02, m);
@@ -6599,6 +6617,7 @@ try {
   });
 
   await step('TODO 36: Distribute horizontally / vertically with equal gaps (selection span or the sheet); needs three; the command line words work', async () => {
+    await page.evaluate(() => document.activeElement.blur()); await page.keyboard.press('Control+a');
     const before = await selBoxes();
     await t('distribute-horizontal').click();
     let b = (await selBoxes()).slice().sort((p, q) => p[0] - q[0]);
@@ -8403,9 +8422,11 @@ try {
     assert.equal(await prompt(), 'Specify first point (x,y):');
     assert.equal(await page.locator('.layer', { hasText: '0' }).locator('[data-testid=layer-current]').textContent(), 'current', 'layer 0 is the current layer to begin with');
     assert.equal(await page.locator('.tabs .dtab .dot').count(), 0, 'nothing drawn yet: still untouched');
+    await page.keyboard.press('Escape');
   });
 
   await step('Line: typed x,y and @dx,dy, a length while the rubber band points the way; each segment is made at once, its own undo step; Esc ends; saved as LINEs', async () => {
+    await page.locator('[data-tool=line]').click();
     await typeCmd('20,20');
     assert.match(await prompt(), /^Next point or length \[Undo\]:?$/);
     assert.equal(await entCount(), 0, 'the first point makes nothing');
@@ -8868,9 +8889,11 @@ try {
     assert.equal(await t('cmd-hist').textContent(), 'Command: TEXT   Height 10.00 · Standard · Left · layer 0');
     assert.equal(await prompt(), 'Specify insertion point or [Height / Justify / Style]:');
     await page.evaluate(() => localStorage.removeItem('pd-text'));
+    await page.keyboard.press('Escape');
   });
 
   await step('Text: click to place, type in place, Enter commits one line as TEXT on the current layer; Height from the bar; one undo step "Text"', async () => {
+    await page.locator('[data-tool=text]').click();
     await t('text-height').fill('12'); await t('text-height').press('Enter');
     assert.equal(await t('cmd-hist').textContent(), 'Command: TEXT   Height 12.00 · Standard · Left · layer 0');
     await click(30, 100);
@@ -8894,9 +8917,11 @@ try {
     assert.equal(e.r.v[e.r.c.indexOf(1)], 'PLATE 04 - REV C');
     assert.equal(fieldOf(e, 40), 12); assert.ok(Math.abs(fieldOf(e, 10) - 30) < 0.5 && Math.abs(fieldOf(e, 20) - 100) < 0.5, 'where it was clicked');
     assert.equal(e.r.v[e.r.c.indexOf(7)], 'Standard');
+    await page.keyboard.press('Escape');
   });
 
   await step('Text: Shift+Enter makes a new line (two lines save as MTEXT); clicking away commits; Esc is done too; empty text makes nothing', async () => {
+    await page.locator('[data-tool=text]').click();
     await click(30, 60);
     await t('text-editor').waitFor();
     await page.keyboard.type('MATERIAL: ACRYLIC 3 MM');
@@ -8925,6 +8950,7 @@ try {
     assert.deepEqual(tx.map((e) => e.type), ['TEXT', 'MTEXT', 'TEXT']);
     assert.equal(tx[1].r.v[tx[1].r.c.indexOf(1)], 'MATERIAL: ACRYLIC 3 MM\\PFINISH: GLOSS');
     assert.deepEqual((await histLabels()).slice(-2), ['Text', 'Text']);
+    await page.keyboard.press('Escape');
   });
 
   await step('Text: the top bar changes the selected text (Height, Font, Angle, Align, Bold): each one labelled undo step; bold saves as MTEXT with a bold font code', async () => {
@@ -17364,6 +17390,7 @@ try {
 
   await step('TODO 69d fixes: the preview follows typed values, a click uses the typed X, Esc keeps the points, Linear h', async () => {
     await open70([dxfLine(0, 0, 200, 200)]);
+    await openStyle(); await setStyle({ units: 'mm' }); await t('ds-ok').click();
     if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
     for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
     await t('decimals').selectOption('2');
@@ -17614,7 +17641,7 @@ try {
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
-  for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(entry);
+  for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry);
 } catch (e) {
   failed++;
   console.log('FAIL', e.stack || e);
