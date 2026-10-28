@@ -581,6 +581,33 @@ test('history: undo and redo hand back the state to restore; a new change drops 
   h.clear(); assert.equal(h.canUndo, false);
 });
 
+test('TODO 156c1 fixes: combined histories undo newest edits and redo in the same order', () => {
+  const drawing = E.createHistory(), compare = E.createHistory(), combined = () => E.combinedHistory([compare, drawing]);
+  drawing.push('drawing before', 'Draw'); compare.push('guide before', 'Add guide'); drawing.push('drawing after', 'Move'); compare.push('guide after', 'Move guide');
+  assert.deepEqual(combined().labels(), { past: ['Draw', 'Add guide', 'Move', 'Move guide'], future: [] });
+  assert.equal(combined().undoHistory, compare);
+  assert.equal(combined().undoHistory.undo('guide moved'), 'guide after');
+  assert.equal(combined().undoHistory, drawing);
+  assert.equal(combined().undoHistory.undo('drawing moved'), 'drawing after');
+  assert.deepEqual(combined().labels(), { past: ['Draw', 'Add guide'], future: ['Move', 'Move guide'] });
+  assert.equal(combined().redoHistory.redo('drawing after'), 'drawing moved');
+  assert.equal(combined().redoHistory.redo('guide after'), 'guide moved');
+  assert.equal(combined().canRedo, false);
+  assert.deepEqual(E.combinedHistory([compare]).labels().past, ['Add guide', 'Move guide'], 'closed copies and parts use only Compare history');
+  compare.clear();
+  assert.equal(E.combinedHistory([compare, null]).canUndo, false);
+});
+
+test('TODO 156c1 fixes: clearing redo preserves past steps and later Undo can still be redone', () => {
+  const h = E.createHistory();
+  h.push('start', 'Draw'); h.push('drawn', 'Move'); h.undo('moved');
+  h.clearRedo();
+  assert.deepEqual(h.labels(), { past: ['Draw'], future: [] });
+  assert.equal(h.redo('drawn'), null);
+  assert.equal(h.undo('drawn'), 'start');
+  assert.equal(h.redo('start'), 'drawn');
+});
+
 test('history labels (TODO 30): old pushes get "Edit"; labels(); undoMany / redoMany jump several steps and back', () => {
   const h = E.createHistory();
   h.push('s0', 'Delete 3'); h.push('s1', 'Set length ×2.000'); h.push('s2');

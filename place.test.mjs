@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import * as P from './web/place.js';
 import { placedBox, placedMat, placement1 } from './web/apply.js';
+import * as AR from './web/array.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 const nearPt = (a, b, t = 1e-5) => { near(a[0], b[0], t); near(a[1], b[1], t); };
@@ -143,6 +144,51 @@ test('TODO 71b: rotated outline box selection rejects bbox-only overlap and incl
   assert.equal(P.boxHit(square, pl(0, 0), [80.01, 10, 90, 20], true), false, 'a gap is not a touch');
   const thin = { w: 100, h: 4 };
   assert.equal(P.boxHit(thin, pl(0, 0, 45), [30, 0, 40, 60], true), true, 'edges cross without any corner inside');
+});
+
+test('TODO 156b1: a placement scale grows the box about the INSERT point, and the matrix agrees', () => {
+  const s = { ...pl(10, 20), sc: 2 };
+  assert.deepEqual(placedBox(part, s), [10, 20, 210, 140]);
+  assert.deepEqual(placedBox(part, pl(10, 20)), [10, 20, 110, 80], 'no sc = 1');
+  nearPt(P.toSheet(s, 100, 60), [210, 140]);
+  const m = placedMat(part, s, 500);
+  near(m[0], 2); near(m[3], -2);
+});
+
+test('TODO 156b1: scaleAbout a point: position and size scale about it, a scale back to 1 leaves no sc, a mirror and a turn are kept', () => {
+  const a = P.scaleAbout(part, pl(10, 20, 30, true), [0, 0], 2);
+  assert.equal(a.sc, 2); near(a.x, 20); near(a.y, 40); assert.equal(a.rot, 30); assert.equal(a.mirrorX, true);
+  const b = P.scaleAbout(part, a, [0, 0], 0.5);
+  assert.equal('sc' in b, false); near(b.x, 10); near(b.y, 20);
+  const c = P.scaleAbout(part, { ...pl(50, 50), sc: 2 }, [50, 50], 1.5);
+  assert.equal(c.sc, 3); near(c.x, 50); near(c.y, 50);
+  const bx = placedBox(part, P.scaleAbout(part, pl(10, 20), [10, 20], 3));
+  assert.deepEqual(bx, [10, 20, 310, 200], 'about its own lower-left corner');
+  assert.equal(P.samePlacement(pl(1, 2), { ...pl(1, 2), sc: 2 }), false);
+  assert.equal(P.samePlacement(pl(1, 2), pl(1, 2)), true);
+});
+
+test('TODO 156b1: mirror about a slanted line: every corner lands on its mirror image, twice is the identity', () => {
+  const a = [10, 5], b = [60, 55];                         // 45° line
+  const refl = ([x, y]) => { const dx = x - a[0], dy = y - a[1]; return [a[0] + dy, a[1] + dx]; };
+  for (const start of [pl(100, 40), pl(100, 40, 25), pl(100, 40, 70, true, false), { ...pl(100, 40, 10, false, true), sc: 1.5 }]) {
+    const m = P.mirrorAboutLine(part, start, a, b);
+    samePts(P.corners(part, m), P.corners(part, start).map(refl), 'corners');
+    const back = P.mirrorAboutLine(part, m, a, b);
+    samePts(P.corners(part, back), P.corners(part, start), 'twice');
+  }
+  // a horizontal line through y = 30: the box is flipped top to bottom
+  const h = P.mirrorAboutLine(part, pl(0, 40), [0, 30], [10, 30]);
+  assert.deepEqual(placedBox(part, h), [0, -40, 100, 20]);
+});
+
+test('TODO 156b1: move and copy offsets, array counts', () => {
+  const m = P.translate(pl(10, 10), 5, -3);
+  assert.deepEqual([m.x, m.y], [15, 7]);
+  assert.equal(AR.rectOffsets({ cols: 2, rows: 2, dx: 120, dy: 80 }).length, 3, '2 x 2 adds 3 copies');
+  assert.deepEqual(AR.rectOffsets({ cols: 2, rows: 2, dx: 120, dy: 80 }), [[120, 0], [0, 80], [120, 80]]);
+  const ring = AR.polarPlacements([0, 0], [50, 0], { items: 4, fill: 360, rotate: true }).map(({ deg }) => P.rotateAbout(part, pl(50, 0), [0, 0], deg));
+  assert.equal(ring.length, 3); nearPt([ring[0].x, ring[0].y], [0, 50]); assert.equal(ring[0].rot, 90);
 });
 
 console.log(n + ' tests passed');

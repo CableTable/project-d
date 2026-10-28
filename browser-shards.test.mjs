@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { browserArgs, shardSelector } from './tools/browser-shards.mjs';
+import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
 
 test('four contiguous shards balance time, cover every step once, and include new steps', () => {
   const timings = { a: 8, b: 1, c: 1, d: 10, e: 5, f: 5, g: 10, 'no console errors': 0 };
@@ -25,7 +25,7 @@ test('four contiguous shards balance time, cover every step once, and include ne
 });
 
 test('arguments preserve ONLY and full runs; reject invalid shards and partial timing updates', () => {
-  assert.deepEqual(browserArgs(['5291']), { port: 5291, only: undefined, shard: undefined, updateTimings: false });
+  assert.deepEqual(browserArgs(['5291']), { port: 5291, only: undefined, shard: undefined, updateTimings: false, shots: 'shots' });
   assert.deepEqual(browserArgs(['5291', 'SHARD=2/4']).shard, { index: 2, count: 4 });
   assert.deepEqual(browserArgs(['--shard=3/4'], { TEST_PORT: '5292' }).shard, { index: 3, count: 4 });
   assert.deepEqual(browserArgs([], { SHARD: '1/4' }).shard, { index: 1, count: 4 });
@@ -38,6 +38,41 @@ test('arguments preserve ONLY and full runs; reject invalid shards and partial t
   assert.throws(() => browserArgs(['65536']), /port/);
   assert.throws(() => shardSelector({ a: -1, b: 1 }, 1, 2), /timing/);
   assert.throws(() => shardSelector({ a: 1 }, 1, 4), /enough/);
+});
+
+test('--shots consumes its directory, preserves filters and shards, and overrides SHOTS_DIR', () => {
+  for (const args of [['5291', 'some regex', '--shots', 'shots-kretro'], ['--shots', 'shots-kretro', '5291', 'some regex']]) {
+    assert.deepEqual(browserArgs(args, { SHOTS_DIR: 'env shots' }), {
+      port: 5291, only: 'some regex', shard: undefined, updateTimings: false, shots: 'shots-kretro',
+    });
+  }
+  assert.equal(browserArgs([], { SHOTS_DIR: 'env shots' }).shots, 'env shots');
+  assert.equal(browserArgs([], { SHOTS_DIR: '' }).shots, 'shots');
+  const sharded = browserArgs(['5291', '--shots', 'shots with spaces', 'SHARD=2/4']);
+  assert.equal(sharded.shots, 'shots with spaces');
+  assert.deepEqual(sharded.shard, { index: 2, count: 4 });
+  assert.equal(browserArgs(['5291', '--shots', 'shots-kretro', '--update-timings']).updateTimings, true);
+  for (const args of [['--shots'], ['--shots', ''], ['--shots', '--update-timings'], ['--shots', 'SHARD=2/4']]) {
+    assert.throws(() => browserArgs(args), /--shots requires a directory/);
+  }
+});
+
+test('name filters expand transitive and shared needs once, in file order', () => {
+  const steps = [
+    { name: 'setup' }, { name: 'unrelated' }, { name: 'drawing', needs: ['setup'] },
+    { name: 'layout', needs: ['drawing', 'setup'] }, { name: 'save', needs: ['layout', 'drawing'] },
+    { name: 'no console errors' },
+  ];
+  assert.deepEqual(expandNeeds(steps, '^save$|no console errors'), [steps[0], ...steps.slice(2)]);
+  assert.deepEqual(expandNeeds(steps, 'drawing|layout|save'), [steps[0], ...steps.slice(2, 5)]);
+  assert.deepEqual(expandNeeds(steps, '^setup$'), [steps[0]]);
+  assert.deepEqual(expandNeeds(steps, 'absent'), []);
+  assert.deepEqual(expandNeeds(steps, '.*'), steps);
+  assert.deepEqual(steps[3].needs, ['drawing', 'setup'], 'expansion does not mutate metadata');
+  assert.throws(() => expandNeeds([{ name: 'a', needs: ['missing'] }], 'a'), /Unknown.*missing/);
+  assert.throws(() => expandNeeds([{ name: 'a', needs: ['b'] }, { name: 'b' }], 'a'), /must precede/);
+  assert.throws(() => expandNeeds([{ name: 'a', needs: ['a'] }], 'a'), /must precede/);
+  assert.throws(() => expandNeeds([{ name: 'a' }, { name: 'a' }], 'a'), /Duplicate/);
 });
 
 test('local runner launches four children together, prefixes failures and counts crashed children', () => {

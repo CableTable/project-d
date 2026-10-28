@@ -116,7 +116,7 @@
   "review: Rows and Columns say why a typed value is refused; a huge count is refused with a note": 0.26,
   "invalid numbers (text, negative, 0 rows) get a message naming the allowed range, a red mark on the field, and the old value back": 0.48,
   "review: the gripper label never sits on a registration mark; the selected slot's width is never drawn over another part": 2.08,
-  "review: the read-only Part ribbon numbers (W, H) are not drawn as inputs; X, Y and Angle are, and say what they are": 0.01,
+  "review: the Part ribbon numbers (W, H) are editable scale inputs; X, Y and Angle are inputs, and say what they are": 0.01,
   "review: PDF dialog: a greyed Mirror and Negative show unticked and do not apply": 0.68,
   "review: the smallest window (1024 × 700): every tool is reachable without scrolling, on a drawing and on a layout": 2.19,
   "Recent files (TODO 33): in the app the File menu lists them; one that is gone comes off the list": 0.33,

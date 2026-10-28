@@ -6,10 +6,13 @@
 //   canModify(ent)                     → can Offset / Trim take this entity? (LINE, ARC, CIRCLE, LWPOLYLINE in the plane)
 //   offsetEntity(ent, d, at)           → { ent } | { error }   the copy d away on the side of the point `at`; a polyline is joined with mitres
 //   trimEntity(ent, edges, pick)       → { ents, removed } | { error }  the kept pieces and the piece under `pick` that goes
-//   mirrorEntity(ent, p1, p2)          → { ent } | { skip }    the reflection in the line p1 → p2 (text keeps reading the right way)
+//   mirrorEntity(ent, p1, p2, blocks)  → { ent, blocks? } | { skip }    reflection; dimensions and leaders return private blocks
 //   mirrorShape(sh, p1, p2) / offsetShape(sh, d, at) / trimShape(sh, edgeShapes, pick) are the same on shapes.
 import { shapeOf, hasGrips, num, at as atCode, get, withValues } from './grips.js';
 import { toEntity } from './draw.js';
+import { LDR_BLOCK } from './edit.js';
+import * as L from './leader.js';
+import { insert } from './dxf-write.js';
 
 const TAU = Math.PI * 2, DEG = 180 / Math.PI;
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -159,14 +162,91 @@ export function rebuilt(sh, ent) {
   return e;
 }
 
-const TEXTS = new Set(['TEXT', 'MTEXT']);
+const TEXTS = new Set(['TEXT', 'MTEXT', 'ATTRIB', 'ATTDEF']);
+const field = (r, code) => r.v[r.c.indexOf(code)];
+
+/** Reflect record coordinates without changing pattern directions or text handedness. */
+function mirrorRecord(ent, p1, p2, dimensionText = false, parent = [1, 0, 0, 1]) {
+  const r = ent.r, c = r.c.slice(), v = r.v.slice(), type = ent.type;
+  if (ent.flip && ['INSERT', 'HATCH', 'SOLID', 'TRACE', 'TEXT', 'ATTRIB', 'ATTDEF'].includes(type)) {
+    p1 = [-p1[0], p1[1]]; p2 = [-p2[0], p2[1]];
+  }
+  const set = (code, value) => {
+    const k = c.indexOf(code);
+    if (k < 0) { c.push(code); v.push(String(value)); } else v[k] = String(value);
+  };
+  const pair = (k, vector = false, dy = 10) => {
+    const code = r.c[k];
+    let j = k + 1;
+    while (j < r.c.length && r.c[j] !== code && r.c[j] !== code + dy) j++;
+    const q = (vector ? reflectVec : reflect)([num(r.v[k]), r.c[j] === code + dy ? num(r.v[j]) : 0], p1, p2);
+    v[k] = String(q[0]);
+    if (r.c[j] === code + dy) v[j] = String(q[1]); else { c.push(code + dy); v.push(String(q[1])); }
+  };
+  const theta = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]) * DEG;
+  if (type === 'HATCH') {
+    let stage = 'head', flags = 0, edge = 0, direction = 1;
+    for (let k = 0; k < r.c.length; k++) {
+      const code = r.c[k];
+      if (code === 91) stage = 'paths';
+      else if (code === 75) stage = 'pattern';
+      else if (code === 98) stage = 'seed';
+      else if (stage === 'paths') {
+        if (code === 92) { flags = +r.v[k]; edge = 0; }
+        else if (code === 72 && !(flags & 2)) {
+          edge = +r.v[k];
+          let j = k + 1;
+          while (j < r.c.length && ![73, 72, 92, 75].includes(r.c[j])) j++;
+          direction = r.c[j] === 73 && +r.v[j] === 0 ? -1 : 1;
+        } else if ([10, 11, 12, 13].includes(code)) pair(k, edge === 3 && code === 11 || edge === 4 && code >= 12);
+        else if (flags & 2 && code === 42) v[k] = String(-num(r.v[k]));
+        else if (!(flags & 2) && [2, 3].includes(edge)) {
+          if ([50, 51].includes(code) && edge === 2) v[k] = String(norm360(num(r.v[k]) - direction * 2 * theta));
+          if (code === 73) v[k] = String(1 - num(r.v[k]));
+        }
+      } else if (stage === 'pattern' && code === 43) pair(k, false, 1);
+      else if (stage === 'seed' && code === 10) pair(k);
+    }
+    // A copy owns its boundary; handles to the source boundary must not drive it.
+    set(71, 0);
+  } else {
+    const pts = type === 'DIMENSION' ? [10, 11, 12, 13, 14, 15, 16] : ['SOLID', 'TRACE', '3DFACE'].includes(type) ? [10, 11, 12, 13]
+      : type === 'SPLINE' ? [10, 11, 12, 13] : type === 'LINE' || type === 'TEXT' || type === 'ATTRIB' || type === 'ATTDEF' || type === 'ELLIPSE' ? [10, 11] : [10];
+    for (let k = 0; k < r.c.length; k++) if (pts.includes(r.c[k])) pair(k, type === 'ELLIPSE' && r.c[k] === 11 || type === 'SPLINE' && r.c[k] >= 12);
+    if (type === 'ELLIPSE') {
+      const a0 = get(r, 41) ?? 0, a1 = get(r, 42) ?? TAU;
+      set(41, mod2pi(-a1)); set(42, mod2pi(-a0));
+      if (Math.abs(a1 - a0) >= TAU - 1e-6) set(42, mod2pi(-a1) + TAU);
+    } else if (type === 'INSERT') {
+      set(41, -(get(r, 41) ?? 1)); set(50, norm360(2 * theta - (get(r, 50) ?? 0) + 180));
+      if (get(r, 44) != null) set(44, -get(r, 44));
+    } else if (type === 'DIMENSION') {
+      for (const code of [50, 51, 52, 53]) if (get(r, code) != null || code === 50) {
+        let angle = norm360(2 * theta - (get(r, code) ?? 0));
+        if (code === 53 && angle > 90 && angle <= 270) angle = norm360(angle + 180);
+        set(code, angle);
+      }
+    }
+    if (dimensionText && TEXTS.has(type)) {
+      const original = type === 'MTEXT' && get(r, 11) != null ? Math.atan2(get(r, 21) ?? 0, get(r, 11)) * DEG : get(r, 50) ?? 0;
+      let angle = norm360(2 * theta - original);
+      const a = angle / DEG, x = parent[0] * Math.cos(a) + parent[2] * Math.sin(a), y = parent[1] * Math.cos(a) + parent[3] * Math.sin(a);
+      if (x < -1e-9 || Math.abs(x) <= 1e-9 && y < 0) angle = norm360(angle + 180);
+      set(50, angle);
+      if (type !== 'MTEXT') set(71, (get(r, 71) ?? 0) & ~6);
+      if (type === 'MTEXT') { const a = angle / DEG; set(11, Math.cos(a)); set(21, Math.sin(a)); }
+    }
+  }
+  return { ...ent, r: { ...r, c, v } };
+}
 /**
- * The entity reflected in the line p1 → p2: { ent }, or { skip: 'why' } when this kind is not mirrored. Text moves but is not turned
+ * The entity reflected in the line p1 → p2: { ent, blocks? }, or { skip: 'why' } when this kind is not mirrored. Text moves but is not turned
  * round (MIRRTEXT 0): only its insertion point is reflected, so it reads the right way.
  */
-export function mirrorEntity(ent, p1, p2) {
+export function mirrorEntity(ent, p1, p2, blocks = {}, depth = 0) {
   if (!ent || !ent.r) return { skip: 'it has no shape' };
   if (dist(p1, p2) < 1e-12) return { skip: 'the mirror line has no length' };
+  if (depth >= 10) return { skip: 'the dimension blocks are nested too deeply' };
   if (hasGrips(ent)) {
     const sh = mirrorShape(shapeOf(ent, 1), p1, p2);
     return sh ? { ent: rebuilt(sh, ent) } : { skip: 'it could not be mirrored' };
@@ -181,15 +261,49 @@ export function mirrorEntity(ent, p1, p2) {
     if (ent.type === 'TEXT' && x2 >= 0 && y2 >= 0) { const q2 = reflect([num(r.v[x2]), num(r.v[y2])], p1, p2); edits.push([x2, q2[0]], [y2, q2[1]]); }
     return { ent: withValues(ent, edits) };
   }
-  if (ent.type === 'ELLIPSE') {
-    const a0 = get(r, 41) ?? 0, a1 = get(r, 42) ?? TAU;
-    if (Math.abs(a1 - a0 - TAU) > 1e-6) return { skip: 'a part of an ellipse is not mirrored yet' };
-    const x = atCode(r, 10), y = atCode(r, 20), mx = atCode(r, 11), my = atCode(r, 21);
-    if (x < 0 || y < 0 || mx < 0 || my < 0) return { skip: 'it is not a plain ellipse' };
-    const q = reflect([num(r.v[x]), num(r.v[y])], p1, p2), m = reflectVec([num(r.v[mx]), num(r.v[my])], p1, p2);
-    return { ent: withValues(ent, [[x, q[0]], [y, q[1]], [mx, m[0]], [my, m[1]]]) };
+  if (ent.type === 'INSERT' || ent.type === 'DIMENSION') {
+    const name = field(r, 2), dim = ent.type === 'DIMENSION' || /^PD_DIM_/.test(name);
+    if (ent.type === 'INSERT' && LDR_BLOCK.test(name)) {
+      const block = blocks[name], model = !block?.xref && L.read(name, block);
+      if (!model) return { skip: 'the leader has no block geometry' };
+      const angle = (get(r, 50) ?? 0) / DEG, c = Math.cos(angle), s = Math.sin(angle);
+      model.pts = model.pts.map(([x, y]) => {
+        x = (x - block.base[0]) * (get(r, 41) ?? 1); y = (y - block.base[1]) * (get(r, 42) ?? 1);
+        const wx = (get(r, 10) ?? 0) + c * x - s * y, wy = (get(r, 20) ?? 0) + s * x + c * y;
+        return reflect([ent.flip ? -wx : wx, wy], p1, p2);
+      });
+      const built = L.build(model, L.freeName(blocks));
+      return built ? { ent: insert(built.name, 0, 0, ent), blocks: { ...blocks, [built.name]: built.block } } : { skip: 'the leader has invalid geometry' };
+    }
+    let mirrored = mirrorRecord(ent, p1, p2);
+    mirrored.kids = ent.kids?.map((kid) => mirrorRecord({ type: kid.type, r: kid, flip: (get(kid, 230) ?? 1) < 0 }, p1, p2).r);
+    if (!dim) return { ent: mirrored };
+    const block = blocks[name];
+    if (!block || block.xref) return { skip: 'the dimension has no block geometry' };
+    const prefix = ent.type === 'DIMENSION' ? '*D' : /^PD_DIM_[RDAHV]?/.exec(name)[0];
+    let n = 1;
+    while (blocks[prefix + n]) n++;
+    const own = prefix + n, native = ent.type === 'DIMENSION';
+    // Native blocks use world coordinates; PD_DIM keeps its positive insert transform and reflects local geometry.
+    const a = native ? p1 : [0, 0], b = native ? p2 : [0, 1];
+    const rot = (get(mirrored.r, 50) ?? 0) / DEG, sx = get(r, 41) ?? 1, sy = get(r, 42) ?? 1;
+    const parent = native ? [1, 0, 0, 1] : [sx * Math.cos(rot), sx * Math.sin(rot), -sy * Math.sin(rot), sy * Math.cos(rot)];
+    let nextBlocks = { ...blocks, [own]: block };
+    const entities = [];
+    for (const e of block.entities) {
+      const result = TEXTS.has(e.type) ? { ent: mirrorRecord(e, a, b, true, parent) } : mirrorEntity(e, a, b, nextBlocks, depth + 1);
+      if (!result.ent) return { skip: 'the dimension contains unsupported geometry: ' + result.skip };
+      entities.push(result.ent);
+      if (result.blocks) nextBlocks = result.blocks;
+    }
+    if (!native) mirrored = { ...mirrored, r: { ...mirrored.r, v: mirrored.r.v.map((v, k) => mirrored.r.c[k] === 41 ? String(sx) : v) } };
+    mirrored = { ...mirrored, r: { ...mirrored.r, v: mirrored.r.v.map((v, k) => mirrored.r.c[k] === 2 ? own : v) } };
+    const base = native ? block.base : reflect(block.base, a, b);
+    return { ent: mirrored, blocks: { ...nextBlocks, [own]: { ...block, base, entities } } };
   }
-  return { skip: ent.type === 'INSERT' ? 'blocks and dimensions are not mirrored yet' : ent.type + ' is not mirrored yet' };
+  if (ent.type === 'ELLIPSE' && [10, 20, 11, 21].some((code) => atCode(r, code) < 0)) return { skip: 'it is not a plain ellipse' };
+  if (['ELLIPSE', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'POINT', 'SPLINE'].includes(ent.type)) return { ent: mirrorRecord(ent, p1, p2) };
+  return { skip: ent.type + ' is not mirrored yet' };
 }
 
 // ---------------------------------------------------------------- Offset

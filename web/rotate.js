@@ -1,5 +1,6 @@
 // Drawing-unit rotation, counter-clockwise degrees. No DOM.
 import { SPEC, OCS, moveEntities, copyEntities } from './edit.js';
+import { turnBetween } from './place.js';
 
 const field = (r, code) => r.v[r.c.indexOf(code)];
 const text = (v) => String(+v.toPrecision(15));
@@ -7,6 +8,15 @@ const text = (v) => String(+v.toPrecision(15));
 export function rotationAngle(pivot, point, shift = false) {
   const a = Math.atan2(point[1] - pivot[1], point[0] - pivot[0]) * 180 / Math.PI;
   return shift ? Math.round(a / 15) * 15 : a;
+}
+
+/** Reference: the turn that takes the reference angle to the new angle (degrees). */
+export const referenceTurn = (reference, next) => next - reference;
+
+/** A corner drag measures its turn from the picked arrow, rather than from +X. */
+export function rotationDragAngle(pivot, start, point, shift = false) {
+  const angle = turnBetween(rotationAngle(pivot, start), rotationAngle(pivot, point));
+  return shift ? Math.round(angle / 15) * 15 : angle;
 }
 
 /** Cached drawing ghosts use the same canvas placement path as layout parts. */

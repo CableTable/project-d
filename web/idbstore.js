@@ -1,6 +1,14 @@
 // idbstore.js — one IndexedDB store keyed by "id", shared by partstore.js and recovery.js. Every call can fail (private mode, blocked
 // storage, a full disk): the caller catches. A write is done when its transaction commits, not when the request succeeds.
 
+/** JSON records in localStorage; the caller catches blocked storage or malformed records. */
+export function localStore(prefix, storage) {
+  return {
+    get: (id) => JSON.parse(storage.getItem(prefix + id) || 'null'),
+    put: (id, value) => storage.setItem(prefix + id, JSON.stringify(value)),
+  };
+}
+
 /** → { all(), put(rec), del(id), clear() } for database `db`, object store `store`; `what` names it in an error ("the parts store"). */
 export function idbStore(db, store, what) {
   let opened = null;

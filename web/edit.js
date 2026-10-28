@@ -1199,24 +1199,36 @@ export function copyEntities(raw, selection, dx, dy) {
  * (TODO 30; default 'Edit'); undo / redo hand back the one to restore. labels() lists the steps for the history list, and
  * undoMany(n, current) / redoMany(n, current) go several steps at once.
  */
+let historyOrder = 0;
 export function createHistory(limit = 100) {
   let revision = 0;
   let undo = [], redo = [];                                  // entries { s: the state to go back to, label: the step it undoes }
   const h = {
-    push(state, label = 'Edit') { revision++; undo.push({ s: state, label }); if (undo.length > limit) undo.shift(); redo = []; },
-    undo(current) { revision++; const e = undo.pop(); if (!e) return null; redo.push({ s: current, label: e.label }); return e.s; },
-    redo(current) { revision++; const e = redo.pop(); if (!e) return null; undo.push({ s: current, label: e.label }); return e.s; },
+    push(state, label = 'Edit') { revision++; undo.push({ s: state, label, order: ++historyOrder }); if (undo.length > limit) undo.shift(); redo = []; },
+    undo(current) { revision++; const e = undo.pop(); if (!e) return null; redo.push({ ...e, s: current }); return e.s; },
+    redo(current) { revision++; const e = redo.pop(); if (!e) return null; undo.push({ ...e, s: current }); return e.s; },
     /** Back n steps (1 to canUndo count): the state to restore, or null. */
     undoMany(n, current) { if (!(n >= 1) || n > undo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.undo(s); return s; },
     redoMany(n, current) { if (!(n >= 1) || n > redo.length) return null; let s = current; for (let i = 0; i < n; i++) s = h.redo(s); return s; },
     /** { past: labels oldest first (the last is what Undo undoes), future: labels, the one Redo redoes first } */
     labels() { return { past: undo.map((e) => e.label), future: redo.slice().reverse().map((e) => e.label) }; },
+    steps() { return { past: undo.map(({ label, order }) => ({ label, order })), future: redo.slice().reverse().map(({ label, order }) => ({ label, order })) }; },
     get canUndo() { return undo.length > 0; },
     get canRedo() { return redo.length > 0; },
     get revision() { return revision; },
+    clearRedo() { if (redo.length) { revision++; redo = []; } },
     clear() { revision++; undo = []; redo = []; }
   };
   return h;
+}
+
+/** Inspect linked histories in one edit order; Undo goes back and Redo retraces that order. */
+export function combinedHistory(histories) {
+  const steps = histories.filter(Boolean).map((history) => ({ history, ...history.steps() }));
+  const entries = (side) => steps.flatMap((x) => x[side].map((e) => ({ ...e, history: x.history }))).sort((a, b) => a.order - b.order);
+  const past = entries('past'), future = entries('future');
+  return { canUndo: !!past.length, canRedo: !!future.length, undoHistory: past.at(-1)?.history, redoHistory: future[0]?.history,
+    labels: () => ({ past: past.map((e) => e.label), future: future.map((e) => e.label) }) };
 }
 
 /** The factor that turns `current` into `wanted` (both mm), or null when either is not a usable length. */

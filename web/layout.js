@@ -104,7 +104,7 @@ export function stepRepeat(o) {
   const manual = o.fit === false;                                     // rows and columns typed by hand: the grid may not fit
   const placed = o.placed || [];
   const angle = (p) => ((p.rot || 0) % 360 + 360) % 360;
-  const candidates = placed.filter((p) => o.gridPart && p.partId === o.gridPart && !p.mirrorX && !p.mirrorY &&
+  const candidates = placed.filter((p) => o.gridPart && p.partId === o.gridPart && !p.mirrorX && !p.mirrorY && !p.sc &&
     (String(rotate) === 'best' ? angle(p) === 0 || angle(p) === 270 : angle(p) === (String(rotate) === '90' ? 270 : 0)) &&
     p.box[0] >= area.x - 1e-9 && p.box[1] >= area.y - 1e-9 &&
     p.box[2] <= area.x + area.w + 1e-9 && p.box[3] <= area.y + area.h + 1e-9);

@@ -6,6 +6,7 @@ import { writeDxf, newDoc, addEntities, rect, line, circle, insert, addBlock } f
 import { placedMat, placedBox, placement1, buildLayoutDoc } from './web/apply.js';
 import * as LD from './web/layoutdoc.js';
 import * as P from './web/place.js';
+import * as TX from './web/text.js';
 import { planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
@@ -165,6 +166,27 @@ test('round trip: write, read, and the layout is back — settings, parts and ev
   assert.equal(readDxf(again).entities.filter((e) => e.type === 'INSERT').length, 7);
 });
 
+test('TODO 156b1: a scaled placement is the INSERT scale, and the scale comes back from the file', () => {
+  const lay = sample();
+  lay.placed.push({ ...placement1('a', 300, 200, 30, false, true), sc: 2.5 });
+  const raw = LD.layoutRaw(lay), ins = raw.entities.filter((e) => e.type === 'INSERT');
+  const text = writeDxf(raw, { escapeUnicode: true }), back = LD.layoutFromRaw(readDxf(text), 'Scaled');
+  const sc = back.placed.at(-1);
+  near(sc.sc, 2.5); assert.equal(sc.mirrorY, true); near(sc.rot, 30);
+  assert.equal(back.placed[0].sc, undefined, 'an unscaled part has no sc');
+  assert.deepEqual(back.placed, lay.placed);
+  const e = readDxf(text).entities.filter((x) => x.type === 'INSERT').at(-1);
+  assert.equal(ins.length, 8);
+  near(Number(e.r.v[e.r.c.indexOf(42)]), -2.5, 1e-6);       // Y scale = mirror x sc
+  near(Number(e.r.v[e.r.c.indexOf(41)]), 2.5, 1e-6);
+  const againRaw = readDxf(writeDxf(LD.layoutRaw(back))), again = LD.layoutFromRaw(againRaw);
+  assert.deepEqual(again.placed, lay.placed, 'reopening and saving keeps the placement scale');
+  near(again.parts.a.w, lay.parts.a.w); near(again.parts.a.h, lay.parts.a.h);
+  const againInsert = againRaw.entities.filter((x) => x.type === 'INSERT').at(-1);
+  near(Number(againInsert.r.v[againInsert.r.c.indexOf(41)]), 2.5);
+  near(Number(againInsert.r.v[againInsert.r.c.indexOf(42)]), -2.5);
+});
+
 test('the settings need several TEXT chunks when long, and still round-trip (many extra gaps, a long name)', () => {
   const lay = sample();
   lay.s.extraRows = Array.from({ length: 60 }, (_, i) => ({ after: i + 1, mm: i + 0.5 }));
@@ -302,6 +324,129 @@ test('TODO 127: anchored grids derive identically after save and reopen, without
     assert.deepEqual(LD.gridOf(back), grid);
     assert.deepEqual(LD.placedAll(back), all);
   }
+});
+
+test('layout objects as a drawing (TODO 156b3a): parts left out, the same entities each time, a result becomes objects, a copy keeps its part', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  lay.parts.p1 = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);
+  lay.placed.push(placement1('p1', 100, 50));
+  const o = LD.objectPart('o1', 'Line 1', line(0, 0, 100, 0), layers);
+  lay.parts.o1 = o; lay.placed.push(LD.objectPlacement(o), { ...LD.objectPlacement(o), y: 50 });      // the line, and a copy of it 50 up
+  const v = LD.objectDoc(lay), [a, b] = v.raw.entities;
+  assert.equal(v.raw.entities.length, 2, 'the plate is not in it');
+  assert.deepEqual(v.fl.boxes.model, [0, 0, 100, 50]);
+  assert.equal(LD.objectSig(lay, () => false), LD.objectSig(lay, () => false));
+  assert.notEqual(LD.objectSig(lay, () => false), LD.objectSig(lay, (id) => id === 'o1'));
+  assert.deepEqual(LD.objectDoc(lay).raw.entities, [a, b]);
+  assert.ok(LD.objectDoc(lay).raw.entities.every((e, i) => e === v.raw.entities[i]), 'the same entity objects');
+  const cut = line(0, 50, 40, 50);                                     // the copy trimmed to 40 mm: its entity is replaced
+  LD.objectCommit(lay, v, [a, cut], () => 'n1');
+  assert.equal(lay.placed.length, 3); assert.ok(lay.parts.o1, 'the first object still uses o1'); assert.equal(lay.parts.n1.name, 'Line 2');
+  const v2 = LD.objectDoc(lay);
+  assert.ok(v2.raw.entities.includes(a) && v2.raw.entities.includes(cut), 'both are still the same entity objects');
+  LD.objectCommit(lay, v2, [cut], () => 'n2');                         // Erased
+  assert.equal(lay.placed.length, 2); assert.equal(lay.parts.o1, undefined, 'a part nothing is placed from goes'); assert.ok(lay.parts.p1, 'a real part is never removed');
+});
+
+test('layout objects (TODO 156b3b): a grip edit keeps the object (slot, name, group, lock); a part shared with a copy is not changed', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  const o = LD.objectPart('o1', 'Line 1', line(0, 0, 100, 0), layers);
+  lay.parts.o1 = o; lay.placed.push({ ...LD.objectPlacement(o), g: 'g1', lock: true, sc: 2 });
+  let v = LD.objectDoc(lay);
+  assert.ok(LD.objectReplace(lay, v, v.raw.entities[0], line(0, 0, 100, 50), () => 'n1'));
+  assert.equal(lay.placed.length, 1); assert.equal(lay.parts.n1.name, 'Line 1'); assert.deepEqual(Object.keys(lay.parts), ['n1'], 'the old part is gone');
+  assert.match(LD.objectSig(lay, () => false), /^n1\|/, 'a new part id, so the objects\' drawing is made again even at the same placement');
+  assert.equal(lay.placed[0].g, 'g1'); assert.equal(lay.placed[0].lock, true); assert.equal(lay.placed[0].sc, undefined);
+  assert.deepEqual(LD.objectDoc(lay).fl.boxes.model, [0, 0, 100, 50], 'the object is the new line');
+  lay.placed.push({ ...lay.placed[0], y: 70 });                          // a copy of it: the same part
+  v = LD.objectDoc(lay);
+  assert.ok(LD.objectReplace(lay, v, v.raw.entities[1], line(0, 70, 30, 70), () => 'n2'));
+  assert.deepEqual(lay.parts.n1.box, [0, 0, 100, 50], 'the first one is untouched'); assert.equal(lay.parts.n2.name, 'Line 2'); assert.equal(lay.placed[1].partId, 'n2');
+});
+
+test('layout objects (TODO 156b fixes): group and lock survive save and reopen; a trim to one piece keeps group, lock and name; an old layout without them opens', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  const mk = (id, ent, extra) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push({ ...LD.objectPlacement(o), ...extra }); };
+  mk('a', line(0, 0, 100, 0), { g: 'g1', lock: true }); mk('b', line(0, 20, 100, 20)); mk('c', circle(200, 100, 15), { g: 'g1' });
+  const raw = readDxf(writeDxf(LD.layoutRaw(lay))), back = LD.layoutFromRaw(raw);
+  assert.deepEqual(back.placed.map((p) => [p.g || null, !!p.lock]), [['g1', true], [null, false], ['g1', false]]);
+  const none = LD.newLayout('Plain'), o = LD.objectPart('o', 'o', line(0, 0, 5, 5), LD.layersOf(none));
+  none.parts.o = o; none.placed.push(LD.objectPlacement(o));
+  assert.equal(LD.readMeta(LD.layoutRaw(none)).ob, undefined, 'nothing to store: no ob in the file');
+  assert.equal(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(none)))).placed.length, 1);
+  const v = LD.objectDoc(lay), cut = line(0, 0, 40, 0);                    // a trimmed to 40 mm: one piece
+  LD.objectCommit(lay, v, [cut, v.raw.entities[1], v.raw.entities[2]], () => 'n1');
+  const piece = lay.placed.find((p) => p.partId === 'n1');
+  assert.equal(piece.g, 'g1'); assert.equal(piece.lock, true); assert.equal(lay.parts.n1.name, 'a');
+});
+
+test('layout objects (TODO 156b review): an outside entity count change drops positional group and lock metadata', () => {
+  const lay = LD.newLayout('Outside edit'), layers = LD.layersOf(lay);
+  const a = LD.objectPart('a', 'Note', TX.encode({ type: 'TEXT', x: 10, y: 10, h: 5, lines: ['NOTE'], angle: 0, ha: 0, font: 'Standard' }, { layer: '0' }), layers);
+  const b = LD.objectPart('b', 'Line', line(0, 20, 100, 20), layers);
+  lay.parts = { a, b }; lay.placed = [{ ...LD.objectPlacement(a), g: 'notes', lock: true }, LD.objectPlacement(b)];
+  const raw = readDxf(writeDxf(LD.layoutRaw(lay)));
+  assert.equal(LD.readMeta(raw).obCount, 2);
+  assert.equal(LD.layoutFromRaw(raw).placed[0].lock, true, 'unchanged count keeps metadata');
+  for (const entities of [raw.entities.filter((e) => e.type !== 'TEXT'), [...raw.entities, circle(50, 50, 10)]]) {
+    const back = LD.layoutFromRaw({ ...raw, entities });
+    assert.ok(back.placed.every((p) => !p.g && !p.lock), 'a deletion or addition drops all positional metadata');
+    assert.equal(back.placed.length, entities.filter((e) => !LD.isReserved(e.layer)).length, 'the artwork still opens');
+  }
+});
+
+test('layout objects (TODO 156b2): plain entities beside the INSERTs, back as objects, moved / turned ones baked in, not in the grid', () => {
+  const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
+  const part = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);
+  lay.parts.p1 = part; lay.placed.push(placement1('p1', 100, 50));
+  const mk = (id, ent) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push(LD.objectPlacement(o)); return lay.placed.at(-1); };
+  mk('o1', line(10, 10, 60, 40));
+  const c = mk('o2', circle(200, 100, 15));
+  c.x += 30; c.y -= 10;                                              // moved by 30, -10
+  const raw = LD.layoutRaw(lay);
+  assert.equal(raw.entities.filter((e) => e.type === 'INSERT').length, 1, 'objects are not INSERTs');
+  const plain = raw.entities.filter((e) => e.type !== 'INSERT' && !LD.isReserved(e.layer));
+  assert.deepEqual(plain.map((e) => e.type), ['LINE', 'CIRCLE']);
+  assert.equal(LD.readMeta(raw).placed.length, 1, 'the JSON holds no copy of the objects');
+  const back = LD.layoutFromRaw(readDxf(writeDxf(raw)));
+  const objs = back.placed.filter((p) => back.parts[p.partId].obj);
+  assert.equal(objs.length, 2);
+  assert.equal(back.placed.length, 3);
+  assert.equal(LD.partsForPlacement(back).length, 1, 'objects are not parts of the library');
+  assert.deepEqual(LD.placedAll(back).map((p) => p.partId).sort(), ['ob1', 'ob2', 'p1']);
+  const circ = back.parts[objs[1].partId];
+  near(placedBox(circ, objs[1])[0], 215); near(placedBox(circ, objs[1])[1], 75);       // the circle's box: 215..245 x 75..105 after the move
+  // turned and scaled objects are baked: a line from (0,0) to (10,0) turned 90° about its corner, scaled ×2
+  const l2 = LD.newLayout('Turned'), t = LD.objectPart('t', 't', line(0, 0, 10, 0), LD.layersOf(l2));
+  l2.parts.t = t; l2.placed.push({ ...LD.objectPlacement(t), x: 50, y: 50, rot: 90, sc: 2 });
+  const e = LD.layoutRaw(l2).entities.find((x) => x.type === 'LINE' && !LD.isReserved(x.layer));
+  const f = flatten({ ...LD.layoutRaw(l2), entities: [e] }).boxes.model;
+  near(f[0], 50); near(f[1], 50); near(f[2], 50); near(f[3], 70);
+  // the grid ignores objects; an old layout (no layers table, no objects) still opens and saves
+  const g = LD.newLayout('Grid'); g.parts.p1 = part; g.s.gridPart = 'p1'; g.s.sheetW = 300; g.s.sheetH = 200;
+  const count = LD.gridOf(g).count, big = LD.objectPart('big', 'big', rect(0, 0, 290, 190), LD.layersOf(g));
+  g.parts.big = big; g.placed.push(LD.objectPlacement(big));
+  assert.equal(LD.gridOf(g).count, count);
+  const old = LD.newLayout('Old'); delete old.layers; old.parts.p1 = part; old.placed.push(placement1('p1', 5, 5));
+  const oldBack = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(old))));
+  assert.equal(oldBack.placed.length, 1);
+  assert.equal(Object.keys(oldBack.parts).length, 1);
+});
+
+test('layout objects (TODO 156b2b): a TEXT and an MTEXT among the objects are saved as plain entities, come back as objects with their lines, and a move is baked in', () => {
+  const lay = LD.newLayout('Texts'), layers = LD.layersOf(lay);
+  const m = { type: 'TEXT', x: 100, y: 50, h: 10, lines: ['HELLO'], angle: 0, ha: 0, font: 'Standard', styleName: 'Standard', bold: false };
+  const mk = (id, ent) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push(LD.objectPlacement(o)); return lay.placed.at(-1); };
+  const t1 = mk('t1', TX.encode(m, { layer: '0' }));
+  mk('t2', TX.encode({ ...m, type: 'MTEXT', y: 200, lines: ['ONE', 'TWO'] }, { layer: '0' }));
+  t1.x += 40; t1.y -= 10;                                             // moved by 40, -10
+  const raw = LD.layoutRaw(lay), plain = raw.entities.filter((e) => e.type !== 'INSERT' && !LD.isReserved(e.layer));
+  assert.deepEqual(plain.map((e) => e.type), ['TEXT', 'MTEXT']);
+  const back = LD.layoutFromRaw(readDxf(writeDxf(raw))), objs = back.placed.filter((p) => back.parts[p.partId].obj);
+  assert.equal(objs.length, 2); assert.equal(back.placed.length, 2);
+  const msgs = objs.map((p) => TX.decode(back.parts[p.partId].raw.entities[0]));
+  assert.deepEqual(msgs.map((x) => x.lines), [['HELLO'], ['ONE', 'TWO']]);
+  near(msgs[0].x, 140); near(msgs[0].y, 40);
 });
 
 console.log(n + ' tests passed');

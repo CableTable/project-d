@@ -53,7 +53,7 @@ export const placement1 = (partId, x, y, rot = 0, mirrorX = false, mirrorY = fal
 export function placedMat(part, pl, sheetH) {
   const f = part.factor || 1, [b0, b1] = part.box || [0, 0];
   const th = (pl.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th);
-  const sx = pl.mirrorX ? -1 : 1, sy = pl.mirrorY ? -1 : 1;
+  const k = pl.sc || 1, sx = (pl.mirrorX ? -1 : 1) * k, sy = (pl.mirrorY ? -1 : 1) * k;
   const a = f * co * sx, b = -f * si * sx, c = -f * si * sy, d = -f * co * sy;
   return [a, b, c, d, pl.x - a * b0 - c * b1, sheetH - pl.y - b * b0 - d * b1];
 }
@@ -61,7 +61,7 @@ export function placedMat(part, pl, sheetH) {
 /** The box a placed part covers on the sheet, [x0, y0, x1, y1] in mm, y up (the part's own box, mirrored and turned). */
 export function placedBox(part, pl) {
   const f = part.factor || 1, w = part.w != null ? part.w : (part.box[2] - part.box[0]) * f, hgt = part.h != null ? part.h : (part.box[3] - part.box[1]) * f;
-  const th = (pl.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), sx = pl.mirrorX ? -1 : 1, sy = pl.mirrorY ? -1 : 1;
+  const th = (pl.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), k = pl.sc || 1, sx = (pl.mirrorX ? -1 : 1) * k, sy = (pl.mirrorY ? -1 : 1) * k;
   const xs = [], ys = [];
   for (const [u, v] of [[0, 0], [w, 0], [w, hgt], [0, hgt]]) { const p = u * sx, q = v * sy; xs.push(pl.x + co * p - si * q); ys.push(pl.y + si * p + co * q); }
   const r = (v) => Math.round(v * 1e9) / 1e9;
@@ -135,7 +135,7 @@ export function buildLayoutDoc({ parts, placed, sheetW, sheetH, marks, keep = []
     else addBlock(doc, name, [roundRect(0, 0, part.w, part.h, 6)]);
   }
   const ins = placed.filter((p) => blockOf[p.partId]).map((p) => {
-    const f = parts[p.partId].factor || 1, sx = (p.mirrorX ? -1 : 1) * f, sy = (p.mirrorY ? -1 : 1) * f;
+    const f = parts[p.partId].factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
     return insert(blockOf[p.partId], p.x, p.y, { layer: LAYERS.parts, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) });
   });
   addEntities(doc, rect(0, 0, sheetW, sheetH, { layer: LAYERS.sheet }), ins);

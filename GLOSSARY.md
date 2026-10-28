@@ -36,7 +36,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Compare reference**: The first ticked snapshot in the Compare list. All other ticked snapshots line up to it; its measurement changes are zero. Hiding a snapshot with its eye keeps it in the comparison and table; unticking leaves it out. Where: `web/compare-list.js`.
 
-**Compare snapshot**: A copy of a drawing tab, Parts library part or disk file taken when added to Compare. Later edits to the source do not change it; remove and re-add to refresh it. The list lasts only for that Compare tab and is not saved with a drawing. Where: `web/compare-list.js`.
+**Compare snapshot**: A copy of a drawing tab, Parts library part or disk file taken when added to Compare. A snapshot from an open drawing tab keeps its tab id: edits on the picked snapshot use that drawing's coordinates, file and Undo, and refresh its artwork and the Differences list. Closing the source tab leaves a plain copy; library and disk snapshots are read-only. The list lasts only for that Compare tab and is not saved with a drawing. Where: `web/compare-list.js`.
 
 **Contour**: Makes one or more new outlines inside or outside a closed outline at repeated distances, with sharp or rounded corners, on the Contour layer. Where: `DECISIONS.md`, Contour tool and Contour colour and line style. Avoid: Trace.
 **Extend tool**: Lengthens a drawing line to the nearest boundary edge ahead: pick the boundary edges (Enter alone = every line, arc, circle and polyline), then click near the end to move; the other end stays. One Undo per extend; repeats until Esc. Modify menu, Home / Modify ribbons, EX / EXTEND. Arcs and polylines follow in TODO 66i. Where: `web/extend.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
@@ -48,7 +48,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Displacement**: The x,y vector used to Move or Copy a selection. D or Enter at the base point asks for it directly (default 0,0); Enter at the first second-point prompt uses the base point itself as the vector. Where: `DECISIONS.md`, Copy / Move options (TODO 155f).
 
 **Fillet tool**: Rounds the corner between two drawing lines or arcs, or adjacent segments of one polyline, with a tangent arc of the remembered radius (R changes it; 0 or Shift-click makes a sharp corner). Separate entities keep the sides picked; arcs and polyline segments stay finite. A polyline stays one entity with the new arc stored as a bulge. One Undo per corner; repeats until Esc. Modify menu, Home / Modify ribbons, F / FILLET. Circles, non-adjacent polyline segments and mixed polyline / separate-entity picks are refused. Where: `web/fillet.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
-**Rotate tool**: Turns selected drawing objects about a snapped or typed pivot by a clicked or typed angle in degrees; counter-clockwise is positive. Shift uses 15° steps; C at Angle toggles a copy. One turn, one Undo; Esc cancels. Modify menu, Home / Modify ribbons, RO / ROTATE. On a layout those commands turn the selected part as before. Where: `web/rotate.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h).
+**Rotate tool**: Turns selected drawing objects about a snapped or typed pivot by a clicked or typed angle in degrees; counter-clockwise is positive. Shift uses 15° steps; C at Angle toggles a copy. A second click on a drawing selection toggles grips / corner arrows: drag an arrow to turn it, or drag ◎ to move the pivot from its default centre. One turn, one Undo; Esc cancels. Modify menu, Home / Modify ribbons, RO / ROTATE. On a layout those commands turn the selected part as before. Where: `web/rotate.js`, `web/app.js`; `DECISIONS.md`, Copy, Rotate, Scale, Fillet, Extend (TODO 66b–66h) and Same features in every tab: scope (TODO 156).
 
 **Cutter export (Export for cutter)**: Writes a separate DXF copy containing only LINE, ARC and LWPOLYLINE, flattening curves to a chosen tolerance and leaving out text, fills and other unsupported objects. Where: `DECISIONS.md`, Cutter-safe DXF. Avoid: Normal Save.
 
@@ -101,6 +101,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **In-app clipboard**: The session-only snapshot of selected drawing objects or placed parts taken with Ctrl+C. Ctrl+V pastes at the same coordinates and true size. Drawing objects pasted on a layout become a new Parts library part; copied placed parts keep their library links on a layout and become plain drawing objects on a drawing tab or PDF sheet, with rotation and mirrors applied. It remembers drawing source names at Ctrl+C, survives source edits and closing the source tab, and is separate from the system clipboard. Where: `web/clipboard.js`; `DECISIONS.md`, Copy and paste inside the app first, Ctrl+C on layout tabs.
 
+**Layout object**: A line, arc, text or other drawing object drawn straight onto a layout sheet, not part of any part, such as a setup line, note or frame. Where: `DECISIONS.md`, Tools on Layouts. Avoid: Loose part (a placed part outside the step and repeat grid).
+
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
 
 **Padlock**: The W / H proportions control: locked scales both sides together; unlocked changes each side independently. It starts locked and applies to selection size or the whole drawing when nothing is selected. Where: Drawing size fields; `web/app.js`. Avoid: Layer Lock.
@@ -129,7 +131,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Part tab**: The ribbon context tab that appears and selects itself when placed parts are selected on a layout. It holds their name, position, size, angle, mirror, nudge, group and lock controls. Where: `DECISIONS.md`, Ribbon; `web/app.js`.
 
-**Placed part**: One positioned, rotated or mirrored copy of a part on a layout sheet. Where: `DECISIONS.md`, Placed part: X, Y, W, H, Angle. Avoid: The library part itself.
+**Placed part**: One positioned, rotated, mirrored or uniformly scaled copy of a part on a layout sheet. Its placement scale is saved in the INSERT; typing W or H in the Part tab scales both sides together. Where: `DECISIONS.md`, Placed part: X, Y, W, H, Angle and Tools on Layouts. Avoid: The library part itself.
 
 **Preflight**: An optional drawing check for duplicates, open cut paths, tiny gaps, off-sheet parts, wide lines and live text that warns without blocking export. Where: `DECISIONS.md`, Cleanup / Preflight placement and Preflight: warn, not block.
 
@@ -249,7 +251,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **OTRACK**: Object-snap tracking that lines a pick up with points already acquired from drawing geometry. Where: `TODO.md`, item 21; `web/track.js`.
 
-**Outline**: A connected chain of drawing edges, often used as a part's outer cut shape. A click picks one object; right-click → Select connected picks its chain. Where: `DECISIONS.md`, Click selects one object (TODO 155c). Avoid: Necessarily a single polyline.
+**Outline**: A connected chain of drawing edges, often used as a part's outer cut shape. A click on an unselected object picks it; clicking a selected object keeps the whole selection and toggles corner rotate arrows. To pick one, click empty space first or Shift+click the others away. Right-click → Select connected picks its chain. Where: `DECISIONS.md`, Click selects one object (TODO 155c) and Click on an object already in the selection (156a vs 155c). Avoid: Necessarily a single polyline.
 
 **POINT**: A DXF point location that is left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
 

@@ -2,13 +2,20 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import { flatten, mapply, readDxf } from './web/drawing.js';
-import { rotateEntities, rotationAngle, rotationMatrix } from './web/rotate.js';
+import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './web/rotate.js';
 import { addDimension, buildDim } from './web/edit.js';
 
 const value = (e, code) => +e.r.v[e.r.c.indexOf(code)];
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
 const pair = (e, code, want) => { close(value(e, code), want[0]); close(value(e, code + 10), want[1]); };
 const pivot = [3, 7];
+test('Corner drag measures relative turns around a moved pivot and snaps the turn to 15 degrees', () => {
+  const at = (degrees) => [3 + 10 * Math.cos(degrees * Math.PI / 180), 7 + 10 * Math.sin(degrees * Math.PI / 180)];
+  for (const [from, to, angle, snapped] of [[38, 80, 42, 45], [179, -179, 2, 0], [-179, 158, -23, -30], [90, 0, -90, -90]]) {
+    close(rotationDragAngle(pivot, at(from), at(to)), angle);
+    close(rotationDragAngle(pivot, at(from), at(to), true), snapped);
+  }
+});
 const turned = (p, a, vector = false) => {
   const c = Math.cos(a * Math.PI / 180), s = Math.sin(a * Math.PI / 180);
   const [x, y] = p.map((v, i) => v - (vector ? 0 : pivot[i]));
@@ -170,4 +177,11 @@ test('Rotate angle convention, Shift steps, negative / full turns and invalid in
   }
   for (const [p, a] of [[null, 90], [[NaN, 0], 90], [pivot, Infinity]]) assert.throws(() => rotateEntities(raw, new Set([0]), p, a), /finite/);
   assert.throws(() => rotateEntities({ ...raw, entities: [make('UNKNOWN', points)] }, new Set([0]), pivot, 90));
+});
+
+test('Reference: the turn is the new angle minus the reference angle', () => {
+  assert.equal(referenceTurn(30, 90), 60);
+  assert.equal(referenceTurn(0, 0), 0);
+  assert.equal(referenceTurn(90, 30), -60);
+  assert.equal(referenceTurn(rotationAngle([0, 0], [1, 1]), rotationAngle([0, 0], [0, 1])), 45);
 });

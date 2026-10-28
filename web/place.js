@@ -24,7 +24,7 @@ const rad = (d) => d * Math.PI / 180;
 /** A point of the part's own box (u across, v up, mm) on the sheet. */
 export function toSheet(pl, u, v) {
   const th = rad(pl.rot || 0), co = Math.cos(th), si = Math.sin(th);
-  const p = u * (pl.mirrorX ? -1 : 1), q = v * (pl.mirrorY ? -1 : 1);
+  const k = pl.sc || 1, p = u * k * (pl.mirrorX ? -1 : 1), q = v * k * (pl.mirrorY ? -1 : 1);
   return [pl.x + co * p - si * q, pl.y + si * p + co * q];
 }
 
@@ -87,6 +87,18 @@ export function mirrorAbout(part, pl, axis) {
 export function mirrorAboutPoint(part, pl, axis, cx, cy) {
   const [mx, my] = centreOf(part, pl), m = mirrorAbout(part, pl, axis);
   return axis === 'x' ? translate(m, r6(2 * (cx - mx)), 0) : translate(m, 0, r6(2 * (cy - my)));
+}
+
+/** The part mirrored about the line through sheet points a and b: the INSERT point is reflected, the turn becomes 2 × the line's angle − its turn, the part flips (Y) before it is turned. */
+export function mirrorAboutLine(part, pl, a, b) {
+  const phi = Math.atan2(b[1] - a[1], b[0] - a[0]), c2 = Math.cos(2 * phi), s2 = Math.sin(2 * phi), dx = pl.x - a[0], dy = pl.y - a[1];
+  return { ...pl, x: r6(a[0] + c2 * dx + s2 * dy), y: r6(a[1] + s2 * dx - c2 * dy), rot: normAngle(2 * phi * 180 / Math.PI - (pl.rot || 0)), mirrorY: !pl.mirrorY };
+}
+
+/** The part scaled by k (> 0) about the sheet point `pivot`: its placement scale `sc` (the INSERT's scale) × k; sc is left out at 1. */
+export function scaleAbout(part, pl, pivot, k) {
+  const sc = r6((pl.sc || 1) * k), { sc: _was, ...rest } = pl;
+  return { ...rest, x: r6(pivot[0] + k * (pl.x - pivot[0])), y: r6(pivot[1] + k * (pl.y - pivot[1])), ...(sc !== 1 ? { sc } : {}) };
 }
 
 /** The part moved by (dx, dy) mm. */
@@ -156,4 +168,4 @@ export const parseAngle = (text) => parseMm(String(text).trim().replace(/\s*(°|
 
 /** Is this placement the same as that one (position, turn, mirror)? */
 export const samePlacement = (a, b) => a.partId === b.partId && Math.abs(a.x - b.x) < 1e-9 && Math.abs(a.y - b.y) < 1e-9 &&
-  normAngle(a.rot || 0) === normAngle(b.rot || 0) && !!a.mirrorX === !!b.mirrorX && !!a.mirrorY === !!b.mirrorY;
+  normAngle(a.rot || 0) === normAngle(b.rot || 0) && !!a.mirrorX === !!b.mirrorX && !!a.mirrorY === !!b.mirrorY && Math.abs((a.sc || 1) - (b.sc || 1)) < 1e-9;

@@ -4,7 +4,7 @@ import * as W from './web/dxf-write.js';
 import { flatten, mapply } from './web/drawing.js';
 import { addDimension, buildDim, dimOfEntity, dimGeom } from './web/edit.js';
 import { followDimensions } from './web/linked-dimensions.js';
-import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix } from './web/scale.js';
+import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './web/scale.js';
 
 const value = (e, code) => +e.r.v[e.r.c.indexOf(code)];
 const close = (a, b) => assert.ok(Math.abs(a - b) < 1e-9, `${a} != ${b}`);
@@ -134,4 +134,10 @@ test('Scale repeated points, missing y, reflected OCS, attributes, implicit inse
   for (const s of [0, -1, NaN, Infinity]) assert.throws(() => scaleEntities(raw, new Set([0]), base, s), /positive factor/);
   assert.throws(() => scaleEntities(raw, new Set([0]), [NaN, 0], 2), /finite/);
   assert.throws(() => scaleEntities({ ...raw, entities: [make('UNKNOWN', pts)] }, new Set([0]), base, 2), /Cannot/);
+});
+
+test('Reference: the factor is the new length over the reference length; a zero reference is refused', () => {
+  assert.equal(referenceFactor(10, 25), 2.5);
+  assert.equal(referenceFactor(4, 1), 0.25);
+  for (const [a, b] of [[0, 5], [5, 0], [-1, 5], [5, -1], [NaN, 5], [5, Infinity]]) assert.equal(referenceFactor(a, b), null);
 });

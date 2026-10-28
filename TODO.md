@@ -255,24 +255,43 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155a. ✅ (built, King T1-T4) Quick-mode Trim / Extend (TRIMEXTENDMODE 1, AutoCAD's default: click what to trim, every object an edge), plus Fence, Crossing, eRase, Undo and Edge options (M). Tested in his AutoCAD 2027 (command log, 2026-10-27): TRIM starts straight at "Select object to trim or shift-select to extend [cuTting edges/Crossing/mOde/Project/eRase]" (Undo added after the first cut); each click cuts the piece between the nearest crossings; a line that crosses nothing is deleted whole; a click on empty space starts a fence; mOde switches Quick / Standard (Standard = ours today); EXTEND Quick stops at the nearest object, Shift = trim.
 155a2. (after 155a) Freehand fence path in Quick Trim / Extend: press and drag on empty space draws a path; everything it crosses is trimmed (AutoCAD way). His ask 2026-10-27.
     155b. ❌ (won't do: he keeps our decided aliases, 2026-10-27) Command aliases to acad.pgp: M Move, P Pan, D Dimstyle, S Stretch, E Erase, R Redraw, CP Copy, DLI / DAL; revisit the deliberate M = Measure and MV = Move (S–M).
-    155c. ✅ (built, 2026-10-28, Knight) A click selects one object; Shift / Ctrl toggle per object. Right-click → Select connected picks the joined chain.
-    155d. Rotate and Scale Reference option (M).
+    155c. ✅ (built, 2026-10-28, Knight) A click on an unselected object selects it; Shift / Ctrl toggle per object. Clicking a selected object keeps the whole selection and toggles corner rotate arrows (156a); to pick one, click empty space first or Shift+click the others away. Right-click → Select connected picks the joined chain.
+    155d. ✅ (built, 2026-10-28, King) Rotate and Scale Reference option (M). A placed part's Rotate in a layout takes typed degrees only (no picked points).
     155e. Grip modes: Space / Enter cycles Stretch, Move, Rotate, Scale, Mirror; C copy, B base point, grip menu; Shift for several hot grips; grips on text, ellipse, hatch and blocks (M–L, split when grilled).
     155f. ✅ (built, 2026-10-28, Knight) Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).
     155g. Offset Through, Erase, Layer and Multiple options; offset ellipses and splines (M).
     155h. Fillet Polyline (all corners at once), Trim / No trim, circles and parallel lines (M).
     155i. Explode dimensions and hatches; block attributes as AutoCAD does (M).
-    155j. Mirror blocks and dimensions (M).
+    155j. ✅ (built, 2026-10-28, Knight) Mirror blocks, dimensions, hatches and partial ellipses; shared block inserts, private readable dimension blocks, MIRRHATCH 0, Erase Yes / No and one undo.
     155k. ✅ Snaps: Tab cycles the hovered object's candidates; all 14 snap types have ticks with exact 2D support and documented geometry limits; `osnap` / `os` opens the tick list, `ortho` asks ON / OFF. F3 / F8 come from 73; no `polar` command (AutoCAD has none). See DECISIONS "TODO 155k as built".
     155l. DIM with automatic type and hover preview (M).
-    155m. Extend splines and elliptical arcs (S).
+    155m. Extend splines and elliptical arcs (S). (elliptical arcs built; ellipses and splines also work as boundaries; splines still wait for the AutoCAD test)
+    155m2. Extend to an ellipse: a line within ~0.02 mm of tangent can snap to the far crossing; solve line vs ellipse as a quadratic and take the nearer root (review `runs26/rv155mfix2.out`, Low) (S).
     155n. Copy Array (later).
     155o. ✅ (built, King, `web/crosshair.js`) Crosshair cursor (UI check, session 25): AutoCAD draws a full crosshair 5% of the screen (CURSORSIZE 5) with a 3 px pick box; ours is the plain OS crosshair, no pick box, 7 px aperture. No decision chose ours.
     156. Same features in every tab (DECISIONS "Same features in every tab"): audit Drawings / Layouts / Compare for tools that work in only one, then close each gap. 156a: corner-arrow rotate (Shift = 15°, ◎ pivot) on drawing selections (grill first).
-    156a. Corner-arrow rotate on drawings: second click toggles grips / arrows, Shift = 15°, ◎ pivot (S).
-    156b. Tools on Layouts: whole-part Move / Copy / Rotate / Scale / Mirror / Array; Trim / Extend / Fillet / Offset / Shaping / grips on loose layout objects (M).
-    156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M).
-    156d. Guides, Layers (+ Add), Contour, Measure in every tab (S–M).
+    156a. ✅ (built, Knight, 2026-10-28) Corner-arrow rotate on drawings: second click toggles grips / arrows, Shift = 15°, ◎ pivot (S).
+    156b. Tools on Layouts: whole-part Move / Copy / Rotate / Scale / Mirror / Array; Trim / Extend / Fillet / Offset / Shaping / grips on loose layout objects (M). Grilled 2026-10-28 (DECISIONS "Tools on Layouts"), split:
+      156b1. ✅ (built, Knight, 2026-10-28; full browser suite pending with Rook) Move / Copy / Rotate / Scale / Mirror / Array commands on whole placed parts (Scale = placement scale, W / H editable; Array = separate placed parts) (M).
+      156b2. ✅ (built, King, 2026-10-28; full browser suite pending with Rook) Draw on layouts: layout objects (S–M). Left as **156b2b**: Text and Dimension on a layout (the Text tool is tied to a drawing's `raw`; refused with a note), Text to outlines / Break Apart on objects.
+      156b2b. ✅ (built, King, 2026-10-28; full browser suite pending with Rook) Text on a layout (new text = a layout object, saved as plain TEXT / MTEXT) and Text to outlines on layout objects; Break Apart needs no change (objects are single entities; a group of objects breaks apart as before). Left as **156b2c**: Dimension on a layout (all kinds; linked only to objects): the dimension tool and its preview are painted by the drawing canvas path only, a DIMENSION needs its block in the object (objectPart / objectCommit take no blocks yet, Explode cannot bake it, so Move needs a translate for it), and editing an existing text object on a layout (double-click) is not done.
+      156b3. Trim / Extend / Fillet / Offset / Shaping / grips on layout objects (M). Group / lock are kept only for a one-to-one object swap; splitting into multiple pieces (including Text to outlines) drops them.
+        156b3a. ✅ (built, King, 2026-10-28) Trim / Extend / Fillet / Offset on layout objects: the drawing tab's code runs on `layoutdoc.js objectDoc()` (the objects as one little drawing), the result is `objectCommit()`ed back as objects, one Undo per step. A pick on a placed part says "<Tool> works on layout objects, not placed parts"; parts are not cutting edges / boundaries (not in that drawing).
+        156b3b. ✅ (built, King, 2026-10-28) Grips and Shaping on layout objects: a selected unlocked object shows the drawing tab's grips (`gripDoc()` runs them on `layObjSelDoc()`); a grip edit is `layoutdoc.js objectReplace()` (same slot, name, group, lock; new part id; one Undo) and the resize squares give way to the grips. Shaping (all ops, Keep originals) runs on the objects' drawing, new pieces get new names and stay selected; a placed part in the selection says "<Tool> works on layout objects, not placed parts". Text / Dimension on layouts stay 156b2b.
+      156b4. Explode a placed part on a layout.
+    156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M). Grilled 2026-10-28 (DECISIONS "Compare editable"), split:
+      156c1. ✅ (built, Knight, 2026-10-28) Snapshot link to its drawing tab; Modify / Draw / grips on the picked snapshot go to that tab (file + Undo); differences recalculated; closed tab or library part = read-only with a message (M).
+      156c2. Layers panel for the picked snapshot and Contour in Compare (result to the source drawing) (S).
+      156c3. Compare: Ctrl+Z on a Line with only its first point drops that point, as on a drawing tab or layout (review rvmerge, Low, 2026-10-28) (XS).
+    156d. Guides, Layers (+ Add), Contour, Measure in every tab (S–M). Grilled 2026-10-28 (DECISIONS "Guides, Layers, Measure in every tab"):
+      156d1. ✅ (built, Knight, 2026-10-28) Guides on drawing tabs (remembered per file on this PC, never in the DXF) and in Compare; Measure in Compare across all snapshots (S). Layouts' "+ Add layer" goes with 156b2; Compare Layers / Contour with 156c2.
+    157. **UI colours match AutoCAD** (M, grilled 2026-10-28, DECISIONS "UI colours match AutoCAD"; next session). Facts so far: ours `runs26/q-colours.out`, AutoCAD per web `runs26/pawn-acadcolours.json` (documented vs measured; snap marker colour conflicts). 155r already gives the 25% box fill.
+      157a. Bishop-acad: screenshots of his AutoCAD, dark and light (ribbon, panel titles, file tabs, palettes, command line, status bar, grips, snap marker), picked hex values to `Project D extras/acad-colours.txt` + acad-facts line (S).
+      157b. Build: theme tokens for both modes from 157a; drawing area unchanged; before / after screenshots light and dark (S–M).
+- [ ] 158. Browser test hardening (session 26 retro, his OK 2026-10-28):
+      158a. `runStep` (browser.test.mjs ~95): after a passing step press Escape twice and fail with "<name> left a command running" if the prompt still reads "Specify" (check the prompt element first) (S).
+      158b. Flaky `TODO 156a` step: `pivotPoint` (browser.test.mjs ~9161) read null on CI run 40703400524 (passed on 6ea7e68); wait for the pivot before reading it (XS).
+      158c. `runStep` catch (browser.test.mjs ~97): on a failed step save `FAIL-<step>.png` to the shots folder (when `--shots` is on) and print the prompt line's text (session 26 King retro) (XS).
     155p. ✅ (built, Knight, revised decision 2026-10-28) Snap markers: green `#00C000` outlines, about 12 px, with our text label. Dark halo kept for readability on white paper.
     155q. ✅ (built, King, 2026-10-28) Status bar chips in AutoCAD's order GRID SNAP ORTHO POLAR OTRACK DYN (text chips kept).
     155r. ✅ (built, King) Window / crossing box fill: AutoCAD 25% (SELECTIONAREAOPACITY); ours 14%. Also check grip hover (ACI 11) / hot (ACI 12, red) colours and grip size 5.
