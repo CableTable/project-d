@@ -9,7 +9,7 @@ import * as CB from './cmdbar.js';
 import { buildCmdUI } from './cmdui.js';
 import * as SC from './shortcuts.js';
 import { openShortcuts } from './shortcutdlg.js';
-import { idbStore } from './idbstore.js';
+import { idbStore, localStore } from './idbstore.js';
 import { WORK_AREAS, workAreaDark } from './workarea.js';
 import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
@@ -411,8 +411,8 @@ function buildMenus() {
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
-    Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => { const d = editable(); return d ? d.hist.canUndo : !!curLay() && layHist(curDoc()).canUndo; }],
-      ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => { const d = editable(); return d ? d.hist.canRedo : !!curLay() && layHist(curDoc()).canRedo; }],
+    Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => !!historyOf(curDoc())?.canUndo],
+      ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
@@ -420,14 +420,14 @@ function buildMenus() {
       ['Select all', selectAll, 'Ctrl+A', () => !!editable() || !!curLay()],
       ['Delete', () => (curLay() ? deletePlaced() : deleteSelection()), 'Del', () => { const d = editable(); return d ? d.sel.size > 0 : !!selectedPlaced(); }]],
     View: () => {
-      const lay = curLay(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
+      const lay = guideTarget(), theme = document.documentElement.dataset.theme || 'system', tick = (on, text) => (on ? '✓ ' : '  ') + text;
       return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
         [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
         [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
-        [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!curLay().s.guidesShow), null, () => !!curLay()],
-        [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!curLay().s.guidesLock), null, () => !!curLay()],
-        [tick(ribbon.guideSnap, 'Snap to guides'), toggleGuideSnap, null, () => !!curLay()],
-        ['Clear all guides', clearGuides, null, () => !!curLay() && curLay().s.guides.length > 0],
+        [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!guideTarget().s.guidesShow), null, () => !!guideTarget()],
+        [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!guideTarget().s.guidesLock), null, () => !!guideTarget()],
+        [tick(ribbon.guideSnap, 'Snap to guides'), toggleGuideSnap, null, () => !!guideTarget()],
+        ['Clear all guides', clearGuides, null, () => !!guideTarget() && guideTarget().s.guides.length > 0],
         [tick(ribbon.rail, 'Tool rail'), toggleRail],
         [tick(strip.on, 'Swatch strip'), toggleStrip, null, null, null, false, strip.on],
         ...WORK_AREAS.map((mode, i) => [tick(state.workArea === mode, 'Work area: ' + mode), () => setWorkArea(mode), null, null, null, i === 0, state.workArea === mode]),
@@ -640,10 +640,10 @@ function ribbonContents(kind) {
   if (ribbon.tab === 'View') return [
     group('Show',
       btn('Show rulers', TOOLS.find((t) => t.id === 'measure').svg, () => setRulers(!state.rulers), { pressed: () => state.rulers }),
-      btn('Show guides', EYE, () => setGuidesShow(!curLay().s.guidesShow), { enabled: () => !!curLay(), pressed: () => !!curLay()?.s.guidesShow }),
-      btn('Snap to guides', '<rect x="4" y="4" width="16" height="16"/><circle cx="12" cy="12" r="3"/>', toggleGuideSnap, { enabled: () => !!curLay(), pressed: () => ribbon.guideSnap }),
-      btn('Lock guides', LOCK, () => setGuidesLock(!curLay().s.guidesLock), { enabled: () => !!curLay(), pressed: () => !!curLay()?.s.guidesLock }),
-      btn('Clear all guides', '<path d="M6 6l12 12M18 6L6 18"/>', clearGuides, { enabled: () => !!curLay()?.s.guides.length })),
+      btn('Show guides', EYE, () => setGuidesShow(!guideTarget().s.guidesShow), { enabled: () => !!guideTarget(), pressed: () => !!guideTarget()?.s.guidesShow }),
+      btn('Snap to guides', '<rect x="4" y="4" width="16" height="16"/><circle cx="12" cy="12" r="3"/>', toggleGuideSnap, { enabled: () => !!guideTarget(), pressed: () => ribbon.guideSnap }),
+      btn('Lock guides', LOCK, () => setGuidesLock(!guideTarget().s.guidesLock), { enabled: () => !!guideTarget(), pressed: () => !!guideTarget()?.s.guidesLock }),
+      btn('Clear all guides', '<path d="M6 6l12 12M18 6L6 18"/>', clearGuides, { enabled: () => !!guideTarget()?.s.guides.length })),
     group('Navigate', btn('Fit to window', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit, { command: 'fit' }),
       btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe })),
     group('Windows', btn('Properties panel', '<rect x="3" y="4" width="18" height="16"/><path d="M15 4v16"/>', toggleProps, { pressed: () => state.propsOn, command: 'properties' }),
@@ -1038,7 +1038,7 @@ async function openBytes(name, buf, path = null) {
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
   if (lay) { openLayoutFile(lay, name, path, fontNote, readTitleBlock(r.doc)); return; } // one of our saved layouts: it opens as a layout tab
-  const doc = { name, path, openPath: path, dirty: false, ...tabFields(r.doc, fl) };       // openPath: the file itself, which Save never writes over
+  const doc = { name, path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...tabFields(r.doc, fl) };       // openPath: the file itself, which Save never writes over
   addTab(doc);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
     (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : ''));
@@ -1295,6 +1295,7 @@ function setDimType(type) {
 function setTool(id) {
   state.orthoAsk = false;
   state.colourTool = null; endReadout();
+  if (id === 'measure' && !measureTarget()) { note('Measure: open a drawing, layout or Compare tab first'); return; }
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable() && !(curLay() && LAY_MODS.includes(id))) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
@@ -1324,7 +1325,7 @@ function setTool(id) {
   if (id === 'dimension') state.msg = dimPrompt();
   if (id === 'balloon') state.msg = balPrompt();
   if (id === 'leader') state.msg = ldrPrompt();
-  if (id === 'measure') state.msg = measureTarget() ? 'Measure: click the first point (it snaps to ends and centres)' : 'Measure: open a drawing or layout tab first';
+  if (id === 'measure') state.msg = 'Measure: click the first point (it snaps to ends and centres)';
   if (id === 'measure' && curLay()) { state.mode = 'select'; state.rotCopy = false; selectSheet(false); }
   if (id === 'step') state.msg = curLay() ? null : 'Step and repeat is on a layout tab: New layout, or Add to layout';
   if (id === 'contour') { state.msg = null; placeContourPanel(); }
@@ -1867,20 +1868,20 @@ function layRestore(d, st, dirty = true) {
 }
 function undoLay() {
   const d = curDoc();
-  if (!d || !d.lay) return;
+  if (!d?.lay) { if (d?.hist) undo(d); return; }
   const st = layHist(d).undo(laySnap(d.lay));
   if (!st) { note('Nothing to undo'); return; }
   layRestore(d, st); note('Undone');
 }
 function redoLay() {
   const d = curDoc();
-  if (!d || !d.lay) return;
+  if (!d?.lay) { if (d?.hist) redo(d); return; }
   const st = layHist(d).redo(laySnap(d.lay));
   if (!st) { note('Nothing to redo'); return; }
   layRestore(d, st); note('Redone');
 }
 /** The undo history of a tab: a drawing's, a layout's, or null. */
-const historyOf = (d) => (!d ? null : d.lay ? layHist(d) : d.raw && d.fl && d.hist ? d.hist : null);
+const historyOf = (d) => (!d ? null : d.lay ? layHist(d) : d.hist || null);
 /** Edit → Undo history… (TODO 30): the steps of the open tab by name, oldest first, the current one marked; a click goes there (several undos, or redos, at once). */
 function showHistory() {
   const d = curDoc(), hist = historyOf(d);
@@ -2304,8 +2305,36 @@ function drawRulers() {
 }
 
 /** The guides of the open layout as dashed lines across the whole view, each with its position beside it; hit lines to pick and drag them. */
+function guideTarget(d = curDoc()) {
+  if (!d) return null;
+  if (d.lay) return d.lay;
+  if (!d.guideState) {
+    let saved;
+    try { if (d.guideFile) saved = localStore('pd-guides:', localStorage).get(d.guideFile); } catch { /* session only if storage is blocked */ }
+    d.guideState = { s: G.settings(saved) };
+    d.hist ||= Ed.createHistory();
+  }
+  return d.guideState;
+}
+function rememberGuides(d = curDoc()) {
+  if (!d?.guideFile || d.lay) return;
+  try { localStore('pd-guides:', localStorage).put(d.guideFile, guideTarget(d).s); } catch { /* session only if storage is blocked */ }
+}
+function guideGesture(d, label) { return d.lay ? startGesture(d, label) : { d, label }; }
+function guideMark(g) {
+  if (g.d.lay) gMark(g);
+  else g.snap = snapshotOf(g.d);
+}
+function guideCommit(g) {
+  if (g.d.lay) gCommit(g);
+  else { g.d.hist.push(g.snap, g.label); rememberGuides(g.d); }
+}
+function snapGuideBox(box, options) {
+  const gs = guideTarget().s;
+  return G.snapBoxToGuides(box, state.snap && ribbon.guideSnap && gs.guidesShow ? gs.guides : [], 6 / view.scale, options);
+}
 function drawGuides() {
-  const g = ui.gGuides, lay = curLay();
+  const g = ui.gGuides, lay = guideTarget();
   if (!g) return;
   if (!lay || !lay.s.guidesShow || !lay.s.guides.length) { g.replaceChildren(); return; }
   const { w, h: ch } = canvasSize(), k = 1 / view.scale, H = state.sheetH, out = [];
@@ -2361,20 +2390,20 @@ function drawAlignmentGuides() {
 
 /** One change to the guides, kept for undo: fn() changes lay.s.guides. */
 function editGuides(label, fn) {
-  const d = curDoc(), lay = d && d.lay;
+  const d = curDoc(), lay = guideTarget();
   if (!lay) return false;
-  const g = startGesture(d, label);
-  gMark(g);
+  const g = guideGesture(d, label);
+  guideMark(g);
   fn(lay.s.guides);
-  gCommit(g);
+  guideCommit(g);
   update();
   return true;
 }
 function addGuide(axis, mm) {
-  const lay = curLay();
-  if (!lay) { note('Guides belong to a layout tab'); return; }
-  const at = G.freeSpot(lay.s.guides, axis, mm != null ? mm : Math.round(axis === 'y' ? lay.s.sheetH / 2 : lay.s.sheetW / 2));
-  if (lay.s.guides.length >= G.MAX_GUIDES) { note(`A layout can have ${G.MAX_GUIDES} guides`); return; }
+  const lay = guideTarget();
+  if (!lay) { note('Open a tab to use guides'); return; }
+  const at = G.freeSpot(lay.s.guides, axis, mm != null ? mm : Math.round(axis === 'y' ? state.sheetH / 2 : state.sheetW / 2));
+  if (lay.s.guides.length >= G.MAX_GUIDES) { note(`A tab can have ${G.MAX_GUIDES} guides`); return; }
   editGuides('Add guide', (list) => { list.push({ axis, mm: at }); lay.s.guidesShow = true; });
   note(`${axis === 'y' ? 'Horizontal' : 'Vertical'} guide at ${G.guideText({ axis, mm: at })}: type its position in the Guides section, or drag it`);
   const rows = ui.guideList.querySelectorAll('input.fld');
@@ -2388,13 +2417,13 @@ function addTypedGuide(axis, input) {
   addGuide(axis, mm);
 }
 function deleteGuide(i) {
-  const lay = curLay(), gd = lay && lay.s.guides[i];
+  const lay = guideTarget(), gd = lay && lay.s.guides[i];
   if (!gd) return;
   editGuides('Delete guide', (list) => { list.splice(i, 1); });
   note(`Guide ${G.guideText(gd)} deleted`);
 }
 function setGuidePos(i, text) {
-  const lay = curLay(), gd = lay && lay.s.guides[i], v = PL.parseMm(text);
+  const lay = guideTarget(), gd = lay && lay.s.guides[i], v = PL.parseMm(text);
   if (!gd) return '';
   if (v == null) return `A guide's position must be a number in mm`;
   if (Math.abs(v - gd.mm) < 1e-9) return '';
@@ -2403,22 +2432,22 @@ function setGuidePos(i, text) {
   return '';
 }
 function clearGuides() {
-  const lay = curLay();
+  const lay = guideTarget();
   if (!lay || !lay.s.guides.length) { note('There are no guides to clear'); return; }
   const n = lay.s.guides.length;
   editGuides('Clear guides', (list) => { list.length = 0; });
   note(`${n} guide${n === 1 ? '' : 's'} cleared. Ctrl+Z brings ${n === 1 ? 'it' : 'them'} back`);
 }
 function setGuidesShow(on) {
-  const lay = curLay();
-  if (!lay) { note('Guides belong to a layout tab'); return; }
-  lay.s.guidesShow = on; touch(); update();
+  const lay = guideTarget();
+  if (!lay) { note('Open a tab to use guides'); return; }
+  lay.s.guidesShow = on; touch(); rememberGuides(); update();
   note(on ? 'Guides shown' : 'Guides hidden (they are still there, and saved)');
 }
 function setGuidesLock(on) {
-  const lay = curLay();
-  if (!lay) { note('Guides belong to a layout tab'); return; }
-  lay.s.guidesLock = on; touch(); update();
+  const lay = guideTarget();
+  if (!lay) { note('Open a tab to use guides'); return; }
+  lay.s.guidesLock = on; touch(); rememberGuides(); update();
   note(on ? 'Guides locked: they cannot be dragged' : 'Guides unlocked');
 }
 function setRulers(on) {
@@ -2433,7 +2462,7 @@ function setRulers(on) {
 /** Guide creation and positions stay in the panel; display toggles live on View. */
 function renderGuidePanel() {
   if (!ui.guideSec) return;
-  const lay = curLay(), lib = state.panel === 'library';
+  const lay = guideTarget(), lib = state.panel === 'library';
   ui.guideSec.hidden = !lay || lib;
   if (!lay || lib) return;
   const sig = lay.s.guides.map((q) => q.axis + q.mm).join(',');
@@ -2453,17 +2482,18 @@ function renderGuidePanel() {
 
 /** Pointer down on a ruler (a new guide) or on a guide (move it): the drag follows the pointer until it is let go. */
 function guideDown(e, axis, idx) {
-  const lay = curLay();
-  if (!lay) { note('Guides belong to a layout tab: open or make a layout first'); return; }
+  const lay = guideTarget();
+  if (!lay) { note('Open a tab to use guides'); return; }
+  if (idx == null && lay.s.guides.length >= G.MAX_GUIDES) { note(`A tab can have ${G.MAX_GUIDES} guides`); return; }
   if (lay.s.guidesLock) { note('Guides are locked: View → Lock guides unlocks them'); return; }
   gdrag = { axis, idx, isNew: idx == null, x: e.clientX, y: e.clientY, moved: false, g: null, orig: idx != null ? lay.s.guides[idx].mm : null, over: false };
 }
 function guideMove(e) {
-  const p = gdrag, lay = curLay(), d = curDoc();
+  const p = gdrag, lay = guideTarget(), d = curDoc();
   if (!p || !lay) return;
   if (!p.moved) {
     if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 3) return;
-    p.moved = true; p.g = startGesture(d, p.isNew ? 'Add guide' : 'Move guide'); gMark(p.g);
+    p.moved = true; p.g = guideGesture(d, p.isNew ? 'Add guide' : 'Move guide'); guideMark(p.g);
     if (p.isNew) { lay.s.guides.push({ axis: p.axis, mm: 0 }); p.idx = lay.s.guides.length - 1; lay.s.guidesShow = true; }
   }
   const r = ui.canvas.getBoundingClientRect();
@@ -2477,29 +2507,29 @@ function guideMove(e) {
   drawGuides(); renderCommand();
 }
 function guideUp() {
-  const p = gdrag, lay = curLay();
+  const p = gdrag, lay = guideTarget();
   gdrag = null; state.guideDrag = null; ui.guideTip.hidden = true;
   if (!p || !p.moved || !lay) return;
   const gd = lay.s.guides[p.idx];
   if (p.over) {
     lay.s.guides.splice(p.idx, 1);
     if (p.isNew) { drawGuides(); renderGuidePanel(); renderCommand(); note('No guide made: it was dropped back on the ruler'); return; }
-    p.g.label = 'Delete guide'; gCommit(p.g); update(); note(`Guide ${G.guideText(gd)} deleted: dropped on the ruler`);
+    p.g.label = 'Delete guide'; guideCommit(p.g); update(); note(`Guide ${G.guideText(gd)} deleted: dropped on the ruler`);
     return;
   }
-  gCommit(p.g); update();
+  guideCommit(p.g); update();
   note(`Guide ${G.guideText(gd)} ${p.isNew ? 'placed' : 'moved'}`);
 }
 /** Esc during a guide drag: the guide goes back (a new one is not made). */
 function cancelGuideDrag() {
-  const p = gdrag, lay = curLay();
+  const p = gdrag, lay = guideTarget();
   gdrag = null; state.guideDrag = null; ui.guideTip.hidden = true;
   if (p && p.moved && lay) { if (p.isNew) lay.s.guides.splice(p.idx, 1); else lay.s.guides[p.idx].mm = p.orig; }
   drawGuides(); renderGuidePanel(); note('Guide cancelled');
 }
 /** Right-click on a guide: Delete guide, Lock guides, Hide guides. */
 function guideMenu(e, idx) {
-  const lay = curLay();
+  const lay = guideTarget();
   if (!lay || !lay.s.guides[idx]) return;
   popMenu(e.clientX, e.clientY, [['Delete guide', () => deleteGuide(idx), null, !lay.s.guidesLock], [lay.s.guidesLock ? 'Unlock guides' : 'Lock guides', () => setGuidesLock(!lay.s.guidesLock)], ['Hide guides', () => setGuidesShow(false)]]);
 }
@@ -4114,11 +4144,19 @@ function paintOverlay(gesture = false) {
     const d = curDoc();
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
-    if (d && d.cmp) { cmpPaint(c, d.cmp, base); ui.cmdUI.place(); return; }
     const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
+    if (d?.cmp) {
+      cmpPaint(c, d.cmp, base);
+      if (marks) {
+        const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
+        drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#00c000'));
+        canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
+      }
+      ui.cmdUI.place(); return;
+    }
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
@@ -4273,8 +4311,8 @@ function attachCanvasEvents() {
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
-    if (e.button === 0 && gh0 && curLay() && !state.setlen && state.tool !== 'pan' && state.tool !== 'measure' && !curLay().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
-    if (e.button === 0 && state.tool !== 'pan' && cmpDown(e)) return;
+    if (e.button === 0 && gh0 && guideTarget() && (curLay() || state.tool === 'select') && !state.setlen && state.tool !== 'pan' && state.tool !== 'measure' && !guideTarget().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
+    if (e.button === 0 && state.tool === 'select' && cmpDown(e)) return;
     if (e.button === 1 || (e.button === 0 && state.tool === 'pan')) {
       e.preventDefault();
       markView();
@@ -4408,7 +4446,7 @@ function attachCanvasEvents() {
     if (state.draw && !curLay()) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
     if (layModLive()) { modEnter(curDoc()); return; }
-    if (gh && curLay()) { guideMenu(e, Number(gh.dataset.guide)); return; }
+    if (gh && guideTarget()) { guideMenu(e, Number(gh.dataset.guide)); return; }
     if (curLay()) { layoutMenu(e); return; }
     const d = editable();
     if (!d || state.setlen) return;
@@ -4431,7 +4469,7 @@ function renderCommand() {
   if (ui.keepMeas) ui.keepMeas.hidden = !(state.meas && state.meas.pts.length === 2 && editable());
   if (ui.modAsk) ui.modAsk.hidden = !((modLive() || layModLive()) && state.mod.kind === 'mirror' && state.mod.stage === 'erase');
   const cm = cmpDoc();
-  if (cm) { cmpCommand(cm.cmp); return; }
+  if (cm && state.tool !== 'measure' && !state.guideDrag) { cmpCommand(cm.cmp); return; }
   if (state.dsOpen) { ui.hist.textContent = 'Command: DIMSTYLE   Dimension style'; ui.prompt.textContent = 'Preset, arrow size, text height, decimals, gap, units and text position. OK applies, Esc cancels:'; return; }
   const t = TOOLS.find((x) => x.id === state.tool), lay = curLay(), ed = editable();
   if (state.zwin) { ui.hist.textContent = 'Command: ZOOM   Window'; ui.prompt.textContent = 'Drag a box with the left button to zoom into it (Esc cancels):'; return; }
@@ -4451,7 +4489,7 @@ function renderCommand() {
   if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(ed)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
   const gp = lay && lay.parts[lay.s.gridPart];
   const rs = state.mode === 'rotate' ? selectedPlaced() : null, rp = rs && pivotPoint(rs.part, rs.p);
-  const nSel = lay ? selIdxs().length : 0, gd = state.guideDrag && lay && lay.s.guides[state.guideDrag.idx];
+  const nSel = lay ? selIdxs().length : 0, gd = state.guideDrag && guideTarget()?.s.guides[state.guideDrag.idx];
   ui.hist.textContent = gd ? `Command: GUIDE   Dragging a ${gd.axis === 'y' ? 'horizontal' : 'vertical'} guide from the ${gd.axis === 'y' ? 'top' : 'left'} ruler (Esc cancels)` : rs ? `Command: ROTATE   Pivot: ${fmt(rp[0])}, ${fmt(rp[1])}` : (state.tool === 'select' || state.tool === 'step') && nSel > 1 ? `Command: SELECT   ${wholeGroup() ? `Group of ${nSel}` : `${nSel} parts selected`} (Shift-click adds or removes a part)` : state.tool === 'step' && lay
     ? `Command: STEP   Part: ${gp ? gp.name : '(none)'}   Gap X <5>: ${state.gapX}   Gap Y <5>: ${state.gapY}   Click a gap between rows or columns for extra room`
     : state.tool === 'contour' && (ed || lay) ? 'Command: CONTOUR   ' + contourCommandText()
@@ -4814,10 +4852,10 @@ function partBox(d) {
 }
 /** The tab being edited: a drawing tab (not a layout). */
 const editable = () => { const d = curDoc(); return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
-const measureTarget = () => curLay() ? curDoc() : editable();
+const measureTarget = () => curLay() || cmpDoc() ? curDoc() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ entities: d.raw.entities, blocks: d.raw.blocks, layers: d.raw.layers, ltypes: d.raw.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ guides: d.guideState && structuredClone(d.guideState.s.guides), entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -4930,8 +4968,8 @@ function snapWatch(ref) {
 const snapPlaced = () => state.hidden.parts ? [] : placedNow.filter((pl) => !partHid(pl));
 const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
   if (state.trk.d !== d) { trackClear(); state.trk.d = d; }
-  const ed = !d.lay && edIndex(d), tol = pickTol(d), types = state.snapTypes;
-  let sn = d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
+  const ed = !d.lay && !d.cmp && edIndex(d), tol = pickTol(d), types = state.snapTypes;
+  let sn = d.cmp ? d.cmp.items.filter((it) => it.visible).reduce((best, it) => preferSnap(best, cmpSnap(it, it.offset, p), ...p, tol, types), null) : d.lay ? state.snap && layoutSnap(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from)
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
   if (state.snap && ed) {
     if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
@@ -4946,6 +4984,10 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     snapWatch(ref ? { ...ref, d } : null);
     if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
   }
+  if (!d.lay && !sn && state.snap && ribbon.guideSnap) {
+    const f = d.factor || 1, hit = snapGuideBox([p[0] * f, p[1] * f, p[0] * f, p[1] * f]);
+    if (hit.hits.length) sn = { x: p[0] + hit.dx / f, y: p[1] + hit.dy / f, kind: 'guide' };
+  }
   snapQuery = { d, ed, p, skip, from, sn };
   if (snapCycle) {
     const same = snapCycle.d === d && snapCycle.ed === ed && snapCycle.skip === skip && snapCycle.from?.[0] === from?.[0] && snapCycle.from?.[1] === from?.[1];
@@ -4957,6 +4999,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
 };
 function snapObjectCandidates(q, candidates = true) {
   const { d, ed, p, skip, from } = q, tol = pickTol(d), types = state.snapTypes;
+  if (d.cmp) return null;
   if (d.lay) return layoutCandidates(d.lay.parts, snapPlaced(), state.sheetW, state.sheetH, ...p, tol, types, from, candidates);
   const e = Ed.snapObject(ed, ...p, tol, skip, types);
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
@@ -5051,6 +5094,11 @@ function moveSelectionTo(g, e) {
   const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
   g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
   g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
+  const box = OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
+  if (box) {
+    const hit = snapGuideBox(box.map((v, i) => (v + (i % 2 ? g.dy : g.dx)) * f), { skipX: straight && g.dx === 0, skipY: straight && g.dy === 0 });
+    g.dx += hit.dx / f; g.dy += hit.dy / f;
+  }
   try {
     if (!g.preview) {
       g.preview = { ...g.d.fl, items: g.d.fl.items.filter((it) => g.sel.has(it.e)) };
@@ -5129,6 +5177,8 @@ function restoreBg(d, st) {
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
 }
 function restore(d, st) {
+  if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
+  if (!d.raw || st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
   const layerTableChanged = st.layers && st.layers !== d.raw.layers;
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if (st.ltypes) d.raw.ltypes = st.ltypes;
@@ -5167,7 +5217,7 @@ function deleteSelection() {
 function undo(d) {
   if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }   // a Line with only its first point: nothing made to undo
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
-  const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw.entities;
+  const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
   const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; }
   restore(d, st);
   if (m?.raw) {
@@ -8989,7 +9039,7 @@ function cmpStart() {
     try { c.items = CMP.addItem(c.items, x); } catch (err) { note(err.message); }
   }
   c.items = CMP.lineUpItems(c.items, c.mode); c.selected = c.items.at(-1)?.id;
-  addTab({ name: 'Compare', path: null, dirty: false, cmp: c });
+  addTab({ name: 'Compare', path: null, factor: 1, dirty: false, cmp: c });
   note('Compare: add up to 5 snapshots. The first ticked drawing is the reference');
 }
 
@@ -9167,6 +9217,8 @@ function cmpDown(e) {
     const q = [g[0] + o[0] - m0[0], g[1] + o[1] - m0[1]], drop = target && cmpSnap(target, target.offset, q);
     c.snap = drop || (grab ? { x: q[0], y: q[1], kind: grab.kind } : null);
     if (drop) o = [o[0] + drop.x - q[0], o[1] + drop.y - q[1]];
+    const hit = snapGuideBox(item.box.map((v, i) => v + o[i % 2]));
+    o = [o[0] + hit.dx, o[1] + hit.dy];
     moved = true; item.offset = o; paintOverlay();
   };
   const up = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); c.moving = false; c.snap = null; if (moved) { cmpMoved(d); if (manual) note('Line-up set to Manual'); } };
@@ -9181,7 +9233,8 @@ function cmpManual(c) {
 /** Arrow keys nudge the selected snapshot by the shared step. */
 function cmpKey(e, mod) {
   const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
-  if (!c || !item?.visible || !dir || mod || e.altKey) return false;
+  if (c && mod && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) { e.preventDefault(); if (e.key.toLowerCase() === 'y' || e.shiftKey) redo(d); else undo(d); return true; }
+  if (!c || state.tool !== 'select' || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
   const manual = cmpManual(c), [dx, dy] = PL.nudgeVector(dir, state.nudge, e.shiftKey);
   item.offset = [PL.r6(item.offset[0] + dx), PL.r6(item.offset[1] + dy)];

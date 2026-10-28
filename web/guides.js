@@ -4,6 +4,9 @@
 // sheet's bottom-left and Y counts up, as everywhere in the app). Boxes are [x0, y0, x1, y1] in the same mm, y up.
 
 export const MAX_GUIDES = 200;
+/** A disk path wins over a browser upload's name; untitled drawings and Compare have no key. */
+export const fileKey = (path, name) => (path || name || '').replaceAll('\\', '/').toLowerCase();
+export const settings = (saved) => ({ guides: cleanGuides(saved?.guides), guidesShow: saved?.guidesShow !== false, guidesLock: saved?.guidesLock === true });
 const r6 = (v) => { const r = Math.round(v * 1e6) / 1e6; return r === 0 ? 0 : r; };
 
 /** Guides read from a file or typed: odd entries go, positions kept to 6 decimals, at most MAX_GUIDES. */

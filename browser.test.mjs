@@ -4336,6 +4336,76 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 156d1: per-file Guides stay out of DXF; Compare guide snaps and Measure spans visible snapshots', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.locator(`[data-testid=${id}]`));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const raw = newDoc(4); addEntities(raw, [dxfPoly([[10, 20], [40, 20], [40, 40], [10, 40]], true)]);
+    const other = newDoc(1); addEntities(other, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]].map(([x, y]) => [x / 25.4, y / 25.4]), true)]);
+    const open = async (name, doc) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const clickAt = async (x, y) => { const a = await point(x, y); await p.mouse.click(a.x, a.y); };
+    const vals = () => q('guide-pos').evaluateAll((es) => es.map((e) => Number(e.value)));
+    const close = async () => { await p.locator('.dtab.on .x').click(); };
+    const measure = async (a, b) => {
+      await command('measure'); await clickAt(...a); await clickAt(...b);
+      return q('cmd-prompt').textContent();
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await command('measure');
+      assert.match(await q('cmd-prompt').textContent(), /open a drawing, layout or Compare tab/);
+      assert.doesNotMatch(await p.locator('[data-tool=measure]').getAttribute('class'), /\bon\b/, 'refusal leaves Select on');
+      await open('guides-156d1.dxf', raw);
+      await q('guide-position').fill('25'); await q('guide-add-v').click();
+      assert.deepEqual(await vals(), [25]);
+      await q('guide-pos').fill('26'); await q('guide-pos').press('Enter');
+      await p.keyboard.press('Control+z'); assert.deepEqual(await vals(), [25]);
+      await p.keyboard.press('Control+y'); assert.deepEqual(await vals(), [26]);
+      const [dl] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      const saved = readDxf(readFileSync(await dl.path(), 'utf8'));
+      assert.equal(saved.entities.length, raw.entities.length, 'guides add no DXF entity');
+      assert.deepEqual(flatten(saved).items, flatten(readDxf(writeDxf(raw))).items, 'saved artwork is unchanged');
+      assert.equal(layoutFromRaw(saved), null, 'no layout settings block in drawing DXF');
+      await close(); await open('guides-156d1.dxf', raw);
+      await q('guide-pos').waitFor(); assert.deepEqual(await vals(), [26], 'same file restores its guides');
+      await close(); await p.reload(); await open('guides-156d1.dxf', raw);
+      await q('guide-pos').waitFor(); assert.deepEqual(await vals(), [26], 'guides survive an app reload');
+      await q('guide-del').click(); assert.deepEqual(await vals(), []);
+      await close(); await open('guides-156d1.dxf', raw);
+      assert.deepEqual(await vals(), [], 'delete persists');
+      await open('other-156d1.dxf', other); assert.deepEqual(await vals(), [], 'files have independent guides');
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-item').first().waitFor(); assert.equal(await q('cmp-item').count(), 2);
+      assert.match(await measure([40.05, 40.05], [70.05, 80.05]), /50(?:\.0+)? mm.*ΔX 30(?:\.0+)?\s+ΔY 40(?:\.0+)?/, 'two snapshots, including inch conversion');
+      assert.equal(await q('meas-keep').isVisible(), false, 'Compare measures do not create dimensions');
+      await p.keyboard.press('Escape'); assert.match(await q('cmd-prompt').textContent(), /Measure cleared/);
+      await q('guide-position').fill('55'); await q('guide-add-v').click();
+      assert.match(await measure([40, 40], [55.15, 40]), /15(?:\.0+)? mm.*ΔX 15(?:\.0+)?\s+ΔY 0/, 'Compare point snaps to guide');
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo156d1-compare-${theme}.png` });
+      }
+      await q('cmp-eye').first().click();
+      assert.doesNotMatch(await measure([40, 40], [70.15, 80.15]), /50(?:\.0+)? mm/, 'hidden snapshot is excluded from snaps');
+      await q('cmp-eye').first().click();
+      await close();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      assert.deepEqual(await vals(), [], 'Compare guides are session only');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 143: Measure on a layout', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
@@ -6556,11 +6626,11 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'outline.dxf');
     assert.equal(await t('ruler-top').isVisible(), true, 'rulers on a drawing tab');
     assert.ok((await t('ruler-left').locator('text').allTextContents()).length > 2);
-    assert.equal(await t('guides-panel').isVisible(), false, 'guides belong to layouts');
-    // dragging out of a ruler on a drawing says where guides live
+    assert.equal(await t('guides-panel').isVisible(), true, 'guides also belong to drawing tabs');
+    // Dragging out of a ruler on a drawing creates a guide.
     const rp = await rulerPoint('top', 300);
     await page.mouse.move(rp.x, rp.y); await page.mouse.down(); await page.mouse.move(rp.x, rp.y + 60, { steps: 3 }); await page.mouse.up();
-    assert.match(await prompt(), /^Guides belong to a layout tab/);
+    assert.match(await prompt(), /^Guide Y .* placed/);
     await closeTabs(/outline/);
     await t('new-layout').click();                                // nothing placed yet: the bar says where 0,0 is
     assert.equal(await t('propbar').count(), 0);
