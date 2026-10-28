@@ -269,7 +269,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155n. Copy Array (later).
     155o. ✅ (built, King, `web/crosshair.js`) Crosshair cursor (UI check, session 25): AutoCAD draws a full crosshair 5% of the screen (CURSORSIZE 5) with a 3 px pick box; ours is the plain OS crosshair, no pick box, 7 px aperture. No decision chose ours.
     156. Same features in every tab (DECISIONS "Same features in every tab"): audit Drawings / Layouts / Compare for tools that work in only one, then close each gap. 156a: corner-arrow rotate (Shift = 15°, ◎ pivot) on drawing selections (grill first).
-    156a. Corner-arrow rotate on drawings: second click toggles grips / arrows, Shift = 15°, ◎ pivot (S).
+    156a. ✅ (built, Knight, 2026-10-28) Corner-arrow rotate on drawings: second click toggles grips / arrows, Shift = 15°, ◎ pivot (S).
     156b. Tools on Layouts: whole-part Move / Copy / Rotate / Scale / Mirror / Array; Trim / Extend / Fillet / Offset / Shaping / grips on loose layout objects (M).
     156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M).
     156d. Guides, Layers (+ Add), Contour, Measure in every tab (S–M).

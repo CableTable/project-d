@@ -41,7 +41,7 @@ import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
-import { rotateEntities, rotationAngle, rotationMatrix, referenceTurn } from './rotate.js';
+import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape } from './fillet.js';
 import * as PR from './props.js';
@@ -978,7 +978,7 @@ function showDoc() {
   selectionCycle = null;
   if (state.pointDoc !== curDoc()) { state.pointLast = null; state.pointDoc = curDoc(); }
   ui.fontNote.hidden = true;
-  state.entityDrag = null;
+  state.entityDrag = null; state.drawingRotate = null;
   state.sel = 0;                          // a tab opens with its first part selected; an explicit deselection stays empty
   ribbon.context = null;
   state.gapSel = null; gapSig = ''; hideMenu();
@@ -1306,7 +1306,7 @@ function setTool(id) {
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable()) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
-  state.text.drag = null; state.grip = null; state.entityDrag = null; state.txoWait = false; state.zwin = false; trackClear();
+  state.text.drag = null; state.grip = null; state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
   if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab'); return; }
@@ -3954,6 +3954,26 @@ function drawSheet() {
 /** Points of an SVG polygon from sheet points (mm, y up). */
 const polyPoints = (pts, H) => pts.map((q) => `${+q[0].toFixed(3)},${+(H - q[1]).toFixed(3)}`).join(' ');
 
+/** Shared screen-sized corner arrows and draggable pivot, in sheet coordinates. */
+function rotationControls(cor, c, pv, k, label) {
+  const out = [];
+  cor.forEach((q, i) => {
+    const a = Math.atan2(q[1] - c[1], q[0] - c[0]), r = 17 * k, span = 0.9;
+    const at = (t) => [q[0] + r * Math.cos(t), q[1] + r * Math.sin(t)], p0 = at(a - span), p1 = at(a + span);
+    const d = `M${p0[0]} ${p0[1]}A${r} ${r} 0 0 1 ${p1[0]} ${p1[1]}`;
+    const head = (pt, t, dir) => {                                  // a small arrowhead at the arc's end, pointing along it
+      const tx = -Math.sin(t) * dir, ty = Math.cos(t) * dir, nx = Math.cos(t), ny = Math.sin(t), tip = [pt[0] + tx * 7 * k, pt[1] + ty * 7 * k];
+      return s('path', { class: 'rot-head', d: `M${tip[0]} ${tip[1]}L${pt[0] + nx * 4.5 * k} ${pt[1] + ny * 4.5 * k}L${pt[0] - nx * 4.5 * k} ${pt[1] - ny * 4.5 * k}Z` });
+    };
+    out.push(s('g', { class: 'rot-arrow' }, s('path', { class: 'rot-arc', d, 'stroke-width': 2 * k }), head(p1, a + span, 1), head(p0, a - span, -1),
+      s('path', { class: 'rot-hit', d, 'stroke-width': 16 * k, 'data-rot': i })));
+  });
+  out.push(s('g', { class: 'pivot' }, s('circle', { class: 'pivot-ring', cx: pv[0], cy: pv[1], r: 7.5 * k, 'stroke-width': 1.8 * k }), s('circle', { class: 'pivot-dot', cx: pv[0], cy: pv[1], r: 2.6 * k }),
+    s('circle', { class: 'pivot-hit', cx: pv[0], cy: pv[1], r: 12 * k, 'data-pivot': '1' })));
+  if (label) out.push(s('text', { class: 'rot-label', x: pv[0] + 12 * k, y: pv[1] - 12 * k, 'font-size': 13 * k, 'stroke-width': 3 * k }, label));
+  return out;
+}
+
 /**
  * What is drawn over the selected placed part: its outline, and the size handles (for show: a part is scaled with its drawing) or, in rotate
  * mode, the four turn arrows and the pivot ◎. Sizes are in screen pixels, so it is redrawn when the view zooms.
@@ -4000,20 +4020,7 @@ function drawTools() {
   out.push(s('polygon', { class: 'sel-box', points: poly(cor), 'data-mode': state.mode }));
   if (state.mode === 'rotate') {
     const mid = PL.centreOf(sel.part, sel.p), c = Y(mid), pv = Y(pivotPoint(sel.part, sel.p));
-    cor.forEach((q, i) => {
-      const a = Math.atan2(q[1] - c[1], q[0] - c[0]), r = 17 * k, span = 0.9;
-      const at = (t) => [q[0] + r * Math.cos(t), q[1] + r * Math.sin(t)], p0 = at(a - span), p1 = at(a + span);
-      const d = `M${p0[0]} ${p0[1]}A${r} ${r} 0 0 1 ${p1[0]} ${p1[1]}`;
-      const head = (pt, t, dir) => {                                  // a small arrowhead at the arc's end, pointing along it
-        const tx = -Math.sin(t) * dir, ty = Math.cos(t) * dir, nx = Math.cos(t), ny = Math.sin(t), tip = [pt[0] + tx * 7 * k, pt[1] + ty * 7 * k];
-        return s('path', { class: 'rot-head', d: `M${tip[0]} ${tip[1]}L${pt[0] + nx * 4.5 * k} ${pt[1] + ny * 4.5 * k}L${pt[0] - nx * 4.5 * k} ${pt[1] - ny * 4.5 * k}Z` });
-      };
-      out.push(s('g', { class: 'rot-arrow' }, s('path', { class: 'rot-arc', d, 'stroke-width': 2 * k }), head(p1, a + span, 1), head(p0, a - span, -1),
-        s('path', { class: 'rot-hit', d, 'stroke-width': 16 * k, 'data-rot': i })));
-    });
-    out.push(s('g', { class: 'pivot' }, s('circle', { class: 'pivot-ring', cx: pv[0], cy: pv[1], r: 7.5 * k, 'stroke-width': 1.8 * k }), s('circle', { class: 'pivot-dot', cx: pv[0], cy: pv[1], r: 2.6 * k }),
-      s('circle', { class: 'pivot-hit', cx: pv[0], cy: pv[1], r: 12 * k, 'data-pivot': '1' })));
-    if (pdrag && pdrag.label) out.push(s('text', { class: 'rot-label', x: pv[0] + 12 * k, y: pv[1] - 12 * k, 'font-size': 13 * k, 'stroke-width': 3 * k }, pdrag.label.text));
+    out.push(...rotationControls(cor, c, pv, k, pdrag?.label?.text));
   } else {
     out.push(s('g', { class: 'grip-sq' }, PL.handlePoints(sel.part, sel.p).map(Y).map((q) => s('rect', { x: q[0] - 3.5 * k, y: q[1] - 3.5 * k, width: 7 * k, height: 7 * k }))));
   }
@@ -4061,7 +4068,7 @@ function hidIdx(d) {
 /** Entities not painted: the one a grip is dragging (the overlay draws it) and the ones hidden one by one in the Objects tab. */
 function hideNow(d) {
   const drag = d && state.grip && state.grip.d === d && state.grip.next ? state.grip.e : null;
-  const move = state.entityDrag;
+  const move = state.drawingRotate?.drag || state.entityDrag;
   if (!d || (drag == null && !move?.items && !(d.hid && d.hid.size))) return null;
   const out = new Set(hidIdx(d) || []);
   if (drag != null) out.add(drag);
@@ -4144,13 +4151,13 @@ function paintOverlay(gesture = false) {
       return;
     }
     const drawn = paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
-      bg: d && d.bg, hl: d ? (state.entityDrag?.items ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+      bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
       accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
       dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-    const move = state.entityDrag || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
+    const move = state.drawingRotate?.drag || state.entityDrag || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
     c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
     ui.cmdUI.place();
     c.dataset.drawn = drawn || 0;
@@ -4283,9 +4290,10 @@ function attachCanvasEvents() {
       if (state.colourTool && editable() === state.colourTool.d) { colourToolClick(editable(), toDrawing(editable(), e.clientX, e.clientY)); return; }
       const gh = e.target.closest && e.target.closest('[data-gap]');
       if (sheetDown(e)) { capture(c, e); return; }
+      if (drawingRotateDown(e)) { capture(c, e); return; }
       if (balDown(e)) { capture(c, e); return; }
       if (gripDown(e)) { capture(c, e); return; }
-      if (!state.match && textHandleDown(e)) { capture(c, e); return; }
+      if (!state.match && !state.drawingRotate && textHandleDown(e)) { capture(c, e); return; }
       if (state.tool === 'text' && drawTarget()) { textToolDown(e); return; }
       if (state.draw && drawTarget()) { drawClick(e); return; }
       if (gh && !state.setlen && state.tool !== 'measure') return;                          // a gap is picked on click (below), so the browser's own focus change does not undo ours
@@ -4311,6 +4319,7 @@ function attachCanvasEvents() {
     if (gdrag) guideMove(e);
     if (state.sheetDrag) sheetMove(e);
     if (pdrag) placedMove(e);
+    if (state.drawingRotate?.drag) drawingRotateMove(e);
     if (lrub) { if (!lrub.moved && Math.hypot(e.clientX - lrub.x, e.clientY - lrub.y) > 4) lrub.moved = true; if (lrub.moved) showRubber(lrub, e); }
     if (pan) {
       view.ox -= (e.clientX - pan.x) / view.scale; view.oy -= (e.clientY - pan.y) / view.scale;
@@ -4353,6 +4362,7 @@ function attachCanvasEvents() {
     if (state.grip) gripUp(e);
     if (state.balDrag) balUp();
     if (pdrag) placedUp();
+    if (state.drawingRotate?.drag) drawingRotateUp(e);
     if (lrub) { const r = lrub; lrub = null; hideRubber(); if (r.zoom) zoomWindowUp(r, e); else layoutBoxSelect(r, e); }
     const was = drag; drag = null;
     const d = state.tool === 'measure' ? measureTarget() : editable();
@@ -4391,7 +4401,7 @@ function attachCanvasEvents() {
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
   c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
-  c.addEventListener('pointercancel', () => { if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
+  c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
@@ -4977,6 +4987,7 @@ function pickPoint(d, p, pts, shift, hover = false) {
 }
 
 function setSel(d, sel) {
+  state.drawingRotate = null;
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
   const ed = edIndex(d);
@@ -4984,6 +4995,57 @@ function setSel(d, sel) {
   for (const e of sel) for (const i of ed.byEnt[e] || []) d.hl.push(ed.items[i]);
   paintOverlay(); renderEdit();
   if (state.ptab === 'objects') renderObjects(true);
+}
+
+function drawingRotateDown(e) {
+  const r = state.drawingRotate;
+  if (!r || r.d !== editable()) return false;
+  const pivot = e.target.closest('[data-pivot]'), arrow = e.target.closest('[data-rot]');
+  if (!pivot && !arrow) return false;
+  if (arrow && moveLocked(r.d, r.d.sel, 'rotate')) return true;
+  r.drag = { kind: pivot ? 'pivot' : 'rotate', d: r.d, raw: r.d.raw.entities, sel: new Set(r.d.sel), from: toDrawing(r.d, e.clientX, e.clientY), px: [e.clientX, e.clientY], angle: 0, dx: 0, dy: 0 };
+  return true;
+}
+function drawingRotateMove(e) {
+  const r = state.drawingRotate, g = r?.drag;
+  if (!g) return;
+  if (r.d !== editable() || g.raw !== r.d.raw.entities) { r.drag = null; paintOverlay(); return; }
+  const p = toDrawing(r.d, e.clientX, e.clientY);
+  if (g.kind === 'pivot') { r.pivot = p; paintOverlay(); return; }
+  if (!g.items && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) <= 3) return;
+  if (!g.preview) {
+    g.preview = flatten({ ...r.d.raw, entities: [...g.sel].map((i) => g.raw[i]) });
+    g.items = g.preview.items;
+  }
+  g.angle = rotationDragAngle(r.pivot, g.from, p, e.shiftKey);
+  g.slots = [mmul([r.d.factor, 0, 0, -r.d.factor, 0, state.sheetH], rotationMatrix(r.pivot, g.angle))];
+  paintOverlay();
+}
+function drawingRotateUp(e) {
+  drawingRotateMove(e);
+  const r = state.drawingRotate, g = r?.drag;
+  if (!g) return;
+  r.drag = null;
+  if (g.kind === 'rotate' && g.items && g.angle && !moveLocked(r.d, g.sel, 'rotate')) {
+    try {
+      const next = rotateEntities(r.d.raw, g.sel, r.pivot, g.angle);
+      view.fitted = false;
+      commit(r.d, followDimensions(r.d.raw, next, r.d.factor), 'Rotate'); setSel(r.d, g.sel);
+      r.box = OB.boxOf(r.d.fl, [...g.sel]); state.drawingRotate = r;
+      note('Selection rotated. Ctrl+Z takes it back');
+    } catch (err) { note(err.message); }
+  }
+  paintOverlay();
+}
+function drawingRotateOverlay(out) {
+  const r = state.drawingRotate, g = r.drag, b = r.box, k = 1 / view.scale;
+  const matrix = g?.items ? rotationMatrix(r.pivot, g.angle) : null;
+  // Give even a horizontal or vertical line four distinct corner targets.
+  const pad = 20 * k / r.d.factor;
+  const cor = [[b[0] - pad, b[1] - pad], [b[2] + pad, b[1] - pad], [b[2] + pad, b[3] + pad], [b[0] - pad, b[3] + pad]].map((p) => toSheetPt(r.d, matrix ? mapply(matrix, ...p) : p));
+  const c = [(cor[0][0] + cor[2][0]) / 2, (cor[0][1] + cor[2][1]) / 2];
+  out.push(s('polygon', { class: 'sel-box', points: cor.map((p) => p.join(',')).join(' '), 'data-mode': 'rotate', 'vector-effect': 'non-scaling-stroke' }));
+  out.push(s('g', { class: 'ptools' }, rotationControls(cor, c, toSheetPt(r.d, r.pivot), k, g?.items ? fmt1(g.angle) + '°' : null)));
 }
 
 function moveSelectionTo(g, e) {
@@ -5024,6 +5086,15 @@ function clickSelect(d, p, shift) {
   const ed = edIndex(d), e = Ed.hitEntity(ed, p[0], p[1], pickTol(d));
   if (e >= 0 && lockedEnt(d, e)) { note(`Layer ${d.raw.entities[e].layer} is locked: unlock it in the Objects tab to pick this`); return; }
   if (e < 0) { if (!shift && d.sel.size) setSel(d, new Set()); return; }
+  if (!shift && state.tool === 'select' && d.sel.has(e)) {
+    const box = OB.boxOf(d.fl, [...d.sel]);
+    if (box) {
+      state.drawingRotate = state.drawingRotate ? null : { d, box, pivot: [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] };
+      state.gripHover = null; paintOverlay();
+      note(state.drawingRotate ? 'Rotate: drag a corner arrow · Shift = 15° · drag ◎ to move the pivot · Esc ends' : 'Rotate done');
+      return;
+    }
+  }
   const next = new Set(shift ? d.sel : []);
   if (shift && d.sel.has(e)) next.delete(e); else next.add(e);
   setSel(d, next);
@@ -6115,7 +6186,8 @@ function drawOvl() {
   }
   if (d && !d.lay && modLive()) modOvl(d, out);
   if (d && !d.lay && editable()) {
-    const bt = balOvl(d, out, 1 / view.scale), tt = textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
+    const bt = balOvl(d, out, 1 / view.scale), tt = state.drawingRotate ? null : textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
+    if (state.drawingRotate) drawingRotateOverlay(out);
     if (bt && !tt) tip = bt;
     if (drawLive() || state.grip || state.meas || state.dim || state.ldr) trackOvl(d, out, 1 / view.scale);
     if (tt && state.grip && state.trk.res) tt.text = state.trk.res.text;
@@ -7395,7 +7467,7 @@ function trackOvl(d, out, k) {
 
 // ---- grips (grips.js; mock-up R5c, left pane): blue squares on a selected line, arc, circle or polyline to drag ----
 /** Do grips show? On a drawing tab with the Select tool, something selected (not too many things), and no text handles in the way. */
-const gripOn = (d) => !!d && !d.lay && !state.match && !state.colourTool && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
+const gripOn = (d) => !!d && !state.drawingRotate && !d.lay && !state.match && !state.colourTool && editable() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -7597,6 +7669,7 @@ function editKey(e) {
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }
     else if (state.match) endMatch();
+    else if (state.drawingRotate) { state.drawingRotate = null; note('Rotate done'); paintOverlay(); }
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
