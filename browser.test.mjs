@@ -3039,12 +3039,6 @@ try {
   const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '\\b') : item, exact: true }).click(); };
   const grip = (side) => panelControl(page, page.locator(`[data-key=grip${side}]`));
   await step('gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px', async () => {
-    if (only) {
-      await t('picker').setInputFiles('fixtures/overlay.dxf');
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'overlay.dxf');
-      await t('add-to-layout').click();
-      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').dataset.kind === 'layout');
-    }
     assert.equal(await panelControl(page, page.locator('[data-key=margin]')).count(), 0, 'no margin field');
     assert.equal(await panelControl(page, page.locator('[data-key=gripper]')).count(), 0);
     assert.deepEqual(await Promise.all(['Top', 'Right', 'Bottom', 'Left'].map((x) => grip(x).inputValue())), ['0', '0', '30', '0']);
@@ -3807,10 +3801,7 @@ try {
     return { b, sc: b.width / w, h: hh };
   };
   /** The client position of a drawing point (mm from the sheet's bottom-left, y up). */
-  const at = (x, y) => page.evaluate(([x, y]) => {
-    const svg = document.querySelector('[data-testid=overlay]'), h = +document.querySelector('rect.sheet').getAttribute('height');
-    const p = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
-  }, [x, y]);
+  const at = async (x, y) => { const { b, sc, h: hh } = await sheetPx(); return { x: b.x + x * sc, y: b.y + (hh - y) * sc }; };
   const click = async (x, y, opts = {}) => {
     const p = await at(x, y);
     if (opts.shift) await page.keyboard.down('Shift');
@@ -5492,7 +5483,6 @@ try {
   });
 
   await step('review: the gripper label never sits on a registration mark; the selected slot\'s width is never drawn over another part', async () => {
-    await ensureLibraryParts();
     await t('new-layout').click();
     await t('panel-library').click();
     assert.ok((await libNames()).length > 0);
@@ -6139,10 +6129,9 @@ try {
     await page.keyboard.press('Control+z');
     await page.keyboard.press('Control+a');
     assert.equal(await t('pp-name').textContent(), '3 parts', 'all three are back');
-  });
+  }, { needs: ['TODO 36: Shift-click adds and removes parts; a rubber band selects the parts fully inside; the pick-order numbers, the box and its readout, the Arrange section'] });
 
   await step('TODO 110c: the Part ribbon Rotate 90° turns a multi-selection by 90° whatever the main part\'s angle; Nudge moves it', async () => {
-    if (only) { await threeParts(); await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+a'); }
     const rb = page.locator('.ribbon-body');
     await partTab(); await t('pa').fill('90'); await t('pa').press('Enter');         // the main part is now at 90°
     await partTab(); await rb.getByRole('button', { name: 'Rotate 90°', exact: true }).click();
@@ -6150,7 +6139,7 @@ try {
     await rb.getByRole('button', { name: 'Right', exact: true }).click();
     assert.match(await prompt(), /^3 parts moved .* mm right/);
     await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
-  });
+  }, { needs: ['Select all in a layout: Ctrl+A and Edit → Select all pick every placed part; Delete removes them all as one step; Ctrl+Z brings them back'] });
 
   await step('TODO 36: Align left / centre / right / top / middle / bottom, relative to the selection, the sheet and the first selected', async () => {
     const before = await selBoxes();
@@ -8747,6 +8736,12 @@ try {
   });
 
   await step('TODO 156a: drawing corner arrows, Shift turn, moved pivot, preview, undo, grips and layout arrows', async () => {
+    // Pivot checks need exact SVG coordinates; older steps keep their sheetPx helper.
+    const at = (x, y) => page.evaluate(([x, y]) => {
+      const svg = document.querySelector('[data-testid=overlay]'), h = +document.querySelector('rect.sheet').getAttribute('height');
+      const p = new DOMPoint(x, h - y).matrixTransform(svg.getScreenCTM()); return { x: p.x, y: p.y };
+    }, [x, y]);
+    const click = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y); };
     const raw = newDoc(4); addEntities(raw, dxfLine(20, 30, 120, 30));
     await openGrips(writeDxf(raw), 'corner-rotate.dxf');
     const before = await savedDoc();
@@ -8801,8 +8796,10 @@ try {
     sameGeometry(await savedDoc(), first);
     await page.keyboard.press('Control+z'); sameGeometry(await savedDoc(), before);
     // Pivot movement did not add an undo step; a cancelled turn adds none either.
+    const history = await histLabels();
     await click(45, 30); await click(45, 30); await frames(); await turn(40, false, true);
     assert.equal(await arrows.count(), 0); await gripWhen(3); sameGeometry(await savedDoc(), before);
+    assert.deepEqual(await histLabels(), history, 'Esc during a turn adds no undo step');
     await click(45, 30); await frames(); await click(80, 55); await frames();
     assert.equal(await arrows.count(), 0); await gripWhen(0);
     await click(45, 30); await gripWhen(3);
@@ -8816,6 +8813,20 @@ try {
     assert.equal(await arrows.count(), 4); await gripWhen(0);
     await turn(23, true); sameGeometry(await savedDoc(), rotateEntities(multiple, new Set([0, 1]), [70, 55], 30));
     await page.keyboard.press('Control+z'); sameGeometry(await savedDoc(), multiple);
+    for (const selector of ['[data-layer=f0]', '.or.layer[data-layer="0"] [data-act=vis]']) {
+      const history = await histLabels();
+      await page.keyboard.press('Control+a'); await click(45, 30); await frames();
+      const a = await arrow();
+      await page.locator(selector.startsWith('.or') ? '[data-tab=objects]' : '[data-tab=layers]').click();
+      const eye = panelControl(page, page.locator(selector));
+      await eye.click(); await frames();
+      assert.equal(await arrows.count(), 0, 'a layer toggle ends rotate mode');
+      await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move(a.x + 35, a.y + 25, { steps: 4 }); await page.mouse.up(); await frames();
+      sameGeometry(await savedDoc(), multiple);
+      assert.deepEqual(await histLabels(), history, 'dragging where an arrow was adds no undo step');
+      await eye.click();
+    }
     await freshLayoutWithPlate(); await partTab();
     const q = await partPoint(.5); await page.mouse.click(q.x, q.y); await frames();
     assert.equal(await page.locator('[data-group=tools] [data-rot]').count(), 4);
@@ -8852,7 +8863,6 @@ try {
   });
 
   await step('Grips: dragging a line\'s end stretches it (rubber band, length and angle readout, the hot grip red, a ghost of what it was); it snaps; one undo step "Stretch line"', async () => {
-    if (only) await openGrips();
     await pick(70, 30, 3);
     const a = await gripBox('0:b'), b = await at(150, 60);
     await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 });
@@ -8880,7 +8890,7 @@ try {
     await gripWhen(3);
     await page.keyboard.press('Control+z');
     assert.equal(fieldOf(entOf(await savedDoc(), 0), 11), 120, 'one Ctrl+Z puts it back');
-  });
+  }, { needs: ['Grips: a selected line, circle, arc and polyline show blue squares (line 3, circle 5, arc 4, polyline per vertex); none with nothing selected, with a drawing tool, or past 200 selected'] });
 
   await step('Grips: the middle grip moves the line ("Move ΔX … ΔY …"); ORTHO keeps it straight; the line keeps its length', async () => {
     await openGrips();
@@ -10141,7 +10151,6 @@ try {
     await typeCmd('20,20'); await typeCmd('@100,0'); await page.keyboard.press('Escape');
     await page.waitForTimeout(400);
     await page.locator('[data-tool=select]').click();
-    if (!(await chipOn('tog-polar'))) await t('tog-polar').click();
     await pick(70, 20, 3);
     const { sc } = await sheetPx(), off = 3 / sc, a = Math.PI / 6;
     await dragGripTo('0:b', 20 + 100 * Math.cos(a) + off * Math.sin(a), 20 + 100 * Math.sin(a) - off * Math.cos(a));
@@ -10523,14 +10532,9 @@ try {
     assert.match(await prompt(), /Leader cancelled/); assert.equal((await ldrBlocks()).list.length, 2, 'Esc in the note cancels the whole leader');
     await page.keyboard.press('Escape'); assert.equal(await page.locator('[data-tool=select].on').count(), 1, 'Esc with nothing in progress: back to Select');
     await typeCmd('le'); assert.equal(await page.locator('[data-tool=leader].on').count(), 1, 'LE in the command line'); await page.keyboard.press('Escape');
-  });
+  }, { needs: ['leader: the rail has a Leader button; the tool asks for the arrowhead, the next point, then Enter or a third point, then the note typed in place (Enter finishes)'] });
+
   await step('leader: a selected leader shows a grip at each point (drag one: the note follows the end), the Leader section (note, text height, arrow size, style), double-click edits the note, Delete', async () => {
-    if (only) {
-      await openGrips(dimDoc(), 'leaders.dxf');
-      await openStyle(); await t('ds-preset').selectOption('Standard'); await t('ds-ok').click();
-      await typeCmd('le'); await typeCmd('100,100'); await typeCmd('60,150'); await page.keyboard.press('Enter'); await typeNote('DEBURR');
-      await typeCmd('200,100'); await typeCmd('220,140'); await typeCmd('240,140'); await typeNote('TYP');
-    }
     await page.locator('[data-tool=select]').click(); await page.keyboard.press('Escape');
     await click(80, 125); await waitSel('1 selected');                                // the first leader's line, half way
     assert.equal(await t('ldr-row').isVisible(), true); assert.equal(await t('dim-row').isVisible(), false);
@@ -10564,7 +10568,8 @@ try {
     assert.match(await prompt(), /Leader note changed/); assert.deepEqual((await ldrBlocks()).list.find((x) => x.name === 'PD_LDR_1').model.lines, ['DEBURR ALL']);
     await page.keyboard.press('Delete'); assert.equal((await ldrBlocks()).list.length, 1, 'Delete removes the whole leader');
     await page.keyboard.press('Control+z'); assert.equal((await ldrBlocks()).list.length, 2);
-  });
+  }, { needs: ['leader: Esc cancels (the points, or the note being typed); nothing typed makes nothing; the same point twice is refused; Esc with nothing in progress goes back to Select'] });
+
   await step('leader: Format → Dimension style… restyles a selected leader (text height, arrow); a saved file reopens it, selectable and editable', async () => {
     await click(80, 125); await waitSel('1 selected');
     await openStyle(); await setStyle({ text: 2, arrow: 1 }); await t('ds-ok').click();
@@ -10660,16 +10665,10 @@ try {
     const rows = await page.locator('[data-testid=hist-row] > span:last-child').allTextContents();
     assert.ok(rows.includes('Add balloon 1') && rows.includes('Renumber balloons') && rows.includes('Next balloon number 10'), rows.join(' | '));
     await page.locator('[data-testid=hist-close]').click();
-  });
+  }, { needs: ['balloons: the Balloon tool (B) sits beside Leader; two clicks make a balloon, the next number goes up by itself, a number typed at the command line restarts the count'] });
 
   await step('balloons: a selected balloon shows grips (centre, tip) and its row lights; the fields are typed, Pick from text fills the dimension from the PDF text under the arrow; a drag of a grip is one labelled step; Delete keeps the other numbers', async () => {
-    if (only) {
-      await balOpen(); await typeCmd('b'); await frames();
-      await balPlace([101, 62], [130, 80]); await balPlace([75, 13], [75, 35]); await balPlace([33, 91], [55, 105]);
-      await balPlace([150, 30], [165, 50]); await balPlace([100, 40], [110, 20]);
-      await page.locator('[data-tool=select]').click();
-    }
-    await click(75, 35); await page.waitForFunction(() => document.querySelector('[data-testid=bal-panel]') && !document.querySelector('[data-testid=bal-panel]').hidden); await frames();
+    await click(75, 35); await page.waitForFunction(() => document.querySelector('[data-testid=bal-panel]') && !document.querySelector('[data-testid=bal-panel]').hidden);
     assert.equal(await t('bal-chip').textContent(), 'Balloon 2'); assert.equal(await page.locator('[data-testid=bal-grip]').count(), 2);
     assert.deepEqual(await page.locator('[data-testid=bal-row].hi').evaluateAll((r) => r.map((x) => x.dataset.n)), ['2']);
     assert.equal(await t('bal-pick').getAttribute('aria-disabled'), 'false');
@@ -10703,7 +10702,7 @@ try {
     await page.keyboard.press('Control+z'); assert.deepEqual(await balNums(), ['1', '2', '3', '4', '5']);
     await click(95, 45); await t('bal-dim').waitFor();
     const p = await at(95, 45); await page.mouse.dblclick(p.x, p.y); assert.equal(await page.evaluate(() => document.activeElement.dataset.testid), 'bal-n', 'double-click: the number is typed in the panel');
-  });
+  }, { needs: ['balloons: Renumber numbers 1…n in sheet order, then placement order, as one undo step; every change is a labelled step'] });
 
   await step('balloons: the table is docked above the command line, resizes, collapses; a row zooms to its balloon; Export CSV and Export Excel write the rows', async () => {
     const dock = t('bal-dock'), h0 = (await dock.boundingBox()).height, cmd = await page.locator('.status').boundingBox(), box0 = await dock.boundingBox();

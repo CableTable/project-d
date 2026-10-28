@@ -4889,7 +4889,7 @@ function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)
 const lockedEnt = (d, e) => !!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer);
 /** Builds the index once the page has painted, so the first click is quick. */
 function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
-function layersChanged(d) { selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; warm(d); renderEdit(); }
+function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
 function toDrawing(d, cx, cy) {
@@ -4999,7 +4999,7 @@ function setSel(d, sel) {
 
 function drawingRotateDown(e) {
   const r = state.drawingRotate;
-  if (!r || r.d !== editable()) return false;
+  if (!r || r.d !== editable() || !r.d.sel.size) return false;
   const pivot = e.target.closest('[data-pivot]'), arrow = e.target.closest('[data-rot]');
   if (!pivot && !arrow) return false;
   if (arrow && moveLocked(r.d, r.d.sel, 'rotate')) return true;
