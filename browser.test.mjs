@@ -11574,7 +11574,51 @@ try {
     await typeCmd('r'); assert.match(await prompt(), /Specify the reference angle <0>:/);
     await typeCmd('30'); assert.match(await prompt(), /Specify the new angle <0>:/); await typeCmd('90');
     assert.equal(await t('rot-angle').inputValue(), '60°');
-    await page.keyboard.press('Escape'); await closeTabs(/ref-layout/);
+    await page.keyboard.press('Escape');
+    // Enter takes the <0> default at both layout prompts: reference 20, Enter (new 0) turns by -20
+    await typeCmd('ro'); await typeCmd('r'); await typeCmd('20'); await typeCmd('');
+    assert.equal(await t('rot-angle').inputValue(), '40°', 'Enter at the new angle takes 0');
+    await typeCmd('ro'); await typeCmd('r'); await typeCmd(''); assert.match(await prompt(), /Specify the new angle <0>:/); await typeCmd('25');
+    assert.equal(await t('rot-angle').inputValue(), '65°', 'Enter at the reference angle takes 0');
+    // Esc partway through Reference changes nothing
+    await typeCmd('ro'); await typeCmd('r'); await typeCmd('10'); await page.keyboard.press('Escape');
+    assert.equal(await t('rot-angle').inputValue(), '65°', 'Esc mid-Reference leaves the part alone');
+    // Copy with Reference keeps the original
+    const placedCount = () => page.locator('[data-group=parts] [data-i]').count(), before = await placedCount();
+    await typeCmd('ro'); await typeCmd('c'); await typeCmd('r'); await typeCmd('0'); await typeCmd('90');
+    assert.equal(await placedCount(), before + 1, 'Copy adds a part');
+    await page.locator('.coords').click(); await page.waitForTimeout(1100);          // the two overlap, so read the saved file
+    const pending = page.waitForEvent('download'); await page.keyboard.press('Control+s');
+    const rots = layoutFromRaw(readDxf(readFileSync(await (await pending).path(), 'utf8'))).placed.map((q) => q.rot ?? 0).sort((x, y) => x - y);
+    assert.deepEqual(rots, [65, 155], 'the original stays at 65° and the copy is at 155°');
+    await closeTabs(/ref-layout/);
+
+    // several parts, one already at 30°: Reference 0 -> 90 turns both by 90
+    const two = newLayout('Ref two');
+    two.parts.plate = makePart('plate', 'Plate', partDoc);
+    two.placed = [{ partId: 'plate', x: 100, y: 100, rot: 0 }, { partId: 'plate', x: 200, y: 100, rot: 30 }];
+    await t('picker').setInputFiles({ name: 'ref-two.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(two))) });
+    await page.locator('.dtab.on .tname').filter({ hasText: 'ref-two.dxf' }).waitFor();
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    await page.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true, modifiers: ['Shift'] });
+    await typeCmd('ro'); await typeCmd('r'); await typeCmd('0'); await typeCmd('90');
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true });
+    assert.equal(await t('rot-angle').inputValue(), '90°', 'the first part turned by 90');
+    await page.locator('[data-group=parts] [data-i="1"] .part-hit').click({ force: true });
+    assert.equal(await t('rot-angle').inputValue(), '120°', 'the part at 30° turned by 90 too, not set to 90');
+    await closeTabs(/ref-two/);
+
+    // dynamic input: off at the reference step, on at Rotate's new angle (typed on the cursor, relative to the reference)
+    await start('ro'); await typeCmd('r');
+    await hoverPreview(20, 60);
+    assert.equal(await t('cursor-angle').isVisible(), false, 'no cursor fields at the reference step');
+    await typeCmd('30'); await hoverPreview(20, 60);
+    await t('cursor-angle').waitFor({ state: 'visible' });
+    await page.keyboard.type('90'); await page.keyboard.press('Enter');
+    doc = await savedDoc(); closeEnough(angleOf(doc), 60, 1e-6, 'cursor field 90 minus reference 30');
+    await start('sc'); await typeCmd('r'); await typeCmd('10'); await hoverPreview(20, 60);
+    assert.equal(await t('cursor-angle').isVisible(), false, 'Scale Reference keeps the cursor fields off');
+    await page.keyboard.press('Escape');
   });
 
   await step('TODO 66a: Move', async () => {

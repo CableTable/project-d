@@ -3638,15 +3638,15 @@ function cmdEnter(raw) {
   }
   const c = raw.trim().toLowerCase();
   if (state.txoWait) { state.txoWait = false; if (!c) { textToOutlines(); return; } }          // "Select text": Enter runs it, a typed command replaces it
-  if (!c) return;
+  if (!c && !(state.lref && state.mode === 'rotate' && curLay() && selectedPlaced())) return;       // Enter at the layout "angle <0>" prompt takes 0
   if (state.mode === 'rotate' && curLay() && selectedPlaced()) {
     const lr = state.lref;
     if (!lr && (c === 'reference' || c === 'r')) { state.lref = { step: 'ref', value: 0 }; state.msg = null; renderCommand(); return; }
-    if (lr && PL.parseAngle(c) != null) {
-      const v = PL.parseAngle(c), rs = selectedPlaced();
+    if (lr && PL.parseAngle(c || '0') != null) {
+      const v = PL.parseAngle(c || '0'), rs = selectedPlaced();
       if (lr.step === 'ref') { state.lref = { step: 'new', value: v }; state.msg = null; renderCommand(); return; }
       const copy = state.rotCopy; state.rotCopy = false; state.lref = null;
-      const why = setAngleText(String(+(rs.p.rot + v - lr.value).toFixed(6)), copy); if (why) note(why); return;
+      const turn = v - lr.value, why = setAngleText(String(+(selItems().length > 1 ? turn : rs.p.rot + turn).toFixed(6)), copy); if (why) note(why); return;
     }
     if (c === 'pivot' || c === 'p') { note('Pivot: drag ◎ on the sheet, or pick Custom in the Rotate section and type its X and Y'); return; }
     if (c === 'copy' || c === 'c') { state.rotCopy = !state.rotCopy; renderCommand(); note(state.rotCopy ? 'Copy on: the angle you type now turns a copy, and the part stays' : 'Copy off'); return; }
@@ -6176,7 +6176,7 @@ function cursorTool() {
   if (!state.dynamicInput) return null;
   if (state.draw) return drawLive() ? state.draw : null;
   const m = state.mod;
-  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && !m.ref && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
+  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && !(m.ref && (m.kind === 'scale' || m.ref.step !== 'new')) && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
     const d = editable(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
     return { kind: m.kind, A: m, mod: true, d, f, pts: m.p1 ? [mm(m.p1)] : [], hover: mm(m.cur) };
   }
@@ -6224,7 +6224,7 @@ function modTypedValue() {
 /** The Rotate / Scale ghost for the typed angle or factor; null when nothing valid is typed (the mouse's ghost stays). */
 function modTypedSlots(d) {
   const m = state.mod, v = modTypedValue();
-  return v == null ? null : [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], m.kind === 'scale' ? scaleMatrix(m.p1, v) : rotationMatrix(m.p1, v))];
+  return v == null ? null : [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], m.kind === 'scale' ? scaleMatrix(m.p1, v) : rotationMatrix(m.p1, m.ref ? referenceTurn(m.ref.value, v) : v))];
 }
 /** A click while cursor fields hold typing: the pointer fills the rest. → true when it committed (or said why not) */
 function cursorClick(d, p, shift) {
@@ -6756,7 +6756,7 @@ function refClick(d, p, q, shift) {
 /** What is typed at a Reference step. → true when taken (false lets a command word through) */
 function refTyped(d, raw, c) {
   const m = state.mod, R = m.ref, scaling = m.kind === 'scale', f = d.factor;
-  if (R.step === 'new' && (c === 'p' || c === 'points')) { R.step = 'newpts'; R.pts = []; note(modPrompt(d).prompt); paintOverlay(); return true; }
+  if (R.step === 'new' && (c === 'p' || c === 'points')) { R.step = 'newpts'; R.pts = []; if (m.move) m.move.slots = null; note(modPrompt(d).prompt); paintOverlay(); return true; }
   const inp = DR.parseInput(raw), from = (R.pts.at(-1) || m.p1).map((v) => v * f), q = DR.typedPoint(inp, from);
   if (q) {
     const p = q.map((v) => v / f);
