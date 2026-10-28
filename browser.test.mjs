@@ -8110,30 +8110,36 @@ try {
   });
 
   await step('Circle (centre, then radius or D for a diameter), Ellipse (centre, axis 1, other half-axis) and Arc (3 points)', async () => {
+    await closeTabs(/./);
+    for (const [id, on] of [['tog-dyn', true], ['tog-snap', true], ['tog-ortho', false]]) {
+      if ((await t(id).getAttribute('aria-pressed') === 'true') !== on) await t(id).click();
+    }
     await page.locator('[data-tool=circle]').click();
     await typeCmd('50,60'); await typeCmd('d');
     assert.equal(await prompt(), 'Diameter [Radius]:');
     await typeCmd('40');
     await click(50.2, 60.1);                                   // a circle by clicks: the centre snaps to the first circle's centre
     const r = await at(65, 60); await page.mouse.move(r.x, r.y);
-    await tipWhen(/^R /);
+    await t('cursor-length').waitFor({ state: 'visible' });
+    assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Radius');
+    approx(parseFloat(await t('cursor-length').inputValue()), 15, 1, 'the live Radius follows the cursor');
     await click(65, 60);
-    assert.equal(await entCount(), 8);
+    assert.equal(await entCount(), 2);
     await page.locator('[data-tool=ellipse]').click();
     await typeCmd('115,112'); await typeCmd('@25,0'); await typeCmd('8');
     await page.locator('[data-tool=arc]').click();
     await typeCmd('170,75'); await typeCmd('185,90');
     assert.equal(await prompt(), 'Specify end point:');
     await typeCmd('200,75');
-    assert.equal(await entCount(), 10);
-    const doc = await savedDoc(), types = doc.entities.slice(6).map((e) => e.type);
+    assert.equal(await entCount(), 4);
+    const doc = await savedDoc(), types = doc.entities.map((e) => e.type);
     assert.deepEqual(types, ['CIRCLE', 'CIRCLE', 'ELLIPSE', 'ARC']);
-    assert.deepEqual([10, 20, 40].map((c) => fieldOf(doc.entities[6], c)), [50, 60, 20]);
-    assert.equal(fieldOf(doc.entities[7], 10), 50, "snapped to the first circle's centre");
-    assert.ok(fieldOf(doc.entities[7], 40) > 14);
-    const el = doc.entities[8];
+    assert.deepEqual([10, 20, 40].map((c) => fieldOf(doc.entities[0], c)), [50, 60, 20]);
+    assert.equal(fieldOf(doc.entities[1], 10), 50, "snapped to the first circle's centre");
+    assert.ok(fieldOf(doc.entities[1], 40) > 14);
+    const el = doc.entities[2];
     assert.deepEqual([10, 20, 11, 21, 40].map((c) => fieldOf(el, c)), [115, 112, 25, 0, 0.32]);
-    const ar = doc.entities[9];
+    const ar = doc.entities[3];
     assert.deepEqual([10, 20, 40, 50, 51].map((c) => Math.round(fieldOf(ar, c) * 1e6) / 1e6), [185, 75, 15, 0, 180]);
     assert.deepEqual((await histLabels()).slice(-4), ['Circle', 'Circle', 'Ellipse', 'Arc']);
   });
@@ -8147,7 +8153,7 @@ try {
     await page.locator('[data-tool=line]').click();
     await click(50.3, 60.3); await click(185.2, 89.8);
     await page.keyboard.press('Enter');
-    const doc = await savedDoc(), e = doc.entities[10];
+    const doc = await savedDoc(), e = doc.entities[4];
     assert.deepEqual([10, 20].map((c) => fieldOf(e, c)), [50, 60]);
     assert.deepEqual([11, 21].map((c) => Math.round(fieldOf(e, c) * 1e6) / 1e6), [185, 90]);
     await page.keyboard.press('Control+z');
@@ -8155,7 +8161,7 @@ try {
     const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
     await t('picker').setInputFiles({ name: 'drawn.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'drawn.dxf');
-    assert.equal(await entCount(), 10);
+    assert.equal(await entCount(), 4);
   });
 
   await step('Current layer: a layer clicked in the Layers panel gets the new shapes; the file keeps its own layers', async () => {
@@ -8224,6 +8230,7 @@ try {
 
   await step('drawing tools: screenshots mid-draw, light and dark (the live preview and its readout)', async () => {
     await closeTabs(/./);
+    if (await t('tog-dyn').getAttribute('aria-pressed') !== 'true') await t('tog-dyn').click();
     await page.locator('[data-tool=rrect]').click();
     await typeCmd('10');
     await typeCmd('40,30'); await typeCmd('90,70');
@@ -8232,7 +8239,15 @@ try {
     await page.locator('[data-tool=arc]').click();
     await typeCmd('40,100'); await typeCmd('90,115');
     const pt = await at(130, 70);
-    await shotBoth('draw-tools', async () => { await page.mouse.move(pt.x, pt.y); await tipWhen(/^R /); }, async () => {});
+    await shotBoth('draw-tools', async () => {
+      await page.mouse.move(pt.x, pt.y);
+      await t('cursor-length').waitFor({ state: 'visible' });
+      assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Length');
+      approx(parseFloat(await t('cursor-length').inputValue()), Math.hypot(40, 45), 1, 'the Arc length follows the cursor');
+      assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Angle');
+      assert.equal(await t('cursor-angle').isVisible(), true);
+      assert.equal(await t('draw-preview').count(), 1);
+    }, async () => {});
     assert.equal(await t('draw-preview').count(), 1);
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     await closeTabs(/./);
@@ -12168,6 +12183,8 @@ try {
 
   await step('TODO 146: the command box clears the Circle readout', async () => {
     await blankTab();
+    const dynOn = await chipOn('tog-dyn');
+    if (dynOn) await t('tog-dyn').click(); // The legacy readout and command-box typing require DYN off.
     if (await chipOn('tog-polar')) await t('tog-polar').click();
     const cv = await t('canvas').boundingBox(), centre = { x: cv.x + cv.width * .4, y: cv.y + cv.height * .5 };
     const overlap = (a, b) => Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x))
@@ -12185,7 +12202,11 @@ try {
       assert.ok(overlap(rightBelow, tip) > 0, 'right-below would cover the blue readout');
       assert.equal(overlap(box, tip), 0, 'the command box leaves the readout clear');
     };
-    await shotBoth('146-circle-readout', show, async () => { await page.keyboard.press('Escape'); });
+    try {
+      await shotBoth('146-circle-readout', show, async () => { await page.keyboard.press('Escape'); });
+    } finally {
+      if (dynOn) await t('tog-dyn').click();
+    }
   });
 
   await step('TODO 146: the box stays put while the mouse walks to its chip', async () => {
