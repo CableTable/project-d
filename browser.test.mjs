@@ -689,7 +689,8 @@ try {
         const mid = await atPoint(40, 20); await p.mouse.click(mid.x, mid.y);
         await p.waitForFunction(() => document.querySelectorAll('[data-testid=grip]').length >= 2);
         await p.locator('[data-testid=grip]').first().waitFor({ state: 'visible' });
-        await p.waitForFunction(() => Math.round(document.querySelector('[data-testid=grip]')?.getBoundingClientRect().width) === 11);
+        try { await p.waitForFunction(() => Math.round(document.querySelector('[data-testid=grip]')?.getBoundingClientRect().width) === 11); }
+        catch (e) { throw new Error(`expected grip size 11 px, last seen ${await p.evaluate(() => Math.round(document.querySelector('[data-testid=grip]')?.getBoundingClientRect().width))} px: ${e.message}`); }
         const side = await p.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
         assert.equal(side, 11);
         const fill = (loc) => loc.evaluate((el) => getComputedStyle(el).fill);
@@ -6153,7 +6154,8 @@ try {
   });
 
   await step('placing: arrow keys nudge by the step, Shift+arrow by 10 times; the step field is remembered; not while typing', async () => {
-    await page.locator('[data-group=parts] .part-hit').first().click({ force: true });
+    await freshLayoutWithPlate();
+    await click(450 + 50, 320 + 30);
     const p0 = await pos();
     await page.keyboard.press('ArrowRight');
     assert.deepEqual(await pos(), [p0[0] + 1, p0[1]]);
