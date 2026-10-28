@@ -192,7 +192,7 @@ codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowa
 # uncommitted work; read git status and the diff, finish, test, commit". Not `exec resume`: it takes no -p / -C /
 # --add-dir, so it cannot commit in a Knight clone (2026-10-24).
 # Screenshots: a clone folder made outside Codex (e.g. ProjectD-rowan's old shots/) can lack the sandbox grants and
-# refuse writes (EPERM); set SHOTS_DIR to a new folder in the clone root (shots-k*/, in the clone -git info/exclude).
+# refuse writes (EPERM); pass `--shots shots-k*` (a new folder in the clone root, in the clone -git info/exclude).
 # Usage (headless): the newest ~/.codex/sessions/**/*.jsonl has "rate_limits": primary.used_percent over a
 # 5-hour window and secondary over the week, resets_at in Unix time. Two S builds = ~6% of 5h, 1% of the week.
 
@@ -315,7 +315,6 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
 - Builders: `npm.cmd test` plus ONLY their own new / changed browser steps (`node browser.test.mjs <port> '<step names>'`) must pass; screenshots light + dark through those steps. **Rook runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
-  Every builder brief says: "A filtered step you didn't touch fails: list it under Findings and stop; Rook runs the full suite." (until `step()` takes `needs:`)
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
 - Rook writes briefs to `runs<N>/b*.txt` with the Write tool, never a heredoc (one hung Rook in session 25).

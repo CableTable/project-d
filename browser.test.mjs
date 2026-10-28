@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { browserArgs, shardSelector } from './tools/browser-shards.mjs';
+import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';
@@ -32,8 +32,8 @@ function contrastRatio(foreground, background, opacity = 1) {
 
 // SHARD=2/4 (env or argument); ONLY=regex / positional regex ignores shards.
 // Refresh committed per-step seconds: node browser.test.mjs 5181 --update-timings
-const { port: PORT, only, shard, updateTimings } = browserArgs(process.argv.slice(2), process.env);
-const selectStep = only ? (name) => new RegExp(only).test(name) : shard
+const { port: PORT, only, shard, updateTimings, shots: shotRoot } = browserArgs(process.argv.slice(2), process.env);
+const selectStep = shard
   ? shardSelector(JSON.parse(readFileSync(new URL('./tools/browser-shards.json', import.meta.url), 'utf8')), shard.index, shard.count)
   : () => true;
 const URL_ = `http://localhost:${PORT}/`;
@@ -87,8 +87,11 @@ const N0 = stepRepeat(base).count;                // the default sheet, 120 × 8
 let failed = 0;
 const timings = {};
 let afterStep = async () => {};
-async function step(name, fn) {
-  if (!selectStep(name)) return;
+const steps = [];
+function step(name, fn, { needs = [] } = {}) {
+  steps.push({ name, fn, needs, afterStep });
+}
+async function runStep({ name, fn, afterStep }) {
   const started = performance.now();
   try { await fn(); console.log('ok', name); } catch (e) { failed++; console.log('FAIL', name, '\n  ', e.message, '\n  at', ((e.stack || '').split('\n').find((l) => l.includes('browser.test.mjs')) || '').trim()); try { await afterStep(); } catch { /* best effort */ } }
   finally { timings[name] = Math.round((performance.now() - started) / 10) / 100; }
@@ -134,9 +137,8 @@ try {
   const typeCmd = async (text) => { await cmdLine().fill(text); await cmdLine().press('Enter'); };
   const readout = async () => ({ count:Number(await t('count').textContent()), grid: await t('grid').textContent() });
 
-  const shotRoot = process.env.SHOTS_DIR || 'shots';
   const shotDir = shard ? join(shotRoot, `shard-${shard.index}-of-${shard.count}`) : shotRoot;
-  if (shard) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
+  if (shard || process.argv.includes('--shots')) process.env.SHOTS_DIR = shotDir; // Older screenshot steps read the environment directly.
   mkdirSync(shotDir, { recursive: true });
   await step('TODO 73: hover tooltips teach aliases and keys; F3 / F7 / F8 flip chips, F9 Wireframe and F12 Dynamic input; fields keep their keys', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -3012,7 +3014,7 @@ try {
     assert.equal(r.count, N0); assert.equal(N0, 56); assert.match(r.grid, /8 × 7/);
     assert.equal(await t('pct').textContent(), '77% of sheet');
     assert.equal(await page.locator('[data-group=parts] .part-hit').count(), N0);
-  });
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('layout: menu bar, rail tools in order, layers', async () => {
     assert.deepEqual(await page.locator('.menubar .menu').allTextContents(), ['File', 'Edit', 'View', 'Draw', 'Modify', 'Format', 'Layout', 'Tools', 'Help']);
@@ -3020,7 +3022,7 @@ try {
     assert.equal(labels.length, 21); assert.equal(labels[0], 'Select'); assert.equal(labels.at(-1), 'Measure');
     assert.equal(labels[labels.indexOf('Offset') - 1], 'Move');
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), ['Parts', 'Marks', 'Dimensions']);
-  });
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   // a download the page makes: { name, text }
   const downloaded = async (action) => {
@@ -3046,7 +3048,7 @@ try {
     const fits = (sel) => page.locator(sel).evaluate((e) => e.scrollHeight <= e.clientHeight + 1);
     assert.ok(await fits('nav.rail'), 'rail scrolls');
     await page.screenshot({ path: shotDir + '/a-light.png' });
-  });
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('Gap X 20 changes the count', async () => {
     await panelControl(page, page.locator('[data-key=gapX]')).fill('20');
@@ -3056,7 +3058,7 @@ try {
     assert.equal(await page.locator('[data-group=parts] .part-hit').count(), want);
     await panelControl(page, page.locator('[data-key=gapX]')).fill('5');
     assert.equal((await readout()).count, N0);
-  });
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('rotate 90° recomputes', async () => {
     await t('rotate').selectOption('90');
@@ -3065,7 +3067,7 @@ try {
     assert.equal(r.count, want.count); assert.match(r.grid, new RegExp(`${want.cols} × ${want.rows}`));
     assert.equal(await t('pa').inputValue(), '270°', 'turned 90° clockwise = 270° anticlockwise, as in a DXF');
     await t('rotate').selectOption('0');
-  });
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('huge values: a sheet side over 100 000 mm, grippers wider than the sheet, a sheet narrower than its grippers: refused, the field reverts', async () => {
     const f = (k) => panelControl(page, page.locator(`[data-key=${k}]`));
@@ -3088,7 +3090,7 @@ try {
     assert.equal(await f('sheetW').inputValue(), '2000', 'a sane side is kept');
     await layoutTab(); await f('sheetW').fill(w0); await f('sheetW').blur();
     assert.equal(await page.locator('svg [d*="e+"]').count(), 0, 'no 1e+… in a path');
-  });
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('preset, gripper sides and top-left align: the count and the first position follow', async () => {
     await layoutTab(); await t('preset').selectOption('a3');
@@ -3105,7 +3107,7 @@ try {
     await layoutTab(); await grip('Top').fill('0'); await layoutTab(); await grip('Bottom').fill('30');
     await t('align').selectOption('centre');
     assert.equal((await readout()).count, N0);
-  });
+  }, { needs: ['a DXF opens on a drawing tab (no sheet); Add to layout makes a layout tab and the part fills Step and repeat'] });
 
   await step('gripper: any sides at once, 0 = none, the parts keep clear of each', async () => {
     for (const [k, v] of [['Top', '20'], ['Right', '40'], ['Bottom', '0'], ['Left', '50']]) await grip(k).fill(v);
@@ -3118,7 +3120,7 @@ try {
     await page.screenshot({ path: (process.env.SHOTS_DIR || 'shots') + '/s6-grippers-light.png' });
     for (const [k, v] of [['Top', '0'], ['Right', '0'], ['Bottom', '30'], ['Left', '0']]) await grip(k).fill(v);
     assert.equal((await readout()).count, N0); assert.equal(await page.locator('.grip-band').count(), 1);
-  });
+  }, { needs: ['preset, gripper sides and top-left align: the count and the first position follow'] });
 
   await step('extra gap: click a gap, type mm; the grid shifts, the count follows, the panel lists it with a ×', async () => {
     const gaps = t('gap-list');
@@ -3153,7 +3155,7 @@ try {
     await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
     await page.screenshot({ path: dir + '/s6-extra-gap-dark.png' });
     await menuItem('View', 'Theme: light');
-  });
+  }, { needs: ['preset, gripper sides and top-left align: the count and the first position follow'] });
 
   await step('extra gap: what Save writes uses the shifted positions (the first Save of a new layout is a Save As)', async () => {
     const want = stepRepeat({ ...base, extraRows: [{ after: 3, mm: 10 }], extraCols: [{ after: 2, mm: 5 }] });
@@ -3164,7 +3166,7 @@ try {
     const got = ins.map((e) => [Math.round(val(e, 10) * 100) / 100, Math.round(val(e, 20) * 100) / 100]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     const exp = want.positions.map((p) => [Math.round(p.x * 100) / 100, Math.round((700 - p.y - 80) * 100) / 100]).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
     assert.deepEqual(got, exp);
-  });
+  }, { needs: ['extra gap: click a gap, type mm; the grid shifts, the count follows, the panel lists it with a ×'] });
 
   await step('extra gap: a gap that no longer exists after a sheet change goes quietly; × removes one', async () => {
     await page.locator('[data-gap=r3]').click({ force: true, position: { x: 30, y: 5 } }); await page.keyboard.type('10');
@@ -3179,7 +3181,7 @@ try {
     assert.equal(await t('gap-list').locator('.gaprow').count(), 0);
     assert.equal(await page.locator('.gap-sel').count(), 0);
     assert.equal((await readout()).count, N0);
-  });
+  }, { needs: ['preset, gripper sides and top-left align: the count and the first position follow'] });
 
   await step('crop / reg checkboxes and layer toggles', async () => {
     const marks = page.locator('[data-group=marks] circle');
@@ -3979,7 +3981,7 @@ try {
     await t('selrow').waitFor();
     assert.equal(await t('selrow').isVisible(), true);
     await page.screenshot({ path: shotDir + '/s5-selected-light.png' });
-  });
+  }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
   await step('edit: Shift+click adds a shape and takes it out again; Esc clears; a click on empty space clears', async () => {
     await click(38, 30, { shift: true });              // the dial
@@ -3992,14 +3994,14 @@ try {
     assert.equal(await accentWhen((n) => n === 0), 0, 'highlight gone');
     await clickConnected(50, 0); await waitSel('8 selected');
     await click(115, 45); await waitSel('0 selected');          // empty space
-  });
+  }, { needs: ['edit: Select connected selects the whole loop (8 entities), drawn in the accent colour'] });
 
   await step('edit: a shape inside, the leader that crosses the outline, and the block are each one thing', async () => {
     await click(38, 30); await waitSel('1 selected');            // the dial
     await click(-10, 30); await waitSel('1 selected');           // the leader: crosses the outline, joined to nothing
     await click(113, 10); await waitSel('1 selected');           // the block's line: the whole INSERT
     await page.keyboard.press('Escape');
-  });
+  }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
   await step('edit: dragging a box from empty space selects what lies fully inside it', async () => {
     const a = await at(-5, -5), b = await at(101, 61);
@@ -4009,7 +4011,7 @@ try {
     await waitSel('13 selected');                                // the plate and what is inside; not the leader or the block
     assert.equal(await t('rubber').isVisible(), false);
     await page.keyboard.press('Escape'); await waitSel('0 selected');
-  });
+  }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
   await step('edit: Delete removes the selection, Ctrl+Z brings it back, Ctrl+Y does it again; the tab is marked unsaved', async () => {
     await click(38, 30); await waitSel('1 selected');
@@ -4023,7 +4025,7 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 14');
     await page.keyboard.press('Control+z');
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
-  });
+  }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
   await step('Select all: Ctrl+A and Edit → Select all pick every visible entity of a drawing (not while typing in an input); Delete then works; Ctrl+Z brings them back', async () => {
     await page.keyboard.press('Control+a');
@@ -4047,7 +4049,7 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 0');
     await page.keyboard.press('Control+z');
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 15');
-  });
+  }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
   await step('edit: Keep only this leaves just the outline; the size is the plate\'s 100 × 60', async () => {
     await clickConnected(50, 0); await waitSel('8 selected');
@@ -4066,7 +4068,7 @@ try {
     await page.waitForTimeout(150);
     await page.screenshot({ path: shotDir + '/s5-kept-dark.png' });
     await menuItem('View', 'Theme: light');
-  });
+  }, { needs: ['edit: a DXF tab gets the Drawing panel with W × H in mm; no selection, no Keep only'] });
 
   await step('edit: a typed width scales the drawing, the height follows, it stays at the sheet\'s bottom-left', async () => {
     await t('dw').fill('250'); await t('dw').press('Enter');
@@ -4087,7 +4089,7 @@ try {
     let ink = await inkAt();
     while (!(ink[0] && ink[1]) && Date.now() < end) { await page.waitForTimeout(50); ink = await inkAt(); }
     assert.deepEqual(ink, [true, true], 'the left edge is at 0 and the right at 125 on the sheet');
-  });
+  }, { needs: ['edit: Keep only this leaves just the outline; the size is the plate\'s 100 × 60'] });
 
   await step('edit: Set length: two points snap to ends, the real length scales the drawing', async () => {
     await t('set-length').click();
@@ -4105,7 +4107,7 @@ try {
     await t('set-length').click(); await click(6.25, 0); await page.keyboard.press('Escape');
     assert.match(await t('cmd-prompt').textContent(), /Set length cancelled/);
     assert.equal(await t('len-row').isVisible(), false);
-  });
+  }, { needs: ['edit: a typed width scales the drawing, the height follows, it stays at the sheet\'s bottom-left'] });
 
   await step('edit: Ctrl+Z walks back through the scaling and Keep only; Ctrl+Y forward again', async () => {
     await page.keyboard.press('Control+z'); await waitSize('125', '75');
@@ -4119,7 +4121,7 @@ try {
     await page.keyboard.press('Control+Shift+z'); await waitSize('125', '75');
     await page.keyboard.press('Control+y'); await waitSize('62.5', '37.5');
     assert.equal(await t('redo').isDisabled(), true);
-  });
+  }, { needs: ['edit: Set length: two points snap to ends, the real length scales the drawing'] });
 
   await step('edit: Unit fix ×25.4 / ÷25.4 scales the whole drawing in one undo step and says before → after', async () => {
     assert.match(await t('unit-up').getAttribute('title'), /Would give 1587\.50 × 952\.50 mm/);
@@ -4150,7 +4152,7 @@ try {
     await page.keyboard.press('Control+z'); await waitSize('1587.5', '952.5');        // one undo step each
     await page.keyboard.press('Control+z'); await waitSize('62.5', '37.5');
     assert.equal(await t('undo').isDisabled(), false, 'the earlier steps are still there');
-  });
+  }, { needs: ['edit: Ctrl+Z walks back through the scaling and Keep only; Ctrl+Y forward again'] });
 
   await step('edit: Save writes the edited drawing: 8 entities, 62.5 × 37.5, nothing else', async () => {
     const dl = await downloaded(() => page.keyboard.press('Control+s'));
@@ -4161,7 +4163,7 @@ try {
     assert.ok(!(await tabs()).at(-1).includes('•'), 'saved: no dot');
     const again = await downloaded(() => page.keyboard.press('Control+s'));
     assert.equal(again.name, 'outline-edited.dxf', 'later saves write the same file');
-  });
+  }, { needs: ['edit: Set length: two points snap to ends, the real length scales the drawing'] });
 
   await step('edit: Add to layout puts the edited, scaled part (62.5 × 37.5) on a new layout', async () => {
     await closeTabs(/layout/);                                   // a fresh layout, not the earlier ones
@@ -4181,7 +4183,7 @@ try {
     assert.deepEqual(dims, [37.5, 62.5], 'the copy is the edited part at true size');
     const blk = Object.entries(doc.blocks).find(([n]) => n === 'outline-edited');
     assert.equal(blk[1].entities.length, 8, 'only the outline is in the part');
-  });
+  }, { needs: ['edit: Save writes the edited drawing: 8 entities, 62.5 × 37.5, nothing else'] });
 
   await step('edit: tidy up the tabs', async () => {
     await closeTabs(/outline/);
@@ -16601,6 +16603,7 @@ try {
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
+  for (const entry of only ? expandNeeds(steps, only) : steps.filter(({ name }) => selectStep(name))) await runStep(entry);
 } catch (e) {
   failed++;
   console.log('FAIL', e.stack || e);
