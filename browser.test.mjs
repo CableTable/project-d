@@ -4406,6 +4406,96 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 156c1: picked Compare snapshot edits its linked tab in drawing coordinates, Undo, differences and read-only copies', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const first = newDoc(4), second = newDoc(1);
+    addEntities(first, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], true), dxfLine(45, 50, 60, 50)]);
+    addEntities(second, [dxfPoly([[110, 120], [170, 120], [170, 180], [110, 180]].map((pt) => pt.map((v) => v / 25.4)), true)]);
+    const open = async (name, raw) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const saveDoc = async () => {
+      const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await download.path(), 'utf8'));
+    };
+    const compare = async () => { await tab('Compare').click(); await q('cmp-name-2').click(); };
+    const diff = () => q('cmp-diff').allTextContents();
+    const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < .001, `${actual} ≈ ${expected}`);
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('first-156c1.dxf', first);
+      // A real library part also exercises the library-only refusal without a test hook.
+      await p.keyboard.press('Control+a'); await q('bar-extract').click();
+      await q('name-input').fill('Part 156c1'); await q('name-ok').click(); await q('name-dialog').waitFor({ state: 'detached' });
+      await open('second-156c1.dxf', second); await tab('first-156c1.dxf').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-name-2').click(); await q('cmp-run').click();
+      assert.notEqual(await q('cmp-count').textContent(), 'No differences');
+      assert.match(await q('cmp-hint').textContent(), /X -100.00, Y -100.00/);
+      await command('line'); await click(45.05, 50.05); await click(60.05, 50.05); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      assert.equal(await q('cmp-count').textContent(), 'No differences', 'Draw snaps to the other snapshot and recalculates Differences');
+      const drawnDiff = await diff();
+      await click(52.5, 50); await command('move'); await command('145,150'); await command('@10,5');
+      assert.notDeepEqual(await diff(), drawnDiff, 'Move recalculates Differences');
+      const movedDiff = await diff();
+      await p.keyboard.press('Control+z'); assert.deepEqual(await diff(), drawnDiff, 'Compare Undo uses source drawing history');
+      await p.keyboard.press('Control+y'); assert.deepEqual(await diff(), movedDiff, 'Compare Redo uses source drawing history');
+      await p.locator('[data-tool=select]').click(); await click(62.5, 55);
+      await q('grip').first().waitFor();
+      const a = await point(55, 55);
+      await p.mouse.click(a.x, a.y); await command('@0,5');
+      assert.notDeepEqual(await diff(), movedDiff, 'grip edit also refreshes Differences');
+      await q('cmp-count').scrollIntoViewIfNeeded();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo156c1-${theme}.png` });
+      }
+      await tab('second-156c1.dxf').click();
+      assert.ok(await tab('second-156c1.dxf').locator('.dot').count(), 'drawing 2 is dirty');
+      const changed = await saveDoc(), line = changed.entities.find((e) => e.type === 'LINE');
+      assert.equal(changed.entities.length, 2); near(fieldOf(line, 10) * 25.4, 155); near(fieldOf(line, 20) * 25.4, 160);
+      near(fieldOf(line, 11) * 25.4, 170); near(fieldOf(line, 21) * 25.4, 155);
+      await tab('first-156c1.dxf').click();
+      assert.equal(await tab('first-156c1.dxf').locator('.dot').count(), 0, 'drawing 1 stays clean');
+      assert.deepEqual(flatten(await saveDoc()).items, flatten(readDxf(writeDxf(first))).items, 'drawing 1 unchanged');
+      await compare(); await command('d'); await command('155,160'); await command('170,155'); await command('160,170');
+      await tab('second-156c1.dxf').click();
+      assert.equal((await saveDoc()).entities.length, 3, 'Dimension also commits into the linked source');
+      await compare(); await p.keyboard.press('Control+z'); await tab('second-156c1.dxf').click();
+      assert.equal((await saveDoc()).entities.length, 2, 'Compare undoes Dimension in the same source history');
+      await compare(); await p.locator('[data-tool=select]').click();
+      const closedName = await q('cmp-name-2').textContent(), closedMessage = `Open ${closedName} to edit`;
+      await tab('second-156c1.dxf').locator('.x').click();
+      await command('line'); assert.equal(await q('cmd-prompt').textContent(), closedMessage);
+      await command('move'); assert.equal(await q('cmd-prompt').textContent(), closedMessage);
+      await command('d'); assert.equal(await q('cmd-prompt').textContent(), closedMessage);
+      // A same-name replacement has a different tab id and must not revive the link.
+      await open(closedName, second); await compare(); await command('line');
+      assert.equal(await q('cmd-prompt').textContent(), closedMessage);
+      await q('cmp-add-library').click(); await p.getByRole('menuitem', { name: 'Part 156c1', exact: true }).click();
+      const copies = await diff();
+      await command('line'); assert.match(await q('cmd-prompt').textContent(), /Open the part as a drawing to edit/);
+      await command('move'); assert.match(await q('cmd-prompt').textContent(), /Open the part as a drawing to edit/);
+      await command('d'); assert.match(await q('cmd-prompt').textContent(), /Open the part as a drawing to edit/);
+      await p.keyboard.press('Control+z'); assert.match(await q('cmd-prompt').textContent(), /Open the part as a drawing to edit/);
+      assert.deepEqual(await diff(), copies, 'refused edits change nothing');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 143: Measure on a layout', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);

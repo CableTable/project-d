@@ -12,6 +12,23 @@ function source(name, entities, factor = 1) {
 }
 const plate = (name, w = 30, x = 0) => source(name, [rect(x, 0, w, 20), circle(x + 10, 10, 2)]);
 
+test('linked snapshots keep tab identity; coordinates undo offset and inch factor; refresh can empty the artwork', () => {
+  const original = { ...plate('same.dxf'), tabId: 'tab-2' }, item = L.addItem([], original)[0];
+  assert.equal(item.tabId, 'tab-2');
+  assert.equal(L.addItem([], { ...original, tabId: 'tab-1' })[0].tabId, 'tab-1');
+  assert.equal(L.addItem([], { ...plate('part'), part: true })[0].part, true);
+  const placed = { ...item, factor: 25.4, offset: [-254, 50.8] };
+  assert.deepEqual(L.drawingPoint(placed, [0, 101.6]), [10, 2]);
+  assert.deepEqual(L.comparePoint(placed, [10, 2]), [0, 101.6]);
+  const empty = { ...item, ...L.snapshotGeometry(source('same.dxf', [])) };
+  assert.equal(empty.tabId, 'tab-2');
+  assert.equal(empty.box, null);
+  assert.deepEqual(empty.polys, []);
+  assert.equal(empty.metrics.perimeter, 0);
+  assert.doesNotThrow(() => L.lineUpItems([empty, item], 'bl'));
+  assert.ok(L.compareItems([empty, { ...item, id: 2 }], .1).diffs.length);
+});
+
 test('snapshots own their geometry and visibility; five distinct colours, limit and reuse after removal', () => {
   const original = plate('<b>part</b>');
   let items = L.addItem([], original);
