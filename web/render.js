@@ -89,7 +89,7 @@ export function paintDrawing(canvas, o) {
   const drawn = paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, o.hide, factor, o.wireframe);
   if (o.hl && o.hl.length) highlight(c, o.hl, fl.mats, T, k, dpr, o.accent || '#4f46e5', o.wireframe);
   if (o.dim) drawDimPreview(c, o.dim, T, dpr, o.dimCol || DIM_LIGHT);
-  if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5');
+  if (o.marks && o.marks.length) drawMarks(c, o.marks, T, dpr, o.accent || '#4f46e5', o.snapCol);
   if (o.gaps && o.gaps.length) drawGaps(c, o.gaps, T, dpr, o.markCol || '#c2410c');
   if (o.contour && o.contour.length) drawContour(c, o.contour, T, dpr, o.contourCol || '#00ff00', o.contourDash || []);
   if (o.previewBounds && !o.keep) { const box = overlayBox(o, T, dpr); if (box) o.previewBounds(box); }
@@ -201,7 +201,8 @@ function drawDimPreview(c, g, T, dpr, accent) {
 }
 
 /** Set length's / Measure's points: a ring and a cross at each, a line between two; the point under the cursor gets the shape of its snap. */
-export function drawMarks(c, pts, T, dpr, accent) {
+export const SNAP_MARK_SIZE = 6;                   // 155p: AutoSnapMarkerSize 6, the half side in px like AutoCAD's
+export function drawMarks(c, pts, T, dpr, accent, snapCol = '#ffbf7f') {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.6 * dpr; c.setLineDash([]);
   const placed = pts.filter((p) => !p[3]).map(([x, y]) => mapply(T, x, y));
@@ -209,7 +210,7 @@ export function drawMarks(c, pts, T, dpr, accent) {
   const r = 7 * dpr;
   for (const [x, y] of placed) { c.beginPath(); c.arc(x, y, r, 0, Math.PI * 2); c.moveTo(x - r * 1.6, y); c.lineTo(x + r * 1.6, y); c.moveTo(x, y - r * 1.6); c.lineTo(x, y + r * 1.6); c.stroke(); }
   for (const p of pts.filter((q) => q[3])) {
-    const [x, y] = mapply(T, p[0], p[1]), k = p[2], h = 5 * dpr;
+    const [x, y] = mapply(T, p[0], p[1]), k = p[2], h = SNAP_MARK_SIZE * dpr;
     c.beginPath();
     if (k === 'end') c.rect(x - h, y - h, 2 * h, 2 * h);
     else if (k === 'centre') c.arc(x, y, h, 0, Math.PI * 2);
@@ -219,8 +220,15 @@ export function drawMarks(c, pts, T, dpr, accent) {
     else if (k === 'perpendicular') { c.moveTo(x - h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.moveTo(x - h, y); c.lineTo(x, y); c.lineTo(x, y + h); }       // the right-angle symbol
     else if (k === 'near') { c.moveTo(x - h, y - h); c.lineTo(x + h, y - h); c.lineTo(x - h, y + h); c.lineTo(x + h, y + h); c.closePath(); }       // AutoCAD's hourglass
     else { c.moveTo(x - h, y); c.lineTo(x + h, y); c.moveTo(x, y - h); c.lineTo(x, y + h); }
-    c.stroke();
-    if (k) { c.font = `${11 * dpr}px system-ui, sans-serif`; c.textBaseline = 'middle'; c.fillText(SNAP_NAME[k] || k, x + h + 4 * dpr, y - h - 2 * dpr); }
+    const halo = c.lineWidth;                                                       // a dark edge under the light orange so it reads on a white sheet too
+    c.strokeStyle = 'rgba(0, 0, 0, .55)'; c.lineWidth = halo + 2 * dpr; c.stroke();
+    c.strokeStyle = snapCol; c.lineWidth = halo; c.stroke();
+    if (k) {
+      const name = SNAP_NAME[k] || k;
+      c.font = `${11 * dpr}px system-ui, sans-serif`; c.textBaseline = 'middle'; c.lineJoin = 'round';
+      c.strokeStyle = 'rgba(0, 0, 0, .55)'; c.lineWidth = 3 * dpr; c.strokeText(name, x + h + 4 * dpr, y - h - 2 * dpr);
+      c.fillStyle = snapCol; c.fillText(name, x + h + 4 * dpr, y - h - 2 * dpr);
+    }
   }
 }
 

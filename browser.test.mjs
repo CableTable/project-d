@@ -442,6 +442,97 @@ try {
       await p.keyboard.press('Escape');
     } finally { await context.close(); }
   });
+  await step('TODO 155o-r: crosshair cursor over the canvas only, light orange snap marker of 6, box fill 25%, grip 5 with hover and hot colours', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+      p.on('pageerror', (e) => errs.push(String(e)));
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const doc = newDoc(4);
+      addEntities(doc, dxfLine(20, 20, 60, 20), dxfLine(20, 20, 20, 50), dxfCircle(80, 40, 8));
+      await q('picker').setInputFiles({ name: 'look-155.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'look-155.dxf');
+      await p.locator('[data-tool=select]').click();
+      const atPoint = async (x, y) => {
+        const b = await p.locator('rect.sheet').boundingBox(), w = Number(await panelControl(p, p.locator('[data-key=sheetW]')).inputValue()), h = Number(await panelControl(p, p.locator('[data-key=sheetH]')).inputValue());
+        return { x: b.x + x * b.width / w, y: b.y + (h - y) * b.width / w };
+      };
+      const at = async (x, y, steps = 3) => { const pt = await atPoint(x, y); await p.mouse.move(pt.x, pt.y, { steps }); return pt; };
+      const xh = p.getByTestId('crosshair');
+      // 155o: the crosshair is on the canvas, 5% arms and a pick box, the OS cursor is hidden there; on the ribbon and the panel it is gone
+      await at(40, 35);
+      await xh.waitFor({ state: 'visible' });
+      const cv = await p.getByTestId('canvas').boundingBox(), arm = await xh.locator('.xh-h').boundingBox(), vert = await xh.locator('.xh-v').boundingBox(), box = await xh.locator('.xh-box').boundingBox();
+      assert.ok(Math.abs(arm.width - (2 * Math.round(cv.width * .05) + 1)) <= 1, `horizontal arms are 5% of the canvas width each: ${arm.width} for ${cv.width}`);
+      assert.ok(Math.abs(vert.height - (2 * Math.round(cv.height * .05) + 1)) <= 1, `vertical arms are 5% of the canvas height each: ${vert.height} for ${cv.height}`);
+      assert.equal(Math.round(box.width), 7, 'PICKBOX 3 is the half side: a 7 px square');
+      assert.equal(await p.getByTestId('canvas').evaluate((el) => getComputedStyle(el).cursor), 'none');
+      const pt = await atPoint(40, 35);
+      assert.ok(Math.abs(arm.x + arm.width / 2 - pt.x) <= 1.5 && Math.abs(arm.y - pt.y) <= 1.5, 'the crosshair is centred on the pointer');
+      await p.mouse.move(pt.x + 120, pt.y + 60, { steps: 4 });
+      assert.ok(Math.abs((await xh.locator('.xh-h').boundingBox()).x + arm.width / 2 - (pt.x + 120)) <= 1.5, 'it follows the pointer');
+      const wheelPt = await at(40, 35); await p.mouse.wheel(0, -300);
+      await p.mouse.move(wheelPt.x + 5, wheelPt.y + 5);
+      assert.ok(Math.abs((await xh.locator('.xh-h').boundingBox()).x + arm.width / 2 - (wheelPt.x + 5)) <= 1.5, 'still on the pointer after a zoom');
+      await p.mouse.wheel(0, 300);
+      const rb = await p.locator('.ribbon').first().boundingBox();
+      await p.mouse.move(rb.x + 40, rb.y + 20, { steps: 3 });
+      await xh.waitFor({ state: 'hidden' });
+      await p.mouse.move(cv.x + cv.width / 2, cv.y + cv.height / 2, { steps: 3 }); await xh.waitFor({ state: 'visible' });
+      const zb = await p.locator('.zoombox button').first().boundingBox();
+      await p.mouse.move(zb.x + zb.width / 2, zb.y + zb.height / 2, { steps: 3 });
+      await xh.waitFor({ state: 'hidden' });
+      const panel = await p.locator('.panel').first().boundingBox();
+      await p.mouse.move(panel.x + panel.width / 2, panel.y + 30, { steps: 3 });
+      await xh.waitFor({ state: 'hidden' });
+      const alpha = (c) => { const m = /\/\s*([\d.]+)\s*\)$/.exec(c) || /,\s*([\d.]+)\)$/.exec(c); return m ? Number(m[1]) : 1; };
+      const snapBox = (pt) => q('drawing').evaluate((c, pt) => {                    // the extent of the light orange pixels within 10 css px of the snap point
+        const b = c.getBoundingClientRect(), k = c.width / b.width, cx = (pt.x - b.x) * k, cy = (pt.y - b.y) * k, R = Math.round(10 * k);
+        const d = c.getContext('2d').getImageData(Math.round(cx) - R, Math.round(cy) - R, 2 * R, 2 * R).data;
+        let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+        for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && Math.abs(d[i] - 255) < 6 && Math.abs(d[i + 1] - 191) < 6 && Math.abs(d[i + 2] - 127) < 6) { const n = i / 4, x = n % (2 * R), y = Math.floor(n / (2 * R)); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+        return x1 < 0 ? null : { w: (x1 - x0 + 1) / k, h: (y1 - y0 + 1) / k };
+      }, pt);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        // 155p: Line tool hovering an end point: the marker is ACI 31 (#ffbf7f) and 6 px a side each way, with its name beside it
+        await p.locator('[data-tool=line]').click();
+        const end = await at(60.3, 20.3, 5);
+        await p.waitForTimeout(200);
+        const m = await snapBox(end);
+        assert.ok(m, 'the snap marker is painted in #ffbf7f');
+        assert.ok(m.w >= 12 && m.w <= 15 && m.h >= 12 && m.h <= 15, `a 6 px marker is about 12 to 14 px across, got ${m.w} x ${m.h}`);
+        await p.screenshot({ path: `${shotDir}/todo155op-crosshair-snap-${theme}.png` });
+        await p.keyboard.press('Escape'); await p.locator('[data-tool=select]').click();
+        // 155r: a crossing box (right to left) has 25% fill
+        const a = await atPoint(50, 12), b2 = await atPoint(14, 35);
+        await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.mouse.move(b2.x, b2.y, { steps: 6 });
+        const rubber = p.getByTestId('rubber'); await rubber.waitFor({ state: 'visible' });
+        const bg = await rubber.evaluate((el) => getComputedStyle(el).backgroundColor);
+        assert.ok(Math.abs(alpha(bg) - .25) < .01, `box fill is 25%, got ${bg}`);
+        await p.screenshot({ path: `${shotDir}/todo155r-crossing-${theme}.png` });
+        await p.mouse.up();
+        await p.keyboard.press('Escape');
+        // 155r: grips are 11 px (size 5), the one under the pointer is ACI 11, the dragged one ACI 12
+        const mid = await atPoint(40, 20); await p.mouse.click(mid.x, mid.y);
+        await p.waitForFunction(() => document.querySelectorAll('[data-testid=grip]').length >= 2);
+        const side = await p.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
+        assert.equal(side, 11);
+        const fill = (loc) => loc.evaluate((el) => getComputedStyle(el).fill);
+        assert.ok(!['rgb(255, 127, 127)', 'rgb(204, 0, 0)'].includes(await fill(p.locator('[data-testid=grip]').first())), 'a grip at rest keeps the selection colour');
+        const gr = await at(60, 20, 4);
+        await p.waitForFunction(() => document.querySelector('[data-testid=grip].hover'));
+        assert.equal(await fill(p.locator('[data-testid=grip].hover')), 'rgb(255, 127, 127)');
+        await p.screenshot({ path: `${shotDir}/todo155r-grip-hover-${theme}.png`, clip: { x: gr.x - 80, y: gr.y - 60, width: 160, height: 120 } });
+        await p.mouse.down(); await p.mouse.move(gr.x + 30, gr.y + 20, { steps: 4 });
+        await p.getByTestId('grip-hot').waitFor();
+        assert.equal(await fill(p.getByTestId('grip-hot')), 'rgb(204, 0, 0)');
+        await p.keyboard.press('Escape'); await p.mouse.up();
+        await p.keyboard.press('Escape');
+      }
+      assert.deepEqual(errs, []);
+    } finally { await context.close(); }
+  });
   await step('TODO 71b: layout rotated part miss, window vs crossing, live styles, Shift add, locked/hidden skip and groups', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
@@ -8186,7 +8277,7 @@ try {
     await pick(70, 30, 3); await click(190, 100, { shift: true }); await click(60, 130, { shift: true }); await click(170, 30, { shift: true });
     await gripWhen(3 + 5 + 4 + 4);
     const sq = await page.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
-    assert.equal(sq, 10, 'the board\'s 10 px squares');
+    assert.equal(sq, 11, 'GRIPSIZE 5 is the half side: 11 px squares (TODO 155r)');
     await page.locator('[data-tool=line]').click();
     await gripWhen(0);                                         // a drawing tool is on: no grips
     await page.keyboard.press('Escape');                       // back to Select, the selection stays
@@ -14229,7 +14320,7 @@ try {
       assert.ok(ink.fills >= 2, 'dimension arrows are painted');
       await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
       const grip = p.locator('[data-grip="0:m"]'), start = await grip.boundingBox();
-      assert.ok(Math.abs(start.width - 11.2) < .02, 'ten-pixel grips plus their 1.2-pixel stroke stay precise');
+      assert.ok(Math.abs(start.width - 12.2) < .02, 'eleven-pixel grips (GRIPSIZE 5) plus their 1.2-pixel stroke stay precise');
       await p.mouse.move(anchor.x, anchor.y + 60); await p.mouse.down({ button: 'middle' });
       for (let dx = 1; dx <= 4; dx++) {
         await p.mouse.move(anchor.x + dx, anchor.y + 60 + dx);
@@ -14243,7 +14334,7 @@ try {
       await p.keyboard.press('Escape'); await p.locator('[data-tool=line]').click();
       const end = await atPoint(X + .6, Y); await p.mouse.move(end.x + 3, end.y + 2);
       await p.waitForFunction(() => window.__zoomPaint?.texts.includes('end'));
-      assert.ok((await p.evaluate(() => window.__zoomPaint.rects)).some(([w, h]) => w === 10 && h === 10), 'endpoint marker stays ten pixels');
+      assert.ok((await p.evaluate(() => window.__zoomPaint.rects)).some(([w, h]) => w === 12 && h === 12), 'endpoint marker stays twelve pixels (AutoSnapMarkerSize 6, TODO 155p)');
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
       await p.keyboard.press('Control+a'); await q('grip').first().waitFor();
       for (const theme of ['light', 'dark']) {

@@ -1,5 +1,6 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
 import { h } from './dom.js';
+import { attachCrosshair } from './crosshair.js';
 import { pickColour, swatches } from './colourpicker.js';
 import { recentColours, stripGroups } from './swatchstrip.js';
 import { parseHex, rgbKey, keyRgb, validColourKey } from './colour.js';
@@ -233,6 +234,7 @@ const state = {
   draw: null, drawDoc: null,       // the drawing tool in progress (draw.js createTool), and the tab it works on
   drawCfg: { radius: 5 },          // the rounded rectangle's corner radius (mm), remembered on this PC
   drawHover: null,                 // where the pointer is for the drawing tool: [x, y (mm), snap kind]
+  gripHover: null,                 // the id ('e:id') of the grip under the pointer, drawn in the hover colour (155r)
   grip: null,                      // a grip being dragged: { d, e (the entity), id, ent, next (the changed entity), to, label, hot (click, then click), moved }
   sheetSel: null, sheetDrag: null,   // the layout whose sheet is selected (Sheet resize, TODO 23); a handle being dragged: { side, p0, W, H, newW, newH, hot, moved }
   propsOn: true, match: null,     // The whole docker's visibility; Match properties in progress: { d, src (the source's index) }
@@ -1378,6 +1380,7 @@ function buildCanvas() {
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, '+'),
       ui.fitBtn));
   attachCanvasEvents();
+  ui.canvas.append(attachCrosshair(ui.canvas));
   ui.canvas.addEventListener('pointermove', (e) => ui.cmdUI.pointer(e.clientX, e.clientY));
   return ui.canvas;
 }
@@ -4093,7 +4096,7 @@ function paintOverlay(gesture = false) {
       }
       if (marks) {
         const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
-        drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'));
+        drawMarks(c.getContext('2d'), marks, T, dpr, cssVar('--selection', '#4f46e5'), cssVar('--snap-mark', '#ffbf7f'));
         canvasPreviewBounds = unionBox(canvasPreviewBounds, overlayBox({ marks }, T, dpr));
       }
       ui.cmdUI.place();
@@ -4104,7 +4107,7 @@ function paintOverlay(gesture = false) {
       contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
       contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
       markCol: cssVar('--mark', '#c2410c'),
-      accent: cssVar('--selection', '#4f46e5'),
+      accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#ffbf7f'),
       dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
     const move = state.entityDrag || (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? state.mod.move : null);
     if (move?.items) paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
@@ -4275,7 +4278,7 @@ function attachCanvasEvents() {
     if (state.draw && d && state.drawDoc === curDoc()) drawHoverAt(d, e.clientX, e.clientY, e.shiftKey);
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     if (state.text.drag) textDragMove(e);
-    if (state.grip) gripMove(e);
+    if (state.grip) gripMove(e); else gripHoverAt(e);
     if (state.balDrag) balMove(e);
     const picking = (modLive() && !(['move', 'copy', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
     if (drag && !picking && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
@@ -4294,6 +4297,7 @@ function attachCanvasEvents() {
     ui.coords.textContent = `X ${fmt(cx)}   Y ${fmt(cy)} mm`;
   });
   c.addEventListener('pointerleave', () => {
+    if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if (modLive() && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
   const end = () => { pan = null; c.classList.remove('panning'); };
@@ -7032,6 +7036,12 @@ function gripAim(g, q, shift = false) {
   const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]], shift);
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
 }
+/** The grip under the pointer turns the hover colour (GRIPHOVER); only the overlay is redrawn, and only when the grip under the pointer changes. */
+function gripHoverAt(e) {
+  const d = editable(), hit = d && gripOn(d) ? gripAt(d, e.clientX, e.clientY) : null, id = hit ? hit.e + ':' + hit.id : null;
+  if (id === state.gripHover) return;
+  state.gripHover = id; drawOvl();
+}
 function gripDown(e) {
   const d = editable();
   if (!d) return false;
@@ -7096,8 +7106,8 @@ function gripTyped(raw) {
 function gripOvl(d, out, k, grips) {
   const g = state.grip;
   const square = (p, hot, id) => {
-    const [sx, sy] = toSheetPt(d, p), z = hot ? 12 : 10;
-    const sq = s('rect', { class: 'gr' + (hot ? ' hot' : ''), x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': hot ? 'grip-hot' : 'grip' });
+    const [sx, sy] = toSheetPt(d, p), z = GR.gripSide();
+    const sq = s('rect', { class: 'gr' + (hot ? ' hot' : state.gripHover === id ? ' hover' : ''), x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': hot ? 'grip-hot' : 'grip' });
     // Screen coordinates keep small grips precise even far from the drawing origin.
     return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
       hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
@@ -8493,7 +8503,7 @@ function cmpPaint(canvas, c, base) {
     const ctx = canvas.getContext('2d'), k = base.scale * base.dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k], at = mapply(T, c.snap.x, c.snap.y), accent = cssVar('--selection', '#4f46e5');
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.strokeStyle = accent; ctx.lineWidth = base.dpr; ctx.setLineDash([3 * base.dpr, 4 * base.dpr]);
     ctx.beginPath(); ctx.moveTo(0, at[1]); ctx.lineTo(canvas.width, at[1]); ctx.moveTo(at[0], 0); ctx.lineTo(at[0], canvas.height); ctx.stroke();
-    drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent);
+    drawMarks(ctx, [[c.snap.x, c.snap.y, c.snap.kind, true]], T, base.dpr, accent, cssVar('--snap-mark', '#ffbf7f'));
   }
 }
 /** The differences as a glow (a soft round patch) with its number; the one picked in the list has a ring. */
