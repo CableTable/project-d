@@ -436,7 +436,7 @@ function buildMenus() {
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
-  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => setTool(id), key, () => !curLay() || LAY_MODS.includes(id)]);
+  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
@@ -616,8 +616,8 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 }
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
-  const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : setTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() && !curLay() : !!editable() || (id === 'contour' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
+  const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? DO.rotate() : setTool(id),
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay() && !!selectedPlaced()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -695,13 +695,13 @@ function ribbonContents(kind) {
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),
       btn('Select all', '<rect x="4" y="4" width="16" height="16" stroke-dasharray="3 2"/><path d="M8 12l3 3 5-6"/>', selectAll, { small: true, enabled: () => !!editable() || !!curLay() })))];
+  groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
   if (kind === 'layout') return [...groups,
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('contour'))];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('contour'))];
   if (kind === 'drawing') {
-    groups.push(group('Draw', ...['line', 'polyline', 'circle', 'arc'].map((id) => ribbonTool(id)), stack(...['rect', 'ellipse', 'text'].map((id) => ribbonTool(id, true)))));
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true))));
@@ -6245,7 +6245,7 @@ function curLayerName(d) {
   const names = d.lay ? new Set(Object.keys(LD.layersOf(d.lay))) : new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
   return d.curLayer && names.has(d.curLayer) ? d.curLayer : '0';
 }
-const drawLive = () => !!(state.draw && state.drawDoc === (editable() || curLay() && curDoc()));
+const drawLive = () => !!(state.draw && state.drawDoc && state.drawDoc === (editable() || curLay() && curDoc()));
 
 /** The point for a pick (mm, y up, with its snap kind): the drawing's snaps, the tool's own points, then Shift / ORTHO along X or Y. */
 function drawPick(d, cx, cy, shift, hover) {
@@ -7713,7 +7713,7 @@ function textHeightTyped(v) {
 }
 /** A property from the bar or the command line: changes the selected text (one undo step), the one being typed, and is what the next text gets. patch: { h (mm), angle, font, ha, bold }. */
 function textProp(patch) {
-  const d = editable(), c = state.text.cfg, ts = d && textSel(d), f = d ? d.factor : 1;      // (on a layout there is no selected text to change: the next text gets it)
+  const d = editable(), c = state.text.cfg, ts = d && textSel(d);      // (on a layout there is no selected text to change: the next text gets it)
   const m = {};
   if (patch.h != null) m.h = patch.h;
   if (patch.angle != null) m.angle = patch.angle;

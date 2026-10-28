@@ -15016,6 +15016,42 @@ try {
     await page.locator('[data-tool=select]').click();
   });
 
+  await step('TODO 156b review: layout ribbon Line and Rotate are enabled; ribbon and menu Rotate turn a placed part', async () => {
+    await freshLayoutWithPlate();
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const line = page.locator('.ribbon-body').getByRole('button', { name: 'Line', exact: true });
+    assert.equal(await line.isEnabled(), true);
+    await line.click(); assert.match(await prompt(), /^Specify first point/);
+    await typeCmd('50,50'); await typeCmd('150,100'); await typeCmd('');
+    assert.equal(await nParts(), 2, 'ribbon Line draws an object on the layout');
+    await page.locator('[data-tool=select]').click();
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true });
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const rotate = page.locator('.ribbon-body').getByRole('button', { name: 'Rotate', exact: true });
+    assert.equal(await rotate.isEnabled(), true);
+    await page.locator('[data-menu=Modify]').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Explode', exact: true }).isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await rotate.click(); assert.match(await prompt(), /^Angle <0\.00>/);
+    await typeCmd('90'); assert.equal(await t('rot-angle').inputValue(), '90°');
+    const saved = layoutFromRaw(await savedDoc());
+    assert.equal(saved.placed.find((p) => !saved.parts[p.partId].obj).rot, 90, 'ribbon Rotate changes the placement');
+    await page.keyboard.press('Escape');
+    await menuItem('Modify', 'Rotate'); assert.match(await prompt(), /^Angle <90\.00>/);
+    await typeCmd('180'); assert.equal(await t('rot-angle').inputValue(), '180°');
+    await page.keyboard.press('Escape');
+    await shotBoth('layout-ribbon-review');
+  });
+
+  await step('TODO 156 merge: switching from layout Draw to an empty Compare has no editable target', async () => {
+    await closeTabs(/./);
+    await t('new-layout').click(); await typeCmd('line');
+    await menuItem('File', 'Compare drawings…');
+    assert.match(await prompt(), /Compare: add up to 5 snapshots/);
+    await typeCmd('line'); assert.match(await prompt(), /Pick a snapshot to edit/);
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('TODO 156b1: Contour on scaled placements keeps 5 mm spacing and shares contour parts only at the same scale', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

@@ -243,7 +243,7 @@ function metaEntities(lay, blockOf, ids, ob = []) {
     v: 1, app: 'Project D', name: lay.name, s: lay.s,
     parts: ids.map((id) => { const p = lay.parts[id]; return { id, name: p.name, block: blockOf[id], factor: p.factor || 1, w: p.w, h: p.h, src: p.src || '', ...(p.obj ? { obj: true } : {}) }; }),
     placed: lay.placed.filter((p) => ids.includes(p.partId)),
-    ...(ob.some((o) => o) ? { ob } : {}),       // the group / lock of each baked object, in entity order (a plain entity carries neither)
+    ...(ob.some((o) => o) ? { ob, obCount: ob.length } : {}),       // the group / lock of each baked object, in entity order (a plain entity carries neither)
   };
   const b = enc(meta), out = [];
   for (let i = 0; i < b.length; i += CHUNK) out.push(dxfText(0, 0, 1, b.slice(i, i + CHUNK), { layer: '0' }));
@@ -323,16 +323,17 @@ export function layoutFromRaw(raw, name) {
       ...(typeof p.cid === 'string' && p.cid ? { cid: p.cid } : {}), ...(typeof p.ct === 'string' && p.ct ? { ct: p.ct } : {}) }));   // cid: a part that has a contour; ct: the contour of the part with that cid (layoutcontour.js)
   if (lay.s.gridPart && !lay.parts[lay.s.gridPart]) lay.s.gridPart = null;
   for (const pm of m.parts) if (pm.obj === true && lay.parts[pm.id]) lay.parts[pm.id].obj = true;       // an object kept as a block
-  readObjects(lay, raw, Array.isArray(m.ob) ? m.ob : []);
+  readObjects(lay, raw, Array.isArray(m.ob) ? m.ob : [], m.obCount);
   return lay;
 }
 
 /** The plain entities of the file (not the sheet, the marks or the INSERTs) become layout objects again, one each. */
-function readObjects(lay, raw, ob) {
-  const layers = layersOf(lay);
+function readObjects(lay, raw, ob, count) {
+  const layers = layersOf(lay), plain = raw.entities.filter((e) => e.type !== 'INSERT' && !e.ps && !isReserved(e.layer));
+  // shortcut: equal-count outside reordering remains positional, use stable entity IDs if that must be detected
+  if (count !== plain.length) ob = [];       // outside edits can shift the positional group / lock metadata
   let n = 0, k = 0;
-  for (const e of raw.entities) {
-    if (e.type === 'INSERT' || e.ps || isReserved(e.layer)) continue;
+  for (const e of plain) {
     const info = ob[k++];
     if (raw.layers[e.layer] && !layers[e.layer]) layers[e.layer] = raw.layers[e.layer];
     let id; do id = 'ob' + (++n); while (lay.parts[id]);

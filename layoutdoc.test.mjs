@@ -380,6 +380,21 @@ test('layout objects (TODO 156b fixes): group and lock survive save and reopen; 
   assert.equal(piece.g, 'g1'); assert.equal(piece.lock, true); assert.equal(lay.parts.n1.name, 'a');
 });
 
+test('layout objects (TODO 156b review): an outside entity count change drops positional group and lock metadata', () => {
+  const lay = LD.newLayout('Outside edit'), layers = LD.layersOf(lay);
+  const a = LD.objectPart('a', 'Note', TX.encode({ type: 'TEXT', x: 10, y: 10, h: 5, lines: ['NOTE'], angle: 0, ha: 0, font: 'Standard' }, { layer: '0' }), layers);
+  const b = LD.objectPart('b', 'Line', line(0, 20, 100, 20), layers);
+  lay.parts = { a, b }; lay.placed = [{ ...LD.objectPlacement(a), g: 'notes', lock: true }, LD.objectPlacement(b)];
+  const raw = readDxf(writeDxf(LD.layoutRaw(lay)));
+  assert.equal(LD.readMeta(raw).obCount, 2);
+  assert.equal(LD.layoutFromRaw(raw).placed[0].lock, true, 'unchanged count keeps metadata');
+  for (const entities of [raw.entities.filter((e) => e.type !== 'TEXT'), [...raw.entities, circle(50, 50, 10)]]) {
+    const back = LD.layoutFromRaw({ ...raw, entities });
+    assert.ok(back.placed.every((p) => !p.g && !p.lock), 'a deletion or addition drops all positional metadata');
+    assert.equal(back.placed.length, entities.filter((e) => !LD.isReserved(e.layer)).length, 'the artwork still opens');
+  }
+});
+
 test('layout objects (TODO 156b2): plain entities beside the INSERTs, back as objects, moved / turned ones baked in, not in the grid', () => {
   const lay = LD.newLayout('Objs'), layers = LD.layersOf(lay);
   const part = LD.makePart('p1', 'Plate', (() => { const r = newDoc(4); addEntities(r, rect(0, 0, 40, 20)); return r; })(), 1);
