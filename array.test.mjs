@@ -1,4 +1,4 @@
-// array.js — the rectangular array's grid maths, typed words and copies.   node array.test.mjs
+// array.js — Array's geometry, typed words and copies.   node array.test.mjs
 const { test } = await import('node:test');
 const assert = (await import('node:assert/strict')).default;
 const W = await import('./web/dxf-write.js');
@@ -42,7 +42,7 @@ test('TODO 75 T1: typed lines: option words with their numbers, keys COU / COL /
   for (const no of ['', 'c', 'co', 'copy', '3', '3 rows', 'line']) assert.equal(A.parseLine(no), null, JSON.stringify(no));
   const cfg = A.rectDefaults([0, 0, 100, 50]);
   const r = A.applyLine(cfg, A.parseLine('col 2 r 2'));
-  assert.deepEqual([r.cfg.cols, r.cfg.rows, r.exit, r.ask], [2, 2, false, []]);
+  assert.deepEqual([r.cfg.cols, r.cfg.rows, r.exit, r.ask], [2, 2, false, ['dy']]);
   assert.deepEqual(A.applyLine(cfg, A.parseLine('s 40 -25')).cfg, { ...cfg, dx: 40, dy: -25 });
   assert.deepEqual(A.applyLine(cfg, A.parseLine('s 40')).cfg, { ...cfg, dx: 40 }, 'one number: columns only');
   assert.deepEqual(A.applyLine(cfg, A.parseLine('cou')).ask, ['cols', 'rows']);
@@ -67,7 +67,7 @@ test('TODO 75 T1: arrayRect adds plain copies in order, keeps the originals, lay
   const inch = A.arrayRect(raw, new Set([0]), { cols: 2, rows: 1, dx: 25.4, dy: 0 }, 25.4);
   assert.equal(f(inch.entities[2], 10), 1);
   assert.throws(() => A.arrayRect(raw, sel, { cols: 0, rows: 2, dx: 1, dy: 1 }), /whole numbers/);
-  assert.throws(() => A.arrayRect(raw, sel, { cols: 200, rows: 200, dx: 1, dy: 1 }), /whole numbers/);
+  assert.throws(() => A.arrayRect(raw, sel, { cols: 200, rows: 200, dx: 1, dy: 1 }), /most is 10000/);
   assert.throws(() => A.arrayRect(raw, sel, { cols: 2, rows: 2, dx: 1, dy: 1 }, 0), /scale/);
 });
 
@@ -107,19 +107,19 @@ test('TODO 75 T2: withField takes items from 1, fill -360..360 but not 0, rotate
   assert.deepEqual(['y', 'Yes', 'n', ' NO ', 'x', ''].map(A.yesNo), [true, true, false, false, null, null]);
 });
 
-test('TODO 75 T2: polar typed lines: I, A / F, ROT with Yes / No, X', () => {
-  assert.deepEqual(A.parseLine('i 8 a 180', 'polar'), [{ opt: 'items', args: [8] }, { opt: 'angle', args: [180] }]);
+test('TODO 75 T2: polar typed lines: I, F, ROT with Yes / No, X', () => {
+  assert.deepEqual(A.parseLine('i 8 f 180', 'polar'), [{ opt: 'items', args: [8] }, { opt: 'fill', args: [180] }]);
   assert.deepEqual(A.parseLine('f -90', 'polar'), [{ opt: 'fill', args: [-90] }]);
   assert.deepEqual(A.parseLine('rot n', 'polar'), [{ opt: 'rotate', args: [0] }]);
   assert.deepEqual(A.parseLine('rotate yes x', 'polar'), [{ opt: 'rotate', args: [1] }, { opt: 'exit', args: [] }]);
   assert.deepEqual(A.parseLine('rot', 'polar'), [{ opt: 'rotate', args: [] }]);
-  for (const no of ['r', 'ro', 'n', 'y', 'cou', 'items n']) assert.equal(A.parseLine(no, 'polar'), null, no);
+  for (const no of ['a', 'a 30', 'angle 30', 'r', 'ro', 'n', 'y', 'cou', 'items n']) assert.equal(A.parseLine(no, 'polar'), null, no);
   assert.equal(A.parseLine('i 8'), null, 'Rectangular does not know Items');
   const c = A.polarDefaults();
-  assert.deepEqual(A.applyLine(c, A.parseLine('i 8 a 180 rot n', 'polar')).cfg, { items: 8, fill: 180, rotate: false });
+  assert.deepEqual(A.applyLine(c, A.parseLine('i 8 f 180 rot n', 'polar')).cfg, { items: 8, fill: 180, rotate: false });
   assert.deepEqual(A.applyLine(c, A.parseLine('rot', 'polar')).ask, ['rotate']);
   assert.equal(A.applyLine(c, A.parseLine('rot i 3', 'polar')).error, 'Rotate needs Yes or No');
-  assert.ok(A.applyLine(c, A.parseLine('a 0', 'polar')).error);
+  assert.ok(A.applyLine(c, A.parseLine('f 0', 'polar')).error);
 });
 
 test('TODO 75 T2: arrayPolar adds plain copies turned about the centre (or moved, Rotate items off), keeps layer / colour / line type, leaves the input alone', () => {
@@ -138,4 +138,69 @@ test('TODO 75 T2: arrayPolar adds plain copies turned about the centre (or moved
   assert.throws(() => A.arrayPolar(raw, sel, [NaN, 0], [0, 0], A.polarDefaults()), /centre/);
   assert.throws(() => A.arrayPolar(raw, sel, [0, 0], [0, 0], { items: 0, fill: 360, rotate: true }), /items/);
   assert.throws(() => A.arrayPolar(raw, sel, [0, 0], [0, 0], { items: 3, fill: 0, rotate: true }), /angle/);
+});
+
+test('TODO 75 fix: both array caps include selection size in fields, typed lines and final copies', () => {
+  const raw = W.newDoc(4);
+  W.addEntities(raw, [W.line(0, 0, 10, 0), W.circle(0, 0, 2)]);
+  const sel = new Set([0, 1]), rect = { cols: 50, rows: 100, dx: 10, dy: 10 }, polar = { items: 5000, fill: 360, rotate: true };
+  assert.equal(A.withField(rect, 'cols', 50, 2).cfg.cols, 50);
+  assert.match(A.withField(rect, 'cols', 51, 2).error, /10200 objects.*10000/);
+  assert.match(A.applyLine(rect, A.parseLine('col 51'), 2).error, /2 selected objects/);
+  assert.equal(A.withField(polar, 'items', 5000, 2).cfg.items, 5000);
+  assert.match(A.withField(polar, 'items', 5001, 2).error, /10002 objects.*10000/);
+  assert.match(A.applyLine(polar, A.parseLine('i 5001', 'polar'), 2).error, /2 selected objects/);
+  assert.throws(() => A.arrayRect(raw, sel, { ...rect, cols: 51 }), /2 selected objects.*10200.*10000/);
+  assert.throws(() => A.arrayPolar(raw, sel, [0, 0], [5, 0], { ...polar, items: 5001 }), /2 selected objects.*10002.*10000/);
+});
+
+test('TODO 75 fix: COL 5 asks spacing; Enter keeps it and returns to options without creating an array', () => {
+  const cfg = A.rectDefaults([0, 0, 10, 10]);
+  const col = A.applyLine(cfg, A.parseLine('col'));
+  assert.deepEqual(col.ask, ['cols', 'dx']);
+  const count = A.withField(col.cfg, col.ask[0], 5);
+  const spacing = A.withField(count.cfg, col.ask[1], count.cfg.dx);
+  assert.deepEqual(spacing.cfg, { ...cfg, cols: 5 });
+  assert.deepEqual(A.applyLine(cfg, A.parseLine('col 5')).ask, ['dx']);
+  assert.deepEqual(A.applyLine(cfg, A.parseLine('rows')).ask, ['rows', 'dy']);
+});
+
+test('TODO 75 fix: native dimensions own their blocks, including rotated Polar copies, and 50 x 50 takes under 1 s', () => {
+  const raw = W.newDoc(4);
+  W.addBlock(raw, '*D1', [W.line(0, 0, 10, 0), W.text(5, 1, 2, '10')]);
+  W.addEntities(raw, W.entity('DIMENSION', [[2, '*D1'], [10, 0], [20, 0], [70, 0]]));
+  const before = structuredClone(raw), sel = new Set([0]), field = (e, c) => e.r.v[e.r.c.indexOf(c)];
+  const started = performance.now();
+  const rect = A.arrayRect(raw, sel, { cols: 50, rows: 50, dx: 20, dy: 10 });
+  const ms = performance.now() - started;
+  assert.ok(ms < 1000, '50 x 50 dimension array: ' + ms.toFixed(1) + ' ms');
+  assert.equal(new Set(rect.entities.map((e) => field(e, 2))).size, 2500);
+  assert.equal(f(rect.blocks[field(rect.entities[1], 2)].entities[0], 10), 20);
+  const polar = A.arrayPolar(raw, sel, [0, 0], [5, 0], { items: 4, fill: 360, rotate: true });
+  assert.equal(new Set(polar.entities.map((e) => field(e, 2))).size, 4);
+  const line = polar.blocks[field(polar.entities[1], 2)].entities[0];
+  near(f(line, 11), 0, 'rotated dimension x'); near(f(line, 21), 10, 'rotated dimension y');
+  near(f(polar.blocks[field(polar.entities[1], 2)].entities[1], 50), 90, 'dimension text turns');
+  assert.deepEqual(raw, before, 'original drawing and blocks stay intact');
+});
+
+test('TODO 75 fix: kept dimensions and leaders get separate blocks in both arrays', async () => {
+  const E = await import('./web/edit.js');
+  let raw = W.newDoc(4);
+  raw = { ...raw, ...E.addDimension(raw, E.buildDim('aligned', { a: [0, 0], b: [10, 0], offset: 5, textH: 2 }, 1, 'PD_DIM_1')) };
+  W.addBlock(raw, 'PD_LDR_1', [W.line(0, 0, 5, 5)]);
+  W.addEntities(raw, W.insert('PD_LDR_1', 0, 0));
+  const before = structuredClone(raw), sel = new Set(raw.entities.map((_, i) => i));
+  const started = performance.now();
+  const big = A.arrayRect(raw, new Set([0]), { cols: 50, rows: 50, dx: 20, dy: 10 });
+  const ms = performance.now() - started;
+  assert.ok(ms < 1000, '50 x 50 kept dimension array: ' + ms.toFixed(1) + ' ms');
+  assert.equal(new Set(big.entities.map((e) => e.r.v[e.r.c.indexOf(2)])).size, 2501);
+  for (const next of [A.arrayRect(raw, sel, { cols: 3, rows: 2, dx: 20, dy: 10 }),
+    A.arrayPolar(raw, sel, [0, 0], [5, 0], { items: 6, fill: 360, rotate: true })]) {
+    const names = next.entities.map((e) => e.r.v[e.r.c.indexOf(2)]);
+    assert.equal(new Set(names).size, names.length);
+    assert.ok(names.every((name) => next.blocks[name]));
+  }
+  assert.deepEqual(raw, before);
 });

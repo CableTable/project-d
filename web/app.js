@@ -4923,10 +4923,10 @@ function moveSelectionTo(g, e) {
   } catch (err) { state.entityDrag = null; note(err.message); paintOverlay(); return false; }
 }
 
-function moveLocked(d, sel) {
+function moveLocked(d, sel, command = 'move') {
   const i = [...sel].find((i) => lockedEnt(d, i));
   if (i == null) return false;
-  note(`Layer ${d.raw.entities[i].layer} is locked: unlock it in the Objects tab to move this`);
+  note(`Layer ${d.raw.entities[i].layer} is locked: unlock it in the Objects tab to ${command} this`);
   return true;
 }
 
@@ -6266,7 +6266,7 @@ function modEnter(d) {
 /** Words the Trim / Extend that is on takes itself (modTyped), so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
   const m = state.mod;
-  if (modLive() && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts' && (!!m.ask || !!AR.parseLine(c, m.type));
+  if (modLive() && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!modLive() || !['trim', 'extend'].includes(m.kind)) return false;
   if (m.askMode || m.fence || m.cross || m.erase) return true;
   const own = m.kind === 'extend' ? ['b', 'boundary', 'boundary edges'] : ['t', 'cutting', 'cutting edges', 'r', 'erase'];
@@ -6461,7 +6461,7 @@ function mirrorPoint(d, p, shift = false, typed = false) {
 /** Array: the selection taken, its default grid set, the preview of every copy; Enter / a typed option / Exit then adds them in one step. */
 function arrayTake(d) {
   if (!d.sel.size) { note('Array: pick at least one object first'); return; }
-  if (moveLocked(d, d.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
+  if (moveLocked(d, d.sel, 'array')) { const msg = state.msg; setTool('select'); note(msg); return; }
   const m = state.mod;
   m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = 'type'; m.ask = null; m.type = 'rect'; m.center = null; m.move = null;
   m.preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
@@ -6479,12 +6479,14 @@ function arrayPrompt(d, m) {
   if (m.stage === 'center') return { status: 'Command: ARRAY   Polar', prompt: 'Specify center point of array (click or x,y):' };
   const c = m.cfg, polar = m.type === 'polar';
   if (m.ask) return { status: `Command: ARRAY   ${polar ? 'Polar' : 'Rectangular'}`, prompt: `${ARRAY_ASK[m.ask[0]]} <${m.ask[0] === 'rotate' ? (c.rotate ? 'Yes' : 'No') : mmText(c[m.ask[0]])}>:` };
-  if (polar) return { status: `Command: ARRAY   Polar: ${c.items} items, fill ${mmText(c.fill)}°, rotate items ${c.rotate ? 'on' : 'off'}`, prompt: 'Enter an option [Items/Angle to fill/ROTate items/Exit] <Exit>:' };
+  if (polar) return { status: `Command: ARRAY   Polar: ${c.items} items, fill ${mmText(c.fill)}°, rotate items ${c.rotate ? 'on' : 'off'}`, prompt: '[Items/Fill angle/ROTate items/eXit] <eXit>:' };
   return { status: `Command: ARRAY   Rectangular: ${c.cols} columns × ${c.rows} rows, spacing ${mmText(c.dx)} × ${mmText(c.dy)} mm`, prompt: 'Enter an option [COUnt/Spacing/COLumns/Rows/Exit] <Exit>:' };
 }
 /** The preview of all the copies: the selection drawn once per offset (one matrix each), tinted. */
 function arrayPreview(d) {
   const m = state.mod, base = [d.factor, 0, 0, -d.factor, 0, state.sheetH];
+  const key = m.type === 'polar' ? 'items' : 'cols', checked = AR.withField(m.cfg, key, m.cfg[key], m.sel.size);
+  if (checked.error) { m.move = null; note(checked.error); renderCommand(); paintOverlay(); return; }
   const slots = m.type === 'polar' ? AR.polarPlacements(m.center, m.base, m.cfg).map(({ deg, dx, dy }) => mmul(base, m.cfg.rotate ? rotationMatrix(m.center, deg) : [1, 0, 0, 1, dx, dy]))
     : AR.rectOffsets(m.cfg).map(([x, y]) => mmul(base, [1, 0, 0, 1, x / d.factor, y / d.factor]));
   m.move = slots.length ? { preview: m.preview, items: m.preview.items, dx: 0, dy: 0, slots } : null;
@@ -6498,7 +6500,7 @@ function arrayEnter(d) {
   else if (m.ask) { m.ask = m.ask.length > 1 ? m.ask.slice(1) : null; renderCommand(); }
   else arrayDo(d);
 }
-/** Text at the Array prompts: the type, an answer to a question, or option words with numbers ("col 2 r 3", "s 40 -25"). False = another command's word. */
+/** Text at the Array prompts: the type, an answer to a question, or option words with numbers ("col 2 r 3", "s 40 -25"). */
 function arrayTyped(d, raw, c) {
   const m = state.mod;
   if (m.stage === 'type') {
@@ -6512,32 +6514,33 @@ function arrayTyped(d, raw, c) {
     if (q) { arrayCenter(d, q.map((v) => v / d.factor)); return true; }
   } else if (m.ask) {
     const yn = m.ask[0] === 'rotate' ? AR.yesNo(c) : null;
-    const r = m.ask[0] === 'rotate' && yn === null ? { error: 'Type Yes or No' } : AR.withField(m.cfg, m.ask[0], m.ask[0] === 'rotate' ? +yn : Number(c));
+    const r = m.ask[0] === 'rotate' && yn === null ? { error: 'Type Yes or No' } : AR.withField(m.cfg, m.ask[0], m.ask[0] === 'rotate' ? +yn : Number(c), m.sel.size);
     if (r.error) { note(r.error); return true; }
     m.cfg = r.cfg; m.ask = m.ask.length > 1 ? m.ask.slice(1) : null; arrayPreview(d); return true;
   } else {
     const steps = AR.parseLine(c, m.type);
     if (steps) {
-      const r = AR.applyLine(m.cfg, steps);
+      const r = AR.applyLine(m.cfg, steps, m.sel.size);
       if (r.error) { note(r.error); return true; }
       m.cfg = r.cfg; m.ask = r.ask.length ? r.ask : null;
       if (r.exit) arrayDo(d); else arrayPreview(d);
       return true;
     }
   }
+  if (m.stage === 'opts') { note('Unknown option. ' + arrayPrompt(d, m).prompt); renderCommand(); return true; }
   if (DR.parseInput(raw).kind === 'word') return false;
-  note(`I do not understand "${raw.trim()}". ${m.stage === 'type' ? 'Type R for Rectangular or PO for Polar' : m.stage === 'center' ? 'Type x,y or click' : m.ask ? 'Type ' + (m.ask[0] === 'rotate' ? 'Yes or No' : 'a number') : m.type === 'polar' ? 'Type Items, Angle, ROTate or Exit' : 'Type COUnt, Spacing, COLumns, Rows or Exit'}`); return true;
+  note(`I do not understand "${raw.trim()}". ${m.stage === 'type' ? 'Type R for Rectangular or PO for Polar' : 'Type x,y or click'}`); return true;
 }
 /** Polar's centre point is set (clicked or typed): the default ring shows at once. */
 function arrayCenter(d, q) {
   const m = state.mod;
   m.center = q.slice(0, 2); m.stage = 'opts'; state.pointLast = m.center;
-  note('Polar: Enter adds the copies shown; type Items, Angle or ROTate to change them'); arrayPreview(d);
+  note('Polar: Enter adds the copies shown; type Items, Fill angle or ROTate to change them'); arrayPreview(d);
 }
 function arrayDo(d) {
   const m = state.mod;
   if (m.raw !== d.raw.entities) { setTool('select'); note('Drawing changed: start Array again'); return; }
-  if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
+  if (moveLocked(d, m.sel, 'array')) { const msg = state.msg; setTool('select'); note(msg); return; }
   const polar = m.type === 'polar', added = polar ? m.cfg.items - 1 : m.cfg.cols * m.cfg.rows - 1;
   if (!added) { note(polar ? 'Array: 1 item adds nothing. Change Items, or Esc cancels' : 'Array: 1 column × 1 row adds nothing. Change COUnt, or Esc cancels'); return; }
   try {

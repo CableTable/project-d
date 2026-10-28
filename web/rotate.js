@@ -38,7 +38,7 @@ export function rotateEntities(raw, selection, pivot, degrees, copy = false) {
   return { entities, blocks };
 }
 
-function rotateRecord(type, r, pivot, degrees, flip) {
+export function rotateRecord(type, r, pivot, degrees, flip) {
   const reflected = flip && (OCS.has(type) || type === 'VERTEX');
   const a = (reflected ? -degrees : degrees) * Math.PI / 180, cos = Math.cos(a), sin = Math.sin(a);
   const px = reflected ? -pivot[0] : pivot[0], py = pivot[1];

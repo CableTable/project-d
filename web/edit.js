@@ -14,6 +14,7 @@
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
 import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
+import { rotateRecord } from './rotate.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap } from './snap.js';
@@ -1011,16 +1012,17 @@ export function resizeAbout(raw, sx, sy, ax, ay, space = 0, selection = null) {
   return { entities, blocks: raw.blocks, skipped: {} };
 }
 
-/** Translate selected records; sizes, direction vectors and shared blocks stay unchanged. Copy also isolates unshared native dimension blocks. */
-export function moveEntities(raw, selection, dx, dy, copy = false) {
+function moveRecord(type, r, x, dy) {
+  if (type === 'HATCH') return moveHatch(r, x, dy);
+  if (type === 'MLEADER' || type === 'MULTILEADER') return moveMleader(r, x, dy);
+  const pts = ['ACAD_TABLE', 'WIPEOUT', 'IMAGE', 'VIEWPORT'].includes(type) ? [10] : SPEC[type]?.pts;
+  if (!pts) throw new Error('Cannot move ' + type);
+  return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
+}
+
+/** Translate selected records; sizes, direction vectors and shared blocks stay unchanged. */
+export function moveEntities(raw, selection, dx, dy) {
   if (![dx, dy].every(Number.isFinite)) throw new Error('Move needs finite distances');
-  const record = (type, r, x) => {
-    if (type === 'HATCH') return moveHatch(r, x, dy);
-    if (type === 'MLEADER' || type === 'MULTILEADER') return moveMleader(r, x, dy);
-    const pts = ['ACAD_TABLE', 'WIPEOUT', 'IMAGE', 'VIEWPORT'].includes(type) ? [10] : SPEC[type]?.pts;
-    if (!pts) throw new Error('Cannot move ' + type);
-    return { ...r, v: r.v.map((v, k) => pts.includes(r.c[k]) ? text(+v + x) : pts.includes(r.c[k] - 10) ? text(+v + dy) : v) };
-  };
   let blocks = raw.blocks, blockRefs;
   const movedDims = new Map();
   const countRefs = (entities) => {
@@ -1030,7 +1032,7 @@ export function moveEntities(raw, selection, dx, dy, copy = false) {
   };
   const one = (e) => {
     const x = e.flip && OCS.has(e.type) ? -dx : dx;
-    let r = record(e.type, e.r, x);
+    let r = moveRecord(e.type, e.r, x, dy);
     if (e.type === 'DIMENSION') {
       const name = fieldOf(e.r, 2), b = raw.blocks[name];
       if (b && !b.xref) {
@@ -1042,7 +1044,7 @@ export function moveEntities(raw, selection, dx, dy, copy = false) {
         let own = movedDims.get(name);
         if (!own) {
           own = name;
-          if (copy || blockRefs.get(name) > 1) {
+          if (blockRefs.get(name) > 1) {
             let n = 1;
             while (blocks['*D' + n]) n++;
             own = '*D' + n;
@@ -1057,7 +1059,7 @@ export function moveEntities(raw, selection, dx, dy, copy = false) {
         r = { ...r, v: r.v.map((v, k) => r.c[k] === 2 ? own : v) };
       }
     }
-    return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, OCS.has(kid.type) ? (+fieldOf(kid, 230) < 0 ? -dx : dx) : x)) };
+    return { ...e, r, kids: e.kids?.map((kid) => moveRecord(kid.type, kid, OCS.has(kid.type) ? (+fieldOf(kid, 230) < 0 ? -dx : dx) : x, dy)) };
   };
   const entities = raw.entities.map((e, i) => selection.has(i) ? one(e) : e);
   return { entities, blocks };
@@ -1105,26 +1107,49 @@ function moveMleader(r, dx, dy) {
   }) };
 }
 
-/** Append translated copies in drawing order, leaving the originals and shared blocks intact; copied dimensions and leaders get their own blocks. */
-export function copyEntities(raw, selection, dx, dy) {
-  const moved = moveEntities(raw, selection, dx, dy, true);
-  let blocks = moved.blocks;
-  const copies = moved.entities.filter((_, i) => selection.has(i)).map((e) => {
-    const name = e.type === 'INSERT' ? fieldOf(e.r, 2) : '';
-    if ((!DIM_BLOCK.test(name) && !LDR_BLOCK.test(name)) || !blocks[name]) return e;
-    let own;
-    if (LDR_BLOCK.test(name)) {
-      let n = 1;
-      while (blocks['PD_LDR_' + n]) n++;
-      own = 'PD_LDR_' + n;
-    } else {
-      const dim = readDim(name, blocks[name]);
-      own = freeName(blocks, dim?.kind, dim?.params.axis);
-    }
-    blocks = { ...blocks, [own]: structuredClone(blocks[name]) };
-    return { ...e, r: { ...e.r, v: e.r.v.map((v, k) => e.r.c[k] === 2 ? own : v) } };
-  });
+/** Copy and Array share one batch: select once, allocate block names once, append once. */
+export function copyMany(raw, selection, placements, pivot = [0, 0]) {
+  const selected = raw.entities.filter((_, i) => selection.has(i)), copies = [];
+  let blocks = raw.blocks;
+  const counters = new Map();
+  const ownName = (prefix) => {
+    if (blocks === raw.blocks) blocks = { ...blocks };
+    let n = counters.get(prefix) || 1;
+    while (blocks[prefix + n]) n++;
+    counters.set(prefix, n + 1);
+    return prefix + n;
+  };
+  for (const { dx = 0, dy = 0, deg = 0 } of placements) {
+    if (![dx, dy, deg, ...pivot].every(Number.isFinite)) throw new Error('Copy needs finite distances, pivot and angle');
+    const record = (type, r, flip) => {
+      const x = flip && (OCS.has(type) || type === 'VERTEX') ? -dx : dx;
+      const moved = moveRecord(type, r, x, dy);
+      return deg ? rotateRecord(type, moved, pivot, deg, flip) : moved;
+    };
+    const one = (e, dims = new Map()) => {
+      let r = record(e.type, e.r, e.flip);
+      const name = fieldOf(e.r, 2), block = raw.blocks[name];
+      if (block && !block.xref && (e.type === 'DIMENSION' || e.type === 'INSERT' && (DIM_BLOCK.test(name) || LDR_BLOCK.test(name)))) {
+        let own = dims.get(name);
+        if (!own) {
+          const prefix = e.type === 'DIMENSION' ? '*D' : LDR_BLOCK.test(name) ? 'PD_LDR_' : /^PD_DIM_[RDAHV]?/.exec(name)[0];
+          own = ownName(prefix);
+          dims.set(name, own);
+          blocks[own] = block;
+          blocks[own] = e.type === 'DIMENSION' ? { ...block, entities: block.entities.map((child) => one(child, dims)) } : structuredClone(block);
+        }
+        r = { ...r, v: r.v.map((v, k) => r.c[k] === 2 ? own : v) };
+      }
+      return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, kid.type === 'VERTEX' ? e.flip : +fieldOf(kid, 230) < 0)) };
+    };
+    for (const e of selected) copies.push(one(e));
+  }
   return { entities: [...raw.entities, ...copies], blocks };
+}
+
+/** Append one translated copy of the selection. */
+export function copyEntities(raw, selection, dx, dy) {
+  return copyMany(raw, selection, [{ dx, dy }]);
 }
 
 // ---------------------------------------------------------------- undo

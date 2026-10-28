@@ -5144,6 +5144,10 @@ try {
   });
 
   await step('review: Edit menu has Undo, Redo, Copy, Paste, Delete; shortcut hints; unbuilt menus are greyed', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/outline.dxf');
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+    await page.locator('[data-tool=select]').click();
     await page.locator('[data-menu=File]').click();
     const hint = (name) => page.getByRole('menuitem', { name, exact: true }).locator('.hint').textContent();
     assert.equal(await hint('Save'), 'Ctrl+S'); assert.equal(await hint('Save As…'), 'Ctrl+Shift+S');
@@ -8178,6 +8182,14 @@ try {
   });
 
   await step('command bar: F2 opens the history on the right; the filter, Copy history and a click on a line that runs it again; F2 and Esc shut it', async () => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles('fixtures/outline.dxf');
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'outline.dxf');
+    await page.locator('[data-tool=select]').click();
+    await typeCmd('l'); await page.keyboard.press('Escape');
+    await typeCmd('c'); await typeCmd('50,50');
+    await page.waitForTimeout(400);
+    await page.keyboard.press('Escape');
     assert.equal(await t('cmd-history').isVisible(), false);
     await page.keyboard.press('F2');
     await t('cmd-history').waitFor();
@@ -11469,6 +11481,8 @@ try {
     assert.deepEqual((await savedDoc()).entities, before.entities, 'one Ctrl+Z removes all 11 copies');
 
     await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd(''); await typeCmd('col 2 r 2');
+    assert.match(await prompt(), /Specify the distance between rows/);
+    await typeCmd('');
     assert.match(await prompt(), /Enter an option/);
     await typeCmd('');
     assert.equal((await savedDoc()).entities.length, 4, 'COL 2 R 2 gives 4');
@@ -11484,10 +11498,28 @@ try {
     await blur(); await page.keyboard.press('Control+z');
 
     await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('');
+    for (const word of ['c', 'co', 'l', 'a', 'nonsense']) {
+      await typeCmd(word);
+      assert.match(await histLine(), /Unknown option/);
+      assert.match(await prompt(), /Enter an option/);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
+    }
+    await typeCmd('col'); await typeCmd('5');
+    assert.match(await prompt(), /Specify the distance between columns <60>:/);
+    await typeCmd('');
+    assert.match(await prompt(), /Enter an option/);
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'COL 5 Enter keeps spacing and creates nothing');
     await typeCmd('rows 0'); assert.deepEqual((await savedDoc()).entities, before.entities);
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.deepEqual((await savedDoc()).entities, before.entities, 'Esc adds nothing');
+    await page.keyboard.press('Control+a');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('1 selected');
+    await typeCmd('ar');
+    assert.match(await prompt(), /Layer Cut is locked:.*to array this/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'locked layers block Array');
     await closeTabs(/array/);
   });
 
@@ -11503,9 +11535,18 @@ try {
     await page.keyboard.press('Control+a'); await typeCmd('ar'); await typeCmd('po');
     assert.match(await prompt(), /Specify center point of array/);
     await page.mouse.move(500, 400); await typeCmd('0,0');
-    assert.match(await prompt(), /Enter an option \[Items\/Angle to fill\/ROTate items\/Exit\] <Exit>:/);
+    for (const word of ['a', 'c', 'co', 'l', 'nonsense']) {
+      await typeCmd(word);
+      assert.match(await histLine(), /Unknown option/);
+      assert.match(await prompt(), /Fill angle/);
+      assert.equal(await t('tool-chip').textContent(), 'Tool: Array');
+    }
+
+    assert.match(await prompt(), /\[Items\/Fill angle\/ROTate items\/eXit\] <eXit>:/);
+    await typeCmd('i 6');
     await page.locator('button:text-is("Fit")').click(); await page.mouse.move(600, 500); for (let k = 0; k < 4; k++) await page.mouse.wheel(0, 300);
     await page.mouse.move(1, 1); await page.waitForTimeout(300);
+    assert.ok(await t('cmd-fade').locator('.cb-fade-rows > div').evaluateAll((rows) => rows.every((row) => row.scrollWidth <= row.clientWidth)), 'Polar prompt and answers fit the visible history');
     for (const theme of ['light', 'dark']) {
       await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
       await page.screenshot({ path: `${shotDir}/todo75b-polar-preview-${theme}.png` });
@@ -11529,20 +11570,22 @@ try {
     assert.equal((await savedDoc()).entities.length, 8, 'I 8 gives 8');
     await blur(); await page.keyboard.press('Control+z');
 
-    await polar('i 4', 'rot n'); assert.match(await prompt(), /Enter an option/); await typeCmd('');
+    await polar('i 4', 'rot n'); assert.match(await prompt(), /\[Items\/Fill angle/); await typeCmd('');
     assert.deepEqual((await savedDoc()).entities.slice(1).map(seg), [[-10, 50, 10, 50], [-60, 0, -40, 0], [-10, -50, 10, -50]], 'ROT N: still horizontal, the middle of the line goes round');
     await blur(); await page.keyboard.press('Control+z');
 
-    await polar('i 3 a 180 x');
+    await polar('i 3', 'f');
+    assert.match(await prompt(), /Specify the angle to fill.*<360>:/);
+    await typeCmd('180'); await typeCmd('x');
     assert.deepEqual((await savedDoc()).entities.slice(1).map(seg), [[0, 40, 0, 60], [-40, 0, -60, 0]], 'a partial angle: the last item is at the fill angle');
     await blur(); await page.keyboard.press('Control+z');
-    await polar('i 3 a -90 x');
+    await polar('i 3 f -90 x');
     assert.deepEqual((await savedDoc()).entities.slice(1).map(seg), [[28.284, -28.284, 42.426, -42.426], [0, -40, 0, -60]], 'negative = clockwise');
     await blur(); await page.keyboard.press('Control+z');
 
     await polar('rot'); assert.match(await prompt(), /Rotate arrayed items\? \[Yes\/No\] <Yes>:/);
-    await typeCmd('no'); assert.match(await prompt(), /Enter an option/);
-    await typeCmd('i 0'); assert.match(await prompt(), /Enter an option/);
+    await typeCmd('no'); assert.match(await prompt(), /\[Items\/Fill angle/);
+    await typeCmd('i 0'); assert.match(await prompt(), /\[Items\/Fill angle/);
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.deepEqual((await savedDoc()).entities, before.entities, 'Esc adds nothing');
