@@ -411,8 +411,8 @@ function buildMenus() {
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
-    Edit: [['Undo', () => { const d = editable(); if (d) undo(d); else undoLay(); }, 'Ctrl+Z', () => !!historyOf(curDoc())?.canUndo],
-      ['Redo', () => { const d = editable(); if (d) redo(d); else redoLay(); }, 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
+    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!historyOf(curDoc())?.canUndo],
+      ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
       ['Paste', pasteSelection, 'Ctrl+V', () => !!clipboard && (!!curDoc()?.lay || !!editable())],
@@ -942,7 +942,11 @@ async function closeTab(d) {
   } else if (d.dirty && !(await confirmAsk(d.name + ' has changes that are not saved. Close it anyway?', 'Close without saving', 'warning', 'Keep it open'))) return;
   const i = state.docs.indexOf(d);
   if (i < 0) return;
-  for (const tab of state.docs) if (tab.cmp) tab.cmp.items = tab.cmp.items.map((x) => x.tabId === d.tabId ? { ...x, tabId: null } : x);
+  for (const tab of state.docs) if (tab.cmp) {
+    cmpRefresh(d);
+    tab.cmp.sources.delete(d.tabId);
+    tab.cmp.items = tab.cmp.items.map((x) => x.tabId === d.tabId ? { ...x, tabId: null } : x);
+  }
   PS.pageStates(d).forEach(dropCopy);
   state.docs.splice(i, 1);
   if (!state.docs.length) { state.docs.push(emptyDoc()); view.fitted = true; }         // the fresh empty tab is fitted
@@ -969,6 +973,7 @@ function cycleTab(step) {
 
 /** The active tab changed: its drawing, layers and status, and Fit if the view is still fitted. */
 function showDoc() {
+  for (const item of cmpDoc()?.cmp.items || []) { const source = cmpSourceTab(item); if (source) cmpRefresh(source); }
   selectionCycle = null;
   if (state.pointDoc !== curDoc()) { state.pointLast = null; state.pointDoc = curDoc(); }
   ui.fontNote.hidden = true;
@@ -1883,16 +1888,34 @@ function redoLay() {
   layRestore(d, st); note('Redone');
 }
 /** The undo history of a tab: a drawing's, a layout's, or null. */
-const historyOf = (d) => (!d ? null : d.cmp ? cmpSourceTab(cmpSelected(d.cmp))?.hist || d.hist || null : d.lay ? layHist(d) : d.hist || null);
+const historyDocs = (d) => d?.cmp ? [d, cmpSourceTab(cmpSelected(d.cmp))].filter(Boolean) : [d];
+const historyOf = (d) => (!d ? null : d.cmp ? Ed.combinedHistory(historyDocs(d).map((x) => x.hist)) : d.lay ? layHist(d) : d.hist || null);
+function undoCurrent(forward = false) {
+  const tab = curDoc(), hist = historyOf(tab);
+  const d = tab?.cmp ? historyDocs(tab).find((x) => x.hist && x.hist === hist[forward ? 'redoHistory' : 'undoHistory']) : editable();
+  if (d) { if (forward) redo(d); else undo(d); }
+  else if (tab?.cmp) { if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit(); }
+  else if (forward) redoLay(); else undoLay();
+}
 /** Edit → Undo history… (TODO 30): the steps of the open tab by name, oldest first, the current one marked; a click goes there (several undos, or redos, at once). */
 function showHistory() {
-  const d = editable() || curDoc(), hist = historyOf(d);
+  const d = curDoc(), hist = historyOf(d);
   if (!hist) { note('Undo history: open a drawing or a layout first'); return; }
   const { past, future } = hist.labels(), rows = ['Start', ...past, ...future], now = past.length;
   const finish = () => { back.remove(); document.removeEventListener('keydown', onKey, true); };
   const go = (r) => {
     finish();
     if (r === now) return;
+    if (d.cmp) {
+      const forward = r > now;
+      for (let i = 0; i < Math.abs(r - now); i++) {
+        const current = historyOf(d), target = historyDocs(d).find((x) => x.hist && x.hist === current[forward ? 'redoHistory' : 'undoHistory']);
+        if (!target) break;
+        const st = target.hist[forward ? 'redo' : 'undo'](snapshotOf(target));
+        if (st) restore(target, st);
+      }
+      return;
+    }
     const lay = !!d.lay, cur = lay ? laySnap(d.lay) : snapshotOf(d);
     const st = r < now ? hist.undoMany(now - r, cur) : hist.redoMany(r - now, cur);
     if (!st) return;
@@ -3727,8 +3750,8 @@ const DO = {
   },
   group: () => groupSel(), ungroup: () => ungroupSel(), lock: () => lockSel(true), unlock: () => lockSel(false), mx: () => mirrorSel('x'), my: () => mirrorSel('y'),
   newlayout: () => newLayoutTab(), library: () => showLibrary(), open: () => openFile(), save: () => save(false), saveas: () => save(true), pdf: () => exportPdf(), compare: () => cmpStart(),
-  undo: () => { const d = editable(); if (d) undo(d); else undoLay(); },
-  redo: () => { const d = editable(); if (d) redo(d); else redoLay(); },
+  undo: () => undoCurrent(),
+  redo: () => undoCurrent(true),
   paste: pasteSelection,
   history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: fitView, zoomwindow: zoomWindow, zoomselection: zoomSelection, zoomprevious: zoomPrevious, rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
@@ -4321,6 +4344,7 @@ function attachCanvasEvents() {
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
     if (e.button === 0 && gh0 && guideTarget() && (curLay() || state.tool === 'select') && !state.setlen && state.tool !== 'pan' && state.tool !== 'measure' && !guideTarget().s.guidesLock) { guideDown(e, gh0.dataset.axis, Number(gh0.dataset.guide)); if (gdrag) { capture(c, e); } return; }
+    if (e.button === 0 && cmpDoc() && cmpSelected(cmpDoc().cmp)?.visible === false && !['pan', 'measure'].includes(state.tool)) { cmpEdit(); return; }
     if (e.button === 0 && state.tool === 'select' && cmpDown(e)) return;
     if (e.button === 1 || (e.button === 0 && state.tool === 'pan')) {
       e.preventDefault();
@@ -4860,7 +4884,7 @@ function partBox(d) {
   return d.pb.box || d.box;
 }
 /** The tab being edited: a drawing tab (not a layout). */
-const editable = () => { const tab = curDoc(), d = tab?.cmp ? cmpSourceTab(cmpSelected(tab.cmp)) : tab; return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
+const editable = () => { const tab = curDoc(), item = tab?.cmp && cmpSelected(tab.cmp), d = tab?.cmp ? item?.visible && cmpSourceTab(item) : tab; return d && !d.lay && d.raw && d.fl && d.hist ? d : null; };
 const measureTarget = () => curLay() || cmpDoc() ? curDoc() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
@@ -4933,7 +4957,7 @@ function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)
 const lockedEnt = (d, e) => !!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer);
 /** Builds the index once the page has painted, so the first click is quick. */
 function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
-function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; warm(d); renderEdit(); }
+function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; cmpRefresh(d); warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
 function toDrawing(d, cx, cy) {
@@ -7992,8 +8016,8 @@ function buildDrawingSection() {
   ui.drawSec = h('section', { class: 'drawbox', hidden: true, 'data-testid': 'drawing-panel' },
     h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Drawing scale'),
       h('span', { class: 'tools' },
-        tog('Undo', 'undo', () => { const d = editable(); if (d) undo(d); }, 'Undo (Ctrl+Z)'),
-        tog('Redo', 'redo', () => { const d = editable(); if (d) redo(d); }, 'Redo (Ctrl+Y)'))),
+        tog('Undo', 'undo', () => undoCurrent(), 'Undo (Ctrl+Z)'),
+        tog('Redo', 'redo', () => undoCurrent(true), 'Redo (Ctrl+Y)'))),
     h('div', { class: 'unitrow' },
       tog('Set length', 'set-length', startSetlen, 'Click two points, then type the real distance between them'),
       tog('×25.4', 'unit-up', () => unitFix(UF.UNIT_FIXES.up), ''),
@@ -8989,7 +9013,7 @@ function renderEdit() {
   ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
   for (const [id, fix] of [['unit-up', UF.UNIT_FIXES.up], ['unit-down', UF.UNIT_FIXES.down]]) { ui[id].disabled = !scalable; ui[id].title = UF.unitFixTip(fix, b); }
-  ui.undo.disabled = !d.hist.canUndo; ui.redo.disabled = !d.hist.canRedo;
+  ui.undo.disabled = !historyOf(curDoc()).canUndo; ui.redo.disabled = !historyOf(curDoc()).canRedo;
   const gl = gapsOf(d);
   ui.gapRow.hidden = !d.ed;
   const countOnly = gl && gl.length > Ed.GAP_MARK_CAP;
@@ -9021,21 +9045,26 @@ const cmpDoc = () => { const d = curDoc(); return d && d.cmp ? d : null; };
 const cmpCss = (id) => { const k = C.COLOURS.find((x) => x.id === id) || C.COLOURS[0]; return workDark() ? k.dark : k.css; };
 const cmpSelected = (c) => c.items.find((x) => x.id === c.selected);
 const cmpSourceTab = (item) => item?.tabId ? state.docs.find((d) => d.tabId === item.tabId && d.raw && !d.lay) : null;
+const cmpSourceState = (d) => [d.fl, d.raw.entities, d.factor, d.pdf?.page, d.name, ...d.off];
 const cmpEditingItem = (d) => { const c = cmpDoc()?.cmp, item = c && cmpSelected(c); return d && cmpSourceTab(item) === d ? item : null; };
 const drawingTransform = (d) => { const item = cmpEditingItem(d); return item ? `translate(${item.offset[0]} ${-item.offset[1]})` : null; };
 function cmpEdit() {
   const item = cmpDoc() && cmpSelected(cmpDoc().cmp), d = cmpSourceTab(item);
+  if (item && !item.visible) { note(`Show ${item.name} to edit`); return null; }
   if (d) return d;
   note(item?.part ? 'Open the part as a drawing to edit' : item ? `Open ${item.name} to edit` : 'Pick a snapshot to edit');
   return null;
 }
-/** Compare edits refresh linked snapshots; source-tab edits retain the captured comparison. */
+/** Refresh changed linked artwork and measurements together, even while a source tab is current. */
 function cmpRefresh(d) {
-  if (!cmpDoc() || !d.tabId) return;
+  if (!d.tabId) return;
+  const next = cmpSourceState(d);
   for (const tab of state.docs) if (tab.cmp?.items.some((x) => x.tabId === d.tabId)) {
-    const c = tab.cmp;
+    const c = tab.cmp, previous = c.sources.get(d.tabId);
+    if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
     c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.snapshotGeometry(d) } : x);
-    c.res = CMP.compareItems(c.items, c.tol); c.stale = false; c.sel = 0;
+    c.sources.set(d.tabId, next);
+    cmpCalc(c);
   }
 }
 /** Visible snapshots at their current offsets (mm, y up). */
@@ -9055,7 +9084,7 @@ function cmpMoved(d, refit = false) { const c = d.cmp; c.items = CMP.lineUpItems
 function cmpAdd(d, source) {
   try {
     const c = d.cmp;
-    if (state.docs.includes(source)) source.tabId ||= uid();
+    if (state.docs.includes(source)) { source.tabId ||= uid(); cmpRefresh(source); c.sources.set(source.tabId, cmpSourceState(source)); }
     c.items = CMP.addItem(c.items, source);
     if (curDoc() === d) setTool('select');
     c.selected = c.items.at(-1).id; c.res = null; c.stale = false;
@@ -9085,10 +9114,10 @@ function cmpStart() {
   const have = state.docs.findIndex((x) => x.cmp);
   if (have >= 0) { state.doc = have; showDoc(); return; }
   const tabs = state.docs.filter((x) => x.raw && x.fl && !x.lay && x.box), cur = curDoc(), first = tabs.includes(cur) ? cur : tabs[0], second = tabs.find((x) => x !== first);
-  const c = { items: [], selected: null, mode: 'bl', tol: C.DEFAULT_TOL, show: true, res: null, stale: false, sel: 0 };
+  const c = { items: [], sources: new Map(), selected: null, mode: 'bl', tol: C.DEFAULT_TOL, show: true, res: null, stale: false, sel: 0 };
   for (const x of [first, second].filter(Boolean)) {
     x.tabId ||= uid();
-    x.sel = new Set(); x.hl = [];
+    c.sources.set(x.tabId, cmpSourceState(x));
     try { c.items = CMP.addItem(c.items, x); } catch (err) { note(err.message); }
   }
   c.items = CMP.lineUpItems(c.items, c.mode); c.selected = c.items.at(-1)?.id;
@@ -9170,6 +9199,7 @@ function renderCompare() {
     h('button', { class: 'tog', type: 'button', 'aria-label': 'Show ' + x.name, 'aria-pressed': String(x.visible), title: 'Show ' + x.name, 'data-testid': 'cmp-eye', onclick: () => { c.items = CMP.setItem(c.items, x.id, { visible: !x.visible }); update(); } }, icon(x.visible ? EYE : EYE_OFF, { size: 16 })),
     h('button', { class: 'tog', type: 'button', 'aria-label': 'Remove ' + x.name, 'data-testid': 'cmp-remove', onclick: () => {
       c.items = CMP.removeItem(c.items, x.id); if (c.selected === x.id) { c.selected = c.items.at(-1)?.id; setTool('select'); }
+      if (!c.items.some((item) => item.tabId === x.tabId)) c.sources.delete(x.tabId);
       c.res = null; c.stale = false; cmpMoved(d, true);
     } }, '×'))));
   for (const b of ui.cmpAdd) b.disabled = c.items.length >= CMP.MAX_ITEMS;
@@ -9291,7 +9321,7 @@ function cmpManual(c) {
 /** Arrow keys nudge the selected snapshot by the shared step. */
 function cmpKey(e, mod) {
   const d = cmpDoc(), c = d && d.cmp, item = c && cmpSelected(c), dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
-  if (c && mod && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) { e.preventDefault(); const target = cmpEdit(); if (target) { if (e.key.toLowerCase() === 'y' || e.shiftKey) redo(target); else undo(target); } return true; }
+  if (c && mod && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) { e.preventDefault(); undoCurrent(e.key.toLowerCase() === 'y' || e.shiftKey); return true; }
   if (!c || state.tool !== 'select' || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
   const manual = cmpManual(c), [dx, dy] = PL.nudgeVector(dir, state.nudge, e.shiftKey);

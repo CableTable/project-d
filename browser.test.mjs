@@ -4563,6 +4563,114 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 156c1 fixes: Compare orders guide and drawing Undo, refreshes source edits and refuses hidden edits', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const first = newDoc(4), second = newDoc(4);
+    addEntities(first, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], true)]);
+    addEntities(second, [...first.entities, dxfCircle(30, 40, 4)]);
+    const open = async (name, raw) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name }) });
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const click = async (x, y) => { const a = await point(x, y); await p.mouse.click(a.x, a.y); };
+    const dragGuide = async (from, to) => {
+      await p.locator('[data-tool=select]').click();
+      const a = await point(from, 75), b = await point(to, 75);
+      await p.mouse.move(a.x, a.y); await p.mouse.down(); await p.mouse.move(b.x, b.y, { steps: 5 }); await p.mouse.up();
+    };
+    const guide = () => q('guide-pos').inputValue().then(Number);
+    const saveDoc = async () => {
+      const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await download.path(), 'utf8'));
+    };
+    const differences = () => q('cmp-diff').allTextContents();
+    const history = async () => {
+      await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo history…', exact: true }).click();
+    };
+    const circleInk = async () => {
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const a = await point(25, 45), b = await point(35, 35);
+      return q('drawing').evaluate((c, { a, b }) => {
+        const box = c.getBoundingClientRect(), scale = c.width / box.width;
+        const pixels = c.getContext('2d').getImageData(Math.round((a.x - box.x) * scale), Math.round((a.y - box.y) * scale), Math.max(1, Math.round((b.x - a.x) * scale)), Math.max(1, Math.round((b.y - a.y) * scale))).data;
+        let blue = 0;
+        for (let i = 0; i < pixels.length; i += 4) if (pixels[i + 2] > pixels[i] + 30 && pixels[i + 3] > 100) blue++;
+        return blue;
+      }, { a, b });
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('first-156c1-fixes.dxf', first); await p.keyboard.press('Control+a');
+      await open('second-156c1-fixes.dxf', second); await p.keyboard.press('Control+a');
+      await tab('first-156c1-fixes').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      assert.equal(await q('sel-count').textContent(), '2 selected', 'Compare keeps drawing 2 selection');
+      await tab('first-156c1-fixes').click(); assert.equal(await q('sel-count').textContent(), '1 selected', 'Compare keeps drawing 1 selection');
+      await tab('second-156c1-fixes').click(); assert.equal(await q('sel-count').textContent(), '2 selected');
+      await command('line'); await command('20,65'); await command('60,65'); await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      const drawingBefore = flatten(await saveDoc()).items;
+      await tab('Compare').click(); await q('cmp-name-2').click(); await q('cmp-run').click();
+      const beforeGuide = await differences();
+      await q('guide-position').fill('50'); await q('guide-add-v').click(); await dragGuide(50, 55);
+      assert.equal(await guide(), 55);
+      await p.keyboard.press('Control+z'); assert.equal(await guide(), 50, 'Ctrl+Z restores the guide');
+      assert.deepEqual(await differences(), beforeGuide); assert.equal(await tab('second-156c1-fixes').locator('.dot').count(), 0, 'guide Undo leaves drawing 2 clean');
+      await p.keyboard.press('Control+y'); assert.equal(await guide(), 55);
+      await p.locator('[data-menu=Edit]').click(); await p.getByRole('menuitem', { name: 'Undo', exact: true }).click();
+      assert.equal(await guide(), 50, 'Edit Undo shares the guide order');
+      await command('redo'); assert.equal(await guide(), 55, 'command Redo shares the guide order');
+      await history();
+      assert.deepEqual(await q('hist-row').locator('span:last-child').allTextContents(), ['Start', 'Line', 'Add guide', 'Move guide']);
+      await q('hist-row').filter({ hasText: 'Start' }).click(); assert.equal(await q('guide-pos').count(), 0, 'history jumps across both histories');
+      await history(); await q('hist-row').filter({ hasText: 'Move guide' }).click(); assert.equal(await guide(), 55);
+      await tab('second-156c1-fixes').click(); assert.deepEqual(flatten(await saveDoc()).items, drawingBefore, 'drawing 2 artwork is unchanged after guide Undo/Redo');
+      for (const picked of [2, 1]) {
+        await tab('Compare').click(); await q('cmp-name-' + picked).click(); await q('cmp-run').click();
+        const before = await differences(), metrics = await q('cmp-result').allTextContents();
+        assert.ok(await circleInk() > 0, 'drawing 2 circle is visible before source edit');
+        await tab('second-156c1-fixes').click(); await p.locator('[data-tool=select]').click(); await p.keyboard.press('Escape');
+        await click(34, 40); await p.keyboard.press('Delete');
+        await tab('Compare').click();
+        assert.notDeepEqual(await differences(), before, 'source edit recalculates Differences with snapshot ' + picked + ' picked');
+        assert.notDeepEqual(await q('cmp-result').allTextContents(), metrics, 'metrics refresh too');
+        assert.equal(await circleInk(), 0, 'drawing 2 snapshot loses its circle, including when not picked');
+        assert.equal(await q('cmp-glow').count(), await q('cmp-diff').count(), 'glow follows refreshed Differences');
+        assert.equal(await q('cmp-stale').isVisible(), false);
+        if (picked === 2) { await tab('second-156c1-fixes').click(); await p.keyboard.press('Control+z'); }
+      }
+      await q('cmp-name-2').click(); await q('cmp-eye').nth(1).click();
+      const hiddenDiff = await differences(), hiddenMessage = `Show ${await q('cmp-name-2').textContent()} to edit`;
+      await command('line'); assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
+      await click(40, 65); assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
+      await p.keyboard.press('Delete'); assert.equal(await q('cmd-prompt').textContent(), hiddenMessage);
+      assert.deepEqual(await differences(), hiddenDiff);
+      await q('cmp-eye').nth(1).click();
+      await tab('second-156c1-fixes').click(); const closedDrawing = await saveDoc();
+      assert.equal(closedDrawing.entities.length, 2, 'hidden clicks and commands made no edit');
+      await tab('Compare').click(); await q('cmp-name-2').click();
+      await tab('second-156c1-fixes').locator('.x').click();
+      await tab('Compare').click(); assert.equal(await circleInk(), 0, 'closed copy retains the refreshed artwork');
+      await dragGuide(55, 60); await p.keyboard.press('Control+z'); assert.equal(await guide(), 55, 'closed copy uses Compare guide Undo');
+      await p.keyboard.press('Control+y'); assert.equal(await guide(), 60);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo156c1-fixes-${theme}.png` });
+      }
+    } finally { await context.close(); }
+  });
+
   await step('TODO 143: Measure on a layout', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     const p = await context.newPage(), q = (id) => p.locator(`[data-testid=${id}]`);
