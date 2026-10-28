@@ -11,34 +11,11 @@ Started 2026-10-16. Unrelated to Projects B, P, R and WF in the parent folder, b
 
 ## Status
 
-Session 1 (2026-10-17): repo **CableTable/project-d** (private), the decisions, the mock-ups
-(artifact "Project D Mockups"), screen A built (drawing-first main screen, live step and repeat), and
-CI that builds `ProjectD.exe` on `windows-latest` and publishes it to Releases on a merge to main.
-Session 2 (2026-10-17): a DXF opens (File → Open, the Open button, drag and drop) in its own tab and
-is drawn at true size on the sheet, 0,0 at the sheet's bottom-left; the Layers panel lists the
-file's layers; Save, Apply, PDF / Print. PR #5: Part | Layout views (keep only the outline, 1:1, Measure, dimensions,
-background pictures, vector PDF opens as a drawing, part PDF), a gripper per side, extra gaps.
-Session 3 (2026-10-17, PR #6): layout tabs (L1) with a Parts library, extract and name parts, step and repeat per
-layout (fit or typed rows / columns), a saved layout reopens with its settings; the Dimension tool (AutoCAD way);
-decimals picker; Save never overwrites the opened file; Shift = straight picks. **Next: TODO.md "Rakshith's list"**,
-the unticked items in his order of value: Build B = placing parts (2, 9–13, 16; mock-up board R3d), then 36–38
-(align, group / lock, rulers), contour (35), then the rest. Push after every finished item and tick it in TODO.md
-(his rule, 2026-10-17).
-Session 13 (2026-10-21, PR #8): Text to outlines done (53a–d), grips off on big selections, PC-test TODO 82–88. **Next: TODO 83** (TXO font in the exe), then 82, then 84–88 and the rest of "Rakshith's list".
-Sessions 17–18 (2026-10-23/24, PRs #12, #13): Shaping (122, 123 Keep originals), Explode (91), Break Apart (124), Compare
-up to five (114, T49), drag parts onto drawings (T50), PDF title block editor (101).
-Session 19 (2026-10-24): step and repeat grid cell (127), linked dimensions (129), tab keys (118), Ctrl+drag copy (135),
-open a library part as a drawing (116), Clean up greyed buttons (128). Session 20 (2026-10-24, PR #15): PDF sheets keep edits + Delete sheet (117), copy / paste between tabs, sheets and layouts (111a, 111b), tables saved as blocks (141). **Next:** 142 (review leftovers), then open bugs,
-then TODO.md "Rakshith's list".
-Session 21 (2026-10-24/25, PR #16, v0.1.95): Move (66a), nudge / nu box (66a2), ribbon + CorelDRAW-style panel + AutoCAD / CorelDRAW theme (110a-d, 94, 132; mock-up R19 Option A). **Next:** 66b Copy, then 66c-66h (decided, DECISIONS row "Copy, Rotate, Scale, Fillet, Extend"), TODO 145, 142, then the rest of "Rakshith's list".
-Session 22 (2026-10-25, PR #17): Copy (66b), Rotate (66c), Scale (66d), Fillet lines / arcs / polylines (66e-66g), Extend lines (66h), exe leftovers (145), each reviewed and fixed. **Next:** 146 (command box over the preview), 142, 143-144, 66i (Extend arcs), then the rest of "Rakshith's list". Session 23 (2026-10-25/27, PR #18): 142, 146, 78, 68a-c, 70, 147, 72, 148a. Session 24 (2026-10-27, PRs #19-#24, v0.1.153): CI flake fix, exe display fixes (152), browser suite in 4 shards (151), window / crossing selection and Alt + click cycling (71a-c), swatch strip, Fill tool, Eyedropper, colour readout (148b-d). **Next:** open bugs, then TODO.md "Rakshith's list" (148e, 153, 154 queued).
-Session 25 (2026-10-28, PR #26): AutoCAD-parity round (155a, c, f, k, o, p, q; 69a-f; 75 Array; 67a-c; 65; 73), same features in every tab decided (156). **Next:** finish 155d, 155j, 155m (branches king/155d, knight/155j, king/155m), then 156a-d, then the remaining 155 items.
-Session 26 (2026-10-28, PR #27): 155d, 155j, 155m, 156a corner rotate arrows, 156b1-156b3b + 156b2b (commands, Draw, Trim / Extend / Fillet / Offset, grips, Shaping, Text on layouts), 156d1 Guides / Measure in every tab, 156c1 Compare editable; UI colours to match AutoCAD grilled (157). **Next:** 157 (157a Bishop-acad capture in his AutoCAD first), then 156b2c, 156b4, 156c2, 156c3, then the remaining 155 items.
-Sessions 4–6 (2026-10-18/19): drawing tools, Text, Grips, Properties, Compare, theme "Modern SaaS", Offset / Trim /
-Mirror, Auto-nest (release v0.1.16, PR #1). Session 7 (2026-10-19, PR #2): the 4 bugs from the v0.1.16 test (close
-prompt for unsaved tabs, Layers + Add, invalid-number messages, PDF / Print asks where to save). Session 8
-(2026-10-19/20, PR #3): Objects tab (39), floating command bar (47), three review rounds and a whole-repo audit
-(recovery, No plot, big PDFs, one storage helper), and the Rook / Bishop / Knight / Pawn workflow. See HISTORY.md.
+Built so far: sessions 1-27 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
+AutoCAD-style draw / modify / dimension / snap tools in every tab, ribbon + panel UI in AutoCAD colours (157), CI that builds
+`ProjectD.exe` and publishes it to Releases on a merge to main. Repo **CableTable/project-d** (private).
+**Next:** TODO 156b2c (Dimension on layouts, c1 building), 156b4, 156c2, 156c3, then the rest of the 155 list, then
+TODO.md "Rakshith's list". Push after every finished item and tick it in TODO.md (his rule, 2026-10-17).
 
 ## The app
 
@@ -60,7 +37,11 @@ Set up in session 1, the same shape as Project R:
 
 ## 1. How changes ship
 
-- **Plan first, with options**, before any big build; wait for the go-ahead.
+- **Rook has full control** (his call, 2026-10-29): grill rounds, plans and retro suggestions are still written
+  (grill rounds to `runs<N>/grill-<item>.md`), but Rook takes its own recommended answers and goes on without waiting,
+  unless he says otherwise. Message him only for a major change (big behaviour / UI change, a decision reversed,
+  something lost or broken, a merge to main, a blocker that needs him). His PC / AutoCAD, keys and billing still need him.
+- **Plan first, with options**, before any big build (the plan is written; under full control Rook picks the recommended option).
 - **No mock-up unless he asks for one** for a feature (his call, 2026-10-20): Rook decides the UI, records it
   in DECISIONS.md, and the PR body says what was chosen. When he does ask, the mock-up comes first and he picks.
   The **As built** boards stay: every UI build gets one (mockups/R<n>_AB_*.html, local), drawn from the screenshots.

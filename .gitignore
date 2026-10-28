@@ -1,10 +1,8 @@
 node_modules/
 src-tauri/target/
 shots/
-shots-kU2/
+shots-*/
 *.log
 *firebase-key*.json
 *-adminsdk-*.json
-shots-kU3/
-shots-kU4/
 tmp-*
