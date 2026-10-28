@@ -21,7 +21,9 @@ const ellAt = (q, t) => [q.c[0] + q.m[0] * Math.cos(t) + q.n[0] * Math.sin(t), q
 const curves = new WeakMap();
 /**
  * An ellipse or spline entity as a flattened polyline shape (drawing units), its stand-in as a boundary; null for anything else.
- * shortcut: about 512 chords to a full ellipse, so a hit sits within ~r/500000 of the true curve; refine if a hit must be exact.
+ * An ellipse keeps its frame as `q` so a hit on it is snapped to the true curve (snapOnto).
+ * shortcut: a spline is about max(n*12, 48) chords with no snap, so a hit can stop short of the true curve (a few 1e-5 of its size, more for
+ * few control points on a big curve); snap it like an ellipse if a hit must be exact.
  */
 export function curveShape(ent) {
   if (!ent || !ent.r || !['ELLIPSE', 'SPLINE'].includes(ent.type)) return null;
@@ -29,7 +31,7 @@ export function curveShape(ent) {
   let sh = null;
   if (ent.type === 'ELLIPSE') {
     const q = ellipseOf(ent), full = q.t1 - q.t0 > TAU - 1e-6, n = Math.max(16, Math.ceil(512 * (q.t1 - q.t0) / TAU));
-    sh = { t: 'poly', pts: Array.from({ length: full ? n : n + 1 }, (_, i) => ellAt(q, q.t0 + (q.t1 - q.t0) * i / n)), closed: full };
+    sh = { t: 'poly', pts: Array.from({ length: full ? n : n + 1 }, (_, i) => ellAt(q, q.t0 + (q.t1 - q.t0) * i / n)), closed: full, q };
   } else {
     const r = ent.r, cp = [], fit = [], knots = [], w = [];
     r.c.forEach((c, k) => {
@@ -42,6 +44,22 @@ export function curveShape(ent) {
   curves.set(ent, sh);
   return sh;
 }
+/**
+ * A chord hit `p` on shape `sh` moved onto the true curve when `sh` is an ellipse: Newton on the ellipse parameter t until
+ * miss(point) = 0 (miss is zero on the line or circle being extended); `p` itself for anything else or when it does not settle nearby.
+ */
+function snapOnto(sh, p, miss) {
+  const q = sh.q, det = q ? q.m[0] * q.n[1] - q.m[1] * q.n[0] : 0;
+  if (!det) return p;
+  const x = p[0] - q.c[0], y = p[1] - q.c[1], t0 = Math.atan2((q.m[0] * y - q.m[1] * x) / det, (x * q.n[1] - y * q.n[0]) / det), h = 1e-6;
+  let t = t0;
+  for (let i = 0; i < 8; i++) {
+    const f = miss(ellAt(q, t)), df = (miss(ellAt(q, t + h)) - f) / h;
+    if (!df) return p;
+    t -= f / df;
+  }
+  return Number.isFinite(t) && Math.abs(Math.atan2(Math.sin(t - t0), Math.cos(t - t0))) < 0.05 ? ellAt(q, t) : p;      // a chord is ~0.012 rad wide
+}
 /** The shape Extend measures against: a modifiable shape, an ellipse or a spline. */
 const boundaryOf = (e) => (canModify(e) ? shapeOf(e, 1) : curveShape(e));
 /** Can Extend take this as a boundary (a picked edge, or among "all")? */
@@ -53,14 +71,18 @@ export const extendable = (e) => !!e && (canModify(e) || (e.type === 'ELLIPSE' &
 export function rayHit(from, end, shapes) {
   const len = dist(from, end);
   if (len < 1e-9) return null;
-  const segs = shapes.flatMap((sh) => pathOf(sh).segs).filter((s) => dist(s.a, s.b) >= 1e-9);
+  const segs = shapes.flatMap((sh) => pathOf(sh).segs.map((s) => ({ ...s, sh }))).filter((s) => dist(s.a, s.b) >= 1e-9);
   // a ray long enough to pass every boundary: the farthest a segment can reach from `end`
   const reach = 1 + Math.max(0, ...segs.map((s) => { const g = geo(s); return dist(end, s.a) + (g.line ? g.len : 2 * g.r); }));
-  const ray = { a: end, b: [end[0] + (end[0] - from[0]) / len * reach, end[1] + (end[1] - from[1]) / len * reach], bulge: 0 };
-  let best = null, bd = Infinity;
+  const u = [(end[0] - from[0]) / len, (end[1] - from[1]) / len], ray = { a: end, b: [end[0] + u[0] * reach, end[1] + u[1] * reach], bulge: 0 };
+  let best = null, bd = Infinity, bs = null;
   for (const s of segs) for (const h of segInter(ray, s)) {
     const d = dist(end, h.p);
-    if (d > 1e-9 * (1 + len) && d < bd) { bd = d; best = h.p; }
+    if (d > 1e-9 * (1 + len) && d < bd) { bd = d; best = h.p; bs = s; }
+  }
+  if (best && bs.sh.q) {
+    const p = snapOnto(bs.sh, best, (P) => u[0] * (P[1] - end[1]) - u[1] * (P[0] - end[0]));
+    if ((p[0] - end[0]) * u[0] + (p[1] - end[1]) * u[1] > 1e-9 * (1 + len)) best = p;          // still ahead of the end
   }
   return best;
 }
@@ -75,9 +97,10 @@ function arcGrowth(g, atEnd, shapes) {
   let best = null;
   for (const sh of shapes) for (const bs of pathOf(sh).segs) {
     if (dist(bs.a, bs.b) < 1e-9) continue;
+    const turn = (p) => { const d = ((Math.atan2(p[1] - g.c[1], p[0] - g.c[0]) - from) * dir) % TAU; return d < 0 ? d + TAU : d; };
     for (const cs of circle) for (const h of segInter(cs, bs)) {
-      let d = ((Math.atan2(h.p[1] - g.c[1], h.p[0] - g.c[0]) - from) * dir) % TAU;
-      if (d < 0) d += TAU;
+      let d = turn(h.p);
+      if (sh.q && d > 1e-9 && d < gap - 1e-9 && (best == null || d < best)) d = turn(snapOnto(sh, h.p, (P) => Math.hypot(P[0] - g.c[0], P[1] - g.c[1]) - g.r));
       if (d > 1e-9 && d < gap - 1e-9 && (best == null || d < best)) best = d;
     }
   }
@@ -108,7 +131,12 @@ function extendEllipse(ent, shapes, pick) {
   const q = ellipseOf(ent), gap = TAU - (q.t1 - q.t0);
   if (gap < 1e-6) return { error: "Can't extend a closed shape" };
   const atEnd = dist(pick, ellAt(q, q.t1)) <= dist(pick, ellAt(q, q.t0)), k = at(ent.r, atEnd ? 42 : 41);
-  const segs = shapes.flatMap((sh) => pathOf(sh).segs).filter((s) => dist(s.a, s.b) >= 1e-9);
+  const lx = Math.abs(q.m[0]) + Math.abs(q.n[0]) + 1e-6, ly = Math.abs(q.m[1]) + Math.abs(q.n[1]) + 1e-6;      // the ellipse lies inside c ± (|m| + |n|)
+  const inBox = (s) => {
+    const g = geo(s), [x0, x1, y0, y1] = g.line ? [Math.min(s.a[0], s.b[0]), Math.max(s.a[0], s.b[0]), Math.min(s.a[1], s.b[1]), Math.max(s.a[1], s.b[1])] : [g.c[0] - g.r, g.c[0] + g.r, g.c[1] - g.r, g.c[1] + g.r];
+    return x1 >= q.c[0] - lx && x0 <= q.c[0] + lx && y1 >= q.c[1] - ly && y0 <= q.c[1] + ly;
+  };
+  const segs = shapes.flatMap((sh) => pathOf(sh).segs).filter((s) => dist(s.a, s.b) >= 1e-9 && inBox(s));
   const d = ellipseGrowth(q, atEnd ? q.t1 : q.t0, atEnd ? 1 : -1, gap, segs);
   if (d == null || k < 0) return { error: 'No boundary ahead of that end: nothing changed' };
   return { ent: withValues(ent, [[k, wrap(atEnd ? q.t1 + d : q.t0 - d)]]) };

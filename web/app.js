@@ -6931,6 +6931,7 @@ function trimUndo(d) {
 /** Quick Trim (or Extend) of a whole region (a fence or a crossing window): one undo step; what the edges were stays an edge as pieces. */
 function trimRegionDo(d, hit, what) {
   const m = state.mod, ext = m.kind === 'extend', idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && (ext ? extendable : MD.canModify)(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
+  if (!ext && curveEdgesOnly(d, m)) { note("Ellipse and spline edges don't trim yet"); return false; }
   const r = ext ? extendRegion(ents, trimEdges(d, m), hit) : MD.trimRegion(ents, trimEdges(d, m), hit);
   if (!r.changed.length) { note(ext ? `${what} reaches nothing to extend` + (r.skipped ? ` (${r.skipped} object${r.skipped === 1 ? '' : 's'} with no boundary ahead or closed)` : '') : `${what} crosses nothing to trim` + (r.skipped ? ` (${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone)` : '')); return false; }
   const rep = new Map(r.changed.map((c) => [idxs[c.i], c.ents]));
@@ -6989,9 +6990,12 @@ function editDo(d, p, shift) {
   if (idx < 0) { note(ext ? 'Extend: nothing there. Click near the end of a line, arc or open polyline' : 'Trim: nothing there. Click the part to cut away'); return; }
   if (ext !== !!shift) extendDo(d, idx, p); else trimDo(d, idx, p);
 }
+/** Every edge Trim was given is an ellipse or spline, which Trim can't cut with yet (Extend can use them). */
+const curveEdgesOnly = (d, m) => { const es = trimEdges(d, m); return es.length > 0 && !es.some(MD.canModify); };
 function trimDo(d, idx, p) {
   const m = state.mod, ent = d.raw.entities[idx];
   if (!MD.canModify(ent)) { note('Trim takes a line, arc, circle or polyline'); return; }
+  if (curveEdgesOnly(d, m)) { note("Ellipse and spline edges don't trim yet"); return; }
   const r = MD.trimEntity(ent, trimEdges(d, m), p, m.quick);
   if (r.error) { note(r.error); return; }
   view.fitted = false;

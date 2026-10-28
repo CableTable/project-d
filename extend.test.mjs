@@ -154,3 +154,29 @@ test('previewEdit and extendRegion take elliptical arcs: the preview is just the
   const r = extendRegion([half, line(0, 5, 3, 5)], [floor], fenceHit([[-12, 1], [-9, 1]]));
   assert.equal(r.changed.length, 1); nearE(E(r.changed[0].ents[0], 42), PI + Math.asin(0.6));
 });
+
+test('extendEntity ellipse: a line reaches a huge ellipse exactly (snapped off the chord)', () => {
+  const r = extendEntity(line(0, 3000, 100, 3000), [ellipse(0, 0, 10000, 0, 0.5)], [100, 3000]), b = S(r.ent).b;
+  assert.ok(Math.hypot(b[0] - 8000, b[1] - 3000) < 1e-6, `${b}`);
+  const a = extendEntity(arc(0, 0, 7000, 0, 30), [ellipse(0, 0, 10000, 0, 0.5)], [7000 * Math.cos(PI / 6), 3500]);      // an arc too, on the true curve
+  const p = [7000 * Math.cos(S(a.ent).a1 / 180 * PI), 7000 * Math.sin(S(a.ent).a1 / 180 * PI)];
+  assert.ok(Math.abs((p[0] / 10000) ** 2 + (p[1] / 5000) ** 2 - 1) < 1e-8, `${p}`);      // the arc's angle is stored to ~1e-7 degree; an unsnapped chord hit leaves ~7e-7
+});
+
+test('extendEntity ellipse: an elliptical arc whose sweep crosses 0 (t0 = 5, t1 = 1) grows at both ends', () => {
+  const arcE = ellipse(0, 0, 10, 0, 0.5, 5, 1);
+  let r = extendEntity(arcE, [line(-20, 4, 20, 4)], onEll([10, 0], 0.5, 1));                     // the end at t = 1 grows on to y = 4 (sin t = 0.8)
+  nearE(E(r.ent, 42), PI - Math.asin(0.8)); nearE(E(r.ent, 41), 5);
+  r = extendEntity(arcE, [line(-20, -4, 20, -4)], onEll([10, 0], 0.5, 5));                       // the start at t = 5 grows backwards to y = -4
+  nearE(E(r.ent, 41), PI + Math.asin(0.8)); nearE(E(r.ent, 42), 1);
+});
+
+test('extendEntity ellipse: an elliptical arc against 50 boundary ellipses and 2000 lines stays fast', () => {
+  const edges = [line(-20, -3, 20, -3)];
+  for (let i = 0; i < 50; i++) edges.push(ellipse(40 + i * 15, 30, 10, 0, 0.5));
+  for (let i = 0; i < 2000; i++) edges.push(line(-500 + (i % 100) * 10, -500 + Math.floor(i / 100) * 50, -495 + (i % 100) * 10, -480 + Math.floor(i / 100) * 50));
+  const half = ellipse(0, 0, 10, 0, 0.5, 0, PI), t = performance.now();
+  const r = extendEntity(half, edges, [-10, 0]);
+  assert.ok(performance.now() - t < 50, `${performance.now() - t} ms`);
+  nearE(E(r.ent, 42), PI + Math.asin(0.6));
+});
