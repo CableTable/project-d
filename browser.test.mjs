@@ -734,7 +734,7 @@ try {
         assert.equal(await bg('[data-testid=cmd-bar]'), command, `${theme}: the command bar keeps its own colour`);
         assert.equal(await bg('.cb-rows .r.hi'), row, `${theme}: the highlighted suggestion row keeps its old colour`);
         assert.equal(await p.evaluate(() => { const a = document.createElement('a'); a.href = '#'; document.body.append(a); const c = getComputedStyle(a).color; a.remove(); return c; }), link, `${theme}: links stay blue`);
-        await p.screenshot({ path: `shots-157b/after-cmdbox-${theme}.png` });
+        await p.screenshot({ path: `${shotDir}/after-cmdbox-${theme}.png` });
         assert.equal(await p.locator('[data-testid=grip]').first().evaluate((el) => getComputedStyle(el).fill), 'rgb(0, 127, 255)', `${theme}: grip`);
         await p.screenshot({ path: `${shotDir}/todo157b-chrome-${theme}.png` });
       }
@@ -748,7 +748,7 @@ try {
         assert.equal(await bg('.drawtip.dynamic-input'), box, `${theme}: the cursor command box keeps its old colour`);
         assert.equal(await css('input.cursor-field.active', 'outlineColor'), outline, `${theme}: the active cursor field keeps its blue outline`);
         assert.equal(await css('.status .cb-hint', 'color'), hint, `${theme}: the status hint keeps its old colour`);
-        await p.screenshot({ path: `shots-157b/after-cursorbox-${theme}.png` });
+        await p.screenshot({ path: `${shotDir}/after-cursorbox-${theme}.png` });
       }
       assert.deepEqual(errs, []);
     } finally { await context.close(); }
