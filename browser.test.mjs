@@ -3878,6 +3878,7 @@ try {
       await p.locator('.ovl [data-rot]').first().waitFor();
       assert.equal(await p.locator('.ovl [data-rot]').count(), 4);
       await pick(80, 80); await count(0);
+      assert.equal(await p.locator('.ovl [data-rot]').count(), 0);
       await pick(100, 120); await count(1);
       const a = await point(120, 100); await p.mouse.dblclick(a.x, a.y); await count(1);
       assert.equal(await p.getByRole('dialog').count(), 0, 'double-click adds no Quick Properties flow');
@@ -11840,7 +11841,8 @@ try {
     await typeCmd('ct'); assert.equal(await t('contour-panel').isVisible(), true);
     await page.keyboard.press('Escape'); await typeCmd('m'); assert.equal(await t('tool-chip').textContent(), 'Tool: Measure');
     await page.keyboard.press('Escape'); await closeTabs(/move-locked/);
-    await t('new-layout').click(); await typeCmd('mv'); assert.match(await prompt(), /Move works on a drawing tab/);
+    await t('new-layout').click(); await typeCmd('mv'); assert.equal(await prompt(), 'Select objects (click or drag a box), then Enter:');
+    await page.keyboard.press('Escape');
     await closeTabs(/Layout/);
   });
 
@@ -14303,6 +14305,15 @@ try {
     await menuItem('Layout', 'Lock');
     await typeCmd('move'); await typeCmd('0,0'); await typeCmd('50,0');
     assert.deepEqual(await pos(), [x0, y0], 'locked: not moved');
+    const lockedScale = await placedNow();
+    await typeCmd('scale'); await typeCmd(`${x0},${y0}`); await typeCmd('2');
+    assert.match(await prompt(), /Locked: Unlock/);
+    assert.deepEqual(await placedNow(), lockedScale, 'locked: Scale leaves the original alone');
+    await typeCmd('scale'); await typeCmd(`${x0},${y0}`); await typeCmd('c'); await typeCmd('2');
+    const scaledCopy = await placedNow();
+    assert.deepEqual(scaledCopy.slice(0, -1), lockedScale, 'Scale Copy keeps the locked original');
+    assert.equal(scaledCopy.at(-1).sc, 2); assert.equal(Boolean(scaledCopy.at(-1).lock), false);
+    await undo(); assert.deepEqual(await placedNow(), lockedScale, 'one Undo removes the scaled copy');
     await menuItem('Layout', 'Unlock');
     // Copy: the original stays, one more part
     await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('0,100');
@@ -14344,6 +14355,44 @@ try {
     await page.locator('[data-group=parts] .part-hit').last().click({ force: true });
     [w1, h1] = await wh(); approx(w1, w0 * 2, 0.02, 'reopened W'); approx(h1, h0 * 2, 0.02, 'reopened H');
     await shotBoth('layout-modify');
+  });
+
+  await step('TODO 156b1: Contour on scaled placements keeps 5 mm spacing and shares contour parts only at the same scale', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(4), src = newLayout('Scaled contours');
+      addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      src.parts.plate = makePart('plate', 'Plate', raw, 1);
+      src.placed = [1, 2, 2].map((sc, i) => ({ partId: 'plate', x: 100 + i * 300, y: 200, rot: 0, mirrorX: false, mirrorY: false, sc }));
+      await q('picker').setInputFiles({ name: 'scaled-contours.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(src)), 'latin1') });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'scaled-contours.dxf');
+      await p.keyboard.press('Control+a'); await p.locator('[data-tool=contour]').click();
+      await q('contour-dist').fill('5'); await q('contour-dist').press('Enter');
+      await q('contour-steps').fill('1'); await q('contour-steps').press('Enter');
+      await q('contour-outside').click(); await q('contour-sharp').click();
+      assert.match(await q('contour-hint').textContent(), /3 outlines.*3 parts/);
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/156b1-scaled-contour-preview-${theme}.png` });
+      }
+      await q('contour-apply').click(); await q('contour-close').click();
+      const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      const lay = layoutFromRaw(readDxf(readFileSync(await dl.path(), 'latin1'))), contours = lay.placed.filter((pl) => pl.ct);
+      assert.equal(contours.length, 3);
+      assert.notEqual(contours[0].partId, contours[1].partId, 'different scales need different contour geometry');
+      assert.equal(contours[1].partId, contours[2].partId, 'matching scales share contour geometry');
+      for (const ct of contours) {
+        const pl = lay.placed.find((pl) => pl.cid === ct.ct), b = placedBox(lay.parts[pl.partId], pl);
+        assert.equal(ct.sc || 1, pl.sc || 1);
+        assert.deepEqual(placedBox(lay.parts[ct.partId], ct), [b[0] - 5, b[1] - 5, b[2] + 5, b[3] + 5]);
+      }
+      for (const theme of ['light', 'dark']) {
+        await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
+        await p.screenshot({ path: `${shotDir}/156b1-scaled-contour-applied-${theme}.png` });
+      }
+    } finally { await context.close(); }
   });
 
   await step('TODO 124: Break Apart via Ctrl+K and BREAKAPART separates a group and a block of outlines, selects results, Undo restores selection; plain line explains no change', async () => {

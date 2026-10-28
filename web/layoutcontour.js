@@ -31,17 +31,17 @@ export function outerLoop(part) {
 
 /**
  * The contour of a part for cfg { dist (mm), steps, dir ('inside' | 'outside'), corners ('sharp' | 'rounded') }:
- * { kind: 'ok' | 'open' (no closed outline) | 'none' (nothing to make with these values), loop, open, res (CT.contour's result) }. Kept per part and values.
+ * { kind: 'ok' | 'open' (no closed outline) | 'none' (nothing to make with these values), loop, open, res (CT.contour's result) }. Kept per part, placement scale and values.
  */
-export function partContour(part, cfg) {
-  const key = [cfg.dist, cfg.steps, cfg.dir, cfg.corners].join('|');
+export function partContour(part, cfg, sc = 1) {
+  const key = [cfg.dist, cfg.steps, cfg.dir, cfg.corners, sc].join('|');
   let byKey = results.get(part);
   if (!byKey) results.set(part, byKey = new Map());
   if (byKey.has(key)) return byKey.get(key);
   const { loop, open } = outerLoop(part);
   let out = { kind: 'open', loop: null, open, res: null };
   if (loop) {
-    const res = CT.contour([loop], { dist: cfg.dist / (part.factor || 1), steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners });
+    const res = CT.contour([loop], { dist: cfg.dist / ((part.factor || 1) * sc), steps: cfg.steps, outward: cfg.dir === 'outside', corners: cfg.corners });
     out = { kind: res.made ? 'ok' : 'none', loop, open, res };
   }
   byKey.set(key, out);
@@ -67,7 +67,7 @@ const r6 = (v) => Math.round(v * 1e6) / 1e6;
 export function contourPlacement(srcPart, srcPl, ctPart) {
   const f = srcPart.factor || 1, u = (ctPart.box[0] - srcPart.box[0]) * f, v = (ctPart.box[1] - srcPart.box[1]) * f;
   const th = (srcPl.rot || 0) * Math.PI / 180, co = Math.cos(th), si = Math.sin(th), k = srcPl.sc || 1, p = u * k * (srcPl.mirrorX ? -1 : 1), q = v * k * (srcPl.mirrorY ? -1 : 1);
-  return placement1(ctPart.id, r6(srcPl.x + co * p - si * q), r6(srcPl.y + si * p + co * q), srcPl.rot, srcPl.mirrorX, srcPl.mirrorY);
+  return { ...placement1(ctPart.id, r6(srcPl.x + co * p - si * q), r6(srcPl.y + si * p + co * q), srcPl.rot, srcPl.mirrorX, srcPl.mirrorY), ...(srcPl.sc ? { sc: srcPl.sc } : {}) };
 }
 
 /** The rings of a contour result as closed point lists on the sheet (mm, y up), for the preview. */

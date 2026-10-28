@@ -14,10 +14,10 @@ const nearBox = (a, b) => a.forEach((v, i) => near(v, b[i]));
 const CFG = { dist: 10, steps: 1, dir: 'outside', corners: 'sharp' };
 const STYLE = { id: 'c1', name: 'plate - contour 1', layer: 'Contour', colour: 'bylayer', lt: 'BYLAYER', dash: [] };
 /** A 100 x 60 plate with a round hole, as a layout part. */
-function plate() {
+function plate(factor = 1) {
   const d = newDoc(4);
   addEntities(d, rect(0, 0, 100, 60, { layer: 'OUT' }), circle(50, 30, 15, { layer: 'OUT' }));
-  return LD.makePart('a', 'plate', d, 1);
+  return LD.makePart('a', 'plate', d, factor);
 }
 const grow = (b, k) => [b[0] - k, b[1] - k, b[2] + k, b[3] + k];
 
@@ -49,6 +49,21 @@ test('the contour lies on its part for any turn and mirror, so the two boxes nes
   const p = plate(), c = LC.contourPart(p, LC.partContour(p, CFG).res, STYLE);
   for (const pl of [placement1('a', 30, 40), placement1('a', 30, 40, 90), placement1('a', 200, 100, 180, true, false), placement1('a', 5, 5, 270, true, true), placement1('a', 5, 5, 180, false, true)]) {
     nearBox(placedBox(c, LC.contourPlacement(p, pl, c)), grow(placedBox(p, pl), 10));
+  }
+});
+
+test('scaled placements: a 5 mm contour stays 5 mm outside, and Apply matches Preview at each scale', () => {
+  for (const factor of [1, 25.4]) {
+    const p = plate(factor), cfg = { ...CFG, dist: 5 };
+    for (const sc of [2, 1, 0.5, 2]) for (const rot of [0, 90, 180, 270]) {
+      const pl = { ...placement1('a', 200, 100, rot, true, false), sc }, r = LC.partContour(p, cfg, sc);
+      assert.equal(LC.partContour(p, cfg, sc), r, 'same scale reuses the cached result');
+      const c = LC.contourPart(p, r.res, STYLE), cp = LC.contourPlacement(p, pl, c), b = grow(placedBox(p, pl), 5);
+      assert.equal(cp.sc, sc);
+      nearBox(placedBox(c, cp), b);
+      const pts = LC.sheetLoops(p, pl, r.res, 700).flat(), xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
+      nearBox([Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)], b);
+    }
   }
 });
 

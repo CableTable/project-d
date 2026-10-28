@@ -6903,12 +6903,12 @@ function layStill() {
   return !!m.items && now.length === m.items.length && now.every((x, k) => x.i === m.items[k].i && PL.samePlacement(placementOf(x.p), m.items[k].orig));
 }
 function layStale() { const label = modLabel(state.mod.kind); setTool('select'); note(`Layout changed: start ${label} again`); }
-/** Enter on the selection: the parts the command works on are taken (Move and Scale refuse a locked part; copies are allowed). */
+/** Enter on the selection: the parts the command works on are taken (Move refuses a locked part; copies are allowed). */
 function layTake(d) {
   const m = state.mod, label = modLabel(m.kind), now = selItems();
   d.factor = 1;                                                    // the commands above read d.factor: a layout is in mm
   if (!now.length) { note(`${label}: pick at least one object first`); return; }
-  if (['move', 'scale'].includes(m.kind) && now.some((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
+  if (m.kind === 'move' && now.some((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
   m.items = now.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) }));
   m.sel = new Set(m.items.map((x) => x.i)); m.keep = selIdxs(); m.main = state.sel; m.objs = m.items;
   if (m.kind === 'array') {
@@ -6965,6 +6965,7 @@ function layMoveTo(d, q) {
 function layScaleDo(d, k) {
   const m = state.mod;
   if (!layStill()) { layStale(); return; }
+  if (!m.copy && m.items.some((x) => x.orig.lock)) { setTool('select'); note(LOCKED); return; }
   if (!(k >= 1e-4 && k <= 1e4)) { note('The scale factor must be between 0.0001 and 10000'); return; }
   const to = layResults(m, k)[0], r = editSelected((part, pl, c) => to[c.k], { copy: m.copy, label: 'Scale' });
   setTool('select');
@@ -8583,7 +8584,7 @@ function contourCompute(d) {
 /** Contour on a layout: the selected placed parts that are not themselves contours, each with its own contour for the panel's values.
  * → { kind: 'none' | 'open' | 'ok', rows: [{ x (selItems entry), c (LC.partContour's result) }] (the ones with a contour), made (rings in all), polys (preview, sheet mm), warn, an / res (the first part's, for the panel's little picture) }. */
 function layContourCompute(lay) {
-  const cfg = state.contourCfg, all = selItems().filter((x) => !x.p.ct).map((x) => ({ x, c: LC.partContour(x.part, cfg) }));
+  const cfg = state.contourCfg, all = selItems().filter((x) => !x.p.ct).map((x) => ({ x, c: LC.partContour(x.part, cfg, x.p.sc || 1) }));
   if (!all.length) return { kind: 'none', rows: [] };
   const rows = all.filter((r) => r.c.kind === 'ok');
   if (!rows.length) return { kind: 'open', rows, an: { loops: [], open: 0 } };
@@ -8682,12 +8683,12 @@ function applyLayContour() {
   for (const p of old) if (!lay.placed.some((q) => q.partId === p.partId) && lay.s.gridPart !== p.partId) delete lay.parts[p.partId];       // before the names are chosen, so "contour 1" is free again
   const names = Object.values(lay.parts).map((p) => p.name);
   srcs.forEach((src, k) => {
-    const part = cc.rows[k].x.part;
-    if (!(src.partId in made)) {                                                       // one contour part for all the places of a part
-      made[src.partId] = LC.contourPart(part, cc.rows[k].c.res, { id: uid(), name: LD.nextName(`${part.name} - contour`, names), layer: CONTOUR_LAYER, colour: cfg.colour, lt: cfg.lt, dash: style.dash });
-      if (made[src.partId]) { names.push(made[src.partId].name); lay.parts[made[src.partId].id] = made[src.partId]; }
+    const part = cc.rows[k].x.part, key = JSON.stringify([src.partId, src.sc || 1]);
+    if (!(key in made)) {                                                             // share contours only between placements of the same part and scale
+      made[key] = LC.contourPart(part, cc.rows[k].c.res, { id: uid(), name: LD.nextName(`${part.name} - contour`, names), layer: CONTOUR_LAYER, colour: cfg.colour, lt: cfg.lt, dash: style.dash });
+      if (made[key]) { names.push(made[key].name); lay.parts[made[key].id] = made[key]; }
     }
-    const cp = made[src.partId];
+    const cp = made[key];
     if (cp) add.push({ ...LC.contourPlacement(part, src, cp), g: src.g, ct: src.cid });
   });
   lay.placed.push(...add);
