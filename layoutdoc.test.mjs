@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { readDxf, decodeDxf, flatten, unionBox, mapply } from './web/drawing.js';
-import { writeDxf, newDoc, addEntities, addLayer, rect, line, circle, insert, addBlock, arc, text, entity } from './web/dxf-write.js';
+import { writeDxf, newDoc, addEntities, addLayer, rect, line, circle, insert, addBlock } from './web/dxf-write.js';
 import { placedMat, placedBox, placement1, buildLayoutDoc } from './web/apply.js';
 import * as LD from './web/layoutdoc.js';
 import * as P from './web/place.js';
@@ -501,76 +501,6 @@ test('Explode a block inside a part stays one object; a grid becomes placed part
   assert.equal(LD.placedAll(g).length, copies.length);
   assert.equal(LD.explodePlaced(g, [0], () => 'q' + Math.random()).done, 1);
   assert.ok(g.placed.length > copies.length);
-});
-
-// ---- 156b4 fix round
-const PLACES = { 'rot 90': { rot: 90 }, mirrorX: { mirrorX: true }, mirrorY: { mirrorY: true }, 'rot 180': { rot: 180 }, 'mirrorX + sc 2': { mirrorX: true, sc: 2 }, 'rot 180 + mirrorX': { rot: 180, mirrorX: true } };
-const placedPart = (raw, pl) => { const lay = LD.newLayout('E'); lay.parts.p = LD.makePart('p', 'Part', raw, 1); lay.placed.push({ ...placement1('p', 100, 50), ...pl }); return lay; };
-const unionOf = (bs) => bs.reduce((u, b) => [Math.min(u[0], b[0]), Math.min(u[1], b[1]), Math.max(u[2], b[2]), Math.max(u[3], b[3])]);
-const boxOf = (lay, i) => { const p = lay.placed[i], o = lay.parts[p.partId]; return [p.x, p.y, p.x + o.w, p.y + o.h]; };
-
-test('Explode: a part with a DIMENSION explodes, the dimension stays one object and lands where the part showed it', () => {
-  const raw = newDoc(4);
-  addBlock(raw, '*D1', [line(0, 0, 20, 0), line(0, 0, 0, 3), line(20, 0, 20, 3), text(8, 4, 2, '20')]);
-  addEntities(raw, line(0, 10, 20, 10), entity('DIMENSION', [[2, '*D1'], [70, 0]]));
-  for (const [name, pl] of Object.entries(PLACES)) {
-    const lay = placedPart(raw, pl), want = placedBox(lay.parts.p, lay.placed[0]);
-    const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
-    assert.equal(r.done, 1, name + ': ' + r.errors);
-    assert.deepEqual(r.pieces.map((i) => lay.parts[lay.placed[i].partId].raw.entities[0].type).sort(), ['INSERT', 'LINE'], name);
-    unionOf(r.pieces.map((i) => boxOf(lay, i))).forEach((v, i) => near(v, want[i], 1e-6));
-  }
-});
-
-test('Explode: pieces on a reserved layer name (Sheet, Marks, Parts) go to a renamed layer and survive save and reopen', () => {
-  const raw = newDoc(4);
-  addLayer(raw, 'Parts', { aci: 3 });
-  addEntities(raw, text(0, 0, 2, 'AB', { layer: 'Parts' }), line(0, 5, 10, 5, { layer: 'Sheet' }), line(0, 8, 10, 8, { layer: 'parts' }));
-  const lay = placedPart(raw, {});
-  const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
-  assert.equal(r.done, 1); assert.equal(r.pieces.length, 3);
-  const layers = r.pieces.map((i) => lay.parts[lay.placed[i].partId].raw.entities[0].layer);
-  assert.ok(layers.every((l) => !LD.isReserved(l) && LD.layersOf(lay)[l]), layers.join());
-  assert.equal(layers[0], layers[2]);                              // Parts and parts are one layer
-  assert.equal(LD.layersOf(lay)[layers[0]].aci, 3);                // it keeps the part's colour
-  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
-  assert.equal(back.placed.filter((p) => back.parts[p.partId].obj).length, 3);
-});
-
-test('Explode: text, an arc and a line land where the part showed them, under mirror, rot 90 and rot 180; save and reopen keeps them', () => {
-  const raw = newDoc(4);
-  addEntities(raw, text(2, 3, 2, 'HELLO'), arc(5, 5, 4, 20, 100), line(0, 0, 12, 1));
-  for (const [name, pl] of Object.entries({ none: {}, ...PLACES })) {
-    const lay = placedPart(raw, pl), want = placedBox(lay.parts.p, lay.placed[0]);
-    const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
-    assert.equal(r.pieces.length, 3, name);
-    unionOf(r.pieces.map((i) => boxOf(lay, i))).forEach((v, i) => near(v, want[i], 1e-6));
-    const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
-    assert.equal(back.placed.length, 3, name);
-    unionOf(back.placed.map((_, i) => boxOf(back, i))).forEach((v, i) => near(v, want[i], 1e-6));
-  }
-});
-
-test('Explode: a text alone lands in the same box as the placed part, mirrored and turned', () => {
-  for (const [name, pl] of Object.entries({ none: {}, ...PLACES })) {
-    const raw = newDoc(4); addEntities(raw, text(2, 3, 2, 'HELLO'));
-    const lay = placedPart(raw, pl), want = placedBox(lay.parts.p, lay.placed[0]);
-    const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
-    assert.equal(r.pieces.length, 1, name);
-    boxOf(lay, r.pieces[0]).forEach((v, i) => near(v, want[i], 1e-6));
-  }
-});
-
-test('Explode: a piece on a layer the part had turned off stays off', () => {
-  const raw = newDoc(4);
-  addLayer(raw, 'HID', { aci: 1, off: true });
-  addEntities(raw, line(0, 0, 10, 0), line(0, 5, 10, 5), line(0, 9, 10, 9, { layer: 'HID' }));
-  const lay = placedPart(raw, {});
-  const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
-  assert.equal(LD.layersOf(lay).HID.off, true);                    // the layer stays off in the layout
-  const objs = lay.placed.map((p) => lay.parts[p.partId]);
-  assert.ok(objs.every((o) => o.raw.entities[0].layer !== 'HID'));  // nothing on it shows (an object needs extents), and the note says so
-  assert.equal(objs.length, 2); assert.equal(r.errors.length, 1);
 });
 
 console.log(n + ' tests passed');

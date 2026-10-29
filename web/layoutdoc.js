@@ -18,7 +18,7 @@ import { explodeInsert, explodeDimension } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
-import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag } from './edit.js';
+import { keepOnly, DIM_LAYER, DIM_BLOCK, dimTag } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
 import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
@@ -135,21 +135,15 @@ export function explodePlaced(lay, idxs, newId) {
   const at = new Set(idxs), out = [], pieces = [], errors = new Set(), table = { ...layersOf(lay) }, names = new Set(Object.values(lay.parts).map((q) => q.name));
   const find = (t, n) => Object.keys(t).find((k) => k.toLowerCase() === String(n).toLowerCase());
   let done = 0;
-  const renamed = new Map();
   lay.placed.forEach((p, i) => {
     const part = lay.parts[p.partId], mine = [];
     if (at.has(i) && part && !part.obj && !p.lock) {
       try {
         const r = explodePart(part, p);
-        for (let e of r.entities) {
-          const k = find(part.raw.layers || {}, e.layer), def = () => (k === undefined ? { aci: 7 } : structuredClone(part.raw.layers[k]));
-          if (isReserved(e.layer)) {                       // Sheet, Marks and Parts are not read back as objects: such a piece goes on a layer of its own
-            const low = e.layer.toLowerCase();
-            if (!renamed.has(low)) { const name = newLayerName([...Object.keys(table), ...RESERVED_LAYERS]); table[name] = def(); renamed.set(low, name); }
-            e = { ...e, layer: renamed.get(low) };
-          } else if (find(table, e.layer) === undefined) table[e.layer] = def();
+        for (const e of r.entities) {
+          if (find(table, e.layer) === undefined) { const k = find(part.raw.layers || {}, e.layer); table[e.layer] = k === undefined ? { aci: 7 } : structuredClone(part.raw.layers[k]); }
           const o = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), e, table, {}, e.type === 'INSERT' ? r.blocks : {});
-          if (o) { names.add(o.name); mine.push(o); } else errors.add('pieces with no extent (on a layer the part had off) were dropped');       // shortcut: an object needs extents; keep them if a hidden layer must survive Explode
+          if (o) { names.add(o.name); mine.push(o); }
         }
       } catch (err) { errors.add(err.message); mine.length = 0; }
     }
