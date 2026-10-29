@@ -96,6 +96,12 @@ usage-agent-install.ps1.
    skill, over King's `king-*.jsonl` runs: permissions, wasted tokens, navigation, brief gaps); and a Rook retro
    (`runs<N>/retro<N>rook.txt`, over Rook's own transcript: wasted tokens, wrong claims, briefs that caused rework, rules
    broken). Each skips points the earlier ones made. All suggest changes to rules, checks, briefs (not code); Rook applies the ones it recommends (full control, his call 2026-10-29) and names them in one line; he can overrule.
+   The retro skill is the project copy `.claude/skills/retro/` (the plugin's is user-only). **Weekly plugin check** (his call
+   2026-10-29): the first Rook session after the Sun 15:30 reset, if `Project D extras/weekly-check.txt`'s last date is 7+
+   days old: `claude plugin marketplace update mattpocock`, then `plugin update mattpocock-skills@mattpocock` with `claude`,
+   `claude2.cmd` and `claude3.cmd`; diff the newest plugin `skills/engineering/retro/SKILL.md` against the copy (ignore the
+   `description:` and `disable-model-invocation:` lines); changed -> refresh the copy (drop `disable-model-invocation`, keep
+   our description) and commit; append today's date + result to weekly-check.txt.
 5. **Tickets sized for one fresh session** (his call 2026-10-20): every M / L TODO item is split into tickets
    (TODO "66a", "66b", …), each a vertical slice that one fresh builder run can finish with its context under
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
