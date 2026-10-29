@@ -68,7 +68,7 @@ usage-agent-install.ps1.
    own recommended answers and goes on without waiting; he can overrule any answer later. He is told only of major changes.
    **AutoCAD check** (his call, 2026-10-27): before grilling any AutoCAD-style feature (commands, prompts, keys, snaps,
    selection, dimensions), Pawn reads Autodesk's own help (help.autodesk.com) on how AutoCAD does it, and the round's
-   recommendations follow AutoCAD unless he decided otherwise; where ours differs, say which way is better and why (his ask 2026-10-27). Not settled by the docs: a short AutoLISP / script check
+   recommendations follow AutoCAD unless he decided otherwise; where ours differs, say which way is better and why (his ask 2026-10-27). What the UI SHOWS (editor contents, prefill, highlight, prompt text) is not settled by the docs: a Bishop-acad run checks it before the brief when AutoCAD is open (S28 built `<>` in the dim editor where AutoCAD shows the number; one fix round). Other points not settled by the docs: a short AutoLISP / script check
    he runs in his AutoCAD (licence allows; he pastes the result), then, if still open, watch it in his installed AutoCAD
    with computer use (Claude desktop app only; from the CLI, ask him to run that step there). Never reverse-engineer
    AutoCAD's binaries (e.g. REA): Autodesk's licence forbids it.
@@ -296,6 +296,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min,
   re-arm on expiry). It prints each finished job and ends with `RUN <id> success|failure`. Never pipe to `jq`: it is not installed
   here, so such a watch stays silent forever (two silent monitors on PR #25); use gh's own `--jq`.
+  Push again only after the `RUN` line: a `build: success` line is one job, and a new push cancels the running tests (S28).
 - **Context limit 250k** (his call, 2026-10-21): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
   automatically there. If it ever doesn't fire, Rook finishes its step at ~250k and asks him to type `/compact`.
 - **Bishop-support** (his call, 2026-10-21): an interactive claude2 (Sonnet) in a Terminal tab answers his questions while he
