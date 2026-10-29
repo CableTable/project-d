@@ -13,9 +13,12 @@ export function snapshotGeometry(source) {
   const outlines = polylines(fl, factor, off);
   const ed = makeIndex(raw, fl, off), ents = new Set(ed.shown);
   const metrics = outlines.box && areaPerimeter(ed, ents, factor, chainTol(outlines.box, 1) / factor);
-  return { name, fl, factor, off, ...outlines,
+  return { name, fl, factor, off, raw: { entities: raw.entities.map(({ type, layer }) => ({ type, layer })) }, ...outlines,     // all that the measurements read, kept so a layer can be hidden later (no live link to the source)
     metrics: { area: metrics?.area || 0, perimeter: metrics?.perimeter || 0, w: outlines.box ? outlines.box[2] - outlines.box[0] : 0, h: outlines.box ? outlines.box[3] - outlines.box[1] : 0 }, sn: null };
 }
+
+/** Hide or show layers in this snapshot only (its own off list): outlines and measurements follow; the source drawing is untouched. */
+export const setItemOff = (item, off) => ({ ...item, ...snapshotGeometry({ ...item, off }) });
 
 /** A snapshot owns its artwork; a tab id lets the app refresh it while that tab is open. */
 export function addItem(items, source) {

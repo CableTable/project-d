@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import * as L from './web/compare-list.js';
 import * as C from './web/compare.js';
 import { flatten, readDxf } from './web/drawing.js';
-import { newDoc, addEntities, writeDxf, rect, circle, line } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, writeDxf, rect, circle, line } from './web/dxf-write.js';
 
 function source(name, entities, factor = 1) {
   const doc = newDoc(4); addEntities(doc, entities);
@@ -94,4 +94,18 @@ test('measurements reuse closed loops with holes, joined lines, open lengths and
   assert.ok(Math.abs(item.metrics.perimeter - 53 * 25.4) < 1e-6);
   assert.equal(item.metrics.w, 635);
   assert.equal(item.metrics.h, 254);
+});
+
+test('hiding a layer in one snapshot recomputes its outlines and leaves the source and the other snapshots alone', () => {
+  const doc = newDoc(4); addLayer(doc, 'Holes'); addEntities(doc, [rect(0, 0, 30, 20, { layer: '0' }), circle(10, 10, 2, { layer: 'Holes' })]);
+  const raw = readDxf(writeDxf(doc)), src = { name: 'p', raw, fl: flatten(raw), factor: 1, off: new Set() };
+  const [a, b] = L.addItem(L.addItem([], src), src).slice(0, 2);
+  const holes = a.fl.layers.findIndex((l) => l.name === 'Holes');
+  const hidden = L.setItemOff(a, new Set([holes]));
+  assert.ok(hidden.off.has(holes) && hidden.polys.length < a.polys.length, 'the circle is gone from the outlines');
+  assert.ok(hidden.metrics.perimeter < a.metrics.perimeter);
+  assert.equal(hidden.id, a.id);
+  assert.equal(src.off.size, 0, 'the source keeps its own list');
+  assert.equal(b.off.size, 0, 'the other snapshot keeps its own list');
+  assert.deepEqual(L.setItemOff(hidden, new Set()).polys, a.polys, 'showing it again brings the outline back');
 });

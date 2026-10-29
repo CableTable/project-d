@@ -4634,6 +4634,98 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 156c2: Compare Layers panel hides a layer in one snapshot only; Contour lands in the source with one Undo; a library part greys Contour', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => {
+      const raw = newDoc(4); addLayer(raw, 'Plate'); addLayer(raw, 'Notes');
+      addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true, layer: 'Plate' }), dxfLine(20, 30, 60, 30, { layer: 'Notes' }));
+      return raw;
+    };
+    const open = async (name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(make())) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const saveDoc = async () => {
+      const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await download.path(), 'utf8'));
+    };
+    const dock = (id) => q('ptab-' + id).click();
+    const pick = async (n) => { await dock('drawing'); await q('cmp-name-' + n).click(); await dock('layers'); };
+    const rows = () => p.locator('[data-file-layer]');
+    const hiddenRows = () => p.locator('[data-file-layer].hidden-layer');
+    const compareMenu = async () => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); };
+    const inkAt = async (x, y) => {                 // coloured pixels around a drawing point: the Notes line is there
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const a = await point(x - 2, y + 2), b = await point(x + 2, y - 2);
+      return q('drawing').evaluate((c, { a, b }) => {
+        const box = c.getBoundingClientRect(), scale = c.width / box.width;
+        const px = c.getContext('2d').getImageData(Math.round((a.x - box.x) * scale), Math.round((a.y - box.y) * scale), Math.max(1, Math.round((b.x - a.x) * scale)), Math.max(1, Math.round((b.y - a.y) * scale))).data;
+        let n = 0; for (let i = 3; i < px.length; i += 4) if (px[i] > 100) n++;
+        return n;
+      }, { a, b });
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await compareMenu(); await dock('layers');
+      assert.equal(await q('layers-empty').textContent(), 'Pick a drawing', 'no snapshot picked');
+      assert.equal(await q('layer-add').isVisible(), false, 'Compare has no + Add layer');
+      await tab('Compare').locator('.x').click();
+      await open('one-156c2.dxf');
+      await p.keyboard.press('Control+a'); await q('bar-extract').click();
+      await q('name-input').fill('Part 156c2'); await q('name-ok').click(); await q('name-dialog').waitFor({ state: 'detached' });
+      await open('two-156c2.dxf');
+      await tab('one-156c2.dxf').click(); await compareMenu();
+      await dock('drawing'); await q('cmp-name-2').click(); await q('cmp-run').click(); await dock('layers');
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'the picked snapshot lists its layers');
+      assert.equal(await q('layer-add').isVisible(), false, 'Compare has no + Add layer');
+      await dock('drawing'); await q('cmp-eye').first().click(); await dock('layers');                  // snapshot 1 hidden: only snapshot 2 paints
+      assert.ok(await inkAt(40, 30) > 0, 'Notes line shows');
+      await rows().nth(1).locator('.vis').click();
+      assert.equal(await hiddenRows().count(), 1);
+      assert.equal(await inkAt(40, 30), 0, 'Notes hidden in the picked snapshot');
+      await pick(1); assert.equal(await hiddenRows().count(), 0, 'snapshot 1 keeps its own layers');
+      await pick(2); assert.equal(await hiddenRows().count(), 1, 'snapshot 2 remembers its hidden layer');
+      await tab('two-156c2.dxf').click();
+      assert.equal(await hiddenRows().count(), 0, 'the source tab keeps its layers');
+      assert.equal(await inkAt(40, 30) > 0, true, 'the source tab still draws Notes');
+      await tab('Compare').click(); await pick(2);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo156c2-${theme}.png` });
+      }
+      // Contour: the outline of the picked snapshot's source gets a ring on the layer Contour, one Undo in the source
+      await rows().nth(1).locator('.vis').click();
+      await p.locator('[data-tool=select]').click(); await click(40, 20);
+      await dock('drawing'); await p.locator('[data-tool=contour]').click(); await q('contour-apply').click();
+      assert.match(await q('cmd-prompt').textContent(), /^Contour: 1 new outline/);
+      await q('contour-close').click(); await dock('layers');
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes', 'Contour'], 'the snapshot is refreshed with the new layer');
+      await tab('two-156c2.dxf').click();
+      const contoured = (await saveDoc()).entities.filter((e) => e.layer === 'Contour').length;
+      assert.ok(contoured > 0, 'the rings are in the source drawing');
+      await tab('Compare').click(); await pick(2);
+      await p.keyboard.press('Control+z');
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'one Undo takes the whole contour away');
+      await tab('two-156c2.dxf').click();
+      assert.equal((await saveDoc()).entities.filter((e) => e.layer === 'Contour').length, 0);
+      // a library part has no source tab: Contour is greyed
+      await tab('Compare').click(); await dock('drawing');
+      await q('cmp-add-library').click(); await p.getByRole('menuitem', { name: 'Part 156c2', exact: true }).click();
+      const contour = p.locator('[data-tool=contour]');
+      assert.equal(await contour.isDisabled(), true);
+      assert.equal(await contour.getAttribute('title'), "Open the part's drawing to contour it");
+    } finally { await context.close(); }
+  });
+
   await step('TODO 156c1 fixes: Compare orders guide and drawing Undo, refreshes source edits and refuses hidden edits', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));

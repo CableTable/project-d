@@ -836,7 +836,7 @@ function applyKind() {
   ui.canvas.classList.toggle('part', !lay);
   renderWorkArea();
   for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
-  ui.layersSec.hidden = lib || !!(d && d.cmp); ui.libSec.hidden = !lib;
+  ui.layersSec.hidden = lib; ui.libSec.hidden = !lib;
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
@@ -1270,6 +1270,11 @@ function buildRail() {
   });
   return h('nav', { class: 'rail', 'aria-label': 'Tools' }, items);
 }
+/** In Compare a picked library part has no source drawing to add the outlines to: Contour is greyed. */
+function railContour() {
+  const b = ui.toolBtns?.contour, part = !!cmpDoc() && !editable() && !!cmpSelected(cmpDoc().cmp)?.part, t = TOOLS.find((x) => x.id === 'contour');
+  if (b) { b.disabled = part; b.title = part ? "Open the part's drawing to contour it" : commandTooltip(t.label, t.id, t.description); }
+}
 function paintRailTooltips() {
   for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
   paintDimButton();
@@ -1305,9 +1310,9 @@ function setTool(id) {
   state.orthoAsk = false;
   state.colourTool = null; endReadout();
   if (id === 'measure' && !measureTarget()) { note('Measure: open a drawing, layout or Compare tab first'); return; }
-  if (cmpDoc() && (MOD_KINDS.includes(id) || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
+  if (cmpDoc() && (MOD_KINDS.includes(id) || id === 'contour' || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
-  if (id === 'contour' && (cmpDoc() || !editable() && !curLay())) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
+  if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable() && !(curLay() && LAY_MODS.includes(id))) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
   state.text.drag = null; state.grip = null; state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
@@ -1507,7 +1512,7 @@ function buildPanel() {
     buildLibrary(),
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
+        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
       h('div', { class: 'osr lsr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.layerSearch = h('input', { type: 'text', placeholder: 'Search layers…', 'aria-label': 'Search layers', 'data-testid': 'layer-search', autocomplete: 'off', spellcheck: 'false' })),
       ui.layerRows),
     buildObjects());
@@ -3375,6 +3380,8 @@ function layerSearchInit() {
 }
 function renderLayers() {
   const d = curDoc(), q = d && d.layerQuery || '';
+  ui.layerAdd.hidden = !!d?.cmp;                                  // Compare draws onto the source drawing: new layers are made there
+  if (d?.cmp) { renderCmpLayers(d, q); return; }
   if (ui.layerSearch.value !== q) ui.layerSearch.value = q;       // also while the box has focus (Ctrl+Tab to another tab): typed text is already in d.layerQuery
   ui.layerRows.replaceChildren(...layerRows().filter((l) => OB.nameMatches(l.name, q)).map((l) => {
     const isFile = l.fileLayer != null;
@@ -3396,6 +3403,24 @@ function renderLayers() {
     return row;
   }));
   if (state.ptab === 'objects') renderObjects();
+}
+
+/** Compare: the layers of the picked snapshot. On / off acts on that snapshot's own list; its source drawing keeps its own. */
+function renderCmpLayers(tab, q) {
+  if (ui.layerSearch.value !== q) ui.layerSearch.value = q;
+  const item = cmpSelected(tab.cmp);
+  if (!item) { ui.layerRows.replaceChildren(h('p', { style: 'color:var(--muted);font-size:12px;margin:0', 'data-testid': 'layers-empty' }, 'Pick a drawing')); return; }
+  ui.layerRows.replaceChildren(...item.fl.layers.map((l, i) => [l, i]).filter(([l]) => OB.nameMatches(l.name, q)).map(([l, i]) => {
+    const hid = item.off.has(i);
+    const vis = h('button', { class: 'vis live', type: 'button', 'data-layer': 'f' + i, title: 'Show / hide ' + l.name, onclick: () => cmpToggleLayer(tab, item.id, i) }, icon(hid ? EYE_OFF : EYE, { size: 16, label: hid ? 'Hidden' : 'Visible' }));
+    return h('div', { class: 'layer' + (hid ? ' hidden-layer' : ''), 'data-file-layer': i }, h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + ink(l.css, isDark()) }), h('span', { class: 'nm' }, l.name), vis);
+  }));
+}
+function cmpToggleLayer(tab, id, i) {
+  const item = tab.cmp.items.find((x) => x.id === id), off = new Set(item.off);
+  if (!off.delete(i)) off.add(i);
+  tab.cmp.items = CMP.setItem(tab.cmp.items, id, CMP.setItemOff(item, off));
+  cmpMoved(tab);
 }
 
 // ---- the Objects tab (TODO 39, mock-up R11a Option A): the open file as a tree, layer by layer; the tree itself is objects.js ----
@@ -4281,7 +4306,7 @@ function paintOverlay(gesture = false) {
 
 function paintEditable(c, d, base, marks) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
-  const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
+  const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
     bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
@@ -4677,7 +4702,7 @@ function update(refit = false, dimNames) {
   clampSel();
   state.msg = null;
   ui.svg.setAttribute('aria-label', lay ? `Sheet ${state.sheetW} by ${state.sheetH} mm with ${placedNow.length} placed parts` : 'Sheet');
-  renderStep(); renderPartsList(); renderCommand(); renderProps(); renderLayers(); drawSheet(); renderStatus(); renderEdit(); renderGaps(); renderGuidePanel(); renderCompare();
+  renderStep(); renderPartsList(); renderCommand(); renderProps(); renderLayers(); drawSheet(); renderStatus(); renderEdit(); renderGaps(); renderGuidePanel(); renderCompare(); railContour();
   if (refit) fit(); else paintOverlay();
 }
 
@@ -9303,7 +9328,7 @@ function cmpRefresh(d) {
   for (const tab of state.docs) if (tab.cmp?.items.some((x) => x.tabId === d.tabId)) {
     const c = tab.cmp, previous = c.sources.get(d.tabId);
     if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
-    c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.snapshotGeometry(d) } : x);
+    c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.snapshotGeometry({ ...d, off: x.off }) } : x);
     c.sources.set(d.tabId, next);
     cmpCalc(c);
   }
@@ -9490,7 +9515,7 @@ function cmpPaint(canvas, c, base, marks) {
   paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
   for (const sd of c.items) {
     if (!sd.visible) continue;
-    const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour) };
+    const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
     if (target) paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
     else paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
   }
