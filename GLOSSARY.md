@@ -56,6 +56,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Dimension style**: A named preset for dimension appearance, including text height, arrow size, decimals and units. Where: `TODO.md`, item 27; `web/dims.js`.
 
+**Dimension text override**: Text replacing a dimension's measured label; `<>` inside it shows the live measured value. Empty text or `<>` alone restores the measured label. Where: `DECISIONS.md`, Dimension text edit, both tabs.
+
 **Drawing tab**: A tab for editing a drawing and preparing parts before putting them on a layout. Where: `DECISIONS.md`, Layout page.
 
 **Duplicate**: Makes copies of a placed part along a chosen direction, with distance measured edge to edge. Where: `DECISIONS.md`, Duplicate and Duplicate both ways.

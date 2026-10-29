@@ -36,6 +36,7 @@ import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
+import { overrideText } from './dimension-text.js';
 import * as GR from './grips.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
@@ -1384,7 +1385,7 @@ function buildCanvas() {
   ui.textHintEd = h('div', { class: 'texted-hint', 'data-testid': 'text-editor-hint' }, h('strong', null, 'Typing in place'), h('span', null, 'Enter = done · Shift+Enter = new line'));
   ui.textEd = h('div', { class: 'texted', hidden: true, 'data-testid': 'text-edit-box' }, ui.textArea, ui.textHintEd);
   ui.textArea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); textCommit(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (state.text.ed && state.text.ed.ldr) textCancel(); else textCommit(); }       // a leader's note: Esc cancels
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); textCommit(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (state.text.ed && (state.text.ed.ldr || state.text.ed.dim)) textCancel(); else textCommit(); }       // a leader's note or dimension: Esc cancels
   });
   ui.textArea.addEventListener('input', placeTextEditor);
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
@@ -4045,7 +4046,8 @@ function objHit(part, p, H) {
     }
   }
   if (!dd) return s('polygon', { class: 'part-hit ob', points: polyPoints(PL.corners(part, p), H) });
-  return s('path', { class: 'part-hit ob', d: dd, transform: `matrix(${placedMat(part, p, H).join(' ')})` });
+  const transform = `matrix(${placedMat(part, p, H).join(' ')})`, path = s('path', { class: 'part-hit ob', d: dd, transform });
+  return isDimPart(part) ? s('g', null, path, part.fl.items.filter((it) => it.k === 't').map((it) => s('rect', { fill: 'transparent', cursor: 'move', x: it.b[0], y: it.b[1], width: it.b[2] - it.b[0], height: it.b[3] - it.b[1], transform }))) : path;
 }
 
 /** Points of an SVG polygon from sheet points (mm, y up). */
@@ -4237,10 +4239,11 @@ function paintOverlay(gesture = false) {
         for (const p of placedNow) { if (p.src === 'loose' && p.i === gripped) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
         for (const [id, part] of Object.entries(d.lay.parts)) {
           if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
+          const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
-          if (on.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
-          if (outside.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+          if (on.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
+          if (outside.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
       if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
@@ -4270,8 +4273,9 @@ function paintOverlay(gesture = false) {
 }
 
 function paintEditable(c, d, base, marks) {
-  const drawn = paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
-    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
+  const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
+    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
@@ -4516,6 +4520,7 @@ function attachCanvasEvents() {
     state.entityDrag = null;
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
+  c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
   c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
   c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
@@ -7587,15 +7592,27 @@ function placeTextEditor() {
 }
 
 /** Opens the editor: a new text at drawing point p, or the text at entity e to change (its lines in the box). */
-function textOpen(d, p, e = null, ldr = null) {
+function textOpen(d, p, e = null, ldr = null, dim = null) {
   textCommit();
   const c = state.text.cfg;
   let m, orig = null;
-  if (ldr) { m = { ...LR.geometry(ldr.model).text }; e = ldr.e; }                 // a leader's note: where it lands, in the leader's text height
+  if (dim) {
+    m = TX.decode(dim.raw.blocks[dim.name].entities.find((x) => x.type === 'TEXT'));
+    const fl = flatten(dim.raw), it = fl.items.find((x) => x.e === e && x.k === 't'), mat = it && fl.mats[it.m];
+    if (!m || !it) return;
+    dim.fl = { ...fl, items: fl.items.filter((x) => x.e !== e || x.k !== 't') };
+    if (mat) {
+      [m.x, m.y] = mapply(mat, m.x, m.y);
+      m.h *= Math.hypot(mat[0], mat[1]); m.angle += Math.atan2(mat[1], mat[0]) * 180 / Math.PI;
+    }
+    m.lines = [dim.params.override || '<>'];
+    if (!d.lay) setSel(d, new Set([e]));
+  }
+  else if (ldr) { m = { ...LR.geometry(ldr.model).text }; e = ldr.e; }                 // a leader's note: where it lands, in the leader's text height
   else if (e != null) { orig = TX.decode(d.raw.entities[e]); m = { ...orig }; setSel(d, new Set([e])); }
   else m = { type: 'TEXT', x: p[0], y: p[1], h: c.h / d.factor, lines: [''], angle: c.angle || 0, ha: c.ha, font: c.font, styleName: c.font, bold: c.bold };
   if (p && e == null && !ldr) state.pointLast = p.slice(0, 2);
-  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model };
+  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model, dim };
   ui.textArea.value = m.lines.join('\n');
   ui.textEd.hidden = false;
   placeTextEditor();
@@ -7609,6 +7626,18 @@ function textCommit() {
   state.text.ed = null; ui.textEd.hidden = true; ui.textArea.blur();      // hiding alone moves focus only at the next frame: a key pressed sooner would still go to the textarea
   const lines = TX.linesOf(ui.textArea.value), d = ed.d;
   if (!state.docs.includes(d) || !(d.raw || d.lay)) return;
+  if (ed.dim) {
+    const dim = ed.dim, override = overrideText((lines || []).join(' '));
+    if (override === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); return; }
+    const built = Ed.buildDim(dim.kind, { ...dim.params, override }, d.factor || 1, dim.name, dim.dp);
+    if (d.lay) {
+      const snap = laySnap(d.lay);
+      if (!LD.replaceDim(d.lay, dim.placed, dim.raw.entities[ed.e], { ...dim.raw.blocks, [dim.name]: built.block }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((p) => p.name)))) return;
+      pushLay(d, snap, '', 'Dimension text'); touch(); update();
+    } else { commit(d, Ed.replaceDimension(d.raw, built), 'Dimension text'); setSel(d, new Set([ed.e])); }
+    note('Dimension text changed. Ctrl+Z takes it back');
+    return;
+  }
   if (ed.ldr) {                                                       // a leader's note
     if (!lines) { if (ed.e == null && state.ldr) state.ldr.pts = []; renderCommand(); renderEdit(); paintOverlay(); if (ed.e == null) note('Leader: nothing typed, so nothing was made'); return; }
     if (ed.e == null) ldrAdd(d, { ...ed.ldr, lines });
@@ -7642,10 +7671,21 @@ function textToolDown(e) {
 }
 /** Double-click on a text with the Select tool: change it. */
 function textDblClick(e) {
-  const d = editable();
-  if (!d || state.tool !== 'select' || state.setlen) return;
+  const d = dimTarget();
+  if (!d || state.tool !== 'select' || state.setlen || state.text.ed?.dim) return;
+  if (d.lay) {
+    const hit = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
+    const p = hit && placedNow[+hit.dataset.i], part = p && d.lay.parts[p.partId];
+    if (p && partSelectable(p) && isDimPart(part)) {
+      const dim = Ed.dimOfEntity(part.raw, 0);
+      if (dim) { pdrag = null; state.mode = 'select'; update(); textOpen(d, null, 0, null, { ...dim, raw: part.raw, placed: d.lay.placed[p.i] }); }
+    }
+    return;
+  }
   const hit = hitAt(d, toDrawing(d, e.clientX, e.clientY));
-  if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) textOpen(d, null, hit);
+  const dim = hit >= 0 && Ed.dimOfEntity(d.raw, hit);
+  if (dim) textOpen(d, null, hit, null, { ...dim, raw: d.raw });
+  else if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) textOpen(d, null, hit);
   else if (hit >= 0 && ldrPseudo(d, hit)) ldrEdit(d, hit, ldrPseudo(d, hit).model);
 }
 

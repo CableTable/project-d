@@ -145,7 +145,7 @@ export function dimensionNames(lay) {
   return { taken, drawn };
 }
 /** Replace a dimension with its new entity and blocks, keeping its placement slot and metadata. */
-function replaceDim(lay, p, ent, blocks, newId, names) {
+export function replaceDim(lay, p, ent, blocks, newId, names) {
   const part = lay.parts[p.partId], shared = lay.placed.filter((q) => q.partId === p.partId).length > 1;
   const next = objectPart(newId(), shared ? nextName('Dimension', names) : part.name, ent, layersOf(lay), part.raw.header, blocks);
   if (!next) return false;

@@ -10,6 +10,7 @@ import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
+import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
@@ -15328,6 +15329,85 @@ try {
     assert.deepEqual(labelsIn(await save()), labelsIn(text), 'one Undo restores the circle and its dimensions');
     await t('decimals').selectOption('2');
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156b2c3a: double-click a dimension edits its text on a drawing and on a layout (Esc cancels, one Undo); mixed <> text follows a grip; save and reopen', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const dimIn = (text) => {
+      const [name, block] = Object.entries(readDxf(text).blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5 }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'dimension-text.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dimension-text.dxf');
+      }
+      await t('decimals').selectOption('2');
+      await page.locator('[data-tool=select]').click();
+      if (tab === 'layout') assert.equal(await nParts(), 3, 'one plate, one line and one dimension hit target');
+      const edit = async (expected) => {
+        const p = await at(190, 200); await page.mouse.dblclick(p.x, p.y);
+        await t('text-editor').waitFor().catch((e) => { throw new Error(`${tab}, editing ${expected}: ${e.message}`); });
+        assert.equal(await t('text-editor').inputValue(), expected, tab + ': prefilled with the template');
+      };
+      const apply = async (text, expected = '<>') => { await edit(expected); await t('text-editor').fill(text); await page.keyboard.press('Enter'); };
+      const start = await save();
+      assert.equal(dimIn(start).label, '150.00');
+      const history = await histLabels();
+      await edit('<>'); await t('text-editor').fill('CANCEL THIS'); await page.keyboard.press('Escape');
+      assert.equal(await t('text-edit-box').isVisible(), false);
+      assert.deepEqual(await histLabels(), history, tab + ': Esc adds no history');
+      assert.deepEqual(dimIn(await save()), dimIn(start));
+      await apply('7.125');
+      assert.equal(dimIn(await save()).label, '7.125');
+      assert.equal((await histLabels()).at(-1), 'Dimension text');
+      await undo(); assert.deepEqual(dimIn(await save()), dimIn(start), tab + ': one Undo restores measured text');
+      await apply('Width <> mm');
+      assert.equal(dimIn(await save()).label, 'Width 150.00 mm');
+      await edit('Width <> mm'); await t('text-editor').fill('CANCEL AGAIN'); await page.keyboard.press('Escape');
+      assert.equal(dimIn(await save()).override, 'Width <> mm');
+      for (const reset of ['', '<>']) {
+        await apply(reset, 'Width <> mm'); assert.equal(dimIn(await save()).label, '150.00');
+        await undo(); assert.equal(dimIn(await save()).override, 'Width <> mm');
+      }
+      const a = await at(120, 120), b = await at(350, 230);
+      await typeCmd('zw'); await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); await frames();
+      await shotBoth('dimension-text-' + tab, () => edit('Width <> mm'), () => page.keyboard.press('Escape'));
+      await page.keyboard.press('Escape'); await click(220, 150); await frames(); await gripWhen(3);
+      const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id === 'b' || id.endsWith(':b')));
+      const g = await gripBox(gid); await page.mouse.click(g.x, g.y);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+      await typeCmd('330,150'); await frames();
+      let text = await save();
+      assert.equal(dimIn(text).label, 'Width 180.00 mm', tab + ': <> stays live after a source grip');
+      assert.equal(dimIn(text).override, 'Width <> mm');
+      await page.keyboard.press('Escape'); await undo(); assert.equal(dimIn(await save()).label, 'Width 150.00 mm');
+      await page.keyboard.press('Control+y'); await page.keyboard.press('Escape');
+      await click(220, 150); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,10');
+      text = await save(); assert.equal(dimIn(text).label, 'Width 180.00 mm');
+      assert.ok(Math.abs(dimIn(text).params.a[1] - 160) < 1e-3, tab + ': Move still carries the dimension');
+      await closeTabs(/./);
+      const filename = 'dimension-text-' + tab + '.dxf';
+      await t('picker').setInputFiles({ name: filename, mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+      await page.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, filename);
+      assert.deepEqual(dimIn(await save()), dimIn(text), tab + ': override and geometry survive save/reopen');
+      await page.locator('[data-tool=select]').click();
+      const dim = dimIn(text), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
+      const p = await at(tx.x, tx.y + tx.h / 2); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+      assert.equal(await t('text-editor').inputValue(), 'Width <> mm', tab + ': reopened text is editable');
+      await page.keyboard.press('Escape');
+    }
   });
 
   await step('TODO 156b2c2b: on a layout, Angle Dimension picks two lines (one Undo, Esc cancels), refuses placed parts; saves and reopens as a dimension object; a line grip updates the angle and Move carries it', async () => {
