@@ -265,9 +265,13 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
   head commit asks his OK to merge. On his yes, and only once `runs<N>/retro.out` exists (session 25 retro): `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
-  (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then start the next Rook session itself
-  (`start_session`, fresh, this same folder, the template below filled in: branch, next items, open questions) instead
-  of handing him a prompt. No scheduled or polled CI checks.
+  (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then hand over to the next Rook session
+  (the template below filled in as `runs<N+1>/resume-rook.txt`: branch, next items, open questions) instead of handing him a prompt.
+  **Rook at logon** (his call, 2026-10-29): the Startup shortcut "Rook.lnk" (Windows Terminal tab, like "Bishop support.lnk")
+  runs `Project D extras/start-rook.ps1`, which reads `Project D extras/rook-next.txt` (line 1 session uuid, 2 name `Rook S<n>`,
+  3 resume file): transcript found -> `--resume`, else a fresh `--session-id` told to read the resume file. Each Rook session
+  writes its own uuid there at start (a reboot resumes it); at handover it writes a NEW uuid + the next resume file, then
+  either the PC shuts down (next logon starts it) or Rook launches the same script with Start-Process (never start_session). No scheduled or polled CI checks.
   **CI monitor** (his call, 2026-10-21): right after opening the session PR, bind it (ccd_pr `get_status` / `bind_pr`) and turn
   on its CI monitor (`set_monitor`); on green with his merge OK, merge at once; on red, send the failing step to a Bishop fix round. Every Rook turn re-reads the whole conversation, so a
   long one costs the most.
