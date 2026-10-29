@@ -182,6 +182,17 @@ test('exploding one of two dimensions sharing a block keeps the block; a rotated
   nearAll(numbers(out.entities.find((e) => e.type === 'MTEXT'), [50]), [90]);
 });
 
+test('a mirrored dimension explodes into text that reads left to right; a backslash in the override is escaped', () => {
+  for (const at of [{ sx: -1 }, { sy: -1 },{ sx: -1, rot: 30 }]) {
+    const doc = dimDoc('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 });
+    doc.entities[0] = insert('PD_DIM_1', 0, 0, { layer: 'Notes', ...at });
+    const rot = get(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT').r, 50);
+    assert.ok(rot > -90 - 1e-9 && rot <= 90 + 1e-9, `${JSON.stringify(at)}: rotation ${rot} reads left to right`);
+  }
+  const doc = dimDoc('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 }, 'A\\P <>');
+  assert.ok(textOf(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT')).startsWith('A\\\\P '));
+});
+
 test('untransformable or missing block members leave the whole insert intact with a reason', () => {
   for (const doc of [blockDoc([line(0, 0, 1, 1), entity('HATCH', [])]), blockDoc([insert('Missing', 0, 0)])]) {
     const out = explodeSelection(doc, new Set([0]));

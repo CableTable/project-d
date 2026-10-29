@@ -188,8 +188,15 @@ export function explodeDimension(e, raw) {
   const name = field(e, 2), block = raw.blocks[name], att = textRecord(block.entities), keep = block.entities.filter((c) => c !== att && c.type !== 'POINT');
   const pieces = explodeInsert(e, { ...raw, blocks: { ...raw.blocks, [name]: { ...block, entities: keep } } }).entities;
   // TEXT 72 = 1 (centre) with 73 = 1 / 2 / 3 (bottom / middle / top) is MTEXT attachment 8 / 5 / 2
-  return pieces.map((p) => p.type !== 'TEXT' ? p : mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), field(p, 1).replace(/[{}]/g, '\\$&'),
-    { ...p, attach: { 3: 2, 2: 5 }[val(p, 73)] ?? 8, rot: val(p, 50) }));
+  return pieces.map((p) => {
+    if (p.type !== 'TEXT') return p;
+    let rot = val(p, 50), attach = { 3: 2, 2: 5 }[val(p, 73)] ?? 8;
+    if (val(p, 71) & 6) {       // mirrored: dimension text still reads left to right, so turn it half a turn (top and bottom swap with it)
+      rot = ((rot % 360) + 360) % 360;
+      if (rot > 90 && rot <= 270) { rot -= 180; attach = { 2: 8, 8: 2 }[attach] ?? attach; } else if (rot > 270) rot -= 360;
+    }
+    return mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), field(p, 1).replace(/[\\{}]/g, '\\$&'), { ...p, attach, rot });
+  });
 }
 
 /** Replace only explodable selected entities, preserving draw order and returning the new selection. */

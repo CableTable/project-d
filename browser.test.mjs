@@ -15427,6 +15427,12 @@ try {
     mkdirSync(shots, { recursive: true });
     const dimBlocks = (text) => Object.keys(readDxf(text).blocks).filter((k) => /^PD_DIM_/.test(k));
     const onDimLayer = (text) => readDxf(text).entities.filter((e) => e.layer === 'Dimensions');
+    // where the dimension is: every x and y of its block and of what sits on its layer
+    const dimAt = (text) => {
+      const d = readDxf(text), es = [...onDimLayer(text), ...Object.entries(d.blocks).filter(([k]) => /^PD_DIM_/.test(k)).flatMap(([, b]) => b.entities)];
+      return es.reduce((n, e) => n + (GR.get(e.r, 10) || 0) + (GR.get(e.r, 20) || 0), 0);
+    };
+    const moveLine = async () => { await click(250, 150); await frames(); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('30,40'); await page.keyboard.press('Escape'); };
     for (const tab of ['drawing', 'layout']) {
       if (tab === 'layout') {
         await freshLayoutWithPlate();
@@ -15459,11 +15465,30 @@ try {
         await page.waitForTimeout(250); await page.screenshot({ path: `${shots}/explode-dimension-${tab}-${colour}.png` });
       }
       await menuItem('View', 'Theme: light');
+      await moveLine();
+      assert.equal(dimAt(await save()), dimAt(text), tab + ': the pieces stay when the line moves');
+      await undo(); await frames();
       await undo(); await frames();
       const back = await save();
       assert.equal(dimBlocks(back).length, 1, tab + ': one Undo brings the dimension back');
       assert.deepEqual(onDimLayer(back).map((e) => e.type).sort(), onDimLayer(start).map((e) => e.type).sort());
+      await moveLine();
+      assert.notEqual(dimAt(await save()), dimAt(back), tab + ': after Undo the dimension is linked to its line again and follows it');
+      await undo(); await frames();
     }
+    // an aligned and an angle dimension on a drawing
+    await closeTabs(/./);
+    const both = newDoc(4);
+    Object.assign(both, addDimension(both, buildDim('aligned', { a: [150, 150], b: [300, 200], offset: 30, textH: 5 }, 1, 'PD_DIM_1')));
+    Object.assign(both, addDimension(both, buildDim('angle', { v: [200, 300], r: 50, a0: 0, a1: 60, textH: 5 }, 1, 'PD_DIM_A1', 2)));
+    await t('picker').setInputFiles({ name: 'explode-dim2.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(both), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim2.dxf');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: 2/);
+    const both2 = await save();
+    assert.equal(dimBlocks(both2).length, 0, 'aligned and angle: no dimension block left');
+    assert.deepEqual(onDimLayer(both2).map((e) => e.type).sort(), ['ARC', 'LINE', 'LINE', 'LINE', 'MTEXT', 'MTEXT', 'SOLID', 'SOLID', 'SOLID', 'SOLID'], 'aligned and angle: lines, arc, arrows and two texts');
   });
 
   await step('TODO 156b2c2b: on a layout, Angle Dimension picks two lines (one Undo, Esc cancels), refuses placed parts; saves and reopens as a dimension object; a line grip updates the angle and Move carries it', async () => {
