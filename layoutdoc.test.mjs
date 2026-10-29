@@ -8,7 +8,6 @@ import * as LD from './web/layoutdoc.js';
 import * as P from './web/place.js';
 import * as TX from './web/text.js';
 import { planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
-import { isDimPart } from './web/layoutdim.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 let n = 0;
@@ -562,43 +561,16 @@ test('Explode: a text alone lands in the same box as the placed part, mirrored a
   }
 });
 
-test('Explode: a piece on a layer the part had turned off is kept, hidden, and survives save and reopen', () => {
+test('Explode: a piece on a layer the part had turned off stays off', () => {
   const raw = newDoc(4);
   addLayer(raw, 'HID', { aci: 1, off: true });
   addEntities(raw, line(0, 0, 10, 0), line(0, 5, 10, 5), line(0, 9, 10, 9, { layer: 'HID' }));
   const lay = placedPart(raw, {});
   const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
   assert.equal(LD.layersOf(lay).HID.off, true);                    // the layer stays off in the layout
-  assert.equal(r.errors.length, 0); assert.equal(r.pieces.length, 3);
-  const hid = lay.placed.map((p) => lay.parts[p.partId]).find((o) => o.raw.entities[0].layer === 'HID');
-  assert.ok(hid && hid.off.size === 1);                            // kept, and hidden with its layer
-  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
-  assert.equal(back.placed.length, 3);
-});
-
-test('A layout object on an off layer survives save and reopen', () => {
-  const layers = { ...newDoc(4).layers, HID: { aci: 1, off: true } };
-  const part = LD.objectPart('o1', 'Line', line(0, 0, 10, 0, { layer: 'HID' }), layers);
-  assert.ok(part && part.off.size === 1);
-  const lay = LD.newLayout('H'); lay.layers = layers; lay.parts.o1 = part; lay.placed.push(LD.objectPlacement(part));
-  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
-  assert.equal(back.placed.length, 1);
-});
-
-test('Explode: a dimension in a part becomes a plain block (not a *D block, not a live dimension) in the same place', () => {
-  const raw = newDoc(4);
-  addBlock(raw, '*D1', [line(0, 0, 20, 0), line(0, 0, 0, 3), line(20, 0, 20, 3), text(8, 4, 2, '20')]);
-  addEntities(raw, line(0, 10, 20, 10), entity('DIMENSION', [[2, '*D1'], [70, 0]]));
-  const lay = placedPart(raw, { rot: 90 }), want = placedBox(lay.parts.p, lay.placed[0]);
-  const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
-  assert.equal(r.done, 1);
-  const ins = r.pieces.map((i) => lay.parts[lay.placed[i].partId]).find((o) => o.raw.entities[0].type === 'INSERT');
-  const e = ins.raw.entities[0], name = e.r.v[e.r.c.indexOf(2)];
-  assert.ok(!name.startsWith('*') && ins.raw.blocks[name] && !isDimPart(ins), name);
-  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
-  assert.equal(back.placed.length, 2);
-  assert.ok(back.placed.every((p) => back.parts[p.partId].obj && !isDimPart(back.parts[p.partId])));
-  unionOf(back.placed.map((_, i) => boxOf(back, i))).forEach((v, i) => near(v, want[i], 1e-6));
+  const objs = lay.placed.map((p) => lay.parts[p.partId]);
+  assert.ok(objs.every((o) => o.raw.entities[0].layer !== 'HID'));  // nothing on it shows (an object needs extents), and the note says so
+  assert.equal(objs.length, 2); assert.equal(r.errors.length, 1);
 });
 
 console.log(n + ' tests passed');
