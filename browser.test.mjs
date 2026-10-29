@@ -4726,6 +4726,50 @@ try {
     } finally { await context.close(); }
   });
 
+  await step('TODO 156c3: Ctrl+Z drops a Line point in Compare, then falls to the source Undo', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => { const raw = newDoc(4); addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true })); return raw; };
+    const open = async (name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(make())) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const entities = async () => {
+      const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await download.path(), 'utf8')).entities.length;
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('one-156c3.dxf'); await open('two-156c3.dxf');
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-name-2').click();
+      await command('line'); await click(30, 50);
+      assert.match(await q('cmd-prompt').textContent(), /^Next point/);
+      await p.keyboard.press('Control+z');
+      assert.match(await q('cmd-prompt').textContent(), /^Specify first point/, 'Ctrl+Z drops the only picked point (the source has no step to undo)');
+      await click(30, 50); await click(50, 50);                              // a segment is made: one step in the source
+      await p.keyboard.press('Control+z');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 0, 'the segment is undone, the source is clean again');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+z');
+      assert.match(await q('cmd-prompt').textContent(), /Nothing to undo/, 'nothing to drop and nothing to undo');
+      await tab('two-156c3.dxf').click();
+      assert.equal(await entities(), 1, 'the source drawing was not changed');
+    } finally { await context.close(); }
+  });
+
   await step('TODO 156c1 fixes: Compare orders guide and drawing Undo, refreshes source edits and refuses hidden edits', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
     const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));

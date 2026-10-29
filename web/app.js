@@ -1922,7 +1922,11 @@ function undoCurrent(forward = false) {
     if (tab?.cmp && d !== tab && !cmpEdit()) return;
     if (forward) redo(d); else undo(d);
   }
-  else if (tab?.cmp) { if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit(); }
+  else if (tab?.cmp) {
+    const src = !forward && state.draw && editable();       // a Line's first point is dropped before any step is undone (a first point has no step: the source may have no history yet)
+    if (src && state.drawDoc === src && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); }
+    else if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit();
+  }
   else if (forward) redoLay(); else undoLay();
 }
 /** Edit → Undo history… (TODO 30): the steps of the open tab by name, oldest first, the current one marked; a click goes there (several undos, or redos, at once). */
