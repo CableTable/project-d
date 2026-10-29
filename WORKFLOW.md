@@ -77,7 +77,7 @@ usage-agent-install.ps1.
    scratch drawing (never his open work); WScript.Shell SendKeys types into it; LOGFILEON / LOGFILEOFF writes the command line
    to `%LOCALAPPDATA%AutodeskAutoCAD 2027R26.0enu<drawing>.log`: read the log, not COM busy states (unreliable).
    Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
-   **An acad run (claude2 or claude3, whichever has the most 5-hour headroom; same command with `claude3.cmd`) runs these checks, not Rook** (his call 2026-10-28, to save Rook's usage): Rook writes the questions
+   **Bishop-acad (claude2, always; never King) runs these checks, not Rook** (his calls 2026-10-28, to save Rook's usage, and 2026-10-29: Bishop is the tester): Rook writes the questions
    (what to try, which prompts / keys / screenshots), then from `Project D extras/runs<N>`:
    `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out`.
    The brief always says: one AutoCAD session at a time; only new scratch drawings (`Documents.Add()`), never his open
