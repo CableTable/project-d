@@ -189,6 +189,14 @@ test('a mirrored dimension explodes into text that reads left to right; a backsl
     const rot = get(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT').r, 50);
     assert.ok(rot > -90 - 1e-9 && rot <= 90 + 1e-9, `${JSON.stringify(at)}: rotation ${rot} reads left to right`);
   }
+  // the text keeps its side of the dimension line (line at |y| = 20, text anchored at |y| = 22): sx -1 sits above, sy -1 hangs below
+  for (const [at, attach, y] of [[{ sx: -1 }, 8, 22], [{ sy: -1 }, 2, -22]]) {
+    const doc = dimDoc('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 });
+    doc.entities[0] = insert('PD_DIM_1', 0, 0, { layer: 'Notes', ...at });
+    const t = explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT').r;
+    assert.equal(get(t, 71), attach, `${JSON.stringify(at)}: MTEXT attachment`);
+    assert.ok(Math.abs(get(t, 20) - y) < 1e-9, `${JSON.stringify(at)}: text anchored at y ${get(t, 20)}`);
+  }
   const doc = dimDoc('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 }, 'A\\P <>');
   assert.ok(textOf(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT')).startsWith('A\\\\P '));
 });

@@ -15489,6 +15489,19 @@ try {
     const both2 = await save();
     assert.equal(dimBlocks(both2).length, 0, 'aligned and angle: no dimension block left');
     assert.deepEqual(onDimLayer(both2).map((e) => e.type).sort(), ['ARC', 'LINE', 'LINE', 'LINE', 'MTEXT', 'MTEXT', 'SOLID', 'SOLID', 'SOLID', 'SOLID'], 'aligned and angle: lines, arc, arrows and two texts');
+    // a mirrored dimension (dimension line at y -200): the text keeps its side of the line, hanging from just beyond it, not sitting on it
+    await closeTabs(/./);
+    const flipped = newDoc(4);
+    Object.assign(flipped, addDimension(flipped, buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1')));
+    flipped.entities[flipped.entities.length - 1] = dxfInsert('PD_DIM_1', 0, 0, { layer: 'Dimensions', sy: -1 });
+    await t('picker').setInputFiles({ name: 'explode-dim3.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(flipped), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim3.dxf');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: 1/);
+    const flat = onDimLayer(await save()), mt = flat.find((e) => e.type === 'MTEXT').r, ty = GR.get(mt, 20);
+    assert.equal(GR.get(mt, 71), 2, 'mirrored: the text hangs from its anchor (top attachment)');
+    assert.ok(ty < -200 && ty > -206, `mirrored: the text is anchored beyond the dimension line (y ${ty}), not on it`);
   });
 
   await step('TODO 156b2c2b: on a layout, Angle Dimension picks two lines (one Undo, Esc cancels), refuses placed parts; saves and reopens as a dimension object; a line grip updates the angle and Move carries it', async () => {

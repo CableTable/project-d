@@ -191,9 +191,12 @@ export function explodeDimension(e, raw) {
   return pieces.map((p) => {
     if (p.type !== 'TEXT') return p;
     let rot = val(p, 50), attach = { 3: 2, 2: 5 }[val(p, 73)] ?? 8;
-    if (val(p, 71) & 6) {       // mirrored: dimension text still reads left to right, so turn it half a turn (top and bottom swap with it)
+    if (val(p, 71) & 6) {       // mirrored: dimension text still reads left to right, so turn it half a turn
+      let turned = false;
       rot = ((rot % 360) + 360) % 360;
-      if (rot > 90 && rot <= 270) { rot -= 180; attach = { 2: 8, 8: 2 }[attach] ?? attach; } else if (rot > 270) rot -= 360;
+      if (rot > 90 && rot <= 270) { rot -= 180; turned = true; } else if (rot > 270) rot -= 360;
+      // top and bottom swap when the text is upside down (71 & 4) XOR it was turned: the turn undoes the flip, so it keeps its side of the line
+      if (!!(val(p, 71) & 4) !== turned) attach = { 2: 8, 8: 2 }[attach] ?? attach;
     }
     return mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), field(p, 1).replace(/[\\{}]/g, '\\$&'), { ...p, attach, rot });
   });
