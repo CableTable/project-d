@@ -1,7 +1,7 @@
 // `node tools/rook.mjs review ...`, `build ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { existsSync, openSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -98,6 +98,13 @@ const RUN = 'const rm = () => { try { require("fs").unlinkSync(process.argv[2]);
   + 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => { rm(); process.exit(c); });';
 const lockFile = (dir) => `${dir}/.run-lock`;
 
+// A run that never started must not leave its folder locked.
+export function launchFailed(cwd, e, exit = process.exit) {
+  try { unlinkSync(lockFile(cwd)); } catch { /* no lock */ }
+  console.error(`launch failed: ${e.message}`);
+  exit(1);
+}
+
 // Everything that touches git, npm, files or processes; the tests swap it for a recorder.
 const io = {
   git(dir, ...a) {
@@ -115,7 +122,7 @@ const io = {
   launch(bin, args, cwd, inFd, outFd, env = process.env) {
     writeFileSync(lockFile(cwd), new Date().toISOString());
     const child = spawn(process.execPath, ['-e', RUN, commandLine(bin, args), lockFile(cwd)], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
-    child.on('error', (e) => { console.error(`launch failed: ${e.message}`); process.exit(1); });
+    child.on('error', (e) => launchFailed(cwd, e));
     child.unref();
   },
 };

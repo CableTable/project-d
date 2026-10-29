@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { basename, resolve } from 'node:path';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight } from './tools/rook-launch.mjs';
+import { launchFailed, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -128,4 +130,15 @@ test('the Knight command line has the builder profile, its clone, the git folder
 
 test('commandLine refuses a double quote', () => {
   assert.throws(() => commandLine('x', ['a"b']), /double quote/);
+});
+
+test('a launch that fails to start deletes the folder\'s lock and exits 1; no lock is no error', (t) => {
+  t.mock.method(console, 'error', () => {});
+  const dir = mkdtempSync(join(tmpdir(), 'rook-lock-')), codes = [];
+  writeFileSync(`${dir}/.run-lock`, 'x');
+  launchFailed(dir, new Error('spawn ENOENT'), (c) => codes.push(c));
+  assert.equal(existsSync(`${dir}/.run-lock`), false);
+  launchFailed(dir, new Error('again'), (c) => codes.push(c));
+  assert.deepEqual(codes, [1, 1]);
+  rmSync(dir, { recursive: true });
 });
