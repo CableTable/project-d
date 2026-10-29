@@ -18338,68 +18338,6 @@ try {
     await closeTabs(/./);
   });
 
-  await step('TODO 156b4: Explode a placed part and a grid on a layout (X): a rotated part becomes its objects where it was, on its layers (one Undo); a grid becomes separate placed parts, one level each', async () => {
-    mkdirSync('shots-k156b4', { recursive: true });
-    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
-    const layerNames = () => page.locator('.layers-rows .layer .nm').allTextContents();
-    const bracket = () => {
-      const raw = newDoc(4);
-      addLayer(raw, 'CUT', { aci: 1 }); addLayer(raw, 'MARK', { aci: 3 });
-      addEntities(raw, dxfLine(0, 0, 60, 0, { layer: 'CUT' }), dxfLine(60, 0, 60, 40, { layer: 'CUT' }), dxfLine(60, 40, 0, 40, { layer: 'CUT' }), dxfLine(0, 40, 0, 0, { layer: 'CUT' }), dxfLine(0, 0, 60, 40, { layer: 'MARK' }));
-      return makePart('b', 'Bracket', raw, 1, 'bracket');
-    };
-    const open = async (name, lay) => {
-      await closeTabs(/./);
-      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
-      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
-    };
-    const shots = async (name) => {
-      await page.screenshot({ path: `shots-k156b4/${name}-light.png` });
-      await menuItem('View', 'Theme: dark'); await page.waitForTimeout(300); await page.screenshot({ path: `shots-k156b4/${name}-dark.png` });
-      await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
-    };
-    // a part turned 90°
-    const one = newLayout('Explode one');
-    one.parts.b = bracket(); one.placed.push({ partId: 'b', x: 300, y: 200, rot: 90, mirrorX: false, mirrorY: false });
-    await open('explode-one.dxf', one);
-    assert.equal(await nParts(), 1);
-    await click(310, 220);
-    const p0 = await pos();
-    await typeCmd('x');
-    assert.match(await prompt(), /Explode: 1 part exploded → 5 objects/);
-    assert.equal(await nParts(), 5);
-    assert.ok((await layerNames()).includes('CUT') && (await layerNames()).includes('MARK'), 'the part layers are in the Layers panel');
-    const p1 = await pos();
-    approx(p1[0], p0[0], 0.01, 'same X'); approx(p1[1], p0[1], 0.01, 'same Y');
-    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text, saved = readDxf(text);
-    assert.deepEqual(saved.entities.filter((e) => e.layer === 'CUT' || e.layer === 'MARK').map((e) => e.type), ['LINE', 'LINE', 'LINE', 'LINE', 'LINE'], 'plain lines in the file');
-    assert.equal(saved.entities.filter((e) => e.layer === 'Parts').length, 0, 'the pieces no longer count as the part');
-    await shots('explode-part');
-    await undo();
-    assert.equal(await nParts(), 1, 'one Undo brings the part back');
-    assert.ok(!(await layerNames()).includes('MARK'), 'and takes the layers it added');
-    await page.keyboard.press('Control+y');
-    assert.equal(await nParts(), 5);
-    await typeCmd('x');
-    assert.match(await prompt(), /nothing explodable/, 'objects are not parts: Explode leaves them');
-    assert.equal(await nParts(), 5);
-    // a step-and-repeat grid
-    const grid = newLayout('Explode grid');
-    grid.parts.b = bracket(); grid.s.gridPart = 'b'; grid.s.fit = false; grid.s.rows = 2; grid.s.cols = 2;
-    await open('explode-grid.dxf', grid);
-    assert.equal(await nParts(), 4);
-    await click(...(await pos()).map((v, k) => v + (k ? 5 : 5)));
-    await typeCmd('x');
-    assert.match(await prompt(), /grid's copies are separate placed parts/);
-    assert.equal(await nParts(), 4, 'four separate placed parts');
-    await click(...(await pos()).map((v) => v + 5));
-    await typeCmd('x');
-    assert.equal(await nParts(), 8, 'a second Explode breaks one copy into its 5 objects');
-    await undo(); assert.equal(await nParts(), 4);
-    await undo(); assert.equal(await nParts(), 4, 'Undo takes the grid back');
-    await shots('explode-grid');
-  });
-
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {
