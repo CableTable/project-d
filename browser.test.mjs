@@ -15281,7 +15281,7 @@ try {
       await page.keyboard.press('Escape');
     }
     // Both kinds also pick an arc through the drawing tool's same path.
-    await typeCmd('dra'); await click(400, 230); await typeCmd('450,250'); await page.keyboard.press('Escape');
+    await typeCmd('dra'); await click(400, 230); await typeCmd('450,170'); await page.keyboard.press('Escape');
     await typeCmd('ddi'); await click(400, 230); await typeCmd('450,200'); await page.keyboard.press('Escape');
     assert.equal(await nParts(), n0 + 6);
     let text = await save();
@@ -15314,9 +15314,9 @@ try {
     await page.keyboard.press('Escape'); await click(120, 200);
     await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,40');
     text = await save();
-    for (const [name, q] of Object.entries(dimsIn(text))) if (name.endsWith('1')) {
-      const c = q.kind === 'radius' ? q.params.c : [(q.params.a[0] + q.params.b[0]) / 2, (q.params.a[1] + q.params.b[1]) / 2];
-      assert.ok(Math.abs(c[0] - 200) < 1e-3 && Math.abs(c[1] - 240) < 1e-3, 'Move carries the measured centre');
+    for (const [name, q] of Object.entries(dimsIn(text))) {
+      const c = q.kind === 'radius' ? q.params.c : [(q.params.a[0] + q.params.b[0]) / 2, (q.params.a[1] + q.params.b[1]) / 2], moved = name.endsWith('1');
+      assert.ok(Math.abs(c[0] - (moved ? 200 : 400)) < 1e-3 && Math.abs(c[1] - (moved ? 240 : 200)) < 1e-3, moved ? 'Move carries the measured centre' : 'the arc\'s dimensions stay at its centre');
     }
     await page.keyboard.press('Escape'); await click(120, 240); await frames(); await gripWhen(5);
     const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id.endsWith(':q0')));
