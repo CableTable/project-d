@@ -1409,10 +1409,13 @@ export const buildDimension = (params, factor, name, dp = 2) => buildDim('aligne
 /** First free name: PD_DIM_n aligned, H / V linear, R radius, D diameter or A angle. */
 export function freeName(blocks, kind = 'aligned', axis = null) {
   const tag = kind === 'linear' ? { h: 'H', v: 'V' }[axis] || '' : { radius: 'R', diameter: 'D', angle: 'A' }[kind] || '';
+  const taken = new Set((blocks instanceof Set ? [...blocks] : Object.keys(blocks)).map((n) => n.toLowerCase()));
   let n = 1;
-  while (blocks['PD_DIM_' + tag + n]) n++;
+  while (taken.has(('PD_DIM_' + tag + n).toLowerCase())) n++;
   return 'PD_DIM_' + tag + n;
 }
+/** The tag letter ('' | H | V | R | D | A) of a PD_DIM block name. */
+export const dimTag = (name) => (/^PD_DIM_([RDAHV]?)\d+$/.exec(name) || [, ''])[1];
 
 /** How a dimension looks, read back from its block: text height, arrow size, units and text position (all in drawing units). */
 function lookOf(ents) {
@@ -1447,7 +1450,7 @@ export function dimParams(block) {
 /** A kept dimension's kind and parameters from its block name and block: { kind, params } for dimGeom, or null when it is not one. */
 export function readDim(name, block) {
   if (!block || !DIM_BLOCK.test(name)) return null;
-  const tag = (/^PD_DIM_([RDAHV])\d+$/.exec(name) || [])[1], ents = block.entities || [], g = (e, c) => +fieldOf(e.r, c);
+  const tag = dimTag(name), ents = block.entities || [], g = (e, c) => +fieldOf(e.r, c);
   if (tag === 'R' || tag === 'A') {
     const ln = ents.find((e) => e.type === 'LINE'), sd = ents.find((e) => e.type === 'SOLID'), ar = ents.find((e) => e.type === 'ARC'), look = lookOf(ents);
     if (tag === 'R' && ln && sd) { const c = [g(ln, 10), g(ln, 20)]; return { kind: 'radius', params: { ...look, c, r: Math.hypot(g(sd, 10) - c[0], g(sd, 20) - c[1]), p: [g(ln, 11), g(ln, 21)] } }; }

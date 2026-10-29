@@ -5,7 +5,7 @@
 // bakeDim() then puts that placement into the block's own points (a rotate turns the text, a scale re-labels it, a mirror keeps it
 // readable), which is what the file and every other command see: a settled dimension is always at the identity placement.
 import { mapply } from './drawing.js';
-import { DIM_BLOCK, relabel } from './edit.js';
+import { DIM_BLOCK, relabel, freeName } from './edit.js';
 
 const DEG = Math.PI / 180;
 const field = (r, c) => { const k = r.c.indexOf(c); return k < 0 ? NaN : +r.v[k]; };
@@ -69,9 +69,5 @@ export function turnedTag(tag, rot) {
 }
 /** The first free PD_DIM_<tag>n among the names in `taken` (a Set). */
 export function freeBlockName(taken, tag = '') {
-  let n = 1;
-  while (taken.has(`PD_DIM_${tag}${n}`) || taken.has(`pd_dim_${tag}${n}`.toLowerCase())) n++;   // block names ignore case (apply.js mergePart); settleDims stores them lower-case
-  return `PD_DIM_${tag}${n}`;
+  return freeName(taken, { H: 'linear', V: 'linear', R: 'radius', D: 'diameter', A: 'angle' }[tag], tag.toLowerCase());
 }
-/** The tag letter ('' | H | V | R | D | A) of a PD_DIM block name. */
-export const tagOf = (name) => (/^PD_DIM_([RDAHV]?)\d+$/.exec(name) || [, ''])[1];

@@ -4644,15 +4644,15 @@ function renderProps() {
 
 const linkBase = new WeakMap();      // layout → LD.linkView() as of the last update: what a dimension on a layout follows (TODO 156b2c1)
 /** Dimensions on a layout: a moved / turned one gets its placement baked into its block, and one whose object moved or was grip-edited follows it. Undo / redo only rebases (layRestore). */
-function layDimsSettle(lay) {
+function layDimsSettle(lay, names) {
   if (!Object.values(lay.parts).some(isDimPart)) { linkBase.delete(lay); return; }
-  LD.settleDims(lay, () => 'o' + uid());
+  LD.settleDims(lay, () => 'o' + uid(), names);
   const cur = LD.linkView(lay), prev = linkBase.get(lay);
   linkBase.set(lay, prev && LD.followDims(lay, prev, cur, () => 'o' + uid()) ? LD.linkView(lay) : cur);
 }
-function update(refit = false) {
+function update(refit = false, dimNames) {
   const lay = curLay();
-  if (lay) layDimsSettle(lay);
+  if (lay) layDimsSettle(lay, dimNames);
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
@@ -5536,12 +5536,13 @@ function dimHover(d, p, shift) {
 /** Puts the dimension m ({ kind, params }) in the drawing (one undo step) and starts the next. */
 function dimPlace(d, m) {
   if (!m) { note(state.dimType === 'angle' ? 'Dimension: no angle there, try another place' : 'Dimension: nothing to measure there, try another place'); return; }
-  const taken = d.lay ? Object.fromEntries(Object.values(d.lay.parts).flatMap((q) => Object.keys(q.raw?.blocks || {})).map((n) => [n, 1])) : d.raw.blocks;
+  const names = d.lay ? LD.dimensionNames(d.lay) : null, taken = names ? names.taken : d.raw.blocks;
   const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(taken, m.kind, m.params.axis), state.dp);
   if (!dim) { note('Dimension: nothing to measure there, try another place'); return; }
   dimClear(state.dim);
   if (d.lay) {                                                       // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
-    layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block });
+    names.taken.add(dim.name.toLowerCase());
+    layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block }, names);
     note(`Dimension placed: ${dim.label}${dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
@@ -6340,7 +6341,7 @@ function toolMenu(e) {
   return true;
 }
 /** Drawn shapes on a layout: each is a layout object on the current layer (layoutdoc.js objectPart), all in ONE undo step. */
-function layObjectsAdd(d, label, ents, blocks = {}) {
+function layObjectsAdd(d, label, ents, blocks = {}, dimNames) {
   const lay = d.lay, names = new Set(Object.values(lay.parts).map((p) => p.name));
   pushLay(d, null, '', label);
   if (Object.keys(blocks).length && !LD.layersOf(lay)[Ed.DIM_LAYER]) { lay.layers = { ...LD.layersOf(lay) }; addLayer(lay, Ed.DIM_LAYER, { aci: 5, tc: 0x0f766e }); }       // (a dimension's layer, as Ed.addDimension makes it)
@@ -6350,7 +6351,7 @@ function layObjectsAdd(d, label, ents, blocks = {}) {
     if (!part) continue;
     names.add(part.name); lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
   }
-  touch(); update();
+  touch(); update(false, dimNames);
 }
 function layDrawCommit(d, kind, shapes, attrs) {
   layObjectsAdd(d, DR.LABELS[kind], shapes.map((sh) => DR.toEntity(sh, attrs, 1)));
