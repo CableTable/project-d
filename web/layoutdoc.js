@@ -150,7 +150,7 @@ export function explodePlaced(lay, idxs, newId) {
             e = { ...e, layer: renamed.get(low) };
           } else if (find(table, e.layer) === undefined) table[e.layer] = def();
           const o = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), e, table, {}, e.type === 'INSERT' ? r.blocks : {});
-          if (o) { names.add(o.name); mine.push(o); } else errors.add('pieces with no extent (on a layer the part had off) were dropped');       // shortcut: an object needs extents; keep them if a hidden layer must survive Explode
+          if (o) { names.add(o.name); mine.push(o); } else errors.add('pieces with no extent were dropped');
         }
       } catch (err) { errors.add(err.message); mine.length = 0; }
     }

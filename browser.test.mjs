@@ -15874,7 +15874,7 @@ try {
     const rotate = page.locator('.ribbon-body').getByRole('button', { name: 'Rotate', exact: true });
     assert.equal(await rotate.isEnabled(), true);
     await page.locator('[data-menu=Modify]').click();
-    assert.equal(await page.getByRole('menuitem', { name: 'Explode', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('menuitem', { name: 'Explode', exact: true }).isEnabled(), true);       // 156b4: Explode works on a placed part
     await page.keyboard.press('Escape');
     await rotate.click(); assert.match(await prompt(), /^Angle <0\.00>/);
     await typeCmd('90'); assert.equal(await t('rot-angle').inputValue(), '90°');

@@ -234,3 +234,19 @@ test('a DIMENSION member explodes as one INSERT of its block, in place', () => {
   const want = flatten(doc).boxes.model;
   flatten({ ...doc, blocks: out.blocks, entities: out.entities }).boxes.model.forEach((v, i) => near(v, want[i]));
 });
+
+test('explodeInsert throws for a missing block, an external reference and a DIMENSION whose block is missing', () => {
+  const missing = blockDoc([insert('Missing', 0, 0)]), dim = blockDoc([entity('DIMENSION', [[2, '*D9']])]);
+  for (const doc of [missing, dim]) assert.throws(() => explodeInsert(doc.entities[0], doc), /missing block or external reference/);
+  addBlock(missing, 'X', [], [0, 0]); missing.blocks.X.xref = true; addBlock(missing, 'C', [insert('X', 0, 0)]);
+  assert.throws(() => explodeInsert(insert('C', 0, 0), missing), /missing block or external reference/);
+});
+
+test('a second DIMENSION, or an existing PD_EXPLODE_1, gets the next PD_EXPLODE_n name', () => {
+  const doc = newDoc();
+  addBlock(doc, '*D1', [line(0, 0, 5, 0)]); addBlock(doc, '*D2', [line(0, 0, 0, 5)]); addBlock(doc, 'PD_EXPLODE_1', [line(9, 9, 10, 10)]);
+  addBlock(doc, 'B', [entity('DIMENSION', [[2, '*D1']]), entity('DIMENSION', [[2, '*D2']])]); addEntities(doc, insert('B', 0, 0));
+  const out = result(doc);
+  assert.equal(out.blocks.PD_EXPLODE_1, doc.blocks.PD_EXPLODE_1, 'the existing block is untouched');
+  assert.equal(out.blocks.PD_EXPLODE_2, doc.blocks['*D1']); assert.equal(out.blocks.PD_EXPLODE_3, doc.blocks['*D2']);
+});
