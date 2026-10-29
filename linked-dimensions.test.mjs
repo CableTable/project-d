@@ -245,6 +245,16 @@ test('angle dimension follows its two lines: Move of one, a tilt, and a Move of 
   close(model(tilt).params.a0, 45); close(model(tilt).params.a1, 90); assert.equal(label(tilt), '45.000°');
 });
 
+test('angle dimension keeps its 90° arc when its lines are mirrored (a reflection reverses the arc ends)', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { v: [0, 0], r: 20, a0: 0, a1: 90 }, 'angle');
+  W.addEntities(raw, W.line(0, 0, 0, 100));
+  const follow = (a, b) => followDimensions(raw, { entities: raw.entities.map((e, i) => i === 0 ? a : i === 2 ? b : e), blocks: raw.blocks });
+  for (const [name, next, a0, a1] of [['across the y axis', follow(W.line(0, 0, -100, 0), raw.entities[2]), 90, 180], ['across the x axis', follow(raw.entities[0], W.line(0, 0, 0, -100)), 270, 0]]) {
+    const p = model(next).params;
+    close(p.a0, a0); close(p.a1, a1); point(p.v, [0, 0]); assert.equal(label(next), '90.000°', name);
+  }
+});
+
 test('angle at a rectangle corner follows a grip drag of the corner; a vertex off the lines does not link', () => {
   const square = [[20, 20], [120, 20], [120, 80], [20, 80]];
   const raw = drawing(W.lwpoly(square, { closed: true }), { v: [120, 20], r: 15, a0: 90, a1: 180 }, 'angle');

@@ -347,7 +347,7 @@ test('angle: A block saves and reopens as a dimension object, with its look and 
   near(m.params.textH, 2); near(m.params.arrow, 2, 1e-5);
 });
 
-for (const reverse of [false, true]) for (const change of ['Move', 'Rotate', 'Mirror', 'Scale', 'first grip', 'second grip']) {
+for (const reverse of [false, true]) for (const change of ['Move', 'Rotate', 'Rotate 90', 'Rotate 180', 'Mirror', 'Mirror Y', 'Scale', 'first grip', 'second grip']) {
   test(`angle: follows ${change} of its lines (${reverse ? 'reversed' : 'forward'} first line)`, () => {
     const lay = angleLayout(reverse), d = lay.placed[2], prev = LD.linkView(lay);
     if (change.endsWith('grip')) {
@@ -357,8 +357,9 @@ for (const reverse of [false, true]) for (const change of ['Move', 'Rotate', 'Mi
       assert.ok(LD.objectReplace(lay, view, ent, next, newId));
     } else for (const p of lay.placed.slice(0, 2)) {
       if (change === 'Move') { p.x += 30; p.y += 5; }
-      if (change === 'Rotate') p.rot = 35;
+      if (change.startsWith('Rotate')) p.rot = +change.slice(7) || 35;
       if (change === 'Mirror') p.mirrorX = true;
+      if (change === 'Mirror Y') p.mirrorY = true;
       if (change === 'Scale') p.sc = 2;
     }
     LD.settleDims(lay, newId);
@@ -386,6 +387,19 @@ test('angle: baking its own scale, rotation and mirror keeps its A tag and value
   assert.equal(labelOf(lay, d), '90.000°'); near(dimOf(lay, d).params.r, 80);
   assert.equal(LD.settleDims(lay, newId), false);
 });
+
+for (const [change, set, rays] of [['Rotate 90', (p) => { p.rot = 90; }, [90, 180]], ['Rotate 180', (p) => { p.rot = 180; }, [180, 270]], ['Mirror Y', (p) => { p.mirrorY = true; }, [270, 0]]]) {
+  test(`angle: its own ${change} is baked, the arc keeps its 90° sweep`, () => {
+    const lay = angleLayout(), d = lay.placed[2];
+    set(d);
+    assert.equal(LD.settleDims(lay, newId), true);
+    const m = dimOf(lay, d);
+    assert.equal(m.kind, 'angle'); assert.equal(m.name, 'PD_DIM_A1'); assert.equal(labelOf(lay, d), '90.000°');
+    near(m.params.r, 40);
+    near(m.params.a0, rays[0]); near(m.params.a1, rays[1]);   // a mirror reverses the ends, so the arc still runs counter-clockwise from a0 to a1
+    assert.equal(LD.settleDims(lay, newId), false);
+  });
+}
 
 test('names: turnedTag and freeBlockName', () => {
   assert.equal(turnedTag('H', 90), 'V'); assert.equal(turnedTag('V', 270), 'H'); assert.equal(turnedTag('H', 180), 'H'); assert.equal(turnedTag('H', 45), '');
