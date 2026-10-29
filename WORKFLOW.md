@@ -142,6 +142,8 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # (each resume re-sends the whole conversation: one builder reached $22 over 3 resumed jobs, 2026-10-19).
 # --resume only to finish a run that was cut off mid-work (usage limit), then start fresh again.
 
+# One call does the folder check, `switch -c` and launch below (raw commands are the fallback):
+#   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop]   (default king: claude3 in ProjectD-king; bishop: claude2 in ProjectD-s15fix)
 # King-build (claude3, Sonnet high) in its worktree ProjectD-king (session 25 retro: this block was written nowhere).
 # Its cwd is the worktree: one bare command per call, no `cd … &&`. Find code with Grep or `grep -n`, read with Read
 # offset/limit, change it with Edit (`replace_all` for repeats); never awk / node -e with braces, sed -i, python
@@ -165,7 +167,7 @@ R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Projec
 # run the tests and time things without touching a builder's folder (2026-10-20, his call). Never add `git -C:*` to the
 # allowlist: `git -C … commit/push` would slip past the commit and push denies.
 # One call does all of the below (checks, detaches the worktree, launches detached, fails loudly; raw commands are the fallback):
-#   node tools/rook.mjs review <sha> <brief file> <out jsonl> [--from <clone folder> <branch>]   (--from = a Knight build's clone and branch)
+#   node tools/rook.mjs review <sha> <brief file> <out jsonl> [--as bishop|king] [--from <clone folder> <branch>]   (default bishop: claude2 in ProjectD-s15fix; king: claude3 in ProjectD-king2; --from = a Knight build's clone and branch; also runs `npm.cmd ci` there)
 # Reviews run in ProjectD-s15fix (worktree of this repo, trusted on account 2; ProjectD-review was removed twice, session 28 moved). A Knight build: first `git fetch "<extras>/ProjectD-rowan" <branch>` in the repo, or the sha is unknown here (S28 lost a launch).
 WT="E:/Project B/Claude/Project D extras/ProjectD-s15fix"; git -C "$WT" switch --detach <sha> && cd "$WT" || exit 1; npm.cmd ci --silent  # once per review
 $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 \

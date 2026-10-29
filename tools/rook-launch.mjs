@@ -1,25 +1,59 @@
-// `node tools/rook.mjs review ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
+// `node tools/rook.mjs review ...`, `build ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, openSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXTRAS = 'E:/Project B/Claude/Project D extras';
-const CLAUDE2 = join(homedir(), '.local', 'bin', 'claude2.cmd');
+const MAIN_GIT = 'E:/Project B/Claude/Project D/.git';
 const CODEX = join(homedir(), 'AppData', 'Roaming', 'npm', 'codex.cmd');
 const SHA = /^[0-9a-f]{7,40}$/i;
+// Two Claude accounts x two roles: the account's launcher and the folder it reviews / builds in.
+export const ACCOUNTS = {
+  bishop: { bin: 'claude2.cmd', review: 'ProjectD-s15fix', build: 'ProjectD-s15fix' },
+  king: { bin: 'claude3.cmd', review: 'ProjectD-king2', build: 'ProjectD-king' },
+};
 
-export function parseReview(args) {
-  const usage = 'usage: review <sha> <brief file> <out jsonl> [--from <clone folder> <branch>]';
-  const i = args.indexOf('--from');
+// Positionals first, then flags (name -> number of values). Returns { pos, flags: { name: [values] } } or throws the usage.
+function parseFlags(args, spec, usage) {
+  const i = args.findIndex((a) => a.startsWith('--'));
   const pos = i < 0 ? args : args.slice(0, i);
-  const from = i < 0 ? null : args.slice(i + 1);
-  if (pos.length !== 3 || (from && from.length !== 2)) throw new Error(usage);
+  const flags = {};
+  for (let j = i < 0 ? args.length : i; j < args.length;) {
+    const n = spec[args[j]];
+    const vals = args.slice(j + 1, j + 1 + n);
+    if (n === undefined || flags[args[j]] || vals.length !== n) throw new Error(usage);
+    flags[args[j]] = vals;
+    j += n + 1;
+  }
+  return { pos, flags };
+}
+
+function account(flags, def, usage) {
+  const as = flags['--as'] ? flags['--as'][0] : def;
+  if (!ACCOUNTS[as]) throw new Error(`${usage}\nunknown account: ${as}`);
+  return as;
+}
+
+// Paths are resolved against the caller's folder: the run's cwd is a worktree or clone, where a relative path would land.
+export function parseReview(args) {
+  const usage = 'usage: review <sha> <brief file> <out jsonl> [--as bishop|king] [--from <clone folder> <branch>]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--from': 2 }, usage);
+  if (pos.length !== 3) throw new Error(usage);
   if (!SHA.test(pos[0])) throw new Error(`not a commit id: ${pos[0]}`);
-  return { sha: pos[0], brief: pos[1], out: pos[2], from: from && { clone: from[0], branch: from[1] } };
+  const from = flags['--from'];
+  return { sha: pos[0], brief: resolve(pos[1]), out: resolve(pos[2]), as: account(flags, 'bishop', usage), from: from && { clone: resolve(from[0]), branch: from[1] } };
+}
+
+export function parseBuild(args) {
+  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop]';
+  const { pos, flags } = parseFlags(args, { '--as': 1 }, usage);
+  if (pos.length !== 4) throw new Error(usage);
+  if (!SHA.test(pos[3])) throw new Error(`not a commit id: ${pos[3]}`);
+  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as: account(flags, 'king', usage) };
 }
 
 export function parseKnight(args) {
@@ -27,13 +61,22 @@ export function parseKnight(args) {
   const [brief, report, branch, sha] = args;
   if (!report.endsWith('.txt')) throw new Error(`report must end in .txt (the log goes next to it): ${report}`);
   if (!SHA.test(sha)) throw new Error(`not a commit id: ${sha}`);
-  return { brief, report, branch, sha, log: report.replace(/\.txt$/, '.log') };
+  const abs = resolve(report);
+  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log') };
 }
 
 // WORKFLOW.md's reviewer flags, plus the extras folder (the brief lives there).
 export const reviewerArgs = (extras = EXTRAS) => ['-p', '--agent', 'reviewer', '--model', 'claude-opus-5-5', '--effort', 'medium',
   '--permission-mode', 'dontAsk', '--max-budget-usd', '6', '--add-dir', extras,
   '--disallowedTools', 'Agent', ...['commit', 'push', 'add', 'checkout', 'switch', 'stash', 'restore', 'pull'].map((g) => `Bash(git ${g}:*)`),
+  '--output-format', 'stream-json', '--verbose'];
+
+// WORKFLOW.md's King-build flags (the same for either account): the repo's git folder and the extras folder (the brief lives there).
+export const buildArgs = (extras = EXTRAS, gitDir = MAIN_GIT) => ['-p', '--strict-mcp-config', '--model', 'claude-sonnet-5-5', '--effort', 'high',
+  '--permission-mode', 'acceptEdits', '--max-budget-usd', '8', '--add-dir', gitDir, '--add-dir', extras,
+  '--disallowedTools', 'Bash(gh pr merge:*)', 'PowerShell(gh pr merge:*)', 'Agent', 'Bash(git push:*)', 'Bash(taskkill:*)', 'PowerShell(Stop-Process:*)',
+  '--allowedTools', 'Bash(echo:*)', 'Bash(tee:*)', 'Bash(npx.cmd:*)', 'Bash(npm.cmd:*)', 'PowerShell(Select-String:*)', 'PowerShell(Select-Object:*)',
+  'PowerShell(Write-Output:*)', ...['add', 'commit', 'fetch', 'checkout', 'switch', 'cherry-pick', 'rebase', 'apply', 'check-ignore'].map((g) => `Bash(git ${g}:*)`),
   '--output-format', 'stream-json', '--verbose'];
 
 // WORKFLOW.md's Knight-build flags: its clone, the clone's git folder and the Playwright folder.
@@ -48,52 +91,85 @@ export function commandLine(bin, args) {
   }).join(' ');
 }
 
-const git = (dir, ...a) => {
-  try { return execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim(); }
-  catch (e) { throw new Error(`git ${a.join(' ')} failed in ${dir}: ${String(e.stderr || e.message).trim()}`); }
-};
-const has = (dir, sha) => { try { execFileSync('git', ['-C', dir, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'pipe' }); return true; } catch { return false; } };
-const need = (path, what) => { if (!existsSync(path)) throw new Error(`${what} not found: ${path}`); };
-
 // A detached cmd.exe loses its redirected output on Windows (tested 2026-10-29), so a detached node holds the handles
 // and runs the .cmd under them. The command returns at once and the run goes on. stdin = brief, stdout and stderr = the out file.
 const RUN = 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => process.exit(c));';
-function launch(bin, args, cwd, briefFile, outFile) {
-  const out = openSync(outFile, 'w');
-  const child = spawn(process.execPath, ['-e', RUN, commandLine(bin, args)], { cwd, detached: true, windowsHide: true, stdio: [openSync(briefFile, 'r'), out, out] });
-  child.on('error', (e) => { console.error(`launch failed: ${e.message}`); process.exit(1); });
-  child.unref();
+
+// Everything that touches git, npm, files or processes; the tests swap it for a recorder.
+const io = {
+  git(dir, ...a) {
+    try { return execFileSync('git', ['-C', dir, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim(); }
+    catch (e) { throw new Error(`git ${a.join(' ')} failed in ${dir}: ${String(e.stderr || e.message).trim()}`); }
+  },
+  has(dir, sha) { try { execFileSync('git', ['-C', dir, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'pipe' }); return true; } catch { return false; } },
+  need(path, what) { if (!existsSync(path)) throw new Error(`${what} not found: ${path}`); },
+  open: (path, mode) => openSync(path, mode),
+  npmCi(dir) {
+    try { execSync('npm.cmd ci --silent', { cwd: dir, stdio: 'pipe' }); }
+    catch (e) { throw new Error(`npm ci failed in ${dir}: ${String(e.stderr || e.message).trim()}`); }
+  },
+  launch(bin, args, cwd, inFd, outFd, env = process.env) {
+    const child = spawn(process.execPath, ['-e', RUN, commandLine(bin, args)], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
+    child.on('error', (e) => { console.error(`launch failed: ${e.message}`); process.exit(1); });
+    child.unref();
+  },
+};
+
+const claude = (as) => join(homedir(), '.local', 'bin', ACCOUNTS[as].bin);
+const folder = (as, role) => `${EXTRAS}/${ACCOUNTS[as][role]}`;
+
+function needClean(x, dir) {
+  x.need(dir, 'folder');
+  const dirty = x.git(dir, 'status', '--porcelain').split('\n').filter((l) => l && !l.startsWith('??'));
+  if (dirty.length) throw new Error(`${dir} has tracked changes (git stash -u -m "<run>" first): ${dirty.join(' | ')}`);
 }
 
-export function review(args) {
-  const { sha, brief, out, from } = parseReview(args);
-  const wt = `${EXTRAS}/ProjectD-s15fix`;
-  need(brief, 'brief file');
-  need(CLAUDE2, 'claude2.cmd');
-  need(`${wt}/.claude/agents/reviewer.md`, 'reviewer worktree (.claude/agents/reviewer.md)');
-  if (from) git(REPO, 'fetch', from.clone, from.branch);
-  if (!has(REPO, sha)) throw new Error(`commit ${sha} not in the repo${from ? '' : ' (use --from <clone folder> <branch> for a Knight build)'}`);
-  git(wt, 'switch', '--detach', sha);
-  launch(CLAUDE2, reviewerArgs(), wt, brief, out);
-  console.log(`review ${sha} -> ${out}`);
+export function review(args, x = io) {
+  const { sha, brief, out, as, from } = parseReview(args);
+  const wt = folder(as, 'review');
+  x.need(brief, 'brief file');
+  x.need(claude(as), ACCOUNTS[as].bin);
+  needClean(x, wt);
+  x.need(`${wt}/.claude/agents/reviewer.md`, 'reviewer worktree (.claude/agents/reviewer.md)');
+  if (from) x.git(REPO, 'fetch', from.clone, from.branch);
+  if (!x.has(REPO, sha)) throw new Error(`commit ${sha} not in the repo${from ? '' : ' (use --from <clone folder> <branch> for a Knight build)'}`);
+  const fds = [x.open(brief, 'r'), x.open(out, 'w')];
+  x.git(wt, 'switch', '--detach', sha);
+  x.npmCi(wt);
+  x.launch(claude(as), reviewerArgs(), wt, ...fds);
+  console.log(`review ${sha} (${as}) -> ${out}`);
 }
 
-export function knight(args) {
+export function build(args, x = io) {
+  const { brief, out, branch, sha, as } = parseBuild(args);
+  const dir = folder(as, 'build');
+  x.need(brief, 'brief file');
+  x.need(claude(as), ACCOUNTS[as].bin);
+  needClean(x, dir);
+  if (!x.has(dir, sha)) throw new Error(`commit ${sha} not in ${dir}`);
+  const fds = [x.open(brief, 'r'), x.open(out, 'w')];
+  x.git(dir, 'switch', '-c', branch, sha);
+  const env = { ...process.env };
+  delete env.FORCE_COLOR;
+  x.launch(claude(as), buildArgs(), dir, ...fds, env);
+  console.log(`build ${branch} @ ${sha} (${as}) -> ${out}`);
+}
+
+export function knight(args, x = io) {
   const { brief, report, branch, sha, log } = parseKnight(args);
   const clone = `${EXTRAS}/ProjectD-rowan`;
-  need(brief, 'brief file');
-  need(CODEX, 'codex.cmd');
-  need(clone, 'Knight clone');
-  const dirty = git(clone, 'status', '--porcelain').split('\n').filter((l) => l && !l.startsWith('??'));
-  if (dirty.length) throw new Error(`${clone} has tracked changes (git stash -u -m "<run>" first): ${dirty.join(' | ')}`);
-  if (!has(clone, sha)) {
-    if (!has(REPO, sha)) throw new Error(`commit ${sha} not in the repo or the clone`);
-    const holder = git(REPO, 'branch', '--contains', sha, '--format=%(refname:short)').split('\n')[0];
+  x.need(brief, 'brief file');
+  x.need(CODEX, basename(CODEX));
+  needClean(x, clone);
+  if (!x.has(clone, sha)) {
+    if (!x.has(REPO, sha)) throw new Error(`commit ${sha} not in the repo or the clone`);
+    const holder = x.git(REPO, 'branch', '--contains', sha, '--format=%(refname:short)').split('\n')[0];
     if (!holder) throw new Error(`no branch in the repo holds ${sha}`);
-    git(clone, 'fetch', REPO, holder);
-    if (!has(clone, sha)) throw new Error(`commit ${sha} still missing in the clone after fetching ${holder}`);
+    x.git(clone, 'fetch', REPO, holder);
+    if (!x.has(clone, sha)) throw new Error(`commit ${sha} still missing in the clone after fetching ${holder}`);
   }
-  git(clone, 'switch', '-c', branch, sha);
-  launch(CODEX, knightArgs(report, clone), clone, brief, log);
+  const fds = [x.open(brief, 'r'), x.open(log, 'w')];
+  x.git(clone, 'switch', '-c', branch, sha);
+  x.launch(CODEX, knightArgs(report, clone), clone, ...fds);
   console.log(`knight ${branch} @ ${sha} -> ${report}`);
 }
