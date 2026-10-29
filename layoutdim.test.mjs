@@ -1,6 +1,6 @@
 // layoutdim.js + the dimension parts of layoutdoc.js — a dimension on a layout (TODO 156b2c1).   node layoutdim.test.mjs
 import assert from 'node:assert/strict';
-import { line } from './web/dxf-write.js';
+import { line, circle, arc } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
 import { writeDxf } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
@@ -250,11 +250,72 @@ for (const [slot, where] of ['first', 'middle', 'last'].entries()) test(`Trim of
   });
 });
 
+for (const kind of ['radius', 'diameter']) for (const shape of ['circle', 'arc']) {
+  const tag = kind === 'radius' ? 'R' : 'D';
+  const makeShape = (r) => shape === 'circle' ? circle(100, 100, r) : arc(100, 100, r, 20, 160);
+  const setup = () => {
+    const lay = layoutWith(), part = LD.objectPart('s', 'Shape', makeShape(20), LD.layersOf(lay));
+    lay.parts.s = part; lay.placed.push(LD.objectPlacement(part));
+    const params = kind === 'radius' ? { c: [100, 100], r: 20, p: [130, 130] } : { a: [80, 100], b: [120, 100], offset: 0 };
+    const dim = Ed.buildDim(kind, params, 1, `PD_DIM_${tag}1`, 3), dp = LD.objectPart('d', 'Dimension', dim.insert, LD.layersOf(lay), {}, { [dim.name]: dim.block });
+    lay.parts.d = dp; lay.placed.push(LD.objectPlacement(dp));
+    return lay;
+  };
+  const centreRadius = (d) => {
+    const p = d.params;
+    return kind === 'radius' ? [...p.c, p.r] : [(p.a[0] + p.b[0]) / 2, (p.a[1] + p.b[1]) / 2, Math.hypot(p.b[0] - p.a[0], p.b[1] - p.a[1]) / 2];
+  };
+
+  test(`${kind} on a ${shape}: R/D block saves and reopens as a dimension object`, () => {
+    const lay = setup(), back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))), 'L');
+    const p = back.placed.find((q) => isDimPart(back.parts[q.partId]));
+    assert.ok(p);
+    assert.equal(dimOf(back, p).kind, kind);
+    assert.equal(dimOf(back, p).name, `PD_DIM_${tag}1`);
+    centreRadius(dimOf(back, p)).forEach((v, i) => near(v, [100, 100, 20][i]));
+    assert.equal(labelOf(back, p).replace('\\U+00D8', 'Ø'), kind === 'radius' ? 'R20.000' : 'Ø40.000');
+  });
+
+  test(`${kind} on a ${shape}: follows Scale, Move, rotation, mirror and a radius grip`, () => {
+    const lay = setup(), p = lay.placed[0], d = lay.placed[1];
+    const follow = (change) => {
+      const prev = LD.linkView(lay);
+      change(); LD.settleDims(lay, newId);
+      assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+      const q = Ed.circleOf(LD.objectDoc(lay).raw.entities[0]);
+      centreRadius(dimOf(lay, d)).forEach((v, i) => near(v, [...q.c, q.r][i]));
+    };
+    follow(() => { p.sc = 2; });
+    assert.equal(labelOf(lay, d), kind === 'radius' ? 'R40.000' : 'Ø80.000');
+    follow(() => { p.x += 30; p.y += 5; });
+    follow(() => { p.rot = 90; });
+    follow(() => { p.mirrorX = true; });
+    follow(() => {
+      const view = LD.objectDoc(lay), ent = view.raw.entities[0], q = Ed.circleOf(ent);
+      const next = { ...ent, r: { ...ent.r, v: ent.r.v.map((v, i) => ent.r.c[i] === 40 ? String(q.r + 10) : v) } };
+      assert.ok(LD.objectReplace(lay, view, ent, next, newId));
+    });
+    assert.equal(labelOf(lay, d), kind === 'radius' ? 'R50.000' : 'Ø100.000');
+  });
+
+  test(`${kind}: baking its own scale, rotation and mirror keeps its tag and measured value`, () => {
+    const lay = setup(), d = lay.placed[1];
+    d.sc = 2; d.rot = 35; d.mirrorX = true;
+    assert.equal(LD.settleDims(lay, newId), true);
+    assert.equal(dimOf(lay, d).kind, kind);
+    assert.equal(labelOf(lay, d), kind === 'radius' ? 'R40.000' : 'Ø80.000');
+    near(centreRadius(dimOf(lay, d))[2], 40);
+    assert.equal(LD.settleDims(lay, newId), false);
+  });
+}
+
 test('names: turnedTag and freeBlockName', () => {
   assert.equal(turnedTag('H', 90), 'V'); assert.equal(turnedTag('V', 270), 'H'); assert.equal(turnedTag('H', 180), 'H'); assert.equal(turnedTag('H', 45), '');
   assert.equal(turnedTag('', 90), ''); assert.equal(turnedTag('R', 45), 'R');
   assert.equal(freeBlockName(new Set(['PD_DIM_1', 'PD_DIM_2']), ''), 'PD_DIM_3');
   assert.equal(freeBlockName(new Set(['pd_dim_1', 'pd_dim_h1']), ''), 'PD_DIM_2'); assert.equal(freeBlockName(new Set(['pd_dim_h1']), 'H'), 'PD_DIM_H2');
+  assert.equal(freeBlockName(new Set(['pd_dim_r1']), 'R'), 'PD_DIM_R2');
+  assert.equal(freeBlockName(new Set(['pd_dim_d1']), 'D'), 'PD_DIM_D2');
 });
 
 console.log(n + ' tests');

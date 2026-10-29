@@ -15248,6 +15248,91 @@ try {
     assert.deepEqual(dimsIn(await save()), beforeTrim, 'one Undo restores the dimensions with the trimmed copy');
   });
 
+  await step('TODO 156b2c2a: on a layout, Radius and Diameter Dimension pick circles and arcs (one Undo, Esc cancels); save and reopen as dimension objects; Scale, Move and a radius grip carry their values and positions', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const dimsIn = (text) => Object.fromEntries(Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)]));
+    const labelsIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([, b]) => b.entities.find((e) => e.type === 'TEXT').r.v[b.entities.find((e) => e.type === 'TEXT').r.c.indexOf(1)].replace('\\U+00D8', 'Ø')).sort();
+    await t('decimals').selectOption('3');
+    await typeCmd('circle'); await typeCmd('200,200'); await typeCmd('40');
+    await typeCmd('arc'); await typeCmd('430,200'); await typeCmd('400,230'); await typeCmd('370,200');
+    await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 2);
+    for (const [command, prefix, value] of [['dra', 'R', 40], ['ddi', 'Ø', 80]]) {
+      await typeCmd(command);
+      assert.equal(await prompt(), 'Select arc or circle:');
+      await click(500, 350);
+      assert.match(await prompt(), /Dimension works on layout objects, not placed parts/);
+      await click(160, 200);
+      assert.equal(await prompt(), 'Specify dimension line location:');
+      await page.keyboard.press('Escape');
+      assert.equal(await nParts(), n0 + (command === 'dra' ? 2 : 3), 'Esc after the circle pick adds nothing');
+      await typeCmd(command); await click(160, 200);
+      const p = await at(...(command === 'dra' ? [270, 240] : [200, 270]));
+      await page.mouse.move(p.x, p.y); await frames();
+      await page.mouse.click(p.x, p.y);
+      assert.ok((await prompt()).includes(`Dimension placed: ${prefix}${value.toFixed(3)} mm`));
+      assert.equal((await histLabels()).at(-1), 'Dimension');
+      const placed = await nParts();
+      await undo(); assert.equal(await nParts(), placed - 1, 'one Undo removes the dimension');
+      await page.keyboard.press('Control+y'); assert.equal(await nParts(), placed);
+      await page.keyboard.press('Escape');
+    }
+    // Both kinds also pick an arc through the drawing tool's same path.
+    await typeCmd('dra'); await click(400, 230); await typeCmd('450,250'); await page.keyboard.press('Escape');
+    await typeCmd('ddi'); await click(400, 230); await typeCmd('450,200'); await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 6);
+    await typeCmd('dimangular');
+    assert.match(await prompt(), /angle on a layout is not built yet \(TODO 156b2c2b\)/);
+    await click(400, 230); assert.equal(await nParts(), n0 + 6);
+    await page.keyboard.press('Escape');
+    let text = await save();
+    assert.deepEqual(labelsIn(text), ['R30.000', 'R40.000', 'Ø60.000', 'Ø80.000']);
+    assert.deepEqual(Object.values(dimsIn(text)).map((q) => q.kind).sort(), ['diameter', 'diameter', 'radius', 'radius']);
+    const zoom = async (a, b) => {
+      const p = await at(...a), q = await at(...b);
+      await typeCmd('zw'); await page.mouse.move(p.x, p.y); await page.mouse.down();
+      await page.mouse.move(q.x, q.y, { steps: 5 }); await page.mouse.up(); await frames();
+    };
+    const fadeHistory = () => page.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle'));
+    await zoom([130, 140], [310, 280]);
+    await shotBoth('layout-radius-diameter', fadeHistory);
+    await typeCmd('zp');
+    await zoom([350, 160], [490, 270]);
+    await shotBoth('layout-arc-radius-diameter', fadeHistory);
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'radius-diameter-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'radius-diameter-lay.dxf');
+    assert.equal(await nParts(), n0 + 6);
+    const reopened = layoutFromRaw(readDxf(text));
+    assert.equal(Object.values(reopened.parts).filter((p) => p.obj).length, 6);
+    assert.deepEqual(labelsIn(await save()), labelsIn(text), 'all four dimension blocks survive reopening');
+    await page.locator('[data-tool=select]').click(); await click(160, 200);
+    await typeCmd('scale'); await typeCmd('200,200'); await typeCmd('2');
+    text = await save();
+    assert.deepEqual(labelsIn(text), ['R30.000', 'R80.000', 'Ø160.000', 'Ø60.000'], 'Scale updates only the circle dimensions');
+    await undo(); assert.deepEqual(labelsIn(await save()), ['R30.000', 'R40.000', 'Ø60.000', 'Ø80.000']);
+    await page.keyboard.press('Control+y');
+    await page.keyboard.press('Escape'); await click(120, 200);
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,40');
+    text = await save();
+    for (const [name, q] of Object.entries(dimsIn(text))) if (name.endsWith('1')) {
+      const c = q.kind === 'radius' ? q.params.c : [(q.params.a[0] + q.params.b[0]) / 2, (q.params.a[1] + q.params.b[1]) / 2];
+      assert.ok(Math.abs(c[0] - 200) < 1e-3 && Math.abs(c[1] - 240) < 1e-3, 'Move carries the measured centre');
+    }
+    await page.keyboard.press('Escape'); await click(120, 240); await frames(); await gripWhen(5);
+    const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id.endsWith(':q0')));
+    const g = await gripBox(gid); await page.mouse.click(g.x, g.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+    await typeCmd('300,240'); await frames();
+    assert.deepEqual(labelsIn(await save()), ['R100.000', 'R30.000', 'Ø200.000', 'Ø60.000'], 'a radius grip updates both values');
+    await page.keyboard.press('Escape'); await undo();
+    assert.deepEqual(labelsIn(await save()), labelsIn(text), 'one Undo restores the circle and its dimensions');
+    await t('decimals').selectOption('2');
+    await page.locator('[data-tool=select]').click();
+  });
+
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts(), blur = () => page.evaluate(() => document.activeElement?.blur());

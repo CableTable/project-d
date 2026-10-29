@@ -5491,7 +5491,7 @@ function dimPrompt() {
   const t = dimTarget();
   if (!t) return 'Dimension: open a drawing tab or a layout first';
   if (!D) return null;
-  if (t.lay && type !== 'aligned' && type !== 'linear') return 'Dimension: radius, diameter and angle on a layout are not built yet (TODO 156b2c2). Pick Aligned or Linear';
+  if (t.lay && type === 'angle') return 'Dimension: angle on a layout is not built yet (TODO 156b2c2b). Pick Aligned, Linear, Radius or Diameter';
   if (type === 'aligned') return ['Dimension: first point (it snaps to ends and centres)', 'Dimension: second point', 'Dimension: move the line up or down and click to place it'][D.pts.length];
   if (type === 'linear') return ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location [Horizontal/Vertical]:'][D.pts.length];
   if (type === 'angle') return ['Select first line:', 'Select second line:', 'Specify dimension arc location:'][D.lines.length];
@@ -5553,10 +5553,12 @@ function dimPlace(d, m) {
 function dimensionPoint(d, p, shift = false, typed = false) {
   const D = state.dim, type = state.dimType;
   if (!D || !dimTarget()) return;
-  if (d.lay && type !== 'aligned' && type !== 'linear') { note(dimPrompt()); return; }
+  if (d.lay && type === 'angle') { note(dimPrompt()); return; }
   if (type === 'radius' || type === 'diameter' || type === 'angle') {
     if (D.obj || D.lines.length === 2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
-    const ent = d.raw.entities[Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d))];
+    const v = d.lay ? layObjDoc(d) : d;
+    if (d.lay && partRefused(v, { kind: 'dimension' }, p)) return;
+    const ent = v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))];
     if (type === 'angle') {
       const l = Ed.lineOf(ent);
       if (!l) { note('Select a line: click on one'); return; }
