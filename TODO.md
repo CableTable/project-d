@@ -285,7 +285,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
         156b3c. ✅ (fixed, King, 2026-10-29) Flaky step 'TODO 156b3b' (2nd hit 2026-10-29, green alone both times): in the full suite it waits for 3 grips and finds 0, the prompt still on the step-and-repeat part pick, so the step starts before the layout object is selected. Make the step set up and wait for its own state (S, test only).
         156b3d. ✅ (fixed, King, 2026-10-30) Bug: an imported angle dimension whose own INSERT is mirrored showed the wrong arc after a follow (270 instead of 90); a reflex one now stays reflex.
           flaky step fixed.
-      156b4. Explode a placed part on a layout.
+      156b4. ✅ (built, King, 2026-10-30; 3 fix rounds: dimensions inside, reserved layer names, mirrored text, off-layer objects kept on save) Explode a placed part on a layout.
     156c. Compare editable: edits go to the drawing picked in the Compare list; its tab updates (M). Grilled 2026-10-28 (DECISIONS "Compare editable"), split:
       156c1. ✅ (built, Knight, 2026-10-28) Snapshot link to its drawing tab; Modify / Draw / grips on the picked snapshot go to that tab (file + Undo); differences recalculated; closed tab or library part = read-only with a message (M).
       156c2. ✅ (built, King, 2026-10-30; hidden layers kept per snapshot by name, Contour goes to the source drawing) Layers panel for the picked snapshot and Contour in Compare (result to the source drawing) (S).
