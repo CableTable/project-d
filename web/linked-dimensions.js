@@ -85,9 +85,9 @@ function followCircle(dim, params, m, nm, paper, ctx) {
 
 /** Angle: the one straight piece along each ray, through the vertex; the vertex and the rays follow those pieces. */
 function followAngle(dim, params, m, nm, paper, ctx) {
-  const { factor } = ctx, rot = Math.atan2(m[1], m[0]), v = mapply(m, ...dim.params.v), picks = [];
+  const { factor } = ctx, v = mapply(m, ...dim.params.v), picks = [];
   for (const a of [dim.params.a0, dim.params.a1]) {
-    const u = [Math.cos(a * DEG + rot), Math.sin(a * DEG + rot)];
+    const w = [m[0] * Math.cos(a * DEG) + m[2] * Math.sin(a * DEG), m[1] * Math.cos(a * DEG) + m[3] * Math.sin(a * DEG)], u = [w[0] / Math.hypot(...w), w[1] / Math.hypot(...w)];   // through the insert's matrix: a mirror turns the other way
     const hit = ctx.segs.filter(([f, , ps]) => {
       const d = [f[2] - f[0], f[3] - f[1]], len = Math.hypot(...d);
       return ps === paper && Math.abs(d[0] * u[1] - d[1] * u[0]) / len <= LINK_ANGLE &&
@@ -100,10 +100,11 @@ function followAngle(dim, params, m, nm, paper, ctx) {
   if (picks[0].hit === picks[1].hit || !picks.some((q) => segMoved(q.hit, factor))) return false;
   const [{ t: l1, d: d1 }, { t: l2, d: d2 }] = picks, cross = d1[0] * d2[1] - d1[1] * d2[0];
   if (!(Math.abs(cross) > 1e-9 * Math.hypot(...d1) * Math.hypot(...d2))) return false;
-  const s = ((l2[0] - l1[0]) * d2[1] - (l2[1] - l1[1]) * d2[0]) / cross, rot2 = Math.atan2(nm[1], nm[0]);
-  const ang = (d) => ((((Math.atan2(d[1], d[0]) - rot2) / DEG) % 360) + 360) % 360;
+  const s = ((l2[0] - l1[0]) * d2[1] - (l2[1] - l1[1]) * d2[0]) / cross, flat = [nm[0], nm[1], nm[2], nm[3], 0, 0];
+  const ang = (d) => { const q = local(flat, d); return (((Math.atan2(q[1], q[0]) / DEG) % 360) + 360) % 360; };
   params.v = local(nm, [l1[0] + d1[0] * s, l1[1] + d1[1] * s]); params.a0 = ang(d1); params.a1 = ang(d2);
-  if (cross * (nm[0] * nm[3] - nm[1] * nm[2]) < 0) [params.a0, params.a1] = [params.a1, params.a0]; // a reflection reverses the arc's ends
+  // The arc runs anticlockwise from a0 to a1; if the lines' turn in the insert's frame changed sense, the lines were reflected, so the ends swap and it measures what it did.
+  if (cross * (nm[0] * nm[3] - nm[1] * nm[2]) * Math.sin((dim.params.a1 - dim.params.a0) * DEG) < -1e-12) [params.a0, params.a1] = [params.a1, params.a0];
   return true;
 }
 
