@@ -6,3 +6,4 @@ shots-*/
 *firebase-key*.json
 *-adminsdk-*.json
 tmp-*
+.run-lock

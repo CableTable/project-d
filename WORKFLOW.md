@@ -171,7 +171,7 @@ R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Projec
 # Reviews run in ProjectD-s15fix (worktree of this repo, trusted on account 2; ProjectD-review was removed twice, session 28 moved). A Knight build: first `git fetch "<extras>/ProjectD-rowan" <branch>` in the repo, or the sha is unknown here (S28 lost a launch).
 WT="E:/Project B/Claude/Project D extras/ProjectD-s15fix"; git -C "$WT" switch --detach <sha> && cd "$WT" || exit 1; npm.cmd ci --silent  # once per review
 $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 \
-  --disallowedTools Agent "Bash(git commit:*)" "Bash(git push:*)" "Bash(git add:*)" "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git stash:*)" "Bash(git restore:*)" "Bash(git pull:*)" \
+  --add-dir "E:/Project B/Claude/Project D extras" --disallowedTools Agent "Bash(git commit:*)" "Bash(git push:*)" "Bash(git add:*)" "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git stash:*)" "Bash(git restore:*)" "Bash(git pull:*)" \
   $OUT < review.txt > rev.jsonl
 cd -
 # A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-s15fix.

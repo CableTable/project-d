@@ -1,7 +1,7 @@
 // `node tools/rook.mjs review ...`, `build ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { existsSync, openSync } from 'node:fs';
+import { existsSync, openSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -93,7 +93,10 @@ export function commandLine(bin, args) {
 
 // A detached cmd.exe loses its redirected output on Windows (tested 2026-10-29), so a detached node holds the handles
 // and runs the .cmd under them. The command returns at once and the run goes on. stdin = brief, stdout and stderr = the out file.
-const RUN = 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => process.exit(c));';
+// When the run ends it deletes the folder's lock (argv[2]).
+const RUN = 'const rm = () => { try { require("fs").unlinkSync(process.argv[2]); } catch {} };'
+  + 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => { rm(); process.exit(c); });';
+const lockFile = (dir) => `${dir}/.run-lock`;
 
 // Everything that touches git, npm, files or processes; the tests swap it for a recorder.
 const io = {
@@ -104,12 +107,14 @@ const io = {
   has(dir, sha) { try { execFileSync('git', ['-C', dir, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'pipe' }); return true; } catch { return false; } },
   need(path, what) { if (!existsSync(path)) throw new Error(`${what} not found: ${path}`); },
   open: (path, mode) => openSync(path, mode),
+  locked: (dir) => existsSync(lockFile(dir)),
   npmCi(dir) {
     try { execSync('npm.cmd ci --silent', { cwd: dir, stdio: 'pipe' }); }
     catch (e) { throw new Error(`npm ci failed in ${dir}: ${String(e.stderr || e.message).trim()}`); }
   },
   launch(bin, args, cwd, inFd, outFd, env = process.env) {
-    const child = spawn(process.execPath, ['-e', RUN, commandLine(bin, args)], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
+    writeFileSync(lockFile(cwd), new Date().toISOString());
+    const child = spawn(process.execPath, ['-e', RUN, commandLine(bin, args), lockFile(cwd)], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
     child.on('error', (e) => { console.error(`launch failed: ${e.message}`); process.exit(1); });
     child.unref();
   },
@@ -118,8 +123,10 @@ const io = {
 const claude = (as) => join(homedir(), '.local', 'bin', ACCOUNTS[as].bin);
 const folder = (as, role) => `${EXTRAS}/${ACCOUNTS[as][role]}`;
 
+// A folder runs one thing at a time: a second launch would switch the branch under the first.
 function needClean(x, dir) {
   x.need(dir, 'folder');
+  if (x.locked(dir)) throw new Error(`${dir} is in use by a running launch (${lockFile(dir)}); if that run is dead, delete the lock file`);
   const dirty = x.git(dir, 'status', '--porcelain').split('\n').filter((l) => l && !l.startsWith('??'));
   if (dirty.length) throw new Error(`${dir} has tracked changes (git stash -u -m "<run>" first): ${dirty.join(' | ')}`);
 }
@@ -133,10 +140,11 @@ export function review(args, x = io) {
   x.need(`${wt}/.claude/agents/reviewer.md`, 'reviewer worktree (.claude/agents/reviewer.md)');
   if (from) x.git(REPO, 'fetch', from.clone, from.branch);
   if (!x.has(REPO, sha)) throw new Error(`commit ${sha} not in the repo${from ? '' : ' (use --from <clone folder> <branch> for a Knight build)'}`);
-  const fds = [x.open(brief, 'r'), x.open(out, 'w')];
+  x.need(dirname(out), 'output folder');
+  const inFd = x.open(brief, 'r');
   x.git(wt, 'switch', '--detach', sha);
   x.npmCi(wt);
-  x.launch(claude(as), reviewerArgs(), wt, ...fds);
+  x.launch(claude(as), reviewerArgs(), wt, inFd, x.open(out, 'w'));
   console.log(`review ${sha} (${as}) -> ${out}`);
 }
 
@@ -147,11 +155,12 @@ export function build(args, x = io) {
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
   if (!x.has(dir, sha)) throw new Error(`commit ${sha} not in ${dir}`);
-  const fds = [x.open(brief, 'r'), x.open(out, 'w')];
+  x.need(dirname(out), 'output folder');
+  const inFd = x.open(brief, 'r');
   x.git(dir, 'switch', '-c', branch, sha);
   const env = { ...process.env };
   delete env.FORCE_COLOR;
-  x.launch(claude(as), buildArgs(), dir, ...fds, env);
+  x.launch(claude(as), buildArgs(), dir, inFd, x.open(out, 'w'), env);
   console.log(`build ${branch} @ ${sha} (${as}) -> ${out}`);
 }
 
@@ -168,8 +177,9 @@ export function knight(args, x = io) {
     x.git(clone, 'fetch', REPO, holder);
     if (!x.has(clone, sha)) throw new Error(`commit ${sha} still missing in the clone after fetching ${holder}`);
   }
-  const fds = [x.open(brief, 'r'), x.open(log, 'w')];
+  x.need(dirname(log), 'output folder');
+  const inFd = x.open(brief, 'r');
   x.git(clone, 'switch', '-c', branch, sha);
-  x.launch(CODEX, knightArgs(report, clone), clone, ...fds);
+  x.launch(CODEX, knightArgs(report, clone), clone, inFd, x.open(log, 'w'));
   console.log(`knight ${branch} @ ${sha} -> ${report}`);
 }

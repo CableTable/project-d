@@ -19,7 +19,7 @@ function recorder(fail = '') {
   const calls = [];
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
-  return { calls, x: { git: rec('git', ''), has: rec('has', true), need: rec('need'), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]) } };
+  return { calls, x: { git: rec('git', ''), has: rec('has', true), need: rec('need'), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]) } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
@@ -75,7 +75,7 @@ test('review plan: checks, files opened, detach, npm ci in the review folder, th
   const { calls, x } = recorder();
   review(['abc1234', 'b.txt', 'o.jsonl'], x);
   const names = calls.map((c) => c[0] + (c[0] === 'git' ? ` ${c[2]}` : ''));
-  assert.deepEqual(names.slice(-5), ['open', 'open', 'git switch', 'npmCi', 'launch']);
+  assert.deepEqual(names.slice(-5), ['open', 'git switch', 'npmCi', 'open', 'launch']);
   assert.equal(calls.find((c) => c[0] === 'npmCi')[1], `${X}/ProjectD-s15fix`);
   assert.ok(calls.some((c) => c[0] === 'need' && c[1] === `${X}/ProjectD-s15fix/.claude/agents/reviewer.md`));
   const bad = recorder('npmCi');
@@ -83,12 +83,14 @@ test('review plan: checks, files opened, detach, npm ci in the review folder, th
   assert.equal(launched(bad.calls), undefined);
 });
 
-test('build and knight open their files before the branch is made, so a failed run can be re-run', () => {
+test('build and knight open the brief before the branch is made (a failed run can be re-run), the out file only after it', () => {
   for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
     const { calls, x } = recorder();
     run(args, x);
-    assert.ok(calls.findIndex((c) => c[0] === 'open' && c[2] === 'w') < calls.findIndex(isSwitch), run.name);
-    assert.ok(calls.findIndex(isSwitch) < calls.findIndex((c) => c[0] === 'launch'), run.name);
+    const at = (f) => calls.findIndex(f);
+    assert.ok(at((c) => c[0] === 'open' && c[2] === 'r') < at(isSwitch), run.name);
+    assert.ok(at(isSwitch) < at((c) => c[0] === 'open' && c[2] === 'w'), run.name);
+    assert.ok(at((c) => c[0] === 'open' && c[2] === 'w') < at((c) => c[0] === 'launch'), run.name);
     assert.deepEqual(calls.find(isSwitch).slice(3), ['-c', 'br', 'abc1234']);
     const failing = recorder('open');
     assert.throws(() => run(args, failing.x), /open failed/);
@@ -104,6 +106,18 @@ test('a folder with tracked changes, or a commit it lacks, stops the run before 
   const missing = recorder();
   missing.x.has = () => false;
   assert.throws(() => build(['b.txt', 'o.jsonl', 'br', 'abc1234'], missing.x), /not in/);
+});
+
+test('a failed switch never opens the out file; a locked folder is refused before anything changes', () => {
+  for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']], [review, ['abc1234', 'b.txt', 'o.jsonl']]]) {
+    const failing = recorder('git');
+    assert.throws(() => run(args, failing.x), /git failed/);
+    assert.equal(failing.calls.some((c) => c[0] === 'open' && c[2] === 'w'), false, run.name);
+    const locked = recorder();
+    locked.x.locked = () => true;
+    assert.throws(() => run(args, locked.x), /in use.*\.run-lock/);
+    assert.equal(locked.calls.some((c) => c[0] === 'open' || isSwitch(c) || c[0] === 'launch'), false, run.name);
+  }
 });
 
 test('the Knight command line has the builder profile, its clone, the git folder and Playwright', () => {
