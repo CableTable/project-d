@@ -15001,6 +15001,7 @@ try {
         return Math.abs(r.x + r.width / 2 - x) < 2 && Math.abs(r.y + r.height / 2 - y) < 2;
       }, await at(x, y));
     };
+    const pickLine = async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3); }; // ends any command, then picks the line itself
     const rectAt = async (x, y, w, hh) => { await typeCmd('rect'); await typeCmd(`${x},${y}`); await typeCmd(`${w},${hh}`); };
     await draw('50,600', '300,600');
     await rectAt(50, 300, 100, 80); await rectAt(120, 320, 100, 80);
@@ -15008,7 +15009,7 @@ try {
     assert.equal(await nParts(), n0 + 3);
     const l0 = (await histLabels()).length;
     // grips: the line's two ends and middle; the end goes where it is dragged, in one history step
-    await page.keyboard.press('Escape'); await click(175, 600); await frames(); await gripWhen(3);
+    await pickLine();
     await t('grip-hint').waitFor({ state: 'visible' });
     await dragGripTo(await gid('b'), 300, 650);
     await frames(); await gripWhen(3);
@@ -15018,7 +15019,7 @@ try {
     assert.equal((await histLabels()).length, l0 + 1, 'one history step for the grip edit');
     assert.equal(await nParts(), n0 + 3, 'the same object, not a new one');
     await undo(); assert.equal((await histLabels()).length, l0, 'one Undo takes it back');
-    await page.keyboard.press('Escape'); await click(175, 600); await frames(); await gripWhen(3);
+    await pickLine();
     await waitForEnd(300, 600);
     const back = await gripBox(await gid('b')), was = await at(300, 600);
     assert.ok(near(back.x, was.x, 2) && near(back.y, was.y, 2), 'the end is back');
