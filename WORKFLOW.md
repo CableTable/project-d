@@ -88,7 +88,7 @@ usage-agent-install.ps1.
 2. **Reviews per build, sized** (his call 2026-10-21): review A = spec fidelity + bugs (Opus medium); review B = code
    standards (`ponytail:ponytail-review`, Sonnet high). S items: A only. M items: A + B. L items and anything touching
    security (keys, Firebase rules, file access, credentials): A + B, both on Opus. Separate fresh sessions in parallel,
-   each in its own folder (ProjectD-review, or ProjectD-fixC when free).
+   each in its own folder (ProjectD-s15fix; a 2nd review at once: ProjectD-b68 once trusted).
 3. **PR body in the `pr` skill's shape**: a summary visual (file tree / call tree / diff), before / after evidence
    (tests, screenshots), and a merge-danger call: one-way or two-way door, plus blast radius.
 4. **Retro at session end** (three runs, all on Bishop, his call 2026-10-28): before the merge, a Bishop run of the
@@ -158,13 +158,13 @@ R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Projec
 # plus the git denies for Bash, capped at $6. It runs in its OWN throwaway worktree at the commit under review, so it can
 # run the tests and time things without touching a builder's folder (2026-10-20, his call). Never add `git -C:*` to the
 # allowlist: `git -C … commit/push` would slip past the commit and push denies.
-# ProjectD-review is a permanent worktree (made once, trusted on account 2); never remove it (session 27: removing it lost the trust).
-WT="E:/Project B/Claude/ProjectD-review"; git -C "$WT" switch --detach <sha>; cd "$WT"; npm.cmd ci --silent  # once per review
+# Reviews run in ProjectD-s15fix (worktree of this repo, trusted on account 2; ProjectD-review was removed twice, session 28 moved). A Knight build: first `git fetch "<extras>/ProjectD-rowan" <branch>` in the repo, or the sha is unknown here (S28 lost a launch).
+WT="E:/Project B/Claude/Project D extras/ProjectD-s15fix"; git -C "$WT" switch --detach <sha> && cd "$WT" || exit 1; npm.cmd ci --silent  # once per review
 $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 \
   --disallowedTools Agent "Bash(git commit:*)" "Bash(git push:*)" "Bash(git add:*)" "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git stash:*)" "Bash(git restore:*)" "Bash(git pull:*)" \
   $OUT < review.txt > rev.jsonl
 cd -
-# A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-review.
+# A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-s15fix.
 
 # Lookup (Haiku)
 $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format text < question.txt
