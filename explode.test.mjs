@@ -207,3 +207,19 @@ test('untransformable or missing block members leave the whole insert intact wit
     assert.equal(out.exploded, 0); assert.equal(out.entities[0], doc.entities[0]); assert.equal(out.errors.length, 1);
   }
 });
+
+test('mirrored and turned text explodes into the box the INSERT showed (backward / upside-down text hangs the other way)', () => {
+  for (const at of [{ sx: -1 }, { sy: -1 }, { sx: -1, sy: -1 }, { rot: 180 }, { sy: -1, rot: 90 }]) {
+    const doc = blockDoc([text(3, 4, 2, 'HELLO'), line(0, 0, 1, 1)], at), want = flatten(doc).boxes.model;
+    flatten({ ...doc, entities: result(doc).entities }).boxes.model.forEach((v, i) => near(v, want[i]));
+  }
+});
+
+test('a DIMENSION member explodes as one INSERT of its block, in place', () => {
+  const doc = newDoc(); addBlock(doc, '*D1', [line(0, 0, 20, 0), text(8, 4, 2, '20')]); addBlock(doc, 'B', [entity('DIMENSION', [[2, '*D1']])]);
+  addEntities(doc, insert('B', 10, 20, { rot: 90, sx: -2 }));
+  const out = result(doc);
+  assert.deepEqual(out.entities.map((e) => e.type), ['INSERT']);
+  const want = flatten(doc).boxes.model;
+  flatten({ ...doc, blocks: out.blocks, entities: out.entities }).boxes.model.forEach((v, i) => near(v, want[i]));
+});
