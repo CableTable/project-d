@@ -309,6 +309,66 @@ for (const kind of ['radius', 'diameter']) for (const shape of ['circle', 'arc']
   });
 }
 
+function angleLayout(reverse = false) {
+  const lay = layoutWith();
+  addLine(lay, 'l1', reverse ? [200, 100] : [100, 100], reverse ? [100, 100] : [200, 100]);
+  addLine(lay, 'l2', [100, 100], [100, 200]);
+  const dim = Ed.buildDim('angle', { v: [100, 100], r: 40, a0: 0, a1: 90, textH: 2, arrow: 2 }, 1, 'PD_DIM_A1', 3);
+  const part = LD.objectPart('d', 'Angle', dim.insert, LD.layersOf(lay), {}, { [dim.name]: dim.block });
+  lay.parts.d = part; lay.placed.push(LD.objectPlacement(part));
+  return lay;
+}
+
+test('angle: A block saves and reopens as a dimension object, with its look and decimals', () => {
+  const lay = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(angleLayout()))), 'L'), d = lay.placed[2];
+  assert.ok(isDimPart(lay.parts[d.partId]));
+  const m = dimOf(lay, d);
+  assert.equal(m.name, 'PD_DIM_A1'); assert.equal(m.kind, 'angle');
+  assert.equal(labelOf(lay, d), '90.000°');
+  near(m.params.v[0], 100); near(m.params.v[1], 100); near(m.params.r, 40);
+  near(m.params.textH, 2); near(m.params.arrow, 2, 1e-5);
+});
+
+for (const reverse of [false, true]) for (const change of ['Move', 'Rotate', 'Mirror', 'Scale', 'first grip', 'second grip']) {
+  test(`angle: follows ${change} of its lines (${reverse ? 'reversed' : 'forward'} first line)`, () => {
+    const lay = angleLayout(reverse), d = lay.placed[2], prev = LD.linkView(lay);
+    if (change.endsWith('grip')) {
+      const view = LD.objectDoc(lay), first = change === 'first grip';
+      const ent = view.raw.entities[first ? 0 : 1];
+      const next = first ? (reverse ? line(200, 200, 100, 100) : line(100, 100, 200, 200)) : line(100, 100, 0, 200);
+      assert.ok(LD.objectReplace(lay, view, ent, next, newId));
+    } else for (const p of lay.placed.slice(0, 2)) {
+      if (change === 'Move') { p.x += 30; p.y += 5; }
+      if (change === 'Rotate') p.rot = 35;
+      if (change === 'Mirror') p.mirrorX = true;
+      if (change === 'Scale') p.sc = 2;
+    }
+    LD.settleDims(lay, newId);
+    assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+    const m = dimOf(lay, d).params;
+    near(m.v[0], change === 'Move' ? 130 : 100); near(m.v[1], change === 'Move' ? 105 : 100);
+    assert.equal(labelOf(lay, d), change === 'first grip' ? '45.000°' : change === 'second grip' ? '135.000°' : '90.000°');
+    const lines = LD.objectDoc(lay).raw.entities.slice(0, 2).map(Ed.lineOf);
+    for (const a of [m.a0, m.a1]) assert.ok(lines.some((l) => Math.abs((l[2] - l[0]) * Math.sin(a * Math.PI / 180) - (l[3] - l[1]) * Math.cos(a * Math.PI / 180)) < 1e-5), 'each ray follows a source line');
+  });
+}
+
+test('angle: moving one line moves the intersection even when its direction opposes the dimension ray', () => {
+  const lay = angleLayout(true), d = lay.placed[2], prev = LD.linkView(lay);
+  lay.placed[0].y += 20;
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+  near(dimOf(lay, d).params.v[0], 100); near(dimOf(lay, d).params.v[1], 120);
+});
+
+test('angle: baking its own scale, rotation and mirror keeps its A tag and value', () => {
+  const lay = angleLayout(), d = lay.placed[2];
+  d.sc = 2; d.rot = 35; d.mirrorX = true;
+  assert.equal(LD.settleDims(lay, newId), true);
+  assert.equal(dimOf(lay, d).kind, 'angle'); assert.equal(dimOf(lay, d).name, 'PD_DIM_A1');
+  assert.equal(labelOf(lay, d), '90.000°'); near(dimOf(lay, d).params.r, 80);
+  assert.equal(LD.settleDims(lay, newId), false);
+});
+
 test('names: turnedTag and freeBlockName', () => {
   assert.equal(turnedTag('H', 90), 'V'); assert.equal(turnedTag('V', 270), 'H'); assert.equal(turnedTag('H', 180), 'H'); assert.equal(turnedTag('H', 45), '');
   assert.equal(turnedTag('', 90), ''); assert.equal(turnedTag('R', 45), 'R');
@@ -316,6 +376,7 @@ test('names: turnedTag and freeBlockName', () => {
   assert.equal(freeBlockName(new Set(['pd_dim_1', 'pd_dim_h1']), ''), 'PD_DIM_2'); assert.equal(freeBlockName(new Set(['pd_dim_h1']), 'H'), 'PD_DIM_H2');
   assert.equal(freeBlockName(new Set(['pd_dim_r1']), 'R'), 'PD_DIM_R2');
   assert.equal(freeBlockName(new Set(['pd_dim_d1']), 'D'), 'PD_DIM_D2');
+  assert.equal(freeBlockName(new Set(['pd_dim_a1']), 'A'), 'PD_DIM_A2');
 });
 
 console.log(n + ' tests');

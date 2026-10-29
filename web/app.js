@@ -5491,7 +5491,6 @@ function dimPrompt() {
   const t = dimTarget();
   if (!t) return 'Dimension: open a drawing tab or a layout first';
   if (!D) return null;
-  if (t.lay && type === 'angle') return 'Dimension: angle on a layout is not built yet (TODO 156b2c2b). Pick Aligned, Linear, Radius or Diameter';
   if (type === 'aligned') return ['Dimension: first point (it snaps to ends and centres)', 'Dimension: second point', 'Dimension: move the line up or down and click to place it'][D.pts.length];
   if (type === 'linear') return ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location [Horizontal/Vertical]:'][D.pts.length];
   if (type === 'angle') return ['Select first line:', 'Select second line:', 'Specify dimension arc location:'][D.lines.length];
@@ -5543,7 +5542,7 @@ function dimPlace(d, m) {
   if (d.lay) {                                                       // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
     names.taken.add(dim.name.toLowerCase());
     layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block }, names);
-    note(`Dimension placed: ${dim.label}${dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
+    note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
@@ -5553,7 +5552,6 @@ function dimPlace(d, m) {
 function dimensionPoint(d, p, shift = false, typed = false) {
   const D = state.dim, type = state.dimType;
   if (!D || !dimTarget()) return;
-  if (d.lay && type === 'angle') { note(dimPrompt()); return; }
   if (type === 'radius' || type === 'diameter' || type === 'angle') {
     if (D.obj || D.lines.length === 2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
     const v = d.lay ? layObjDoc(d) : d;

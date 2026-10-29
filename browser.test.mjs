@@ -15283,10 +15283,6 @@ try {
     await typeCmd('dra'); await click(400, 230); await typeCmd('450,250'); await page.keyboard.press('Escape');
     await typeCmd('ddi'); await click(400, 230); await typeCmd('450,200'); await page.keyboard.press('Escape');
     assert.equal(await nParts(), n0 + 6);
-    await typeCmd('dimangular');
-    assert.match(await prompt(), /angle on a layout is not built yet \(TODO 156b2c2b\)/);
-    await click(400, 230); assert.equal(await nParts(), n0 + 6);
-    await page.keyboard.press('Escape');
     let text = await save();
     assert.deepEqual(labelsIn(text), ['R30.000', 'R40.000', 'Ø60.000', 'Ø80.000']);
     assert.deepEqual(Object.values(dimsIn(text)).map((q) => q.kind).sort(), ['diameter', 'diameter', 'radius', 'radius']);
@@ -15331,6 +15327,66 @@ try {
     assert.deepEqual(labelsIn(await save()), labelsIn(text), 'one Undo restores the circle and its dimensions');
     await t('decimals').selectOption('2');
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156b2c2b: on a layout, Angle Dimension picks two lines (one Undo, Esc cancels), refuses placed parts; saves and reopens as a dimension object; a line grip updates the angle and Move carries it', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const angleIn = (text) => {
+      const [name, block] = Object.entries(readDxf(text).blocks).find(([k]) => /^PD_DIM_A\d+$/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { name, ...readDim(name, block), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    await t('decimals').selectOption('3');
+    await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+    await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,300'); await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 2);
+    await typeCmd('dan'); assert.equal(await prompt(), 'Select first line:');
+    await click(500, 350); assert.match(await prompt(), /Dimension works on layout objects, not placed parts/);
+    await click(250, 150); assert.equal(await prompt(), 'Select second line:');
+    await click(250, 150); assert.match(await prompt(), /Those lines are parallel/);
+    await page.keyboard.press('Escape'); assert.equal(await nParts(), n0 + 2, 'Esc after the first pick adds nothing');
+    await typeCmd('dan'); await click(250, 150); await click(250, 250);
+    assert.equal(await prompt(), 'Specify dimension arc location:');
+    await page.keyboard.press('Escape'); assert.equal(await nParts(), n0 + 2, 'Esc before placement adds nothing');
+    await typeCmd('dan'); await click(250, 150); await click(250, 250);
+    const p = await at(230, 180); await page.mouse.move(p.x, p.y); await frames(); await page.mouse.click(p.x, p.y);
+    assert.match(await prompt(), /Dimension placed: 45\.000°, on the layer Dimensions/);
+    assert.equal((await histLabels()).at(-1), 'Dimension');
+    assert.equal(await nParts(), n0 + 3);
+    await undo(); assert.equal(await nParts(), n0 + 2, 'one Undo removes only the dimension');
+    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 3);
+    await page.keyboard.press('Escape');
+    let text = await save();
+    assert.equal(angleIn(text).name, 'PD_DIM_A1'); assert.equal(angleIn(text).kind, 'angle');
+    assert.equal(angleIn(text).label, '45.000°');
+    const a = await at(120, 120), b = await at(340, 330);
+    await typeCmd('zw'); await page.mouse.move(a.x, a.y); await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); await frames();
+    await shotBoth('layout-angle', () => page.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle')));
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'angle-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'angle-lay.dxf');
+    assert.equal(await nParts(), n0 + 3);
+    assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((q) => q.obj).length, 3);
+    assert.deepEqual(angleIn(await save()), angleIn(text), 'the A block reopens as an angle dimension');
+    await page.locator('[data-tool=select]').click(); await click(250, 250); await frames(); await gripWhen(3);
+    const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id.endsWith(':b')));
+    const g = await gripBox(gid); await page.mouse.click(g.x, g.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+    await typeCmd('150,300'); await frames();
+    text = await save(); assert.equal(angleIn(text).label, '90.000°', 'the line grip changes the angle value after reopening');
+    await page.keyboard.press('Escape'); await undo(); assert.equal(angleIn(await save()).label, '45.000°');
+    await page.keyboard.press('Control+y'); await page.keyboard.press('Escape');
+    await click(250, 150); await page.keyboard.down('Shift'); await click(150, 250); await page.keyboard.up('Shift');
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('30,40');
+    text = await save();
+    const moved = angleIn(text);
+    assert.equal(moved.label, '90.000°');
+    assert.ok(Math.abs(moved.params.v[0] - 180) < 1e-3 && Math.abs(moved.params.v[1] - 190) < 1e-3, 'Move carries the angle vertex with both source lines');
+    await undo(); assert.ok(Math.abs(angleIn(await save()).params.v[1] - 150) < 1e-3, 'one Undo restores the lines and angle');
+    await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
   });
 
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {

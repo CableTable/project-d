@@ -102,7 +102,8 @@ function followAngle(dim, params, m, nm, paper, ctx) {
   if (!(Math.abs(cross) > 1e-9 * Math.hypot(...d1) * Math.hypot(...d2))) return false;
   const s = ((l2[0] - l1[0]) * d2[1] - (l2[1] - l1[1]) * d2[0]) / cross, rot2 = Math.atan2(nm[1], nm[0]);
   const ang = (d) => ((((Math.atan2(d[1], d[0]) - rot2) / DEG) % 360) + 360) % 360;
-  params.v = local(nm, [l1[0] + (l1[2] - l1[0]) * s, l1[1] + (l1[3] - l1[1]) * s]); params.a0 = ang(d1); params.a1 = ang(d2);
+  params.v = local(nm, [l1[0] + d1[0] * s, l1[1] + d1[1] * s]); params.a0 = ang(d1); params.a1 = ang(d2);
+  if (cross * (nm[0] * nm[3] - nm[1] * nm[2]) < 0) [params.a0, params.a1] = [params.a1, params.a0]; // a reflection reverses the arc's ends
   return true;
 }
 
