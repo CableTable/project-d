@@ -441,7 +441,11 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
+<<<<<<< HEAD
   menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay() || selItems().some((x) => isDimPart(x.part))]);
+=======
+  menus.Modify.push(['Explode', explodeSelected, 'X']);
+>>>>>>> df3ce5b (156b4: Explode a placed part or a grid on a layout)
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, null, SHAPING_TITLE[op], i === 0]));
@@ -3829,7 +3833,7 @@ function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -4839,7 +4843,29 @@ function breakApartSelected() {
   note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
 }
 
+/** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects; one level, one undo step. */
+function explodeOnLayout() {
+  const items = selItems(), d = curDoc();
+  if (!items.length) { note('Explode: select a placed part or the grid first'); return; }
+  if (items.some((x) => x.p.src === 'grid')) {
+    const g = startGesture(d, 'Explode the grid');
+    const idxs = gLooseMany(g, items.map((x) => x.i));
+    gCommit(g); selLooseMany = idxs; update();
+    note(`Explode: the grid's copies are separate placed parts now. Explode again to break a part into outlines. Ctrl+Z puts the grid back`);
+    return;
+  }
+  const skipped = items.filter((x) => x.part.obj || x.p.lock).length, g = startGesture(d, items.length > 1 ? `Explode ${items.length} parts` : `Explode ${items[0].part.name}`);
+  gMark(g);
+  const r = LD.explodePlaced(d.lay, items.map((x) => x.i), () => 'o' + uid());
+  const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
+  if (!r.done) { note('Explode: nothing explodable (0 exploded)' + why); return; }
+  tidyGroups(d.lay); gCommit(g);
+  selLooseMany = r.pieces; update();
+  note(`Explode: ${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` + why + '. Ctrl+Z puts the part back');
+}
+
 function explodeSelected() {
+<<<<<<< HEAD
   const lay = curLay() && curDoc();
   if (lay) {                                                         // on a layout only dimensions explode (the other objects are plain entities already)
     const ats = selItems().filter((x) => x.p.src === 'loose' && isDimPart(x.part)).map((x) => x.p.i), snap = laySnap(lay.lay);
@@ -4850,6 +4876,9 @@ function explodeSelected() {
     note(`Explode: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
     return;
   }
+=======
+  if (curLay()) { explodeOnLayout(); return; }
+>>>>>>> df3ce5b (156b4: Explode a placed part or a grid on a layout)
   const d = editable();
   if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
   const r = explodeSelection(d.raw, d.sel, d.locked);
