@@ -35,7 +35,7 @@ briefs, reading short reports and merging.
 4. **Review:** a Bishop-review session on the build's commits (ranked findings, "ship as is" / "fix first").
 5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run.
 6. **As built:** every UI build gets an AB board (mockups/R<n>_AB_*.html, local), drawn from the screenshots (his call, 2026-10-20).
-7. **Ship:** one PR per session; merge on a green run for the head commit (his OK per PR, or Rook's call under full control, CLAUDE.md). CI publishes the exe.
+7. **Ship:** one PR per session number (it may span several Rook sessions); merge on a green run for the head commit (his OK per PR, or Rook's call under full control, CLAUDE.md). CI publishes the exe.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
    Bishop-test downloads the release into `shots/exe/`, starts it with `WEBVIEW2_USER_DATA_FOLDER` (an isolated profile:
    never his real library or recovery copies) and `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9233`,
@@ -261,6 +261,11 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 
 - **His new rule** (session 27 retro): in the same turn, grep CLAUDE.md, WORKFLOW.md, AGENTS.md, .claude/agents/ and memory/ for the old wording, change every hit, and list the files in the reply.
 - A plan for him stops at this PR's merge; later items are listed under "session <N+1>".
+- **Handover** (his call, 2026-10-29; replaces "fresh Rook after every merge"): Rook hands over at a clean break (no runs
+  going, last item pushed and CI green, queue.txt current) once ANY of: its context passes ~150k (hard stop 250k), he is
+  shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
+  (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
+  the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end).
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
