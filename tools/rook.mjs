@@ -2,6 +2,8 @@
 //   node tools/rook.mjs usage           one line per agent (+ week forecast); refreshes mockups/_design/usage/limits.csv, history.csv
 //   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
 //   node tools/rook.mjs result <file>   a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
+//   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--from <clone> <branch>]   launch the reviewer on a commit, detached
+//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha>   launch a Knight build on a new branch in its clone, detached
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
@@ -11,6 +13,7 @@ import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
+import { review, knight } from './rook-launch.mjs';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -116,8 +119,11 @@ if (cmd === 'result') {
     appendFileSync(join(U, 'history.csv'), `${iso(now)},${a},5h,${Math.round(u.h5[0])}\n${iso(now)},${a},week,${Math.round(u.wk[0])}\n`);
   }
   if (!cached) writeFileSync(join(U, 'limits.csv'), rows.join('\n') + '\n');
+} else if (cmd === 'review' || cmd === 'knight') {
+  try { (cmd === 'review' ? review : knight)(process.argv.slice(3)); }
+  catch (e) { console.error(e.message); process.exit(1); }
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | review <sha> <brief> <out.jsonl> [--from <clone> <branch>] | knight <brief> <report.txt> <branch> <sha>');
 }
 }
 

@@ -164,6 +164,8 @@ R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Projec
 # plus the git denies for Bash, capped at $6. It runs in its OWN throwaway worktree at the commit under review, so it can
 # run the tests and time things without touching a builder's folder (2026-10-20, his call). Never add `git -C:*` to the
 # allowlist: `git -C … commit/push` would slip past the commit and push denies.
+# One call does all of the below (checks, detaches the worktree, launches detached, fails loudly; raw commands are the fallback):
+#   node tools/rook.mjs review <sha> <brief file> <out jsonl> [--from <clone folder> <branch>]   (--from = a Knight build's clone and branch)
 # Reviews run in ProjectD-s15fix (worktree of this repo, trusted on account 2; ProjectD-review was removed twice, session 28 moved). A Knight build: first `git fetch "<extras>/ProjectD-rowan" <branch>` in the repo, or the sha is unknown here (S28 lost a launch).
 WT="E:/Project B/Claude/Project D extras/ProjectD-s15fix"; git -C "$WT" switch --detach <sha> && cd "$WT" || exit 1; npm.cmd ci --silent  # once per review
 $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 \
@@ -188,6 +190,8 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # Before a Knight build: `git status --porcelain` in the clone must be empty; leftovers -> `git stash -u -m "<run>"`, never a commit.
 # CI-only red: `gh run download <id> -n browser-failure-shard-<N>` into runs<N>/ before the fix brief; local shards match CI's, so suspect Linux / timing, not order.
 # A step red in the full suite but green alone: append "<date> <step> <shard>" to runs<N>/flakes.txt; a 2nd hit becomes a TODO.
+# One call does the clone check, fetch, `switch -c` and launch below (raw commands are the fallback):
+#   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha>   (log = the report's name with .log)
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
 # FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
 # `git switch -c <branch> <sha>`. Rook's full-suite script checks out by sha too. After: Rook pushes.
