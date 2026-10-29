@@ -67,7 +67,7 @@
   },
   "hooks": {
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node tools/stop-hook.mjs" } ] }
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/stop-hook.mjs\"" } ] }
     ]
   }
 }
