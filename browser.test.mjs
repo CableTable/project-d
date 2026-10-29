@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
+import { RUNNING_PROMPT } from './tools/running-prompt.mjs';
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';
@@ -98,7 +99,7 @@ async function runStep(page, { name, fn, afterStep }, shotDir) {
     await fn();
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
-    assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), /Specify|Next point|Click inside|Select destination|Type the text|Esc (?:ends|cancels)[).:\s]*$/, `${name} left a command running`);
+    assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), RUNNING_PROMPT, `${name} left a command running`);
     console.log('ok', name);
   } catch (e) {
     failed++;
