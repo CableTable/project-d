@@ -109,3 +109,17 @@ test('hiding a layer in one snapshot recomputes its outlines and leaves the sour
   assert.equal(b.off.size, 0, 'the other snapshot keeps its own list');
   assert.deepEqual(L.setItemOff(hidden, new Set()).polys, a.polys, 'showing it again brings the outline back');
 });
+
+test('a refreshed snapshot keeps its hidden layers by name when the layer numbers shift', () => {
+  const make = (...pairs) => {
+    const doc = newDoc(4); pairs.forEach(([name]) => addLayer(doc, name));
+    addEntities(doc, pairs.flatMap(([name, x]) => rect(x, 0, 10, 10, { layer: name })));
+    const raw = readDxf(writeDxf(doc));
+    return { name: 'p', raw, fl: flatten(raw), factor: 1, off: new Set() };
+  };
+  const [item] = L.addItem([], make(['A', 0], ['B', 20]));
+  const hidden = L.setItemOff(item, new Set([item.fl.layers.findIndex((l) => l.name === 'B')]));
+  const refreshed = { ...hidden, ...L.refreshGeometry(hidden, make(['B', 20], ['C', 40])) };      // A emptied: B is now number 0, the new C number 1
+  assert.deepEqual([...refreshed.off].map((i) => refreshed.fl.layers[i].name), ['B'], 'B stays hidden, C is shown');
+  assert.equal(refreshed.polys.length, 1, 'only C is drawn');
+});

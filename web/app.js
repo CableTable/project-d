@@ -1272,8 +1272,8 @@ function buildRail() {
 }
 /** In Compare a picked library part has no source drawing to add the outlines to: Contour is greyed. */
 function railContour() {
-  const b = ui.toolBtns?.contour, part = !!cmpDoc() && !editable() && !!cmpSelected(cmpDoc().cmp)?.part, t = TOOLS.find((x) => x.id === 'contour');
-  if (b) { b.disabled = part; b.title = part ? "Open the part's drawing to contour it" : commandTooltip(t.label, t.id, t.description); }
+  const b = ui.toolBtns?.contour, item = cmpDoc() && cmpSelected(cmpDoc().cmp), part = !!item?.part && !editable(), closed = !!item && !item.part && !cmpSourceTab(item), t = TOOLS.find((x) => x.id === 'contour');
+  if (b) { b.disabled = part; b.title = part ? "Open the part's drawing to contour it" : closed ? `Open ${item.name} to edit` : commandTooltip(t.label, t.id, t.description); }
 }
 function paintRailTooltips() {
   for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
@@ -1892,7 +1892,7 @@ function undoLay() {
   const d = curDoc();
 
   if (!d?.lay) { if (d?.hist) undo(d); return; }
-  if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }       // a Line with only its first point: nothing made to undo
+  if (dropLinePoint(d)) return;
   const st = layHist(d).undo(laySnap(d.lay));
   if (!st) { note('Nothing to undo'); return; }
   layRestore(d, st); note('Undone');
@@ -1923,9 +1923,8 @@ function undoCurrent(forward = false) {
     if (forward) redo(d); else undo(d);
   }
   else if (tab?.cmp) {
-    const src = !forward && state.draw && editable();       // a Line's first point is dropped before any step is undone (a first point has no step: the source may have no history yet)
-    if (src && state.drawDoc === src && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); }
-    else if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit();
+    if (!forward && dropLinePoint(editable())) return;       // a Line's first point is dropped before any step is undone (a first point has no step: the source may have no history yet)
+    if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit();
   }
   else if (forward) redoLay(); else undoLay();
 }
@@ -5405,10 +5404,15 @@ function deleteSelection() {
   commit(d, Ed.removeEntities(d.raw, d.sel), `Delete ${n}`);
   note(`Deleted ${n}. Ctrl+Z brings them back`);
 }
+/** A Line with only its first point has nothing made to undo: Ctrl+Z drops the point. */
+function dropLinePoint(d) {
+  if (!d || !state.draw || state.drawDoc !== d || DR.toolUndoSeg(state.draw) !== 'point') return false;
+  state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return true;
+}
 function undo(d) {
   if (d.vlay) { undoLay(); return; }
-  if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }   // a Line with only its first point: nothing made to undo
-  const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
+  if (dropLinePoint(d)) return;
+  const m =state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
   const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; }
   restore(d, st);
@@ -9332,7 +9336,7 @@ function cmpRefresh(d) {
   for (const tab of state.docs) if (tab.cmp?.items.some((x) => x.tabId === d.tabId)) {
     const c = tab.cmp, previous = c.sources.get(d.tabId);
     if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
-    c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.snapshotGeometry({ ...d, off: x.off }) } : x);
+    c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.refreshGeometry(x, d) } : x);
     c.sources.set(d.tabId, next);
     cmpCalc(c);
   }

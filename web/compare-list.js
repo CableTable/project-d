@@ -20,6 +20,12 @@ export function snapshotGeometry(source) {
 /** Hide or show layers in this snapshot only (its own off list): outlines and measurements follow; the source drawing is untouched. */
 export const setItemOff = (item, off) => ({ ...item, ...snapshotGeometry({ ...item, off }) });
 
+/** A snapshot's artwork from its source again; its hidden layers are kept by name, since layer numbers shift when a layer empties or appears. */
+export function refreshGeometry(item, source) {
+  const names = new Set([...item.off].map((i) => item.fl.layers[i]?.name));
+  return snapshotGeometry({ ...source, off: new Set(source.fl.layers.flatMap((l, i) => names.has(l.name) ? [i] : [])) });
+}
+
 /** A snapshot owns its artwork; a tab id lets the app refresh it while that tab is open. */
 export function addItem(items, source) {
   if (items.length >= MAX_ITEMS) throw new Error('Compare: at most 5 drawings');

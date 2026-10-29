@@ -4717,6 +4717,28 @@ try {
       assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'one Undo takes the whole contour away');
       await tab('two-156c2.dxf').click();
       assert.equal((await saveDoc()).entities.filter((e) => e.layer === 'Contour').length, 0);
+      // Esc in the middle of Contour ends it and adds nothing
+      const names = () => rows().locator('.nm').allTextContents();
+      await tab('Compare').click(); await pick(2); await dock('drawing');
+      await p.locator('[data-tool=contour]').click(); await p.keyboard.press('Escape');
+      assert.match(await p.locator('[data-tool=select]').getAttribute('class'), /on/, 'Esc ends Contour');
+      await dock('layers'); assert.deepEqual(await names(), ['Plate', 'Notes'], 'nothing was added');
+      // a hidden layer stays hidden by name when an edit empties the layer before it
+      await rows().nth(1).locator('.vis').click();
+      await p.locator('[data-tool=select]').click(); await click(40, 20); await p.keyboard.press('Delete');
+      assert.deepEqual(await names(), ['Notes'], 'Plate is gone from the snapshot');
+      assert.equal(await hiddenRows().count(), 1, 'Notes is still hidden');
+      await p.keyboard.press('Control+z');
+      assert.deepEqual(await names(), ['Plate', 'Notes']);
+      assert.deepEqual(await hiddenRows().locator('.nm').allTextContents(), ['Notes']);
+      // the source tab closed: Contour stays on and its tooltip says what to open
+      await dock('drawing'); const closedName = await q('cmp-name-2').textContent();
+      p.once('dialog', (d) => d.accept()); await tab('two-156c2.dxf').locator('.x').click();      // the edited source asks before it closes
+      await tab('two-156c2.dxf').waitFor({ state: 'detached' });
+      const contourBtn = p.locator('[data-tool=contour]');
+      assert.equal(await contourBtn.isDisabled(), false);
+      assert.equal(await contourBtn.getAttribute('title'), `Open ${closedName} to edit`);
+      await contourBtn.click(); assert.equal(await q('cmd-prompt').textContent(), `Open ${closedName} to edit`);
       // a library part has no source tab: Contour is greyed
       await tab('Compare').click(); await dock('drawing');
       await q('cmp-add-library').click(); await p.getByRole('menuitem', { name: 'Part 156c2', exact: true }).click();
