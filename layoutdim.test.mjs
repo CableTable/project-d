@@ -6,6 +6,7 @@ import { writeDxf } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import * as Ed from './web/edit.js';
 import { isDimPart, dimName, turnedTag, freeBlockName } from './web/layoutdim.js';
+import { trimEntity } from './web/modify.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -226,6 +227,27 @@ test('a grip edit on a copy that shares its part keeps its dimension following',
   LD.settleDims(lay, newId);
   assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
   near(dimOf(lay, d).params.b[0], 160);
+});
+
+for (const [slot, where] of ['first', 'middle', 'last'].entries()) test(`Trim of the ${where} shared copy: only its dimension follows by slot`, () => {
+  const lay = layoutWith(), a = addLine(lay, 'l1', [0, 0], [100, 0]);
+  lay.placed.push({ ...a, y: 50 }, { ...a, y: 100 });
+  const dims = [0, 50, 100].map((y, i) => addDim(lay, 'd' + i, [0, y], [100, y], 10, `PD_DIM_${i + 1}`));
+  const blocks = dims.map((p) => { const q = lay.parts[p.partId]; return q.raw.blocks[dimName(q)]; });
+  const prev = LD.linkView(lay), view = LD.objectDoc(lay), ent = view.raw.entities[slot];
+  const cut = trimEntity(ent, [line(60, -10, 60, 110)], [90, slot * 50]);
+  assert.equal(cut.ents.length, 1);
+  LD.objectCommit(lay, view, view.raw.entities.flatMap((e) => e === ent ? cut.ents : [e]), newId);
+  LD.settleDims(lay, newId);
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+  assert.equal(LD.objectDoc(lay).raw.entities[slot], cut.ents[0], 'Trim keeps the edited copy in its slot');
+  dims.forEach((p, i) => {
+    const d = dimOf(lay, p);
+    near(d.params.a[0], 0); near(d.params.a[1], i * 50);
+    near(d.params.b[0], i === slot ? 60 : 100); near(d.params.b[1], i * 50);
+    assert.equal(labelOf(lay, p), i === slot ? '60.00' : '100.00');
+    if (i !== slot) assert.equal(d.part.raw.blocks[d.name], blocks[i], 'another copy\'s dimension block is untouched');
+  });
 });
 
 test('names: turnedTag and freeBlockName', () => {

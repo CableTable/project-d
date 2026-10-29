@@ -104,7 +104,7 @@ const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Pol
 export function objectCommit(lay, view, entities, newId) {
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
-  const fresh = entities.filter((e) => !view.at.has(e)), one = gone.size === 1 && fresh.length === 1 ? lay.placed[[...gone][0]] : null;       // one object replaced by one piece (a trim): it keeps its group, lock and name
+  const fresh = entities.filter((e) => !view.at.has(e)), oneAt = gone.size === 1 && fresh.length === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // one object replaced by one piece (a trim): it keeps its slot, group, lock and name
   const oneName = one && lay.parts[one.partId]?.name;
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
@@ -116,7 +116,8 @@ export function objectCommit(lay, view, entities, newId) {
     const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers), pl = part && objectPlacement(part);
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
-    names.add(part.name); lay.parts[part.id] = part; lay.placed.push(pl);
+    names.add(part.name); lay.parts[part.id] = part;
+    if (one) lay.placed.splice(oneAt, 0, pl); else lay.placed.push(pl);
     bakedCache.set(part, new Map([[bakeKey(pl), e]]));
   }
 }

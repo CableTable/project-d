@@ -15218,6 +15218,34 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dims-lay2.dxf');
     assert.deepEqual(labelsOf((await save())), ['200.00', '200.00', '300.00'], 'and after reopening');
     await page.locator('[data-tool=select]').click();
+    // Trim the first of three copies sharing one part: only its dimension follows, and one Undo restores it.
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    for (const dy of [100, 200]) {
+      await page.keyboard.press('Escape'); await click(200, 150);
+      await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('0,' + dy);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    }
+    await typeCmd('line'); await typeCmd('220,100'); await typeCmd('220,400'); await typeCmd('');
+    await page.keyboard.press('Escape');
+    for (const y of [150, 250, 350]) {
+      await typeCmd('dli'); await typeCmd('100,' + y); await typeCmd('300,' + y); await typeCmd('200,' + (y + 30));
+      await page.keyboard.press('Escape');
+    }
+    const beforeTrim = dimsIn(await save());
+    assert.deepEqual(Object.values(beforeTrim).map((q) => Math.round(q.params.a[1])).sort((a, b) => a - b), [150, 250, 350]);
+    await typeCmd('trim'); await typeCmd('o'); await typeCmd('q'); await click(270, 150);
+    await page.keyboard.press('Escape');
+    const afterTrim = dimsIn(await save());
+    assert.deepEqual(Object.keys(afterTrim).sort(), Object.keys(beforeTrim).sort());
+    for (const [name, q] of Object.entries(beforeTrim)) {
+      if (Math.abs(q.params.a[1] - 150) < 1e-3) {
+        assert.deepEqual([afterTrim[name].params.a, afterTrim[name].params.b].map((p) => p.map((v) => Math.round(v * 1e6) / 1e6)), [[100, 150], [220, 150]], 'the first copy\'s dimension follows Trim');
+      } else assert.deepEqual(afterTrim[name], q, 'another copy\'s dimension does not move');
+    }
+    await undo();
+    assert.deepEqual(dimsIn(await save()), beforeTrim, 'one Undo restores the dimensions with the trimmed copy');
   });
 
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
