@@ -57,7 +57,8 @@ export function layersOf(lay) {
 /** A layout object from one entity (sheet mm; `layers` is the layer table; `blocks`: the one a dimension's INSERT names), or null when it has no extents. */
 export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   const raw = { header: { ...header }, layers, ltypes: {}, blocks, entities: [{ ...ent, ps: false }] };
-  const fl = flatten(raw), box = fl.boxes && fl.boxes.model;
+  const fl = flatten(raw), shown = flatten({ ...raw, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box is made with the entity's layer on: an off layer keeps its objects (hidden by `off`)
+  const box = shown.boxes && shown.boxes.model;
   if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
   return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
 }
