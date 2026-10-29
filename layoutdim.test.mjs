@@ -250,6 +250,24 @@ for (const [slot, where] of ['first', 'middle', 'last'].entries()) test(`Trim of
   });
 });
 
+for (const [slot, where] of ['first', 'last'].entries()) test(`Trim of the ${where} shared copy after the copy before it was deleted: its own dimension follows`, () => {
+  const lay = layoutWith(), a = addLine(lay, 'l1', [0, 0], [100, 0]);
+  lay.placed.push({ ...a, y: 50 }, { ...a, y: 100 });
+  const dims = [0, 50, 100].map((y, i) => addDim(lay, 'd' + i, [0, y], [100, y], 10, `PD_DIM_${i + 1}`));
+  lay.placed.splice(lay.placed.indexOf(a), 1);   // the y = 0 copy is gone; the copies at 50 and 100 now sit in slots 0 and 1
+  const prev = LD.linkView(lay), view = LD.objectDoc(lay), ent = view.raw.entities[slot];
+  const cut = trimEntity(ent, [line(60, -10, 60, 110)], [90, 50 + slot * 50]);
+  assert.equal(cut.ents.length, 1);
+  LD.objectCommit(lay, view, view.raw.entities.flatMap((e) => e === ent ? cut.ents : [e]), newId);
+  LD.settleDims(lay, newId);
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+  dims.forEach((p, i) => {
+    const cutOne = i === slot + 1;
+    near(dimOf(lay, p).params.b[0], cutOne ? 60 : 100);
+    assert.equal(labelOf(lay, p), cutOne ? '60.00' : '100.00');
+  });
+});
+
 for (const kind of ['radius', 'diameter']) for (const shape of ['circle', 'arc']) {
   const tag = kind === 'radius' ? 'R' : 'D';
   const makeShape = (r) => shape === 'circle' ? circle(100, 100, r) : arc(100, 100, r, 20, 160);
