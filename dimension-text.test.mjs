@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as E from './web/edit.js';
 import * as W from './web/dxf-write.js';
 import { readDxf, flatten } from './web/drawing.js';
-import { dimensionText, overrideText, readOverride, measuredText, textRecord } from './web/dimension-text.js';
+import { dimensionText, overrideText, readOverride, measuredText, textRecord, dimensionEditor, changeDimensionEditor, dimensionEditorOverride } from './web/dimension-text.js';
 import { followDimensions } from './web/linked-dimensions.js';
 import { dragGrip } from './web/grips.js';
 import { scaleEntities } from './web/scale.js';
@@ -27,6 +27,23 @@ test('dimension override: empty and <> reset; every embedded <> substitutes the 
   assert.equal(dimensionText('100.00', 'L=<> (<> mm)'), 'L=100.00 (100.00 mm)');
   assert.equal(dimensionText('100.00', '7.125'), '7.125');
   assert.equal(dimensionText('R3.0', ' <>& '), ' R3.0& ');
+});
+
+test('the dimension editor shows and selects measured ranges, retaining only untouched tokens', () => {
+  let edit = dimensionEditor('150.00');
+  assert.equal(edit.value, '150.00'); assert.deepEqual(edit.ranges, [[0, 6]]);
+  assert.equal(dimensionEditorOverride(edit), '');
+  edit = changeDimensionEditor(edit, 'Width 150.00', [0, 0]);
+  edit = changeDimensionEditor(edit, 'Width 150.00 mm', [12, 12]);
+  assert.equal(dimensionEditorOverride(edit), 'Width <> mm');
+  assert.equal(dimensionEditorOverride(changeDimensionEditor(edit, 'Width 7.125 mm', [6, 12])), 'Width 7.125 mm');
+  assert.equal(dimensionEditorOverride(changeDimensionEditor(edit, 'Width 150.00 mm', [6, 12])), 'Width 150.00 mm', 'typing the same number over the selection makes it literal');
+  assert.equal(dimensionEditorOverride(changeDimensionEditor(edit, 'Width 150.0 mm', [11, 12])), 'Width 150.0 mm');
+  edit = dimensionEditor('150.00', '150.00 + <> / <>');
+  assert.deepEqual(edit.ranges, [[9, 15], [18, 24]]);
+  edit = changeDimensionEditor(edit, '150.00 + 7 / 150.00', [9, 15]);
+  assert.equal(dimensionEditorOverride(edit), '150.00 + 7 / <>');
+  assert.equal(dimensionEditorOverride(changeDimensionEditor(dimensionEditor('150.00'), 'Ø <>')), 'Ø <>');
 });
 
 test('all five dimension kinds retain group 1 templates, units and decimals on DXF reopen', () => {
@@ -66,11 +83,17 @@ test('transforming a dimension itself preserves numeric overrides and remeasures
     let raw = drawing(override);
     raw = { ...raw, ...scaleEntities(raw, new Set([1]), [0, 0], 2) };
     assert.equal(label(raw), dimensionText('200.000', override));
+    assert.equal(E.dimOfEntity(raw, 1).params.override, override);
     raw = { ...raw, ...rotateEntities(raw, new Set([1]), [0, 0], 30) };
+    assert.equal(label(raw), dimensionText('200.000', override));
+    assert.equal(E.dimOfEntity(raw, 1).params.override, override);
     const mirrored = mirrorEntity(raw.entities[1], [0, 0], [0, 1], raw.blocks);
     assert.ok(mirrored.ent);
     raw = reopen({ ...raw, entities: [raw.entities[0], mirrored.ent], blocks: mirrored.blocks });
     assert.equal(label(raw), dimensionText('200.000', override));
+    assert.equal(E.dimOfEntity(raw, 1).params.override, override);
+    raw = { ...raw, ...scaleEntities(raw, new Set([1]), [0, 0], 1.5) };
+    assert.equal(label(raw), dimensionText('300.000', override), '<> is still live after rotate and mirror');
     assert.equal(E.dimOfEntity(raw, 1).params.override, override);
   }
 });
@@ -86,7 +109,7 @@ test('decimal changes keep overrides and preserve the new precision for the next
 });
 
 test('layout dimensions save overrides, settle scaled placements, and follow a later source grip', () => {
-  for (const override of ['7.125', 'Width <> mm']) {
+  for (const override of ['7.125', 'Width <> mm', 'Ø <>']) {
     let id = 0;
     const newId = () => 'o' + ++id, raw = drawing(override), lay = LD.newLayout();
     for (const ent of raw.entities) {
@@ -103,5 +126,11 @@ test('layout dimensions save overrides, settle scaled placements, and follow a l
     const reopened = LD.layoutFromRaw(reopen(doc));
     assert.equal(Object.values(reopened.parts).filter(isDimPart).length, 1);
     assert.equal(label(LD.layoutRaw(reopened)), dimensionText('300.000', override));
+    for (const transform of [{ rot: 30 }, { mirrorX: true }, { sc: 2 }]) {
+      Object.assign(reopened.placed.find((p) => isDimPart(reopened.parts[p.partId])), transform); LD.settleDims(reopened, newId);
+      const transformed = LD.layoutRaw(reopened), dim = transformed.entities.map((_, i) => E.dimOfEntity(transformed, i)).find(Boolean);
+      assert.equal(dim.params.override, override);
+      assert.equal(label(transformed), dimensionText(transform.sc ? '600.000' : '300.000', override));
+    }
   }
 });

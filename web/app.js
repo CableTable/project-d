@@ -36,7 +36,8 @@ import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
-import { overrideText } from './dimension-text.js';
+import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText } from './dimension-text.js';
+import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
@@ -1385,9 +1386,15 @@ function buildCanvas() {
   ui.textHintEd = h('div', { class: 'texted-hint', 'data-testid': 'text-editor-hint' }, h('strong', null, 'Typing in place'), h('span', null, 'Enter = done · Shift+Enter = new line'));
   ui.textEd = h('div', { class: 'texted', hidden: true, 'data-testid': 'text-edit-box' }, ui.textArea, ui.textHintEd);
   ui.textArea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.shiftKey && state.text.ed?.dim) { e.preventDefault(); return; }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); textCommit(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (state.text.ed && (state.text.ed.ldr || state.text.ed.dim)) textCancel(); else textCommit(); }       // a leader's note or dimension: Esc cancels
   });
-  ui.textArea.addEventListener('input', placeTextEditor);
+  ui.textArea.addEventListener('beforeinput', () => { if (state.text.ed?.dim) state.text.ed.dim.selection = [ui.textArea.selectionStart, ui.textArea.selectionEnd]; });
+  ui.textArea.addEventListener('input', () => {
+    const dim = state.text.ed?.dim;
+    if (dim) { dim.editor = changeDimensionEditor(dim.editor, ui.textArea.value, dim.selection); delete dim.selection; }
+    placeTextEditor();
+  });
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
   ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
@@ -3017,7 +3024,7 @@ function exportPdf() {
     setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
 
-const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : d.raw, d.titleBlock);
+const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : nativeDimensionOverrides(d.raw), d.titleBlock);
 
 // ---- save ----
 const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
@@ -7605,7 +7612,8 @@ function textOpen(d, p, e = null, ldr = null, dim = null) {
       [m.x, m.y] = mapply(mat, m.x, m.y);
       m.h *= Math.hypot(mat[0], mat[1]); m.angle += Math.atan2(mat[1], mat[0]) * 180 / Math.PI;
     }
-    m.lines = [dim.params.override || '<>'];
+    dim.editor = dimensionEditor(measuredText(dim.raw.blocks[dim.name].entities), dim.params.override);
+    m.lines = [dim.editor.value];
     if (!d.lay) setSel(d, new Set([e]));
   }
   else if (ldr) { m = { ...LR.geometry(ldr.model).text }; e = ldr.e; }                 // a leader's note: where it lands, in the leader's text height
@@ -7614,9 +7622,11 @@ function textOpen(d, p, e = null, ldr = null, dim = null) {
   if (p && e == null && !ldr) state.pointLast = p.slice(0, 2);
   state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model, dim };
   ui.textArea.value = m.lines.join('\n');
+  ui.textHintEd.lastChild.textContent = dim ? 'Enter = done · Esc = cancel' : 'Enter = done · Shift+Enter = new line';
   ui.textEd.hidden = false;
   placeTextEditor();
   ui.textArea.focus({ preventScroll: true }); ui.textArea.setSelectionRange(ui.textArea.value.length, ui.textArea.value.length);
+  if (dim?.editor.ranges.length) ui.textArea.setSelectionRange(...dim.editor.ranges[0]);
   state.msg = null; renderCommand(); paintOverlay(); renderEdit();
 }
 /** Enter, Esc or clicking away: the typed lines become the text (a new one, or the changed one). */
@@ -7627,7 +7637,7 @@ function textCommit() {
   const lines = TX.linesOf(ui.textArea.value), d = ed.d;
   if (!state.docs.includes(d) || !(d.raw || d.lay)) return;
   if (ed.dim) {
-    const dim = ed.dim, override = overrideText((lines || []).join(' '));
+    const dim = ed.dim, override = dimensionEditorOverride(dim.editor).replace(/\r?\n/g, ' ');
     if (override === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); return; }
     const built = Ed.buildDim(dim.kind, { ...dim.params, override }, d.factor || 1, dim.name, dim.dp);
     if (d.lay) {

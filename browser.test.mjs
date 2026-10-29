@@ -15358,13 +15358,19 @@ try {
       const edit = async (expected) => {
         const p = await at(190, 200); await page.mouse.dblclick(p.x, p.y);
         await t('text-editor').waitFor().catch((e) => { throw new Error(`${tab}, editing ${expected}: ${e.message}`); });
-        assert.equal(await t('text-editor').inputValue(), expected, tab + ': prefilled with the template');
+        assert.equal(await t('text-editor').inputValue(), expected, tab + ': prefilled with the shown text');
       };
-      const apply = async (text, expected = '<>') => { await edit(expected); await t('text-editor').fill(text); await page.keyboard.press('Enter'); };
+      const apply = async (text, expected = '150.00') => { await edit(expected); await t('text-editor').fill(text); await page.keyboard.press('Enter'); };
       const start = await save();
       assert.equal(dimIn(start).label, '150.00');
       const history = await histLabels();
-      await edit('<>'); await t('text-editor').fill('CANCEL THIS'); await page.keyboard.press('Escape');
+      await edit('150.00');
+      assert.deepEqual(await t('text-editor').evaluate((el) => [el.selectionStart, el.selectionEnd]), [0, 6], tab + ': measured number selected');
+      await page.keyboard.press('Shift+Enter');
+      assert.equal(await t('text-editor').inputValue(), '150.00', tab + ': Shift+Enter does nothing');
+      await page.keyboard.press('Enter');
+      assert.deepEqual(await histLabels(), history, tab + ': unchanged number stays measured without history');
+      await edit('150.00'); await t('text-editor').fill('CANCEL THIS'); await page.keyboard.press('Escape');
       assert.equal(await t('text-edit-box').isVisible(), false);
       assert.deepEqual(await histLabels(), history, tab + ': Esc adds no history');
       assert.deepEqual(dimIn(await save()), dimIn(start));
@@ -15372,18 +15378,22 @@ try {
       assert.equal(dimIn(await save()).label, '7.125');
       assert.equal((await histLabels()).at(-1), 'Dimension text');
       await undo(); assert.deepEqual(dimIn(await save()), dimIn(start), tab + ': one Undo restores measured text');
-      await apply('Width <> mm');
-      assert.equal(dimIn(await save()).label, 'Width 150.00 mm');
-      await edit('Width <> mm'); await t('text-editor').fill('CANCEL AGAIN'); await page.keyboard.press('Escape');
+      await edit('150.00'); await page.keyboard.press('Home'); await page.keyboard.insertText('Width ');
+      await page.keyboard.press('End'); await page.keyboard.insertText(' mm'); await page.keyboard.press('Enter');
+      const overridden = await save();
+      assert.equal(dimIn(overridden).label, 'Width 150.00 mm');
+      assert.equal(dimIn(overridden).override, 'Width <> mm', tab + ': untouched number remains live');
+      if (tab === 'drawing') assert.match(overridden, /\r\nDIMENSION\r\n(?:(?!\r\n  0\r\n)[\s\S])*?\r\n  1\r\nWidth <> mm\r\n/, 'drawing saves the override as native DIMENSION group 1');
+      await edit('Width 150.00 mm'); await t('text-editor').fill('CANCEL AGAIN'); await page.keyboard.press('Escape');
       assert.equal(dimIn(await save()).override, 'Width <> mm');
       for (const reset of ['', '<>']) {
-        await apply(reset, 'Width <> mm'); assert.equal(dimIn(await save()).label, '150.00');
+        await apply(reset, 'Width 150.00 mm'); assert.equal(dimIn(await save()).label, '150.00');
         await undo(); assert.equal(dimIn(await save()).override, 'Width <> mm');
       }
       const a = await at(120, 120), b = await at(350, 230);
       await typeCmd('zw'); await page.mouse.move(a.x, a.y); await page.mouse.down();
       await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); await frames();
-      await shotBoth('dimension-text-' + tab, () => edit('Width <> mm'), () => page.keyboard.press('Escape'));
+      await shotBoth('dimension-text-' + tab, () => edit('Width 150.00 mm'), () => page.keyboard.press('Escape'));
       await page.keyboard.press('Escape'); await click(220, 150); await frames(); await gripWhen(3);
       const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id === 'b' || id.endsWith(':b')));
       const g = await gripBox(gid); await page.mouse.click(g.x, g.y);
@@ -15405,7 +15415,7 @@ try {
       await page.locator('[data-tool=select]').click();
       const dim = dimIn(text), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
       const p = await at(tx.x, tx.y + tx.h / 2); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
-      assert.equal(await t('text-editor').inputValue(), 'Width <> mm', tab + ': reopened text is editable');
+      assert.equal(await t('text-editor').inputValue(), 'Width 180.00 mm', tab + ': reopened text is editable');
       await page.keyboard.press('Escape');
     }
   });

@@ -1,4 +1,5 @@
 import { ACI } from './colour.js';
+import { restoreDimensionInserts } from './dimension-text.js';
 import { closedOutline, linkFills, fillCss, fillHoles, fillOps } from './fill.js';
 // The drawing viewer's reader (.dxf), pure: no DOM, no canvas — drawing.test.mjs. dxf-worker.js runs it off the
 // page's thread, viewers.js draws what it gives, and Measure asks pickAt / describe2d / measure2d (geom.js words them).
@@ -61,7 +62,7 @@ export function readDxf(text) {
     else if (name === 'ENTITIES') doc.entities = entities(records(C, V, i + 2, end));
     i = end;
   }
-  return linkFills(doc);
+  return linkFills(restoreDimensionInserts(doc));
 }
 
 function header(doc, C, V, from, to) {
