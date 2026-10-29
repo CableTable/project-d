@@ -620,11 +620,11 @@ function textItem(base, p, h, rot, lines, ha, va, wf, fl, put, more) {
   const y0 = more ? (va === 'top' ? -tall : va === 'middle' ? -tall / 2 : 0) : va === 'top' ? -h : va === 'middle' ? -h / 2 : va === 'bottom' ? 0 : -h * 0.25;
   const words = lines.join(' ').split(/\s+/).length;
   const grow = more && more.wrap > 0 && w > more.wrap ? Math.min(Math.ceil(w / more.wrap), words) * lh : 0;      // wrapped lines go down
-  const c = Math.cos(rot), s = Math.sin(rot), corners = [[x0, y0 - grow], [x0 + wrapW, y0 - grow], [x0 + wrapW, y0 + tall], [x0, y0 + tall]]
-    .map(([x, y]) => [p[0] + x * c - y * s, p[1] + x * s + y * c]);
+  const mx = fl & 2 ? -1 : 1, my = fl & 4 ? -1 : 1, c = Math.cos(rot), s = Math.sin(rot), corners = [[x0, y0 - grow], [x0 + wrapW, y0 - grow], [x0 + wrapW, y0 + tall], [x0, y0 + tall]]
+    .map(([x, y]) => [p[0] + x * mx * c - y * my * s, p[1] + x * mx * s + y * my * c]);       // backward / upside-down text hangs the other way from its point
   const pad = h * 0.3, b0 = corners.reduce((a, q) => [Math.min(a[0], q[0]), Math.min(a[1], q[1]), Math.max(a[2], q[0]), Math.max(a[3], q[1])], [Infinity, Infinity, -Infinity, -Infinity]);
   const b = [b0[0] - pad, b0[1] - pad, b0[2] + pad, b0[3] + pad];
-  put({ k: 't', ...base, dash: undefined, dpx: undefined, x: p[0], y: p[1], h, rot, lines, ha, va, wf, mx: fl & 2 ? -1 : 1, my: fl & 4 ? -1 : 1, ...more, b });
+  put({ k: 't', ...base, dash: undefined, dpx: undefined, x: p[0], y: p[1], h, rot, lines, ha, va, wf, mx, my, ...more, b });
 }
 
 function hatch(e, base, put) {
