@@ -14,7 +14,7 @@
 // apps ignore (or at most list) an unused block; our reader (drawing.js readDxf) keeps it, and layoutFromRaw() reads it back.
 import { readDxf, flatten } from './drawing.js';
 import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
-import { explodeInsert } from './explode.js';
+import { explodeInsert, explodeDimension } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
@@ -99,7 +99,7 @@ export function objectDoc(lay, skip = () => false) {
   const raw = { header: {}, layers: layersOf(lay), ltypes: {}, blocks: {}, entities }, fl = flatten(raw);
   return { raw, fl, off: startHidden(fl), at, lockedEnts };
 }
-const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline' };
+const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline', SOLID: 'Solid', MTEXT: 'Text' };
 /** What a command left of objectDoc(lay) (`entities`): objects whose entity is gone are removed (and their part, if nothing else is placed from it), each new entity becomes an object. */
 export function objectCommit(lay, view, entities, newId) {
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
@@ -152,6 +152,25 @@ export function replaceDim(lay, p, ent, blocks, newId, names) {
   names.add(next.name); lay.parts[next.id] = next;
   Object.assign(p, objectPlacement(next));
   return true;
+}
+/** Explode the dimensions at `lay.placed` indexes `ats`: each becomes its lines, arrowheads and text as separate objects in its slot (its lock kept; the pieces follow nothing). → the number of dimensions exploded. */
+export function explodeDims(lay, ats, newId) {
+  const layers = layersOf(lay), names = new Set(Object.values(lay.parts).map((q) => q.name));
+  let n = 0;
+  for (const p of ats.map((i) => lay.placed[i])) {
+    const part = lay.parts[p.partId], at = lay.placed.indexOf(p);
+    if (!isDimPart(part) || !isSettled(part, p)) continue;
+    const pieces = [];
+    for (const e of explodeDimension(part.raw.entities[0], { blocks: part.raw.blocks, layers })) {
+      const obj = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), { ...e, ps: false }, layers);
+      if (!obj) continue;
+      names.add(obj.name); lay.parts[obj.id] = obj;
+      pieces.push(Object.assign(objectPlacement(obj), p.lock ? { lock: true } : {}));
+    }
+    lay.placed.splice(at, 1, ...pieces); n++;
+  }
+  dropUnusedDims(lay);
+  return n;
 }
 /** Bakes the placement of every moved / turned / scaled / mirrored dimension into its block (a new part, the placement back to the identity).
  * Also gives a dimension a block name of its own when a placed drawing's block, or another dimension (pasted from another layout), has it: they all land in one file. → true when any changed. */

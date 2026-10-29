@@ -859,7 +859,7 @@ export function joinGaps(raw, ed, gaps, method = 'average') {
 const fieldOf = (r, code) => { const k = r.c.indexOf(code); return k < 0 ? '' : String(r.v[k]).trim(); };
 
 /** The block names a list of entities uses, and the blocks those use in turn. */
-function usedBlocks(blocks, entities) {
+export function usedBlocks(blocks, entities) {
   const used = new Set(), todo = [];
   const scan = (list) => { for (const e of list) if (e.type === 'INSERT' || e.type === 'DIMENSION' || e.type === 'ACAD_TABLE') { const nm = fieldOf(e.r, 2); if (nm && !used.has(nm)) { used.add(nm); todo.push(nm); } } };
   scan(entities);

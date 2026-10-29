@@ -411,4 +411,27 @@ test('names: turnedTag and freeBlockName', () => {
   assert.equal(freeBlockName(new Set(['pd_dim_a1']), 'A'), 'PD_DIM_A2');
 });
 
+test('explodeDims: a dimension becomes its lines, arrows and one text as objects in its slot; the dimension part is gone; a locked one stays locked', () => {
+  const lay = layoutWith();
+  addLine(lay, 'l1', [0, 0], [100, 0]);
+  const p = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1'); p.lock = true;
+  addLine(lay, 'l2', [0, 50], [100, 50]);
+  assert.equal(LD.explodeDims(lay, [1], newId), 1);
+  const kinds = lay.placed.map((q) => lay.parts[q.partId].raw.entities[0].type);
+  assert.deepEqual(kinds, ['LINE', 'LINE', 'LINE', 'LINE', 'SOLID', 'SOLID', 'MTEXT', 'LINE'], 'in the dimension\'s slot, between the two lines');
+  assert.ok(lay.placed.slice(1, 7).every((q) => q.lock) && !lay.placed[0].lock && !lay.placed[7].lock);
+  assert.ok(Object.values(lay.parts).every((part) => !isDimPart(part)), 'no dimension part left');
+  assert.ok(lay.placed.slice(1, 7).every((q) => lay.parts[q.partId].raw.entities[0].layer === Ed.DIM_LAYER));
+  const mt = lay.parts[lay.placed[6].partId].raw.entities[0];
+  assert.equal(mt.r.v[mt.r.c.indexOf(1)], '100.00');
+  assert.equal(LD.explodeDims(lay, [0], newId), 0, 'a plain line does not explode');
+});
+
+test('explodeDims: a copy sharing the part keeps its dimension', () => {
+  const lay = layoutWith(), p = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  lay.placed.push({ ...p });
+  assert.equal(LD.explodeDims(lay, [0], newId), 1);
+  assert.ok(isDimPart(lay.parts[lay.placed.at(-1).partId]));
+});
+
 console.log(n + ' tests');

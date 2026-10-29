@@ -15420,6 +15420,52 @@ try {
     }
   });
 
+  await step('TODO 156b2c3b: Explode a dimension on a drawing and on a layout: lines, SOLID arrows and one MTEXT on its layer, no attdef or block, one Undo restores it', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const shots = 'shots-k156b2c3b';
+    mkdirSync(shots, { recursive: true });
+    const dimBlocks = (text) => Object.keys(readDxf(text).blocks).filter((k) => /^PD_DIM_/.test(k));
+    const onDimLayer = (text) => readDxf(text).entities.filter((e) => e.layer === 'Dimensions');
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5, override: 'Width <> mm' }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'explode-dim.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim.dxf');
+      }
+      await t('decimals').selectOption('2');
+      await page.locator('[data-tool=select]').click();
+      const start = await save();
+      assert.equal(dimBlocks(start).length, 1, tab + ': a dimension to begin with');
+      await click(170, 200); await frames();
+      await typeCmd('explode'); await frames();
+      assert.match(await prompt(), /^Explode: 1/, tab);
+      assert.equal((await histLabels()).at(-1), 'Explode', tab + ': one history step');
+      const text = await save(), pieces = onDimLayer(text);
+      assert.deepEqual(pieces.map((e) => e.type).sort(), ['LINE', 'LINE', 'LINE', 'MTEXT', 'SOLID', 'SOLID'], tab + ': three lines, two arrows and one text on the dimension layer');
+      assert.equal(dimBlocks(text).length, 0, tab + ': no dimension block left');
+      assert.equal(/PD_DIM_TEXT/.test(text), false, tab + ': no attdef');
+      const shown = pieces.find((e) => e.type === 'MTEXT').r;
+      assert.equal(shown.v[shown.c.indexOf(1)], tab === 'drawing' ? 'Width 150.00 mm' : '150.00', tab + ': the text it showed');
+      for (const colour of ['light', 'dark']) {
+        if (colour === 'dark') await menuItem('View', 'Theme: dark');
+        await page.waitForTimeout(250); await page.screenshot({ path: `${shots}/explode-dimension-${tab}-${colour}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      await undo(); await frames();
+      const back = await save();
+      assert.equal(dimBlocks(back).length, 1, tab + ': one Undo brings the dimension back');
+      assert.deepEqual(onDimLayer(back).map((e) => e.type).sort(), onDimLayer(start).map((e) => e.type).sort());
+    }
+  });
+
   await step('TODO 156b2c2b: on a layout, Angle Dimension picks two lines (one Undo, Esc cancels), refuses placed parts; saves and reopens as a dimension object; a line grip updates the angle and Move carries it', async () => {
     await freshLayoutWithPlate();
     const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };

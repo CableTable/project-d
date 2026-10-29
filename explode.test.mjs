@@ -5,6 +5,7 @@ import { newDoc, addLayer, addBlock, addEntities, line, arc, circle, ellipse, lw
 import { get } from './web/grips.js';
 import { flatten, mapply, readDxf } from './web/drawing.js';
 import { resolve } from './web/cmdbar.js';
+import { buildDim, addDimension } from './web/edit.js';
 
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
 const numbers = (e, codes) => codes.map((c) => get(e.r, c));
@@ -140,6 +141,45 @@ test('selection skips locked layers and other types, selects new pieces, and doe
   assert.equal(explodeSelection(doc, new Set([2])).exploded, 0);
   assert.equal(explodeSelection(doc, new Set()).exploded, 0);
   assert.equal(resolve('X', 'draw').name, 'explode'); assert.equal(resolve('EXPLODE', 'draw').name, 'explode');
+});
+
+// ---- TODO 156b2c3b: Explode of a dimension
+const dimDoc = (kind, params, override) => {
+  const doc = newDoc(4), made = buildDim(kind, { ...params, override }, 1, 'PD_DIM_' + ({ aligned: '', linear: 'H', angle: 'A' }[kind]) + '1', 2);
+  addLayer(doc, 'Notes', { aci: 3 });
+  Object.assign(doc, addDimension(doc, { ...made, insert: { ...made.insert, layer: 'Notes' } }));
+  return doc;
+};
+const textOf = (e) => e.r.v[e.r.c.indexOf(1)];
+for (const [name, kind, params, counts] of [
+  ['aligned', 'aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 }, { LINE: 3, SOLID: 2, MTEXT: 1 }],
+  ['linear', 'linear', { a: [0, 0], b: [100, 40], offset: 20, axis: 'h', textH: 5 }, { LINE: 3, SOLID: 2, MTEXT: 1 }],
+  ['angle', 'angle', { v: [0, 0], r: 50, a0: 0, a1: 60, textH: 5 }, { ARC: 1, SOLID: 2, MTEXT: 1 }],
+]) {
+  test(`explode a ${name} dimension: its lines, SOLID arrows and one MTEXT on its layer; no attdef, point or block left`, () => {
+    for (const override of [undefined, 'Width <> mm']) {
+      const doc = dimDoc(kind, params, override), before = structuredClone(doc);
+      const out = explodeSelection(doc, new Set([0]));
+      assert.equal(out.exploded, 1);
+      assert.deepEqual(out.entities.map((e) => e.type).sort(), Object.entries(counts).flatMap(([k, n]) => Array(n).fill(k)).sort());
+      assert.ok(out.entities.every((e) => e.layer === 'Notes'), "all on the dimension's layer");
+      const shown = textOf(out.entities.find((e) => e.type === 'MTEXT'));
+      if (override) assert.match(shown, /^Width \S+ mm$/, 'the override with <> filled in'); else assert.match(shown, /^[\d.]+°?$/);
+      assert.equal(out.entities.some((e) => e.type === 'ATTDEF' || e.type === 'POINT' || e.type === 'INSERT'), false);
+      assert.deepEqual(Object.keys(out.blocks), [], "the dimension's block goes with it");
+      assert.deepEqual([...out.selected], out.entities.map((_, i) => i));
+      assert.deepEqual(doc, before, 'the input is untouched (Undo gets the dimension back)');
+    }
+  });
+}
+
+test('exploding one of two dimensions sharing a block keeps the block; a rotated insert still explodes', () => {
+  const doc = dimDoc('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 });
+  doc.entities.push(insert('PD_DIM_1', 0, 0, { layer: 'Notes', rot: 90 }));
+  const out = explodeSelection(doc, new Set([1]));
+  assert.equal(out.exploded, 1); assert.deepEqual(Object.keys(out.blocks), ['PD_DIM_1']);
+  assert.equal(out.entities[0], doc.entities[0]);
+  nearAll(numbers(out.entities.find((e) => e.type === 'MTEXT'), [50]), [90]);
 });
 
 test('untransformable or missing block members leave the whole insert intact with a reason', () => {

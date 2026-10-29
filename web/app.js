@@ -441,7 +441,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
-  menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
+  menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay() || selItems().some((x) => isDimPart(x.part))]);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, null, SHAPING_TITLE[op], i === 0]));
@@ -669,7 +669,7 @@ function ribbonContents(kind) {
     group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true))),
-    group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>'),
+    group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>', false, undefined, true),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
       op === 'boundary' ? '<path d="M4 8l8-4 8 5v8l-8 4-8-5z" stroke-dasharray="3 2"/>' : op === 'trim' ? toolIcon('trim') : '<rect x="3" y="5" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>' + (op === 'intersect' ? '<rect x="9" y="9" width="6" height="8" fill="currentColor" stroke="none" opacity=".55"/>' : ''), false, op === 'trim' ? 'shapetrim' : op, true)),
@@ -4812,6 +4812,16 @@ function breakApartSelected() {
 }
 
 function explodeSelected() {
+  const lay = curLay() && curDoc();
+  if (lay) {                                                         // on a layout only dimensions explode (the other objects are plain entities already)
+    const ats = selItems().filter((x) => x.p.src === 'loose' && isDimPart(x.part)).map((x) => x.p.i), snap = laySnap(lay.lay);
+    if (!ats.length) { note('Explode on a layout works on dimensions: select one first'); return; }
+    const n = LD.explodeDims(lay.lay, ats, () => 'o' + uid());
+    if (!n) { note('Explode: nothing explodable (0 exploded)'); return; }
+    state.sel = -1; pushLay(lay, snap, '', 'Explode'); touch(); update();
+    note(`Explode: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
+    return;
+  }
   const d = editable();
   if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
   const r = explodeSelection(d.raw, d.sel, d.locked);
