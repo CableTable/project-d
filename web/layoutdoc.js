@@ -122,6 +122,39 @@ export function objectCommit(lay, view, entities, newId) {
   }
 }
 
+/** A placed part's loose entities (sheet mm) with its placement baked in, one level (a block or dimension inside stays one INSERT): { entities, blocks }. Throws when a member cannot be carried. */
+export function explodePart(part, p) {
+  const mini = newDoc(4), f = part.factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
+  mini.layers = part.raw.layers; mini.blocks = { ...part.raw.blocks };
+  addBlock(mini, 'PD_PART', part.raw.entities.filter((e) => (e.ps ? 1 : 0) === part.space), [part.box[0], part.box[1]]);
+  return explodeInsert(insert('PD_PART', p.x, p.y, { layer: '0', rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini);       // layer 0 stays layer 0, as AutoCAD
+}
+/** Explode the placed parts at `idxs` (indexes in lay.placed; layout objects and locked parts stay): each becomes its loose entities as layout objects, in its slot, on the part's layers (added to the layout when missing).
+ * → { done (parts exploded), pieces (indexes in lay.placed of the new objects), errors } */
+export function explodePlaced(lay, idxs, newId) {
+  const at = new Set(idxs), out = [], pieces = [], errors = new Set(), table = { ...layersOf(lay) }, names = new Set(Object.values(lay.parts).map((q) => q.name));
+  const find = (t, n) => Object.keys(t).find((k) => k.toLowerCase() === String(n).toLowerCase());
+  let done = 0;
+  lay.placed.forEach((p, i) => {
+    const part = lay.parts[p.partId], mine = [];
+    if (at.has(i) && part && !part.obj && !p.lock) {
+      try {
+        const r = explodePart(part, p);
+        for (const e of r.entities) {
+          if (find(table, e.layer) === undefined) { const k = find(part.raw.layers || {}, e.layer); table[e.layer] = k === undefined ? { aci: 7 } : structuredClone(part.raw.layers[k]); }
+          const o = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), e, table, {}, e.type === 'INSERT' ? r.blocks : {});
+          if (o) { names.add(o.name); mine.push(o); }
+        }
+      } catch (err) { errors.add(err.message); mine.length = 0; }
+    }
+    if (!mine.length) { out.push(p); return; }
+    done++;
+    for (const o of mine) { lay.parts[o.id] = o; pieces.push(out.length); out.push(objectPlacement(o)); }
+  });
+  if (done) { lay.placed = out; lay.layers = table; }       // a new layer table, so an undo snapshot keeps the old one
+  return { done, pieces, errors: [...errors] };
+}
+
 /** A grip edit: the object of entity `ent` (from objectDoc `view`) becomes `next`, in place: the same slot, name, group and lock (a part shared with a copy is left to the copy, and the new one gets a name of its own).
  * The new part always has a new id: objectSig() sees a changed entity only through it (the placement can stay the same). False when `next` has no extents. */
 export function objectReplace(lay, view, ent, next, newId) {

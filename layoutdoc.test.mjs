@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { readDxf, decodeDxf, flatten, unionBox, mapply } from './web/drawing.js';
-import { writeDxf, newDoc, addEntities, rect, line, circle, insert, addBlock } from './web/dxf-write.js';
+import { writeDxf, newDoc, addEntities, addLayer, rect, line, circle, insert, addBlock } from './web/dxf-write.js';
 import { placedMat, placedBox, placement1, buildLayoutDoc } from './web/apply.js';
 import * as LD from './web/layoutdoc.js';
 import * as P from './web/place.js';
@@ -447,6 +447,60 @@ test('layout objects (TODO 156b2b): a TEXT and an MTEXT among the objects are sa
   const msgs = objs.map((p) => TX.decode(back.parts[p.partId].raw.entities[0]));
   assert.deepEqual(msgs.map((x) => x.lines), [['HELLO'], ['ONE', 'TWO']]);
   near(msgs[0].x, 140); near(msgs[0].y, 40);
+});
+
+test('Explode a placed part (156b4): the placement is baked in, on the part layer, in the part slot', () => {
+  const raw = newDoc(4);
+  addLayer(raw, 'CUT', { aci: 1 });
+  addEntities(raw, line(0, 0, 10, 0, { layer: 'CUT' }), line(0, 0, 0, 5, { layer: 'CUT' }));
+  const box = (pl) => {
+    const lay = LD.newLayout('E'); lay.parts.p = LD.makePart('p', 'Part', raw, 1);
+    lay.placed.push(placement1('x', 0, 0), { ...placement1('p', 100, 50), ...pl }, placement1('x', 0, 0));
+    let k = 0; const r = LD.explodePlaced(lay, [1], () => 'o' + (k++));
+    assert.equal(r.done, 1); assert.deepEqual(r.pieces, [1, 2]); assert.equal(lay.placed.length, 4);       // the slot between the two others
+    const objs = r.pieces.map((i) => lay.parts[lay.placed[i].partId]);
+    assert.ok(objs.every((o) => o.obj && o.raw.entities[0].layer === 'CUT' && o.raw.layers.CUT));
+    assert.ok(LD.layersOf(lay).CUT);
+    const bs = objs.map((o) => { const p = lay.placed.find((q) => q.partId === o.id); return [p.x, p.y, p.x + o.w, p.y + o.h]; });
+    return [0, 1, 2, 3].map((k) => Math[k < 2 ? 'min' : 'max'](...bs.map((b) => b[k])));
+  };
+  assert.deepEqual(box({}).map(R), [100, 50, 110, 55]);
+  assert.deepEqual(box({ rot: 90 }).map(R), [95, 50, 100, 60]);
+  assert.deepEqual(box({ mirrorX: true }).map(R), [90, 50, 100, 55]);
+  assert.deepEqual(box({ mirrorY: true }).map(R), [100, 45, 110, 50]);
+  assert.deepEqual(box({ sc: 2 }).map(R), [100, 50, 120, 60]);
+});
+
+test('Explode: a locked part, a layout object and a part with a member it cannot carry stay; undo-able (the old table and parts are not touched)', () => {
+  const raw = newDoc(4); addEntities(raw, line(0, 0, 10, 0), line(0, 0, 0, 5));
+  const lay = LD.newLayout('E'); lay.parts.p = LD.makePart('p', 'Part', raw, 1);
+  lay.placed.push({ ...placement1('p', 0, 0), lock: true });
+  const before = LD.layersOf(lay), parts = { ...lay.parts }, placed = lay.placed.slice();
+  const r = LD.explodePlaced(lay, [0], () => 'o');
+  assert.equal(r.done, 0); assert.equal(lay.placed[0], placed[0]);
+  delete lay.placed[0].lock;
+  assert.equal(LD.explodePlaced(lay, [0], () => 'o').done, 1);
+  assert.equal(LD.layersOf(lay) === before, false); assert.deepEqual(Object.keys(parts), ['p']); assert.ok(lay.parts.p);
+  const obj = Object.values(lay.parts).find((q) => q.obj), q = lay.placed.findIndex((p) => p.partId === obj.id);
+  assert.equal(LD.explodePlaced(lay, [q], () => 'z').done, 0);       // a layout object is not a part
+});
+
+test('Explode a block inside a part stays one object; a grid becomes placed parts and one of them explodes', () => {
+  const raw = newDoc(4);
+  addBlock(raw, 'B', [line(0, 0, 4, 0), line(0, 0, 0, 4)]);
+  addEntities(raw, insert('B', 0, 0), line(0, 0, 10, 10));
+  const lay = LD.newLayout('G'); lay.parts.p = LD.makePart('p', 'Part', raw, 1);
+  lay.placed.push(placement1('p', 20, 20, 90));
+  const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
+  const objs = r.pieces.map((i) => lay.parts[lay.placed[i].partId]);
+  assert.deepEqual(objs.map((o) => o.raw.entities[0].type).sort(), ['INSERT', 'LINE']);
+  const g = LD.newLayout('Grid'); g.parts.p = LD.makePart('p', 'Part', raw, 1); g.s.gridPart = 'p'; g.s.sheetW = 100; g.s.sheetH = 100; g.s.fit = true;
+  const copies = LD.placedAll(g).filter((p) => p.src === 'grid');
+  assert.ok(copies.length > 1);
+  g.placed.push(...copies.map((p) => placement1(p.partId, p.x, p.y, p.rot))); g.s.gridPart = null;
+  assert.equal(LD.placedAll(g).length, copies.length);
+  assert.equal(LD.explodePlaced(g, [0], () => 'q' + Math.random()).done, 1);
+  assert.ok(g.placed.length > copies.length);
 });
 
 console.log(n + ' tests passed');
