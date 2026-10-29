@@ -92,9 +92,12 @@ export function explodeInsert(e, raw) {
     if (e.flip) m = mmul(m, [-1, 0, 0, 1, 0, 0]);
     if (!m.every(Number.isFinite) || Math.abs(det(m)) < 1e-15) throw new Error('invalid block scale');
     const p = (c) => mapply(m, val(e, c), val(e, c + 10));
-    if (e.type === 'DIMENSION') {                       // its block is in sheet coordinates: carried as one INSERT of that block (no longer a dimension)
-      const name = field(e, 2), base = blocks[name]?.base || [0, 0];
-      return transform(insert(name, base[0], base[1], e), m, depth);
+    if (e.type === 'DIMENSION') {                       // its block is in sheet coordinates: carried as one INSERT of a copy of that block under a plain name (no longer a dimension; a *D name would reopen as a part)
+      const block = blocks[field(e, 2)];
+      if (!block || block.xref) throw new Error('missing block or external reference');
+      let n = 1; while (blocks['PD_EXPLODE_' + n]) n++;
+      blocks['PD_EXPLODE_' + n] = block;
+      return transform(insert('PD_EXPLODE_' + n, block.base?.[0] || 0, block.base?.[1] || 0, e), m, depth);
     }
     if (e.type === 'INSERT') {
       const name = field(e, 2), block = blocks[name];
