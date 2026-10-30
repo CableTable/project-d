@@ -14,11 +14,19 @@ export function dimensionEditor(measured, override = '') {
   const parts = (overrideText(override) || '<>').split('<>'), ranges = [];
   let value = parts[0];
   for (const part of parts.slice(1)) { ranges.push([value.length, value.length + measured.length]); value += measured + part; }
-  return { value, measured, ranges };
+  const state = { value, measured, ranges };
+  return { ...state, history: [state], index: 0 };
 }
 
 /** Keep only measured ranges untouched by this textarea edit; insertions at their edges move them. */
-export function changeDimensionEditor(edit, value, selection) {
+export function changeDimensionEditor(edit, value, selection, inputType) {
+  // Native Undo can group several inputs: restore the ranges belonging to the text it restores.
+  if (inputType === 'historyUndo' || inputType === 'historyRedo') {
+    const step = inputType === 'historyUndo' ? -1 : 1;
+    for (let i = edit.index + step; i >= 0 && i < edit.history.length; i += step) {
+      if (edit.history[i].value === value) return { ...edit.history[i], history: edit.history, index: i };
+    }
+  }
   let [start, end] = selection || [0, edit.value.length];
   if (!selection) {
     while (start < end && edit.value[start] === value[start]) start++;
@@ -27,7 +35,8 @@ export function changeDimensionEditor(edit, value, selection) {
   }
   const delta = value.length - edit.value.length;
   const ranges = edit.ranges.flatMap(([a, b]) => end <= a ? [[a + delta, b + delta]] : start >= b ? [[a, b]] : []);
-  return { ...edit, value, ranges };
+  const state = { value, measured: edit.measured, ranges }, history = [...edit.history.slice(0, edit.index + 1), state];
+  return { ...state, history, index: history.length - 1 };
 }
 
 export function dimensionEditorOverride(edit) {

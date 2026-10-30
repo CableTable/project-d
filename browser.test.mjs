@@ -4712,6 +4712,13 @@ try {
       await tab('two-156c2.dxf').click();
       const contoured = (await saveDoc()).entities.filter((e) => e.layer === 'Contour').length;
       assert.ok(contoured > 0, 'the rings are in the source drawing');
+      await p.locator('[data-tool=select]').click(); await click(40, 30); await p.keyboard.press('Delete');
+      const edited = await saveDoc();
+      assert.equal(edited.entities.filter((e) => e.layer === 'Notes').length, 0, 'source can still be edited after Contour');
+      assert.equal(edited.entities.filter((e) => e.layer === 'Contour').length, contoured, 'source edit preserves the contour');
+      await tab('Compare').click(); await pick(2);
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Contour'], 'source edit refreshes the contoured snapshot');
+      await tab('two-156c2.dxf').click(); await p.keyboard.press('Control+z');
       await tab('Compare').click(); await pick(2);
       await p.keyboard.press('Control+z');
       assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'one Undo takes the whole contour away');
@@ -15582,6 +15589,12 @@ try {
       assert.equal(await t('text-edit-box').isVisible(), false);
       assert.deepEqual(await histLabels(), history, tab + ': Esc adds no history');
       assert.deepEqual(dimIn(await save()), dimIn(start));
+      await edit('150.00'); await page.keyboard.insertText('7.125'); await page.keyboard.press('Control+z');
+      assert.equal(await t('text-editor').inputValue(), '150.00', tab + ': typing Undo restores the number');
+      await page.keyboard.press('Home'); await page.keyboard.insertText('Width ');
+      await page.keyboard.press('Enter');
+      assert.equal(dimIn(await save()).override, 'Width <>', tab + ': typing Undo restores its live range');
+      await undo(); assert.deepEqual(dimIn(await save()), dimIn(start));
       await apply('7.125');
       assert.equal(dimIn(await save()).label, '7.125');
       assert.equal((await histLabels()).at(-1), 'Dimension text');

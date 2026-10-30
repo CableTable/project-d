@@ -46,6 +46,25 @@ test('the dimension editor shows and selects measured ranges, retaining only unt
   assert.equal(dimensionEditorOverride(changeDimensionEditor(dimensionEditor('150.00'), 'Ø <>')), 'Ø <>');
 });
 
+test('dimension editor restores live ranges through grouped native Undo, Redo and a new edit', () => {
+  const initial = dimensionEditor('150.00', 'Width <> / <>');
+  let edit = changeDimensionEditor(initial, 'Width 7 / 150.00', [6, 12]);
+  edit = changeDimensionEditor(edit, 'Width 7.125 / 150.00', [7, 7]);
+  const typed = edit.value;
+  edit = changeDimensionEditor(edit, initial.value, [0, 0], 'historyUndo');
+  assert.deepEqual(edit.ranges, initial.ranges);
+  assert.equal(dimensionEditorOverride(edit), 'Width <> / <>');
+  edit = changeDimensionEditor(edit, typed, [0, 0], 'historyRedo');
+  assert.equal(dimensionEditorOverride(edit), 'Width 7.125 / <>');
+  edit = changeDimensionEditor(edit, initial.value, [0, 0], 'historyUndo');
+  edit = changeDimensionEditor(edit, 'New ' + edit.value, [0, 0]);
+  assert.equal(dimensionEditorOverride(edit), 'New Width <> / <>');
+  assert.equal(edit.index, edit.history.length - 1, 'a new input discards the redo branch');
+  const literal = changeDimensionEditor(dimensionEditor('150.00'), '150.00', [0, 6]);
+  assert.deepEqual(literal.ranges, []);
+  assert.deepEqual(changeDimensionEditor(literal, '150.00', [0, 0], 'historyUndo').ranges, [[0, 6]], 'identical text can have different live ranges');
+});
+
 test('all five dimension kinds retain group 1 templates, units and decimals on DXF reopen', () => {
   const kinds = { aligned: params, linear: { ...params, axis: 'h' }, diameter: params,
     radius: { c: [0, 0], r: 20, p: [30, 10], textH: 2 }, angle: { v: [0, 0], r: 20, a0: 0, a1: 45, textH: 2 } };

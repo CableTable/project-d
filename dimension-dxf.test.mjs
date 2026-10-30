@@ -18,6 +18,25 @@ const kinds = {
 };
 const labels = (raw) => flatten(raw).items.filter((i) => i.k === 't').map((i) => i.lines);
 
+test('save drops unused PD_DIM_ styles after deleting a dimension, retaining used and unrelated styles', () => {
+  const raw = W.newDoc(4);
+  Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { ...kinds.aligned, textH: 2, override: 'Width <>' }, 1, 'PD_DIM_1')));
+  const reopened = readDxf(W.writeDxf(nativeDimensionOverrides(raw)));
+  const style = reopened.dimstyles.PD_DIM_1;
+  assert.ok(style, 'native style was saved and reopened');
+  reopened.dimstyles.Unrelated = style;
+  reopened.dimstyles.PD_DIM_USED = style;
+  reopened.dimstyles.PD_DIM_NESTED = style;
+  W.addEntities(reopened, W.entity('DIMENSION', [[2, '*D1'], [3, 'pd_dim_used'], [70, 1]]));
+  W.addBlock(reopened, 'Nested', [W.entity('DIMENSION', [[2, '*D2'], [3, 'PD_DIM_NESTED'], [70, 1]])]);
+  W.addEntities(reopened, W.insert('Nested', 0, 0));
+  const deleted = { ...reopened, ...E.removeEntities(reopened, new Set([0])) };
+  const before = structuredClone(deleted), saved = nativeDimensionOverrides(deleted);
+  assert.deepEqual(Object.keys(saved.dimstyles).sort(), ['PD_DIM_NESTED', 'PD_DIM_USED', 'Standard', 'Unrelated']);
+  assert.equal(readDxf(W.writeDxf(saved)).dimstyles.PD_DIM_1, undefined, 'unused style is absent from the saved file');
+  assert.deepEqual(deleted, before, 'saving leaves the working document intact');
+});
+
 test('drawing overrides export as native DIMENSION group 1, including Unicode, and reopen editable', () => {
   for (const [kind, params] of Object.entries(kinds)) for (const override of ['7.125', 'Ø <> / <>']) for (const units of ['mm', 'inch']) {
     let raw = W.newDoc(4);

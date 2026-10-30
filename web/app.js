@@ -1395,9 +1395,9 @@ function buildCanvas() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); textCommit(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (state.text.ed && (state.text.ed.ldr || state.text.ed.dim)) textCancel(); else textCommit(); }       // a leader's note or dimension: Esc cancels
   });
   ui.textArea.addEventListener('beforeinput', () => { if (state.text.ed?.dim) state.text.ed.dim.selection = [ui.textArea.selectionStart, ui.textArea.selectionEnd]; });
-  ui.textArea.addEventListener('input', () => {
+  ui.textArea.addEventListener('input', (e) => {
     const dim = state.text.ed?.dim;
-    if (dim) { dim.editor = changeDimensionEditor(dim.editor, ui.textArea.value, dim.selection); delete dim.selection; }
+    if (dim) { dim.editor = changeDimensionEditor(dim.editor, ui.textArea.value, dim.selection, e.inputType); delete dim.selection; }
     placeTextEditor();
   });
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
@@ -5412,7 +5412,7 @@ function dropLinePoint(d) {
 function undo(d) {
   if (d.vlay) { undoLay(); return; }
   if (dropLinePoint(d)) return;
-  const m =state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
+  const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
   const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; }
   restore(d, st);

@@ -201,6 +201,17 @@ test('a mirrored dimension explodes into text that reads left to right; a backsl
   assert.ok(textOf(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT')).startsWith('A\\\\P '));
 });
 
+test('mirrored dimension INSERT rotations 90 and 270 keep exploded text upright and on its side of the line', () => {
+  for (const [sx, sy, rot, x, y, attach] of [[-1, 1, 90, -22, -50, 8], [-1, 1, 270, 22, 50, 2], [1, -1, 90, 22, 50, 2], [1, -1, 270, -22, -50, 8]]) {
+    const doc = dimDoc('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 });
+    doc.entities[0] = insert('PD_DIM_1', 0, 0, { layer: 'Notes', sx, sy, rot });
+    const out = explodeSelection(doc, new Set([0])), text = out.entities.find((e) => e.type === 'MTEXT');
+    assert.equal(out.exploded, 1);
+    nearAll(numbers(text, [10, 20, 50, 71]), [x, y, 90, attach]);
+    assert.equal(textOf(text), '100.00');
+  }
+});
+
 test('untransformable or missing block members leave the whole insert intact with a reason', () => {
   for (const doc of [blockDoc([line(0, 0, 1, 1), entity('HATCH', [])]), blockDoc([insert('Missing', 0, 0)])]) {
     const out = explodeSelection(doc, new Set([0]));
