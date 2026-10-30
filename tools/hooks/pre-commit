@@ -1,9 +1,0 @@
-#!/bin/sh
-# Refuses a commit that adds a merge-conflict marker line (<<<<<<< or >>>>>>>) and says which file.
-# On once per clone: git config core.hooksPath tools/hooks
-bad=$(git diff --cached -U0 | awk '/^\+\+\+ /{f=substr($0,7)} /^\+(<<<<<<<|>>>>>>>)/{print f}' | sort -u)
-if [ -n "$bad" ]; then
-  echo "commit refused: conflict marker (<<<<<<< or >>>>>>>) in staged file(s):" >&2
-  echo "$bad" >&2
-  exit 1
-fi

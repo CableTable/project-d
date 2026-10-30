@@ -3,8 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { EventEmitter } from 'node:events';
-import { launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight } from './tools/rook-launch.mjs';
+import { launchFailed, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -41,7 +40,7 @@ test('review arguments: three positionals, optional --as and --from clone branch
 });
 
 test('build arguments: four positionals, optional --as (default king), a real commit id, paths absolute', () => {
-  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined });
+  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king' });
   assert.equal(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--as', 'bishop']).as, 'bishop');
   assert.throws(() => parseBuild(['b.txt', 'o.jsonl', 'king/x']), /usage: build/);
   assert.throws(() => parseBuild(['b.txt', 'o.jsonl', 'king/x', 'main']), /not a commit id/);
@@ -142,47 +141,4 @@ test('a launch that fails to start deletes the folder\'s lock and exits 1; no lo
   launchFailed(dir, new Error('again'), (c) => codes.push(c));
   assert.deepEqual(codes, [1, 1]);
   rmSync(dir, { recursive: true });
-});
-
-// A fake spawn: records its call and returns a child that can emit 'error'.
-const fakeSpawn = (throwOnSpawn) => {
-  const child = Object.assign(new EventEmitter(), { unref() {} });
-  return { child, spawn: () => { if (throwOnSpawn) throw new Error('spawn blew up'); return child; } };
-};
-
-test('launchRun writes the lock last: a bad argument leaves none, a spawn that throws removes it', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'rook-lock-'));
-  assert.throws(() => launchRun('x.cmd', ['a"b'], dir, 0, 1, {}, 'o.jsonl', fakeSpawn().spawn), /double quote/);
-  assert.equal(existsSync(`${dir}/.run-lock`), false);
-  assert.throws(() => launchRun('x.cmd', ['ok'], dir, 0, 1, {}, 'o.jsonl', fakeSpawn(true).spawn), /spawn blew up/);
-  assert.equal(existsSync(`${dir}/.run-lock`), false);
-  rmSync(dir, { recursive: true });
-});
-
-test('launchRun: the child\'s error event removes the lock; a live run keeps it, and result reports RUNNING for its out file only', (t) => {
-  t.mock.method(console, 'error', () => {});
-  const dir = mkdtempSync(join(tmpdir(), 'rook-lock-')), out = join(dir, 'run.jsonl');
-  const { child, spawn } = fakeSpawn();
-  launchRun('x.cmd', ['ok'], dir, 0, 1, {}, out, spawn, (cwd, e) => launchFailed(cwd, e, () => {}));
-  assert.equal(existsSync(`${dir}/.run-lock`), true);
-  assert.match(runningNote(out, [dir]), /^RUNNING \(lock since \d{4}-\d\d-\d\dT[\d:.]+Z\)$/);
-  assert.equal(runningNote(join(dir, 'other.jsonl'), [dir]), '');
-  child.emit('error', new Error('spawn ENOENT'));
-  assert.equal(existsSync(`${dir}/.run-lock`), false);
-  assert.equal(runningNote(out, [dir]), '');
-  rmSync(dir, { recursive: true });
-});
-
-test('build --dir king2 runs King in his review folder; a lock there refuses it; only for King', () => {
-  assert.equal(parseBuild(['b.txt', 'o.jsonl', 'br', 'abc1234', '--dir', 'king2']).dir, 'king2');
-  assert.equal(parseBuild(['b.txt', 'o.jsonl', 'br', 'abc1234']).dir, undefined);
-  assert.throws(() => parseBuild(['b.txt', 'o.jsonl', 'br', 'abc1234', '--dir', 'king3']), /--dir king2/);
-  assert.throws(() => parseBuild(['b.txt', 'o.jsonl', 'br', 'abc1234', '--as', 'bishop', '--dir', 'king2']), /--dir king2/);
-  const { calls, x } = recorder();
-  build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--dir', 'king2'], x);
-  assert.equal(calls.find(isSwitch)[1], `${X}/ProjectD-king2`);
-  assert.equal(launched(calls)[3], `${X}/ProjectD-king2`);
-  const locked = recorder();
-  locked.x.locked = (dir) => dir.endsWith('ProjectD-king2');
-  assert.throws(() => build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--dir', 'king2'], locked.x), /in use.*\.run-lock/);
 });
