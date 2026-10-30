@@ -1,7 +1,7 @@
 // `node tools/rook.mjs review ...`, `build ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { existsSync, openSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,11 +49,13 @@ export function parseReview(args) {
 }
 
 export function parseBuild(args) {
-  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop]';
-  const { pos, flags } = parseFlags(args, { '--as': 1 }, usage);
+  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   if (!SHA.test(pos[3])) throw new Error(`not a commit id: ${pos[3]}`);
-  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as: account(flags, 'king', usage) };
+  const as = account(flags, 'king', usage), dir = flags['--dir'] && flags['--dir'][0];
+  if (dir && (dir !== 'king2' || as !== 'king')) throw new Error(`${usage}\n--dir king2 is for King (--as king)`);
+  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir };
 }
 
 export function parseKnight(args) {
@@ -105,6 +107,20 @@ export function launchFailed(cwd, e, exit = process.exit) {
   exit(1);
 }
 
+// The command line is built first (it throws on a bad argument), the lock is written last; a throw from the spawn or its 'error' event takes the lock off again.
+export function launchRun(bin, args, cwd, inFd, outFd, env, outPath = '', spawnFn = spawn, fail = launchFailed) {
+  const line = commandLine(bin, args);
+  writeFileSync(lockFile(cwd), `${new Date().toISOString()}\n${outPath}`); // `rook.mjs result` reads the out file's name back
+  try {
+    const child = spawnFn(process.execPath, ['-e', RUN, line, lockFile(cwd)], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
+    child.on('error', (e) => fail(cwd, e));
+    child.unref();
+  } catch (e) {
+    try { unlinkSync(lockFile(cwd)); } catch { /* no lock */ }
+    throw e;
+  }
+}
+
 // Everything that touches git, npm, files or processes; the tests swap it for a recorder.
 const io = {
   git(dir, ...a) {
@@ -119,16 +135,22 @@ const io = {
     try { execSync('npm.cmd ci --silent', { cwd: dir, stdio: 'pipe' }); }
     catch (e) { throw new Error(`npm ci failed in ${dir}: ${String(e.stderr || e.message).trim()}`); }
   },
-  launch(bin, args, cwd, inFd, outFd, env = process.env) {
-    writeFileSync(lockFile(cwd), new Date().toISOString());
-    const child = spawn(process.execPath, ['-e', RUN, commandLine(bin, args), lockFile(cwd)], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
-    child.on('error', (e) => launchFailed(cwd, e));
-    child.unref();
-  },
+  launch: (bin, args, cwd, inFd, outFd, env = process.env, outPath) => launchRun(bin, args, cwd, inFd, outFd, env, outPath),
 };
 
 const claude = (as) => join(homedir(), '.local', 'bin', ACCOUNTS[as].bin);
 const folder = (as, role) => `${EXTRAS}/${ACCOUNTS[as][role]}`;
+
+// "RUNNING (lock since <time>)" while a launch whose out file is `file` has not ended (its folder still has the lock), else ''.
+export function runningNote(file, dirs = [...new Set([...Object.values(ACCOUNTS).flatMap((a) => [a.review, a.build]), 'ProjectD-rowan'])].map((d) => `${EXTRAS}/${d}`)) {
+  for (const dir of dirs) {
+    try {
+      const [since, out] = readFileSync(lockFile(dir), 'utf8').split('\n');
+      if (out && resolve(out) === resolve(file)) return `RUNNING (lock since ${since})`;
+    } catch { /* no lock */ }
+  }
+  return '';
+}
 
 // A folder runs one thing at a time: a second launch would switch the branch under the first.
 function needClean(x, dir) {
@@ -151,13 +173,13 @@ export function review(args, x = io) {
   const inFd = x.open(brief, 'r');
   x.git(wt, 'switch', '--detach', sha);
   x.npmCi(wt);
-  x.launch(claude(as), reviewerArgs(), wt, inFd, x.open(out, 'w'));
+  x.launch(claude(as), reviewerArgs(), wt, inFd, x.open(out, 'w'), undefined, out);
   console.log(`review ${sha} (${as}) -> ${out}`);
 }
 
 export function build(args, x = io) {
-  const { brief, out, branch, sha, as } = parseBuild(args);
-  const dir = folder(as, 'build');
+  const { brief, out, branch, sha, as, dir: second } = parseBuild(args);
+  const dir = second ? folder(as, 'review') : folder(as, 'build'); // king2 is King's review folder: needClean refuses it while a review runs
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
@@ -167,7 +189,7 @@ export function build(args, x = io) {
   x.git(dir, 'switch', '-c', branch, sha);
   const env = { ...process.env };
   delete env.FORCE_COLOR;
-  x.launch(claude(as), buildArgs(), dir, inFd, x.open(out, 'w'), env);
+  x.launch(claude(as), buildArgs(), dir, inFd, x.open(out, 'w'), env, out);
   console.log(`build ${branch} @ ${sha} (${as}) -> ${out}`);
 }
 
@@ -187,6 +209,6 @@ export function knight(args, x = io) {
   x.need(dirname(log), 'output folder');
   const inFd = x.open(brief, 'r');
   x.git(clone, 'switch', '-c', branch, sha);
-  x.launch(CODEX, knightArgs(report, clone), clone, inFd, x.open(log, 'w'));
+  x.launch(CODEX, knightArgs(report, clone), clone, inFd, x.open(log, 'w'), undefined, report);
   console.log(`knight ${branch} @ ${sha} -> ${report}`);
 }
