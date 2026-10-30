@@ -8,7 +8,7 @@
   --snap-mark: #029d03; --grip-cold: #007fff; --grip-hover: #ff7f7f; --grip-hot: #a50000; --box-window: #0064f8;       /* 157b: AutoCAD's snap outline, GRIPCOLOR 150, GRIPHOVER 11, GRIPHOT 12 and window box, the same in light and dark */
   --field: #ffffff; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #1d7a3a; --pdpaper: #ffffff;
   --r: 5px; --dim: #0f766e;
-  --cmd-log-bg: rgba(60, 60, 60, .88); --cmd-log-text: #e6e6e6;
+  --cmd-log-bg: rgba(60, 60, 60, .88); --cmd-log-text: #e6e6e6; --cmd-log-error: #ffc18c; --cmd-log-answer: #add9ff;
   --selection: #2f7bd0; --alignment-guide: #2f7bd0; --crossing: #00f434; --edge-opacity: .35;
   --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Consolas, 'DejaVu Sans Mono', monospace;
@@ -23,7 +23,7 @@
   --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
   --field: #4e5a6e; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
   color-scheme: dark;
-  --cmd-log-bg: rgba(74, 74, 74, .88); --cmd-log-text: #dddddd;
+  --cmd-log-bg: rgba(74, 74, 74, .88); --cmd-log-text: #dddddd; --cmd-log-error: #ffdab8; --cmd-log-answer: #c2e2ff;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
@@ -35,7 +35,7 @@
     --mark: #fb923c; --grip: rgba(6, 150, 215, .12);
     --field: #4e5a6e; --shadow: rgba(0, 0, 0, .16); --film: #111111; --ok: #5fcf86; --pdpaper: #f4f5f6; --dim: #59d2a0;
     color-scheme: dark;
-    --cmd-log-bg: rgba(74, 74, 74, .88); --cmd-log-text: #dddddd;
+    --cmd-log-bg: rgba(74, 74, 74, .88); --cmd-log-text: #dddddd; --cmd-log-error: #ffdab8; --cmd-log-answer: #c2e2ff;
   }
 }
 
@@ -961,6 +961,8 @@ kbd { font: 500 11px var(--mono); padding: 1px 5px; border: 1px solid var(--line
 .cfade.idle .cb-fade-rows { opacity: 0; }
 .cfade.idle .cb-fade-rows > div { pointer-events: none; }
 .cb-fade-rows > div { height: 16px; padding: 0 6px; background: var(--cmd-log-bg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--cmd-log-text); pointer-events: auto; }
+.cb-fade-rows .er { color: var(--cmd-log-error); }
+.cb-fade-rows .ans { color: var(--cmd-log-answer); }
 .cb-fade-rows .ans, .cb-drb .ans { margin-left: 6px; }
 .cb-drb .ans { color: var(--accenttext); }
 .cdrawer { position: absolute; z-index: 25; right: 14px; top: 14px; bottom: 14px; width: min(340px, calc(100% - 28px)); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 12px 32px rgba(0, 0, 0, .28); display: flex; flex-direction: column; overflow: hidden; user-select: text; cursor: default; }

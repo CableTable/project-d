@@ -9411,8 +9411,24 @@ try {
           assert.equal(box.background, mode === 'light' ? 'rgba(60, 60, 60, 0.88)' : 'rgba(74, 74, 74, 0.88)');
           assert.equal(box.color, mode === 'light' ? 'rgb(230, 230, 230)' : 'rgb(221, 221, 221)');
         }
+        const answerColor = await rows.locator('.ans').first().evaluate((el) => getComputedStyle(el).color);
+        assert.equal(answerColor, mode === 'light' ? 'rgb(173, 217, 255)' : 'rgb(194, 226, 255)');
+        assert.notEqual(answerColor, boxes[0].color, 'answers differ from normal row text');
         await page.screenshot({ path: `${shotDir}/todo159-command-log-${mode}.png` });
         await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+        await typeCmd(`unknowncommand${mode}`);
+        const error = rows.locator('.er', { hasText: `Unknown command: unknowncommand${mode}` });
+        await error.waitFor();
+        const errorColor = await error.evaluate((el) => getComputedStyle(el).color);
+        assert.equal(errorColor, mode === 'light' ? 'rgb(255, 193, 140)' : 'rgb(255, 218, 184)');
+        assert.notEqual(errorColor, await rows.locator(':scope > div:not(.er)').first().evaluate((el) => getComputedStyle(el).color),
+          'errors differ from normal rows');
+        for (const color of [answerColor, errorColor]) {
+          const hex = color.match(/\d+/g).map((c) => Number(c).toString(16).padStart(2, '0')).join('');
+          assert.ok(contrastRatio(hex, mode === 'light' ? '535353' : '606060') >= 4.5,
+            'error and answer colours are readable even with the translucent box over white artwork');
+        }
+        await page.screenshot({ path: `${shotDir}/todo159-command-log-error-${mode}.png` });
       }
     } finally {
       await page.evaluate((theme) => {
