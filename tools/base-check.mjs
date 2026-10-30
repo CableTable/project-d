@@ -50,6 +50,7 @@ function check(args) {
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+  process.on('SIGINT', () => {});
   try {
     const ok = check(process.argv.slice(2));
     console.log(ok ? 'PASS' : 'FAIL');

@@ -22,6 +22,18 @@ test('base-check runs a unit file under node --test and the browser file with a 
   assert.deepEqual(testCommand('browser.test.mjs')[1], ['browser.test.mjs', '5391']);
 });
 
+test('base-check CLI registers a no-op SIGINT listener before checking arguments', () => {
+  const r = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+    import assert from 'node:assert/strict';
+    process.argv = [process.execPath, 'tools/base-check.mjs'];
+    await import('./tools/base-check.mjs');
+    assert.equal(process.listenerCount('SIGINT'), 1);
+    process.emit('SIGINT');
+    process.exitCode = 0;
+  `], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+});
+
 test('base-check: the copied test file is run on the base (PASS), a test needing later files FAILs, and the worktree is always removed', () => {
   const repo = resolve('.'), before = execFileSync('git', ['worktree', 'list'], { cwd: repo, encoding: 'utf8' });
   const root = execFileSync('git', ['rev-list', '--max-parents=0', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim().split('\n')[0];
@@ -50,6 +62,10 @@ test('the pre-commit hook refuses a staged conflict marker and names the file; a
   writeFileSync(join(repo, 'ok.txt'), 'fine\nnot a <<<<<<< marker\n');
   git('add', '.');
   assert.equal(git('commit', '-m', 'ok').status, 0);
+  writeFileSync(join(repo, 'ok.txt'), 'staged update\n');
+  git('add', 'ok.txt');
+  writeFileSync(join(repo, 'ok.txt'), '<<<<<<< HEAD\n');
+  assert.equal(git('commit', '-m', 'unstaged marker').status, 0);
   writeFileSync(join(repo, 'merged.js'), 'a\n<<<<<<< HEAD\nb\n=======\nc\n>>>>>>> branch\n');
   git('add', '.');
   const r = git('commit', '-m', 'bad');
