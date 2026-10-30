@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { parseArgs, testCommand } from './tools/base-check.mjs';
 
@@ -35,30 +35,45 @@ test('base-check CLI registers a no-op SIGINT listener before checking arguments
 });
 
 test('base-check: the copied test file is run on the base (PASS), a test needing later files FAILs, and the worktree is always removed', () => {
-  const repo = resolve('.'), before = execFileSync('git', ['worktree', 'list'], { cwd: repo, encoding: 'utf8' });
-  const root = execFileSync('git', ['rev-list', '--max-parents=0', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim().split('\n')[0];
+  const repo = mkdtempSync(join(tmpdir(), 'base-check-test-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', `core.hooksPath=${join(repo, '.git/hooks')}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
   const file = 'tmp-base-check.test.mjs';
   const head = "import { test } from 'node:test'; import { existsSync } from 'node:fs'; import assert from 'node:assert/strict';\n";
-  const run = () => spawnSync(process.execPath, ['tools/base-check.mjs', root, file], { cwd: repo, encoding: 'utf8' });
   try {
-    writeFileSync(file, head + "test('x', () => assert.ok(existsSync('tmp-base-check.test.mjs')));\n");
+    git('init', '-q');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    const root = git('rev-parse', 'HEAD').trim();
+    writeFileSync(join(repo, 'later.txt'), 'later\n');
+    git('add', '.');
+    git('commit', '-qm', 'later');
+    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'node_modules'));
+    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    const before = git('worktree', 'list');
+    const run = () => spawnSync(process.execPath, ['tools/base-check.mjs', root, file], { cwd: repo, encoding: 'utf8' });
+    writeFileSync(join(repo, file), head + "test('x', () => assert.ok(existsSync('tmp-base-check.test.mjs')));\n");
     const pass = run();
     assert.equal(pass.status, 0, pass.stdout + pass.stderr);
     assert.match(pass.stdout, /PASS\s*$/);
-    writeFileSync(file, head + "test('x', () => assert.ok(existsSync('tools/base-check.mjs')));\n"); // not in the root commit
+    assert.equal(git('worktree', 'list'), before);
+    writeFileSync(join(repo, file), head + "test('x', () => assert.ok(existsSync('later.txt')));\n");
     const fail = run();
     assert.equal(fail.status, 1);
     assert.match(fail.stdout, /FAIL\s*$/);
+    assert.equal(git('worktree', 'list'), before);
   } finally {
-    rmSync(file, { force: true });
-    assert.equal(execFileSync('git', ['worktree', 'list'], { cwd: repo, encoding: 'utf8' }), before);
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 
 test('the pre-commit hook refuses a staged conflict marker and names the file; a marker mid-line passes', () => {
-  const hooks = resolve('tools/hooks'), repo = mkdtempSync(join(tmpdir(), 'hook-'));
+  const repo = mkdtempSync(join(tmpdir(), 'hook-')), hooks = join(repo, '.git/hooks');
   const git = (...a) => spawnSync('git', ['-C', repo, '-c', `core.hooksPath=${hooks}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
   git('init', '-q');
+  copyFileSync('tools/hooks/pre-commit', join(hooks, 'pre-commit'));
+  chmodSync(join(hooks, 'pre-commit'), 0o755);
   writeFileSync(join(repo, 'ok.txt'), 'fine\nnot a <<<<<<< marker\n');
   git('add', '.');
   assert.equal(git('commit', '-m', 'ok').status, 0);
