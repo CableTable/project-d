@@ -4844,14 +4844,15 @@ function explodeOnLayout() {
   const all = selItems(), d = curDoc(), isDim = (x) => x.p.src === 'loose' && isDimPart(x.part), dims = all.filter(isDim), items = all.filter((x) => !isDim(x));
   if (!all.length) { note('Explode: select a placed part or the grid first'); return; }
   const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, dims.length ? `Explode ${all.length} objects` : grid ? 'Explode the grid' : items.length > 1 ? `Explode ${items.length} parts` : `Explode ${items[0].part.name}`);
-  const dimPs = dims.map((x) => d.lay.placed[x.p.i]);          // by object: the explode of the parts moves the indexes
+  const dimPs = dims.filter((x) => !x.p.lock).map((x) => d.lay.placed[x.p.i]);          // by object: the explode of the parts moves the indexes
   const at = grid ? gLooseMany(g, items.map((x) => x.i)) : items.map((x) => x.i);       // in lay.placed, item for item; a grid copy first loosens the whole grid
   const gridPl = items.flatMap((x, k) => (x.p.src === 'grid' ? [d.lay.placed[at[k]]] : []));
-  const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = rest.filter((q) => q.x.part.obj || q.x.p.lock).length;
+  const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = dims.length - dimPs.length + rest.filter((q) => q.x.part.obj || q.x.p.lock).length;
   gMark(g);
   const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid()) : { done: 0, pieces: [], errors: [] };
-  const made = r.pieces.map((i) => d.lay.placed[i]);
+  const made = r.pieces.map((i) => d.lay.placed[i]), beforeDims = new Set(d.lay.placed);
   const nd = dimPs.length ? LD.explodeDims(d.lay, dimPs.map((p) => d.lay.placed.indexOf(p)), () => 'o' + uid()) : 0;
+  made.push(...d.lay.placed.filter((p) => !beforeDims.has(p)));
   const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
   if (!grid && !r.done && !nd) { note('Explode: nothing explodable (0 exploded)' + why); return; }
   if (r.done) tidyGroups(d.lay);
