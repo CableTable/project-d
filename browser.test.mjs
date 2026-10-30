@@ -4216,9 +4216,9 @@ try {
       assert.ok(Math.abs(fade.x + fade.width / 2 - canvas.x - canvas.width / 2) < 1, 'toasts centred in the canvas');
       assert.ok(fade.y + fade.height < canvas.y + canvas.height, 'toasts above the status bar');
       assert.equal(await t('cmd-fade').locator('.cb-fade-rows > div').evaluateAll((rows) => rows.length === 3 && rows.every((row) => {
-        const css = getComputedStyle(row), panel = getComputedStyle(document.querySelector('.cbar')), ink = getComputedStyle(document.querySelector('.cb-in input'));       // 157b: the command bar keeps its own colours
-        return css.opacity === '1' && css.color === ink.color &&css.backgroundColor === panel.backgroundColor && css.borderTopStyle === 'solid' && parseFloat(css.borderTopWidth) >= 1;
-      })), true, 'all three toast rows use opaque theme panel/text colours and a border');
+        const css = getComputedStyle(row);
+        return css.opacity === '1' && css.fontSize === '11px' && css.height === '16px' && /^rgba\(.+, 0\.88\)$/.test(css.backgroundColor);
+      })), true, 'all three toast rows use compact translucent boxes');
     };
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-light.png' });
@@ -9386,6 +9386,40 @@ try {
           `command messages sit above the grip hint without overlapping at ${size.width}x${size.height}: ${JSON.stringify({ messages, hint })}`);
       }
     } finally { await page.setViewportSize(viewport); }
+  });
+
+  await step('TODO 159: command log rows small', async () => {
+    await openGrips();
+    const theme = await page.locator('html').getAttribute('data-theme');
+    try {
+      for (const mode of ['light', 'dark']) {
+        await page.evaluate((mode) => { document.documentElement.dataset.theme = mode; }, mode);
+        await typeCmd('line'); await typeCmd('0,0'); await typeCmd('10,10');
+        const rows = page.locator('.cb-fade-rows');
+        const style = await rows.evaluate((el) => {
+          const css = getComputedStyle(el);
+          return { gap: css.rowGap, height: css.height, background: css.backgroundColor };
+        });
+        assert.deepEqual(style, { gap: '2px', height: '52px', background: 'rgba(0, 0, 0, 0)' });
+        const boxes = await rows.locator(':scope > div').evaluateAll((els) => els.map((el) => {
+          const css = getComputedStyle(el);
+          return { font: css.fontSize, height: css.height, padding: css.padding, background: css.backgroundColor, color: css.color };
+        }));
+        assert.equal(boxes.length, 3);
+        for (const box of boxes) {
+          assert.equal(box.font, '11px'); assert.equal(box.height, '16px'); assert.equal(box.padding, '0px 6px');
+          assert.equal(box.background, mode === 'light' ? 'rgba(60, 60, 60, 0.88)' : 'rgba(74, 74, 74, 0.88)');
+          assert.equal(box.color, mode === 'light' ? 'rgb(230, 230, 230)' : 'rgb(221, 221, 221)');
+        }
+        await page.screenshot({ path: `${shotDir}/todo159-command-log-${mode}.png` });
+        await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      }
+    } finally {
+      await page.evaluate((theme) => {
+        if (theme === null) delete document.documentElement.dataset.theme;
+        else document.documentElement.dataset.theme = theme;
+      }, theme);
+    }
   });
 
   await step('TODO 156a: drawing corner arrows, Shift turn, moved pivot, preview, undo, grips and layout arrows', async () => {
