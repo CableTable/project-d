@@ -1,9 +1,9 @@
 // Rook's helpers: short output so the lead's context stays small (2026-10-20).
 //   node tools/rook.mjs usage           one line per agent (+ week forecast); refreshes mockups/_design/usage/limits.csv, history.csv
 //   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
-//   node tools/rook.mjs result <file>   a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
+//   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>]   launch the reviewer on a commit, detached
-//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop]   launch a Claude build on a new branch in its worktree, detached
+//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2]   launch a Claude build on a new branch in its worktree, detached
 //   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha>   launch a Knight build on a new branch in its clone, detached
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
@@ -14,7 +14,7 @@ import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
-import { review, build, knight } from './rook-launch.mjs';
+import { review, build, knight, runningNote } from './rook-launch.mjs';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -45,6 +45,8 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
 
 function main() {
 if (cmd === 'result') {
+  const running = runningNote(arg);
+  if (running) console.log(running);
   if (arg.endsWith('.jsonl')) {
     const events = readFileSync(arg, 'utf8').trim().split('\n').filter((l) => l.trim()).flatMap((l) => { try { return [JSON.parse(l)]; } catch { return []; } }); // a run in progress has a half-written last line
     const r = events.findLast((e) => e.type === 'result');
@@ -124,7 +126,7 @@ if (cmd === 'result') {
   try { ({ review, build, knight })[cmd](process.argv.slice(3)); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] | knight <brief> <report.txt> <branch> <sha>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] | knight <brief> <report.txt> <branch> <sha>');
 }
 }
 
