@@ -4839,24 +4839,27 @@ function breakApartSelected() {
   note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
 }
 
-/** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects; one level, one undo step. */
+/** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects, a dimension its lines, arrows and text; one level, one undo step. */
 function explodeOnLayout() {
-  const items = selItems(), d = curDoc();
-  if (!items.length) { note('Explode: select a placed part or the grid first'); return; }
-  const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, grid ? 'Explode the grid' : items.length > 1 ? `Explode ${items.length} parts` : `Explode ${items[0].part.name}`);
+  const all = selItems(), d = curDoc(), isDim = (x) => x.p.src === 'loose' && isDimPart(x.part), dims = all.filter(isDim), items = all.filter((x) => !isDim(x));
+  if (!all.length) { note('Explode: select a placed part or the grid first'); return; }
+  const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, dims.length ? `Explode ${all.length} objects` : grid ? 'Explode the grid' : items.length > 1 ? `Explode ${items.length} parts` : `Explode ${items[0].part.name}`);
+  const dimPs = dims.map((x) => d.lay.placed[x.p.i]);          // by object: the explode of the parts moves the indexes
   const at = grid ? gLooseMany(g, items.map((x) => x.i)) : items.map((x) => x.i);       // in lay.placed, item for item; a grid copy first loosens the whole grid
   const gridPl = items.flatMap((x, k) => (x.p.src === 'grid' ? [d.lay.placed[at[k]]] : []));
   const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = rest.filter((q) => q.x.part.obj || q.x.p.lock).length;
   gMark(g);
   const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid()) : { done: 0, pieces: [], errors: [] };
+  const made = r.pieces.map((i) => d.lay.placed[i]);
+  const nd = dimPs.length ? LD.explodeDims(d.lay, dimPs.map((p) => d.lay.placed.indexOf(p)), () => 'o' + uid()) : 0;
   const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
-  if (!grid && !r.done) { note('Explode: nothing explodable (0 exploded)' + why); return; }
+  if (!grid && !r.done && !nd) { note('Explode: nothing explodable (0 exploded)' + why); return; }
   if (r.done) tidyGroups(d.lay);
   gCommit(g);
-  selLooseMany = [...gridPl.map((p) => d.lay.placed.indexOf(p)), ...r.pieces]; update();
-  const ex = `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects`;
-  if (grid) note(`Explode: the grid's copies are separate placed parts now` + (r.done ? '; ' + ex : '. Explode again to break a part into outlines') + why + '. Ctrl+Z puts the grid back');
-  else note('Explode: ' + ex + why + '. Ctrl+Z puts the part back');
+  selLooseMany = [...gridPl, ...made].map((p) => d.lay.placed.indexOf(p)); update();
+  const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} dimension${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
+  if (grid) note(`Explode: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : '. Explode again to break a part into outlines') + why + '. Ctrl+Z puts the grid back');
+  else note('Explode: ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
 }
 
 function explodeSelected() {
@@ -4872,7 +4875,7 @@ function explodeSelected() {
     return;
   }
   const d = editable();
-  if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
+  if (!d) { if (!cmpDoc() || cmpEdit()) note('Explode works on a drawing tab: open a drawing first'); return; }      // in Compare, cmpEdit() says why a library part or hidden drawing cannot
   const r = explodeSelection(d.raw, d.sel, d.locked);
   const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
   if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }

@@ -601,4 +601,25 @@ test('Explode: a dimension in a part becomes a plain block (not a *D block, not 
   unionOf(back.placed.map((_, i) => boxOf(back, i))).forEach((v, i) => near(v, want[i], 1e-6));
 });
 
+test('Explode: a part whose block is missing is reported and left as it was', () => {
+  const raw = newDoc(4); addBlock(raw, 'GONE', [line(0, 0, 4, 4)]); addEntities(raw, line(0, 0, 10, 5), insert('GONE', 0, 0));
+  const lay = placedPart(raw, {}), before = lay.placed.slice();
+  delete lay.parts.p.raw.blocks.GONE;
+  const r = LD.explodePlaced(lay, [0], () => 'o' + Math.random());
+  assert.equal(r.done, 0); assert.ok(r.errors.length, 'says why'); assert.deepEqual(lay.placed, before); assert.deepEqual(Object.keys(lay.parts), ['p']);
+});
+
+test('Explode twice: the second finds only objects; two parts with a dimension each save both pieces (equal block names do not clash)', () => {
+  const dimPart = (id) => { const raw = newDoc(4); addBlock(raw, '*D1', [line(0, 0, 20, 0), line(0, 0, 0, 3)]); addEntities(raw, line(0, 10, 20, 10), entity('DIMENSION', [[2, '*D1'], [70, 0]])); return LD.makePart(id, id, raw, 1); };
+  const lay = LD.newLayout('E'); lay.parts.a = dimPart('a'); lay.parts.b = dimPart('b');
+  lay.placed.push(placement1('a', 0, 0), placement1('b', 100, 0));
+  let k = 0; const newId = () => 'o' + k++;
+  const first = LD.explodePlaced(lay, [0, 1], newId);
+  assert.equal(first.done, 2);
+  assert.equal(LD.explodePlaced(lay, lay.placed.map((_, i) => i), newId).done, 0);       // objects are not parts: nothing more to explode
+  const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));       // both pieces carry a PD_EXPLODE_1 block: saving must keep both, not let one block win
+  const boxes = (l) => l.placed.map((p) => [p.x, p.y, R(l.parts[p.partId].w), R(l.parts[p.partId].h)].join()).sort();
+  assert.deepEqual(boxes(back), boxes(lay));
+});
+
 console.log(n + ' tests passed');

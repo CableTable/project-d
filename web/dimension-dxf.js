@@ -52,7 +52,7 @@ export function nativeDimensionOverrides(raw) {
   const refs = new Set([...entities, ...Object.values(blocks).flatMap((b) => b.entities)].filter((e) => ['INSERT', 'DIMENSION'].includes(e.type)).map((e) => field(e, 2)));
   for (const name of converted) if (!refs.has(name)) delete blocks[name];
   const styles = new Set([...entities, ...Object.values(blocks).flatMap((b) => b.entities)]
-    .filter((e) => e.type === 'DIMENSION').map((e) => (field(e, 3) || '').toLowerCase()));
+    .filter((e) => e.type === 'DIMENSION' || e.type === 'LEADER').map((e) => (field(e, 3) || '').toLowerCase()));       // a LEADER names its style too; the header $DIMSTYLE is not written back, so it needs none
   for (const name of Object.keys(dimstyles)) if (/^PD_DIM_/i.test(name) && !styles.has(name.toLowerCase())) delete dimstyles[name];
   return { ...raw, entities, blocks, dimstyles };
 }

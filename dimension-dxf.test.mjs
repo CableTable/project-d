@@ -37,6 +37,18 @@ test('save drops unused PD_DIM_ styles after deleting a dimension, retaining use
   assert.deepEqual(deleted, before, 'saving leaves the working document intact');
 });
 
+test('save keeps a PD_DIM_ style that a LEADER names', () => {
+  const raw = W.newDoc(4);
+  Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { ...kinds.aligned, textH: 2, override: 'Width <>' }, 1, 'PD_DIM_1')));
+  const reopened = readDxf(W.writeDxf(nativeDimensionOverrides(raw)));
+  assert.ok(reopened.dimstyles.PD_DIM_1);
+  const kept = { ...reopened, ...E.removeEntities(reopened, new Set([0])) };
+  assert.equal(nativeDimensionOverrides(kept).dimstyles.PD_DIM_1, undefined, 'unused: dropped');
+  W.addEntities(kept, W.entity('LEADER', [[3, 'pd_dim_1'], [71, 1], [76, 2], [10, 0], [20, 0], [30, 0], [10, 5], [20, 5], [30, 0]]));
+  assert.ok(nativeDimensionOverrides(kept).dimstyles.PD_DIM_1, 'named by a LEADER: kept');
+  assert.ok(readDxf(W.writeDxf(nativeDimensionOverrides(kept))).dimstyles.PD_DIM_1);
+});
+
 test('drawing overrides export as native DIMENSION group 1, including Unicode, and reopen editable', () => {
   for (const [kind, params] of Object.entries(kinds)) for (const override of ['7.125', 'Ø <> / <>']) for (const units of ['mm', 'inch']) {
     let raw = W.newDoc(4);

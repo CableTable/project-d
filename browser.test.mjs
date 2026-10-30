@@ -4719,6 +4719,9 @@ try {
       await tab('Compare').click(); await pick(2);
       assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Contour'], 'source edit refreshes the contoured snapshot');
       await tab('two-156c2.dxf').click(); await p.keyboard.press('Control+z');
+      const restored = await saveDoc();
+      assert.equal(restored.entities.filter((e) => e.layer === 'Notes').length, 1, 'Ctrl+Z in the source brings the Notes line back');
+      assert.equal(restored.entities.filter((e) => e.layer === 'Contour').length, contoured, 'and the contour is still there');
       await tab('Compare').click(); await pick(2);
       await p.keyboard.press('Control+z');
       assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'one Undo takes the whole contour away');
@@ -4752,6 +4755,8 @@ try {
       const contour = p.locator('[data-tool=contour]');
       assert.equal(await contour.isDisabled(), true);
       assert.equal(await contour.getAttribute('title'), "Open the part's drawing to contour it");
+      await p.locator('[data-tool=select]').click(); await p.keyboard.type('explode'); await p.keyboard.press('Enter');
+      assert.equal(await q('cmd-prompt').textContent(), 'Open the part as a drawing to edit', 'Explode on a library part says why not');
     } finally { await context.close(); }
   });
 
@@ -18461,6 +18466,26 @@ try {
     await undo(); assert.equal(await nParts(), 4);
     await undo(); assert.equal(await nParts(), 4, 'Undo takes the grid back');
     await shots('explode-grid');
+  });
+
+  await step('S28 Lows B: Explode a dimension and a placed part together on a layout: both explode, one Undo puts both back', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const dimBlocks = (text) => Object.keys(readDxf(text).blocks).filter((k) => /^PD_DIM_/.test(k)).length;
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+    await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+    await page.locator('[data-tool=select]').click();
+    const n0 = await nParts();
+    assert.equal(dimBlocks(await save()), 1, 'a dimension to begin with');
+    await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: 1 part exploded → \d+ objects; 1 dimension exploded/);
+    assert.equal(dimBlocks(await save()), 0, 'the dimension is lines, arrows and text');
+    assert.ok((await nParts()) > n0 + 1, 'the part is objects too');
+    assert.match((await histLabels()).at(-1), /^Explode 3 objects/, 'one history step');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames();
+    assert.equal(await nParts(), n0, 'one Undo puts the part back');
+    assert.equal(dimBlocks(await save()), 1, 'and the dimension');
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
