@@ -532,10 +532,16 @@ export function trimShape(sh, edges, pick, quick = false) {
 /** Can Offset and Trim take this entity? (A line, arc, circle or light polyline lying in the plane.) */
 export const canModify = (ent) => !!ent && hasGrips(ent) && ent.type !== 'LEADER';
 
-/** The offset copy of an entity d away on the side of the point `at`: { ent } | { error }. */
+/** The offset copy d away towards `at`; null distance means Through: { ent } | { error }. */
 export function offsetEntity(ent, d, at) {
   if (!canModify(ent)) return { error: 'Offset takes a line, arc, circle or polyline' };
-  const r = offsetShape(shapeOf(ent, 1), d, at);
+  const sh = shapeOf(ent, 1);
+  if (d === null) {
+    const P = pathOf(sh), s = P.segs[closest(P, at).index], g = s && geo(s);
+    if (!g) return { error: 'The object has no offset path' };
+    d = g.line ? Math.abs(cross(g.u, sub(at, s.a))) : Math.abs(dist(at, g.c) - g.r);
+  }
+  const r = offsetShape(sh, d, at);
   return r.error ? r : { ent: rebuilt(r.shape, ent) };
 }
 

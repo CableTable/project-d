@@ -51,6 +51,15 @@ test('Offset a line: to the side of the pick, d away, same length, same layer', 
   assert.match(M.offsetEntity(l, -2, [0, 1]).error, /more than 0/);
 });
 
+test('Offset Through uses the picked line or circular segment, retaining editable geometry', () => {
+  nearPt(S(M.offsetEntity(line(0, 0, 100, 0), null, [40, 27]).ent).a, [0, 27]);
+  near(S(M.offsetEntity(circle(0, 0, 10), null, [0, 24]).ent).r, 24);
+  near(S(M.offsetEntity(arc(0, 0, 10, 0, 90), null, [12, 12]).ent).r, Math.hypot(12, 12));
+  const poly = M.offsetEntity(rect(0, 0, 100, 50), null, [40, -7]).ent;
+  near(Math.min(...S(poly).pts.map((p) => p[1])), -7);
+  assert.match(M.offsetEntity(line(0, 0, 100, 0), null, [40, 0]).error, /more than 0/);
+});
+
 test('Offset a circle: out or in by the side picked; more than the radius is refused', () => {
   const c = circle(10, 20, 15, base);
   let r = M.offsetEntity(c, 5, [10, 100]);
