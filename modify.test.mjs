@@ -745,4 +745,30 @@ test('previewEdit (TODO 155a T4): the piece a click would cut, or the stretch it
   assert.ok(previewEdit(circle(0, 0, 10, base), [line(50, -20, 50, 20, base)], [10, 0], true).error, 'a closed shape cannot extend');
 });
 
+test('TODO 155a3: region dry runs return exactly the cut pieces / added stretches and cap crossed objects only for previews', () => {
+  const l = line(0, 0, 100, 0, base), edges = [line(30, -20, 30, 20), line(70, -20, 70, 20)];
+  const before = structuredClone([l, ...edges]);
+  const r = M.trimRegion([l], edges, M.fenceHit([[10, -5], [10, 5], [90, 5], [90, -5]]));
+  assert.deepEqual(r.preview.map(S), [S(line(0, 0, 30, 0)), S(line(70, 0, 100, 0))], 'both crossed end pieces, with the middle kept');
+  assert.deepEqual(r.changed[0].ents.map(S), [S(line(30, 0, 70, 0))]);
+  assert.deepEqual([l, ...edges], before, 'dry run does not change sources or boundaries');
+  const c = circle(0, 0, 10, base);
+  assert.deepEqual(M.trimRegion([c], [], M.fenceHit([[-20, 0], [20, 0]])).preview.map(S), [S(c)], 'an uncut closed circle previews whole');
+  const cutCircle = M.trimRegion([c], [line(-20, 0, 20, 0)], M.fenceHit([[0, 5], [0, 15]]));
+  near(S(cutCircle.preview[0]).a0, 0); near(S(cutCircle.preview[0]).a1, 180);
+  near(S(cutCircle.changed[0].ents[0]).a0, 180); near(S(cutCircle.changed[0].ents[0]).a1, 0);
+  const short = line(0, 0, 20, 0), bound = line(50, -20, 50, 20);
+  const ex = extendRegion([short], [bound], M.windowHit([-5, -5], [25, 5]));
+  assert.deepEqual(ex.preview.map(S), [S(line(20, 0, 50, 0))], 'the fallback to the other end previews only its growth');
+  assert.deepEqual(ex.changed[0].ents.map(S), [S(line(0, 0, 50, 0))]);
+  const rows = Array.from({ length: 301 }, (_, i) => line(0, i, 20, i));
+  const miss = line(100, -1, 120, -1), fence = M.fenceHit([[10, -2], [10, 302]]);
+  const tr = M.trimRegion([miss, ...rows], [], fence, 300);
+  assert.equal(tr.preview.length, 300); assert.equal(tr.changed.at(-1).i, 300, 'misses do not consume the cap');
+  assert.equal(M.trimRegion([miss, ...rows], [], fence).changed.length, 301, 'commit is uncapped');
+  const boundary = line(50, -2, 50, 302), ext = extendRegion([miss, ...rows], [boundary], fence, 300);
+  assert.equal(ext.preview.length, 300); assert.equal(ext.changed.at(-1).i, 300);
+  assert.equal(extendRegion(rows, [boundary], fence).changed.length, 301);
+});
+
 console.log(`${n} modify tests passed`);

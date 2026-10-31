@@ -12673,6 +12673,98 @@ try {
     await page.keyboard.press('Escape');
   });
 
+  await step('TODO 155a3: fence, path and crossing preview the committed pieces; Shift swaps live; Esc, Undo, source edits, Layouts, Compare and Standard drag', async () => {
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    const histLabels = async () => {
+      await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
+      const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
+      await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' }); return rows;
+    };
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 30, 220, 30), dxfLine(20, 70, 220, 70), dxfLine(80, 10, 80, 90), dxfLine(160, 10, 160, 90),
+      dxfLine(20, 110, 60, 110), dxfLine(20, 130, 60, 130), dxfLine(100, 100, 100, 140));
+    await openGrips(writeDxf(raw), 'region-preview-155a3.dxf');
+    const hover = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y); await frames(); };
+    const drag = async (pts) => { await hover(...pts[0]); await page.mouse.down(); for (const p of pts.slice(1)) { const q = await at(...p); await page.mouse.move(q.x, q.y, { steps: 6 }); } await frames(); };
+    const paths = (cls) => page.locator('.' + cls).evaluateAll((es) => es.map((e) => e.getAttribute('d')).sort());
+    const expected = async (ents) => { const h = (await sheetPx()).h; return ents.map((e) => svgPath(GR.shapeOf(e, 1), h)).sort(); };
+    const faded = async (ents) => {
+      assert.deepEqual(await paths('dr-trim-fade'), await expected(ents), 'only the pieces the region will cut are faded');
+      assert.equal(await page.locator('.dr-trim-ext').count(), 0); assert.equal(await t('trim-x').count(), ents.length ? 1 : 0);
+    };
+    const clear = async () => { await frames(); assert.equal(await t('mod-preview').count(), 0); assert.equal(await t('trim-x').count(), 0); };
+    const rows = async (y) => (await savedDoc()).entities.filter((e) => e.type === 'LINE' && fieldOf(e, 20) === y && fieldOf(e, 21) === y)
+      .map((e) => [fieldOf(e, 10), fieldOf(e, 11)].sort((a, b) => a - b)).sort((a, b) => a[0] - b[0]);
+    const cuts = [dxfLine(80, 30, 160, 30), dxfLine(80, 70, 160, 70)], stroke = [[120, 95], [125, 50], [120, 15]];
+    const cutRows = async () => { assert.deepEqual(await rows(30), [[20, 80], [160, 220]]); assert.deepEqual(await rows(70), [[20, 80], [160, 220]]); };
+    await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');
+    const h0 = (await histLabels()).length;
+    // Fence: the live rubber segment crosses both lines before the final click.
+    await click(120, 95); await hover(120, 15); await faded(cuts);
+    await click(120, 15); await typeCmd(''); await cutRows();
+    assert.equal((await histLabels()).length, h0 + 1); await typeCmd('u'); assert.deepEqual(await rows(30), [[20, 220]]);
+    // Path: inspect while the button is held, then compare the removed intervals with the saved result.
+    await drag(stroke); await faded(cuts);
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((v) => { document.documentElement.dataset.theme = v; }, theme); await frames(); await faded(cuts);
+      await page.screenshot({ path: `${shotDir}/155a3-path-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await page.mouse.up(); await cutRows(); assert.equal((await histLabels()).length, h0 + 1);
+    await typeCmd('u');
+    // Crossing: preview before the opposite corner is clicked.
+    await typeCmd('c'); await click(110, 85); await hover(130, 15); await faded(cuts);
+    await click(130, 15); await cutRows(); await typeCmd('u');
+    // Esc mid-drag removes all preview geometry without adding history or starting a click fence on release.
+    await drag(stroke); await faded(cuts); await page.keyboard.press('Escape'); await page.mouse.up(); await clear();
+    assert.equal((await histLabels()).length, h0); assert.deepEqual(await rows(30), [[20, 220]]);
+    assert.match(await prompt(), /^Select object to trim/);
+    // Shift swaps without a pointer move; its release swaps back, and Shift at mouse-up commits that same growth.
+    const shortStroke = [[50, 145], [50, 95]], shortCuts = [dxfLine(20, 110, 60, 110), dxfLine(20, 130, 60, 130)];
+    const grows = [dxfLine(60, 110, 100, 110), dxfLine(60, 130, 100, 130)];
+    await drag(shortStroke); await faded(shortCuts); await page.keyboard.down('Shift'); await frames();
+    assert.deepEqual(await paths('dr-trim-ext'), await expected(grows)); assert.equal(await page.locator('.dr-trim-fade').count(), 0); assert.equal(await t('trim-x').count(), 1);
+    await page.keyboard.up('Shift'); await frames(); await faded(shortCuts);
+    await page.keyboard.down('Shift'); await frames(); await page.mouse.up(); await page.keyboard.up('Shift');
+    assert.deepEqual(await rows(110), [[20, 100]]); assert.deepEqual(await rows(130), [[20, 100]]); assert.equal((await histLabels()).at(-1), 'Extend'); await typeCmd('u');
+    // Extend -> Trim, plus Shift for click fences and crossing windows, all use the same region action.
+    await page.keyboard.press('Escape'); await typeCmd('ex'); await drag(stroke); await page.keyboard.down('Shift'); await frames(); await faded(cuts);
+    await page.mouse.up(); await page.keyboard.up('Shift'); await cutRows(); await typeCmd('u'); await page.keyboard.press('Escape'); await typeCmd('tr');
+    await click(50, 145); await hover(50, 95); await page.keyboard.down('Shift'); await frames();
+    assert.deepEqual(await paths('dr-trim-ext'), await expected(grows)); await click(50, 95); await page.keyboard.press('Enter'); await page.keyboard.up('Shift');
+    assert.deepEqual(await rows(110), [[20, 100]]); await typeCmd('u');
+    await typeCmd('c'); await click(45, 140); await hover(55, 100); await page.keyboard.down('Shift'); await frames();
+    assert.deepEqual(await paths('dr-trim-ext'), await expected(grows)); await click(55, 100); await page.keyboard.up('Shift');
+    assert.deepEqual(await rows(130), [[20, 100]]); await typeCmd('u');
+    // Editing a source after the command ran invalidates the preview's old cutting intervals.
+    await page.keyboard.press('Escape'); await typeCmd('line'); await typeCmd('120,10'); await typeCmd('120,90'); await typeCmd(''); await page.keyboard.press('Escape');
+    await typeCmd('tr'); await drag([[140, 95], [140, 15]]);
+    await faded([dxfLine(120, 30, 160, 30), dxfLine(120, 70, 160, 70)]); await page.mouse.up();
+    assert.deepEqual(await rows(30), [[20, 120], [160, 220]]); await typeCmd('u'); await page.keyboard.press('Escape');
+    // Standard's edges stage and cut stage keep the old empty-space press-drag behavior.
+    await typeCmd('tr'); await typeCmd('o'); await typeCmd('s');
+    const standardBefore = (await savedDoc()).entities, standardHistory = (await histLabels()).length;
+    await drag(stroke); assert.equal(await t('trim-fence').count(), 0); await page.mouse.up();
+    assert.match(await prompt(), /cutting edge/); assert.deepEqual((await savedDoc()).entities, standardBefore);
+    await typeCmd(''); await drag(stroke); assert.equal(await t('trim-fence').count(), 0); await page.mouse.up();
+    assert.match(await prompt(), /^Click the part to cut away/); assert.deepEqual((await savedDoc()).entities, standardBefore); assert.equal((await histLabels()).length, standardHistory);
+    await page.keyboard.press('Escape');
+    // Layouts use the same object region preview while dragging.
+    await freshLayoutWithPlate();
+    for (const pts of [['50,600', '300,600'], ['150,550', '150,650']]) { await typeCmd('line'); for (const p of pts) await typeCmd(p); await typeCmd(''); }
+    await page.keyboard.press('Escape'); await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');
+    await drag([[250, 640], [250, 560]]); await faded([dxfLine(150, 600, 300, 600)]); await page.mouse.up();
+    await typeCmd('u'); await drag([[250, 640], [250, 560]]); await faded([dxfLine(150, 600, 300, 600)]);
+    await page.keyboard.press('Escape'); await page.mouse.up(); await clear(); await page.keyboard.press('Escape');
+    // Compare path trimming edits the linked source, with preview paths transformed into the selected snapshot.
+    await openGrips(writeDxf(raw), 'compare-region-155a3.dxf');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click(); await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');
+    await drag(stroke); await faded(cuts); await page.mouse.up(); await page.keyboard.press('Escape');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'compare-region-155a3.dxf' }) }).click();
+    await cutRows(); await page.keyboard.press('Control+z'); assert.deepEqual(await rows(30), [[20, 220]]);
+    await closeTabs(/./);
+  });
+
   await step('TODO 78: Trim preview', async () => {
     const workArea = async (name) => { await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frames(); };
     await menuItem('View', 'Theme: light'); await workArea('Follow app');

@@ -4236,7 +4236,7 @@ function paintOverlay(gesture = false) {
   paintQueued = requestAnimationFrame(() => {
     paintQueued = 0;
     canvasPreviewBounds = null;
-    drawOvl();
+    drawOvl(true);
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
@@ -6469,7 +6469,7 @@ function drawTyped(raw) {
 }
 
 /** The overlay over the drawing: the shape being drawn, its helper lines and the readout. */
-function drawOvl() {
+function drawOvl(paint = false) {
   if (!ui.ovl) return;
   const tab = curDoc(), d = state.tool === 'measure' && tab?.cmp ? tab : editable() || tab, H = state.sheetH, out = [], grips = [];
   let tip = null;
@@ -6494,8 +6494,8 @@ function drawOvl() {
     const only = DI.readOnlyLength(CT), dynamic = only ? null : cursorPoint(), typed = dynamic?.point && DI.hasTyped(cursorInput());
     tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, single: DI.isSingle(DI.inputMode(CT)) ? DI.inputMode(CT) : null, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
   }
-  if (d && !d.lay && modLive()) modOvl(d, out);
-  else if (d && d.lay && layModLive() && OBJ_MODS.includes(state.mod.kind)) modOvl(layObjDoc(d), out);
+  if (d && !d.lay && modLive()) modOvl(d, out, paint);
+  else if (d && d.lay && layModLive() && OBJ_MODS.includes(state.mod.kind)) modOvl(layObjDoc(d), out, paint);
   if (d && !d.lay && editable() === d) {
     const bt = balOvl(d, out, 1 / view.scale), tt = state.drawingRotate ? null : textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
     if (state.drawingRotate) drawingRotateOverlay(out);
@@ -6723,6 +6723,19 @@ function trimPreview(d, m, e) {
   if (c && c.e === e && c.edges === edges && c.ext === ext && c.quick === m.quick && c.p[0] === m.p[0] && c.p[1] === m.p[1]) return c.r;
   const r = previewEdit(e, edges, m.p, ext, m.quick);
   m.pv = { e, edges, ext, quick: m.quick, p: m.p, r };
+  return r;
+}
+/** The region preview is worked out only on paint, and kept until its geometry, action or source changes. */
+function trimRegionPreview(d, m, paint) {
+  if (!m.p) return null;
+  const pts = m.cross ? m.cross.p1 && [m.cross.p1, m.p] : [...(m.fence || m.path), m.p];
+  if (!pts) return null;
+  const key = JSON.stringify([!!m.cross, pts, [...(d.locked || [])]]), ext = (m.kind === 'extend') !== !!m.shift, edges = trimEdges(d, m), ix = edIndex(d), c = m.regionPv;
+  if (c && c.key === key && c.ext === ext && c.edges === edges && c.ix === ix && c.raw === d.raw.entities) return c.r;
+  if (!paint) { paintOverlay(); return null; }
+  // shortcut: preview only the first 300 crossed objects; raise the cap when region geometry can be worked out off the UI thread.
+  const r = trimRegionResult(d, m.cross ? MD.windowHit(...pts) : MD.fenceHit(pts), ext, 300);
+  m.regionPv = { key, ext, edges, ix, raw: d.raw.entities, r };
   return r;
 }
 
@@ -7025,7 +7038,7 @@ function modUp(d, was, p, shift, crossing) {
       if (!(ext ? isBoundary(ent) : MD.canModify(ent))) { note(`A ${word} edge is a line, arc, circle, ${ext ? 'ellipse, spline ' : ''}or polyline`); return; }
       m.edges = m.edges.includes(ent) ? m.edges.filter((e) => e !== ent) : [...m.edges, ent];
       note(`${m.edges.length} ${word} edge${m.edges.length === 1 ? '' : 's'}. Click more, or press Enter`); paintOverlay();
-    } else if (m.cross) trimCross(d, was.p);
+    } else if (m.cross) trimCross(d, was.p, shift);
     else if (m.erase) trimErasePick(d, was.p);
     else if (m.fence) trimFencePoint(d, was.p);
     else editDo(d, was.p, shift || was.shift);
@@ -7506,15 +7519,20 @@ function trimUndo(d) {
   if (!trimUndoable(d, m)) { note(`Nothing to undo in this ${m.kind === 'extend' ? 'Extend' : 'Trim'}`); return; }
   undo(d); renderCommand();
 }
-/** Quick Trim (or Extend) of a whole region (a fence or a crossing window): one undo step; what the edges were stays an edge as pieces. */
-function trimRegionDo(d, hit, what) {
-  const m = state.mod, ext = m.kind === 'extend', idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && (ext ? extendable : MD.canModify)(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
-  if (!ext && curveEdgesOnly(d, m)) { note("Ellipse and spline edges don't trim yet"); return false; }
-  const r = ext ? extendRegion(ents, trimEdges(d, m), hit) : MD.trimRegion(ents, trimEdges(d, m), hit);
+/** Dry run shared by region previews and commits: the same eligible objects, edges, kept pieces and removed / added pieces. */
+function trimRegionResult(d, hit, ext, limit = Infinity) {
+  const m = state.mod, idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && (ext ? extendable : MD.canModify)(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
+  if (!ext && curveEdgesOnly(d, m)) return { error: "Ellipse and spline edges don't trim yet" };
+  return { idxs, ext, ...(ext ? extendRegion(ents, trimEdges(d, m), hit, limit) : MD.trimRegion(ents, trimEdges(d, m), hit, limit)) };
+}
+/** Quick Trim (or Extend) of a whole region: apply the dry run in one undo step; cutting edges stay edges as pieces. */
+function trimRegionDo(d, hit, what, shift = state.mod.shift) {
+  const m = state.mod, r = trimRegionResult(d, hit, (m.kind === 'extend') !== !!shift), { idxs, ext } = r;
+  if (r.error) { note(r.error); return false; }
   if (!r.changed.length) { note(ext ? `${what} reaches nothing to extend` + (r.skipped ? ` (${r.skipped} object${r.skipped === 1 ? '' : 's'} with no boundary ahead or closed)` : '') : `${what} crosses nothing to trim` + (r.skipped ? ` (${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone)` : '')); return false; }
   const rep = new Map(r.changed.map((c) => [idxs[c.i], c.ents]));
   for (const c of r.changed) {
-    const ent = ents[c.i];
+    const ent = d.raw.entities[idxs[c.i]];
     if (m.edges.includes(ent)) { for (const q of c.ents) m.was.set(q, ent); m.edges = m.edges.flatMap((e) => (e === ent ? c.ents : [e])); }
   }
   view.fitted = false;
@@ -7553,18 +7571,16 @@ function trimPathUp(d, e) {
   m.path = null;
   const end = toDrawing(d, e.clientX, e.clientY), last = pts.at(-1);
   if (Math.hypot(end[0] - last[0], end[1] - last[1]) > 1e-9) pts.push(end);
-  const kind = m.kind;
-  if (e.shiftKey) m.kind = kind === 'extend' ? 'trim' : 'extend';             // Shift at release swaps Trim and Extend, as Shift + click does
-  try { if (pts.length > 1) trimRegionDo(d, MD.fenceHit(pts), 'The path'); } finally { m.kind = kind; }
+  if (pts.length > 1) trimRegionDo(d, MD.fenceHit(pts), 'The path', e.shiftKey);
   renderCommand(); paintOverlay();
 }
-function trimCross(d, p) {
+function trimCross(d, p, shift) {
   const m = state.mod;
   if (!m.cross.p1) { m.cross.p1 = p; note(modPrompt(d).prompt); renderCommand(); paintOverlay(); return; }
   const a = m.cross.p1;
   m.cross = null;
   if (Math.hypot(p[0] - a[0], p[1] - a[1]) < 1e-9) note('Crossing cancelled (the corners are the same point)');
-  else trimRegionDo(d, MD.windowHit(a, p), 'The crossing window');
+  else trimRegionDo(d, MD.windowHit(a, p), 'The crossing window', shift);
   renderCommand(); paintOverlay();
 }
 /** eRase: a click takes an object into the list (again = out); Enter deletes them all, one undo step, and Trim goes on. */
@@ -7644,7 +7660,7 @@ function previewShape(ent, f, fillet) {
   return c && { ...c, pts: c.pts.map((q) => [q[0] * f, q[1] * f]) };
 }
 /** The overlay of a modify tool: what it holds (dashed), the cutting edges, and the result before the click. */
-function modOvl(d, out) {
+function modOvl(d, out, paint) {
   const m = state.mod, H = state.sheetH, f = d.factor;
   modSync(d);
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, transform: drawingTransform(d), d: DR.svgPath(shape, H), 'data-testid': tid || null }));
@@ -7677,13 +7693,22 @@ function modOvl(d, out) {
       const a = m.cross.p1, b = m.p;
       if (a && b) [[a, [b[0], a[1]]], [[b[0], a[1]], b], [b, [a[0], b[1]]], [[a[0], b[1]], a]].forEach(([u, v]) => rub(u, v, 'trim-cross'));
     } else if (m.erase) for (const e of m.erase) addEnt(e, 'dr-trim-cut', 'trim-erase');
-    else if (m.stage === 'cut' && m.p) {
+    const markX = () => {
+      const k = 1 / view.scale, [x, y] = toSheetPt(d, m.p), u = 4 * k, cx = x + 12 * k, cy = y + 12 * k;
+      out.push(s('path', { class: 'dr-trim-x', d: `M${cx - u} ${cy - u}L${cx + u} ${cy + u}M${cx - u} ${cy + u}L${cx + u} ${cy - u}`, 'data-testid': 'trim-x' }));
+    };
+    if (m.fence || m.path || m.cross) {
+      const pv = trimRegionPreview(d, m, paint);
+      if (pv?.changed?.length) {
+        for (const e of pv.preview) addEnt(e, pv.ext ? 'dr-trim-ext' : 'dr-trim-fade', 'mod-preview');
+        markX();
+      }
+    } else if (!m.erase && m.stage === 'cut' && m.p) {
       // only the piece a click would cut, faded with a small red x by the pointer; Extend shows the stretch it would grow by
       const e = modEntAt(d, m.p), pv = e && (MD.canModify(e) || extendable(e)) ? trimPreview(d, m, e) : null;
       if (pv?.act === 'trim' && pv.cut) {
-        const k = 1 / view.scale, [x, y] = toSheetPt(d, m.p), u = 4 * k, cx = x + 12 * k, cy = y + 12 * k;
         addEnt(pv.cut, 'dr-trim-fade', 'mod-preview');
-        out.push(s('path', { class: 'dr-trim-x', d: `M${cx - u} ${cy - u}L${cx + u} ${cy + u}M${cx - u} ${cy + u}L${cx + u} ${cy - u}`, 'data-testid': 'trim-x' }));
+        markX();
       } else if (pv?.act === 'extend') addEnt(pv.add, 'dr-trim-ext', 'mod-preview');
     }
   } else if (m.stage === 'p1' || m.stage === 'p2' || m.stage === 'erase') {

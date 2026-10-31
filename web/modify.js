@@ -590,26 +590,28 @@ export function windowHit(a, b) {
 /**
  * Quick Trim of many at once: each piece of `ents` (the stretch between the `cutters`' crossings; an object nothing crosses is one piece)
  * for which hit(segs) is true goes, and what stays is joined into as few pieces as possible.
- * Returns { changed: [{ i, ents }] (ents = what is left of ents[i]), skipped } (a closed shape with one crossing is skipped).
+ * Returns { changed: [{ i, ents }] (kept pieces), preview: [cut pieces], skipped }. `limit` caps crossed objects for previews.
  */
-export function trimRegion(ents, cutters, hit) {
-  const changed = [], shapes = cutters.filter(canModify).map((e) => ({ e, sh: shapeOf(e, 1) }));
-  let skipped = 0;
+export function trimRegion(ents, cutters, hit, limit = Infinity) {
+  const changed = [], preview = [], shapes = cutters.filter(canModify).map((e) => ({ e, sh: shapeOf(e, 1) }));
+  let skipped = 0, crossed = 0;
   ents.forEach((ent, i) => {
-    if (!canModify(ent)) return;
+    if (crossed >= limit || !canModify(ent)) return;
     const P = pathOf(shapeOf(ent, 1)), n = P.segs.length;
     if (P.segs.some((s) => dist(s.a, s.b) < 1e-9) || !hit(P.segs)) return;
+    crossed++;
     const cs = cutParams(P, shapes.filter((c) => c.e !== ent).map((c) => c.sh));
     if (P.closed && cs.length === 1) { skipped++; return; }
     const bounds = !cs.length ? [0, n] : P.closed ? [...cs, cs[0] + n] : [0, ...cs, n];
     let pieces = bounds.slice(1).map((u, k) => [bounds[k], u]);
     const cut = pieces.map(([u0, u1]) => !!hit(subPath(P, u0, u1)));
     if (!cut.includes(true)) return;
+    preview.push(...pieces.filter((_, k) => cut[k]).map(([u0, u1]) => !cs.length ? shapeOf(ent, 1) : shapeOfPiece(subPath(P, u0, u1), P.type)).filter(Boolean).map((sh) => rebuilt(sh, ent)));
     const s = P.closed ? (cut.indexOf(true) + 1) % pieces.length : 0;           // a closed shape: start just after a cut piece, so no run wraps
     pieces = pieces.slice(s).concat(pieces.slice(0, s).map(([a, b]) => [a + n, b + n]));
     const keep = cut.slice(s).concat(cut.slice(0, s)).map((c) => !c), runs = [];
     pieces.forEach((pc, k) => { if (!keep[k]) return; if (k && keep[k - 1]) runs[runs.length - 1][1] = pc[1]; else runs.push([pc[0], pc[1]]); });
     changed.push({ i, ents: runs.map(([u0, u1]) => shapeOfPiece(subPath(P, u0, u1), P.type)).filter(Boolean).map((sh) => rebuilt(sh, ent)) });
   });
-  return { changed, skipped };
+  return { changed, preview, skipped };
 }
