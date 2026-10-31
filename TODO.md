@@ -265,9 +265,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
       155e4. Grips on text, ellipse, hatch and blocks (own grill: which of these the app edits today).
       155e5. Multifunctional grip hover menus (Lengthen, Add / Remove vertex, Convert to arc); Ctrl while copying = offset snap.
     155f. ✅ (built, 2026-10-28, Knight) Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).
-    155g. split (grilled, Rook S29): Offset options and curve support, 155g1-155g2 below.
+    155g. ✅ (built, Knight, Rook S29) Offset options and curve support, 155g1-155g2 below.
       155g1. ✅ (built, Knight, Rook S29) Offset Through, Erase, Layer, Multiple and Undo with AutoCAD's distance-first prompts; remembered options, one Undo per run, Drawing and Layout objects.
-      155g2. Offset ellipses and splines: result is a spline, as AutoCAD (own grill first).
+      155g2. ✅ (built, Knight, Rook S29) Offset ellipses and splines to degree-3 fit-point splines; 0.01-unit accuracy, fold refusal, DXF round trip, all Offset options and Layouts.
     155h. Fillet Polyline (all corners at once), Trim / No trim, circles and parallel lines (M).
     155i. Explode dimensions and hatches; block attributes as AutoCAD does (M).
     155j. ✅ (built, 2026-10-28, Knight) Mirror blocks, dimensions, hatches and partial ellipses; shared block inserts, private readable dimension blocks, MIRRHATCH 0, Erase Yes / No and one undo.

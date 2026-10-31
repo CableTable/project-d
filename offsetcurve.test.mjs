@@ -95,4 +95,23 @@ test('TODO 155g2: closed spline, fit-only spline and Multiple results can be off
   const closed = entity('SPLINE', [[70, 1], [71, 3], ...[[0, 0], [100, 0], [100, 80], [0, 80]].flatMap(([x, y]) => [[11, x], [21, y]])]);
   assert.equal(get(offset(closed, 5, [-10, 40]).r, 70) & 1, 1);
   assert.match(offsetEntity(closed, 60, [50, 40]).error, /nothing is left/);
+  const nonperiodic = spline([[0, 0], [100, 0], [100, 100], [0, 100]], [0, 0, 0, 0, 1, 1, 1, 1], true);
+  const withClosingEdge = offset(nonperiodic, 5, [-10, 50]);
+  assert.equal(get(withClosingEdge.r, 70) & 1, 1);
+  assert.ok(closest(shape(withClosingEdge), [-5, 50]).d < 0.01, 'the closing edge is offset as well');
+});
+
+test('TODO 155g2: a closed rational NURBS offsets with its weights, stays closed and refuses an inward fold', () => {
+  const cp = [[40, 0], [40, 40], [0, 40], [-40, 40], [-40, 0], [-40, -40], [0, -40], [40, -40], [40, 0]];
+  const ring = entity('SPLINE', [[70, 5], [71, 2], ...[0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 4].map((v) => [40, v]),
+    ...cp.flatMap(([x, y], i) => [[41, i % 2 ? Math.SQRT1_2 : 1], [10, x], [20, y], [30, 0]])]);
+  for (const side of [-1, 1]) {
+    const result = offset(ring, 5, [side > 0 ? 60 : 0, 0]), P = shape(result);
+    assert.equal(get(result.r, 70) & 1, 1);
+    for (let i = 0; i < 100; i++) {
+      const t = (i + 0.37) * Math.PI * 2 / 100, r = 40 + side * 5;
+      assert.ok(closest(P, [r * Math.cos(t), r * Math.sin(t)]).d <= 0.01);
+    }
+  }
+  assert.match(offsetEntity(ring, 41, [0, 0]).error, /nothing is left/);
 });

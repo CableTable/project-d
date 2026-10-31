@@ -52,7 +52,10 @@ export function offsetCurve(ent, d, at) {
   if (!sh || sh.pts.some((p) => !p.every(Number.isFinite))) return { error: 'The object has no offset path' };
   let pts = sh.pts.slice();
   if (sh.closed && length(sub(pts[0], pts.at(-1))) < 1e-9) pts.pop();
-  const n = sh.closed ? pts.length : pts.length - 1, evaluate = evaluator(ent, sh);
+  const n = sh.closed ? pts.length : pts.length - 1;
+  let evaluate = evaluator(ent, sh);
+  // A closed, nonperiodic spline also has the closing chord drawn by curveShape.
+  if (evaluate && sh.closed && !sh.q && length(sub(evaluate(0), evaluate(1))) > 1e-9) evaluate = null;
   if (n < 1) return { error: 'The object has no offset path' };
   let best = Infinity, near = 0, fraction = 0;
   for (let i = 0; i < n; i++) {
@@ -107,7 +110,7 @@ export function offsetCurve(ent, d, at) {
     if (folded) return gone;
     if (unresolved) return { error: 'The offset could not be worked out' };
   } else {
-    // Fit-only SPLINEs draw as chords here: intersect their adjacent normal offsets.
+    // Fit-only and nonperiodic closed SPLINEs draw as chords here: intersect adjacent normal offsets.
     const directions = Array.from({ length: n }, (_, i) => unit(sub(pts[(i + 1) % pts.length], pts[i])));
     out = pts.map((p, i) => {
       const a = directions[(i + n - 1) % n], b = directions[i % n];
