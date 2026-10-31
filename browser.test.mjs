@@ -10719,6 +10719,32 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 164a: hot MTEXT width grip + hot attribute grip: the preview shows the MTEXT reflowed in place (not moved whole), the commit agrees', async () => {
+    await menuItem('View', 'Theme: light');
+    await openGrips(g164aDoc(), 'g164a-hots.dxf');
+    await pick(30, 96, 4); await click(50, 40, { shift: true }); await frames(); await gripWhen(7);
+    const shiftGrip = async (id) => { const a = await gripBox(id); await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { await page.keyboard.up('Shift'); } await frames(); };
+    await shiftGrip('0:w'); await shiftGrip('1:a0');
+    const a = await gripBox('0:w'); await page.mouse.click(a.x, a.y); await frames();
+    const b = await at(100, 70);       // the vector (-40, -30): a whole move would put the text 30 mm lower
+    await page.mouse.move(b.x, b.y, { steps: 4 }); await frames();
+    const inkAt = async (x0, y0, x1, y1) => {       // pixels unlike the corner pixel in a drawing mm box
+      const p = await at(x0, y1), q = await at(x1, y0);
+      return t('drawing').evaluate((c, [p, q]) => {
+        const r = c.getBoundingClientRect(), sx = c.width / r.width, sy = c.height / r.height, w = Math.round((q.x - p.x) * sx), h = Math.round((q.y - p.y) * sy);
+        const d = c.getContext('2d').getImageData(Math.round((p.x - r.x) * sx), Math.round((p.y - r.y) * sy), w, h).data;
+        let n = 0; for (let i = 4; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) n++;
+        return n;
+      }, [p, q]);
+    };
+    assert.ok(await inkAt(22, 95, 50, 103) > 20, 'the first line of the MTEXT is still where it was in the preview');
+    mkdirSync('shots-164a', { recursive: true }); await page.screenshot({ path: 'shots-164a/hots-preview-light.png' });
+    await typeCmd('@-40,-30');
+    const doc = await savedDoc(), mt = entOf(doc, 0);
+    assert.ok(near(fieldOf(mt, 41), 80, 0.6) && near(fieldOf(mt, 20), 100, 1e-6), 'committed: width 80, same place: ' + [fieldOf(mt, 41), fieldOf(mt, 20)]);
+    await closeTabs(/./);
+  });
+
   await step('TODO 155e4: grips on text, ellipse, hatch and blocks: a justified text moved by its grip (both points), an ellipse major end dragged, a hatch moved by its centre, a block moved by its insertion grip, Rotate by a text grip via Space, and an ellipse on a layout', async () => {
     await menuItem('View', 'Theme: light');
     mkdirSync('shots-155e4', { recursive: true });

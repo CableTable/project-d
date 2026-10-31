@@ -326,6 +326,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 - [x] 168. **CI doc-only decision as a tested module** (S29 retro): move the `changes` job logic to `tools/ci-changes.mjs` `codeChanged(files, checkRuns)`, called from ci.yml, with a table test over every conclusion x job name x renamed files.
 - [ ] 169. **Pre-commit refuses mixed line endings** (S29 King retro): `tools/hooks/pre-commit` refuses an LF line in a CRLF file; check `core.hooksPath` is set in every worktree / clone.
 - [ ] 170. **Brief templates and merge=union** (S29 retro): brief skeletons in `tools/briefs/`, repeated brief lines moved into builder.md / reviewer.md / AGENTS.md; `.gitattributes` `DECISIONS.md merge=union`, `HISTORY.md merge=union` (not TODO.md).
+- [ ] 171. **Grips on Layout block objects** (S-M, 164a review): attribute grips there too; 164a left them off: blocks on Layouts have no grips.
 - [x] 159. **Command log smaller, AutoCAD look** (XS, his ask 2026-10-30, grill runs28/grill-159.md): the 3 fading lines at the bottom of the drawing as AutoCAD's: 11px, 16px rows, one grey translucent box each (~52 px tall, was ~85); fade timing and the floating bar unchanged.
 - [x] 158. Browser test hardening (session 26 retro, his OK 2026-10-28):
       158a. ✅ (built, Knight, 2026-10-28) `runStep` (browser.test.mjs ~95): after a passing step press Escape twice and fail with "<name> left a command running" if the prompt still reads "Specify" (check the prompt element first) (S).

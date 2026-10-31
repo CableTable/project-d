@@ -8456,13 +8456,14 @@ function gripAim(g, q, shift = false) {
 /** Stretch with several hot grips (155e3): every one moves by the vector base → q; an object with its middle / centre hot moves whole. g.nexts: object index → the changed entity. */
 function gripStretchHots(g, q, shift) {
   const v = [q[0] - g.base[0], q[1] - g.base[1]], nexts = new Map();
+  let part = false;                                               // an MTEXT's size grip or a block's attribute is hot: not moved whole (164a)
   g.label = null;
   for (const [e, ent] of g.ents) {
     const mine = g.hots.filter((x) => x.e === e);
     let cur = ent;
     // whole (Grill Q2: all grips hot = the object moves): never grip by grip, the first grip would land on the next one's old spot
     if (GR.wholeHot(ent, new Set(mine.map((x) => x.id)))) { if (v[0] || v[1]) cur = GR.translate(ent, v[0], v[1]); g.label = g.label || 'Move'; }
-    else for (const x of GR.stretchHots(ent, mine)) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
+    else { for (const x of GR.stretchHots(ent, mine)) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } } if ((ent.type === 'MTEXT' || ent.type === 'INSERT') && mine.some((x) => !GR.movesWhole(ent, x.id))) part = true; }
     if (cur !== ent) nexts.set(e, cur);
   }
   g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
@@ -8470,6 +8471,11 @@ function gripStretchHots(g, q, shift) {
   const es = new Set([...nexts].filter(([e, n]) => GR.noOutline(g.ents.get(e)) && !previewShape(n, 1)).map(([e]) => e)), fl = es.size && g.d.fl;
   g.move = fl ? { items: fl.items.filter((it) => es.has(it.e)), es, dx: v[0], dy: v[1] } : null;
   if (g.move) g.move.preview = { ...fl, items: g.move.items };
+  if (g.move && part) {                                           // the changed objects drawn as they will be (nexts already holds the moved ones), as gripAim does for one
+    const list = [...es], preview = flatten({ ...g.d.raw, entities: list.map((e) => nexts.get(e)) });
+    preview.items = preview.items.map((it) => ({ ...it, e: list[it.e] }));
+    g.move = { items: preview.items, preview, es, dx: 0, dy: 0 };
+  }
 }
 /** The hint added to the note when some hot objects would not change in a Stretch (they stay as they were). */
 const leftNote = (g) => (g.nexts && !g.mode && g.left ? (g.left === 1 ? '. 1 object would not change and was left as it was' : `. ${g.left} objects would not change and were left as they were`) : '');

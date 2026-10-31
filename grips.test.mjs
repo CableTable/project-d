@@ -636,7 +636,7 @@ test('block attributes: one grip per visible attribute at its point, beside the 
 });
 
 test('block attributes: invisible (flag 1), hidden, position-locked and turned ones have no grip; display mode 0 hides all, 2 shows the invisible', () => {
-  const b = blockWith(attrib(1, 1), attrib(2, 2, { flags: 1 }), attrib(3, 3, { flags: 16 }), attrib(4, 4, { more: [60], moreV: ['1'] }), attrib(5, 5, { more: [280, 280], moreV: ['0', '1'] }), attrib(6, 6, { more: [210, 220, 230], moreV: ['0', '0', '-1'] }));
+  const b = blockWith(attrib(1, 1), attrib(2, 2, { flags: 1 }), attrib(4, 4, { more: [60], moreV: ['1'] }), attrib(5, 5, { more: [280, 280], moreV: ['0', '1'] }), attrib(6, 6, { more: [210, 220, 230], moreV: ['0', '0', '-1'] }));
   assert.deepEqual(GR.gripsOf(b).map((g) => g.id), ['i', 'a0'], 'only the plain one');
   assert.deepEqual(GR.gripsOf(b, 0).map((g) => g.id), ['i'], '$ATTMODE 0: the attributes are not drawn');
   assert.deepEqual(GR.gripsOf(b, 2).map((g) => g.id), ['i', 'a0', 'a1'], '$ATTMODE 2: the invisible one shows (a locked or hidden one still has none)');

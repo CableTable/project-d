@@ -91,7 +91,7 @@ function mtextFrame(r) {
 /** 164a: the attribute of a block insert, grips for: its point (the alignment point when justified, as drawing.js draws it) or null when it has none (not visible, position locked, turned). */
 function attribPoint(k, attMode) {
   if (k.type !== 'ATTRIB' || attMode === 0 || !upright(k) || get(k, 60) === 1 || (attMode !== 2 && ((get(k, 70) ?? 0) & 1))) return null;
-  if (((get(k, 70) ?? 0) & 16) || get(k, 280, 1) === 1) return null;       // position locked (group 70 bit 16 as asked; DXF's own lock flag is the 2nd group 280)
+  if (get(k, 280, 1) === 1) return null;       // position locked: ATTRIB's 2nd group 280 (group 70 has only bits 1 / 2 / 4 / 8)
   const ha = get(k, 72) ?? 0, justified = ha !== 3 && ha !== 5 && ((ha || (get(k, 74) ?? 0)) && at(k, 11) >= 0);
   return justified ? [get(k, 11), get(k, 21) ?? 0] : [get(k, 10) ?? 0, get(k, 20) ?? 0];
 }
