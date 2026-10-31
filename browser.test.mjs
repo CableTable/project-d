@@ -2157,7 +2157,7 @@ try {
       assert.match(await p.locator('[data-tool=measure]').getAttribute('class'), /on/);
       await p.keyboard.press('Escape');
       await rb.getByRole('button', { name: 'Dimension', exact: true }).locator('.flyout').click();
-      assert.deepEqual(await q('ctx-menu').getByRole('menuitem').locator('.mi-l').allTextContents(), ['Aligned', 'Linear', 'Radius', 'Diameter', 'Angle']);
+      assert.deepEqual(await q('ctx-menu').getByRole('menuitem').locator('.mi-l').allTextContents(), ['Automatic', 'Aligned', 'Linear', 'Radius', 'Diameter', 'Angle']);
       await q('ctx-menu').getByRole('menuitem', { name: /^Radius/ }).click();
       assert.match(await p.locator('[data-tool=dimension]').getAttribute('title'), /Radius/);
       await p.keyboard.press('Escape');
