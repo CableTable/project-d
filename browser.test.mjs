@@ -14549,7 +14549,8 @@ try {
     await closeTabs(/./);
     const review = newDoc(4);
     addEntities(review, dxfPoly([[100, 0], [180, 0], [180, 3], [100, 3]], { closed: true }),
-      dxfPoly([[0, -10], [50, -5, 1], [50, 5], [0, 10, 1]], { closed: true }));
+      dxfPoly([[0, -10], [50, -5, 1], [50, 5], [0, 10, 1]], { closed: true }),
+      dxfLine(220, 0, 260, 0), dxfLine(280, 0, 320, 0));
     await openGrips(writeDxf(review), 'fillet-155h1-review.dxf');
     await typeCmd('f'); await typeCmd('r'); await typeCmd('2');
     await typeCmd('p'); await click(140, 0);
@@ -14558,6 +14559,10 @@ try {
     assert.equal(await message(), '1 line was filleted');
     const slot = GR.lwVertices((await savedDoc()).entities[1].r);
     assert.deepEqual([slot[0], slot.at(-1)].map(({ x, y, b }) => [x, y, b]), [[0, -10, 0], [0, 10, 1]], 'the diverging end keeps its arc and endpoints');
+    const collinearBefore = (await savedDoc()).entities;
+    await click(240, 0); await click(300, 0);
+    assert.match(await message(), /The lines are parallel: Fillet needs lines that meet/);
+    assert.deepEqual((await savedDoc()).entities, collinearBefore, 'collinear lines are refused without an edit');
     await page.keyboard.press('Escape'); await closeTabs(/./);
   });
 
@@ -14630,6 +14635,19 @@ try {
     assert.equal(doc.length, layoutBefore.length + 1); assert.deepEqual(record(doc.find((e) => e.type === 'CIRCLE')), record(circle));
     await page.keyboard.press('Escape'); await undo();
     assert.deepEqual((await savedDoc()).entities, layoutBefore, 'Layout circle / line is one Ctrl+Z');
+    await typeCmd('line'); await typeCmd('220,200'); await typeCmd('500,200'); await typeCmd('');
+    const parallelBefore = (await savedDoc()).entities;
+    await typeCmd('f'); await click(290, 100); await hoverPreview(400, 200);
+    assert.equal(await t('mod-preview').count(), 3, 'Layout previews parallel line fillets');
+    await click(400, 200); doc = (await savedDoc()).entities;
+    assert.equal(doc.length, parallelBefore.length + 1);
+    const lines = doc.filter((e) => e.type === 'LINE'), arc = doc.at(-1);
+    assert.deepEqual(lines.map((e) => [10, 20, 11, 21].map((c) => fieldOf(e, c))), [[100, 100, 300, 100], [220, 200, 300, 200]], 'Layout keeps the body side of both parallel lines');
+    assert.equal(arc.type, 'ARC');
+    assert.deepEqual([10, 20, 40].map((c) => fieldOf(arc, c)), [300, 150, 50]);
+    assert.equal((fieldOf(arc, 51) - fieldOf(arc, 50) + 360) % 360, 180);
+    await page.keyboard.press('Escape'); await undo();
+    assert.deepEqual((await savedDoc()).entities, parallelBefore, 'Layout parallel lines are one Ctrl+Z');
     await closeTabs(/./);
   });
 

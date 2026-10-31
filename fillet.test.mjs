@@ -152,6 +152,16 @@ test('parallel lines: a gap-sized semicircle at the first picked end, both order
   assert.match(filletEntities(W.line(0, 0, 10, 0), [1, 0], W.line(0, 1e-7, 10, 1e-7), [1, 1e-7], 5).error, /precision/);
 });
 
+test('parallel lines: an interior contact keeps the second line on the first line\'s body side, both pick orders', () => {
+  const a = [[0, 0], [10, 0]], b = [[6, 5], [20, 5]];
+  const f = filletLines(a, [9, 0], b, [7, 5], 1);
+  assert.deepEqual(f.l1, a); assert.deepEqual(f.l2, [[6, 5], [10, 5]]);
+  tangent(filletEntities(W.line(0, 0, 10, 0), [9, 0], W.line(6, 5, 20, 5), [7, 5], 1).ents, 2.5);
+  const g = filletLines(b, [7, 5], a, [9, 0], 1);
+  assert.deepEqual(g.l1, b); assert.deepEqual(g.l2, [[6, 0], [10, 0]]);
+  tangent(filletEntities(W.line(6, 5, 20, 5), [7, 5], W.line(0, 0, 10, 0), [9, 0], 1).ents, 2.5);
+});
+
 test('OCS -Z circle: solve in drawing coordinates and keep the original circle record', () => {
   const line = W.line(-20, 0, 20, 0), circle = W.circle(3, 10, 5), mirrored = W.circle(-3, 10, 5);
   mirrored.r.c.push(210, 220, 230); mirrored.r.v.push('0', '0', '-1');
