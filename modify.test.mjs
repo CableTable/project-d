@@ -61,7 +61,23 @@ test('Offset Through uses the picked line or circular segment, retaining editabl
     const corner = M.offsetEntity(rect(0, 0, 100, 50), null, at);
     near(M.closest(M.pathOf(S(corner.ent)), at).d, 0);
   }
-  assert.match(M.offsetEntity(line(0, 0, 100, 0), null, [40, 0]).error, /more than 0/);
+  assert.equal(M.offsetEntity(circle(0, 0, 10), null, [0, 0]).error, "The through point is the circle's centre");
+  for (const ent of [line(0, 0, 100, 0), circle(40, 10, 10), arc(40, 10, 10, 180, 360), rect(0, 0, 100, 50)]) {
+    assert.equal(M.offsetEntity(ent, null, [40, 0]).error, 'The through point is on the object');
+  }
+});
+
+test('Offset Through past an open polyline end matches AutoCAD 2027', () => {
+  const source = lwpoly([[0, 0], [100, 0], [100, 50]]);
+  for (const [at, points] of [
+    [[-20, 5], [[0, 5], [95, 5], [95, 50]]],
+    [[110, 70], [[0, -10], [110, -10], [110, 50]]],
+  ]) {
+    const result = M.offsetEntity(source, null, at);
+    assert.ok(result.ent, result.error);
+    S(result.ent).pts.forEach((p, i) => nearPt(p, points[i]));
+    assert.equal(S(result.ent).pts.length, points.length);
+  }
 });
 
 test('Offset a circle: out or in by the side picked; more than the radius is refused', () => {

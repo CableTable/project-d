@@ -539,6 +539,8 @@ export function offsetEntity(ent, d, at) {
   if (d === null) {
     const P = pathOf(sh), near = closest(P, at), s = P.segs[near.index], g = s && geo(s);
     if (!g) return { error: 'The object has no offset path' };
+    if (sh.t === 'circle' && dist(at, sh.c) < 1e-9) return { error: "The through point is the circle's centre" };
+    if (near.d < 1e-9) return { error: 'The through point is on the object' };
     const distance = (g) => g.line ? Math.abs(cross(g.u, sub(at, g.a))) : Math.abs(dist(at, g.c) - g.r);
     d = distance(g);
     if (sh.t === 'poly') {
@@ -552,7 +554,8 @@ export function offsetEntity(ent, d, at) {
         if (r.shape && closest(pathOf(r.shape), at).d < 1e-6) return { ent: rebuilt(r.shape, ent) };
         error ||= r.error;
       }
-      return { error: error || 'The through point cannot lie on an offset of this polyline' };
+      if (P.closed) return { error: error || 'The through point cannot lie on an offset of this polyline' };
+      // Past an open end, AutoCAD uses the nearest segment's distance and side even when the copy misses the pick.
     }
   }
   const r = offsetShape(sh, d, at);

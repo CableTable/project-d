@@ -6698,7 +6698,7 @@ const mmText = (v) => String(+Number(v).toFixed(3));
 function modSync(d) {
   const m = state.mod, have = new Set(d.raw.entities);
   if (m.kind === 'offset' && m.offsetRaw && (m.offsetRaw !== d.raw.entities || m.offsetRevision !== historyOf(d.vlay || d).revision)) {
-    m.offsetSteps = []; m.offsetRaw = null; m.multiple = false; m.ent = null; m.stage = 'obj';
+    m.offsetSteps = []; m.offsetRaw = null; m.offsetSource = null; m.multiple = false; m.ent = null; m.stage = 'obj';
   }
   if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side' || m.stage === 'second') m.stage = 'obj'; }
   // an undone Trim brings the original entity back, not the pieces it made: an edge that is gone is swapped for the object it was cut from
@@ -6821,7 +6821,7 @@ function modEnter(d) {
   if (m.kind === 'offset') {
     if (m.stage === 'distance') { m.stage = 'obj'; note(offsetPrompt(m)); }
     else if (m.stage === 'erase' || m.stage === 'layer') { m.stage = 'distance'; note(offsetPrompt(m)); }
-    else { setTool('select'); note('Offset ended'); }
+    else offsetEnd(d);
     paintOverlay(); return;
   }
   if (m.kind === 'fillet') { modEsc(d); return; }
@@ -7402,7 +7402,7 @@ function offsetTyped(d, raw, c) {
     }
   } else if (m.stage === 'erase' && /^(y|yes|n|no)$/.test(c)) { m.eraseSource = c.startsWith('y'); m.stage = 'distance'; }
   else if (m.stage === 'layer' && /^(c|current|s|source)$/.test(c)) { m.layer = c.startsWith('c') ? 'Current' : 'Source'; m.stage = 'distance'; }
-  else if (['obj', 'side'].includes(m.stage) && /^(e|exit)$/.test(c)) { setTool('select'); note('Offset ended'); return true; }
+  else if (['obj', 'side'].includes(m.stage) && /^(e|exit)$/.test(c)) { offsetEnd(d); return true; }
   else if (['obj', 'side'].includes(m.stage) && /^(u|undo)$/.test(c)) { offsetUndo(d); return true; }
   else if (m.stage === 'side' && /^(m|multiple)$/.test(c)) m.multiple = true;
   else if (m.stage === 'side') {
@@ -7421,18 +7421,35 @@ function offsetDo(d, p) {
   const r = MD.offsetEntity(m.ent, offDistU(d), p);
   if (r.error) { note(r.error); return; }
   const tab = d.vlay || d, snap = d.vlay ? laySnap(tab.lay) : snapshotOf(d), index = d.raw.entities.indexOf(m.ent);
-  if (m.layer === 'Current') r.ent = PR.withLayer(r.ent, curLayerName(tab));
-  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || e !== m.ent), r.ent], blocks: d.raw.blocks };
+  if (m.layer === 'Current') {
+    const name = curLayerName(tab);
+    if (!d.vlay && !d.raw.layers[name]) addLayer(d.raw, name);
+    r.ent = PR.withLayer(r.ent, name);
+  }
+  if (m.multiple && m.eraseSource && m.offsetSource == null) m.offsetSource = index;
+  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== m.ent), r.ent], blocks: d.raw.blocks };
   view.fitted = false; m.offsetRaw = null;
   if (!m.offsetSteps.length) commit(d, next, 'Offset');
   else if (d.vlay) { LD.objectCommit(tab.lay, d, next.entities, () => 'o' + uid()); touch(); update(); }
   else restore(d, next);
-  m.offsetSteps.push({ snap, index });
+  m.offsetSteps.push({ snap });
   const now = mdoc(tab);
-  m.ent = m.multiple ? r.ent : null; m.stage = m.multiple ? 'side' : 'obj';
+  m.ent = m.multiple ? now.raw.entities.at(-1) : null; m.stage = m.multiple ? 'side' : 'obj';
   m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
   state.pointLast = p.slice(0, 2);
   note(offsetPrompt(m)); paintOverlay();
+}
+/** Multiple keeps every copy; only a completed run erases its source, in the same Undo step. */
+function offsetEnd(d) {
+  modSync(d);
+  const m = state.mod;
+  if (m.offsetSource != null && m.offsetSteps.length) {
+    const entities = d.raw.entities.filter((_, i) => i !== m.offsetSource);
+    m.offsetRaw = null;
+    if (d.vlay) { LD.objectCommit(d.vlay.lay, d, entities, () => 'o' + uid()); touch(); update(); }
+    else restore(d, { entities, blocks: d.raw.blocks });
+  }
+  setTool('select'); note('Offset ended');
 }
 function offsetUndo(d) {
   modSync(d);
@@ -7444,7 +7461,7 @@ function offsetUndo(d) {
   else if (d.vlay) layRestore(tab, step.snap);
   else restore(d, step.snap);
   const now = mdoc(tab);
-  m.ent = m.multiple ? now.raw.entities[step.index] : null; m.stage = m.multiple && m.ent ? 'side' : 'obj';
+  m.offsetSource = null; m.multiple = false; m.ent = null; m.stage = 'obj';
   m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
   note(offsetPrompt(m)); paintOverlay();
 }

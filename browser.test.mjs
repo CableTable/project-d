@@ -11718,7 +11718,7 @@ try {
     assert.equal(await entCount(), 5);
     doc = await savedDoc(); e = doc.entities[4];
     assert.equal(e.type, 'CIRCLE'); assert.equal(fieldOf(e, 40), 5);
-    // more than the radius: refused, nothing added, the circle is still held for another side
+    // more than the radius: refused, nothing added; a fresh run holds the circle for another side
     await page.keyboard.press('Escape'); await typeCmd('offset'); await typeCmd('25');
     await click(190, 100); await click(165, 100);
     assert.match(await histLine(), /more than the radius/);
@@ -11789,9 +11789,25 @@ try {
     let doc = await savedDoc();
     assert.deepEqual(lineYs(doc), [40], 'Erase Yes removes the source');
     assert.equal(layerOf(doc.entities.find((e) => e.type === 'LINE')), '0', 'Current is used instead of Cut');
+    await click(70, 40); await typeCmd('70,60');
+    assert.deepEqual(lineYs(await savedDoc()), [50], 'without Multiple, offsetting a copy erases that copy');
+    await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [40]);
     await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [30], 'U restores an erased source');
     await typeCmd('u'); assert.match(await histLine(), /Nothing to undo in this Offset/);
     await typeCmd('exit'); assert.deepEqual(await histLabels(), beforeEsc);
+    for (const finish of ['Enter', 'Escape', 'Undo']) {
+      await start(); await typeCmd('10'); await click(70, 30); await typeCmd('m');
+      for (const y of [50, 60, 70]) await click(70, y);
+      assert.deepEqual(lineYs(await savedDoc()), [30, 40, 50, 60], 'Drawing Erase Multiple keeps the source and every copy until Enter');
+      if (finish === 'Undo') {
+        await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [30, 40, 50]);
+        assert.match(await prompt(), /Select object to offset/); await end();
+      } else if (finish === 'Enter') await end();
+      else await page.keyboard.press('Escape');
+      assert.deepEqual(lineYs(await savedDoc()), finish === 'Enter' ? [40, 50, 60] : finish === 'Undo' ? [30, 40, 50] : [30, 40, 50, 60], 'only Enter erases the Drawing source');
+      assert.equal((await histLabels()).length, beforeEsc.length + 1);
+      await undo(); assert.deepEqual(lineYs(await savedDoc()), [30], 'one Undo restores the Drawing source and removes all copies');
+    }
     await start(); await typeCmd('e'); await typeCmd('n'); await typeCmd('l'); await typeCmd('s'); await typeCmd('10');
     await click(70, 30); await typeCmd('m');
     for (const y of [45, 55, 65]) await click(70, y);
@@ -11827,9 +11843,19 @@ try {
     await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
     await start(); await typeCmd('10'); await click(150, 300); await typeCmd('m');
     for (const y of [320, 330, 340]) await click(150, y);
-    assert.deepEqual(lineYs(await savedDoc()), [330], 'Erase Multiple follows the replacement, not the last Layout object');
-    await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [320]);
-    await end(); await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
+    assert.deepEqual(lineYs(await savedDoc()), [300, 310, 320, 330], 'Layout Erase Multiple keeps the source and every copy until Enter');
+    await end(); assert.deepEqual(lineYs(await savedDoc()), [310, 320, 330], 'Enter erases only the Layout source');
+    await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
+    await start(); await typeCmd('10'); await click(150, 300); await typeCmd('m');
+    for (const y of [320, 330, 340]) await click(150, y);
+    await page.keyboard.press('Escape');
+    assert.deepEqual(lineYs(await savedDoc()), [300, 310, 320, 330], 'Esc keeps the Layout source and every copy');
+    await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
+    await start(); await typeCmd('10'); await click(150, 300); await typeCmd('m');
+    for (const y of [320, 330, 340]) await click(150, y);
+    await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [300, 310, 320]);
+    await end(); assert.deepEqual(lineYs(await savedDoc()), [300, 310, 320], 'U leaves the Layout source after Enter');
+    await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
     await start(); await typeCmd('e'); await typeCmd('n'); await typeCmd('10');
     await click(150, 300); await typeCmd('multiple');
     for (const y of [320, 330, 340]) await click(150, y);
