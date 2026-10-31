@@ -109,6 +109,10 @@ usage-agent-install.ps1.
    A ticket is one tool family or one command, plus its save / reopen; a brief listing more than ~5 behaviours is two
    tickets (session 26 retro: every King build peaked 171k-216k). Count behaviours, not numbered lines: each transform family, output format and follow trigger is one (156b2c1: 5 lines, ~9 behaviours, peak 217k). Builders make a WIP commit of each passing slice
    (said in the report's first line), so a cut-off run loses nothing.
+   Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it);
+   when an item changes existing behaviour, name the old browser steps that check it (`grep -n` in browser.test.mjs) and say to update
+   them in the same commit; tests are `npm.cmd test` and the item's steps by argument (`node browser.test.mjs <port> '<name>'`), never an
+   env var and never the full suite.
 **Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. This week (49% on Tue 21:45):
 by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. From next week: 14% × k by the end of day k
 after the reset, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
@@ -281,7 +285,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end).
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
 
-- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, runs the **retro** first (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
+- **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, launches the **retro** on Bishop first (never inline) (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
   head commit asks his OK to merge. On his yes, and only once `runs<N>/retro.out` exists (session 25 retro): `gh pr merge <n> --merge --match-head-commit <sha>`, check it merged
   (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then hand over to the next Rook session
   (the template below filled in as `runs<N+1>/resume-rook.txt`: branch, next items, open questions) instead of handing him a prompt.
@@ -289,14 +293,15 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   runs `Project D extras/start-rook.ps1`, which reads `Project D extras/rook-next.txt` (line 1 session uuid, 2 name `Rook S<n>`,
   3 resume file): transcript found -> `--resume`, else a fresh `--session-id` told to read the resume file. Each Rook session
   writes its own uuid there at start (a reboot resumes it); at handover it writes a NEW uuid + the next resume file, then
-  either the PC shuts down (next logon starts it) or Rook launches the same script with Start-Process (never start_session). No scheduled or polled CI checks.
-  **CI monitor** (his call, 2026-10-21): right after opening the session PR, bind it (ccd_pr `get_status` / `bind_pr`) and turn
-  on its CI monitor (`set_monitor`); on green with his merge OK, merge at once; on red, send the failing step to a Bishop fix round. Every Rook turn re-reads the whole conversation, so a
-  long one costs the most.
+  either the PC shuts down (next logon starts it) or Rook starts `Rook.lnk` (Windows Terminal; S28 retro: `Start-Process powershell.exe` on the script started no session; untested guess) and checks the new uuid's `.jsonl` appears within 60 s (never start_session).
   **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min,
   re-arm on expiry). It prints each finished job and ends with `RUN <id> success|failure`. Never pipe to `jq`: it is not installed
   here, so such a watch stays silent forever (two silent monitors on PR #25); use gh's own `--jq`.
   Push again only after the `RUN` line: a `build: success` line is one job, and a new push cancels the running tests (S28).
+  Every Rook turn re-reads the whole conversation, so each CI wake-up costs; say nothing on a job that passed.
+  **Probes (S28 retro):** a change to `tools/`, `.github/` or a test helper gets a `workflow_dispatch` probe (`gh workflow run <file> --ref <probe branch>`)
+  before it goes onto the session branch (Linux CI has no git history and no Windows paths). A 2nd red in a step the change does not
+  touch gets a probe first; revert only if the probe is red too. Until a probe confirms a cause, tell him "likely cause".
 - **Context limit 250k** (his call, 2026-10-21): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
   automatically there. If it ever doesn't fire, Rook finishes its step at ~250k and asks him to type `/compact`.
 - **Bishop-support** (his call, 2026-10-21): an interactive claude2 (Sonnet) in a Terminal tab answers his questions while he
@@ -305,7 +310,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   Status current (in TODO → building → built → merged → checked in exe); Bishop-support never edits the repo.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
   `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
-- Rook never opens screenshots or images (Bishop-look reports in lines), never runs the test suites (the review does),
+- Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head (builders run `npm.cmd test` and their item's steps; reviewers unit only); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
   never reads skill or reference docs it has read before in the session.
 - While runs go, Rook ends its turn and waits for the notice; no status messages in between.
 - The usage page is https://project-d-usage.web.app (Firebase, his Google account only; session 12). The PC agent
