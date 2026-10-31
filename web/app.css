@@ -656,6 +656,7 @@ input.cursor-field[aria-invalid='true'] { border-color: #dc2626; outline: 1px so
 .ovl .gr-spoke { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; fill: none; vector-effect: non-scaling-stroke; }
 .ovl .gr-ghost { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
 .ovl .gr-new { fill: none; stroke: var(--partline); stroke-width: 1.6; stroke-dasharray: 6 3; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.ovl .gr-mode { fill: none; stroke: var(--partline); stroke-width: 1; opacity: .65; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 
 /* Properties (TODO 24, 25; R5b Option B): the section at the top of the Drawing panel */
 .panel section.propbox { border-bottom: 1px solid var(--line); }

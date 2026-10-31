@@ -90,6 +90,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Grid cell**: One row-and-column position in a Step and repeat grid, holding one copy of the part. Where: `TODO.md`, item 127. Avoid: Snap grid square.
 
+**Grip mode**: What a hot grip does: Stretch (the first), Move, Rotate, Scale or Mirror, cycled with Space or Enter (AutoCAD's way); the last four act on every selected object about the hot grip, and a click or a typed angle, factor or point puts the result down and ends the grip edit. Where: `web/gripmode.js`, `DECISIONS.md`, Grip modes. Avoid: Gripper.
+
 **Gripper**: A reserved band in mm on any sheet edge that parts must keep clear of, with zero meaning none. Where: `DECISIONS.md`, Gripper. Avoid: Grip; an extra margin added to a gripper.
 
 **Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius; none show when more than 200 shapes are selected (`MAX_SELECTED`), when their total handles exceed 5000 (`MAX_GRIPS`), or on the immediate Text to outlines result selection. Selecting those outlines again enables their grips within both limits. Where: `DECISIONS.md`, Grips. Avoid: Grippers.

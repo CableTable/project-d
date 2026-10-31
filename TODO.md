@@ -258,7 +258,12 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     155b. ❌ (won't do: he keeps our decided aliases, 2026-10-27) Command aliases to acad.pgp: M Move, P Pan, D Dimstyle, S Stretch, E Erase, R Redraw, CP Copy, DLI / DAL; revisit the deliberate M = Measure and MV = Move (S–M).
     155c. ✅ (built, 2026-10-28, Knight) A click on an unselected object selects it; Shift / Ctrl toggle per object. Clicking a selected object keeps the whole selection and toggles corner rotate arrows (156a); to pick one, click empty space first or Shift+click the others away. Right-click → Select connected picks the joined chain.
     155d. ✅ (built, 2026-10-28, King) Rotate and Scale Reference option (M). A placed part's Rotate in a layout takes typed degrees only (no picked points).
-    155e. Grip modes: Space / Enter cycles Stretch, Move, Rotate, Scale, Mirror; C copy, B base point, grip menu; Shift for several hot grips; grips on text, ellipse, hatch and blocks (M–L, split when grilled).
+    155e. split (grilled, Rook S29): 155e1-155e5 below. Grip modes as AutoCAD (Pawn read the help, tested in his AutoCAD 2027, runs29/grill-155e.md).
+      155e1. ✅ (built, King, Rook S29) Mode cycle: Space / Enter on a hot grip goes Stretch, Move, Rotate, Scale, Mirror; AutoCAD's prompts; the last four act on every selected object about the hot grip, preview live, typed angle / factor / point; one undo step by mode.
+      155e2. Options in a grip mode: B base point, C copy (several copies, Enter ends; U steps back one copy), Reference in Rotate / Scale, Ctrl-click = copy.
+      155e3. Shift-click several hot grips (one vector moves them all); the right-click grip menu (Enter, the 5 modes, Base Point, Copy, Reference, Undo, Properties, Quick Select, Exit).
+      155e4. Grips on text, ellipse, hatch and blocks (own grill: which of these the app edits today).
+      155e5. Multifunctional grip hover menus (Lengthen, Add / Remove vertex, Convert to arc); Ctrl while copying = offset snap.
     155f. ✅ (built, 2026-10-28, Knight) Copy Displacement and mOde options; Enter at the second point uses the first point as the displacement (Move and Copy) (S–M).
     155g. Offset Through, Erase, Layer and Multiple options; offset ellipses and splines (M).
     155h. Fillet Polyline (all corners at once), Trim / No trim, circles and parallel lines (M).

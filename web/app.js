@@ -39,6 +39,7 @@ import * as TX from './text.js';
 import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
+import * as GM from './gripmode.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
@@ -4605,7 +4606,12 @@ function renderCommand() {
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
-  if (state.grip && (ed || lay)) { const gg = state.grip; ui.hist.textContent = `Command: ${GR.commandOf(gg.ent, gg.id)}   ${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = gg.id.startsWith('e') ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):'; return; }
+  if (state.grip && (ed || lay)) {
+    const gg = state.grip, M = GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
+    ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
+    ui.prompt.textContent = gg.id.startsWith('e') && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) : 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
+    return;
+  }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
   if (layModLive()) { const mp = modPrompt(curDoc()); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
@@ -5379,10 +5385,10 @@ function layObjCommit(v, next, label) {
   LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid());
   touch(); update();
 }
-/** A grip edit of one layout object (entity `ent` of layObjDoc `v` becomes `next`): the same object, in one undo step. False when nothing is left of it. */
-function layGripCommit(v, ent, next, label) {
+/** A grip edit of layout objects (each [entity of layObjDoc `v`, what it becomes]): the same objects, in one undo step. False (and nothing changed) when nothing is left of one. */
+function layGripCommit(v, pairs, label) {
   const d = v.vlay, snap = laySnap(d.lay);
-  if (!LD.objectReplace(d.lay, v, ent, next, () => 'o' + uid())) return false;
+  for (const [k, [ent, next]] of pairs.entries()) if (!LD.objectReplace(d.lay, v, ent, next, () => 'o' + uid())) { if (k) layRestore(d, snap, d.dirty); return false; }
   pushLay(d, snap, '', label);
   touch(); update();
   return true;
@@ -6823,6 +6829,7 @@ function modEnter(d) {
 /** The command line while a modify tool is on. True when it took the text. */
 /** Words the active modify tool takes itself, so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
+  if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
   const m = state.mod;
   if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
   if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
@@ -8058,7 +8065,7 @@ function gripAt(d, cx, cy) {
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
   let q = snapPoint(d, p, g.e);                                  // not to the shape being dragged: its old place is going away
-  const ref = GR.refPoint(g.ent, g.id), base = ref && !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
+  const ref = g.mode ? g.base : GR.refPoint(g.ent, g.id), base = ref && (g.mode || !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC') ? ref : null, straight = !!((shift || state.ortho) && base);       // a grip mode works from the hot grip itself
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
@@ -8068,8 +8075,22 @@ function gripPick(g, cx, cy, shift, hover) {
 /** The grip's drag is now at q: what the shape becomes. */
 function gripAim(g, q, shift = false) {
   g.to = q;
+  if (g.mode) { g.val = GM.valueAt(GM.MODES[g.mode], g.base, q); gripModeRun(g); return; }
   const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]], shift);
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
+}
+/** Grip modes Move / Rotate / Scale / Mirror (155e1): what the mode does to the selection at value g.val → g.res (the drawing after it), g.err why not. */
+function gripModeRun(g) {
+  g.res = null; g.err = null; g.next = null;
+  try { g.res = GM.apply(g.d.raw, g.sel, GM.MODES[g.mode], g.base, g.val); } catch (err) { g.err = err.message; }
+}
+/** Space or Enter on a hot grip: the next grip mode, AutoCAD's header in the history and its prompt (the preview follows the pointer). */
+function gripCycle() {
+  const g = state.grip;
+  if (!g) return;
+  g.mode = GM.cycle(g.mode); g.res = null; g.err = null; g.next = null; g.val = null; g.to = null;
+  if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
+  state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
 }
 /** The grip under the pointer turns the hover colour (GRIPHOVER); only the overlay is redrawn, and only when the grip under the pointer changes. */
 function gripHoverAt(e) {
@@ -8085,7 +8106,7 @@ function gripDown(e) {
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
-  state.grip = { d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel) };
+  state.grip = { d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y] };
   state.msg = null; renderCommand(); paintOverlay();
   return true;
 }
@@ -8102,7 +8123,7 @@ function gripUp(e) {
   if (!g || g.hot) return;
   if (g.moved) { gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return; }
   g.hot = true; g.cursor = [e.clientX, e.clientY];                  // a click on the grip: it is hot until the next click puts it down
-  renderCommand(); paintOverlay();
+  ui.cmdUI.message(GM.header('STRETCH')); renderCommand(); paintOverlay();
 }
 function gripCancel() { state.grip = null; trackClear(); renderCommand(); paintOverlay(); }
 /** Puts the dragged grip down: one undo step, named for what it did; the selection stays. */
@@ -8110,10 +8131,11 @@ function gripCommit() {
   const g = state.grip;
   state.grip = null; trackClear();
   if (!g) return;
+  if (g.mode) { gripModeCommit(g); return; }
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
   const d = g.d, label = g.label, text = GR.readoutOf(g.ent, g.id, g.next, d.factor);
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, g.ent, g.next, label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  if (d.vlay) { if (!layGripCommit(d, [[g.ent, g.next]], label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
     commit(d, g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
     setSel(d, g.sel);
@@ -8125,8 +8147,16 @@ function gripTyped(raw) {
   const g = state.grip, d = g && g.d;
   if (!g || !d) return;
   const f = d.factor, inp = DR.parseInput(raw);
-  if (inp.kind === 'enter') { if (g.next) gripCommit(); else gripCancel(); return; }
-  if (inp.kind === 'word') { if (inp.w === 'x' || inp.w === 'exit' || inp.w === 'esc') { gripCancel(); note('Stretch cancelled'); } else note(`"${inp.w}" is not an option here: type x,y, @dx,dy or a length, or press Esc`); return; }
+  if (inp.kind === 'enter') { gripCycle(); return; }                // Enter on an empty bar cycles the grip mode, as Space (AutoCAD)
+  if (inp.kind === 'word') {
+    const word = inp.w, M = GM.MODES[g.mode];
+    if (word === 'x' || word === 'exit' || word === 'esc') { gripCancel(); note(`${GM.NAMES[M]} cancelled`); }
+    else if (['b', 'base', 'c', 'copy', 'r', 'reference'].includes(word)) note('Base point, Copy and Reference come in TODO 155e2');
+    else if (word === 'u' || word === 'undo') note('Nothing to undo yet');
+    else note(`"${word}" is not an option here: type ${g.mode ? 'a value or a point' : 'x,y, @dx,dy or a length'}, or press Esc`);
+    return;
+  }
+  if (g.mode) { gripModeTyped(g, inp, raw); return; }
   if (g.id.startsWith('e')) { note('Drag the edge to resize; typing a size is not available yet'); return; }
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
   const grip = GR.gripsOf(g.ent).find((x) => x.id === g.id), origMm = [grip.x * f, grip.y * f], refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
@@ -8140,6 +8170,40 @@ function gripTyped(raw) {
   gripAim(g, [mm[0] / f, mm[1] / f]);
   gripCommit();
 }
+/** Typed in a grip mode: an angle (Rotate) or factor (Scale) or a point (x,y, @dx,dy, @len<ang), or a length the way the rubber band points (Move, Mirror). */
+function gripModeTyped(g, inp, raw) {
+  const f = g.d.factor, M = GM.MODES[g.mode], baseMm = g.base.map((v) => v * f);
+  let v;
+  if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type ${M === 'ROTATE' ? 'an angle' : M === 'SCALE' ? 'a factor' : 'x,y or @dx,dy'}`); return; }
+  if (inp.kind === 'len' && (M === 'ROTATE' || M === 'SCALE')) v = inp.v;
+  else {
+    const mm = inp.kind === 'len' ? DR.directDistance(baseMm, g.to && g.to.map((x) => x * f), inp.v) : DR.typedPoint(inp, baseMm);
+    if (!mm) { note(inp.kind === 'len' ? 'Move the pointer the way you want it to go, then type the length' : 'Point coordinates must be finite'); return; }
+    v = GM.valueAt(M, g.base, mm.map((x) => x / f));
+  }
+  g.val = v; g.to = g.to || g.base; gripModeRun(g); gripCommit();
+}
+/** A grip mode (Move, Rotate, Scale, Mirror) puts its result down: every selected object, one undo step named for the mode; the grip edit ends. */
+function gripModeCommit(g) {
+  const d = g.d, M = GM.MODES[g.mode], label = GM.NAMES[M];
+  if (!g.res) { note(g.err || (g.to ? 'That would not change anything, so it stays as it was' : `${label} cancelled`)); renderCommand(); paintOverlay(); return; }
+  if (moveLocked(d, g.sel)) { paintOverlay(); return; }
+  view.fitted = false;
+  if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  else { commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label); setSel(d, g.sel); }
+  note(`${label}: ${GM.readout(M, g.base, g.val, d.factor)}. Ctrl+Z takes it back`);
+}
+/** The preview of a grip mode: the rubber line base → pointer, a faint ghost of the result, the grips (the hot one red) and the readout tip. */
+function gripModeOvl(d, out, grips, g, square) {
+  const f = d.factor, M = GM.MODES[g.mode], at = (p) => p.map((v) => v * f);
+  if (g.to) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: at(g.base), b: at(g.to) }, state.sheetH), 'data-testid': 'grip-line' }));
+  if (g.res) for (const i of [...g.sel].slice(0, 300)) {
+    const ent = g.res.entities[i], sh = ent && (GR.hasGrips(ent) ? GR.shapeOf(ent, f) : curveShape(ent) && { ...curveShape(ent), pts: curveShape(ent).pts.map((q) => [q[0] * f, q[1] * f]) });
+    if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
+  }
+  for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id));
+  return g.res && g.to ? { text: GM.readout(M, g.base, g.val, f), px: g.cursor || sheetPx(d, g.to) } : null;
+}
 /** Grips, and while one is dragged: the original as a dashed ghost, the new shape dashed, the hot grip, and the readout. Returns the readout tip or null. */
 function gripOvl(d, out, k, grips) {
   const g = state.grip;
@@ -8150,6 +8214,7 @@ function gripOvl(d, out, k, grips) {
     return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
       hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
   };
+  if (g && g.d === d && g.mode) return gripModeOvl(d, out, grips, g, square);
   if (g && g.d === d) {
     const ghost = GR.shapeOf(g.ent, d.factor);
     if (ghost) out.push(s('path', { class: 'gr-ghost', transform: drawingTransform(d), d: DR.svgPath(ghost, state.sheetH) }));
@@ -8242,7 +8307,7 @@ function editKey(e) {
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
-    else if (state.grip) { gripCancel(); note('Stretch cancelled'); }
+    else if (state.grip) { const name = GM.NAMES[GM.MODES[state.grip.mode]]; gripCancel(); note(`${name} cancelled`); }
     else if (state.text.drag) { textDragEnd(true); note('Resize cancelled'); }
     else if (state.txoWait) { state.txoWait = false; note('Text to outlines cancelled'); }
     else if (modLive()) modEsc(d);
@@ -8270,6 +8335,7 @@ function editKey(e) {
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
+  if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again

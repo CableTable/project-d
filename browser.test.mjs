@@ -9742,6 +9742,120 @@ try {
     await typeCmd('');
   });
 
+  await step('TODO 155e1: Space / Enter on a hot grip cycle Stretch, Move, Rotate, Scale, Mirror; Rotate, Scale, Mirror and Move act on every selected object and end the grip edit; Esc changes nothing; one Undo; the same Rotate on a layout object', async () => {
+    await menuItem('View', 'Theme: light');
+    const PROMPT = {
+      STRETCH: 'Specify stretch point or [Base point/Copy/Undo/eXit]:', MOVE: 'Specify move point or [Base point/Copy/Undo/eXit]:',
+      ROTATE: 'Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]:', SCALE: 'Specify scale factor or [Base point/Copy/Undo/Reference/eXit]:',
+      MIRROR: 'Specify second point or [Base point/Copy/Undo/eXit]:',
+    };
+    const mode = async (name) => {
+      assert.equal(await prompt(), PROMPT[name]);
+      assert.match(await t('cmd-hist').textContent(), new RegExp(`^Command: ${name} {3}\\*\\* ${name} \\*\\* {3}Hot grip`));
+    };
+    const hotGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1); };
+    const noHot = () => page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 0);
+    const press = async (key, n = 1) => { for (let i = 0; i < n; i++) await page.keyboard.press(key); };
+    const lineOf = async (i = 0) => { const e = entOf(await savedDoc(), i); return [10, 20, 11, 21].map((k) => fieldOf(e, k)); };
+    const labelsNow = async () => { await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor(); const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents(); await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' }); return rows; };
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); };
+    // the cycle: Space, then Enter, round and back; typed Enter on the empty bar cycles too; Esc changes nothing
+    await openGrips();
+    await pick(70, 30, 3);
+    await hotGrip('0:b');
+    await mode('STRETCH');
+    for (const m of ['MOVE', 'ROTATE', 'SCALE', 'MIRROR', 'STRETCH']) { await press(' '); await mode(m); }
+    for (const m of ['MOVE', 'ROTATE', 'SCALE', 'MIRROR', 'STRETCH']) { await press('Enter'); await mode(m); }
+    await typeCmd(''); await mode('MOVE');
+    await press(' ', 2); await mode('SCALE');
+    await typeCmd('b'); assert.match(await t('cmd-hist').textContent(), /Base point, Copy and Reference come in TODO 155e2/);
+    await typeCmd('reference'); assert.match(await t('cmd-hist').textContent(), /Base point, Copy and Reference come in TODO 155e2/);
+    const at0 = await at(60, 70); await page.mouse.move(at0.x, at0.y);
+    await t('grip-preview').waitFor({ state: 'attached' });
+    assert.equal(await page.locator('.gr-ghost').count(), 0, 'the originals stay as they are: no stretch ghost');
+    await press('Escape'); await noHot();
+    assert.deepEqual(await lineOf(), [20, 30, 120, 30], 'Esc mid-mode changed nothing');
+    assert.equal((await labelsNow()).length, 1, 'no undo step');
+    // Rotate: typed 90 about the hot grip turns the line and ends the grip edit
+    await pick(70, 30, 3);
+    await hotGrip('0:a');
+    await press(' ', 2); await mode('ROTATE');
+    const r0 = await at(70, 70); await page.mouse.move(r0.x, r0.y); await frames();
+    await tipWhen(/^Rotate [\d.]+°$/);
+    assert.equal(await page.locator('[data-testid=grip-line]').count(), 1, 'the rubber line base → pointer');
+    await typeCmd('90'); await noHot();
+    const [x0, y0, x1, y1] = await lineOf();
+    assert.ok(near(x0, 20, 1e-6) && near(y0, 30, 1e-6) && near(x1, 20, 1e-6) && near(y1, 130, 1e-6), `rotated 90° about its start: ${[x0, y0, x1, y1]}`);
+    assert.equal((await labelsNow()).at(-1), 'Rotate');
+    await gripWhen(3);
+    await undo();
+    assert.deepEqual(await lineOf(), [20, 30, 120, 30], 'one Ctrl+Z puts it back');
+    // Scale: a click (factor = distance from the base in drawing units), then a typed 2
+    await pick(70, 30, 3);
+    await hotGrip('0:a');
+    await press(' ', 3); await mode('SCALE');
+    const s0 = await at(23, 30); await page.mouse.move(s0.x, s0.y); await frames(); await page.mouse.click(s0.x, s0.y); await noHot();
+    let sc = await lineOf();
+    assert.ok(sc[2] > 250 && sc[2] < 350 && near(sc[0], 20, 1e-6), `scaled by about 3 about the grip: ${sc}`);
+    assert.equal((await labelsNow()).at(-1), 'Scale');
+    await undoAndPick(70, 30, 3);
+    await hotGrip('0:a'); await press(' ', 3); await typeCmd('2'); await noHot();
+    assert.deepEqual(await lineOf(), [20, 30, 220, 30]);
+    await undo();
+    // Mirror: the line base → picked point; the original goes
+    await pick(70, 30, 3);
+    await hotGrip('0:a');
+    await press(' ', 4); await mode('MIRROR');
+    await typeCmd('20,100'); await noHot();
+    sc = await lineOf();
+    assert.ok(near(sc[0], 20, 1e-6) && near(sc[1], 30, 1e-6) && near(sc[2], -80, 1e-6) && near(sc[3], 30, 1e-6), `mirrored in x = 20: ${sc}`);
+    assert.equal((await savedDoc()).entities.length, 4, 'the original went');
+    assert.equal((await labelsNow()).at(-1), 'Mirror');
+    await undo();
+    // Move and Rotate of two selected lines: every selected object, base = the hot grip, one Ctrl+Z
+    const two = newDoc(4);
+    addEntities(two, dxfLine(20, 30, 120, 30), dxfLine(20, 60, 120, 60));
+    await openGrips(writeDxf(two), 'two.dxf');
+    await click(70, 30); await click(70, 60, { shift: true }); await gripWhen(6);
+    await hotGrip('0:a');
+    await press(' ');
+    const m1 = await at(50, 50); await page.mouse.move(m1.x, m1.y); await frames(); await page.mouse.click(m1.x, m1.y); await noHot();
+    const [a0, b0] = [await lineOf(0), await lineOf(1)];
+    assert.ok(near(a0[0], 50, 0.8) && near(a0[1], 50, 0.8), `the first line moved to the pointer: ${a0}`);
+    assert.ok(near(b0[0] - a0[0], 0, 1e-6) && near(b0[1] - a0[1], 30, 1e-6) && near(b0[2] - a0[2], 0, 1e-6), `the second moved the same way: ${b0}`);
+    assert.equal((await labelsNow()).at(-1), 'Move');
+    await undo();
+    assert.deepEqual([await lineOf(0), await lineOf(1)], [[20, 30, 120, 30], [20, 60, 120, 60]], 'one Ctrl+Z took both back');
+    await click(70, 30); await click(70, 60, { shift: true }); await gripWhen(6);
+    await hotGrip('0:a'); await press(' ', 2); await typeCmd('90');
+    const first = await lineOf(0), second = await lineOf(1);
+    assert.ok(near(first[0], 20, 1e-6) && near(first[1], 30, 1e-6) && near(first[2], 20, 1e-6) && near(first[3], 130, 1e-6), `the first turned: ${first}`);
+    assert.ok(near(second[0], -10, 1e-6) && near(second[1], 30, 1e-6) && near(second[2], -10, 1e-6) && near(second[3], 130, 1e-6), `the second turned about the first one's grip too: ${second}`);
+    await undo();
+    // screenshots: the Rotate preview, light and dark
+    await openGrips();
+    await pick(70, 30, 3);
+    await hotGrip('0:a'); await press(' ', 2);
+    await shotBoth('grip-rotate', async () => { const p = await at(60, 80); await page.mouse.move(p.x, p.y, { steps: 3 }); await tipWhen(/^Rotate /); await wait(150); }, async () => {});
+    await press('Escape');
+    // the same on a layout object
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const n0 = (await labelsNow()).length;
+    await hotGrip(await gid('b')); await press(' ', 2); await mode('ROTATE');
+    await typeCmd('90'); await noHot();
+    await frames(); await gripWhen(3);
+    const turned = await gripBox(await gid('a')), want = await at(300, 350);
+    assert.ok(near(turned.x, want.x, 2) && near(turned.y, want.y, 2), `the layout object turned 90° about its end: ${JSON.stringify([turned, want])}`);
+    assert.equal((await labelsNow()).length, n0 + 1); assert.equal((await labelsNow()).at(-1), 'Rotate');
+    await undo(); await frames();
+    const back = await gripBox(await gid('a')), was = await at(50, 600);
+    assert.ok(near(back.x, was.x, 2) && near(back.y, was.y, 2), 'one Undo turns it back');
+    await closeTabs(/./);
+  });
+
   await step('Grips: off past 200 selected shapes (and on for fewer)', async () => {
     const doc = newDoc(4);
     addEntities(doc, Array.from({ length: 205 }, (_, i) => dxfLine(10 + (i % 41) * 4, 20 + Math.floor(i / 41) * 20, 12 + (i % 41) * 4, 26 + Math.floor(i / 41) * 20)));
