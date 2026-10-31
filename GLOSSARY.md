@@ -223,6 +223,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **ATTDISP**: Sets block attribute visibility: Normal follows each attribute's invisible flag, ON shows all attributes, and OFF hides all attributes. Loose attribute definitions always stay visible.
 
+**Attribute editor**: Edits an inserted block's attribute values. Shows the block name and each editable attribute's tag, prompt and value. Apply saves while staying open; OK saves and closes; Cancel keeps earlier Apply changes.
+
+**Edit Attribute Definition**: Edits a loose attribute definition's tag, prompt and default value. The tag is required, has no spaces and uses uppercase letters. OK saves; Cancel leaves the definition unchanged.
+
 **Hairline**: The project's 0.05 mm outline-width preset and minimum physical stroke for PDF / Print. Where: `DECISIONS.md`, Line width and Preflight Hairline. Avoid: Zero width; a fixed screen-pixel width.
 
 **HATCH**: A DXF filled boundary using either solid colour or a line pattern, left out of cutter export. Where: `web/drawing.js`, `DECISIONS.md`, Cutter-safe DXF.
