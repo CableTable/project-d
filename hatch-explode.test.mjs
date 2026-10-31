@@ -4,6 +4,8 @@ import { explodeHatch } from './web/hatch-explode.js';
 import { explodeSelection } from './web/explode.js';
 import { entity, newDoc, lwpoly } from './web/dxf-write.js';
 import { get } from './web/grips.js';
+import * as LD from './web/layoutdoc.js';
+import { flatten } from './web/drawing.js';
 
 const rectangle = [[0, 0], [100, 0], [100, 50], [0, 50]];
 const hatch = ({ hole = false, spacing = 5, solid = 0, gradient = 0, a = 45, d = [] } = {}) => entity('HATCH', [
@@ -59,4 +61,21 @@ test('dashes keep their phase and gaps, negative spacing works, and ByLayer rema
     const [x, , xx] = coords(p); assert.ok(Math.abs(xx - x - 3) < 1e-9); assert.equal(x % 5, 0);
     assert.equal(p.aci, 256); assert.equal(p.tc, null);
   }
+});
+
+test('TODO 155i1: a loose layout hatch explodes after rotation, scale and mirror, preserving the boundary and layer', () => {
+  const lay = LD.newLayout('Hatch'), layers = newDoc(4).layers;
+  const e = hatch({ hole: true }), part = LD.objectPart('h', 'Hatch', e, layers), outline = LD.objectPart('b', 'Boundary', lwpoly(rectangle, { closed: true }), layers);
+  lay.parts = { h: part, b: outline }; lay.placed = [{ ...LD.objectPlacement(part), x: 200, y: 100, rot: 30, mirrorX: true, sc: 2 }, LD.objectPlacement(outline)];
+  const before = structuredClone(lay.placed[1]); let id = 0;
+  const r = LD.explodePlaced(lay, [0], () => 'o' + id++);
+  assert.equal(r.done, 1); assert.deepEqual(r.errors, []); assert.deepEqual(r.messages, ['Hatch boundary associativity removed.']);
+  assert.deepEqual(lay.placed.at(-1), before);
+  assert.equal(r.pieces.length, explodeHatch(e).length);
+  assert.ok(r.pieces.every((i) => lay.parts[lay.placed[i].partId].raw.entities[0].type === 'LINE'));
+  const solid = LD.objectPart('s', 'Solid hatch', hatch({ solid: 1 }), layers);
+  lay.parts.s = solid; lay.placed.push(LD.objectPlacement(solid));
+  const refused = LD.explodePlaced(lay, [lay.placed.length - 1], () => 'o' + id++);
+  assert.equal(refused.done, 0); assert.deepEqual(refused.errors, ['Cannot explode HATCH']);
+  assert.ok(flatten(part.raw).items.some((it) => it.k === 'h'));
 });

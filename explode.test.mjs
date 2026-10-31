@@ -6,6 +6,7 @@ import { get } from './web/grips.js';
 import { flatten, mapply, readDxf } from './web/drawing.js';
 import { resolve } from './web/cmdbar.js';
 import { buildDim, addDimension } from './web/edit.js';
+import * as LD from './web/layoutdoc.js';
 
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
 const numbers = (e, codes) => codes.map((c) => get(e.r, c));
@@ -249,4 +250,91 @@ test('a second DIMENSION, or an existing PD_EXPLODE_1, gets the next PD_EXPLODE_
   const out = result(doc);
   assert.equal(out.blocks.PD_EXPLODE_1, doc.blocks.PD_EXPLODE_1, 'the existing block is untouched');
   assert.equal(out.blocks.PD_EXPLODE_2, doc.blocks['*D1']); assert.equal(out.blocks.PD_EXPLODE_3, doc.blocks['*D2']);
+});
+
+test('TODO 155i1: native DIMENSION uses its world-coordinate *D block, resolves override and drops POINTs / Defpoints', () => {
+  const doc = newDoc(4);
+  addLayer(doc, 'Notes', { aci: 3 }); addLayer(doc, 'Defpoints', { aci: 7 });
+  const built = buildDim('aligned', { a: [10, 20], b: [110, 20], offset: 30, textH: 5 }, 1, 'PD_DIM_1');
+  addBlock(doc, '*D1', [...built.block.entities, entity('POINT', [[10, 10], [20, 20]], { layer: 'Defpoints' }), line(10, 20, 10, 30, { layer: 'defPOINTS' })], [7, 9]);
+  const native = entity('DIMENSION', [[2, '*D1'], [70, 33], [1, 'Width <> mm'], [42, 100], [10, 110], [20, 50]], { layer: 'Notes', tc: 0x123456 });
+  doc.entities = [native];
+  const before = structuredClone(doc), out = explodeSelection(doc, new Set([0]));
+  assert.equal(out.exploded, 1); assert.deepEqual(out.errors, []);
+  assert.ok(out.entities.every((e) => e.type !== 'POINT' && e.layer === 'Notes'));
+  nearAll(numbers(out.entities[0], [10, 20, 11, 21]), [10, 50, 110, 50]);
+  assert.equal(out.entities.filter((e) => e.type === 'SOLID').length, 2);
+  assert.equal(textOf(out.entities.find((e) => e.type === 'MTEXT')), 'Width 100.00 mm');
+  assert.ok(!out.blocks['*D1']); assert.deepEqual(doc, before);
+  doc.entities.push({ ...native });
+  assert.ok(explodeSelection(doc, new Set([0])).blocks['*D1'], 'another dimension still uses the anonymous block');
+});
+
+test('TODO 155i1: native DIMENSION without a block builds lines, SOLID arrows and MTEXT; rotated and aligned geometry', () => {
+  for (const [type, rotation] of [[1, 0], [0, 0], [0, 30], [0, 90]]) {
+    const c = Math.cos(rotation * Math.PI / 180), s = Math.sin(rotation * Math.PI / 180);
+    const at = (code, x, y) => [[code, x * c - y * s], [code + 10, x * s + y * c]];
+    const doc = newDoc(4); addLayer(doc, 'Notes');
+    doc.entities = [entity('DIMENSION', [[2, '*Dmissing'], [70, type + 32], [1, 'Width <> mm'], [50, rotation],
+      ...at(13, 0, 0), ...at(14, 100, 0), ...at(10, 100, 20)], { layer: 'Notes' })];
+    const out = explodeSelection(doc, new Set([0]));
+    assert.equal(out.exploded, 1, JSON.stringify(out.errors));
+    assert.deepEqual(out.entities.map((e) => e.type).sort(), ['LINE', 'LINE', 'LINE', 'MTEXT', 'SOLID', 'SOLID']);
+    assert.ok(out.entities.every((e) => e.layer === 'Notes'));
+    assert.equal(textOf(out.entities.find((e) => e.type === 'MTEXT')), 'Width 100.00 mm');
+    nearAll(numbers(out.entities[0], [10, 20, 11, 21]), [-20 * s, 20 * c, 100 * c - 20 * s, 100 * s + 20 * c]);
+    assert.deepEqual(out.blocks, {});
+  }
+});
+
+test('TODO 155i1: native block MTEXT keeps formatting and explicit override, blank text is suppressed; invalid fallback leaves source', () => {
+  const doc = newDoc(4);
+  addBlock(doc, '*D1', [line(0, 0, 30, 0), entity('MTEXT', [[10, 15], [20, 2], [40, 2], [3, 'old'], [1, 'value']])]);
+  doc.entities = [entity('DIMENSION', [[2, '*D1'], [70, 0], [1, '{\\C1;Width <>}'], [42, 30]])];
+  const out = explodeSelection(doc, new Set([0]));
+  const tx = out.entities.find((e) => e.type === 'MTEXT');
+  assert.equal(textOf(tx), '{\\C1;Width 30.00}'); assert.equal(tx.r.c.includes(3), false);
+  doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = ' ';
+  assert.deepEqual(explodeSelection(doc, new Set([0])).entities.map((e) => e.type), ['LINE']);
+  doc.entities = [entity('DIMENSION', [[70, 1]])];
+  const invalid = explodeSelection(doc, new Set([0]));
+  assert.equal(invalid.exploded, 0); assert.equal(invalid.entities[0], doc.entities[0]);
+  assert.match(invalid.errors[0], /invalid definition points/);
+});
+
+test('TODO 155i1: native dimensions are loose layout objects, survive Save, explode with their placement and undo snapshot stays intact', () => {
+  const doc = newDoc(4), built = buildDim('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 }, 1, 'PD_DIM_1');
+  addBlock(doc, '*D1', built.block.entities);
+  const e = entity('DIMENSION', [[2, '*D1'], [70, 1], [42, 100], [1, 'Width <>']]);
+  const lay = LD.newLayout('Native');
+  lay.parts.d = LD.objectPart('d', 'Native dimension', e, doc.layers, doc.header, doc.blocks);
+  lay.placed = [LD.objectPlacement(lay.parts.d)];
+  const saved = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));
+  assert.equal(saved.placed.length, 1);
+  assert.equal(saved.parts[saved.placed[0].partId].raw.entities[0].type, 'DIMENSION');
+  const snap = structuredClone(saved), p = saved.placed[0]; p.rot = 90; p.sc = 2;
+  let id = 0;
+  const r = LD.explodePlaced(saved, [0], () => 'o' + id++);
+  assert.equal(r.done, 1); assert.deepEqual(r.errors, []);
+  const pieces = saved.placed.map((p) => saved.parts[p.partId].raw.entities[0]);
+  assert.deepEqual(pieces.map((e) => e.type).sort(), ['LINE', 'LINE', 'LINE', 'MTEXT', 'SOLID', 'SOLID']);
+  assert.equal(textOf(pieces.find((e) => e.type === 'MTEXT')), 'Width 100.00');
+  assert.equal(snap.parts[snap.placed[0].partId].raw.entities[0].type, 'DIMENSION');
+  assert.equal(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(saved)))).placed.length, 6);
+});
+
+test('TODO 155i1: native fallback radius, diameter, two-line and three-point angles use dimension geometry', () => {
+  const pt = (c, x, y) => [[c, x], [c + 10, y]];
+  for (const [kind, points, label] of [
+    [4, [...pt(10, 0, 0), ...pt(15, 20, 0)], 'R20.00'],
+    [3, [...pt(10, -20, 0), ...pt(15, 20, 0)], 'Ø40.00'],
+    [2, [...pt(13, 0, 0), ...pt(14, 30, 0), ...pt(15, 0, 0), ...pt(16, 0, 30), ...pt(10, 20, 20)], '90.00°'],
+    [5, [...pt(13, 30, 0), ...pt(14, 0, 30), ...pt(15, 0, 0), ...pt(10, 20, 20)], '90.00°'],
+  ]) {
+    const doc = newDoc(4); doc.entities = [entity('DIMENSION', [[70, kind], [1, 'Value <>'], ...points])];
+    const out = explodeSelection(doc, new Set([0]));
+    assert.equal(out.exploded, 1, JSON.stringify(out.errors));
+    assert.equal(textOf(out.entities.find((e) => e.type === 'MTEXT')), 'Value ' + label);
+    assert.ok(out.entities.some((e) => e.type === 'SOLID'));
+  }
 });

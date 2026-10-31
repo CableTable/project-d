@@ -14,7 +14,7 @@
 // apps ignore (or at most list) an unused block; our reader (drawing.js readDxf) keeps it, and layoutFromRaw() reads it back.
 import { readDxf, flatten } from './drawing.js';
 import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
-import { explodeInsert, explodeDimension } from './explode.js';
+import { explodeInsert, explodeDimension, explodeSelection } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
@@ -67,6 +67,7 @@ export const objectPlacement = (part) => placement1(part.id, part.box[0], part.b
 /** A placed object as plain entities (its placement baked in), or null when Explode cannot carry that kind (it is then kept as a block). */
 function bakeObject(part, p) {
   if (isDimPart(part)) return isSettled(part, p) ? [part.raw.entities[0]] : null;       // a dimension is settled (settleDims) before it is baked
+  if (part.raw.entities[0].type === 'DIMENSION') return isSettled(part, p) ? [part.raw.entities[0]] : null;
   const e = part.raw.entities[0], mini = newDoc(4), k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * k, sy = (p.mirrorY ? -1 : 1) * k;
   mini.layers = part.raw.layers;
   addBlock(mini, 'O', [e], [part.box[0], part.box[1]]);
@@ -127,21 +128,31 @@ export function objectCommit(lay, view, entities, newId) {
 export function explodePart(part, p) {
   const mini = newDoc(4), f = part.factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
   mini.layers = part.raw.layers; mini.blocks = { ...part.raw.blocks };
-  addBlock(mini, 'PD_PART', part.raw.entities.filter((e) => (e.ps ? 1 : 0) === part.space), [part.box[0], part.box[1]]);
-  return explodeInsert(insert('PD_PART', p.x, p.y, { layer: '0', rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini);       // layer 0 stays layer 0, as AutoCAD
+  let entities = part.raw.entities.filter((e) => (e.ps ? 1 : 0) === part.space), messages = [];
+  if (part.obj) {
+    const r = explodeSelection({ ...part.raw, entities }, new Set([0]));
+    if (r.errors.length) throw new Error(r.errors.join('; '));
+    if (!r.exploded) return { entities: [], blocks: mini.blocks, messages };
+    entities = r.entities; mini.blocks = r.blocks; messages = r.messages;
+  }
+  addBlock(mini, 'PD_PART', entities, [part.box[0], part.box[1]]);
+  return { ...explodeInsert(insert('PD_PART', p.x, p.y, { layer: '0', rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini), messages };       // layer 0 stays layer 0, as AutoCAD
 }
+/** Hatches and native dimensions are also explodable when they are loose layout objects. */
+export const canExplodeObject = (part) => !!part?.obj && ['HATCH', 'DIMENSION'].includes(part.raw.entities[0]?.type);
 /** Explode the placed parts at `idxs` (indexes in lay.placed; layout objects and locked parts stay): each becomes its loose entities as layout objects, in its slot, on the part's layers (added to the layout when missing).
  * → { done (parts exploded), pieces (indexes in lay.placed of the new objects), errors } */
 export function explodePlaced(lay, idxs, newId) {
-  const at = new Set(idxs), out = [], pieces = [], errors = new Set(), table = { ...layersOf(lay) }, names = new Set(Object.values(lay.parts).map((q) => q.name));
+  const at = new Set(idxs), out = [], pieces = [], errors = new Set(), messages = new Set(), table = { ...layersOf(lay) }, names = new Set(Object.values(lay.parts).map((q) => q.name));
   const find = (t, n) => Object.keys(t).find((k) => k.toLowerCase() === String(n).toLowerCase());
   let done = 0;
   const renamed = new Map();
   lay.placed.forEach((p, i) => {
     const part = lay.parts[p.partId], mine = [];
-    if (at.has(i) && part && !part.obj && !p.lock) {
+    if (at.has(i) && part && (!part.obj || canExplodeObject(part)) && !p.lock) {
       try {
         const r = explodePart(part, p);
+        for (const message of r.messages) messages.add(message);
         for (let e of r.entities) {
           const k = find(part.raw.layers || {}, e.layer), def = () => (k === undefined ? { aci: 7 } : structuredClone(part.raw.layers[k]));
           if (isReserved(e.layer)) {                       // Sheet, Marks and Parts are not read back as objects: such a piece goes on a layer of its own
@@ -159,7 +170,7 @@ export function explodePlaced(lay, idxs, newId) {
     for (const o of mine) { lay.parts[o.id] = o; pieces.push(out.length); out.push(objectPlacement(o)); }
   });
   if (done) { lay.placed = out; lay.layers = table; }       // a new layer table, so an undo snapshot keeps the old one
-  return { done, pieces, errors: [...errors] };
+  return { done, pieces, errors: [...errors], messages: [...messages] };
 }
 
 /** A grip edit: the object of entity `ent` (from objectDoc `view`) becomes `next`, in place: the same slot, name, group and lock (a part shared with a copy is left to the copy, and the new one gets a name of its own).
@@ -408,7 +419,7 @@ export function layoutRaw(lay) {
   const all = placedAll(lay), baked = [], kept = [], ob = [], dimBlocks = {};
   for (const p of all) {
     const part = lay.parts[p.partId], ents = part.obj && bakeObject(part, p);
-    if (ents) { baked.push(...ents); if (isDimPart(part)) Object.assign(dimBlocks, part.raw.blocks); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
+    if (ents) { baked.push(...ents); if (isDimPart(part) || part.raw.entities[0].type === 'DIMENSION') Object.assign(dimBlocks, part.raw.blocks); for (const _ of ents) ob.push(p.g || p.lock ? { ...(p.g ? { g: p.g } : {}), ...(p.lock ? { lock: true } : {}) } : 0); } else kept.push(p);               // an object Explode cannot carry stays a block (and comes back as an object)
   }
   const ids = [...new Set([...usedIds(lay), ...kept.filter((p) => lay.parts[p.partId].obj).map((p) => p.partId)])];
   const { doc, blockOf } = buildLayoutDoc({ parts: lay.parts, placed: kept, sheetW: lay.s.sheetW, sheetH: lay.s.sheetH, marks: marksOf(lay, all.filter((p) => !lay.parts[p.partId].obj)), keep: ids });
@@ -493,7 +504,7 @@ function readObjects(lay, raw, ob, count) {
     const info = ob[k++];
     if (raw.layers[e.layer] && !layers[e.layer]) layers[e.layer] = raw.layers[e.layer];
     let id; do id = 'ob' + (++n); while (lay.parts[id]);
-    const part = objectPart(id, 'Object ' + n, e, layers, raw.header, isDim(e) ? { [insName(e)]: raw.blocks[insName(e)] } : {});
+    const part = objectPart(id, 'Object ' + n, e, layers, raw.header, isDim(e) || e.type === 'DIMENSION' ? blocksUsed(raw.blocks, [e]) : {});
     if (!part) continue;
     lay.parts[id] = part; lay.placed.push({ ...objectPlacement(part), ...(info && typeof info.g === 'string' && info.g ? { g: info.g } : {}), ...(info && info.lock === true ? { lock: true } : {}) });
   }

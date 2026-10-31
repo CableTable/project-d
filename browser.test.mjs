@@ -13,7 +13,7 @@ import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
-import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
+import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import { placedBox } from './web/apply.js';
 import * as GR from './web/grips.js';
@@ -16166,6 +16166,19 @@ try {
     assert.match(await prompt(), /0 exploded.*Cannot explode HATCH/);
     assert.deepEqual(await histLabels(), history);
     assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['HATCH']);
+    const lay = newLayout('Hatch explode');
+    lay.parts.h = objectPart('h', 'Hatch', hatch(false), raw.layers);
+    lay.parts.b = objectPart('b', 'Boundary', boundary, raw.layers);
+    lay.placed = [objectPlacement(lay.parts.h), objectPlacement(lay.parts.b)];
+    await open('layout-hatch-explode.dxf', layoutRaw(lay));
+    assert.equal(await nParts(), 2);
+    await click(150, 125); await typeCmd('x');
+    assert.match(await prompt(), /Hatch boundary associativity removed\./);
+    assert.equal(await nParts(), lines.length + 1, 'layout hatch becomes separate line objects beside its boundary');
+    const layoutPieces = readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
+    assert.equal(layoutPieces.entities.filter((e) => e.type === 'LINE').length, lines.length);
+    assert.equal(layoutPieces.entities.filter((e) => e.type === 'LWPOLYLINE' && e.layer === '0').length, 1);
+    await undo(); assert.equal(await nParts(), 2, 'one layout Undo restores hatch and boundary');
     await closeTabs(/./);
   });
 
