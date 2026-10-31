@@ -201,6 +201,10 @@ test('rayHit ellipse: solved exactly: near-tangent crossing, a part ellipse, a m
   assert.equal(rayHit([-20, -3], [-15, -3], [quarter]), null);                               // both roots are off the arc
   const x0 = 9.800665778412416;                                                              // 10·cos 0.2: straight down through the start point of an arc from t = 0.2
   close(rayHit([x0, 10], [x0, 5], [curveShape(ellipse(0, 0, 10, 0, 0.5, 0.2, 1.7))]), [x0, 5 * Math.sin(0.2)]);
+  const sp = curveShape(ellipse(0, 0, 10, 0, 0.5, 0.2, 1.7)), u0 = [-0.3971478906347807, 0.9177546256839811];      // a slanted ray aimed at the start point (the old filter dropped it by rounding)
+  const st = [11.786405231586318, -3.5954264744445994];
+  const sh = rayHit(st, [st[0] + u0[0], st[1] + u0[1]], [sp]);
+  assert.ok(sh && Math.hypot(sh[0] - 10 * Math.cos(0.2), sh[1] - 5 * Math.sin(0.2)) < 1e-9, `${sh}`);
   const flipQ = curveShape(entity('ELLIPSE', [[10, 0], [20, 0], [30, 0], [11, 10], [21, 0], [31, 0], [40, 0.5], [41, 0], [42, PI / 2], [230, -1]]));      // flipped: t 0..π/2 is the fourth quadrant
   close(rayHit([-20, -3], [-15, -3], [flipQ]), [8, -3]); assert.equal(rayHit([-20, 3], [-15, 3], [flipQ]), null);
   const wrapQ = curveShape(ellipse(0, 0, 10, 0, 0.5, 5, 1));                                 // t0 = 5, t1 = 1: the right-hand side, through t = 0
