@@ -50,6 +50,16 @@ test('TODO 155i2b: an invisible attribute outside the block never widens the par
   }
 });
 
+test('TODO 155i2b: an object part (a pasted block) has the same box in ATTDISP Normal, ON and OFF', () => {
+  const ins = insert('Box', 0, 0), raw = newDoc(4);
+  addBlock(raw, 'Box', [rect(0, 0, 100, 50)]);
+  ins.kids = [entity('ATTRIB', [[10, -40], [20, -30], [40, 3], [1, 'Hidden'], [70, 1]]).r];
+  for (const mode of ['0', '1', '2']) {
+    const o = LD.objectPart('o', 'Box', ins, LD.layersOf(LD.newLayout('L')), { $ATTMODE: mode }, raw.blocks);
+    assert.deepEqual(o.box.map(Math.round), [0, 0, 100, 50]);
+  }
+});
+
 test('swatch strip recolours a private part including nested blocks, keeps geometry, source and saved colour', () => {
   const raw = newDoc(4);
   addBlock(raw, 'inner', [line(0, 0, 10, 10, { aci: 5 })]);

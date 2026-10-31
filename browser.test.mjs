@@ -16246,6 +16246,13 @@ try {
       await undo();
       await typeCmd('eattedit'); await click(150, 100); await field('Value').fill('Layout command'); await field('Value').press('Enter');
       assert.equal((await values())[0], 'Layout command'); await undo();
+      await typeCmd('eattedit');
+      // opening a second tab (no closeTabs) switches tabs while the wait is pending
+      await t('picker').setInputFiles({ name: 'attribute-switch.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'attribute-switch.dxf');
+      await frames();
+      await click(150, 100); assert.equal(await dialog.count(), 0);
+      assert.equal(await selCount(), '1 selected', 'tab switch ends the EATTEDIT wait');
       const copies = newLayout('Placed copies'), source = newDoc(4), right = structuredClone(ins);
       right.kids[0].c.push(72, 11, 21); right.kids[0].v.push('2', '110', '110');
       source.blocks = raw.blocks; addEntities(source, right);
@@ -16433,6 +16440,9 @@ try {
         await page.keyboard.press('Escape');
       }
       await menuItem('View', 'Theme: light');
+      await click(125, 133); await frames();
+      assert.equal(await selCount(), '1 selected', 'ON: the same click on the shown hidden ATTRIB text picks the block');
+      await page.keyboard.press('Escape'); await frames();
       await setting('off'); await painted(false, false);
       assert.equal((await savedDoc()).header.$ATTMODE, '0');
       await click(125, 133); await frames();
