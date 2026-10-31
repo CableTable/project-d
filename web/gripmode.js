@@ -22,9 +22,9 @@ const PROMPTS = {                                                  // AutoCAD 20
   SCALE: 'Specify scale factor or [Base point/Copy/Undo/Reference/eXit]:',
   MIRROR: 'Specify second point or [Base point/Copy/Undo/eXit]:',
 };
-/** multi: the Copy option is on (` (multiple)`, and the prompt no longer offers Copy). */
+/** multi: the Copy option is on (` (multiple)`). */
 export const header = (mode, multi = false) => `** ${mode}${multi ? ' (multiple)' : ''} **`;
-export const prompt = (mode, multi = false) => (multi ? PROMPTS[mode].replace('Copy/', '') : PROMPTS[mode]);
+export const prompt = (mode) => PROMPTS[mode];       // the same after C (AutoCAD keeps Copy in the prompt)
 /** The mode index after `i` (Space / Enter). */
 export const cycle = (i) => (i + 1) % MODES.length;
 

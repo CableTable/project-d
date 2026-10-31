@@ -89,7 +89,7 @@ test('Copy (155e2): the originals stay and the transformed copies are added afte
   assert.equal(twice.entities.length, 7);
   near(val(twice.entities[5], 11), -100);
   assert.equal(GM.header('MOVE', true), '** MOVE (multiple) **');
-  assert.equal(GM.prompt('ROTATE', true), 'Specify rotation angle or [Base point/Undo/Reference/eXit]:');
+  assert.equal(GM.prompt('ROTATE', true), 'Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]:');       // Copy stays in the prompt after C
   assert.equal(GM.apply(r, sel, 'ROTATE', [0, 0], 0, true), null);
 });
 

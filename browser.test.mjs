@@ -9905,7 +9905,7 @@ try {
     assert.equal(await prompt(), 'Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]:');
     await typeCmd('c');
     assert.match(await hist(), /\*\* ROTATE \(multiple\) \*\*/);
-    assert.equal(await prompt(), 'Specify rotation angle or [Base point/Undo/Reference/eXit]:');
+    assert.equal(await prompt(), 'Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]:');
     for (const a of ['90', '180', '270']) await typeCmd(a);
     assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the run goes on: the grip is still hot');
     assert.equal(await count(), 4, 'nothing is in the drawing before the run ends');
@@ -9973,6 +9973,45 @@ try {
     const sc1 = await lineOf(4);
     assert.ok(near(sc1[0], 20, 1e-6) && near(sc1[1], 30, 1e-6) && near(sc1[2], 120, 0.8) && near(sc1[3], 80, 0.8), `the copy has its end at the pointer: ${sc1}`);
     assert.equal((await labelsNow()).at(-1), 'Copy Stretch');
+    await undo();
+    // C in Stretch with typed points: the original is not stretched, every typed point is a copy (@ counts from the grip)
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:b');
+    await typeCmd('c'); await typeCmd('150,30'); await typeCmd('@0,50');
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'a typed point leaves a copy and the run goes on');
+    await typeCmd(''); await noHot();
+    assert.equal(await count(), 6, 'two copies');
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]) && close(await lineOf(4), [20, 30, 150, 30]) && close(await lineOf(5), [20, 30, 120, 80]), 'the original stays, the copies end at the typed points');
+    await undo();
+    // a tab change in the middle of a run puts the copies so far into the drawing
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:b');
+    await typeCmd('c'); await typeCmd('150,30');
+    await t('new-tab').click();
+    await page.locator('.tabs .dtab', { hasText: 'grips.dxf' }).first().click(); await frames();
+    assert.equal(await count(), 5, 'the copy made before the tab change is kept');
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 0, 'the run is over');
+    await undo();
+    // Ctrl+Z in a run takes the last copy back (the step before the run stays); with no copy it cancels the grip edit
+    await openGrips(); await pick(70, 30, 3);
+    const before = await labelsNow();
+    await hotGrip('0:a'); await press(' ', 2);
+    await typeCmd('c'); await typeCmd('90'); await typeCmd('180');
+    await undo();
+    assert.match(await hist(), /Last copy removed \(1 left\)/);
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'Ctrl+Z took a copy, the run goes on');
+    await typeCmd(''); await noHot();
+    assert.equal(await count(), 5, 'one copy is left');
+    assert.deepEqual((await labelsNow()).slice(0, -1), before, 'the steps before the run stay');
+    await undo();
+    await openGrips(); await pick(70, 30, 3);
+    const before2 = await labelsNow();
+    await hotGrip('0:a'); await press(' ');
+    await undo(); await noHot();
+    assert.equal(await count(), 4, 'Ctrl+Z with no copy cancels the grip edit');
+    assert.deepEqual(await labelsNow(), before2, 'and no step was undone');
+    // B then a typed @10,0 in Stretch: counted from the base, so the grip moves 10
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:b');
+    await typeCmd('b'); await typeCmd('0,0'); await typeCmd('@10,0'); await noHot();
+    assert.ok(close(await lineOf(0), [20, 30, 130, 30]), `the grip moved 10 from the base: ${await lineOf(0)}`);
     await undo();
     // the (multiple) header in the screenshots, light and dark
     await rotating();
