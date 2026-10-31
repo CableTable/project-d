@@ -207,6 +207,11 @@ export function filletAllPolyline(e, r, trim = true) {
     const next = (k) => closed ? segs[k % segs.length] : segs[k];
     const between = next(i + 1), b = between?.bulge ? next(i + 2) : between;
     if (!b || b === a || b.bulge || (!trim && between.bulge)) continue;
+    if (between.bulge) {
+      const d1 = sub(a.b, a.a), d2 = sub(b.b, b.a), den = cross(d1, d2), delta = sub(b.a, a.a);
+      if (Math.abs(den) < EPS * Math.hypot(...d1) * Math.hypot(...d2) ||
+          cross(delta, d2) / den <= 0 || cross(delta, d1) / den > 1) continue;
+    }
     const f = filletLines([a.a, a.b], a.a, [b.a, b.b], b.b, r);
     if (f.error) { if (!/parallel/.test(f.error)) short++; continue; }
     // Kept endpoints retain their references; a new tangent can coincide with an endpoint after an earlier fillet.

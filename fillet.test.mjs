@@ -251,6 +251,8 @@ test('Polyline option keeps arcs between diverging lines and still replaces conv
       .map(([x, y, b = 0]) => [x, y * winding, b * winding]));
     const g = filletAllPolyline(keyhole, 2);
     assert.equal(g.count, 0); assert.equal(g.short, 0); assert.equal(g.ents[0], keyhole);
+    const oversized = filletAllPolyline(keyhole, 20);
+    assert.equal(oversized.count, 0); assert.equal(oversized.short, 0); assert.equal(oversized.ents[0], keyhole);
   }
 });
 
