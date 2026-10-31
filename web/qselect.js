@@ -8,31 +8,30 @@ export function objectTypes(entities) {
   const types = [...new Set(entities.map((e) => e.type))].sort((a, b) => typeName({ type: a }).localeCompare(typeName({ type: b })));
   return [...(types.length > 1 ? [['Multiple', 'Multiple']] : []), ...types.map((type) => [type, typeName({ type })])];
 }
-export function propertiesOf(entities, type, factor = 1) {
+export function propertiesOf(entities, type, factor = 1, dp = 2) {
   const ents = entities.filter((e) => e.type === type);
   return [...COMMON.map(([key, label]) => ({ key, label, kind: 'list' })),
-    ...fieldsOf(ents, factor).map((f) => ({ key: f.key, label: f.label + (f.group ? (f.key.endsWith('X') ? ' X' : ' Y') : ''), kind: 'number', decimals: f.key === 'vertices' ? 0 : 2 })),
+    ...fieldsOf(ents, factor).map((f) => ({ key: f.key, label: f.label + (f.group ? (f.key.endsWith('X') ? ' X' : ' Y') : ''), kind: 'number', decimals: f.key === 'vertices' ? 0 : dp })),
     ...(['TEXT', 'MTEXT'].includes(type) ? [{ key: 'contents', label: 'Contents', kind: 'text' }] : [])];
 }
 export const operatorsOf = (kind) => ['eq', 'ne', ...(kind === 'number' ? ['gt', 'lt'] : kind === 'text' ? ['wildcard'] : []), 'all'].map((key) => [key, OPS[key]]);
 const weight = (e) => e.lw ?? -1;
 const valueOf = (e, layers, key, factor) => key === 'colour' ? effectiveColour(e, layers) : key === 'layer' ? e.layer : key === 'lt' ? ltKey(e) : key === 'lw' ? weight(e)
   : key === 'contents' ? decode(e)?.lines.join('\n') ?? '' : fieldsOf([e], factor).find((f) => f.key === key)?.value;
-export function valuesOf(entities, layers, key, currentLayer = '0') {
+export function valuesOf(entities, layers, key) {
   const values = [...new Set(entities.map((e) => valueOf(e, layers, key, 1)))];
   const label = (v) => key === 'colour' ? colourLabel(v) : key === 'lt' ? ltLabel(v) : key === 'lw' ? ({ '-1': 'ByLayer', '-2': 'ByBlock', '-3': 'Default' }[v] ?? `${(v / 100).toFixed(2)} mm`) : String(v);
-  const drawn = effectiveColour({ layer: currentLayer }, layers);
-  return [...(key === 'colour' && values.includes(drawn) ? [[drawn, 'ByLayer']] : []),
-    ...values.sort((a, b) => key === 'layer' && (a === '0' || b === '0') ? (a === b ? 0 : a === '0' ? -1 : 1) : label(a).localeCompare(label(b), undefined, { numeric: true })).map((v) => [String(v), label(v)])];
+  return [...values.sort((a, b) => key === 'layer' && (a === '0' || b === '0') ? (a === b ? 0 : a === '0' ? -1 : 1) : label(a).localeCompare(label(b), undefined, { numeric: true })).map((v) => [String(v), label(v)])];
 }
 function wildcard(pattern) {
   return new RegExp('^' + String(pattern).split('').map((c) => c === '*' ? '[\\s\\S]*' : c === '?' ? '[\\s\\S]' : c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('') + '$', 'iu');
 }
-/** rule: { scope?: indices, type, property, operator, value, exclude?, factor? }. */
+/** rule: { scope?: indices, type, property, operator, value, exclude?, factor?, dp? (decimals shown) }. */
 export function quickSelect(entities, layers, rule) {
-  const { type = 'Multiple', property, operator, value, exclude = false, factor = 1 } = rule;
-  const scope = rule.scope ?? entities.keys(), out = [];
-  const prop = propertiesOf(entities, type, factor).find((p) => p.key === property);
+  const { type = 'Multiple', property, operator, value, exclude = false, factor = 1, dp = 2 } = rule;
+  const scope = [...(rule.scope ?? entities.keys())], out = [];
+  // Properties come from the scope, as in the dialog; an entity without the field simply does not match.
+  const prop = propertiesOf(scope.map((i) => entities[i]).filter(Boolean), type, factor, dp).find((p) => p.key === property);
   if (!prop || !operatorsOf(prop.kind).some(([op]) => op === operator)) return out;
   if (operator !== 'all' && (String(value ?? '').trim() === '' || (prop.kind === 'number' && !Number.isFinite(Number(value))))) return out;
   const pattern = operator === 'wildcard' ? wildcard(value) : null;

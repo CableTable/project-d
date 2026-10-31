@@ -8814,7 +8814,7 @@ function startQuickSelect() {
   const hidden = hiddenLayerNames(d);
   // Layer visibility and locks can change for this session without changing the file's layer table.
   const layers = Object.fromEntries(Object.entries(layerMap(d)).map(([name, def]) => [name, { ...def, off: hidden.has(name), frozen: false, flags: d.locked?.has(name) ? 4 : 0 }]));
-  openQuickSelect({ entities: d.raw.entities, layers, factor: d.factor, currentLayer: curLayerName(d),
+  openQuickSelect({ entities: d.raw.entities, layers, factor: d.factor, dp: state.dp,
     scope: edIndex(d).shown.filter((i) => !lockedEnt(d, i)), selection: new Set(d.sel), onApply: (indices, append) => {
       setSel(d, new Set([...(append ? d.sel : []), ...indices]));
       note(`${indices.length} item(s) selected.`);
@@ -8837,6 +8837,7 @@ function editKey(e) {
     if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.attdispAsk) { e.preventDefault(); state.attdispAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.orthoAsk) { e.preventDefault(); state.orthoAsk = false; ui.cmdUI.escape(); renderCommand(); return; }
+    if (document.querySelector('[data-testid=qselect-dialog]')) return;       // the dialog's own cancel handles Esc, wherever focus is
     if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
     if (ui.preflight && !ui.preflight.hidden && !activeCmd() && !ui.cmdUI.isOpen()) { closePreflight(); e.preventDefault(); return; }
     const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
@@ -9190,6 +9191,7 @@ function renderPropsPanel(d) {
   ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none;
   ui.propCommon.hidden = none; ui.propGeo.hidden = none;
   ui.propSimilar.hidden = ui.propMatch.hidden = none;
+  ui.propQuick.hidden = !!curLay();       // 162b adds Layouts
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
   const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
   ui.propWidthHint.textContent = 'Selection · mm';

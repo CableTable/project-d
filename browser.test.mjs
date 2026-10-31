@@ -10413,7 +10413,7 @@ try {
     assert.deepEqual(await combo('Apply to').locator('option').allTextContents(), ['Entire drawing']);
     assert.deepEqual(await combo('Object type').locator('option').allTextContents(), ['Multiple', 'Circle', 'Line', 'Text']);
     assert.deepEqual(await combo('Properties').locator('option').allTextContents(), ['Colour', 'Layer', 'Line type', 'Line weight']);
-    assert.equal(await combo('Value').locator('option').first().textContent(), 'ByLayer');
+    assert.deepEqual(await combo('Value').locator('option').allTextContents(), ['Black', 'Blue', 'Red'], 'Colour lists drawn colours only, no ByLayer entry');
     assert.equal(await dialog.getByRole('radio', { name: 'Include in new selection set', exact: true }).isChecked(), true);
     assert.equal(await dialog.getByRole('checkbox').isChecked(), false);
     assert.deepEqual(await dialog.getByRole('button').allTextContents(), ['OK', 'Cancel']);
@@ -10426,6 +10426,8 @@ try {
     await dialog.getByRole('button', { name: 'Cancel' }).click(); await waitSel('3 selected');
     await t('prop-qselect').click(); assert.equal(await dialog.getByRole('radio', { name: 'Include in new selection set', exact: true }).isChecked(), true);
     await select('CIRCLE', 'radius', 'gt', '15'); await page.keyboard.press('Escape'); await waitSel('3 selected');
+    await t('prop-qselect').click(); await dialog.getByRole('button', { name: 'Cancel' }).focus(); await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' }); await waitSel('3 selected');
     await t('prop-qselect').click(); await combo('Apply to').selectOption('drawing');
     await select('CIRCLE', 'radius', 'all');
     assert.equal(await dialog.getByRole('textbox', { name: 'Value' }).isDisabled(), true); await accept(2);

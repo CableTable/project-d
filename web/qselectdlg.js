@@ -3,7 +3,7 @@ import { objectTypes, propertiesOf, operatorsOf, valuesOf, quickSelect } from '.
 
 let exclude = false;
 
-export function openQuickSelect({ entities, layers, scope, selection, factor, currentLayer, onApply }) {
+export function openQuickSelect({ entities, layers, scope, selection, factor, dp, onApply }) {
   if (document.querySelector('[data-testid=qselect-dialog]')) return;
   const previous = document.activeElement;
   const finish = () => { dialog.close(); dialog.remove(); if (previous?.isConnected) previous.focus(); };
@@ -29,11 +29,11 @@ export function openQuickSelect({ entities, layers, scope, selection, factor, cu
     const p = prop();
     list.hidden = p.kind !== 'list'; input.hidden = p.kind === 'list'; input.value = '';
     input.inputMode = p.kind === 'number' ? 'decimal' : 'text';
-    options(list, p.kind === 'list' ? valuesOf(ents().filter((e) => type.value === 'Multiple' || e.type === type.value), layers, p.key, currentLayer) : []);
+    options(list, p.kind === 'list' ? valuesOf(ents().filter((e) => type.value === 'Multiple' || e.type === type.value), layers, p.key) : []);
     operators();
   };
   const properties = () => {
-    props = propertiesOf(ents(), type.value, factor);
+    props = propertiesOf(ents(), type.value, factor, dp);
     options(property, props.map((p) => [p.key, p.label])); values();
   };
   const types = () => { options(type, objectTypes(ents())); properties(); };
@@ -43,7 +43,7 @@ export function openQuickSelect({ entities, layers, scope, selection, factor, cu
     if (ok.disabled) return;
     exclude = omit.checked;
     const result = quickSelect(entities, layers, { scope: indices(), type: type.value, property: property.value, operator: operator.value,
-      value: prop().kind === 'list' ? list.value : input.value, exclude, factor });
+      value: prop().kind === 'list' ? list.value : input.value, exclude, factor, dp });
     const add = append.checked; finish(); onApply(result, add);
   } }, 'OK');
   const row = (label, control) => h('label', { class: 'qs-row' }, h('span', null, label), control);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { objectTypes, propertiesOf, operatorsOf, valuesOf, quickSelect } from './web/qselect.js';
-import { line, circle, arc, lwpoly, text, entity } from './web/dxf-write.js';
+import { line, circle, arc, lwpoly, text, entity, insert } from './web/dxf-write.js';
 import { encode } from './web/text.js';
 import { fieldsOf } from './web/props.js';
 
@@ -34,7 +34,7 @@ test('every list operator, with drawn colour, layer, line type and DXF line weig
   assert.deepEqual(valuesOf(ents, layers, 'layer'), [['A', 'A'], ['B', 'B']]);
   assert.deepEqual(valuesOf([{ ...ents[0], layer: '-A' }, { ...ents[1], layer: '0' }], layers, 'layer'), [['0', '0'], ['-A', '-A']]);
   assert.deepEqual(valuesOf(ents, layers, 'colour'), [['aci:5', 'Blue'], ['aci:1', 'Red']]);
-  assert.deepEqual(valuesOf(ents, layers, 'colour', 'A'), [['aci:1', 'ByLayer'], ['aci:5', 'Blue'], ['aci:1', 'Red']]);
+  assert.deepEqual(valuesOf([ents[3]], layers, 'colour'), [['aci:5', 'Blue']]);          // ByLayer on a non-current layer: its own layer's colour, no ByLayer entry
   assert.deepEqual(valuesOf(ents, layers, 'lt'), [['BYLAYER', 'ByLayer']]);
   assert.deepEqual(valuesOf(ents, layers, 'lw'), [['25', '0.25 mm'], ['-1', 'ByLayer']]);
   assert.deepEqual(select({ property: 'colour', value: 'tc:1234' }, [{ ...ents[0], tc: 1234 }, { ...ents[1], layer: 'True' }], { True: { tc: 1234 } }), [0, 1]);
@@ -49,6 +49,9 @@ test('every numeric operator uses the panel decimals, including unit conversion 
   assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '15.00' }, rounds), [0]);
   assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '15.00', operator: 'gt' }, rounds), [1]);
   assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '254', factor: 25.4 }), [2]);
+  assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '15.004', dp: 3 }, rounds), [0]);          // decimals follow the panel
+  assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '10', scope: [2, 3] }, [...ents, entity('CIRCLE', [[10, 0], [20, 0], [40, 10], [230, -1]], { layer: 'A' })]), [2]);          // a mirrored circle outside the scope does not hide Radius
+  assert.deepEqual(select({ property: 'layer', value: 'A', scope: [0, 6] }, [...ents, insert('Blk', 0, 0, { layer: 'A' })]), [0, 6]);          // INSERT under Multiple
   for (const value of ['', ' ', 'NaN', 'Infinity', '12junk']) assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value }), []);
 });
 
