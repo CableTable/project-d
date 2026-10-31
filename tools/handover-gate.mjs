@@ -4,6 +4,7 @@
 export const LIMIT = 3;
 const ROW = /^(\s*)(?:- \[([ x])\] )?(\d+[a-z]*\d*)\.\s*(✅)?/; // "- [x] 160." / "    155a. ✅" / "1. ✅"; ids repeat in old lists, so rows are keyed id#occurrence
 
+// shortcut: id#occurrence miscounts when a same-number open row is inserted above a ticked one; it only feeds the queue line (never a launch), upgrade if the line misleads.
 function rows(text) {
   const seen = {}, list = [];
   for (const line of text.split(/\r?\n/)) {
@@ -48,7 +49,9 @@ export function gateOps(env) {
     const n = /runs(\d+)/.exec(resume)?.[1]; // line 3 names runs<N>/resume-rook.txt; a build's branch (king/165) carries no session number
     if (!uuid || !name || !n) throw new Error('rook-next.txt must have the Rook uuid, its name and runs<N>/resume-rook.txt on lines 1-3');
     const dir = `${env.extras}/runs${n}`, file = `${dir}/rook-gate.json`, head = `claude/session${n}`, old = env.read(file);
-    const state = nextState(old && JSON.parse(old), uuid, null);
+    let saved = null;
+    try { saved = old && JSON.parse(old); } catch { throw new Error(`${file} is corrupt: delete it to reset the count`); }
+    const state = nextState(saved, uuid, null);
     if (!state.startSha) state.startSha = env.git('rev-parse', head);
     return { name, dir, file, head, state };
   }
@@ -66,11 +69,14 @@ export function gateOps(env) {
       const g = load();
       if (itemsOf(g.state).length >= LIMIT) throw new Error(refusal(g.name, g.state));
     },
-    // After a launch started. The queue line is a note: its failure must not look like a failed launch.
+    // After a launch started: never throws (a bad state file must not look like a failed launch, or Rook launches twice); it warns instead.
     record({ fix, over, brief, branch }) {
-      const g = load();
-      g.state.launches.push({ kind: fix ? 'fix' : 'item', brief, branch, at: new Date().toISOString(), ...(over && !fix ? { over: true } : {}) });
-      env.write(g.file, JSON.stringify(g.state, null, 2) + '\n');
+      let g;
+      try {
+        g = load();
+        g.state.launches.push({ kind: fix ? 'fix' : 'item', brief, branch, at: new Date().toISOString(), ...(over && !fix ? { over: true } : {}) });
+        env.write(g.file, JSON.stringify(g.state, null, 2) + '\n');
+      } catch (e) { return void console.error(`launch not counted: ${e.message}`); }
       try { return show(g); } catch (e) { console.error(`queue line not updated: ${e.message}`); }
     },
     // `rook.mjs gate`: save the (possibly reset) state, rewrite the queue line, return it.

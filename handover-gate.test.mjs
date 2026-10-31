@@ -89,6 +89,26 @@ test('gate: a new Rook (other uuid) starts at 0; `gate` writes the queue line wi
   assert.equal(state(bad).launches.length, 1);
 });
 
+test('gate: a corrupt state file is named; record never throws, so a --fix launch with rook-next.txt missing only warns', () => {
+  const w = world();
+  w.files['/x/runs30/rook-gate.json'] = '{oops';
+  assert.throws(() => w.gate.check(false, false), /^Error: \/x\/runs30\/rook-gate\.json is corrupt: delete it to reset the count$/);
+  const err = console.error, seen = [];
+  console.error = (m) => seen.push(m);
+  try {
+    assert.equal(w.gate.record({ fix: false, over: false, brief: 'b', branch: 'k/1' }), undefined);
+    delete w.files['/x/rook-next.txt'];
+    w.gate.check(true, false); // --fix skips the check, so the launch starts
+    assert.equal(w.gate.record({ fix: true, over: false, brief: 'b', branch: 'k/fix' }), undefined);
+  } finally { console.error = err; }
+  assert.match(seen[0], /launch not counted: \/x\/runs30\/rook-gate\.json is corrupt/);
+  assert.match(seen[1], /launch not counted: rook-next\.txt not found/);
+});
+
+test('ticked counter: a row ticked then unticked counts 0', () => {
+  assert.equal(countTicked('- [x] 1. a', '- [ ] 1. a'), 0);
+});
+
 test('gate: without rook-next.txt or a runs<N> line it stops with a message', () => {
   const w = world();
   w.files['/x/rook-next.txt'] = 'uuid-1\nRook S30\n';

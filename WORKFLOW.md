@@ -281,7 +281,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   **The launcher enforces the 3** (his ask 2026-10-31, TODO 165; S29 built 9 against this rule): `rook.mjs build` / `knight` count
   the new-item launches per Rook (rook-next.txt line 1 = the uuid; state in runs<N>/rook-gate.json), refuse the 4th, and keep line 2 of
   queue.txt ("items since start ...", `rook.mjs gate` rewrites it). Fix rounds pass `--fix`; a 4th item needs `--over` with his OK.
-  A new Rook rewrites rook-next.txt (new uuid) at its start; that resets the count.
+  A new Rook rewrites rook-next.txt (new uuid) at its start; that resets the count. Until the new Rook's `claude/session<N+1>` branch exists locally, item launches are refused (fix / `--over` pass).
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, launches the **retro** on Bishop first (never inline) (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
