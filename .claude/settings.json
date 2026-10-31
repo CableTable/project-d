@@ -53,6 +53,7 @@
     ],
   
     "deny": [
+      "Bash(sed -i:*)",
       "Bash(git push * --force*)",
       "Bash(git push * -f*)",
       "Bash(git push * +*)",
