@@ -7004,7 +7004,7 @@ function modUp(d, was, p, shift, crossing) {
     if (m.stage === 'obj') {
       const ent = modEntAt(d, was.p);
       if (!ent) { note('Offset: nothing there. Click a line, arc, circle or polyline'); return; }
-      if (!MD.canModify(ent)) { note('Offset takes a line, arc, circle or polyline'); return; }
+      if (!MD.canOffset(ent)) { note('Offset takes a line, arc, circle, ellipse, spline or polyline'); return; }
       m.ent = ent; m.stage = 'side'; m.p = was.p; note(offsetPrompt(m)); paintOverlay();
     } else if (m.stage === 'side') offsetDo(d, was.p);
   } else if (m.kind === 'fillet') {
@@ -7654,7 +7654,7 @@ function modOvl(d, out) {
       if (from) add({ t: 'line', a: from.map((v) => v * f), b: end.map((v) => v * f) }, 'dr-guide', 'mod-line');
     }
   } else if (m.kind === 'offset') {
-    if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canModify(e)) addEnt(e, 'dr-guide'); }
+    if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canOffset(e)) addEnt(e, 'dr-guide'); }
     else if (m.ent) { addEnt(m.ent, 'dr-guide'); const r = m.p ? MD.offsetEntity(m.ent, offDistU(d), m.p) : null; if (r && r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
   } else if (m.kind === 'fillet') {
     if (m.ent) addEnt(m.ent, 'dr-guide');

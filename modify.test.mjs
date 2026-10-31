@@ -169,8 +169,7 @@ test('Offset a polyline with a bulge: the arc keeps its centre and takes the new
 });
 
 test('Offset: other kinds are refused with a message', () => {
-  assert.match(M.offsetEntity(text(0, 0, 5, 'Hi'), 5, [0, 0]).error, /line, arc, circle or polyline/);
-  assert.match(M.offsetEntity(ellipse(0, 0, 10, 0, 0.5), 5, [0, 0]).error, /line, arc, circle or polyline/);
+  assert.match(M.offsetEntity(text(0, 0, 5, 'Hi'), 5, [0, 0]).error, /line, arc, circle, ellipse, spline or polyline/);
   assert.equal(M.canModify(line(0, 0, 1, 1)), true);
   assert.equal(M.canModify(insert('B', 0, 0)), false);
 });

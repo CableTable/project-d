@@ -18,6 +18,8 @@ import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, t
 import { placedBox } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { rotateEntities } from './web/rotate.js';
+import { curveShape } from './web/extend.js';
+import { closest, pathOf } from './web/modify.js';
 import { svgPath } from './web/draw.js';
 import { COMMANDS, placeBar } from './web/cmdbar.js';
 import { Page, writePdf, winAnsi } from './web/pdf-write.js';
@@ -11966,6 +11968,62 @@ try {
     await page.reload(); await t('count').waitFor({ state: 'attached' });
     await openGrips(modDoc(), 'offset-distance.dxf');
     await start(); assert.match(await prompt(), /<12>:/); await typeCmd('10'); await end();
+  });
+
+  await step('TODO 155g2: Offset ellipse outside and inside, spline Through, options, Esc, Undo, source edit and Layout ellipse', async () => {
+    await menuItem('View', 'Theme: light');
+    const source = newDoc(4); addLayer(source, 'Cut', { aci: 3 });
+    addEntities(source, dxfEllipse(150, 110, 100, 0, 0.4, 0, Math.PI * 2, { layer: 'Cut' }),
+      entity('SPLINE', [[70, 0], [71, 3], ...[0, 0, 0, 0, 1, 1, 1, 1].map((v) => [40, v]),
+        ...[[320, 70], [350, 150], [390, 150], [420, 70]].flatMap(([x, y]) => [[10, x], [20, y]])], { layer: 'Cut' }));
+    await openGrips(writeDxf(source), 'offset-curves.dxf');
+    const end = () => typeCmd('');
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const start = async (distance = '5') => { await typeCmd('offset'); await typeCmd(distance); };
+    // Defaults are explicit so this step also runs alone or after the older Offset steps.
+    await typeCmd('offset'); await typeCmd('e'); await typeCmd('n'); await typeCmd('l'); await typeCmd('s'); await typeCmd('5');
+    const before = JSON.stringify((await savedDoc()).entities);
+    await click(150, 150); await page.keyboard.press('Escape');
+    assert.equal(JSON.stringify((await savedDoc()).entities), before, 'Esc holding an ellipse changes nothing');
+    await start(); await click(150, 150); await click(150, 170);
+    await click(150, 150); await click(150, 110); await end();
+    let doc = await savedDoc(), copies = doc.entities.slice(2);
+    assert.equal(copies.length, 2);
+    for (const [i, y] of [[0, 155], [1, 145]]) {
+      assert.equal(copies[i].type, 'SPLINE'); assert.equal(fieldOf(copies[i], 70) & 1, 1);
+      assert.equal(layerOf(copies[i]), 'Cut');
+      assert.ok(Math.abs(Math.max(...curveShape(copies[i]).pts.map((p) => p[1])) - y) < 0.01);
+    }
+    await shotBoth('155g2-offset-curves');
+    await click(150, 150); await typeCmd('mv'); await typeCmd('150,110'); await typeCmd('0,5');
+    doc = await savedDoc();
+    assert.equal(fieldOf(doc.entities.find((e) => e.type === 'ELLIPSE'), 20), 115, 'source can still be edited');
+    assert.deepEqual(doc.entities.slice(2), copies, 'editing the ellipse leaves its spline copies alone');
+    await undo(); await undo(); assert.equal(await entCount(), 2, 'one Ctrl+Z removes the complete Offset run');
+    await start('t'); await click(370, 130); await typeCmd('370,137'); await end();
+    doc = await savedDoc();
+    const through = doc.entities.at(-1);
+    assert.equal(through.type, 'SPLINE'); assert.equal(fieldOf(through, 70) & 1, 0);
+    assert.ok(closest(pathOf(curveShape(through)), [370, 137]).d < 0.01, 'open spline Through uses the nearest curve point');
+    await undo(); assert.equal(await entCount(), 2);
+    await typeCmd('offset'); await typeCmd('e'); await typeCmd('y'); await typeCmd('l'); await typeCmd('c'); await typeCmd('5');
+    await click(150, 150); await typeCmd('m'); await click(150, 170); await click(150, 180); await end();
+    doc = await savedDoc();
+    assert.equal(doc.entities.filter((e) => e.type === 'ELLIPSE').length, 0, 'Erase removes the ellipse');
+    assert.equal(doc.entities.length, 3, 'Multiple keeps both spline copies');
+    assert.ok(doc.entities.slice(1).every((e) => layerOf(e) === '0'), 'Layer Current applies to spline results');
+    await undo(); assert.equal(await entCount(), 2);
+    await typeCmd('offset'); await typeCmd('e'); await typeCmd('n'); await typeCmd('l'); await typeCmd('s'); await typeCmd('5'); await end();
+    await t('new-layout').click();
+    await typeCmd('ellipse'); await typeCmd('100,300'); await typeCmd('300,300'); await typeCmd('40');
+    const count = await nParts();
+    await start(); await click(200, 340); await click(200, 370); await end();
+    doc = await savedDoc();
+    const layoutSpline = doc.entities.find((e) => e.type === 'SPLINE');
+    assert.ok(layoutSpline, 'Layout ellipse offsets to a saved spline');
+    assert.equal(fieldOf(layoutSpline, 70) & 1, 1); assert.equal(await nParts(), count + 1);
+    await undo(); assert.equal(await nParts(), count);
+    assert.equal((await savedDoc()).entities.filter((e) => e.type === 'SPLINE').length, 0);
   });
 
   await step('Trim: Enter makes every object a cutting edge, a click cuts the part between the crossings (a line becomes two); one undo step "Trim" each; pieces of an edge still cut', async () => {

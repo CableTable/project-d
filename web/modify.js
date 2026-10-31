@@ -13,6 +13,7 @@ import { toEntity } from './draw.js';
 import { LDR_BLOCK } from './edit.js';
 import * as L from './leader.js';
 import { insert } from './dxf-write.js';
+import { offsetCurve } from './offsetcurve.js';
 
 const TAU = Math.PI * 2, DEG = 180 / Math.PI;
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -531,10 +532,13 @@ export function trimShape(sh, edges, pick, quick = false) {
 
 /** Can Offset and Trim take this entity? (A line, arc, circle or light polyline lying in the plane.) */
 export const canModify = (ent) => !!ent && hasGrips(ent) && ent.type !== 'LEADER';
+/** Offset also takes curves; keep Trim and cleanup on their existing exact shapes. */
+export const canOffset = (ent) => canModify(ent) || !!ent?.r && ['ELLIPSE', 'SPLINE'].includes(ent.type);
 
 /** The offset copy d away towards `at`; null distance means Through: { ent } | { error }. */
 export function offsetEntity(ent, d, at) {
-  if (!canModify(ent)) return { error: 'Offset takes a line, arc, circle or polyline' };
+  if (!canOffset(ent)) return { error: 'Offset takes a line, arc, circle, ellipse, spline or polyline' };
+  if (['ELLIPSE', 'SPLINE'].includes(ent.type)) return offsetCurve(ent, d, at);
   const sh = shapeOf(ent, 1);
   if (d === null) {
     const P = pathOf(sh), near = closest(P, at), s = P.segs[near.index], g = s && geo(s);
