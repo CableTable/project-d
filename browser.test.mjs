@@ -16274,6 +16274,8 @@ try {
       await menuItem('View', 'Theme: light');
       await setting('off'); await painted(false, false);
       assert.equal((await savedDoc()).header.$ATTMODE, '0');
+      await click(125, 133); await frames();
+      assert.equal(await selCount(), '0 selected', 'OFF: a click on a hidden ATTRIB text picks nothing');
       await setting('normal'); await painted(true, false);
       assert.equal((await savedDoc()).header.$ATTMODE, '1');
       await undo(); await painted(false, false);

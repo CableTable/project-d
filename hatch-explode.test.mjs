@@ -67,7 +67,7 @@ test('TODO 155i1: scan lines through boundary vertices have no doubled or missin
 test('TODO 155i2b: tiny dashes and gap-only patterns reach the work cap even without output lines', () => {
   for (const d of [[1e-12], [1e-9], [-1e-9], [1e-10, -1]]) {
     const started = performance.now();
-    assert.throws(() => explodeHatch(hatch({ a: 0, spacing: .001, d })), /Hatch too dense to explode/);
+    assert.throws(() => explodeHatch(hatch({ a: 0, spacing: .001, d })), { message: 'Hatch pattern too fine to explode' });
     assert.ok(performance.now() - started < 2000, 'dash refusal finishes within two seconds');
   }
 });

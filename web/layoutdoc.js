@@ -73,7 +73,7 @@ export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   if (ent.type === 'DIMENSION' && !blocks[String(ent.r.v[ent.r.c.indexOf(2)] || '').trim()]) {
     try { drawing = { ...raw, entities: explodeDimension(ent, raw) }; } catch { return null; }
   }
-  const fl = flatten(drawing), shown = flatten({ ...drawing, header: { ...drawing.header, $ATTMODE: '2' }, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box includes hidden attributes and off-layer objects so visibility cannot discard them
+  const fl = flatten(drawing), shown = flatten({ ...drawing, header: { ...drawing.header, $ATTMODE: '1' }, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box includes off-layer objects and ignores the attribute display mode (invisible attributes stay out)
   const box = shown.boxes && shown.boxes.model;
   if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
   return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
@@ -326,7 +326,7 @@ export const partBlocks = (blocks) => Object.fromEntries(Object.entries(blocks).
 
 /** A part from a drawing's document: { id, name, raw, space, factor, box, w, h, fl, off (the layers its file has switched off) }, or null when it has no extents. */
 export function makePart(id, name, raw, factor, src = '') {
-  const fl = flatten(raw), bounds = +(raw.header.$ATTMODE ?? 1) !== 2 && hasAttributes(raw) ? flatten({ ...raw, header: { ...raw.header, $ATTMODE: '2' } }) : fl;
+  const fl = flatten(raw), bounds = +(raw.header.$ATTMODE ?? 1) !== 1 && hasAttributes(raw) ? flatten({ ...raw, header: { ...raw.header, $ATTMODE: '1' } }) : fl;   // bounds follow the attributes' own invisible flags, not the display mode
   const p = partFromDrawing(name, raw, bounds, factor || unitFactor(fl.units));
   return p && { id, ...p, fl, off: startHidden(fl), src };
 }

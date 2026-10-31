@@ -39,6 +39,17 @@ test('TODO 155i2b: layout ATTMODE refresh keeps placement, source and undo snaps
   assert.equal(part.fl.items.filter((it) => it.k === 't').length, 1);
 });
 
+test('TODO 155i2b: an invisible attribute outside the block never widens the part box, in any ATTDISP mode', () => {
+  const ins = insert('Box', 0, 0), raw = newDoc(4);
+  addBlock(raw, 'Box', [rect(0, 0, 100, 50)]);
+  ins.kids = [entity('ATTRIB', [[10, -40], [20, -30], [40, 3], [1, 'Hidden'], [70, 1]]).r];
+  raw.entities = [ins];
+  for (const mode of ['0', '1', '2']) {
+    raw.header.$ATTMODE = mode;
+    assert.deepEqual(LD.makePart('p', 'Box', raw, 1).box.map(Math.round), [0, 0, 100, 50]);
+  }
+});
+
 test('swatch strip recolours a private part including nested blocks, keeps geometry, source and saved colour', () => {
   const raw = newDoc(4);
   addBlock(raw, 'inner', [line(0, 0, 10, 10, { aci: 5 })]);

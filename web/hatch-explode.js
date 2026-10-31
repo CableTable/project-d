@@ -66,7 +66,7 @@ export function explodeHatch(e) {
         for (let t = Math.floor((lo - origin) / period); origin + t * period < hi; t++) {
           let x = origin + t * period;
           for (const d of f.d) {
-            if (++steps > 1000000) throw new Error('Hatch too dense to explode (more than 1,000,000 lines)');
+            if (++steps > 1000000) throw new Error('Hatch pattern too fine to explode');
             if (d >= 0) emit(Math.max(lo, x), Math.min(hi, x + (d || 1e-8)), y);
             x += Math.abs(d);
           }
