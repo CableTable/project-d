@@ -14,7 +14,7 @@ import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { rotateEntities } from './web/rotate.js';
@@ -10562,6 +10562,160 @@ try {
     const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
     await hover(await gid('v1')); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Remove vertex']); await pickItem('Remove vertex'); await hotWhen(0);
     await frames(); await gripWhen(3);
+    await closeTabs(/./);
+  });
+
+  // ---- TODO 164a: MTEXT width / height grips and block attribute grips ----
+  const g164aDoc = () => {       // entity 0: an MTEXT 120 wide (3 lines of 5 mm text); entity 1: a block with two attributes
+    const doc = newDoc(4), mt = dxfMtext(20, 100, 5, 'Line one of text\\PLine two of text\\PLine three'), k = mt.r.c.indexOf(40);
+    mt.r.c.splice(k + 1, 0, 41); mt.r.v.splice(k + 1, 0, '120');
+    addBlock(doc, 'Attributed', [dxfLine(0, 0, 60, 0)]);
+    const ins = dxfInsert('Attributed', 20, 40);
+    ins.kids = [['AAA', 'TAG1', 30, 50], ['BBB', 'TAG2', 30, 30]].map(([v, tag, x, y]) => entity('ATTRIB', [[10, x], [20, y], [40, 5], [2, tag], [1, v], [70, 0]]).r);
+    addEntities(doc, mt, ins);
+    return writeDxf(doc);
+  };
+  const g164a = {
+    saved: async () => (await downloaded(() => page.keyboard.press('Control+s'))).text,
+    undo: async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); },
+    kid: (e, i) => [GR.get(e.kids[i], 10), GR.get(e.kids[i], 20)],
+    shot: async (name) => { mkdirSync('shots-164a', { recursive: true }); for (const theme of ['light', 'dark']) { await menuItem('View', 'Theme: ' + theme); await frames(); await page.screenshot({ path: `shots-164a/${name}-${theme}.png` }); } await menuItem('View', 'Theme: light'); },
+  };
+
+  await step('TODO 164a: an MTEXT shows 4 grips (square + width / height / both triangles); the width grip drags the box and the text reflows live, one Undo; a typed 25 adds 25; never narrower than two heights; the height grip sets group 46', async () => {
+    await menuItem('View', 'Theme: light');
+    const { undo, shot } = g164a;
+    await openGrips(g164aDoc(), 'g164a.dxf');
+    await pick(30, 96, 4);
+    assert.deepEqual(await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip).sort()), ['0:h', '0:i', '0:w', '0:wh']);
+    assert.deepEqual(await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.tagName).sort()), ['path', 'path', 'path', 'rect'], 'three triangles and the insertion square');
+    const w0 = await gripBox('0:w'), p0 = await at(140, 100), h0 = await gripBox('0:h');
+    assert.ok(near(w0.x, p0.x, 3) && near(w0.y, p0.y, 3), 'the width grip is at the top right corner of the 120 wide box');
+    await shot('mtext-grips');
+    const history = await histLabels();
+    // drag: the text reflows while the pointer is down
+    await dragGripTo('0:w', 80, 100, { hold: true }); await frames();
+    assert.ok(+(await t('drawing').getAttribute('data-preview') || 0) > 0, 'the text is drawn reflowed while dragged');
+    await page.screenshot({ path: 'shots-164a/mtext-width-drag-light.png' });
+    await page.mouse.up(); await frames();
+    let mt = entOf(await savedDoc(), 0);
+    assert.ok(near(fieldOf(mt, 41), 60, 0.6), 'the width is 60: ' + fieldOf(mt, 41));
+    assert.ok((await gripBox('0:h')).y > h0.y + 3, 'narrower: the text wrapped to more lines, the box got taller');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Stretch MTEXT'], 'one step');
+    await undo();
+    assert.equal(fieldOf(entOf(await savedDoc(), 0), 41), 120, 'one Undo gives the width back');
+    // typed: 25 on the width grip, pointer on its outer side = 25 more
+    await pick(30, 96, 4);
+    const a = await gripBox('0:w');
+    await page.mouse.click(a.x, a.y); await frames();
+    await page.mouse.move(a.x + 40, a.y, { steps: 3 }); await frames();
+    await typeCmd('25'); await frames();
+    assert.ok(near(fieldOf(entOf(await savedDoc(), 0), 41), 145, 1e-6), 'a typed 25 is the distance moved: 120 + 25');
+    await undo();
+    // never narrower than two text heights (5 mm high -> 10)
+    await pick(30, 96, 4);
+    await dragGripTo('0:w', 21, 100);
+    assert.ok(near(fieldOf(entOf(await savedDoc(), 0), 41), 10, 1e-6), 'the width stops at two heights');
+    await undo();
+    // the height grip: group 46 = the box height, the width stays
+    await pick(30, 96, 4);
+    await dragGripTo('0:h', 20, 60);
+    mt = entOf(await savedDoc(), 0);
+    assert.ok(near(fieldOf(mt, 46), 40, 0.6) && fieldOf(mt, 41) === 120, 'height 40, width 120: ' + [fieldOf(mt, 46), fieldOf(mt, 41)]);
+    await undo();
+    // the grip modes still work from an MTEXT grip: Enter twice = Rotate about the width grip
+    await pick(30, 96, 4);
+    const b = await gripBox('0:w');
+    await page.mouse.click(b.x, b.y); await frames(); await typeCmd(''); await typeCmd('');
+    assert.match(await t('cmd-hist').textContent(), /\*\* ROTATE \*\*/);
+    await typeCmd('90');
+    assert.ok(near(fieldOf(entOf(await savedDoc(), 0), 50), 90, 1e-6), 'the MTEXT turned 90°');
+    await undo();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 164a: a block with two attributes shows 3 grips; dragging one attribute moves only it (one Undo); Rotate from an attribute grip; save and reopen keeps both edits', async () => {
+    await menuItem('View', 'Theme: light');
+    const { undo, shot, kid } = g164a;
+    await openGrips(g164aDoc(), 'g164a-attrib.dxf');
+    await pick(70, 40, 3);
+    assert.deepEqual(await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip).sort()), ['1:a0', '1:a1', '1:i']);
+    const g0 = await gripBox('1:a0'), want = await at(30, 50);
+    assert.ok(near(g0.x, want.x, 3) && near(g0.y, want.y, 3), 'the first attribute grip is at its insertion point');
+    assert.equal(await t('grip-hint').isVisible(), true);
+    await shot('attribute-grips');
+    const history = await histLabels();
+    await dragGripTo('1:a0', 50, 70);
+    let ins = entOf(await savedDoc(), 1);
+    assert.ok(near(kid(ins, 0)[0], 50, 0.6) && near(kid(ins, 0)[1], 70, 0.6), 'the first attribute moved to (50, 70): ' + kid(ins, 0));
+    assert.deepEqual(kid(ins, 1), [30, 30], 'the other attribute stayed');
+    assert.ok(near(fieldOf(ins, 10), 20, 1e-6) && near(fieldOf(ins, 20), 40, 1e-6), 'and the block');
+    assert.deepEqual((await histLabels()).slice(history.length), ['Stretch'], 'one Undo step');
+    await frames(); await gripWhen(3);
+    const afterMove = await gripBox('1:a0'), moved = await at(50, 70);
+    assert.ok(near(afterMove.x, moved.x, 3) && near(afterMove.y, moved.y, 3), 'its grip follows');
+    // the file keeps it
+    const text = await g164a.saved();
+    await undo();
+    ins = entOf(await savedDoc(), 1);
+    assert.deepEqual(kid(ins, 0), [30, 50], 'one Undo puts the attribute back');
+    // Rotate from an attribute grip: the whole block turns about it
+    await pick(70, 40, 3);
+    const c = await gripBox('1:a0');
+    await page.mouse.click(c.x, c.y); await frames(); await typeCmd(''); await typeCmd('');
+    assert.match(await t('cmd-hist').textContent(), /\*\* ROTATE \*\*/);
+    await typeCmd('90');
+    assert.ok(near(fieldOf(entOf(await savedDoc(), 1), 50), 90, 1e-6), 'the block turned 90° about the attribute grip');
+    await undo();
+    // save and reopen: the moved attribute (and a narrower MTEXT) are still there
+    await pick(30, 96, 4);
+    await dragGripTo('0:w', 80, 100);
+    const both = await g164a.saved();
+    await openGrips(both, 'g164a-reopen.dxf');
+    await pick(30, 96, 4);
+    const wr = await gripBox('0:w'), w80 = await at(80, 100);
+    assert.ok(near(wr.x, w80.x, 3) && near(wr.y, w80.y, 3), 'the reopened MTEXT keeps its width');
+    await closeTabs(/./);
+    await openGrips(text, 'g164a-reopen2.dxf');
+    await pick(70, 40, 3);
+    const ar = await gripBox('1:a0'), a50 = await at(50, 70);
+    assert.ok(near(ar.x, a50.x, 3) && near(ar.y, a50.y, 3), 'the reopened block keeps the moved attribute');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 164a: MTEXT and attribute grips on Compare (routes to the source) and on a layout object', async () => {
+    await menuItem('View', 'Theme: light');
+    const { kid } = g164a;
+    await openGrips(g164aDoc(), 'g164a-compare.dxf');
+    await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(7);
+    await page.mouse.move(600, 500); await page.mouse.wheel(0, 300); await frames(); await page.mouse.wheel(0, 300); await frames();       // Compare fits the sheet: zoom out until the MTEXT corner is on screen
+    await dragGripTo('0:w', 80, 100); await frames();
+    await page.keyboard.press('Escape'); await click(70, 40); await frames(); await gripWhen(3);
+    await dragGripTo('1:a1', 50, 20);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'g164a-compare.dxf' }) }).click();
+    const src = await savedDoc();
+    assert.ok(near(fieldOf(entOf(src, 0), 41), 60, 0.6), 'the source MTEXT got the width: ' + fieldOf(entOf(src, 0), 41) + ' ' + (await prompt()));
+    assert.ok(near(kid(entOf(src, 1), 1)[0], 50, 0.6) && near(kid(entOf(src, 1), 1)[1], 20, 0.6), 'and the source block its moved attribute');
+    await closeTabs(/./);
+    // a layout object
+    const raw = readDxf(g164aDoc()), lay = newLayout('Grips164');
+    lay.parts.b = objectPart('b', 'Attributed block', raw.entities[1], raw.layers, raw.header, raw.blocks);
+    lay.parts.m = objectPart('m', 'Notes', raw.entities[0], raw.layers, raw.header, raw.blocks);
+    lay.placed = [objectPlacement(lay.parts.b), objectPlacement(lay.parts.m)];
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'g164a-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'g164a-layout.dxf');
+    await frames(); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(4);       // only the MTEXT: a block object is not in the layout objects' drawing (as before), so it has no grips and no attribute grips
+    const w = async () => gripBox(await page.locator('[data-testid=grip]').evaluateAll((l) => l.map((x) => x.dataset.grip).find((x) => x.endsWith(':w'))));
+    const b = await w();       // a layout object sits at its own place on the sheet: drag by a pixel distance
+    await page.mouse.move(b.x, b.y); await page.mouse.down(); await page.mouse.move(b.x - 40, b.y, { steps: 6 }); await page.mouse.up(); await frames(); await gripWhen(4);
+    const a = await w();
+    assert.ok(near(a.x, b.x - 40, 3), 'the layout MTEXT width grip is where it was dropped');
+    const note = Object.values(layoutFromRaw(await savedDoc()).parts).find((p) => p.raw.entities.some((e) => e.type === 'MTEXT')).raw.entities.find((e) => e.type === 'MTEXT');
+    assert.ok(fieldOf(note, 41) < 120, 'the object keeps the new width: ' + fieldOf(note, 41));
     await closeTabs(/./);
   });
 

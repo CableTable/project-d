@@ -3,7 +3,8 @@
 // A selected LINE, ARC, CIRCLE or LWPOLYLINE shows small squares to drag; so do TEXT, MTEXT, INSERT, HATCH (a grip that moves it whole) and ELLIPSE (155e4). Everything here works on the entity record (dxf-write.js shape:
 // { type, layer, …, r: { c: [codes], v: [values] } }) in the drawing's own units, y up; `factor` turns units into mm for what is shown.
 //
-//   gripsOf(ent)                 → [{ id, kind: 'end' | 'mid' | 'centre' | 'quad' | 'vertex' | 'edge', x, y }]
+//   gripsOf(ent, attMode)        → [{ id, kind: 'end' | 'mid' | 'centre' | 'quad' | 'vertex' | 'edge' | 'insert' | 'tri', x, y }]
+//                                  164a: an MTEXT also has width 'w', height 'h' and both 'wh' (kind 'tri', tri = the triangle's screen angle in degrees); a block insert one 'a<n>' per visible attribute (kid n)
 //   dragGrip(ent, id, to, shift) → { ent: the changed record, label } or null (nothing sensible: the point is the same, three points in a line)
 //   optionsOf(ent, id)           → 163a Grip options: ['Stretch', 'Lengthen'] / ['Stretch', 'Radius'] / []; lengthen, setRadius, dragOption, typedOption do them
 //                                  163b polylines: vertex Stretch / Insert vertex / Remove vertex, segment mid Stretch / Insert vertex / Convert to Arc | Line (insertVertex, removeVertex, convertToArc, convertToLine)
@@ -16,6 +17,7 @@
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)
 import { bulgeOf3 } from './contour.js';             // 163b: the bulge of the arc through a pointer
+import { mtextBox } from './drawing.js';             // 164a: an MTEXT's box
 
 export const MAX_SELECTED = 200;
 export const GRIP_SIZE = 5;                 // 155r: GRIPSIZE 5, AutoCAD's half side: the square is 2 * 5 + 1 px
@@ -49,7 +51,9 @@ export function hasGrips(ent) {
 }
 /** 155e4: the kinds whose grip moves the whole object (an ellipse only by its centre); the word is for the undo step. */
 const MOVES = { TEXT: 'text', MTEXT: 'text', INSERT: 'block', HATCH: 'hatch', ELLIPSE: 'ellipse' };
-export const movesWhole = (ent, id) => !!MOVES[ent.type] && (ent.type !== 'ELLIPSE' || id === 'c');
+export const movesWhole = (ent, id) => !!MOVES[ent.type] && (ent.type !== 'ELLIPSE' || id === 'c') && !(id[0] === 'a' && ent.type === 'INSERT') && !(ent.type === 'MTEXT' && id !== 'i');       // 164a: an MTEXT's size grips and a block's attribute grips change one part only
+/** 164a: is this a kind drawn without an outline (text, hatch, block, ellipse), shown moved or redrawn as a whole while a grip is dragged? */
+export const noOutline = (ent) => !!MOVES[ent.type];
 const TAU = 2 * Math.PI;
 const sweepOK = (s) => { const w = ((s % TAU) + TAU) % TAU; return w > 1e-5 && TAU - w > 1e-5; };       // a real arc, not the full 0 .. 2π (the writer saves 6.283185)
 /** The numbers of an ELLIPSE: centre c, major half-axis m, minor half-axis n (m turned 90° and scaled by the ratio), start / end parameter. */
@@ -76,6 +80,22 @@ function hatchCentre(r) {
   }
   return xs.length ? [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] : null;
 }
+
+/** 164a: an MTEXT record's box (drawing.js mtextBox) with its insertion point p and at(x, y): a point of the box frame in the drawing, as { x, y }; null when it draws nothing. */
+function mtextFrame(r) {
+  const b = mtextBox(r);
+  if (!b) return null;
+  const p = [get(r, 10) ?? 0, get(r, 20) ?? 0], c = Math.cos(b.rot), s = Math.sin(b.rot);
+  return { ...b, p, c, s, at: (x, y) => ({ x: p[0] + x * c - y * s, y: p[1] + x * s + y * c }) };
+}
+/** 164a: the attribute of a block insert, grips for: its point (the alignment point when justified, as drawing.js draws it) or null when it has none (not visible, position locked, turned). */
+function attribPoint(k, attMode) {
+  if (k.type !== 'ATTRIB' || attMode === 0 || !upright(k) || get(k, 60) === 1 || (attMode !== 2 && ((get(k, 70) ?? 0) & 1))) return null;
+  if (((get(k, 70) ?? 0) & 16) || get(k, 280, 1) === 1) return null;       // position locked (group 70 bit 16 as asked; DXF's own lock flag is the 2nd group 280)
+  const ha = get(k, 72) ?? 0, justified = ha !== 3 && ha !== 5 && ((ha || (get(k, 74) ?? 0)) && at(k, 11) >= 0);
+  return justified ? [get(k, 11), get(k, 21) ?? 0] : [get(k, 10) ?? 0, get(k, 20) ?? 0];
+}
+const attribGrips = (ent, attMode) => (ent.kids || []).flatMap((k, i) => { const q = attribPoint(k, attMode); return q ? [{ id: 'a' + i, kind: 'insert', x: q[0], y: q[1] }] : []; });
 
 /** Can this entity show grips of any kind? */
 const gripped = (ent) => hasGrips(ent) || (!!ent && !!ent.r && !!MOVES[ent.type] && upright(ent.r) && (ent.type !== 'HATCH' || !!hatchCentre(ent.r)));
@@ -111,7 +131,7 @@ function rectangleVertices(r) {
 }
 
 /** The grips of an entity: [{ id, kind, x, y }] (empty when it has none). */
-export function gripsOf(ent) {
+export function gripsOf(ent, attMode = 1) {
   if (!gripped(ent)) return [];
   if (ent.type === 'LEADER') return ent.model.pts.map((p, i) => ({ id: 'v' + i, kind: 'vertex', x: p[0], y: p[1] }));
   const r = ent.r;
@@ -124,6 +144,11 @@ export function gripsOf(ent) {
       return [{ id: 'c', kind: 'centre', x: q.c[0], y: q.c[1] }, ...ends, ...arcEnds];
     }
     const p = { id: 'i', kind: 'insert', x: get(r, 10) ?? 0, y: get(r, 20) ?? 0 };
+    if (ent.type === 'INSERT') return [p, ...attribGrips(ent, attMode)];
+    if (ent.type === 'MTEXT') {       // 164a: AutoCAD's width (top right), height (bottom left) and both (bottom right) triangles at the box corners, turned with the text
+      const b = mtextFrame(r);
+      return b ? [p, ...[['w', b.left + b.W, b.top, 0], ['h', b.left, b.bottom, 90], ['wh', b.left + b.W, b.bottom, 45]].map(([id, x, y, tri]) => ({ id, kind: 'tri', tri: tri - b.rot / DEG, ...b.at(x, y) }))] : [p];       // tri: the screen angle (y down), so a text turned by +a turns it by -a
+    }
     return ent.type === 'TEXT' && ((get(r, 72) ?? 0) || (get(r, 73) ?? 0)) ? [p, { id: 'a', kind: 'insert', x: get(r, 11) ?? 0, y: get(r, 21) ?? 0 }] : [p];       // a justified text has a second grip at its alignment point
   }
   if (ent.type === 'LINE') {
@@ -149,7 +174,7 @@ export function gripsOf(ent) {
 /** How many segments a polyline of n vertices has (segment j runs from vertex j to j + 1; a closed one has the closing one too); 0 under 2 vertices. */
 const segmentCount = (r, n) => (n < 2 ? 0 : (get(r, 70) ?? 0) & 1 ? n : n - 1);
 
-const find = (ent, id) => gripsOf(ent).find((g) => g.id === id) || null;
+const find = (ent, id) => gripsOf(ent, 2).find((g) => g.id === id) || null;       // 2: every attribute, shown or not (the id is the same either way)
 
 /** Does a Stretch with these hot grips (a Set of ids) move the object whole? Its middle (line) or centre is hot, or every defining grip is (edge grips are derived). */
 export function wholeHot(ent, ids) {
@@ -213,6 +238,43 @@ function dragEllipse(ent, id, g, to) {
   return { ent: withValues(ent, [[at(r, id === 's' ? 41 : 42), (t + TAU) % TAU]]), label: 'Ellipse arc' };
 }
 
+/** 164a: an attribute's grip dragged: only that ATTRIB moves (its point and, when justified, its alignment point) by the same step; the block and the other attributes stay. */
+function dragAttribute(ent, id, g, to) {
+  const dx = to[0] - g.x, dy = to[1] - g.y, i = +id.slice(1), k = ent.kids[i];
+  if (Math.abs(dx) < 1e-12 && Math.abs(dy) < 1e-12) return null;
+  const edits = [[10, dx], [20, dy], [11, dx], [21, dy]].filter(([code]) => at(k, code) >= 0).map(([code, d]) => [at(k, code), get(k, code) + d]);
+  return { ent: { ...ent, kids: ent.kids.map((q, j) => (j === i ? withValues({ r: q }, edits).r : q)) }, label: 'Stretch' };
+}
+/** The record with the value of group `code` set; a missing one is added right after group `after`. */
+function setGroup(ent, code, value, after) {
+  const k = at(ent.r, code);
+  if (k >= 0) return withValues(ent, [[k, value]]);
+  const c = ent.r.c.slice(), v = ent.r.v.slice(), j = at(ent.r, after) + 1;
+  c.splice(j, 0, code); v.splice(j, 0, text(value));
+  return { ...ent, r: { ...ent.r, c, v } };
+}
+/**
+ * 164a: an MTEXT's width (41), height (46) or both grip dragged to `to`. The edge opposite the grip stays where it is (the insertion point slides for a centre or
+ * right attachment); the width never goes below two text heights (drawing.js: narrower than a word does not wrap); the height never below the text's.
+ */
+function dragMtext(ent, id, to) {
+  const b = mtextFrame(ent.r), d = [to[0] - b.p[0], to[1] - b.p[1]], lx = d[0] * b.c + d[1] * b.s, ly = -d[0] * b.s + d[1] * b.c;
+  let cur = ent;
+  if (id !== 'h') {
+    const W = Math.max(lx - b.left, 2 * b.h), slide = b.left + W * b.ha / 2;
+    cur = setGroup(cur, 41, W, 40);
+    if (Math.abs(slide) > 1e-12) cur = withValues(cur, [[at(cur.r, 10), b.p[0] + slide * b.c], [at(cur.r, 20), b.p[1] + slide * b.s]]);
+  }
+  if (id !== 'w') { const n = mtextFrame(cur.r); cur = setGroup(cur, 46, Math.max(n.top - ly, n.textH), at(cur.r, 41) >= 0 ? 41 : 40); }
+  const a = mtextBox(cur.r);
+  return Math.abs(a.W - b.W) < 1e-12 && Math.abs(a.boxH - b.boxH) < 1e-12 ? null : { ent: cur, label: 'Stretch MTEXT' };
+}
+/** 164a: the unit direction a typed distance on this grip counts along (it grows the box): an MTEXT's width grip to the right, its height grip down; null for any other. */
+export function axisOf(ent, id) {
+  const b = ent.type === 'MTEXT' && (id === 'w' || id === 'h') && mtextFrame(ent.r);
+  return b ? (id === 'w' ? [b.c, b.s] : [b.s, -b.c]) : null;
+}
+
 /**
  * The entity with grip `id` dragged to `to` ([x, y], drawing units), and the name of that undo step; null when it comes to nothing
  * (the same point, or three points in a line for an arc). A line's end moves that end; its middle moves it whole. A circle's centre moves it,
@@ -233,6 +295,8 @@ export function dragGrip(ent, id, to, shift = false) {
     return { ent: moveEntities({ entities: [ent], blocks: {} }, new Set([0]), to[0] - g.x, to[1] - g.y).entities[0], label: 'Move ' + MOVES[T] };
   }
   if (T === 'ELLIPSE') return dragEllipse(ent, id, g, to);
+  if (T === 'INSERT') return dragAttribute(ent, id, g, to);
+  if (T === 'MTEXT') return dragMtext(ent, id, to);
   if (T === 'LINE') {
     const [k10, k20, k11, k21] = [at(r, 10), at(r, 20), at(r, 11), at(r, 21)];
     if (id === 'm') {
@@ -437,6 +501,7 @@ export function readoutOf(ent, id, next, factor = 1) {
   if (ent.type === 'CIRCLE' && id.startsWith('q')) return `R ${n2(shapeOf(next, f).r)}`;
   if (ent.type === 'ARC' && (id === 'a' || id === 'b' || id === 'm')) { const n = shapeOf(next, f); return `R ${n2(n.r)} · ${n2(sweepOf(n.a0, n.a1))}°`; }
   if (ent.type === 'ELLIPSE' && id !== 'c') { const q = ellipseOf(next.r), a = Math.hypot(...q.m) * f; return `Major ${n2(2 * a)} · Minor ${n2(2 * a * q.ratio)} mm`; }
+  if (ent.type === 'MTEXT' && id !== 'i') { const b = mtextBox(next.r); return id === 'w' ? `Width ${n2(b.W * f)} mm` : id === 'h' ? `Height ${n2(b.boxH * f)} mm` : `Width ${n2(b.W * f)} · Height ${n2(b.boxH * f)} mm`; }
   if (ent.type === 'LWPOLYLINE' && lwVertices(next.r).length !== lwVertices(ent.r).length) return `${lwVertices(next.r).length} vertices`;       // Insert / Remove vertex
   if (ent.type === 'LWPOLYLINE' || ent.type === 'LEADER') { const n = find(next, id); return `X ${n2(n.x * f)} · Y ${n2(n.y * f)}`; }
   const n = find(next, id);

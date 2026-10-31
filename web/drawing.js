@@ -601,19 +601,34 @@ function text(base, f, attrib, put) {
   textItem(base, p, h, rot, lines, Math.min(ha, 2), ['alphabetic', 'bottom', 'middle', 'top'][va] || 'alphabetic', wf, fl, (it) => put({ ...it, st: f[7], insertion: p }));
 }
 
+const mtextString = (r) => { let s = ''; for (let k = 0; k < r.c.length; k++) if (r.c[k] === 3 || r.c[k] === 1) s += r.v[k]; return s; };
+const mtextRotation = (f) => (f[11] != null && (num(f[11]) || num(f[21])) ? Math.atan2(num(f[21]), num(f[11])) : num(f[50]) * DEG);
+/**
+ * 164a: an MTEXT's box in its own frame (x along the text, y up, from the insertion point): left edge, width W (group 41, or the text's own when it does
+ * not wrap), top, bottom (group 46 makes the box taller than the text), the attachment's horizontal part ha (0 left, 1 centre, 2 right) and the turn.
+ * null when it draws nothing.
+ */
+export function mtextBox(r) {
+  const f = firsts(r), s = mtextString(r), h = num(f[40]);
+  if (!(h > 0) || !s) return null;
+  const ap = Math.min(Math.max(num(f[71], 1), 1), 9) - 1, ha = ap % 3, wrap = num(f[41]);
+  const e = textExtent(h, plainText(s, true), ha, ['top', 'middle', 'bottom'][Math.floor(ap / 3)], 1, { multi: 1, lh: h * 5 / 3 * (num(f[44], 1) || 1), wrap });
+  const W = wrap >= h * 2 ? wrap : e.wrapW, top = e.y0 + e.tall, textH = e.tall + e.grow;
+  return { h, ha, W, left: -W * ha / 2, top, textH, boxH: Math.max(num(f[46]), textH), bottom: top - Math.max(num(f[46]), textH), rot: mtextRotation(f) };
+}
+
 function mtext(base, r, f, put) {
-  let s = '';
-  for (let k = 0; k < r.c.length; k++) if (r.c[k] === 3 || r.c[k] === 1) s += r.v[k];
-  const h = num(f[40]);
+  const s = mtextString(r), h = num(f[40]);
   if (!(h > 0) || !s) return;
   const ap = Math.min(Math.max(num(f[71], 1), 1), 9) - 1;
-  const rot = f[11] != null && (num(f[11]) || num(f[21])) ? Math.atan2(num(f[21]), num(f[11])) : num(f[50]) * DEG;
+  const rot = mtextRotation(f);
   const bold = /\\f[^;]*\|b1/.test(s);   // a bold font code: {\fArial|b1;...}
   textItem(base, [num(f[10]), num(f[20])], h, rot, plainText(s, true), ap % 3, ['top', 'middle', 'bottom'][Math.floor(ap / 3)], 1, 0, (it) => put({ ...it, st: f[7], bold, insertion: [num(f[10]), num(f[20])] }),
     { multi: 1, lh: h * 5 / 3 * (num(f[44], 1) || 1), wrap: num(f[41]) });
 }
 
-function textItem(base, p, h, rot, lines, ha, va, wf, fl, put, more) {
+/** The local frame of a text block (x0 left, y0 the bottom of its lines, wrapW wide, tall high; grow = what wrapped lines add below); textItem draws it, the MTEXT grips read it. */
+function textExtent(h, lines, ha, va, wf, more) {
   if (more && more.wrap > 0 && more.wrap < h * 2) more = { ...more, wrap: 0 };   // a width too narrow for a word: no wrap
   const lh = more ? more.lh : h * 5 / 3, n = lines.length;
   const w = Math.max(...lines.map((l) => l.length)) * h * charW * wf, wrapW = more && more.wrap > 0 ? Math.min(w, more.wrap) : w;
@@ -622,6 +637,12 @@ function textItem(base, p, h, rot, lines, ha, va, wf, fl, put, more) {
   const y0 = more ? (va === 'top' ? -tall : va === 'middle' ? -tall / 2 : 0) : va === 'top' ? -h : va === 'middle' ? -h / 2 : va === 'bottom' ? 0 : -h * 0.25;
   const words = lines.join(' ').split(/\s+/).length;
   const grow = more && more.wrap > 0 && w > more.wrap ? Math.min(Math.ceil(w / more.wrap), words) * lh : 0;      // wrapped lines go down
+  return { wrapW, tall, x0, y0, grow };
+}
+
+function textItem(base, p, h, rot, lines, ha, va, wf, fl, put, more) {
+  if (more && more.wrap > 0 && more.wrap < h * 2) more = { ...more, wrap: 0 };       // the item records the wrap in use (textExtent applies the same rule)
+  const { wrapW, tall, x0, y0, grow } = textExtent(h, lines, ha, va, wf, more);
   const mx = fl & 2 ? -1 : 1, my = fl & 4 ? -1 : 1, c = Math.cos(rot), s = Math.sin(rot), corners = [[x0, y0 - grow], [x0 + wrapW, y0 - grow], [x0 + wrapW, y0 + tall], [x0, y0 + tall]]
     .map(([x, y]) => [p[0] + x * mx * c - y * my * s, p[1] + x * mx * s + y * my * c]);       // backward / upside-down text hangs the other way from its point
   const pad = h * 0.3, b0 = corners.reduce((a, q) => [Math.min(a[0], q[0]), Math.min(a[1], q[1]), Math.max(a[2], q[0]), Math.max(a[3], q[1])], [Infinity, Infinity, -Infinity, -Infinity]);

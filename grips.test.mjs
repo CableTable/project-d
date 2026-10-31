@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import * as GR from './web/grips.js';
 import * as DR from './web/draw.js';
-import { newDoc, addEntities, writeDxf, line, circle, arc, lwpoly, ellipse, rect, text } from './web/dxf-write.js';
+import { newDoc, addEntities, addBlock, writeDxf, line, circle, arc, lwpoly, ellipse, rect, text, mtext, insert } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
 
 let n = 0;
@@ -234,9 +234,10 @@ test('text: one grip at the insertion, a second at the alignment point when just
   assert.ok(GR.readoutOf(j, 'i', GR.dragGrip(j, 'i', [12, 23]).ent).startsWith('Move ΔX 2.00 ΔY 3.00'));
 });
 
-test('mtext and a block insert: one insertion grip that moves the object; a mirrored one has none', () => {
+test('mtext and a block insert: the insertion grip moves the object; a mirrored one has none', () => {
   const t = reopen(text(0, 0, 5, 'x')), mt = { ...t, type: 'MTEXT', r: { ...t.r, type: 'MTEXT' } };
-  assert.deepEqual(GR.gripsOf(mt).map((g) => g.id), ['i']);
+  assert.deepEqual(GR.gripsOf(mt).map((g) => g.id), ['i', 'w', 'h', 'wh']);         // 164a: and the size triangles
+  assert.equal(GR.dragGrip(mt, 'i', [3, 4]).label, 'Move text');
   const ins = { type: 'INSERT', layer: '0', r: { type: 'INSERT', c: [2, 10, 20, 30], v: ['B', '5', '6', '0'] } };
   const moved = GR.dragGrip(ins, 'i', [8, 10]);
   assert.deepEqual(pts(GR.gripsOf(moved.ent)), [[8, 10]]); assert.equal(moved.label, 'Move block');
@@ -540,6 +541,135 @@ test('163b optionsOf for polylines: the lists as tested, Remove vertex only abov
   assert.equal(GR.applyOption(p, 'v1', 'Insert vertex'), null);
   assert.equal(GR.readoutOf(p, 'v1', GR.insertVertex(p, 1, [32, 82]).ent), '5 vertices');
   assert.equal(GR.readoutOf(p, 'v1', GR.removeVertex(p, 1).ent), '3 vertices');
+});
+
+// ---- 164a: MTEXT width / height grips and block attribute grips ----
+const MT = 'Line one of text\\PLine two of text\\PLine three';       // 3 lines, the widest 16 characters = 32 at height 2.5
+const mtextAt = (w, o = {}) => { const m = mtext(10, 10, 2.5, MT, o); return w ? { ...m, r: { ...m.r, c: [...m.r.c.slice(0, 5), 41, ...m.r.c.slice(5)], v: [...m.r.v.slice(0, 5), String(w), ...m.r.v.slice(5)] } } : m; };
+const rounded = (list) => list.map((g) => [g.id, +g.x.toFixed(3), +g.y.toFixed(3)]);
+
+test('mtext: an insertion square and the width, height and both triangles at the box corners', () => {
+  const m = mtextAt(40), g = GR.gripsOf(m);
+  assert.deepEqual(rounded(g), [['i', 10, 10], ['w', 50, 10], ['h', 10, -0.833], ['wh', 50, -0.833]]);       // AutoCAD 2027: top right (50,10), bottom left (10,-0.83)
+  assert.deepEqual(g.map((x) => x.kind), ['insert', 'tri', 'tri', 'tri']);
+  assert.deepEqual(g.map((x) => x.tri), [undefined, 0, 90, 45]);
+  assert.deepEqual(GR.optionsOf(m, 'w'), [], 'no Grip options list on any of them');
+  assert.equal(GR.commandOf(m, 'w'), 'STRETCH');
+  assert.equal(GR.gripsOf(mtextAt(0)).find((x) => x.id === 'w').x, 42, 'without a width the box is the text (16 x 2.5 x 0.8 = 32) wide');
+});
+
+test('mtext: the width grip sets group 41 and the opposite edge stays; the text reflows; the height stays the text\'s', () => {
+  const m = mtextAt(40), r = GR.dragGrip(m, 'w', [40, 10]);
+  assert.equal(r.label, 'Stretch MTEXT'); assert.equal(val(r.ent, 41), 30);
+  assert.equal(r.ent.r.c.indexOf(46), -1, 'a width drag does not write a height');
+  assert.deepEqual(rounded(GR.gripsOf(r.ent)).slice(0, 2), [['i', 10, 10], ['w', 40, 10]]);
+  const wrapped = mtextAt(20), tall = GR.gripsOf(wrapped).find((x) => x.id === 'h').y;
+  assert.ok(tall < GR.gripsOf(m).find((x) => x.id === 'h').y - 1, 'a narrower box wraps: more lines, the bottom goes down');
+  assert.equal(GR.readoutOf(m, 'w', r.ent), 'Width 30.00 mm');
+  assert.equal(GR.dragGrip(m, 'w', [50, 10]), null, 'the same width is nothing');
+  assert.equal(val(GR.dragGrip(mtextAt(0), 'w', [30, 10]).ent, 41), 20, 'a width is added after the height when the text had none');
+});
+
+test('mtext: the width never goes below two heights; a typed distance is added to the width', () => {
+  const m = mtextAt(40);
+  assert.equal(val(GR.dragGrip(m, 'w', [11, 10]).ent, 41), 5, 'two text heights (2 x 2.5): drawing.js stops wrapping narrower than that');
+  assert.deepEqual(GR.axisOf(m, 'w'), [1, 0]); assert.deepEqual(GR.axisOf(m, 'h').map((v) => Math.abs(v)), [0, 1]);
+  assert.equal(GR.axisOf(m, 'wh'), null); assert.equal(GR.axisOf(m, 'i'), null);
+  const typed = GR.dragGrip(m, 'w', [50 + 25, 10]);                          // what the typed 25 comes to: the grip 25 further out
+  assert.equal(val(typed.ent, 41), 65);
+});
+
+test('mtext: the height grip sets group 46 (never below the text), both sets width and height', () => {
+  const m = mtextAt(40), h = GR.dragGrip(m, 'h', [10, -6]);
+  assert.equal(val(h.ent, 46), 16); assert.equal(val(h.ent, 41), 40, 'the width stays');
+  assert.deepEqual(rounded(GR.gripsOf(h.ent)).slice(1), [['w', 50, 10], ['h', 10, -6], ['wh', 50, -6]]);
+  assert.equal(GR.readoutOf(m, 'h', h.ent), 'Height 16.00 mm');
+  assert.equal(GR.dragGrip(m, 'h', [10, 5]), null, 'above the text\'s own height: it stays as it is');
+  const both = GR.dragGrip(m, 'wh', [54, -6]);
+  assert.equal(val(both.ent, 41), 44); assert.equal(val(both.ent, 46), 16);       // AutoCAD: 54,-6 gave width 44, bottom -6
+  assert.equal(GR.readoutOf(m, 'wh', both.ent), 'Width 44.00 · Height 16.00 mm');
+  const shrunk = GR.dragGrip(h.ent, 'h', [10, 0]); near(val(shrunk.ent, 46), 10.8333333333333, 1e-9); // a taller box can shrink back to the text
+});
+
+test('mtext: a rotated one has its grips turned with it and drags along its own axes', () => {
+  const m = mtextAt(40, { rot: 90 }), g = GR.gripsOf(m);
+  assert.deepEqual(rounded(g).slice(0, 2), [['i', 10, 10], ['w', 10, 50]]);          // the width runs up the page
+  assert.equal(g[1].tri, -90);
+  assert.equal(val(GR.dragGrip(m, 'w', [10, 40]).ent, 41), 30);
+  assert.deepEqual(GR.axisOf(m, 'w').map((v) => Math.round(v)), [0, 1]);
+});
+
+test('mtext: a centre or right attachment keeps the far edge: the insertion point slides', () => {
+  const m = mtextAt(40, { attach: 2 }), g = GR.gripsOf(m);                          // top centre: the box runs x -10 .. 30
+  assert.deepEqual(rounded(g).slice(0, 2), [['i', 10, 10], ['w', 30, 10]]);
+  const r = GR.dragGrip(m, 'w', [40, 10]);                                           // the left edge stays at -10, the right goes to 40: 50 wide
+  assert.equal(val(r.ent, 41), 50); assert.equal(val(r.ent, 10), 15);
+  assert.deepEqual(rounded(GR.gripsOf(r.ent)).slice(0, 2), [['i', 15, 10], ['w', 40, 10]]);
+  assert.equal(rounded(GR.gripsOf(r.ent)).find((x) => x[0] === 'h')[1], -10, 'and the left edge is where it was');
+});
+
+test('mtext: a hot width grip beside the insertion grip: Stretch moves the width only', () => {
+  const m = mtextAt(40);
+  assert.equal(GR.wholeHot(m, new Set(['w'])), false); assert.equal(GR.wholeHot(m, new Set(['i', 'w', 'h', 'wh'])), true);
+  assert.equal(GR.movesWhole(m, 'w'), false); assert.equal(GR.movesWhole(m, 'i'), true); assert.equal(GR.noOutline(m), true);
+});
+
+test('mtext: width and height survive a save and reopen', () => {
+  const d = newDoc(4), r = GR.dragGrip(GR.dragGrip(mtextAt(40), 'w', [40, 10]).ent, 'h', [10, -20]).ent;
+  addEntities(d, [r]);
+  const back = readDxf(writeDxf(d)).entities[0];
+  assert.equal(val(back, 41), 30); assert.equal(val(back, 46), 30);
+  assert.deepEqual(GR.gripsOf(back).map((x) => x.id), ['i', 'w', 'h', 'wh']);
+});
+
+const attrib = (x, y, o = {}) => ({ type: 'ATTRIB', c: [10, 20, 40, 1, 2, ...(o.flags != null ? [70] : []), ...(o.more || [])], v: [String(x), String(y), '2', o.value || 'ABC', o.tag || 'TAG1', ...(o.flags != null ? [String(o.flags)] : []), ...(o.more ? o.moreV : [])] });
+const blockWith = (...kids) => ({ type: 'INSERT', layer: '0', r: { type: 'INSERT', c: [2, 10, 20, 30], v: ['B1', '10', '100', '0'] }, kids });
+
+test('block attributes: one grip per visible attribute at its point, beside the insertion grip', () => {
+  const b = blockWith(attrib(17, 100), attrib(17, 90, { tag: 'TAG2' }));
+  assert.deepEqual(GR.gripsOf(b).map((g) => g.id), ['i', 'a0', 'a1']);
+  assert.deepEqual(pts(GR.gripsOf(b)), [[10, 100], [17, 100], [17, 90]]);
+  assert.equal(GR.optionsOf(b, 'a0').length, 0, 'no list');
+  assert.equal(GR.movesWhole(b, 'a0'), false); assert.equal(GR.movesWhole(b, 'i'), true);
+  assert.equal(GR.commandOf(b, 'a0'), 'STRETCH');
+  assert.deepEqual(GR.gripsOf(blockWith()).map((g) => g.id), ['i'], 'a block without attributes has the insertion grip as before');
+});
+
+test('block attributes: invisible (flag 1), hidden, position-locked and turned ones have no grip; display mode 0 hides all, 2 shows the invisible', () => {
+  const b = blockWith(attrib(1, 1), attrib(2, 2, { flags: 1 }), attrib(3, 3, { flags: 16 }), attrib(4, 4, { more: [60], moreV: ['1'] }), attrib(5, 5, { more: [280, 280], moreV: ['0', '1'] }), attrib(6, 6, { more: [210, 220, 230], moreV: ['0', '0', '-1'] }));
+  assert.deepEqual(GR.gripsOf(b).map((g) => g.id), ['i', 'a0'], 'only the plain one');
+  assert.deepEqual(GR.gripsOf(b, 0).map((g) => g.id), ['i'], '$ATTMODE 0: the attributes are not drawn');
+  assert.deepEqual(GR.gripsOf(b, 2).map((g) => g.id), ['i', 'a0', 'a1'], '$ATTMODE 2: the invisible one shows (a locked or hidden one still has none)');
+});
+
+test('block attributes: a justified attribute has its grip at the alignment point', () => {
+  const a = attrib(17, 100, { more: [72, 74, 11, 21], moreV: ['1', '0', '20', '103'] });
+  assert.deepEqual(pts(GR.gripsOf(blockWith(a))).slice(1), [[20, 103]]);
+  const fit = attrib(17, 100, { more: [72, 11, 21], moreV: ['5', '30', '100'] });         // aligned / fit: between two points, the start is the grip
+  assert.deepEqual(pts(GR.gripsOf(blockWith(fit))).slice(1), [[17, 100]]);
+});
+
+test('block attributes: a drag moves that attribute only (and its alignment point), the block and the others stay; one step called Stretch', () => {
+  const a0 = attrib(17, 100, { more: [72, 11, 21], moreV: ['1', '20', '103'] }), a1 = attrib(17, 90, { tag: 'TAG2' }), b = blockWith(a0, a1);
+  const r = GR.dragGrip(b, 'a0', [20, 109]);                                           // the alignment point 20,103 -> 20,109: by (0, 6)
+  assert.equal(r.label, 'Stretch');
+  assert.deepEqual([GR.get(r.ent.kids[0], 10), GR.get(r.ent.kids[0], 20), GR.get(r.ent.kids[0], 11), GR.get(r.ent.kids[0], 21)], [17, 106, 20, 109]);
+  assert.equal(r.ent.kids[1], a1, 'the other attribute is the same record'); assert.equal(r.ent.r, b.r, 'the block did not move');
+  assert.deepEqual(pts(GR.gripsOf(r.ent)), [[10, 100], [20, 109], [17, 90]]);
+  assert.equal(b.kids[0], a0, 'the original stays'); assert.equal(GR.dragGrip(b, 'a1', [17, 90]), null);
+  assert.ok(GR.readoutOf(b, 'a1', GR.dragGrip(b, 'a1', [19, 93]).ent).startsWith('Move ΔX 2.00 ΔY 3.00'));
+  assert.equal(GR.dragGrip(b, 'a1', [19, 93]).ent.kids[1].c.join(), a1.c.join(), 'no group is added or lost');
+});
+
+test('block attributes: the moved attribute survives a save and reopen', () => {
+  const d = newDoc(4), a = attrib(17, 100); a.c.splice(2, 0, 30); a.v.splice(2, 0, '0');
+  addBlock(d, 'B1', [circle(0, 0, 5)]);
+  const ins = { ...insert('B1', 10, 100), kids: [a, { ...a, v: a.v.map((v, i) => (a.c[i] === 20 ? '90' : a.c[i] === 2 ? 'TAG2' : v)) }] };
+  const moved = GR.dragGrip(ins, 'a1', [19, 93]).ent;
+  addEntities(d, [moved]);
+  const back = readDxf(writeDxf(d)).entities[0];
+  assert.deepEqual(back.kids.map((k) => [GR.get(k, 10), GR.get(k, 20)]), [[17, 100], [19, 93]]);
+  assert.deepEqual(pts(GR.gripsOf(back)), [[10, 100], [17, 100], [19, 93]]);
 });
 
 console.log(n + ' grips tests passed');

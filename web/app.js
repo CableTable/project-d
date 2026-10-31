@@ -8403,6 +8403,8 @@ function gripDoc() {
 }
 /** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
 const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textEditing();
+/** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
+const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -8412,7 +8414,7 @@ function gripList(d) {
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
     if (lp) { for (const g of GR.gripsOf(lp)) list.push({ e, ...g }); continue; }       // a leader: a grip at each point
     if (!ent || ent.layer === Ed.DIM_LAYER || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
-    for (const g of GR.gripsOf(ent)) list.push({ e, ...g });
+    for (const g of GR.gripsOf(ent, attMode(d))) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
   d.gripCache = { sel: d.sel, ents, list: shown };
@@ -8449,6 +8451,7 @@ function gripAim(g, q, shift = false) {
   const fl = r && GR.movesWhole(g.ent, g.id) && g.d.fl;
   if (fl && !g.items) g.items = fl.items.filter((it) => it.e === g.e);
   g.move = fl ? { items: g.items, preview: { ...fl, items: g.items }, dx: q[0] - g.base[0], dy: q[1] - g.base[1] } : null;
+  if (r && !g.move && (g.ent.type === 'MTEXT' || g.ent.type === 'INSERT')) { const preview = flatten({ ...g.d.raw, entities: [r.ent] }); g.move = { items: preview.items, preview, dx: 0, dy: 0 }; }       // 164a: an MTEXT's width / height or a block's attribute: the changed object drawn as it will be (the text reflows live)
 }
 /** Stretch with several hot grips (155e3): every one moves by the vector base → q; an object with its middle / centre hot moves whole. g.nexts: object index → the changed entity. */
 function gripStretchHots(g, q, shift) {
@@ -8464,7 +8467,7 @@ function gripStretchHots(g, q, shift) {
   }
   g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
   // a text, hatch or block moved whole has no outline to draw: the canvas shows it moved by the same vector (as a single grip does)
-  const es = new Set([...nexts].filter(([e, n]) => GR.movesWhole(g.ents.get(e), 'c') && !previewShape(n, 1)).map(([e]) => e)), fl = es.size && g.d.fl;
+  const es = new Set([...nexts].filter(([e, n]) => GR.noOutline(g.ents.get(e)) && !previewShape(n, 1)).map(([e]) => e)), fl = es.size && g.d.fl;
   g.move = fl ? { items: fl.items.filter((it) => es.has(it.e)), es, dx: v[0], dy: v[1] } : null;
   if (g.move) g.move.preview = { ...fl, items: g.move.items };
 }
@@ -8728,7 +8731,8 @@ function gripTyped(raw) {
   if (inp.kind === 'len') {
     const hover = g.to ? [g.to[0] * f, g.to[1] * f] : null;
     const org = g.baseSet || g.hots ? g.base.map((v) => v * f) : refMm;       // after B the length counts from the base, as @dx,dy
-    mm = DR.directDistance(org, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [org[0] + inp.v, org[1]] : null);
+    const ax = GR.axisOf(g.ent, g.id), side = ax && g.to ? Math.sign((g.to[0] - g.pos[0]) * ax[0] + (g.to[1] - g.pos[1]) * ax[1]) || 1 : 1;       // 164a: an MTEXT's width / height grip: the typed distance is added along its axis (taken back when the pointer is on the inner side)
+    mm = ax ? [org[0] + side * inp.v * ax[0], org[1] + side * inp.v * ax[1]] : DR.directDistance(org, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [org[0] + inp.v, org[1]] : null);
     if (!mm) { note('Move the pointer the way you want it to go, then type the length'); return; }
   } else mm = DR.typedPoint(inp, g.base.map((v) => v * f));       // @dx,dy counts from the base (the grip itself until B)
   if (!mm || !mm.every(Number.isFinite)) { note('Point coordinates must be finite'); return; }
@@ -8786,15 +8790,17 @@ function gripModeOvl(d, out, grips, g, square) {
     const sh = previewShape(ent, f);
     if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
   }
-  for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id));
+  for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id, x.tri));
   return g.res && g.to ? { text: GM.readout(M, g.base, g.val, f), px: g.cursor || sheetPx(d, g.to) } : null;
 }
 /** Grips, and while one is dragged: the original as a dashed ghost, the new shape dashed, the hot grip, and the readout. Returns the readout tip or null. */
 function gripOvl(d, out, k, grips) {
   const g = state.grip;
-  const square = (p, hot, id) => {
-    const [sx, sy] = toSheetPt(d, p), z = GR.gripSide();
-    const sq = s('rect', { class: 'gr' + (hot ? ' hot' : state.gripHover === id ? ' hover' : ''), x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': hot ? 'grip-hot' : 'grip' });
+  const square = (p, hot, id, tri) => {
+    const [sx, sy] = toSheetPt(d, p), z = GR.gripSide(), cls = 'gr' + (hot ? ' hot' : state.gripHover === id ? ' hover' : ''), tid = hot ? 'grip-hot' : 'grip';
+    // 164a: an MTEXT's size grip is a triangle pointing at `tri` degrees (screen angle), the others a square
+    const sq = tri == null ? s('rect', { class: cls, x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': tid })
+      : s('path', { class: cls, d: `M${z * 0.7} 0L${-z * 0.5} ${-z * 0.6}L${-z * 0.5} ${z * 0.6}Z`, transform: `rotate(${tri})`, 'data-grip': id, 'data-testid': tid });
     // Screen coordinates keep small grips precise even far from the drawing origin.
     return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
       hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
@@ -8815,9 +8821,9 @@ function gripOvl(d, out, k, grips) {
       if (nw) out.push(s('path', { class: 'gr-new', transform: drawingTransform(d), d: DR.svgPath(nw, state.sheetH), 'data-testid': 'grip-preview' }));
     }
     const hotKeys = g.hots && new Set(g.hots.map((x) => x.e + ':' + x.id)), cold = [], hotSq = [];
-    for (const [e, ent] of targets) for (const x of GR.gripsOf((g.nexts ? g.nexts.get(e) : g.next) || ent)) {
+    for (const [e, ent] of targets) for (const x of GR.gripsOf((g.nexts ? g.nexts.get(e) : g.next) || ent, attMode(d))) {
       const key = e + ':' + x.id, hot = hotKeys ? hotKeys.has(key) : x.id === g.id;
-      (hot ? hotSq : cold).push(square([x.x, x.y], hot, hotKeys ? key : x.id));
+      (hot ? hotSq : cold).push(square([x.x, x.y], hot, hotKeys ? key : x.id, x.tri));
     }
     grips.push(...cold, ...hotSq);
     if (g.next && g.to) { return { text: g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor) : GR.readoutOf(g.ent, g.id, g.next, d.factor), px: g.cursor || sheetPx(d, [g.to[0], g.to[1]]) }; }
@@ -8834,7 +8840,7 @@ function gripOvl(d, out, k, grips) {
   }
   const hots = hotsOf(d);
   for (const x of list) {
-    grips.push(square([x.x, x.y], !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id));
+    grips.push(square([x.x, x.y], !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;
