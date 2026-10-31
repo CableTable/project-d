@@ -9768,8 +9768,10 @@ try {
     for (const m of ['MOVE', 'ROTATE', 'SCALE', 'MIRROR', 'STRETCH']) { await press('Enter'); await mode(m); }
     await typeCmd(''); await mode('MOVE');
     await press(' ', 2); await mode('SCALE');
-    await typeCmd('b'); assert.match(await t('cmd-hist').textContent(), /Base point, Copy and Reference come in TODO 155e2/);
-    await typeCmd('reference'); assert.match(await t('cmd-hist').textContent(), /Base point, Copy and Reference come in TODO 155e2/);
+    await typeCmd('b'); assert.equal(await prompt(), 'Specify base point:');
+    await press('Escape'); await mode('SCALE');
+    await typeCmd('reference'); assert.match(await prompt(), /^Scale factor: Specify reference length/);
+    await press('Escape'); await mode('SCALE');
     const at0 = await at(60, 70); await page.mouse.move(at0.x, at0.y);
     await t('grip-preview').waitFor({ state: 'attached' });
     assert.equal(await page.locator('.gr-ghost').count(), 0, 'the originals stay as they are: no stretch ghost');
@@ -9867,6 +9869,103 @@ try {
     await mode('STRETCH');
     assert.match(await t('cmd-hist').textContent(), /take loose objects only here: use the ribbon command for Parts and dimensions/);
     await press('Escape'); await noHot();
+    await closeTabs(/./);
+  });
+
+  await step('TODO 155e2: grip Copy (several copies, one Undo, U, Enter / Esc end), Base point, Reference in Rotate / Scale, Ctrl copies, Esc at the base prompt, and the same on a layout', async () => {
+    await menuItem('View', 'Theme: light');
+    const hotGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1); };
+    const noHot = () => page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 0);
+    const press = async (key, n = 1) => { for (let i = 0; i < n; i++) await page.keyboard.press(key); };
+    const lineOf = async (i = 0) => { const e = entOf(await savedDoc(), i); return [10, 20, 11, 21].map((k) => fieldOf(e, k)); };
+    const count = async () => (await savedDoc()).entities.length;
+    const hist = () => t('cmd-hist').textContent();
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); };
+    const labelsNow = async () => { await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor(); const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents(); await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' }); return rows; };
+    const rotating = async () => { await openGrips(); await pick(70, 30, 3); await hotGrip('0:a'); await press(' ', 2); };
+    const close = (a, b) => a.length === b.length && a.every((v, i) => near(v, b[i], 1e-6));
+    // C in Rotate: three copies, the originals stay, Enter ends, one Ctrl+Z takes all three
+    await rotating();
+    assert.equal(await prompt(), 'Specify rotation angle or [Base point/Copy/Undo/Reference/eXit]:');
+    await typeCmd('c');
+    assert.match(await hist(), /\*\* ROTATE \(multiple\) \*\*/);
+    assert.equal(await prompt(), 'Specify rotation angle or [Base point/Undo/Reference/eXit]:');
+    for (const a of ['90', '180', '270']) await typeCmd(a);
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the run goes on: the grip is still hot');
+    assert.equal(await count(), 4, 'nothing is in the drawing before the run ends');
+    await typeCmd(''); await noHot();
+    assert.equal(await count(), 7, 'three copies');
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]), 'the original stays');
+    assert.ok(close(await lineOf(4), [20, 30, 20, 130]) && close(await lineOf(5), [20, 30, -80, 30]) && close(await lineOf(6), [20, 30, 20, -70]), 'the copies are turned 90, 180 and 270');
+    assert.equal((await labelsNow()).at(-1), 'Copy Rotate');
+    await undo();
+    assert.equal(await count(), 4, 'one Ctrl+Z takes all three');
+    // U takes the last copy; Esc ends the run and keeps the copies
+    await rotating();
+    await typeCmd('c'); await typeCmd('90'); await typeCmd('180'); await typeCmd('u');
+    assert.match(await hist(), /Last copy removed \(1 left\)/);
+    await typeCmd('45'); await press('Escape'); await noHot();
+    assert.equal(await count(), 6, 'U took the 180° copy, then 45° was added, Esc kept both');
+    assert.ok(close(await lineOf(5), [20, 30, 20 + 100 * Math.cos(Math.PI / 4), 30 + 100 * Math.sin(Math.PI / 4)]));
+    await undo();
+    // B: Move by a typed base; Esc at the base prompt goes back to the mode and the run
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:a'); await press(' ');
+    await typeCmd('b'); assert.equal(await prompt(), 'Specify base point:');
+    await press('Escape');
+    assert.equal(await prompt(), 'Specify move point or [Base point/Copy/Undo/eXit]:');
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'Esc at the base prompt: still in MOVE');
+    await typeCmd('b'); await typeCmd('0,0');
+    assert.equal(await prompt(), 'Specify move point or [Base point/Copy/Undo/eXit]:');
+    await typeCmd('10,5'); await noHot();
+    assert.ok(close(await lineOf(0), [30, 35, 130, 35]), `moved by (10,5) from the typed base: ${await lineOf(0)}`);
+    assert.equal((await labelsNow()).at(-1), 'Move');
+    await undo();
+    // R: Rotate with the reference typed 0, then 90; Scale with 100 then 200 (mm)
+    await rotating();
+    await typeCmd('r'); assert.match(await prompt(), /^Angle: Specify the reference angle/);
+    await typeCmd('0'); assert.match(await prompt(), /^Angle: Specify the new angle/);
+    await typeCmd('90'); await noHot();
+    assert.ok(close(await lineOf(0), [20, 30, 20, 130]), 'turned by 90 - 0');
+    assert.equal((await labelsNow()).at(-1), 'Rotate');
+    await undo();
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:a'); await press(' ', 3);
+    await typeCmd('r'); assert.match(await prompt(), /^Scale factor: Specify reference length/);
+    await typeCmd('100'); await typeCmd('200'); await noHot();
+    assert.ok(close(await lineOf(0), [20, 30, 220, 30]), 'scaled by 200 / 100');
+    await undo();
+    // Ctrl at a pick copies in Move, and the run is multiple from then on
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:a'); await press(' ');
+    const m1 = await at(50, 50); await page.mouse.move(m1.x, m1.y); await frames();
+    await page.keyboard.down('Control'); try { await page.mouse.click(m1.x, m1.y); } finally { await page.keyboard.up('Control'); }
+    await frames();
+    assert.match(await hist(), /\*\* MOVE \(multiple\) \*\*/);
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the grip is still hot after a Ctrl pick');
+    await typeCmd(''); await noHot();
+    assert.equal(await count(), 5);
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]), 'the original stayed');
+    const cp = await lineOf(4);
+    assert.ok(near(cp[0], 50, 0.8) && near(cp[1], 50, 0.8) && near(cp[2] - cp[0], 100, 1e-6), `the copy is at the pointer: ${cp}`);
+    await undo();
+    // the (multiple) header in the screenshots, light and dark
+    await rotating();
+    await typeCmd('c'); await typeCmd('45');
+    await shotBoth('grip-multiple', async () => { const p = await at(60, 80); await page.mouse.move(p.x, p.y, { steps: 3 }); await tipWhen(/^Rotate /); await wait(150); }, async () => {});
+    await press('Escape'); await noHot();
+    await undo();
+    // the same on a layout object
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const n0 = (await labelsNow()).length;
+    await hotGrip(await gid('b')); await press(' ', 2);
+    await typeCmd('c'); await typeCmd('90'); await typeCmd('180'); await typeCmd(''); await noHot();
+    await frames(); await gripWhen(3);
+    assert.equal((await labelsNow()).length, n0 + 1, 'one undo step'); assert.equal((await labelsNow()).at(-1), 'Copy Rotate');
+    const kept = await gripBox(await gid('a')), here = await at(50, 600);
+    assert.ok(near(kept.x, here.x, 2) && near(kept.y, here.y, 2), 'the original object stayed');
+    await undo(); await frames();
+    assert.equal((await labelsNow()).length, n0, 'one Undo takes both copies back');
     await closeTabs(/./);
   });
 

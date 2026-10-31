@@ -76,4 +76,21 @@ test('Scale outside 0.0001 .. 10000 is refused (the layout Scale command\'s rang
   assert.deepEqual(GM.MODES.map(GM.nameOf), ['Stretch', 'Move', 'Rotate', 'Scale', 'Mirror']);
 });
 
+test('Copy (155e2): the originals stay and the transformed copies are added after them, in every mode; (multiple) header, no Copy in the prompt', () => {
+  const r = raw(), sel = new Set([0, 1]);
+  for (const [mode, v] of [['MOVE', [5, 7]], ['ROTATE', 90], ['SCALE', 2], ['MIRROR', [0, 1]]]) {
+    const out = GM.apply(r, sel, mode, [0, 0], v, true);
+    assert.equal(out.entities.length, 5, mode);
+    assert.deepEqual(out.entities.slice(0, 3), r.entities, mode + ': originals untouched');
+  }
+  const rot = GM.apply(r, sel, 'ROTATE', [0, 0], 90, true);
+  near(val(rot.entities[3], 21), 100); near(val(rot.entities[0], 21), 0);
+  const twice = GM.apply(rot, sel, 'ROTATE', [0, 0], 180, true);          // a second copy from the same originals
+  assert.equal(twice.entities.length, 7);
+  near(val(twice.entities[5], 11), -100);
+  assert.equal(GM.header('MOVE', true), '** MOVE (multiple) **');
+  assert.equal(GM.prompt('ROTATE', true), 'Specify rotation angle or [Base point/Undo/Reference/eXit]:');
+  assert.equal(GM.apply(r, sel, 'ROTATE', [0, 0], 0, true), null);
+});
+
 console.log(n + ' passed');

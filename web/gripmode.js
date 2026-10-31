@@ -6,7 +6,7 @@
 // (rotate.js, scale.js, edit.js, modify.js).
 //
 //   apply(raw, sel, mode, base, v) → the { entities, blocks } after the mode, same indexes; null when it changes nothing; throws when it cannot
-import { moveEntities, removeEntities } from './edit.js';
+import { moveEntities, copyEntities, removeEntities } from './edit.js';
 import { rotateEntities, rotationAngle } from './rotate.js';
 import { scaleEntities, scaleDistance } from './scale.js';
 import { mirrorEntity } from './modify.js';
@@ -22,8 +22,9 @@ const PROMPTS = {                                                  // AutoCAD 20
   SCALE: 'Specify scale factor or [Base point/Copy/Undo/Reference/eXit]:',
   MIRROR: 'Specify second point or [Base point/Copy/Undo/eXit]:',
 };
-export const header = (mode) => `** ${mode} **`;
-export const prompt = (mode) => PROMPTS[mode];
+/** multi: the Copy option is on (` (multiple)`, and the prompt no longer offers Copy). */
+export const header = (mode, multi = false) => `** ${mode}${multi ? ' (multiple)' : ''} **`;
+export const prompt = (mode, multi = false) => (multi ? PROMPTS[mode].replace('Copy/', '') : PROMPTS[mode]);
 /** The mode index after `i` (Space / Enter). */
 export const cycle = (i) => (i + 1) % MODES.length;
 
@@ -38,23 +39,25 @@ export function readout(mode, base, v, factor = 1) {
   return `Move ΔX ${n2((v[0] - base[0]) * factor)} ΔY ${n2((v[1] - base[1]) * factor)}`;
 }
 
-function mirror(raw, sel, p1, p2) {
+function mirror(raw, sel, p1, p2, copy) {
   let blocks = raw.blocks;
   const entities = raw.entities.slice(), olds = [], skipped = [];
   for (const i of sel) {
     const r = mirrorEntity(raw.entities[i], p1, p2, blocks);
     if (r.blocks) blocks = r.blocks;
-    if (r.ent) { entities[i] = r.ent; olds.push(raw.entities[i]); } else skipped.push(r.skip);
+    if (r.ent) { if (copy) entities.push(r.ent); else entities[i] = r.ent; olds.push(raw.entities[i]); } else skipped.push(r.skip);
   }
   if (!olds.length) throw new Error('nothing could be mirrored' + (skipped.length ? ` (${skipped[0]})` : ''));       // as the Mirror command's note
+  if (copy) return { entities, blocks, skipped };                  // the originals stay
   // the old entities go through removeEntities so a dimension's block that only they used goes too; skipped: why each left-out object was
   return { entities, blocks: removeEntities({ entities: entities.concat(olds), blocks }, new Set(olds.map((_, k) => entities.length + k))).blocks, skipped };
 }
 
-export function apply(raw, sel, mode, base, v) {
-  if (mode === 'MOVE') return Math.hypot(v[0] - base[0], v[1] - base[1]) < 1e-12 ? null : moveEntities(raw, sel, v[0] - base[0], v[1] - base[1]);
-  if (mode === 'ROTATE') return Math.abs(v) < 1e-12 ? null : rotateEntities(raw, sel, base, v);
-  if (mode === 'SCALE') { if (!(v >= 1e-4 && v <= 1e4)) throw new Error('The scale factor must be between 0.0001 and 10000'); return Math.abs(v - 1) < 1e-12 ? null : scaleEntities(raw, sel, base, v); }
-  if (mode === 'MIRROR') return Math.hypot(v[0] - base[0], v[1] - base[1]) < 1e-12 ? null : mirror(raw, sel, base, v);
+/** copy: the originals stay and the transformed copies are added at the end (the Copy option, Ctrl). */
+export function apply(raw, sel, mode, base, v, copy = false) {
+  if (mode === 'MOVE') return Math.hypot(v[0] - base[0], v[1] - base[1]) < 1e-12 ? null : (copy ? copyEntities : moveEntities)(raw, sel, v[0] - base[0], v[1] - base[1]);
+  if (mode === 'ROTATE') return Math.abs(v) < 1e-12 ? null : rotateEntities(raw, sel, base, v, copy);
+  if (mode === 'SCALE') { if (!(v >= 1e-4 && v <= 1e4)) throw new Error('The scale factor must be between 0.0001 and 10000'); return Math.abs(v - 1) < 1e-12 ? null : scaleEntities(raw, sel, base, v, copy); }
+  if (mode === 'MIRROR') return Math.hypot(v[0] - base[0], v[1] - base[1]) < 1e-12 ? null : mirror(raw, sel, base, v, copy);
   return null;
 }

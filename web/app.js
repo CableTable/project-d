@@ -4607,9 +4607,9 @@ function renderCommand() {
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
   if (state.grip && (ed || lay)) {
-    const gg = state.grip, M = GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
-    ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
-    ui.prompt.textContent = gg.id.startsWith('e') && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) : 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
+    const gg = state.grip, M = GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0 || gg.copy;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
+    ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M, gg.copy) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
+    ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.id.startsWith('e') && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M, gg.copy) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
     return;
   }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
@@ -8165,23 +8165,110 @@ function gripPick(g, cx, cy, shift, hover) {
 /** The grip's drag is now at q: what the shape becomes. */
 function gripAim(g, q, shift = false) {
   g.to = q;
-  if (g.mode) { g.val = GM.valueAt(GM.MODES[g.mode], g.base, q); gripModeRun(g); return; }
-  const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]], shift);
+  if (g.baseAsk || g.ref && g.ref.step !== 'new') { g.val = null; g.res = null; g.next = null; return; }       // picking a base point or the reference: nothing to preview yet
+  if (g.mode) { g.val = gripRefVal(g, GM.valueAt(GM.MODES[g.mode], g.base, q)); gripModeRun(g); return; }
+  const r = GR.dragGrip(g.ent, g.id, [g.pos[0] + q[0] - g.base[0], g.pos[1] + q[1] - g.base[1]], shift);       // a Base point sets where the offset starts
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
+}
+/** With Reference on (155e2) the pick's angle / distance v becomes the turn / factor against the reference; null when it cannot. */
+function gripRefVal(g, v) {
+  const R = g.ref;
+  return !R ? v : GM.MODES[g.mode] === 'SCALE' ? referenceFactor(R.value, v) : referenceTurn(R.value, v);
 }
 /** Grip modes Move / Rotate / Scale / Mirror (155e1): what the mode does to the selection at value g.val → g.res (the drawing after it), g.err why not. */
 function gripModeRun(g) {
   g.res = null; g.err = null; g.next = null;
-  try { g.res = GM.apply(g.d.raw, g.sel, GM.MODES[g.mode], g.base, g.val); } catch (err) { g.err = err.message; }
+  if (g.val == null) return;
+  try { g.res = GM.apply(g.acc, g.sel, GM.MODES[g.mode], g.base, g.val, g.copy); } catch (err) { g.err = err.message; }       // g.acc: the drawing with the copies so far (d.raw when none)
 }
 /** Space or Enter on a hot grip: the next grip mode, AutoCAD's header in the history and its prompt (the preview follows the pointer). */
 function gripCycle() {
   const g = state.grip;
   if (!g) return;
+  if (g.copy) { gripExit(); return; }                                // Enter ends a multiple run
   if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj)) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
-  g.mode = GM.cycle(g.mode); g.res = null; g.err = null; g.next = null; g.val = null; g.to = null;
+  g.mode = GM.cycle(g.mode); g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
+}
+/** The preview and the prompt follow the pointer again after an option (Base point, Copy, Undo, Reference) changed what a pick means. */
+function gripRefresh(g) {
+  g.res = null; g.err = null; g.next = null; g.val = null;
+  if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
+  renderCommand(); paintOverlay();
+}
+/** B: the next pick (or typed point) is the new base; for Stretch the grip still moves, the base only sets where the offset starts. */
+function gripBaseAsk(g) { g.baseAsk = true; note('Specify base point:'); gripRefresh(g); }
+function gripBase(g, q) { g.base = [q[0], q[1]]; g.baseAsk = false; note(`Base point set. ${GM.prompt(GM.MODES[g.mode], g.copy)}`); gripRefresh(g); }
+/** C: from now on each pick leaves a transformed copy and keeps the originals (`** ROTATE (multiple) **`). */
+function gripCopyOn(g) {
+  if (g.copy) { note('Copy is on already: Enter or Esc ends'); return; }
+  g.copy = true; ui.cmdUI.message(GM.header(GM.MODES[g.mode], true)); gripRefresh(g);
+}
+/** R (Rotate / Scale): the commands' Reference prompts; the reference first, typed or two points, then the new angle / length. */
+function gripRefOn(g) { g.ref = { step: 'ref', pts: [], value: null }; note(refPrompt({ ref: g.ref, kind: GM.MODES[g.mode].toLowerCase() })); gripRefresh(g); }
+/** A point at a Reference step (q in drawing units): two of them give the reference, or (Points) the new angle / length. */
+function gripRefPick(g, q) {
+  const R = g.ref, scaling = GM.MODES[g.mode] === 'SCALE', r = lengthPick(g.d, R, q, false, true);
+  if (r === 'same') { note('Those are the same point: pick two'); return; }
+  if (r === 'first') { gripRefresh(g); return; }
+  const [a, b] = R.pts;
+  R.pts = []; gripRefGot(g, scaling ? R.measured / g.d.factor : rotationAngle(a, b));
+}
+/** The reference value (degrees / drawing units) is known, or with Points the new one. */
+function gripRefGot(g, v) {
+  const R = g.ref, scaling = GM.MODES[g.mode] === 'SCALE';
+  if (R.step === 'ref') {
+    if (scaling && !(v > 1e-9)) { note('The reference length must be above 0'); return; }
+    R.value = v; R.step = 'new'; R.pts = []; R.measured = null; gripRefresh(g); return;
+  }
+  g.val = gripRefVal(g, v); g.to = g.to || g.base; gripModeRun(g);
+  if (g.err || !g.res) { note(g.err || 'The new length must be above 0'); return; }
+  gripDone(g, false);
+}
+/** U: takes the last copy of the run back. */
+function gripUndoCopy(g) {
+  if (!g.hist.length) { note('Nothing to undo'); return; }
+  g.acc = g.hist.pop(); note(`Last copy removed (${g.hist.length} left)`); gripRefresh(g);
+}
+/** A pick is final (the value is in g.val / g.next): a Ctrl pick or the Copy option leaves a copy and goes on, else the grip edit ends. */
+function gripDone(g, ctrl) { g.hot = true; if (ctrl || g.copy) gripCopy(g, ctrl); else gripCommit(); }
+/** A click (or the release of a drag) at the pointer: a base point, a Reference point, or the pick itself (Ctrl = a copy). */
+function gripPut(g, e) {
+  const q = gripPick(g, e.clientX, e.clientY, e.shiftKey);
+  g.hot = true; g.cursor = [e.clientX, e.clientY];
+  if (g.baseAsk) { gripBase(g, q); return; }
+  if (g.ref && g.ref.step !== 'new') { gripRefPick(g, q); return; }
+  gripAim(g, q, e.shiftKey);
+  gripDone(g, e.ctrlKey);
+}
+/** One more copy for the run: the drawing with it becomes g.acc (the document itself changes only when the run ends). */
+function gripCopy(g, ctrl) {
+  if (ctrl && !g.copy) { g.copy = true; if (g.mode) gripModeRun(g); }       // Ctrl at a pick: this pick copies and the run is multiple from here on
+  const d = g.d, M = GM.MODES[g.mode];
+  if (!g.mode && ldrPseudo(d, g.e)) { note('A leader cannot be copied with Stretch yet'); return; }
+  const next = g.mode ? g.res : g.next && { entities: [...g.acc.entities, g.next], blocks: g.acc.blocks };
+  if (!next) { note(g.err || 'That would not change anything, so no copy is made'); gripRefresh(g); return; }
+  g.hist.push(g.acc); g.acc = next;
+  note(`${GM.nameOf(M)}: ${g.hist.length} cop${g.hist.length === 1 ? 'y' : 'ies'}. Specify the next point; Enter or Esc ends, U takes the last back`);
+  gripRefresh(g);
+}
+/** Enter, Esc or X: the copies so far go into the drawing in one undo step; with none (or no Copy) the grip edit is cancelled. */
+function gripExit() {
+  const g = state.grip, d = g.d, label = 'Copy ' + GM.nameOf(GM.MODES[g.mode]), n = g.hist.length;
+  if (!n) { const name = GM.nameOf(GM.MODES[g.mode]); gripCancel(); note(`${name} cancelled`); return; }
+  state.grip = null; trackClear();
+  view.fitted = false;
+  commit(d, g.acc, label);
+  if (!d.vlay) setSel(d, g.sel);
+  renderCommand(); paintOverlay();
+  note(`${label}: ${n} cop${n === 1 ? 'y' : 'ies'} made. Ctrl+Z takes them all back`);
+}
+/** Esc: back from a Base point or Reference prompt to the mode prompt, else it ends the run. */
+function gripEsc() {
+  const g = state.grip;
+  if (g.baseAsk || g.ref) { g.baseAsk = false; g.ref = null; note(GM.prompt(GM.MODES[g.mode], g.copy)); gripRefresh(g); return; }
+  gripExit();
 }
 /** The grip under the pointer turns the hover colour (GRIPHOVER); only the overlay is redrawn, and only when the grip under the pointer changes. */
 function gripHoverAt(e) {
@@ -8193,11 +8280,11 @@ function gripDown(e) {
   const d = gripDoc();
   if (!d) return false;
   const g0 = state.grip;
-  if (g0 && g0.hot && g0.d === d) { gripAim(g0, gripPick(g0, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return true; }       // the second click of click, then click
+  if (g0 && g0.hot && g0.d === d) { gripPut(g0, e); return true; }       // the second click of click, then click
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
-  state.grip = { d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y] };
+  state.grip = { d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
   state.msg = null; renderCommand(); paintOverlay();
   return true;
 }
@@ -8212,9 +8299,9 @@ function gripMove(e) {
 function gripUp(e) {
   const g = state.grip;
   if (!g || g.hot) return;
-  if (g.moved) { gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return; }
+  if (g.moved) { gripPut(g, e); return; }
   g.hot = true; g.cursor = [e.clientX, e.clientY];                  // a click on the grip: it is hot until the next click puts it down
-  ui.cmdUI.message(GM.header('STRETCH')); renderCommand(); paintOverlay();
+  ui.cmdUI.message(GM.header('STRETCH', g.copy)); renderCommand(); paintOverlay();
 }
 function gripCancel() { state.grip = null; trackClear(); renderCommand(); paintOverlay(); }
 /** Puts the dragged grip down: one undo step, named for what it did; the selection stays. */
@@ -8241,12 +8328,21 @@ function gripTyped(raw) {
   if (inp.kind === 'enter') { gripCycle(); return; }                // Enter on an empty bar cycles the grip mode, as Space (AutoCAD)
   if (inp.kind === 'word') {
     const word = inp.w, M = GM.MODES[g.mode];
-    if (word === 'x' || word === 'exit' || word === 'esc') { gripCancel(); note(`${GM.nameOf(M)} cancelled`); }
-    else if (['b', 'base', 'c', 'copy', 'r', 'reference'].includes(word)) note('Base point, Copy and Reference come in TODO 155e2');
-    else if (word === 'u' || word === 'undo') note('Nothing to undo yet');
+    if (word === 'x' || word === 'exit' || word === 'esc') gripExit();
+    else if (word === 'b' || word === 'base') gripBaseAsk(g);
+    else if (word === 'c' || word === 'copy') gripCopyOn(g);
+    else if ((word === 'r' || word === 'reference') && (M === 'ROTATE' || M === 'SCALE')) gripRefOn(g);
+    else if (g.ref && g.ref.step === 'new' && (word === 'p' || word === 'points')) { g.ref.step = 'newpts'; g.ref.pts = []; gripRefresh(g); }
+    else if (word === 'u' || word === 'undo') gripUndoCopy(g);
     else note(`"${word}" is not an option here: type ${g.mode ? 'a value or a point' : 'x,y, @dx,dy or a length'}, or press Esc`);
     return;
   }
+  if (g.baseAsk) {
+    const mm = DR.typedPoint(inp, g.base.map((v) => v * f));
+    if (!mm) note('Type the base point as x,y or @dx,dy'); else gripBase(g, mm.map((v) => v / f));
+    return;
+  }
+  if (g.ref && g.ref.step !== 'new') { gripRefTyped(g, inp, raw); return; }
   if (g.mode) { gripModeTyped(g, inp, raw); return; }
   if (g.id.startsWith('e')) { note('Drag the edge to resize; typing a size is not available yet'); return; }
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
@@ -8266,15 +8362,25 @@ function gripModeTyped(g, inp, raw) {
   const f = g.d.factor, M = GM.MODES[g.mode], baseMm = g.base.map((v) => v * f);
   let v;
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type ${M === 'ROTATE' ? 'an angle' : M === 'SCALE' ? 'a factor' : 'x,y or @dx,dy'}`); return; }
-  if (inp.kind === 'len' && (M === 'ROTATE' || M === 'SCALE')) v = inp.v;
+  if (inp.kind === 'len' && (M === 'ROTATE' || M === 'SCALE')) v = gripRefVal(g, g.ref && M === 'SCALE' ? inp.v / f : inp.v);       // with Reference a typed scale is the new length (mm)
   else {
     const mm = inp.kind === 'len' ? DR.directDistance(baseMm, g.to && g.to.map((x) => x * f), inp.v) : DR.typedPoint(inp, baseMm);
     if (!mm) { note(inp.kind === 'len' ? 'Move the pointer the way you want it to go, then type the length' : 'Point coordinates must be finite'); return; }
-    v = GM.valueAt(M, g.base, mm.map((x) => x / f));
+    v = gripRefVal(g, GM.valueAt(M, g.base, mm.map((x) => x / f)));
   }
   g.val = v; g.to = g.to || g.base; gripModeRun(g);
-  if (g.err) { note(g.err); return; }                               // a Scale of 0 or outside 0.0001 .. 10000: asks again, the grip stays hot (AutoCAD)
-  gripCommit();
+  if (g.err || (g.ref && !g.res)) { note(g.err || 'The new length must be above 0'); return; }       // a Scale of 0 or outside 0.0001 .. 10000: asks again, the grip stays hot (AutoCAD)
+  gripDone(g, false);
+}
+/** Typed at a Reference step (reference angle / length, or Points): a number, or a point (x,y, @dx,dy; two of them). */
+function gripRefTyped(g, inp, raw) {
+  const R = g.ref, f = g.d.factor, scaling = GM.MODES[g.mode] === 'SCALE', q = DR.typedPoint(inp, (R.pts.at(-1) || g.base).map((v) => v * f));
+  if (q) { gripRefPick(g, q.map((v) => v / f)); return; }
+  if (R.step === 'newpts' || R.pts.length) { note('Pick two points, or Esc cancels'); return; }
+  const v = scaling ? Number(raw.trim().replace(',', '.')) : PL.parseAngle(raw);
+  if (v == null || !Number.isFinite(v)) { note(`I do not understand "${raw.trim()}". Type ${scaling ? 'a length in mm' : 'degrees'}, or click two points`); return; }
+  if (scaling && !(v > 0)) { note('The reference length must be above 0'); return; }
+  gripRefGot(g, scaling ? v / f : v);
 }
 /** A grip mode (Move, Rotate, Scale, Mirror) puts its result down: every selected object, one undo step named for the mode; the grip edit ends. */
 function gripModeCommit(g) {
@@ -8290,9 +8396,10 @@ function gripModeCommit(g) {
 /** The preview of a grip mode: the rubber line base → pointer, a faint ghost of the result, the grips (the hot one red) and the readout tip. */
 function gripModeOvl(d, out, grips, g, square) {
   const f = d.factor, M = GM.MODES[g.mode], at = (p) => p.map((v) => v * f);
-  if (g.to) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: at(g.base), b: at(g.to) }, state.sheetH), 'data-testid': 'grip-line' }));
-  if (g.res) for (const i of [...g.sel].slice(0, 300)) {
-    const sh = previewShape(g.res.entities[i], f);
+  if (g.to && !g.baseAsk) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: at(g.base), b: at(g.to) }, state.sheetH), 'data-testid': 'grip-line' }));
+  const shapes = g.copy ? (g.res || g.acc).entities.slice(d.raw.entities.length, d.raw.entities.length + 300) : g.res ? [...g.sel].slice(0, 300).map((i) => g.res.entities[i]) : [];       // a multiple run shows every copy so far and the next
+  for (const ent of shapes) {
+    const sh = previewShape(ent, f);
     if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
   }
   for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id));
@@ -8312,6 +8419,10 @@ function gripOvl(d, out, k, grips) {
   if (g && g.d === d) {
     const ghost = GR.shapeOf(g.ent, d.factor);
     if (ghost) out.push(s('path', { class: 'gr-ghost', transform: drawingTransform(d), d: DR.svgPath(ghost, state.sheetH) }));
+    for (const ent of g.acc.entities.slice(d.raw.entities.length, d.raw.entities.length + 300)) {       // Stretch copies so far
+      const sh = previewShape(ent, d.factor);
+      if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
+    }
     if (g.next) {
       const nw = GR.shapeOf(g.next, d.factor);
       if (nw) out.push(s('path', { class: 'gr-new', transform: drawingTransform(d), d: DR.svgPath(nw, state.sheetH), 'data-testid': 'grip-preview' }));
@@ -8401,7 +8512,7 @@ function editKey(e) {
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
-    else if (state.grip) { const name = GM.nameOf(GM.MODES[state.grip.mode]); gripCancel(); note(`${name} cancelled`); }
+    else if (state.grip) gripEsc();
     else if (state.text.drag) { textDragEnd(true); note('Resize cancelled'); }
     else if (state.txoWait) { state.txoWait = false; note('Text to outlines cancelled'); }
     else if (modLive()) modEsc(d);
