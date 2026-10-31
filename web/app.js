@@ -6655,6 +6655,7 @@ function cursorKey(e) {
 // ---- Offset, Trim and Mirror (modify.js) ----
 const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
+const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
 const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
 const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
 const objViews = new WeakMap();
@@ -6688,14 +6689,17 @@ let copyMode = 'Multiple';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
-/** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: quick ? 'cut' : kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: historyOf(editable() || curDoc())?.labels().past.length ?? 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
+/** A fresh tool: Offset asks distance first; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
+const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: kind === 'offset' ? 'distance' : quick ? 'cut' : kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: historyOf(editable() || curDoc())?.labels().past.length ?? 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
 const modLive = () => !!(state.mod && state.modDoc === editable() && editable());
-const offDistU = (d) => state.offDist / d.factor;
+const offDistU = (d) => state.mod.through ? null : state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
 /** Drops what an undo took away (the object Offset was holding, edges that are gone). */
 function modSync(d) {
   const m = state.mod, have = new Set(d.raw.entities);
+  if (m.kind === 'offset' && m.offsetRaw && (m.offsetRaw !== d.raw.entities || m.offsetRevision !== historyOf(d.vlay || d).revision)) {
+    m.offsetSteps = []; m.offsetRaw = null; m.multiple = false; m.ent = null; m.stage = 'obj';
+  }
   if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side' || m.stage === 'second') m.stage = 'obj'; }
   // an undone Trim brings the original entity back, not the pieces it made: an edge that is gone is swapped for the object it was cut from
   const back = (e) => { for (let k = 0; e && !have.has(e) && k < 1000; k++) e = m.was.get(e); return e; };
@@ -6727,7 +6731,13 @@ function modStart(id) {
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
   else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line, arc or polyline segment (radius ${mmText(state.filR)} mm; R changes it)`; }
-  else if (id === 'offset') { state.offDist = loadOffsetDist(); state.msg = 'Offset: pick an object, or type the distance first'; }
+  else if (id === 'offset') {
+    state.offDist = loadOffsetDist();
+    let opts; try { opts = JSON.parse(localStorage.getItem(OFFSET_OPTIONS_SAVED)); } catch { /* defaults */ }
+    m.through = opts?.through === true; m.eraseSource = opts?.eraseSource === true; m.layer = opts?.layer === 'Current' ? 'Current' : 'Source'; m.offsetSteps = [];
+    state.msg = `Current settings: Erase source=${m.eraseSource ? 'Yes' : 'No'}  Layer=${m.layer}`;
+    ui.cmdUI.message(state.msg);
+  }
   else if (id === 'trim') state.msg = m.quick ? 'Trim: click the part to cut away (every object is a cutting edge)' : 'Trim: pick the cutting edges, then Enter (Enter alone = all)';
   else if (id === 'extend') state.msg = m.quick ? 'Extend: click near the end to extend (every object is a boundary)' : 'Extend: pick the boundary edges, then Enter (Enter alone = all)';
   else if (d.sel.size) { m.objs = [...d.sel].map((i) => d.raw.entities[i]); m.stage = 'p1'; state.msg = `${d.sel.size} selected: click the first point of the mirror line`; }
@@ -6751,7 +6761,7 @@ function modPrompt(d) {
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode) };
   if (m.kind === 'array') return arrayPrompt(d, m);
   if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):` };
-  if (m.kind === 'offset') return { status: `Command: OFFSET   Distance <${mmText(state.offDist)}> mm`, prompt: m.stage === 'obj' ? `Select the object to offset, or type the distance <${mmText(state.offDist)}>:` : `Click the side to offset to (or type a new distance <${mmText(state.offDist)}>):` };
+  if (m.kind === 'offset') return { status: `Command: OFFSET   ${m.through ? 'Through' : `Distance <${mmText(state.offDist)}> mm`}`, prompt: offsetPrompt(m) };
   const ext = m.kind === 'extend', undoOpt = () => (trimUndoable(d, m) ? '/Undo' : '');
   if ((m.kind === 'trim' || ext) && m.askMode) return { status: `Command: ${m.kind.toUpperCase()}   Mode: ${m.quick ? 'Quick' : 'Standard'}`, prompt: `Enter ${ext ? 'an extend' : 'a trim'} mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
   if ((m.kind === 'trim' || ext) && m.quick) {
@@ -6777,7 +6787,6 @@ function modEsc(d) {
   const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
   if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
   if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note(`${ext ? 'Extend' : 'Trim'}: cancelled. ${again}`); renderCommand(); paintOverlay(); return; }
-  if (m.kind === 'offset' && m.stage === 'side') { m.stage = 'obj'; m.ent = null; note('Offset: pick an object'); paintOverlay(); return; }
   if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line, arc or polyline segment'); paintOverlay(); return; }
   if (m.kind === 'mirror' && m.stage === 'pick' && d.sel.size) { setSel(d, new Set()); renderCommand(); return; }
   if (m.kind === 'array' && m.ask) { m.ask = null; note('Array: option cancelled'); renderCommand(); paintOverlay(); return; }
@@ -6809,7 +6818,13 @@ function modEnter(d) {
     else note(modPrompt(d).prompt);
     return;
   }
-  if (m.kind === 'offset' || m.kind === 'fillet') { modEsc(d); return; }
+  if (m.kind === 'offset') {
+    if (m.stage === 'distance') { m.stage = 'obj'; note(offsetPrompt(m)); }
+    else if (m.stage === 'erase' || m.stage === 'layer') { m.stage = 'distance'; note(offsetPrompt(m)); }
+    else { setTool('select'); note('Offset ended'); }
+    paintOverlay(); return;
+  }
+  if (m.kind === 'fillet') { modEsc(d); return; }
   if (m.kind === 'extend') {
     if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc or open polyline to extend`); paintOverlay(); }
     else modEsc(d);
@@ -6831,6 +6846,7 @@ function modEnter(d) {
 function modTakes(c) {
   if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
   const m = state.mod;
+  if ((modLive() || layModLive()) && m.kind === 'offset') return true;
   if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
   if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!(modLive() || layModLive()) || !['trim', 'extend'].includes(m.kind)) return false;
@@ -6842,6 +6858,7 @@ function modTyped(d, raw) {
   d = mdoc(d);
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (m.kind === 'offset') return offsetTyped(d, raw, c);
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     m.cursorInput = null;
     if (m.stage === 'mode') {
@@ -6911,12 +6928,6 @@ function modTyped(d, raw) {
     if (q) moveTo(d, q.map((v) => v / d.factor));
     else note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'dx,dy or a positive distance toward the cursor'}`);
     return true;
-  }
-  if (m.kind === 'offset' && /^\d*\.?\d+(\s*mm)?$/.test(c)) {
-    const v = Number(c.replace(/\s*mm$/, ''));
-    if (!(v > 0) || v > 1e6) { note('The offset distance must be more than 0'); return true; }
-    state.offDist = v; try { localStorage.setItem(OFFSET_SAVED, String(v)); } catch { /* ignore */ }
-    note(`Offset distance ${mmText(v)} mm`); paintOverlay(); return true;
   }
   if (m.kind === 'mirror' && m.stage === 'erase') {
     if (c === 'y' || c === 'yes') modAnswer(d, true); else if (c === 'n' || c === 'no') modAnswer(d, false); else note('Erase source objects? Type Yes or No (Enter = No)');
@@ -6994,8 +7005,8 @@ function modUp(d, was, p, shift, crossing) {
       const ent = modEntAt(d, was.p);
       if (!ent) { note('Offset: nothing there. Click a line, arc, circle or polyline'); return; }
       if (!MD.canModify(ent)) { note('Offset takes a line, arc, circle or polyline'); return; }
-      m.ent = ent; m.stage = 'side'; m.p = was.p; note('Click the side to offset to'); paintOverlay();
-    } else offsetDo(d, was.p);
+      m.ent = ent; m.stage = 'side'; m.p = was.p; note(offsetPrompt(m)); paintOverlay();
+    } else if (m.stage === 'side') offsetDo(d, was.p);
   } else if (m.kind === 'fillet') {
     const ent = modEntAt(d, was.p);
     if (m.stage === 'obj') {
@@ -7370,13 +7381,72 @@ function sizeField(label, id, axis) {
 }
 
 
+function offsetPrompt(m) {
+  if (m.stage === 'distance') return `Specify offset distance or [Through/Erase/Layer] <${m.through ? 'Through' : mmText(state.offDist)}>:`;
+  if (m.stage === 'erase') return `Erase source object after offsetting? [Yes/No] <${m.eraseSource ? 'Yes' : 'No'}>:`;
+  if (m.stage === 'layer') return `Enter layer option for offset objects [Current/Source] <${m.layer}>:`;
+  if (m.stage === 'obj') return 'Select object to offset or [Exit/Undo] <Exit>:';
+  return m.through ? 'Specify through point or [Exit/Multiple/Undo] <Exit>:' : 'Specify point on side to offset or [Exit/Multiple/Undo] <Exit>:';
+}
+function offsetTyped(d, raw, c) {
+  const m = state.mod;
+  if (m.stage === 'distance') {
+    if (c === 't' || c === 'through') { m.through = true; m.stage = 'obj'; }
+    else if (c === 'e' || c === 'erase') m.stage = 'erase';
+    else if (c === 'l' || c === 'layer') m.stage = 'layer';
+    else {
+      const v = PL.parseMm(raw);
+      if (!(v > 0) || v > 1e6) { note('The offset distance must be more than 0 and at most 1000000 mm'); return true; }
+      state.offDist = v; m.through = false; m.stage = 'obj';
+      try { localStorage.setItem(OFFSET_SAVED, String(v)); } catch { /* applies for this session */ }
+    }
+  } else if (m.stage === 'erase' && /^(y|yes|n|no)$/.test(c)) { m.eraseSource = c.startsWith('y'); m.stage = 'distance'; }
+  else if (m.stage === 'layer' && /^(c|current|s|source)$/.test(c)) { m.layer = c.startsWith('c') ? 'Current' : 'Source'; m.stage = 'distance'; }
+  else if (['obj', 'side'].includes(m.stage) && /^(e|exit)$/.test(c)) { setTool('select'); note('Offset ended'); return true; }
+  else if (['obj', 'side'].includes(m.stage) && /^(u|undo)$/.test(c)) { offsetUndo(d); return true; }
+  else if (m.stage === 'side' && /^(m|multiple)$/.test(c)) m.multiple = true;
+  else if (m.stage === 'side') {
+    const q = DR.typedPoint(DR.parseInput(raw), state.pointLast?.map((v) => v * d.factor));
+    if (q) { offsetDo(d, q.map((v) => v / d.factor)); return true; }
+    note(offsetPrompt(m)); return true;
+  } else { note(offsetPrompt(m)); return true; }
+  try { localStorage.setItem(OFFSET_OPTIONS_SAVED, JSON.stringify({ through: m.through, eraseSource: m.eraseSource, layer: m.layer })); } catch { /* applies for this session */ }
+  note(offsetPrompt(m)); paintOverlay(); return true;
+}
+/** Copies share one history entry; the per-copy snapshots let U restore just the last result. */
 function offsetDo(d, p) {
-  const m = state.mod, r = MD.offsetEntity(m.ent, offDistU(d), p);
+  modSync(d);
+  const m = state.mod;
+  if (!m.ent || !d.raw.entities.includes(m.ent)) { note(offsetPrompt(m)); return; }
+  const r = MD.offsetEntity(m.ent, offDistU(d), p);
   if (r.error) { note(r.error); return; }
-  view.fitted = false;
-  commit(d, { entities: [...d.raw.entities, r.ent], blocks: d.raw.blocks }, 'Offset');
-  m.stage = 'obj'; m.ent = null;
-  note(`Offset ${mmText(state.offDist)} mm made on layer ${r.ent.layer}. Pick another object, or Esc ends. Ctrl+Z takes it back`);
+  const tab = d.vlay || d, snap = d.vlay ? laySnap(tab.lay) : snapshotOf(d), index = d.raw.entities.indexOf(m.ent);
+  if (m.layer === 'Current') r.ent = PR.withLayer(r.ent, curLayerName(tab));
+  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || e !== m.ent), r.ent], blocks: d.raw.blocks };
+  view.fitted = false; m.offsetRaw = null;
+  if (!m.offsetSteps.length) commit(d, next, 'Offset');
+  else if (d.vlay) { LD.objectCommit(tab.lay, d, next.entities, () => 'o' + uid()); touch(); update(); }
+  else restore(d, next);
+  m.offsetSteps.push({ snap, index });
+  const now = mdoc(tab);
+  m.ent = m.multiple ? r.ent : null; m.stage = m.multiple ? 'side' : 'obj';
+  m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
+  state.pointLast = p.slice(0, 2);
+  note(offsetPrompt(m)); paintOverlay();
+}
+function offsetUndo(d) {
+  modSync(d);
+  const m = state.mod, step = m.offsetSteps.pop();
+  if (!step) { note('Nothing to undo in this Offset'); return; }
+  const tab = d.vlay || d;
+  m.offsetRaw = null;
+  if (!m.offsetSteps.length) { undo(d); historyOf(tab).clearRedo(); }
+  else if (d.vlay) layRestore(tab, step.snap);
+  else restore(d, step.snap);
+  const now = mdoc(tab);
+  m.ent = m.multiple ? now.raw.entities[step.index] : null; m.stage = m.multiple && m.ent ? 'side' : 'obj';
+  m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
+  note(offsetPrompt(m)); paintOverlay();
 }
 /** Fillet: both entities trimmed (lines can extend) and the arc added, one undo step; Shift = radius 0 this once. Then the next corner. */
 function filletDo(d, ent, p, sharp) {

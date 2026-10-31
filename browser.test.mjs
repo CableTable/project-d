@@ -11679,23 +11679,23 @@ try {
     await closeTabs(/Layout/);
   });
 
-  await step('Offset: the distance is remembered; click an object, click the side; a line, circle and rounded rectangle each make one copy on the same layer, one undo step "Offset"; too much is refused; Esc backs out', async () => {
+  await step('Offset: the distance is remembered; distance first, object then side; line, circle and rounded rectangle copies on the same layer, one undo step "Offset" per run; too much is refused; Esc ends', async () => {
     await openGrips(modDoc(), 'mod.dxf');
     assert.equal(await entCount(), 3);
     await page.locator('[data-tool=offset]').click();
     assert.equal(await t('tool-chip').textContent(), 'Tool: Offset');
-    assert.match(await prompt(), /Select the object to offset, or type the distance <10>/);
+    assert.match(await prompt(), /Specify offset distance or \[Through\/Erase\/Layer\] <10>/);
     await typeCmd('15');
     assert.match(await histLine(), /Distance <15> mm/);
     await click(70, 30);
-    assert.match(await prompt(), /Click the side to offset to/);
+    assert.match(await prompt(), /Specify point on side to offset/);
     const side = await at(70, 70);
     await page.mouse.move(side.x, side.y);
     await frames();
     assert.equal(await t('mod-preview').count(), 1, 'the copy shows before the click');
     await click(70, 70);
     assert.equal(await entCount(), 4);
-    assert.match(await prompt(), /Select the object to offset/, 'it goes on with the next object');
+    assert.match(await prompt(), /Select object to offset/, 'it goes on with the next object');
     let doc = await savedDoc(), e = doc.entities[3];
     assert.equal(e.type, 'LINE'); assert.equal(layerOf(e), 'Cut');
     assert.deepEqual([10, 20, 11, 21].map((c) => fieldOf(e, c)), [20, 45, 120, 45]);
@@ -11705,14 +11705,13 @@ try {
     doc = await savedDoc(); e = doc.entities[4];
     assert.equal(e.type, 'CIRCLE'); assert.equal(fieldOf(e, 40), 5);
     // more than the radius: refused, nothing added, the circle is still held for another side
-    await typeCmd('25');
+    await page.keyboard.press('Escape'); await typeCmd('offset'); await typeCmd('25');
     await click(190, 100); await click(165, 100);
     assert.match(await histLine(), /more than the radius/);
     assert.equal(await entCount(), 5);
     // a rounded rectangle: outside, 6 mm (arcs grow)
-    await typeCmd('6');
-    await page.keyboard.press('Escape');                   // back to picking an object
-    assert.match(await prompt(), /Select the object to offset/);
+    await page.keyboard.press('Escape'); await typeCmd('offset'); await typeCmd('6');
+    assert.match(await prompt(), /Select object to offset/);
     await click(300, 20); await click(300, 5);
     assert.equal(await entCount(), 6);
     doc = await savedDoc(); e = doc.entities[5];
@@ -11721,20 +11720,113 @@ try {
     assert.ok(Math.abs(Math.min(...ys) - 14) < 1e-6 && Math.abs(Math.max(...ys) - 86) < 1e-6, 'the outline grew by 6 mm each way: ' + ys.join());
     assert.equal(e.r.c.filter((c) => c === 42).length > 0, true, 'the corners are still arcs');
     const labels = await histLabels();
-    assert.deepEqual(labels.slice(-3), ['Offset', 'Offset', 'Offset'], 'one undo step each');
+    assert.deepEqual(labels.slice(-2), ['Offset', 'Offset'], 'one undo step per run');
     // the distance is remembered after switching tools
     await page.locator('[data-tool=select]').click(); await page.locator('[data-tool=offset]').click();
     assert.match(await prompt(), /<6>/);
     await page.keyboard.press('Escape');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc with nothing held: back to Select');
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
-    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
+    await page.keyboard.press('Control+z'); await page.keyboard.press('Control+z');
     assert.equal(await entCount(), 3);
     await typeCmd('o');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Offset', 'O is Offset');
     await typeCmd('10');
     await shotBoth('offset', async () => { await click(70, 30); const p = await at(70, 62); await page.mouse.move(p.x, p.y); await frames(); }, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 155g1: Offset Through, Erase, Layer, Multiple and Undo; Esc, source edits, reload and Layout parity', async () => {
+    await menuItem('View', 'Theme: light');
+    await openGrips(modDoc(), 'offset-options.dxf');
+    const histLabels = async () => {
+      await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
+      const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
+      await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' });
+      return rows;
+    };
+    const end = () => typeCmd('');
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const lineYs = (doc) => doc.entities.filter((e) => e.type === 'LINE').map((e) => fieldOf(e, 20)).sort((a, b) => a - b);
+    const start = async () => { await typeCmd('offset'); assert.match(await prompt(), /^Specify offset distance or \[Through\/Erase\/Layer\]/); };
+    await start();
+    assert.match(await t('cmd-fade').textContent(), /Current settings: Erase source=No  Layer=Source/);
+    await shotBoth('offset-options-prompt', async () => { await cmdLine().focus(); });
+    await typeCmd('t');
+    assert.equal(await prompt(), 'Select object to offset or [Exit/Undo] <Exit>:');
+    await click(70, 30);
+    assert.equal(await prompt(), 'Specify through point or [Exit/Multiple/Undo] <Exit>:');
+    await click(70, 60); await end();
+    const throughYs = lineYs(await savedDoc());
+    assert.equal(throughYs[0], 30); assert.ok(near(throughYs[1], 60, 0.5), 'Through passes through the picked point');
+    assert.equal((await histLabels()).at(-1), 'Offset');
+    await undo(); assert.equal(await entCount(), 3);
+    // Esc while holding an object leaves both geometry and history alone.
+    const beforeEsc = await histLabels();
+    await start(); await end(); await click(70, 30); await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.equal(await entCount(), 3); assert.deepEqual(await histLabels(), beforeEsc);
+    // Erase and Layer return to the distance question; the result remains on Current.
+    await start(); await typeCmd('e');
+    assert.equal(await prompt(), 'Erase source object after offsetting? [Yes/No] <No>:');
+    await typeCmd('y'); await typeCmd('l');
+    assert.equal(await prompt(), 'Enter layer option for offset objects [Current/Source] <Source>:');
+    await typeCmd('c'); await typeCmd('10'); await click(70, 30); await click(70, 50);
+    let doc = await savedDoc();
+    assert.deepEqual(lineYs(doc), [40], 'Erase Yes removes the source');
+    assert.equal(layerOf(doc.entities.find((e) => e.type === 'LINE')), '0', 'Current is used instead of Cut');
+    await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [30], 'U restores an erased source');
+    await typeCmd('u'); assert.match(await histLine(), /Nothing to undo in this Offset/);
+    await typeCmd('exit'); assert.deepEqual(await histLabels(), beforeEsc);
+    await start(); await typeCmd('e'); await typeCmd('n'); await typeCmd('l'); await typeCmd('s'); await typeCmd('10');
+    await click(70, 30); await typeCmd('m');
+    for (const y of [45, 55, 65]) await click(70, y);
+    assert.deepEqual(lineYs(await savedDoc()), [30, 40, 50, 60], 'Multiple offsets the newest copy three times');
+    await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [30, 40, 50], 'U removes just the last copy');
+    await end(); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    assert.equal((await histLabels()).length, beforeEsc.length + 1, 'the run has one history entry');
+    await undo(); assert.deepEqual(lineYs(await savedDoc()), [30], 'one Ctrl+Z removes the whole run');
+    // A completed copy stays independent when its source is subsequently edited.
+    await start(); await end(); await click(70, 30); await click(70, 50); await end();
+    await click(70, 30); await typeCmd('mv'); await typeCmd('70,30'); await typeCmd('0,5');
+    assert.deepEqual(lineYs(await savedDoc()), [35, 40], 'editing the source leaves its offset in place');
+    await undo(); await undo();
+    // Store non-default options, then verify their prompts and behavior after a reload.
+    await start(); await typeCmd('e'); await typeCmd('y'); await typeCmd('l'); await typeCmd('c'); await typeCmd('t'); await end();
+    await page.reload(); await t('count').waitFor({ state: 'attached' });
+    await openGrips(modDoc(), 'offset-reloaded.dxf');
+    await start(); assert.match(await prompt(), /<Through>:/);
+    assert.match(await t('cmd-fade').textContent(), /Current settings: Erase source=Yes  Layer=Current/);
+    await typeCmd('e'); assert.match(await prompt(), /<Yes>:/); await end();
+    await typeCmd('l'); assert.match(await prompt(), /<Current>:/); await end(); await end();
+    await click(70, 30); await typeCmd('70,63'); await end();
+    doc = await savedDoc(); assert.deepEqual(lineYs(doc), [63]);
+    assert.equal(layerOf(doc.entities.find((e) => e.type === 'LINE')), '0');
+    // Layout objects use the same Through/Erase/Layer settings and per-copy Undo.
+    await t('new-layout').click();
+    await typeCmd('line'); await typeCmd('50,300'); await typeCmd('300,300'); await end();
+    await typeCmd('circle'); await typeCmd('800,100'); await typeCmd('20');
+    const layoutCount = await nParts();
+    await start(); await end(); await click(150, 300); await click(150, 350); await end();
+    doc = await savedDoc(); assert.equal(lineYs(doc).length, 1); assert.ok(near(lineYs(doc)[0], 350, 1), 'Through on a Layout object');
+    assert.equal(await nParts(), layoutCount, 'Erase replaces the Layout source');
+    await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
+    await start(); await typeCmd('10'); await click(150, 300); await typeCmd('m');
+    for (const y of [320, 330, 340]) await click(150, y);
+    assert.deepEqual(lineYs(await savedDoc()), [330], 'Erase Multiple follows the replacement, not the last Layout object');
+    await typeCmd('u'); assert.deepEqual(lineYs(await savedDoc()), [320]);
+    await end(); await undo(); assert.deepEqual(lineYs(await savedDoc()), [300]);
+    await start(); await typeCmd('e'); await typeCmd('n'); await typeCmd('10');
+    await click(150, 300); await typeCmd('multiple');
+    for (const y of [320, 330, 340]) await click(150, y);
+    assert.equal(await nParts(), layoutCount + 3);
+    await typeCmd('undo'); assert.equal(await nParts(), layoutCount + 2);
+    await end(); await undo(); assert.equal(await nParts(), layoutCount);
+    // Restore the old tests' defaults; the numeric distance survives reload too.
+    await start(); await typeCmd('l'); await typeCmd('s'); await typeCmd('12'); await end();
+    await page.reload(); await t('count').waitFor({ state: 'attached' });
+    await openGrips(modDoc(), 'offset-distance.dxf');
+    await start(); assert.match(await prompt(), /<12>:/); await typeCmd('10'); await end();
   });
 
   await step('Trim: Enter makes every object a cutting edge, a click cuts the part between the crossings (a line becomes two); one undo step "Trim" each; pieces of an edge still cut', async () => {
@@ -15386,7 +15478,7 @@ try {
     // a pick on the placed part: refused, nothing changes, the tool waits
     for (const tool of ['trim', 'fillet', 'offset']) {
       const Tool = tool[0].toUpperCase() + tool.slice(1);
-      await typeCmd(tool); await click(p0[0] + 10, p0[1] + 10);
+      await typeCmd(tool); if (tool === 'offset') await typeCmd(''); await click(p0[0] + 10, p0[1] + 10);
       assert.match(await histLine(), new RegExp(Tool + ' works on layout objects, not placed parts'));
       assert.equal(await t('tool-chip').textContent(), 'Tool: ' + Tool);
       assert.equal((await labels()).length, l0 + 4); assert.deepEqual(await pos(), p0);
