@@ -693,19 +693,18 @@ try {
         const mid = await atPoint(40, 20); await p.mouse.click(mid.x, mid.y);
         await p.waitForFunction(() => document.querySelectorAll('[data-testid=grip]').length >= 2);
         await p.locator('[data-testid=grip]').first().waitFor({ state: 'visible' });
-        try { await p.waitForFunction(() => Math.round(document.querySelector('[data-testid=grip]')?.getBoundingClientRect().width) === 11); }
+        // one read inside the poll: a grip redrawn between a wait and a later read can't give a stale 0
+        let rest;
+        try { rest = await (await p.waitForFunction(() => { const el = document.querySelector('[data-testid=grip]'); const w = el && Math.round(el.getBoundingClientRect().width); return w === 11 ? { side: w, fill: getComputedStyle(el).fill } : null; })).jsonValue(); }
         catch (e) { throw new Error(`expected grip size 11 px, last seen ${await p.evaluate(() => Math.round(document.querySelector('[data-testid=grip]')?.getBoundingClientRect().width))} px: ${e.message}`); }
-        const side = await p.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
-        assert.equal(side, 11);
-        const fill = (loc) => loc.evaluate((el) => getComputedStyle(el).fill);
-        assert.ok(await fill(p.locator('[data-testid=grip]').first()) === 'rgb(0, 127, 255)', 'a grip at rest is GRIPCOLOR 150 (157b)');
+        assert.equal(rest.side, 11);
+        assert.ok(rest.fill === 'rgb(0, 127, 255)', 'a grip at rest is GRIPCOLOR 150 (157b)');
+        const fillOf = async (sel) => (await p.waitForFunction((s) => { const el = document.querySelector(s); return el && getComputedStyle(el).fill; }, sel)).jsonValue();
         const gr = await at(60, 20, 4);
-        await p.waitForFunction(() => document.querySelector('[data-testid=grip].hover'));
-        assert.equal(await fill(p.locator('[data-testid=grip].hover')), 'rgb(255, 127, 127)');
+        assert.equal(await fillOf('[data-testid=grip].hover'), 'rgb(255, 127, 127)');
         await p.screenshot({ path: `${shotDir}/todo155r-grip-hover-${theme}.png`, clip: { x: gr.x - 80, y: gr.y - 60, width: 160, height: 120 } });
         await p.mouse.down(); await p.mouse.move(gr.x + 30, gr.y + 20, { steps: 4 });
-        await p.getByTestId('grip-hot').waitFor();
-        assert.equal(await fill(p.getByTestId('grip-hot')), 'rgb(165, 0, 0)');
+        assert.equal(await fillOf('[data-testid=grip-hot]'), 'rgb(165, 0, 0)');
         await p.keyboard.press('Escape'); await p.mouse.up();
         await p.keyboard.press('Escape');
       }
@@ -9578,8 +9577,8 @@ try {
     await pick(170, 30, 4);
     await pick(70, 30, 3); await click(190, 100, { shift: true }); await click(60, 130, { shift: true }); await click(170, 30, { shift: true });
     await gripWhen(3 + 5 + 4 + 4);
-    const sq = await page.locator('[data-testid=grip]').first().evaluate((el) => Math.round(el.getBoundingClientRect().width));
-    assert.equal(sq, 11, 'GRIPSIZE 5 is the half side: 11 px squares (TODO 155r)');
+    const sq = await (await page.waitForFunction(() => { const el = document.querySelector('[data-testid=grip]'); return el && Math.round(el.getBoundingClientRect().width); })).jsonValue();
+    assert.equal(sq, 11,'GRIPSIZE 5 is the half side: 11 px squares (TODO 155r)');
     await page.locator('[data-tool=line]').click();
     await gripWhen(0);                                         // a drawing tool is on: no grips
     await page.keyboard.press('Escape');                       // back to Select, the selection stays
