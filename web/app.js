@@ -6731,7 +6731,7 @@ function trimRegionPreview(d, m, paint) {
   const pts = m.cross ? m.cross.p1 && [m.cross.p1, m.p] : [...(m.fence || m.path), m.p];
   if (!pts) return null;
   const key = JSON.stringify([!!m.cross, pts, [...(d.locked || [])]]), ext = (m.kind === 'extend') !== !!m.shift, edges = trimEdges(d, m), ix = edIndex(d), c = m.regionPv;
-  if (c && c.key === key && c.ext === ext && c.edges === edges && c.ix === ix && c.raw === d.raw.entities) return c.r;
+  if (c && c.key === key && c.ext === ext && c.ix === ix && c.raw === d.raw.entities && c.edges.length === edges.length && c.edges.every((e, i) => e === edges[i])) return c.r;
   if (!paint) { paintOverlay(); return null; }
   // shortcut: preview only the first 300 crossed objects; raise the cap when region geometry can be worked out off the UI thread.
   const r = trimRegionResult(d, m.cross ? MD.windowHit(...pts) : MD.fenceHit(pts), ext, 300);

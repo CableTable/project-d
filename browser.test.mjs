@@ -12741,6 +12741,10 @@ try {
     await typeCmd('tr'); await drag([[140, 95], [140, 15]]);
     await faded([dxfLine(120, 30, 160, 30), dxfLine(120, 70, 160, 70)]); await page.mouse.up();
     assert.deepEqual(await rows(30), [[20, 120], [160, 220]]); await typeCmd('u'); await page.keyboard.press('Escape');
+    // Explicit cutting edges in Quick mode stay the same boundaries across repeated overlay paints.
+    await typeCmd('tr'); await typeCmd('t'); await click(80, 50); await click(160, 50); await typeCmd('');
+    await drag([[140, 95], [140, 15]]); await faded(cuts); await frames(); await faded(cuts);
+    await page.mouse.up(); await cutRows(); await typeCmd('u'); await page.keyboard.press('Escape');
     // Standard's edges stage and cut stage keep the old empty-space press-drag behavior.
     await typeCmd('tr'); await typeCmd('o'); await typeCmd('s');
     const standardBefore = (await savedDoc()).entities, standardHistory = (await histLabels()).length;
