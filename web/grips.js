@@ -5,6 +5,7 @@
 //
 //   gripsOf(ent)                 → [{ id, kind: 'end' | 'mid' | 'centre' | 'quad' | 'vertex' | 'edge', x, y }]
 //   dragGrip(ent, id, to, shift) → { ent: the changed record, label } or null (nothing sensible: the point is the same, three points in a line)
+//   optionsOf(ent, id)           → 163a Grip options: ['Stretch', 'Lengthen'] / ['Stretch', 'Radius'] / []; lengthen, setRadius, dragOption, typedOption do them
 //   refPoint(ent, id)            → the point the rubber band starts from (the fixed end of a line, the centre of a circle, else the grip itself)
 //   shapeOf(ent, factor)         → the shape in mm as draw.js svgPath draws it
 //   (a leader, leader.js, is passed in as { type: 'LEADER', model } and has a grip at each of its points)
@@ -256,6 +257,45 @@ export function dragGrip(ent, id, to, shift = false) {
   if (!v || dist([v.x, v.y], to) < 1e-12) return null;
   return { ent: withValues(ent, [[v.kx, to[0]], [v.ky, to[1]]]), label: 'Stretch polyline' };
 }
+
+/** 163a Grip options: what the list on a grip offers (first = Stretch, the plain grip run); [] when the grip has no list (line middle, circle, arc centre ...). */
+export function optionsOf(ent, id) {
+  if (!ent || !ent.r || !hasGrips(ent)) return [];
+  if ((ent.type === 'LINE' || ent.type === 'ARC') && (id === 'a' || id === 'b')) return ['Stretch', 'Lengthen'];
+  return ent.type === 'ARC' && id === 'm' ? ['Stretch', 'Radius'] : [];
+}
+/** AutoCAD's prompt of an option (as tested 2027): the arc asks for "end point of arc". */
+export const optionPrompt = (ent, name) => (name === 'Radius' ? 'Specify radius:' : ent.type === 'ARC' ? 'Specify end point of arc:' : 'Specify end point:');
+const wrap360 = (t) => ((t % 360) + 360) % 360;
+/**
+ * Lengthen: a line's end grip moved along the line's own direction, or an arc's end along the arc. `how`: { to } the pointer ([x, y]), { add } a typed
+ * distance ADDED to the line, { deg } a typed arc-end angle (degrees; the start grip mirrors it, AutoCAD). A new line length of 0 or less (the pointer
+ * behind the fixed end) is refused (null), as is an arc whose ends would meet; an unchanged shape is null too.
+ */
+export function lengthen(ent, id, how) {
+  if (!optionsOf(ent, id).includes('Lengthen')) return null;
+  const r = ent.r;
+  if (ent.type === 'LINE') {
+    const ends = { a: [get(r, 10) ?? 0, get(r, 20) ?? 0], b: [get(r, 11) ?? 0, get(r, 21) ?? 0] }, fixed = ends[id === 'a' ? 'b' : 'a'], moving = ends[id], len = dist(fixed, moving);
+    if (!(len > 1e-9)) return null;
+    const u = [(moving[0] - fixed[0]) / len, (moving[1] - fixed[1]) / len], now = how.add != null ? len + how.add : (how.to[0] - fixed[0]) * u[0] + (how.to[1] - fixed[1]) * u[1];
+    if (!Number.isFinite(now) || !(now > 1e-9) || Math.abs(now - len) < 1e-12) return null;
+    const p = [fixed[0] + u[0] * now, fixed[1] + u[1] * now];
+    return { ent: withValues(ent, id === 'a' ? [[at(r, 10), p[0]], [at(r, 20), p[1]]] : [[at(r, 11), p[0]], [at(r, 21), p[1]]]), label: 'Lengthen' };
+  }
+  const a = arcOf(r), deg = how.deg != null ? (id === 'a' ? -how.deg : how.deg) : angleOf(a.c, how.to), v = wrap360(deg), other = id === 'a' ? a.a1 : a.a0;
+  if (!Number.isFinite(v) || Math.abs(v - wrap360(id === 'a' ? a.a0 : a.a1)) < 1e-9 || Math.abs(wrap360(v - other)) < 1e-9 || 360 - Math.abs(wrap360(v - other)) < 1e-9) return null;
+  return { ent: withValues(ent, [[at(r, id === 'a' ? 50 : 51), v]]), label: 'Lengthen' };
+}
+/** Radius: the arc's middle grip sets the radius (the centre and the end angles stay, so the ends move radially); null when it is 0, negative or the same. */
+export function setRadius(ent, rad) {
+  if (!optionsOf(ent, 'm').includes('Radius') || !Number.isFinite(rad) || !(rad > 1e-9) || Math.abs(rad - (get(ent.r, 40) ?? 0)) < 1e-12) return null;
+  return { ent: withValues(ent, [[at(ent.r, 40), rad]]), label: 'Radius' };
+}
+/** The option `name` with the pointer at `to` (drawing units). */
+export const dragOption = (ent, id, name, to) => (name === 'Radius' ? setRadius(ent, dist(arcOf(ent.r).c, to)) : lengthen(ent, id, { to }));
+/** The option `name` with a typed number: Radius the radius, Lengthen on a line the distance added (both drawing units), on an arc the end angle in degrees. */
+export const typedOption = (ent, id, name, v) => (name === 'Radius' ? setRadius(ent, v) : lengthen(ent, id, ent.type === 'ARC' ? { deg: v } : { add: v }));
 
 /** The shape (mm) of an entity, as draw.js svgPath wants it: { t: 'line' | 'circle' | 'arc' | 'poly', … }; null for other types. */
 export function shapeOf(ent, factor = 1) {

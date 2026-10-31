@@ -10203,6 +10203,150 @@ try {
     await closeTabs(/./);
   });
 
+  // ---- TODO 163a: Grip options, the hover list on a line / arc grip ----
+  const g163 = {
+    list: async () => { await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi').allTextContents(); },
+    hover: async (id) => { const away = await at(5, 5); await page.mouse.move(away.x, away.y); await frames(); const a = await gripBox(id); await page.mouse.move(a.x, a.y); },       // the list comes after 300 ms of rest
+    pickItem: async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); },
+    hotWhen: (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n),
+    hist: () => t('cmd-hist').textContent(),
+    undo: async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); },
+    ent: async (i) => { const e = entOf(await savedDoc(), i); return [10, 20, 11, 21, 40, 50, 51].map((k) => { const v = e.r.c.indexOf(k); return v < 0 ? null : +e.r.v[v]; }); },
+    labels: async () => { await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor(); const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents(); await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' }); return rows; },
+  };
+  const shotBoth163 = async (name) => {
+    for (const theme of ['light', 'dark']) {
+      await page.keyboard.press('Escape'); await menuItem('View', 'Theme: ' + theme);
+      await pick(60, 130, 4); await g163.hover('2:m'); await g163.list(); await frames();
+      await page.screenshot({ path: `E:/Project B/Claude/Project D extras/runs30/shots-163a/${name}-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light'); await pick(60, 130, 4); await g163.hover('2:m'); await g163.list();
+  };
+
+  await step('TODO 163a: hover a line / arc grip 300 ms -> the Grip options list (line end Stretch, Lengthen; arc mid Stretch, Radius; none on a line middle or arc centre); Lengthen typed 10 adds 10, Radius typed 40, Ctrl cycles, Esc closes the list first; one Undo each; light and dark', async () => {
+    const { list, hover, pickItem, hotWhen, hist, undo, ent, labels } = g163;
+    await menuItem('View', 'Theme: light');
+    mkdirSync('E:/Project B/Claude/Project D extras/runs30/shots-163a', { recursive: true });
+    await openGrips();
+    await pick(70, 30, 3);
+    // the list appears after the rest, not at once; exactly Stretch / Lengthen on a line end
+    await hover('0:b');
+    assert.equal(await page.locator('[data-testid=ctx-menu]').count(), 0, 'not before the rest');
+    assert.deepEqual(await list(), ['Stretch', 'Lengthen']);
+    const away = await at(150, 150); await page.mouse.move(away.x, away.y); await page.waitForTimeout(500);
+    assert.equal(await page.locator('[data-testid=ctx-menu]').count(), 1, 'the list stays when the pointer leaves');
+    // Esc closes the list first and leaves the selection
+    await page.keyboard.press('Escape'); await t('ctx-menu').waitFor({ state: 'detached' });
+    assert.equal(await gripCount(), 3, 'Esc closed only the list');
+    // a line middle has no list
+    await hover('0:m'); await page.waitForTimeout(600);
+    assert.equal(await page.locator('[data-testid=ctx-menu]').count(), 0, 'a line middle has no list');
+    // Lengthen: its header and prompt; a typed 10 adds 10 (50 -> 60 long), one Undo step
+    await hover('0:b'); await list(); await pickItem('Lengthen');
+    await hotWhen(1);
+    assert.equal(await prompt(), 'Specify end point:');
+    assert.match(await hist(), /\*\* LENGTHEN \*\*/);
+    await typeCmd('10'); await hotWhen(0);
+    assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 130, 30], 'the length grew by 10');
+    assert.equal((await labels()).at(-1), 'Lengthen');
+    await undo();
+    assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 120, 30], 'one Undo');
+    // Stretch from the list = the plain grip click; Ctrl taps cycle Stretch <-> Lengthen; a click puts the end where the pointer's shadow falls on the line
+    await pick(70, 30, 3);
+    await hover('0:b'); await list(); await pickItem('Stretch'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify stretch point or [Base point/Copy/Undo/eXit]:');
+    await page.keyboard.press('Control'); await frames();
+    assert.equal(await prompt(), 'Specify end point:'); assert.match(await hist(), /\*\* LENGTHEN \*\*/);
+    await page.keyboard.press('Control'); await frames();
+    assert.match(await prompt(), /^Specify stretch point/); assert.match(await hist(), /\*\* STRETCH \*\*/);
+    await page.keyboard.press('Control'); await frames();
+    const to = await at(150, 50); await page.mouse.move(to.x, to.y); await frames(); await page.mouse.click(to.x, to.y); await hotWhen(0);
+    const slid = (await ent(0)).slice(0, 4);
+    assert.ok(near(slid[2], 150, 1) && slid[3] === 30 && slid[1] === 30, `Lengthen keeps the line straight: the end slides along it ${slid}`);
+    assert.equal((await labels()).at(-1), 'Lengthen');
+    await undo();
+    // a Lengthen to a length of 0 is refused (asks again); a negative number shortens
+    await pick(70, 30, 3);
+    await hover('0:b'); await list(); await pickItem('Lengthen'); await hotWhen(1);
+    await typeCmd('-100'); assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'a length of 0 asks again');
+    await typeCmd('-20'); await hotWhen(0);
+    assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 100, 30], 'a negative number shortens');
+    await undo();
+    // Esc in a run cancels it, nothing changed
+    await pick(70, 30, 3);
+    await hover('0:a'); await list(); await pickItem('Lengthen'); await hotWhen(1);
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 120, 30], 'Esc changed nothing');
+    // the right-click grip menu in Lengthen has no tick on Stretch
+    await pick(70, 30, 3);
+    await hover('0:b'); await list(); await pickItem('Lengthen'); await hotWhen(1);
+    const rc = await at(70, 45); await page.mouse.click(rc.x, rc.y, { button: 'right' });
+    await t('ctx-menu').waitFor();
+    assert.deepEqual(await list(), ['Enter', 'Stretch', 'Move', 'Rotate', 'Scale', 'Mirror', 'Base Point', 'Copy', 'Properties', 'Exit']);
+    await pickItem('Exit'); await hotWhen(0);
+    // an arc: end Stretch / Lengthen (typed = the end angle), middle Stretch / Radius (typed = the radius, the centre stays), no list on the centre
+    await pick(60, 130, 4);
+    await hover('2:b'); assert.deepEqual(await list(), ['Stretch', 'Lengthen']); await pickItem('Lengthen'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify end point of arc:');
+    await typeCmd('120'); await hotWhen(0);
+    let a = await ent(2);
+    assert.ok(near(a[5], 0, 1e-6) && near(a[6], 120, 1e-6) && near(a[4], 30, 1e-6), `the end angle is now 120: ${a}`);
+    await undo();
+    await pick(60, 130, 4);
+    await hover('2:m'); assert.deepEqual(await list(), ['Stretch', 'Radius']);
+    await shotBoth163('list');
+    await pickItem('Radius'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify radius:'); assert.match(await hist(), /\*\* RADIUS \*\*/);
+    await typeCmd('40'); await hotWhen(0);
+    a = await ent(2);
+    assert.ok([[0, 60], [1, 100], [4, 40], [5, 0], [6, 180]].every(([i, v]) => near(a[i], v, 1e-6)), `radius 40, centre and angles stay: ${a}`);
+    assert.equal((await labels()).at(-1), 'Radius');
+    await undo();
+    assert.equal((await ent(2))[4], 30, 'one Undo');
+    await pick(60, 130, 4);
+    await hover('2:c'); await page.waitForTimeout(600);
+    assert.equal(await page.locator('[data-testid=ctx-menu]').count(), 0, 'the arc centre has no list');
+    // Ctrl in a hot arc-middle run: Stretch <-> Radius
+    const m = await gripBox('2:m'); await page.mouse.click(m.x, m.y); await hotWhen(1);
+    await page.keyboard.press('Control'); await frames();
+    assert.equal(await prompt(), 'Specify radius:'); assert.match(await hist(), /\*\* RADIUS \*\*/);
+    await page.keyboard.press('Control'); await frames();
+    assert.match(await prompt(), /^Specify stretch point/);
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    // Space leaves the option for MOVE (AutoCAD); a circle has no list
+    await pick(60, 130, 4);
+    await hover('2:b'); await list(); await pickItem('Lengthen'); await hotWhen(1);
+    await page.keyboard.press(' '); await frames();
+    assert.match(await hist(), /\*\* MOVE \*\*/);
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    await pick(190, 100, 5);
+    await hover('1:q0'); await page.waitForTimeout(600);
+    assert.equal(await page.locator('[data-testid=ctx-menu]').count(), 0, 'a circle has no list');
+    await closeTabs(/./);
+  });
+  await step('TODO 163a: Grip options on a Compare snapshot (routes to the source) and on a layout object', async () => {
+    const { list, hover, pickItem, hotWhen, ent } = g163;
+    await openGrips(undefined, 'g163-compare.dxf');
+    await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
+    await click(70, 30); await frames(); await gripWhen(3);
+    await hover('0:b'); assert.deepEqual(await list(), ['Stretch', 'Lengthen']); await pickItem('Lengthen'); await hotWhen(1);
+    await typeCmd('10'); await hotWhen(0);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'g163-compare.dxf' }) }).click();
+    assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 130, 30], 'the source drawing was lengthened');
+    await closeTabs(/./);
+    // a layout object
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    await hover(await gid('b')); assert.deepEqual(await list(), ['Stretch', 'Lengthen']); await pickItem('Lengthen'); await hotWhen(1);
+    await typeCmd('10'); await hotWhen(0); await frames(); await gripWhen(3);
+    const end = await gripBox(await gid('b')), want = await at(310, 600);
+    assert.ok(near(end.x, want.x, 2) && near(end.y, want.y, 2), 'the layout line grew 10');
+    await closeTabs(/./);
+  });
+
   await step('TODO 155e4: grips on text, ellipse, hatch and blocks: a justified text moved by its grip (both points), an ellipse major end dragged, a hatch moved by its centre, a block moved by its insertion grip, Rotate by a text grip via Space, and an ellipse on a layout', async () => {
     await menuItem('View', 'Theme: light');
     mkdirSync('shots-155e4', { recursive: true });

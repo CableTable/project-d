@@ -346,4 +346,63 @@ test('wholeHot: every defining grip hot (or the middle / centre) moves the objec
   assert.deepEqual(pts(GR.gripsOf(GR.translate(pl, 1, 2))), [[1, 2], [11, 2], [11, 7]]);
 });
 
+test('163a Grip options: the list per grip', () => {
+  const ids = (e) => Object.fromEntries(GR.gripsOf(e).map((g) => [g.id, GR.optionsOf(e, g.id)]));
+  assert.deepEqual(ids(line(0, 0, 50, 0)), { a: ['Stretch', 'Lengthen'], m: [], b: ['Stretch', 'Lengthen'] });
+  assert.deepEqual(ids(arc(0, 0, 10, 0, 90)), { a: ['Stretch', 'Lengthen'], m: ['Stretch', 'Radius'], b: ['Stretch', 'Lengthen'], c: [] });
+  assert.deepEqual(ids(circle(0, 0, 5)), { c: [], q0: [], q1: [], q2: [], q3: [] });
+  assert.deepEqual(GR.optionsOf(rect(0, 0, 10, 5), 'v0'), []);
+  assert.equal(GR.optionPrompt(line(0, 0, 5, 0), 'Lengthen'), 'Specify end point:');
+  assert.equal(GR.optionPrompt(arc(0, 0, 10, 0, 90), 'Lengthen'), 'Specify end point of arc:');
+  assert.equal(GR.optionPrompt(arc(0, 0, 10, 0, 90), 'Radius'), 'Specify radius:');
+});
+
+test('163a Lengthen a line: the end follows the pointer along the line; a typed number is added; zero or reversed refused', () => {
+  const ln = reopen(line(10, 10, 60, 10)), end = (e) => [val(e, 11), val(e, 21)];
+  const p = GR.lengthen(ln, 'b', { to: [80, 33] });                          // the pointer off the line: its shadow on the line counts
+  assert.equal(p.label, 'Lengthen'); nearPt(end(p.ent), [80, 10]); nearPt([val(p.ent, 10), val(p.ent, 20)], [10, 10]);
+  nearPt(end(GR.lengthen(ln, 'b', { add: 10 }).ent), [70, 10]);               // AutoCAD: 10 typed on 50 = 60 long
+  nearPt(end(GR.lengthen(ln, 'b', { add: -20 }).ent), [40, 10]);              // a negative shortens
+  const a = GR.lengthen(ln, 'a', { add: 5 });                                 // the start end grows away from the fixed end
+  nearPt([val(a.ent, 10), val(a.ent, 20)], [5, 10]);
+  const slope = reopen(line(0, 0, 30, 40));
+  nearPt(end(GR.lengthen(slope, 'b', { add: 50 }).ent), [60, 80]);
+  assert.equal(GR.lengthen(ln, 'b', { add: -50 }), null, 'zero length refused');
+  assert.equal(GR.lengthen(ln, 'b', { add: -80 }), null, 'reversing refused');
+  assert.equal(GR.lengthen(ln, 'b', { to: [0, 10] }), null, 'the pointer behind the fixed end refused');
+  assert.equal(GR.lengthen(ln, 'b', { to: [60, 10] }), null, 'no change');
+  assert.equal(GR.lengthen(ln, 'm', { add: 5 }), null, 'the middle has no Lengthen');
+  assert.equal(GR.lengthen(reopen(circle(0, 0, 5)), 'q0', { add: 5 }), null);
+});
+
+test('163a Lengthen an arc: the end follows the pointer round the centre; a typed number is the end ANGLE (the start grip mirrors it)', () => {
+  const ar = reopen(arc(50, 50, 20, 0, 90));
+  const p = GR.lengthen(ar, 'b', { to: [50, 120] });                          // straight up from the centre: 90 -> 90 is unchanged, so go to the left
+  assert.equal(p, null, 'the same angle: no change');
+  const q = GR.lengthen(ar, 'b', { to: [30, 50] });
+  near(val(q.ent, 51), 180); near(val(q.ent, 50), 0); near(val(q.ent, 40), 20); nearPt([val(q.ent, 10), val(q.ent, 20)], [50, 50]);
+  near(val(GR.lengthen(ar, 'b', { deg: 10 }).ent, 51), 10);                   // AutoCAD: 10 typed at the end grip = end angle 10
+  near(val(GR.lengthen(ar, 'b', { deg: 120 }).ent, 51), 120);
+  near(val(GR.lengthen(ar, 'a', { deg: 20 }).ent, 50), 340);                  // at the start grip 20 = start angle 340 (= -20)
+  near(val(GR.lengthen(ar, 'a', { to: [50, 30] }).ent, 50), 270);
+  assert.equal(GR.lengthen(ar, 'b', { deg: 0 }), null, 'ends meeting refused');
+  assert.equal(GR.lengthen(ar, 'b', { deg: 360 }), null);
+  assert.equal(GR.lengthen(ar, 'b', { deg: 90 }), null, 'no change');
+  assert.equal(GR.lengthen(ar, 'm', { deg: 5 }), null, 'the middle has no Lengthen');
+});
+
+test('163a Radius: the arc middle grip sets the radius; the centre and angles stay', () => {
+  const ar = reopen(arc(50, 50, 20, 0, 90)), r = GR.setRadius(ar, 30);
+  assert.equal(r.label, 'Radius');
+  near(val(r.ent, 40), 30); near(val(r.ent, 50), 0); near(val(r.ent, 51), 90); nearPt([val(r.ent, 10), val(r.ent, 20)], [50, 50]);
+  nearPt([GR.gripsOf(r.ent)[0].x, GR.gripsOf(r.ent)[0].y], [80, 50]); nearPt([GR.gripsOf(r.ent)[2].x, GR.gripsOf(r.ent)[2].y], [50, 80]);   // AutoCAD: ends at (80,50) / (50,80)
+  assert.equal(GR.dragOption(ar, 'm', 'Radius', [50 + 12, 50 + 16]), null, 'the same radius: no change');
+  near(val(GR.dragOption(ar, 'm', 'Radius', [50 + 30, 50 + 40]).ent, 40), 50);
+  near(val(GR.typedOption(ar, 'm', 'Radius', 7).ent, 40), 7);
+  near(val(GR.typedOption(ar, 'b', 'Lengthen', 45).ent, 51), 45);
+  near(val(GR.typedOption(reopen(line(0, 0, 10, 0)), 'b', 'Lengthen', 5).ent, 11), 15);
+  assert.equal(GR.setRadius(ar, 0), null); assert.equal(GR.setRadius(ar, -3), null); assert.equal(GR.setRadius(ar, NaN), null);
+  assert.equal(GR.setRadius(reopen(circle(0, 0, 5)), 3), null, 'Radius is for the arc middle only');
+});
+
 console.log(n + ' grips tests passed');
