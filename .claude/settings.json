@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+	  "Bash(node tools/base-check.mjs:*)",
       "Edit",
       "Write",
       "Read",
@@ -53,6 +54,7 @@
     ],
   
     "deny": [
+      "Bash(sed -i:*)",
       "Bash(git push * --force*)",
       "Bash(git push * -f*)",
       "Bash(git push * +*)",

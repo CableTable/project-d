@@ -276,7 +276,7 @@ const ciGet = (o, n) => o && o[Object.keys(o).find((k) => k.toLowerCase() === n.
 const HDR = [ // [name, kind, code]: what the header carries when the document has it
   ['$LTSCALE', 'd', 40], ['$CELTSCALE', 'd', 40], ['$PSLTSCALE', 'i', 70], ['$MEASUREMENT', 'i', 70], ['$LUNITS', 'i', 70], ['$LUPREC', 'i', 70],
   ['$AUNITS', 'i', 70], ['$AUPREC', 'i', 70], ['$ANGBASE', 'd', 50], ['$ANGDIR', 'i', 70], ['$PDMODE', 'i', 70], ['$PDSIZE', 'd', 40],
-  ['$TEXTSIZE', 'd', 40], ['$FILLMODE', 'i', 70], ['$DIMASZ', 'd', 40], ['$DIMSCALE', 'd', 40], ['$DIMTXT', 'd', 40], ['$DIMEXO', 'd', 40],
+  ['$ATTMODE', 'i', 70], ['$TEXTSIZE', 'd', 40], ['$FILLMODE', 'i', 70], ['$DIMASZ', 'd', 40], ['$DIMSCALE', 'd', 40], ['$DIMTXT', 'd', 40], ['$DIMEXO', 'd', 40],
   ['$DIMEXE', 'd', 40], ['$DIMGAP', 'd', 40], ['$DIMDEC', 'i', 70], ['$DIMLUNIT', 'i', 70], ['$DIMTAD', 'i', 70]];
 /** The font file each of the app's text styles points at (Mono is Courier New; other style names keep Arial). */
 const FONT_FILES = { Standard: 'txt', Arial: 'arial.ttf', Mono: 'cour.ttf' };

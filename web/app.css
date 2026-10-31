@@ -463,6 +463,19 @@ select.fld { font-family: var(--sans); }
 .hrow.now { font-weight: 600; background: var(--sel); }
 .hrow.later { color: var(--muted); }
 .pop-dialog .row.lbl { gap: 12px; }
+.attribute-dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.attribute-dialog::backdrop { background: rgba(10, 14, 18, .35); }
+.attribute-dialog h2 { margin: 0 0 4px; font-size: 16px; }
+.attribute-dialog label { display: flex; flex-direction: column; gap: 5px; }
+.attribute-dialog input { width: 100%; }
+.attribute-block { display: flex; gap: 12px; overflow-wrap: anywhere; }
+.attribute-list { max-height: 260px; overflow: auto; border: 1px solid var(--line); }
+.attribute-list table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.attribute-list th, .attribute-list td { padding: 8px; text-align: left; overflow-wrap: anywhere; border-bottom: 1px solid var(--line); }
+.attribute-list th { background: var(--panel-head); position: sticky; top: 0; }
+.attribute-list tr[aria-selected=true] { background: var(--sel); }
+.attribute-list tbody tr { cursor: pointer; }
+.attribute-list tbody tr:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cutdlg { width: min(580px, 100%); }
 .cutdlg .fld { width: 70px; }
 .cutchip { padding: 2px 8px; border: 1px solid var(--line); border-radius: 12px; }

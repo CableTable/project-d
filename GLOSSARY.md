@@ -16,6 +16,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Auto-nest**: Packs mixed parts by their actual outlines from the sheet's bottom-left, using allowed quarter turns and keeping gaps and grippers clear. Where: `DECISIONS.md`, Auto-nest method and UI.
 
+**Automatic dimension**: The `DIM` command: hover a line, arc or circle to see the dimension a click would make, click it, then place it; it repeats until Enter or Esc. Where: `DECISIONS.md`, TODO 155l1. Avoid: Dimension type picker.
+
 **Autosave**: Copies changed tabs into local recovery storage every two minutes without writing over drawing files. Where: `DECISIONS.md`, Autosave and recovery. Avoid: Save.
 
 **Background picture**: A dimmed, locked JPG, PNG or rendered PDF page beneath a drawing that can be scaled and measured but is left out of DXF Save and part PDF output. Where: `DECISIONS.md`, Background, Part PDF and Autosave and recovery.
@@ -218,6 +220,14 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Entity**: One top-level DXF object in the shown drawing space, with an INSERT counted once even if it draws many block members. Where: `DECISIONS.md`, Kept dimensions and sizes and Layer and entity counts. Avoid: One rendered line segment.
 
 **Explode**: Replaces selected polylines with separate LINEs / ARCs or selected INSERTs with their transformed members, one block level at a time. The pieces are selected; one Undo restores the originals. Where: Modify menu, `X` / `EXPLODE`; `web/explode.js`. Avoid: Ungroup (layout parts).
+
+**BURST**: Explodes a block one level while keeping its attribute values as visible text, including invisible attributes. Nested blocks stay blocks; one Undo restores the original.
+
+**ATTDISP**: Sets block attribute visibility: Normal follows each attribute's invisible flag, ON shows all attributes, and OFF hides all attributes. Loose attribute definitions always stay visible.
+
+**Attribute editor**: Edits an inserted block's attribute values. Shows the block name and each editable attribute's tag, prompt and value. Apply saves while staying open; OK saves and closes; Cancel keeps earlier Apply changes.
+
+**Edit Attribute Definition**: Edits a loose attribute definition's tag, prompt and default value. The tag is required, has no spaces and uses uppercase letters. OK saves; Cancel leaves the definition unchanged.
 
 **Hairline**: The project's 0.05 mm outline-width preset and minimum physical stroke for PDF / Print. Where: `DECISIONS.md`, Line width and Preflight Hairline. Avoid: Zero width; a fixed screen-pixel width.
 

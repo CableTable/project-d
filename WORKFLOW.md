@@ -276,7 +276,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - **His new rule** (session 27 retro): in the same turn, grep CLAUDE.md, WORKFLOW.md, AGENTS.md, .claude/agents/ and memory/ for the old wording, change every hit, and list the files in the reply.
 - A plan for him stops at this PR's merge; later items are listed under "session <N+1>".
 - **Handover** (his call, 2026-10-29; replaces "fresh Rook after every merge"): Rook hands over at a clean break (no runs
-  going, last item pushed and CI green, queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
+  going, the handover push made; its CI may still run: the resume file names the sha and the next Rook starts ci-watch on it first (his OK 2026-10-31, S29 retro), queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
   started (his call 2026-10-31, was 3 from 2026-10-30; review fix bundles and tool tickets don't count), its context
   passes ~150k (auto-compact fires at ~218k: S29, 3 times), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;

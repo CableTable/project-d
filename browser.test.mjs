@@ -12,10 +12,10 @@ import { read as readLeader, build as buildLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
-import { readDxf, decodeDxf, flatten } from './web/drawing.js';
+import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
-import { placedBox } from './web/apply.js';
+import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { rotateEntities } from './web/rotate.js';
 import { curveShape } from './web/extend.js';
@@ -2157,7 +2157,7 @@ try {
       assert.match(await p.locator('[data-tool=measure]').getAttribute('class'), /on/);
       await p.keyboard.press('Escape');
       await rb.getByRole('button', { name: 'Dimension', exact: true }).locator('.flyout').click();
-      assert.deepEqual(await q('ctx-menu').getByRole('menuitem').locator('.mi-l').allTextContents(), ['Aligned', 'Linear', 'Radius', 'Diameter', 'Angle']);
+      assert.deepEqual(await q('ctx-menu').getByRole('menuitem').locator('.mi-l').allTextContents(), ['Automatic', 'Aligned', 'Linear', 'Radius', 'Diameter', 'Angle']);
       await q('ctx-menu').getByRole('menuitem', { name: /^Radius/ }).click();
       assert.match(await p.locator('[data-tool=dimension]').getAttribute('title'), /Radius/);
       await p.keyboard.press('Escape');
@@ -11555,7 +11555,7 @@ try {
     await openGrips(dimDoc(), 'dims.dxf');
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
     await t('dim-flyout').click();
-    assert.deepEqual(await flyoutItems(), ['Aligned D', 'Linear DLI', 'Radius DRA', 'Diameter DDI', 'Angle DAN']);
+    assert.deepEqual(await flyoutItems(), ['Automatic DIM', 'Aligned D', 'Linear DLI', 'Radius DRA', 'Diameter DDI', 'Angle DAN']);
     await page.locator('.ctxmenu .mi', { hasText: 'Linear' }).click();
     assert.equal(await page.locator('[data-tool=dimension].on').count(), 1);
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension · Linear (DLI)', 'the button shows the type last used');
@@ -11683,6 +11683,74 @@ try {
     await page.screenshot({ path: shotDir + '/s12-dimtypes-dark.png' });
     await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+  });
+
+  // ---- TODO 155l1: DIM, the Automatic dimension: hover ghost, line / arc / circle picks, repeats until Enter ----
+  const tealInk = () => t('drawing').evaluate((c) => {            // pixels in the dimension colour's hue (teal), also when faint
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 100 && d[i + 1] - d[i] > 25 && d[i + 2] - d[i] > 25 && Math.abs(d[i + 1] - d[i + 2]) < 40) k++;
+    return k;
+  });
+  const hoverAt = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y, { steps: 3 }); await page.waitForTimeout(150); };
+  await step('TODO 155l1: DIM (Automatic): hover a line / circle shows a faint ghost, a line pick follows the cursor (beside = aligned, beyond an end = horizontal), arc = R, circle = Ø, Enter ends, one Undo per dimension', async () => {
+    await openGrips(dimDoc(), 'auto.dxf');
+    await menuItem('View', 'Theme: light');
+    await t('dim-flyout').click();
+    assert.equal((await flyoutItems())[0], 'Automatic DIM');
+    await page.locator('.ctxmenu .mi', { hasText: 'Automatic' }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension');
+    assert.match(await page.locator('[data-tool=dimension]').getAttribute('title'), /Automatic/);
+    assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+    assert.equal(await histLine(), 'Command: DIM');
+    await hoverAt(60, 150);
+    assert.equal(await tealInk(), 0, 'nothing under the pointer, no ghost');
+    await hoverAt(60, 60);
+    assert.ok(await tealInk() > 30, 'hovering the sloped line ghosts its dimension');
+    mkdirSync('shots-155l', { recursive: true });
+    await page.screenshot({ path: 'shots-155l/hover-ghost-light.png' });
+    await menuItem('View', 'Theme: dark'); await hoverAt(70, 70); await hoverAt(60, 60); await page.waitForTimeout(250);
+    await page.screenshot({ path: 'shots-155l/hover-ghost-dark.png' });
+    await menuItem('View', 'Theme: light');
+    await hoverAt(175, 100);
+    assert.ok(await tealInk() > 30, 'hovering the circle ghosts its diameter');
+    await hoverAt(60, 150);
+    assert.equal(await tealInk(), 0, 'the ghost goes when the pointer leaves');
+    await click(60, 150);
+    assert.equal(await prompt(), 'Select a line, arc or circle: click on one', 'a click on nothing');
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location:');
+    await click(50, 70);                                                                  // beside the line
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', 'DIM goes on');
+    await click(80, 80); await click(90, 140);                                            // beyond the top end, above it
+    assert.match(await prompt(), /Dimension placed: 80\.00 mm/);
+    await click(200, 170);                                                                // the arc
+    await click(215, 190);
+    assert.match(await prompt(), /Dimension placed: R20\.00 mm/);
+    await click(175, 100);                                                                // the circle
+    await click(190, 120);
+    assert.match(await prompt(), /Dimension placed: Ø50\.00 mm/);
+    let dims = Object.values(await dimBlocks()).map((q) => q.kind + (q.params.axis || '')).sort();
+    assert.deepEqual(dims, ['aligned', 'diameter', 'linearh', 'radius']);
+    await undo(); assert.equal(Object.keys(await dimBlocks()).length, 3, 'one Undo takes back one dimension');
+    await page.keyboard.press('Control+y'); assert.equal(Object.keys(await dimBlocks()).length, 4);
+    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location:');
+    await page.keyboard.press('Escape');
+    assert.match(await prompt(), /Dimension cancelled\. Select a line, arc or circle to dimension:/, 'Esc after a line pick cancels the pick');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', 'DIM goes on after the first Esc');
+    assert.equal(Object.keys(await dimBlocks()).length, 4, 'the cancelled pick placed nothing');
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'a second Esc ends DIM');
+    await typeCmd('dim'); assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension');
+    await typeCmd('');                                                                    // Enter in the command bar at once
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter in the command bar ends DIM');
+    await typeCmd('dim'); await page.keyboard.press('Enter');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends DIM');
+    await typeCmd('dim'); await page.keyboard.press('Space');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Space ends DIM');
+    await typeCmd('dim'); await cmdLine().press('Space');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Space in the command bar ends DIM');
     await closeTabs(/./);
   });
 
@@ -16122,6 +16190,365 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 155i3: attribute double-click editors, Apply and OK Undo, Cancel, locked layer, EATTEDIT, Layout and Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-155i3', { recursive: true });
+    const raw = newDoc(4);
+    addLayer(raw, 'Attributes');
+    const defs = [0, 1, 2].map((n) => entity('ATTDEF', [[10, 10], [20, 10 + n * 20], [40, 6],
+      [2, ['PART', 'REV', 'CONSTANT'][n]], [3, ['Part <name>', 'Revision', 'Constant'][n]], [1, 'Default'], [70, n === 2 ? 2 : 0]]));
+    addBlock(raw, 'Attributed', [dxfLine(0, 0, 100, 0), ...defs]);
+    const ins = dxfInsert('Attributed', 100, 100, { layer: 'Attributes' });
+    ins.kids = [0, 1].map((n) => entity('ATTRIB', [[10, 110], [20, 110 + n * 20], [40, 6],
+      [2, n ? 'REV' : 'PART'], [1, n ? '{\\H2;A}\\Pnext' : 'Original'], [70, 0]]).r);
+    const loose = entity('ATTDEF', [[10, 110], [20, 180], [40, 6], [2, 'LOOSE'], [3, 'Loose prompt'], [1, 'Default']], { layer: 'Attributes' });
+    addEntities(raw, ins, loose, dxfInsert('Attributed', 300, 100));
+    const dialog = page.getByTestId('attribute-dialog'), field = (name) => dialog.getByRole('textbox', { name, exact: true });
+    const button = (name) => dialog.getByRole('button', { name, exact: true });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await frames();
+    };
+    const dbl = async (x, y) => { const p = await at(x, y); await page.mouse.dblclick(p.x, p.y); };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const values = async () => {
+      const doc = await savedDoc(), layout = layoutFromRaw(doc);
+      const entities = layout ? Object.values(layout.parts).flatMap((p) => p.raw.entities) : doc.entities;
+      return entities.find((e) => e.type === 'INSERT' && e.kids?.length).kids.map((r) => r.v[r.c.indexOf(1)]);
+    };
+    const tagOf = (ent) => ent.r.v[ent.r.c.indexOf(2)];
+    const shots = async (name) => {
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme); await frames();
+        await page.screenshot({ path: `shots-155i3/${name}-${theme}.png` });
+      }
+      await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    };
+    await page.evaluate(() => {
+      window.__editorTexts = [];
+      window.__editorFill = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__editorTexts.push(String(text));
+        return window.__editorFill.call(this, text, ...args);
+      };
+    });
+    try {
+      await open('attribute-editors.dxf', raw);
+      const history = await histLabels();
+      await dbl(150, 100); await dialog.waitFor();
+      assert.equal(await dialog.getAttribute('aria-label'), 'Attribute editor');
+      assert.equal(await dialog.locator('strong').textContent(), 'Attributed');
+      assert.deepEqual(await dialog.locator('tbody tr').allTextContents(), ['PARTPart <name>Original', 'REVRevision{\\H2;A}\\Pnext']);
+      assert.equal(await field('Value').inputValue(), 'Original');
+      assert.equal(await dialog.locator('tbody tr').first().getAttribute('aria-selected'), 'true');
+      await shots('attribute-editor');
+      await field('Value').fill('Applied'); await button('Apply').click(); await dialog.waitFor();
+      await button('Apply').click();
+      await field('Value').fill('Accepted'); await button('OK').click();
+      assert.deepEqual(await values(), ['Accepted', '{\\H2;A}\\Pnext']);
+      assert.deepEqual((await histLabels()).slice(history.length), ['Attribute editor', 'Attribute editor'], 'Apply and changed OK are two steps; unchanged Apply adds none');
+      assert.ok(await page.evaluate(() => window.__editorTexts.includes('Accepted')), 'changed value is drawn');
+      await undo(); assert.equal((await values())[0], 'Applied');
+      await undo(); assert.equal((await values())[0], 'Original');
+      await dbl(115, 112); await field('Value').fill('Kept'); await button('Apply').click();
+      await field('Value').fill('Discarded'); await page.keyboard.press('Escape');
+      assert.equal((await values())[0], 'Kept', 'Esc keeps Apply and discards later typing');
+      const keptHistory = await histLabels();
+      await dbl(150, 100); await button('OK').click();
+      assert.deepEqual(await histLabels(), keptHistory, 'unchanged OK adds no step');
+      await undo(); assert.equal((await values())[0], 'Original');
+      await typeCmd('eattedit'); assert.equal(await prompt(), 'Select a block:');
+      await page.keyboard.press('Escape'); assert.equal(await dialog.count(), 0, 'Esc mid-command');
+      await dbl(350, 100); assert.equal(await dialog.count(), 0, 'insert without ATTRIBs does nothing');
+      await typeCmd('eattedit'); await click(350, 100);
+      assert.equal(await prompt(), 'That block has no editable attributes.');
+      await typeCmd('eattedit'); await click(115, 112); await dialog.waitFor();
+      await dialog.locator('tbody tr').nth(1).click(); assert.equal(await field('Value').inputValue(), '{\\H2;A}\\Pnext');
+      await field('Value').fill(''); await field('Value').press('Enter');
+      assert.equal((await values())[1], '', 'Enter accepts an empty value');
+      await click(150, 100); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0'); await page.keyboard.press('Escape');
+      assert.equal(GR.get((await savedDoc()).entities[0].r, 10), 110, 'source remains editable after EATTEDIT');
+      await undo(); await undo();
+      await dbl(118, 182); await dialog.waitFor();
+      assert.equal(await dialog.getAttribute('aria-label'), 'Edit Attribute Definition');
+      await shots('edit-attribute-definition');
+      await field('Tag').fill(''); assert.equal(await button('OK').isDisabled(), true);
+      await field('Tag').fill('two words'); assert.equal(await button('OK').isDisabled(), true);
+      await field('Tag').fill('new_tag'); assert.equal(await field('Tag').inputValue(), 'NEW_TAG');
+      await field('Prompt').fill('<New prompt>'); await field('Default').fill('New default'); await button('Cancel').click();
+      assert.equal(tagOf((await savedDoc()).entities[1]), 'LOOSE', 'Cancel discards definition fields');
+      await dbl(118, 182); await field('Tag').fill('new_tag'); await field('Prompt').fill('<New prompt>'); await field('Default').fill('');
+      await field('Default').press('Enter');
+      const editedDef = (await savedDoc()).entities[1].r;
+      assert.equal(editedDef.v[editedDef.c.indexOf(2)], 'NEW_TAG');
+      assert.equal(editedDef.v[editedDef.c.indexOf(3)], '<New prompt>');
+      assert.equal(editedDef.v[editedDef.c.indexOf(1)], '');
+      const defHistory = await histLabels();
+      await dbl(118, 182); await button('OK').click(); assert.deepEqual(await histLabels(), defHistory);
+      await undo(); assert.equal(tagOf((await savedDoc()).entities[1]), 'LOOSE');
+      await t('ptab-objects').click(); await t('objects-panel').waitFor();
+      await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Attributes"] [data-act=lock]').click();
+      await t('ptab-drawing').click();
+      for (const [x, y] of [[150, 100], [118, 182]]) {
+        await dbl(x, y); assert.equal(await dialog.count(), 0); assert.equal(await prompt(), 'Object is on a locked layer.');
+      }
+      await typeCmd('eattedit'); await click(150, 100);
+      assert.equal(await dialog.count(), 0); assert.equal(await prompt(), 'Object is on a locked layer.');
+      const lay = newLayout('Attribute editors');
+      lay.parts.b = objectPart('b', 'Attributed block', ins, raw.layers, raw.header, raw.blocks);
+      lay.parts.a = objectPart('a', 'Loose definition', loose, raw.layers);
+      lay.placed = [objectPlacement(lay.parts.b), objectPlacement(lay.parts.a)];
+      await open('attribute-editors-layout.dxf', layoutRaw(lay));
+      await page.locator('[data-tool=select]').click();
+      await dbl(150, 100);
+      await field('Value').fill('Layout applied'); await button('Apply').click();
+      await field('Value').fill('Layout accepted'); await button('OK').click();
+      assert.equal((await values())[0], 'Layout accepted');
+      await undo(); assert.equal((await values())[0], 'Layout applied');
+      await undo(); assert.equal((await values())[0], 'Original');
+      await dbl(118, 182); await field('Tag').fill('layout_tag'); await button('OK').click();
+      assert.equal(tagOf((await savedDoc()).entities.find((e) => e.type === 'ATTDEF')), 'LAYOUT_TAG');
+      await undo();
+      await typeCmd('eattedit'); await click(150, 100); await field('Value').fill('Layout command'); await field('Value').press('Enter');
+      assert.equal((await values())[0], 'Layout command'); await undo();
+      await typeCmd('eattedit');
+      // opening a second tab (no closeTabs) switches tabs while the wait is pending
+      await t('picker').setInputFiles({ name: 'attribute-switch.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'attribute-switch.dxf');
+      await frames();
+      await click(150, 100); assert.equal(await dialog.count(), 0);
+      assert.equal(await selCount(), '1 selected', 'tab switch ends the EATTEDIT wait');
+      const copies = newLayout('Placed copies'), source = newDoc(4), right = structuredClone(ins);
+      right.kids[0].c.push(72, 11, 21); right.kids[0].v.push('2', '110', '110');
+      source.blocks = raw.blocks; addEntities(source, right);
+      copies.parts.b = makePart('b', 'Placed drawing', source, 1);
+      copies.placed = [{ ...objectPlacement(copies.parts.b), x: 300, y: 300, rot: 90, sc: 1.5 },
+        { ...objectPlacement(copies.parts.b), x: 650, y: 100, mirrorX: true, lock: true }];
+      const pick = mapply(placedMat(copies.parts.b, copies.placed[0], 0), 106, 112);
+      const lockedPick = mapply(placedMat(copies.parts.b, copies.placed[1], 0), 150, 100);
+      await open('attribute-editors-copies.dxf', layoutRaw(copies));
+      await page.locator('[data-tool=select]').click();
+      await dbl(pick[0], -pick[1]); await field('Value').fill('A much wider right aligned value'); await button('OK').click();
+      const copiedDoc = await savedDoc(), copiedLayout = layoutFromRaw(copiedDoc);
+      assert.notEqual(copiedLayout.placed[0].partId, copiedLayout.placed[1].partId, 'only the edited placement gets its own source');
+      const copyValues = copiedLayout.placed.map((p) => { const r = copiedLayout.parts[p.partId].raw.entities[0].kids[0]; return r.v[r.c.indexOf(1)]; });
+      assert.deepEqual(copyValues, ['A much wider right aligned value', 'Original']);
+      await open('attribute-editors-reopened.dxf', copiedDoc);
+      await page.locator('[data-tool=select]').click();
+      await dbl(pick[0], -pick[1]); assert.equal(await field('Value').inputValue(), 'A much wider right aligned value', 'reopening preserves the transformed text position');
+      await field('Value').fill('After reopen'); await button('OK').click(); await undo();
+      await dbl(pick[0], -pick[1]); assert.equal(await field('Value').inputValue(), 'A much wider right aligned value'); await button('Cancel').click();
+      await dbl(lockedPick[0], -lockedPick[1]); assert.equal(await dialog.count(), 0); assert.equal(await prompt(), 'Object is on a locked layer.');
+      await open('attribute-editors-compare.dxf', raw);
+      await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click();
+      await dbl(150, 100); await field('Value').fill('Compare value'); await button('OK').click();
+      await frames();
+      assert.ok(await page.evaluate(() => window.__editorTexts.includes('Compare value')));
+      await undo();
+      await dbl(118, 182); await field('Tag').fill('compare_tag'); await button('OK').click();
+      await page.locator('.tabs .dtab', { hasText: 'attribute-editors-compare' }).click();
+      const compareDef = (await savedDoc()).entities[1].r;
+      assert.equal(compareDef.v[compareDef.c.indexOf(2)], 'COMPARE_TAG');
+    } finally {
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__editorFill; delete window.__editorFill; delete window.__editorTexts; });
+      await page.keyboard.press('Escape'); await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 155i2a: Explode shows ATTDEF tags, BURST keeps both attribute values, loose tags move and snap; Layout and Compare parity', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-155i2', { recursive: true });
+    const raw = newDoc(4);
+    addLayer(raw, 'Cut', { aci: 7 }); addLayer(raw, 'Definitions', { aci: 3 });
+    addBlock(raw, 'Attributed', [dxfLine(0, 0, 100, 0), ...[0, 1].map((n) => entity('ATTDEF',
+      [[10, 10], [20, 10 + n * 20], [40, 6], [2, n ? 'TAG_HIDDEN' : 'TAG_SHOWN'], [1, 'Default'], [70, n]], { layer: 'Definitions' }))]);
+    const ins = dxfInsert('Attributed', 100, 100, { layer: 'Cut' });
+    ins.kids = [0, 1].map((n) => entity('ATTRIB', [[10, 110], [20, 110 + n * 20], [40, 6], [2, n ? 'TAG_HIDDEN' : 'TAG_SHOWN'], [1, n ? 'Value hidden' : 'Value shown'], [70, n]], { layer: 'Definitions' }).r);
+    addEntities(raw, ins);
+    await page.evaluate(() => {
+      window.__attrTexts = [];
+      window.__attrFill = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__attrTexts.push(String(text));
+        return window.__attrFill.call(this, text, ...args);
+      };
+    });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await frames();
+    };
+    const clearPaint = () => page.evaluate(() => { window.__attrTexts = []; });
+    const painted = async (texts) => {
+      await frames();
+      const drawn = await page.evaluate(() => window.__attrTexts);
+      for (const text of texts) assert.ok(drawn.includes(text), 'canvas draws ' + text);
+    };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    try {
+      await open('attributes.dxf', raw);
+      await click(150, 100); await waitSel('1 selected');
+      await clearPaint(); await typeCmd('explode');
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'ATTDEF', 'ATTDEF']);
+      await painted(['TAG_SHOWN', 'TAG_HIDDEN']);
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        await page.screenshot({ path: `shots-155i2/explode-tags-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      await undo(); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT'], 'one Undo restores attributes');
+      await click(150, 100); await cmdLine().fill('burst'); await page.keyboard.press('Escape');
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT'], 'Esc cancels the unsubmitted command');
+      await click(150, 100); await clearPaint(); await typeCmd('burst');
+      assert.match(await prompt(), /^Burst: 1 exploded/);
+      const burst = await savedDoc();
+      assert.deepEqual(burst.entities.map((e) => e.type), ['LINE', 'TEXT', 'TEXT']);
+      assert.ok(burst.entities.every((e) => e.layer === 'Cut'));
+      await painted(['Value shown', 'Value hidden']);
+      assert.equal((await histLabels()).at(-1), 'Burst');
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        await page.screenshot({ path: `shots-155i2/burst-values-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      await undo(); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT']);
+      await click(150, 100); await menuItem('Modify', 'Burst');
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'TEXT', 'TEXT'], 'Modify menu runs BURST');
+      await undo(); await click(150, 100); await typeCmd('explode');
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      await click(115, 132); await waitSel('1 selected');
+      await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0'); await page.keyboard.press('Escape');
+      const moved = (await savedDoc()).entities.find((e) => e.type === 'ATTDEF' && e.r.v[e.r.c.indexOf(2)] === 'TAG_HIDDEN');
+      assert.equal(GR.get(moved.r, 10), 120, 'invisible loose ATTDEF is selectable and movable');
+      await typeCmd('line'); await click(120.6, 130.4); await typeCmd('150,160'); await page.keyboard.press('Escape');
+      const snapped = (await savedDoc()).entities.at(-1);
+      assert.equal(snapped.type, 'LINE');
+      assert.deepEqual([GR.get(snapped.r, 10), GR.get(snapped.r, 20)], [120, 130], 'insertion snaps to the moved ATTDEF');
+      const lay = newLayout('Attributes');
+      lay.parts.b = objectPart('b', 'Attributed block', ins, raw.layers, raw.header, raw.blocks);
+      lay.placed = [objectPlacement(lay.parts.b)];
+      await open('layout-attributes.dxf', layoutRaw(lay));
+      await click(150, 100); await clearPaint(); await typeCmd('explode');
+      assert.equal(await nParts(), 3); await painted(['TAG_SHOWN', 'TAG_HIDDEN']);
+      await undo(); assert.equal(await nParts(), 1);
+      await click(150, 100); await clearPaint(); await typeCmd('burst');
+      assert.equal(await nParts(), 3); await painted(['Value shown', 'Value hidden']);
+      await undo(); assert.equal(await nParts(), 1, 'one layout Undo restores the insert');
+      await open('compare-attributes.dxf', raw);
+      await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click();
+      await click(150, 100); await clearPaint(); await typeCmd('explode'); await painted(['TAG_SHOWN', 'TAG_HIDDEN']);
+      await undo(); await click(150, 100); await clearPaint(); await typeCmd('burst'); await painted(['Value shown', 'Value hidden']);
+      await page.locator('.tabs .dtab', { hasText: 'compare-attributes' }).click();
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'TEXT', 'TEXT']);
+    } finally {
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__attrFill; delete window.__attrFill; delete window.__attrTexts; });
+      await closeTabs(/./);
+    }
+  });
+
+  await step('TODO 155i2b: ATTDISP Normal, ON and OFF, Enter, Esc and one Undo; Layout and Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-155i2', { recursive: true });
+    const raw = newDoc(4), ins = dxfInsert('Attributed', 100, 100);
+    addBlock(raw, 'Attributed', [dxfLine(0, 0, 100, 0)]);
+    ins.kids = [0, 1].map((n) => entity('ATTRIB', [[10, 110], [20, 110 + n * 20], [40, 6], [2, 'TAG' + n],
+      [1, n ? 'Value hidden' : 'Value shown'], [70, n]]).r);
+    addEntities(raw, ins, entity('ATTDEF', [[10, 110], [20, 150], [40, 6], [2, 'LOOSE_TAG'], [70, 1]]));
+    await page.evaluate(() => {
+      window.__attdispTexts = [];
+      window.__attdispFill = CanvasRenderingContext2D.prototype.fillText;
+      window.__attdispClear = CanvasRenderingContext2D.prototype.clearRect;
+      CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__attdispTexts = [];
+        return window.__attdispClear.apply(this, args);
+      };
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__attdispTexts.push(String(text));
+        return window.__attdispFill.call(this, text, ...args);
+      };
+    });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await frames();
+    };
+    const painted = async (shown, hidden, loose = true) => {
+      await frames();
+      const texts = await page.evaluate(() => window.__attdispTexts);
+      assert.equal(texts.includes('Value shown'), shown, JSON.stringify(texts));
+      assert.equal(texts.includes('Value hidden'), hidden, JSON.stringify(texts));
+      if (loose) assert.ok(texts.includes('LOOSE_TAG'), 'loose ATTDEF always draws');
+    };
+    const setting = async (value) => { await typeCmd('attdisp'); await typeCmd(value); await frames(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    try {
+      await open('attdisp.dxf', raw);
+      await painted(true, false);
+      const before = await histLabels();
+      await typeCmd('attdisp');
+      assert.equal(await prompt(), 'Enter attribute visibility setting [Normal/ON/OFF] <Normal>:');
+      await typeCmd('constructor');
+      assert.equal(await prompt(), 'Enter attribute visibility setting [Normal/ON/OFF] <Normal>:', 'invalid input leaves the setting prompt open');
+      await typeCmd(''); assert.deepEqual(await histLabels(), before, 'Enter keeps without Undo');
+      await typeCmd('attdisp'); await cmdLine().fill('on'); await page.keyboard.press('Escape');
+      await painted(true, false); assert.deepEqual(await histLabels(), before, 'Esc cancels mid-command');
+      await setting('on'); await painted(true, true);
+      assert.equal((await savedDoc()).header.$ATTMODE, '2');
+      assert.equal((await histLabels()).at(-1), 'ATTDISP');
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await typeCmd('attdisp'); await frames();
+        await page.screenshot({ path: `shots-155i2/attdisp-on-${theme}.png` });
+        await page.keyboard.press('Escape');
+      }
+      await menuItem('View', 'Theme: light');
+      await click(125, 133); await frames();
+      assert.equal(await selCount(), '1 selected', 'ON: the same click on the shown hidden ATTRIB text picks the block');
+      await page.keyboard.press('Escape'); await frames();
+      await setting('off'); await painted(false, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '0');
+      await click(125, 133); await frames();
+      assert.equal(await selCount(), '0 selected', 'OFF: a click on a hidden ATTRIB text picks nothing');
+      await setting('normal'); await painted(true, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '1');
+      await undo(); await painted(false, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '0', 'one Undo restores OFF');
+      await setting('on');
+      await click(150, 100); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0'); await page.keyboard.press('Escape');
+      assert.equal(GR.get((await savedDoc()).entities[0].r, 10), 110, 'source remains editable after ATTDISP');
+      await painted(true, true);
+      const lay = newLayout('ATTDISP');
+      lay.parts.b = objectPart('b', 'Attributed', ins, raw.layers, raw.header, raw.blocks);
+      lay.placed = [objectPlacement(lay.parts.b)];
+      await open('attdisp-layout.dxf', layoutRaw(lay));
+      await painted(true, false, false);
+      await setting('on'); await painted(true, true, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '2');
+      await setting('off'); await painted(false, false, false);
+      await undo(); await painted(true, true, false);
+      await setting('normal'); await painted(true, false, false);
+      await open('attdisp-compare.dxf', raw);
+      await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click();
+      await setting('on'); await painted(true, true);
+      await setting('off'); await painted(false, false);
+      await undo(); await painted(true, true);
+      await setting('normal'); await painted(true, false);
+    } finally {
+      await page.evaluate(() => {
+        CanvasRenderingContext2D.prototype.fillText = window.__attdispFill;
+        CanvasRenderingContext2D.prototype.clearRect = window.__attdispClear;
+        delete window.__attdispFill; delete window.__attdispClear; delete window.__attdispTexts;
+      });
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 155i1: Explode pattern hatches into clipped LINEs, keep the boundary, refuse solid hatches and undo once; Layout parity', async () => {
     await menuItem('View', 'Theme: light');
     await closeTabs(/./);
@@ -16841,6 +17268,78 @@ try {
     assert.deepEqual(labelsIn(await save()), labelsIn(text), 'one Undo restores the circle and its dimensions');
     await t('decimals').selectOption('2');
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 155l1: on a layout, DIM (Automatic) ghosts and dimensions a loose circle (Ø, one Undo), refuses a placed part; Enter ends', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await typeCmd('circle'); await typeCmd('200,200'); await typeCmd('40');
+    await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 1);
+    await typeCmd('dim');
+    assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+    const h = await at(240, 200); await page.mouse.move(h.x, h.y, { steps: 3 }); await frames();
+    assert.ok(await tealInk() > 5, 'the ghost shows on a layout (a thin line at this zoom)');
+    await click(500, 350);
+    assert.match(await prompt(), /Dimension works on layout objects, not placed parts/);
+    await click(240, 200);
+    assert.equal(await prompt(), 'Specify dimension line location:');
+    const p = await at(230, 250); await page.mouse.move(p.x, p.y); await frames(); await page.mouse.click(p.x, p.y);
+    assert.match(await prompt(), /Dimension placed: Ø/);
+    assert.equal(await nParts(), n0 + 2);
+    await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo removes the dimension');
+    await page.keyboard.press('Enter');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends DIM');
+  });
+
+  await step('TODO 155l1: in an editable Compare drawing, DIM (Automatic) ghosts the line under the pointer and places it in the linked source (one Undo)', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const first = newDoc(4), second = newDoc(1);
+    addEntities(first, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], true)]);
+    addEntities(second, [dxfPoly([[110, 120], [170, 120], [170, 180], [110, 180]].map((pt) => pt.map((v) => v / 25.4)), true)]);
+    const open = async (name, raw) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const move = async (x, y) => { const pt = await point(x, y); await p.mouse.move(pt.x, pt.y, { steps: 3 }); await p.waitForTimeout(150); };
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const prompt = () => q('cmd-prompt').textContent();
+    const teal = () => p.getByTestId('drawing').evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 100 && d[i + 1] - d[i] > 25 && d[i + 2] - d[i] > 25 && Math.abs(d[i + 1] - d[i + 2]) < 40) k++;
+      return k;
+    });
+    const saved = async () => { const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]); return readDxf(readFileSync(await download.path(), 'utf8')); };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('first-155l1.dxf', first); await open('second-155l1.dxf', second); await tab('first-155l1.dxf').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-name-2').click(); await q('cmp-run').click();
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill('dim'); await q('cmd-input').press('Enter');
+      assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+      await move(100, 150);
+      assert.equal(await teal(), 0, 'nothing under the pointer, no ghost');
+      await move(40, 20);
+      assert.ok(await teal() > 30, 'hovering the bottom edge ghosts its dimension in Compare');
+      await click(40, 20); assert.equal(await prompt(), 'Specify dimension line location:');
+      await click(40, 8);
+      assert.match(await prompt(), /Dimension placed: 60\.00 mm/);
+      await tab('second-155l1.dxf').click();
+      assert.equal((await saved()).entities.length, 2, 'the dimension is in the linked source');
+      await tab('Compare').click(); await q('cmp-name-2').click();
+      await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press('Control+z');
+      await tab('second-155l1.dxf').click();
+      assert.equal((await saved()).entities.length, 1, 'one Undo takes it back');
+    } finally { await context.close(); }
   });
 
   await step('TODO 156b2c3a: double-click a dimension edits its text on a drawing and on a layout (Esc cancels, one Undo); mixed <> text follows a grip; save and reopen', async () => {

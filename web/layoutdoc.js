@@ -33,6 +33,7 @@ export const DEFAULTS = Object.freeze({
   crop: false, reg: false, gapX: 5, gapY: 5, rotate: '0', align: 'centre',
   fit: true, rows: 1, cols: 1, extraRows: [], extraCols: [], gridPart: null,
   guides: [], guidesShow: true, guidesLock: false,       // guidelines (guides.js): per layout, saved with it
+  attmode: 1,
 });
 export const SETTING_KEYS = Object.keys(DEFAULTS);
 
@@ -41,6 +42,17 @@ export const newSettings = (over = {}) => ({ ...DEFAULTS, extraRows: [], extraCo
 
 /** An empty layout. */
 export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed: [] });
+
+const hasAttributes = (raw) => [raw.entities, ...Object.values(raw.blocks).map((b) => b.entities)].some((ents) => ents.some((e) => e.kids?.some((a) => a.type === 'ATTRIB')));
+
+/** Refresh attribute visibility without changing a part's placement or reference box. */
+export function refreshAttributes(lay) {
+  for (const [id, part] of Object.entries(lay.parts)) {
+    if (!part.raw || +(part.raw.header.$ATTMODE ?? 1) === lay.s.attmode) continue;
+    const raw = { ...part.raw, header: { ...part.raw.header, $ATTMODE: String(lay.s.attmode) } };
+    lay.parts[id] = { ...part, raw, fl: hasAttributes(raw) ? flatten(raw) : part.fl };
+  }
+}
 
 // ---------------------------------------------------------------- layout objects
 // A layout object (a line, circle… drawn on the sheet) is held as a part with part.obj = true: one entity, in sheet mm, placed at its
@@ -61,7 +73,7 @@ export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   if (ent.type === 'DIMENSION' && !blocks[String(ent.r.v[ent.r.c.indexOf(2)] || '').trim()]) {
     try { drawing = { ...raw, entities: explodeDimension(ent, raw) }; } catch { return null; }
   }
-  const fl = flatten(drawing), shown = flatten({ ...drawing, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box is made with the entity's layer on: an off layer keeps its objects (hidden by `off`)
+  const fl = flatten(drawing), shown = flatten({ ...drawing, header: { ...drawing.header, $ATTMODE: '1' }, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box includes off-layer objects and ignores the attribute display mode (invisible attributes stay out)
   const box = shown.boxes && shown.boxes.model;
   if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
   return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
@@ -129,12 +141,12 @@ export function objectCommit(lay, view, entities, newId) {
 }
 
 /** A placed part's loose entities (sheet mm) with its placement baked in, one level (a block or dimension inside stays one INSERT): { entities, blocks }. Throws when a member cannot be carried. */
-export function explodePart(part, p) {
+export function explodePart(part, p, burst = false) {
   const mini = newDoc(4), f = part.factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
   mini.layers = part.raw.layers; mini.blocks = { ...part.raw.blocks };
   let entities = part.raw.entities.filter((e) => (e.ps ? 1 : 0) === part.space), messages = [];
   if (part.obj) {
-    const r = explodeSelection({ ...part.raw, entities }, new Set([0]));
+    const r = explodeSelection({ ...part.raw, entities }, new Set([0]), new Set(), burst);
     if (r.errors.length) throw new Error(r.errors.join('; '));
     if (!r.exploded) return { entities: [], blocks: mini.blocks, messages };
     entities = r.entities; mini.blocks = r.blocks; messages = r.messages;
@@ -142,11 +154,11 @@ export function explodePart(part, p) {
   addBlock(mini, 'PD_PART', entities, [part.box[0], part.box[1]]);
   return { ...explodeInsert(insert('PD_PART', p.x, p.y, { layer: '0', rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini), messages };       // layer 0 stays layer 0, as AutoCAD
 }
-/** Hatches and native dimensions are also explodable when they are loose layout objects. */
-export const canExplodeObject = (part) => !!part?.obj && ['HATCH', 'DIMENSION'].includes(part.raw.entities[0]?.type);
+/** Blocks, hatches and native dimensions are also explodable when they are loose layout objects. */
+export const canExplodeObject = (part) => !!part?.obj && ['HATCH', 'DIMENSION', 'INSERT'].includes(part.raw.entities[0]?.type);
 /** Explode the placed parts at `idxs` (indexes in lay.placed; layout objects and locked parts stay): each becomes its loose entities as layout objects, in its slot, on the part's layers (added to the layout when missing).
  * → { done (parts exploded), pieces (indexes in lay.placed of the new objects), errors } */
-export function explodePlaced(lay, idxs, newId) {
+export function explodePlaced(lay, idxs, newId, burst = false) {
   const at = new Set(idxs), out = [], pieces = [], errors = new Set(), messages = new Set(), table = { ...layersOf(lay) }, names = new Set(Object.values(lay.parts).map((q) => q.name));
   const find = (t, n) => Object.keys(t).find((k) => k.toLowerCase() === String(n).toLowerCase());
   let done = 0;
@@ -155,7 +167,7 @@ export function explodePlaced(lay, idxs, newId) {
     const part = lay.parts[p.partId], mine = [];
     if (at.has(i) && part && (!part.obj || canExplodeObject(part)) && !p.lock) {
       try {
-        const r = explodePart(part, p);
+        const r = explodePart(part, p, burst);
         for (const message of r.messages) messages.add(message);
         for (let e of r.entities) {
           const k = find(part.raw.layers || {}, e.layer), def = () => (k === undefined ? { aci: 7 } : structuredClone(part.raw.layers[k]));
@@ -314,7 +326,8 @@ export const partBlocks = (blocks) => Object.fromEntries(Object.entries(blocks).
 
 /** A part from a drawing's document: { id, name, raw, space, factor, box, w, h, fl, off (the layers its file has switched off) }, or null when it has no extents. */
 export function makePart(id, name, raw, factor, src = '') {
-  const fl = flatten(raw), p = partFromDrawing(name, raw, fl, factor || unitFactor(fl.units));
+  const fl = flatten(raw), bounds = +(raw.header.$ATTMODE ?? 1) !== 1 && hasAttributes(raw) ? flatten({ ...raw, header: { ...raw.header, $ATTMODE: '1' } }) : fl;   // bounds follow the attributes' own invisible flags, not the display mode
+  const p = partFromDrawing(name, raw, bounds, factor || unitFactor(fl.units));
   return p && { id, ...p, fl, off: startHidden(fl), src };
 }
 
@@ -432,6 +445,7 @@ export function layoutRaw(lay) {
   addEntities(doc, baked);
   for (const [n, b] of Object.entries(dimBlocks)) addBlock(doc, n, b.entities, b.base);
   addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids, ob));
+  doc.header.$ATTMODE = String(lay.s.attmode);
   return doc;
 }
 
@@ -450,6 +464,7 @@ export function cleanSettings(s = {}) {
     fit: s.fit !== false, rows: Math.max(1, Math.floor(num(s.rows, 1))), cols: Math.max(1, Math.floor(num(s.cols, 1))),
     extraRows: gaps(s.extraRows), extraCols: gaps(s.extraCols), gridPart: typeof s.gridPart === 'string' ? s.gridPart : null,
     guides: cleanGuides(s.guides), guidesShow: s.guidesShow !== false, guidesLock: s.guidesLock === true,
+    attmode: [0, 1, 2].includes(s.attmode) ? s.attmode : 1,
   };
 }
 
@@ -481,6 +496,7 @@ export function layoutFromRaw(raw, name) {
   const m = readMeta(raw);
   if (!m) return null;
   const lay = { name: name || m.name || 'Layout', s: cleanSettings(m.s), parts: {}, placed: [] };
+  lay.s.attmode = [0, 1, 2].includes(+raw.header.$ATTMODE) ? +raw.header.$ATTMODE : 1;
   for (const pm of m.parts) {
     const blk = raw.blocks[pm.block];
     if (!blk || typeof pm.id !== 'string') continue;

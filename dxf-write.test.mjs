@@ -22,6 +22,22 @@ const strip = (d) => ({ ...d, entities: supported(d.entities), blocks: Object.fr
 const supported = (list) => list.filter((e) => !W.unwritable({ entities: [e], blocks: {} }).length);
 const sigs = (list) => supported(list).map(sig);
 
+test('TODO 155i2b: ATTMODE round trips; only ATTRIB visibility changes and missing mode is Normal', () => {
+  const doc = W.newDoc();
+  W.addBlock(doc, 'Attributes', [W.line(0, 0, 100, 0)]);
+  const ins = W.insert('Attributes', 0, 0);
+  ins.kids = [0, 1].map((hidden) => W.entity('ATTRIB', [[10, 0], [20, hidden * 10], [40, 2], [1, hidden ? 'Hidden' : 'Shown'], [70, hidden]]).r);
+  doc.entities = [ins, W.entity('ATTDEF', [[10, 0], [20, 30], [40, 2], [2, 'LOOSE'], [70, 1]])];
+  const texts = (raw) => D.flatten(raw).items.filter((it) => it.k === 't').map((it) => it.lines.join(' '));
+  assert.deepEqual(texts(reread(doc)), ['Shown', 'LOOSE']);
+  for (const [mode, expected] of [[0, ['LOOSE']], [1, ['Shown', 'LOOSE']], [2, ['Shown', 'Hidden', 'LOOSE']]]) {
+    doc.header.$ATTMODE = String(mode);
+    const back = reread(doc);
+    assert.equal(back.header.$ATTMODE, String(mode));
+    assert.deepEqual(texts(back), expected);
+  }
+});
+
 test('contour colour and linetype round trip, with missing and existing LTYPE entries', () => {
   for (const existing of [false, true]) {
     const doc = W.newDoc();
