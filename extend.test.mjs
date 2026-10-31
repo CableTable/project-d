@@ -183,9 +183,27 @@ test('extendEntity ellipse: an elliptical arc against 50 boundary ellipses and 2
   nearE(E(r.ent, 42), PI + Math.asin(0.6));
 });
 
-test('extendEntity ellipse: a line 0.1 mm off tangent to a 10 m ellipse is no worse than the chord hit', () => {
+test('rayHit ellipse: solved exactly: near-tangent crossing, a part ellipse, a miss', () => {
+  const big = curveShape(ellipse(0, 0, 10000, 0, 0.5)), T = 0.8094, off = 0.02;
+  const on = [10000 * Math.cos(T), 5000 * Math.sin(T)], d = [-10000 * Math.sin(T), 5000 * Math.cos(T)], L = Math.hypot(d[0], d[1]), u = [d[0] / L, d[1] / L];
+  const nrm = [u[1], -u[0]], inward = nrm[0] * on[0] / 1e8 + nrm[1] * on[1] / 2.5e7 > 0 ? -1 : 1;      // the tangent line's normal, turned towards the centre
+  const p = [on[0] + inward * off * nrm[0], on[1] + inward * off * nrm[1]];
+  const res = (h) => Math.abs((h[0] / 10000) ** 2 + (h[1] / 5000) ** 2 - 1);
+  const h1 = rayHit([p[0] - 101 * u[0], p[1] - 101 * u[1]], [p[0] - 100 * u[0], p[1] - 100 * u[1]], [big]);
+  const h2 = rayHit([p[0] + 101 * u[0], p[1] + 101 * u[1]], [p[0] + 100 * u[0], p[1] + 100 * u[1]], [big]);
+  assert.ok(res(h1) < 1e-9 && res(h2) < 1e-9, `${h1} ${h2}`);
+  assert.ok((h1[0] - h2[0]) * u[0] + (h1[1] - h2[1]) * u[1] < -1, `${h1} ${h2}`);          // forward from behind hits the near crossing, forward from ahead the other: they are apart
+  const quarter = curveShape(ellipse(0, 0, 10, 0, 0.5, 0, PI / 2));                         // first quadrant only
+  close(rayHit([-20, 3], [-15, 3], [quarter]), [8, 3]);                                      // the nearer root (x = -8) is off the arc, so the far one counts
+  assert.equal(rayHit([-20, -3], [-15, -3], [quarter]), null);                               // both roots are off the arc
+  assert.equal(rayHit([-20, 6], [-15, 6], [curveShape(ellipse(0, 0, 10, 0, 0.5))]), null);  // y = 6 misses the minor radius 5
+  close(rayHit([-20, 5], [-15, 5], [curveShape(ellipse(0, 0, 10, 0, 0.5))]), [0, 5]);        // y = 5 just touches
+});
+
+test('extendEntity ellipse: a line 0.1 mm off tangent to a 10 m ellipse stops at the near crossing, on the curve', () => {
   const big = ellipse(0, 0, 10000, 0, 0.5), a = [6253.243065651865, 3901.7893770914366], e = [6234.652933903769, 3909.165487285057];      // t = 0.9, pushed 0.1 mm inside the tangent
-  const chord = rayHit(a, e, [{ t: 'poly', pts: curveShape(big).pts, closed: true }]);      // no q, so no snap
-  const b = S(extendEntity(line(a[0], a[1], e[0], e[1]), [big], e).ent).b;      // Newton alone lands 80 mm further on, at the far crossing
-  assert.ok(Math.hypot(b[0] - chord[0], b[1] - chord[1]) < 1e-3, `${b} vs chord ${chord}`);
+  const b = S(extendEntity(line(a[0], a[1], e[0], e[1]), [big], e).ent).b;
+  assert.ok(Math.abs((b[0] / 10000) ** 2 + (b[1] / 5000) ** 2 - 1) < 1e-9, `${b}`);
+  const back = rayHit([e[0] + 1e4 * (e[0] - a[0]), e[1] + 1e4 * (e[1] - a[1])], [e[0] + 9999 * (e[0] - a[0]), e[1] + 9999 * (e[1] - a[1])], [curveShape(big)]);      // from far ahead, back: the other crossing
+  assert.ok((back[0] - b[0]) * (e[0] - a[0]) + (back[1] - b[1]) * (e[1] - a[1]) > 0, `${b} ${back}`);
 });
