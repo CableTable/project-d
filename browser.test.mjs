@@ -10067,6 +10067,75 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 155e3: Shift-click makes several hot grips (again = cold), Stretch moves them all, the right-click grip menu, and the same on a layout', async () => {
+    await menuItem('View', 'Theme: light');
+    const two = () => { const doc = newDoc(4); addEntities(doc, dxfLine(20, 30, 120, 30), dxfLine(20, 60, 120, 60)); return writeDxf(doc); };
+    const hotCount = () => page.locator('[data-testid=grip-hot]').count();
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const shiftGrip = async (id) => { const a = await gripBox(id); await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { await page.keyboard.up('Shift'); } await frames(); };
+    const clickGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await frames(); };
+    const lineOf = async (i) => { const e = entOf(await savedDoc(), i); return [10, 20, 11, 21].map((k) => fieldOf(e, k)); };
+    const close = (a, b) => a.length === b.length && a.every((v, i) => near(v, b[i], 1e-6));
+    const hist = () => t('cmd-hist').textContent();
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); };
+    const menuTexts = async () => { await t('ctx-menu').waitFor(); return page.locator('[data-testid=ctx-menu] .mi').allTextContents(); };
+    const rightClick = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y, { button: 'right' }); };
+    const menuPick = async (name) => { await page.locator('[data-testid=ctx-menu] .mi', { hasText: name }).first().click(); await frames(); };
+    const selectTwo = async () => { await openGrips(two()); await pick(70, 30, 3); await click(70, 60, { shift: true }); await frames(); await gripWhen(6); };
+    // Shift-click two ends on two lines; Shift-click one again makes it cold; Esc clears them and keeps the selection
+    await selectTwo();
+    await shiftGrip('0:b'); await shiftGrip('1:b'); await hotWhen(2);
+    await shiftGrip('1:b'); await hotWhen(1);
+    await shiftGrip('1:b'); await hotWhen(2);
+    await page.keyboard.press('Escape'); await hotWhen(0); await gripWhen(6);
+    // a plain click on one hot grip starts STRETCH with both; a typed @20,0 moves both ends 20
+    await shiftGrip('0:b'); await shiftGrip('1:b'); await clickGrip('0:b');
+    assert.match(await hist(), /\*\* STRETCH \*\*/);
+    await typeCmd('@20,0'); await hotWhen(0);
+    assert.ok(close(await lineOf(0), [20, 30, 140, 30]) && close(await lineOf(1), [20, 60, 140, 60]), 'both ends moved 20');
+    await undo(); await frames();
+    // the right-click grip menu
+    await selectTwo(); await clickGrip('0:a');
+    await rightClick(70, 45);
+    assert.deepEqual(await menuTexts(), ['Enter', 'Stretch✓', 'Move', 'Rotate', 'Scale', 'Mirror', 'Base Point', 'Copy', 'Properties', 'Exit']);
+    await shotBoth('grip-menu', async () => { await rightClick(70, 45); await t('ctx-menu').waitFor(); }, async () => { await page.keyboard.press('Escape'); await t('ctx-menu').waitFor({ state: 'detached' }); });
+    await rightClick(70, 45); await menuTexts();
+    await menuPick('Rotate');
+    assert.match(await hist(), /\*\* ROTATE \*\*/);
+    await rightClick(70, 45);
+    assert.deepEqual(await menuTexts(), ['Enter', 'Stretch', 'Move', 'Rotate✓', 'Scale', 'Mirror', 'Base Point', 'Copy', 'Reference', 'Properties', 'Exit']);
+    await menuPick('Exit'); await hotWhen(0);
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]), 'Exit with no pick changes nothing');
+    // Copy, one copy, then the menu offers Undo; Exit keeps the copy
+    await clickGrip('0:a');
+    await rightClick(70, 45); await menuTexts(); await menuPick('Rotate');
+    await rightClick(70, 45); await menuTexts(); await menuPick('Copy');
+    await typeCmd('90');
+    await rightClick(70, 45);
+    assert.ok((await menuTexts()).includes('Undo'), 'Undo with a copy made');
+    await menuPick('Exit'); await hotWhen(0);
+    assert.equal((await savedDoc()).entities.length, 4, 'both lines are copied, the copies are kept');
+    await undo();
+    // Properties ends the run and opens the panel
+    await selectTwo();
+    await page.keyboard.press('Control+1');
+    await page.locator('aside.panel').waitFor({ state: 'hidden' });
+    await clickGrip('0:a');
+    await rightClick(70, 45); await menuTexts(); await menuPick('Properties');
+    await hotWhen(0); await page.locator('aside.panel').waitFor({ state: 'visible' });
+    // the same on a layout object: both ends hot, a typed @20,0 moves the line 20
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3);
+    const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    const [ga, gb] = [await gid('a'), await gid('b')];
+    await shiftGrip(ga); await shiftGrip(gb); await hotWhen(2);
+    await clickGrip(ga); await typeCmd('@20,0'); await hotWhen(0); await frames(); await gripWhen(3);
+    const moved = await gripBox(await gid('a')), where = await at(70, 600);
+    assert.ok(near(moved.x, where.x, 2) && near(moved.y, where.y, 2), 'the layout line moved 20 with both ends');
+    await closeTabs(/./);
+  });
+
   await step('Grips: off past 200 selected shapes (and on for fewer)', async () => {
     const doc = newDoc(4);
     addEntities(doc, Array.from({ length: 205 }, (_, i) => dxfLine(10 + (i % 41) * 4, 20 + Math.floor(i / 41) * 20, 12 + (i % 41) * 4, 26 + Math.floor(i / 41) * 20)));
