@@ -1346,7 +1346,7 @@ function setTool(id) {
   state.draw = DR.KINDS.includes(id) ? DR.createTool(id, state.drawCfg) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
   state.mod = MOD_KINDS.includes(id) ? newMod(id) : null; state.modDoc = state.mod ? editable() || curDoc() : null;
   if (state.mod) modStart(id);
-  state.dim = id === 'dimension' ? newDim() : null; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
+  state.dim = id === 'dimension' ? newDim() : null; state.dimRun = []; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
   if (id === 'dimension') state.msg = dimPrompt();
   if (id === 'balloon') state.msg = balPrompt();
   if (id === 'leader') state.msg = ldrPrompt();
@@ -5625,8 +5625,9 @@ function keepMeasure() {
 }
 /// Dimension: first point, second point, then the callout follows the mouse sideways and a third click places it (AutoCAD's way). Linear is the
 // same with the pointer choosing a horizontal or a vertical line. Radius and diameter: pick a circle or an arc, then place it. Angle: pick two lines, then the arc.
-// Automatic also keeps: text (the override typed with T), as ('radius' | 'diameter' from R / D), askText (the "Enter dimension text" prompt is on), hot (the line hovered as a second line for an angle), run (the history length after each dimension of this DIM run, for Undo).
-const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null, ghost: null, text: '', as: null, askText: false, hot: null, run: [] });
+// Automatic also keeps: text (the override typed with T), as ('radius' | 'diameter' from R / D), askText (the "Enter dimension text" prompt is on), hot (the line hovered as a second line for an angle).
+// state.dimRun: the history length after each dimension of this DIM run, for Undo (a placement rebuilds state.dim, so it cannot live there).
+const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null, ghost: null, text: '', as: null, askText: false, hot: null });
 const dimBusy = (D) => D.pts.length > 0 || !!D.obj || D.lines.length > 0;
 function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.ghost = null; D.lines = []; D.force = null; D.typed = false; D.text = ''; D.as = null; D.askText = false; D.hot = null; }
 const dimAutoLive = () => !!state.dim && state.dimType === 'auto';
@@ -5712,12 +5713,12 @@ function dimPlace(d, m) {
   if (d.lay) {                                                       // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
     names.taken.add(dim.name.toLowerCase());
     layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block }, names);
-    D.run.push(histLen());
+    state.dimRun.push(histLen());
     note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
-  D.run.push(histLen());
+  state.dimRun.push(histLen());
   note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
   return true;
 }
@@ -5764,7 +5765,7 @@ function dimAutoUndo() {
     if (!b.obj && !b.pts.length) { D.text = ''; D.as = null; }       // back at the first prompt: a new dimension starts clean
     note(dimPrompt()); paintOverlay(); return;
   }
-  if (D.run.length && D.run.at(-1) === histLen()) { D.run.pop(); undoCurrent(); note('Dimension taken back. ' + dimPrompt()); return; }
+  if (state.dimRun.at(-1) === histLen()) { state.dimRun.pop(); undoCurrent(); note('Dimension taken back. ' + dimPrompt()); return; }
   note('Nothing to undo in this DIM. ' + dimPrompt());
 }
 function dimensionPoint(d, p, shift = false, typed = false) {
