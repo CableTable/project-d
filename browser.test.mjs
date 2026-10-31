@@ -14209,10 +14209,11 @@ try {
     assert.equal(await prompt(), 'Select second object or shift-select to apply corner or [Radius]:');
     await typeCmd('r'); await typeCmd('10');
     await hoverPreview(200, 60); assert.equal(await t('mod-preview').count(), 3);
-    await shotBoth('155h1-no-trim', () => hoverPreview(200, 60));
     await click(200, 60); doc = await savedDoc();
     assert.equal(doc.entities.length, 4); assert.equal(doc.entities[3].type, 'ARC');
     assert.deepEqual(doc.entities.slice(0, 3), before.entities, 'No trim keeps both source lines');
+    await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' });
+    await shotBoth('155h1-no-trim');
     await typeCmd('p'); await click(60, 20); assert.equal(await message(), '4 lines were filleted');
     assert.equal(fieldOf((await savedDoc()).entities[0], 90), 8, 'P rebuilds even in No trim');
     await typeCmd('u'); assert.deepEqual((await savedDoc()).entities, doc.entities, 'U takes back only the latest fillet');
@@ -14227,6 +14228,10 @@ try {
     const pair = await savedDoc();
     await typeCmd('p'); await click(60, 20);
     await typeCmd(''); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    const twoFillets = (await savedDoc()).entities;
+    await typeCmd('f'); await typeCmd('u'); assert.equal(await message(), 'Nothing to undo in this Fillet');
+    assert.deepEqual((await savedDoc()).entities, twoFillets, 'U cannot undo a previous command');
+    await typeCmd('');
     await undo(); assert.deepEqual((await savedDoc()).entities, pair.entities, 'one Ctrl+Z removes only the last fillet');
     await undo(); assert.deepEqual((await savedDoc()).entities, before.entities);
     await typeCmd('f'); await typeCmd('p'); await click(60, 20); await page.keyboard.press('Escape');

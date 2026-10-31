@@ -269,6 +269,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
       155g1. ✅ (built, Knight, Rook S29) Offset Through, Erase, Layer, Multiple and Undo with AutoCAD's distance-first prompts; remembered options, one Undo per run, Drawing and Layout objects.
       155g2. ✅ (built, Knight, Rook S29) Offset ellipses and splines to degree-3 fit-point splines; 0.01-unit accuracy, fold refusal, DXF round trip, all Offset options and Layouts.
     155h. Fillet Polyline (all corners at once), Trim / No trim, circles and parallel lines (M).
+      155h1. ✅ (built, Knight, Rook S29, 2026-10-31) Fillet options and Polyline (all corners): AutoCAD prompts, P rounds straight corners or replaces fillet arcs (0 makes sharp), short corners skipped, one Undo; remembered Trim / No trim, Multiple note and command-local Undo. Drawings, Layouts and Compare.
+      155h2. Fillet circles with lines, arcs or circles, and parallel lines (semicircle; radius ignored); Q6-Q7 of `runs29/grill-155h.md`.
     155i. Explode dimensions and hatches; block attributes as AutoCAD does (M).
     155j. ✅ (built, 2026-10-28, Knight) Mirror blocks, dimensions, hatches and partial ellipses; shared block inserts, private readable dimension blocks, MIRRHATCH 0, Erase Yes / No and one undo.
     155k. ✅ Snaps: Tab cycles the hovered object's candidates; all 14 snap types have ticks with exact 2D support and documented geometry limits; `osnap` / `os` opens the tick list, `ortho` asks ON / OFF. F3 / F8 come from 73; no `polar` command (AutoCAD has none). See DECISIONS "TODO 155k as built".
