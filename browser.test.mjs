@@ -9799,7 +9799,15 @@ try {
     assert.ok(sc[2] > 250 && sc[2] < 350 && near(sc[0], 20, 1e-6), `scaled by about 3 about the grip: ${sc}`);
     assert.equal((await labelsNow()).at(-1), 'Scale');
     await undoAndPick(70, 30, 3);
-    await hotGrip('0:a'); await press(' ', 3); await typeCmd('2'); await noHot();
+    await hotGrip('0:a'); await press(' ', 3);
+    for (const bad of ['0', '-2']) {
+      await typeCmd(bad);
+      assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, `Scale ${bad} asks again: the grip stays hot`);
+      assert.match(await t('cmd-hist').textContent(), /scale factor must be between 0\.0001 and 10000/);
+      assert.deepEqual(await lineOf(), [20, 30, 120, 30], `Scale ${bad} changed nothing`);
+    }
+    await mode('SCALE');
+    await typeCmd('2'); await noHot();
     assert.deepEqual(await lineOf(), [20, 30, 220, 30]);
     await undo();
     // Mirror: the line base → picked point; the original goes
@@ -9853,6 +9861,12 @@ try {
     await undo(); await frames();
     const back = await gripBox(await gid('a')), was = await at(50, 600);
     assert.ok(near(back.x, was.x, 2) && near(back.y, was.y, 2), 'one Undo turns it back');
+    // a placed Part in the selection too (Select all): the grip modes stay in STRETCH, with a note
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
+    await hotGrip(await gid('b')); await press(' ');
+    await mode('STRETCH');
+    assert.match(await t('cmd-hist').textContent(), /take loose objects only here: use the ribbon command for Parts and dimensions/);
+    await press('Escape'); await noHot();
     await closeTabs(/./);
   });
 

@@ -55,4 +55,25 @@ test('Mirror reflects in the line base → point and the originals go (same inde
   assert.equal(GM.apply(r, new Set([0]), 'MIRROR', [2, 2], [2, 2]), null);
 });
 
+test('Rotate 180 flips the line through the base', () => {
+  const out = GM.apply(raw(), new Set([0]), 'ROTATE', [0, 0], 180);
+  near(val(out.entities[0], 11), -100); near(val(out.entities[0], 21), 0);
+});
+
+test('Mirror in the Y axis (base → up) flips x; an object that cannot be mirrored is reported, and nothing mirrorable throws', () => {
+  const r = raw(), out = GM.apply(r, new Set([0, 1]), 'MIRROR', [0, 0], [0, 1]);
+  near(val(out.entities[0], 11), -100); near(val(out.entities[1], 11), -50); near(val(out.entities[1], 10), 0);
+  assert.deepEqual(out.skipped, []);
+  r.entities.push({});                                             // no shape: mirrorEntity skips it
+  assert.deepEqual(GM.apply(r, new Set([0, 3]), 'MIRROR', [0, 0], [0, 1]).skipped, ['it has no shape']);
+  assert.throws(() => GM.apply(r, new Set([3]), 'MIRROR', [0, 0], [0, 1]), /nothing could be mirrored \(it has no shape\)/);
+});
+
+test('Scale outside 0.0001 .. 10000 is refused (the layout Scale command\'s range); the mode name is title case', () => {
+  const r = raw();
+  for (const k of [0, -2, 1e-5, 1e5]) assert.throws(() => GM.apply(r, new Set([0]), 'SCALE', [0, 0], k), /between 0\.0001 and 10000/);
+  assert.ok(GM.apply(r, new Set([0]), 'SCALE', [0, 0], 1e4));
+  assert.deepEqual(GM.MODES.map(GM.nameOf), ['Stretch', 'Move', 'Rotate', 'Scale', 'Mirror']);
+});
+
 console.log(n + ' passed');

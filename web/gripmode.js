@@ -13,7 +13,8 @@ import { mirrorEntity } from './modify.js';
 import { n2 } from './draw.js';
 
 export const MODES = ['STRETCH', 'MOVE', 'ROTATE', 'SCALE', 'MIRROR'];
-export const NAMES = { STRETCH: 'Stretch', MOVE: 'Move', ROTATE: 'Rotate', SCALE: 'Scale', MIRROR: 'Mirror' };       // the undo step of a mode
+/** The undo step's name of a mode: 'Rotate' for ROTATE. */
+export const nameOf = (mode) => mode[0] + mode.slice(1).toLowerCase();
 const PROMPTS = {                                                  // AutoCAD 2027's, as tested (acad-grips-2027.txt)
   STRETCH: 'Specify stretch point or [Base point/Copy/Undo/eXit]:',
   MOVE: 'Specify move point or [Base point/Copy/Undo/eXit]:',
@@ -39,21 +40,21 @@ export function readout(mode, base, v, factor = 1) {
 
 function mirror(raw, sel, p1, p2) {
   let blocks = raw.blocks;
-  const entities = raw.entities.slice(), olds = [];
+  const entities = raw.entities.slice(), olds = [], skipped = [];
   for (const i of sel) {
     const r = mirrorEntity(raw.entities[i], p1, p2, blocks);
     if (r.blocks) blocks = r.blocks;
-    if (r.ent) { entities[i] = r.ent; olds.push(raw.entities[i]); }
+    if (r.ent) { entities[i] = r.ent; olds.push(raw.entities[i]); } else skipped.push(r.skip);
   }
-  if (!olds.length) return null;
-  // the old entities go through removeEntities so a dimension's block that only they used goes too
-  return { entities, blocks: removeEntities({ entities: entities.concat(olds), blocks }, new Set(olds.map((_, k) => entities.length + k))).blocks };
+  if (!olds.length) throw new Error('nothing could be mirrored' + (skipped.length ? ` (${skipped[0]})` : ''));       // as the Mirror command's note
+  // the old entities go through removeEntities so a dimension's block that only they used goes too; skipped: why each left-out object was
+  return { entities, blocks: removeEntities({ entities: entities.concat(olds), blocks }, new Set(olds.map((_, k) => entities.length + k))).blocks, skipped };
 }
 
 export function apply(raw, sel, mode, base, v) {
   if (mode === 'MOVE') return Math.hypot(v[0] - base[0], v[1] - base[1]) < 1e-12 ? null : moveEntities(raw, sel, v[0] - base[0], v[1] - base[1]);
   if (mode === 'ROTATE') return Math.abs(v) < 1e-12 ? null : rotateEntities(raw, sel, base, v);
-  if (mode === 'SCALE') { if (!(v > 0)) throw new Error('The scale factor must be above 0'); return Math.abs(v - 1) < 1e-12 ? null : scaleEntities(raw, sel, base, v); }
+  if (mode === 'SCALE') { if (!(v >= 1e-4 && v <= 1e4)) throw new Error('The scale factor must be between 0.0001 and 10000'); return Math.abs(v - 1) < 1e-12 ? null : scaleEntities(raw, sel, base, v); }
   if (mode === 'MIRROR') return Math.hypot(v[0] - base[0], v[1] - base[1]) < 1e-12 ? null : mirror(raw, sel, base, v);
   return null;
 }

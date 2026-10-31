@@ -7616,16 +7616,19 @@ function modAnswer(d, erase) {
   note(`Mirrored ${made.length}${erase ? ', the sources erased' : ''}` + (skipped.length ? `; ${skipped.length} left out (${[...new Set(skipped)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }
 
+/** The drawn shape of an entity in mm for a preview (a fillet shows a polyline's corners as they are), or null: shared by the modify tools and the grip modes. */
+function previewShape(ent, f, fillet) {
+  if (fillet && ['LWPOLYLINE', 'POLYLINE'].includes(ent?.type)) return filletPolylineShape(ent, f);
+  if (ent && GR.hasGrips(ent)) return GR.shapeOf(ent, f);
+  const c = curveShape(ent);                                        // an ellipse or spline (Extend's boundary or growing end)
+  return c && { ...c, pts: c.pts.map((q) => [q[0] * f, q[1] * f]) };
+}
 /** The overlay of a modify tool: what it holds (dashed), the cutting edges, and the result before the click. */
 function modOvl(d, out) {
   const m = state.mod, H = state.sheetH, f = d.factor;
   modSync(d);
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, transform: drawingTransform(d), d: DR.svgPath(shape, H), 'data-testid': tid || null }));
-  const addEnt = (ent, cls, tid) => {
-    if (m.kind === 'fillet' && ['LWPOLYLINE', 'POLYLINE'].includes(ent?.type)) add(filletPolylineShape(ent, f), cls, tid);
-    else if (ent && GR.hasGrips(ent)) add(GR.shapeOf(ent, f), cls, tid);
-    else if (curveShape(ent)) add({ ...curveShape(ent), pts: curveShape(ent).pts.map((q) => [q[0] * f, q[1] * f]) }, cls, tid);       // an ellipse or spline (Extend's boundary or growing end)
-  };
+  const addEnt = (ent, cls, tid) => { const sh = previewShape(ent, f, m.kind === 'fillet'); if (sh) add(sh, cls, tid); };
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) {
     if (m.p1 && m.cur) {
       const R = m.ref, typed = m.kind === 'rotate' && !R ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
@@ -8158,6 +8161,7 @@ function gripModeRun(g) {
 function gripCycle() {
   const g = state.grip;
   if (!g) return;
+  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj)) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
   g.mode = GM.cycle(g.mode); g.res = null; g.err = null; g.next = null; g.val = null; g.to = null;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
@@ -8220,7 +8224,7 @@ function gripTyped(raw) {
   if (inp.kind === 'enter') { gripCycle(); return; }                // Enter on an empty bar cycles the grip mode, as Space (AutoCAD)
   if (inp.kind === 'word') {
     const word = inp.w, M = GM.MODES[g.mode];
-    if (word === 'x' || word === 'exit' || word === 'esc') { gripCancel(); note(`${GM.NAMES[M]} cancelled`); }
+    if (word === 'x' || word === 'exit' || word === 'esc') { gripCancel(); note(`${GM.nameOf(M)} cancelled`); }
     else if (['b', 'base', 'c', 'copy', 'r', 'reference'].includes(word)) note('Base point, Copy and Reference come in TODO 155e2');
     else if (word === 'u' || word === 'undo') note('Nothing to undo yet');
     else note(`"${word}" is not an option here: type ${g.mode ? 'a value or a point' : 'x,y, @dx,dy or a length'}, or press Esc`);
@@ -8251,24 +8255,27 @@ function gripModeTyped(g, inp, raw) {
     if (!mm) { note(inp.kind === 'len' ? 'Move the pointer the way you want it to go, then type the length' : 'Point coordinates must be finite'); return; }
     v = GM.valueAt(M, g.base, mm.map((x) => x / f));
   }
-  g.val = v; g.to = g.to || g.base; gripModeRun(g); gripCommit();
+  g.val = v; g.to = g.to || g.base; gripModeRun(g);
+  if (g.err) { note(g.err); return; }                               // a Scale of 0 or outside 0.0001 .. 10000: asks again, the grip stays hot (AutoCAD)
+  gripCommit();
 }
 /** A grip mode (Move, Rotate, Scale, Mirror) puts its result down: every selected object, one undo step named for the mode; the grip edit ends. */
 function gripModeCommit(g) {
-  const d = g.d, M = GM.MODES[g.mode], label = GM.NAMES[M];
+  const d = g.d, M = GM.MODES[g.mode], label = GM.nameOf(M);
   if (!g.res) { note(g.err || (g.to ? 'That would not change anything, so it stays as it was' : `${label} cancelled`)); renderCommand(); paintOverlay(); return; }
   if (moveLocked(d, g.sel)) { paintOverlay(); return; }
   view.fitted = false;
   if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else { commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label); setSel(d, g.sel); }
-  note(`${label}: ${GM.readout(M, g.base, g.val, d.factor)}. Ctrl+Z takes it back`);
+  const left = g.res.skipped || [];
+  note(`${label}: ${GM.readout(M, g.base, g.val, d.factor)}` + (left.length ? `; ${left.length} left out (${[...new Set(left)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }
 /** The preview of a grip mode: the rubber line base → pointer, a faint ghost of the result, the grips (the hot one red) and the readout tip. */
 function gripModeOvl(d, out, grips, g, square) {
   const f = d.factor, M = GM.MODES[g.mode], at = (p) => p.map((v) => v * f);
   if (g.to) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: at(g.base), b: at(g.to) }, state.sheetH), 'data-testid': 'grip-line' }));
   if (g.res) for (const i of [...g.sel].slice(0, 300)) {
-    const ent = g.res.entities[i], sh = ent && (GR.hasGrips(ent) ? GR.shapeOf(ent, f) : curveShape(ent) && { ...curveShape(ent), pts: curveShape(ent).pts.map((q) => [q[0] * f, q[1] * f]) });
+    const sh = previewShape(g.res.entities[i], f);
     if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
   }
   for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id));
@@ -8377,7 +8384,7 @@ function editKey(e) {
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
-    else if (state.grip) { const name = GM.NAMES[GM.MODES[state.grip.mode]]; gripCancel(); note(`${name} cancelled`); }
+    else if (state.grip) { const name = GM.nameOf(GM.MODES[state.grip.mode]); gripCancel(); note(`${name} cancelled`); }
     else if (state.text.drag) { textDragEnd(true); note('Resize cancelled'); }
     else if (state.txoWait) { state.txoWait = false; note('Text to outlines cancelled'); }
     else if (modLive()) modEsc(d);
