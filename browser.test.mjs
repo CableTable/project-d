@@ -9574,15 +9574,16 @@ try {
     await pick(190, 100, 5);
     await pick(60, 130, 4);
     assert.equal(await page.locator('.gr-spoke').count(), 1, 'an arc: dashed spokes from the centre to its ends');
-    await pick(170, 30, 4);
+    await pick(170, 30, 4 + 3);                                // 163b: an open polyline of 4 vertices: 4 vertex squares and 3 segment mid grips
+    assert.equal(await t('grip-hint').textContent(), 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels', 'segment mid grips are not a rectangle\'s edge');
     await pick(70, 30, 3); await click(190, 100, { shift: true }); await click(60, 130, { shift: true }); await click(170, 30, { shift: true });
-    await gripWhen(3 + 5 + 4 + 4);
+    await gripWhen(3 + 5 + 4 + 7);
     const sq = await (await page.waitForFunction(() => { const el = document.querySelector('[data-testid=grip]'); return el && Math.round(el.getBoundingClientRect().width); })).jsonValue();
     assert.equal(sq, 11,'GRIPSIZE 5 is the half side: 11 px squares (TODO 155r)');
     await page.locator('[data-tool=line]').click();
     await gripWhen(0);                                         // a drawing tool is on: no grips
     await page.keyboard.press('Escape');                       // back to Select, the selection stays
-    await gripWhen(3 + 5 + 4 + 4);
+    await gripWhen(3 + 5 + 4 + 7);
     await page.keyboard.press('Escape'); await gripWhen(0);
   });
 
@@ -9682,11 +9683,11 @@ try {
     assert.equal((await histLabels()).at(-1), 'Move arc');
     await page.keyboard.press('Control+z');
     // the polyline
-    await pick(170, 30, 4);
+    await pick(170, 30, 7);
     await dragGripTo('3:v2', 205, 80);
     doc = await savedDoc();
     const pl = GR.gripsOf(entOf(doc, 3));
-    assert.equal(pl.length, 4); assert.ok(near(pl[2].x, 205, 0.6) && near(pl[2].y, 80, 0.6)); assert.deepEqual([pl[0].x, pl[0].y, pl[3].x, pl[3].y], [140, 30, 150, 70]);
+    assert.equal(pl.length, 7); assert.ok(near(pl[2].x, 205, 0.6) && near(pl[2].y, 80, 0.6)); assert.deepEqual([pl[0].x, pl[0].y, pl[3].x, pl[3].y], [140, 30, 150, 70]);
     assert.equal((await histLabels()).at(-1), 'Stretch polyline');
     await page.keyboard.press('Control+z');
   });
@@ -10132,9 +10133,9 @@ try {
     assert.ok([10, 20, 40].every((k, i) => near(fieldOf(circ, k), [180, 100, 20][i], 1e-6)), 'the circle moved whole: centre (180,100), radius 20');
     await undo(); await frames();
     // a polyline with every vertex hot moves whole
-    await pick(170, 30, 4);
+    await pick(170, 30, 7);
     for (const v of ['v0', 'v1', 'v2', 'v3']) await shiftGrip('3:' + v);
-    await hotWhen(4); await clickGrip('3:v0'); await typeCmd('@10,0'); await hotWhen(0); await gripWhen(4);
+    await hotWhen(4); await clickGrip('3:v0'); await typeCmd('@10,0'); await hotWhen(0); await gripWhen(7);
     const pv = await gripBox('3:v3'), pw = await at(160, 70);
     assert.ok(near(pv.x, pw.x, 2) && near(pv.y, pw.y, 2), 'the polyline moved 10 with every vertex');
     await undo(); await frames();
@@ -10340,7 +10341,6 @@ try {
     assert.match(await hist(), /\*\* STRETCH \(multiple\) \*\*/);
     await page.keyboard.press('Control'); await frames();
     assert.match(await hist(), /Lengthen makes no copies/);
-    assert.match(await hist(), /\*\* STRETCH \(multiple\) \*\*/);
     assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the run stays in Stretch');
     await typeCmd(''); await hotWhen(0);
     const copy = await ent(4);
@@ -10368,6 +10368,178 @@ try {
     await typeCmd('10'); await hotWhen(0); await frames(); await gripWhen(3);
     const end = await gripBox(await gid('b')), want = await at(310, 600);
     assert.ok(near(end.x, want.x, 2) && near(end.y, want.y, 2), 'the layout line grew 10');
+    await closeTabs(/./);
+  });
+
+  // ---- TODO 163b: Grip options on polylines: segment mid grips, Insert / Remove vertex, Convert to Arc / Line ----
+  const g163bDoc = () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfPoly([[20, 30], [80, 30], [80, 70, -1], [130, 70]]), dxfPoly([[160, 30], [200, 30]]), dxfPoly([[160, 90], [210, 90], [210, 130], [170, 140]], { closed: true }), dxfPoly([[20, 150], [60, 150], [60, 180], [20, 180]], { closed: true }));
+    return writeDxf(doc);
+  };
+  const g163bVerts = async (i) => {       // [[x, y, bulge]] of polyline i in the saved file, to 0.01
+    const e = entOf(await savedDoc(), i), out = [];
+    e.r.c.forEach((c, k) => { if (c === 10) out.push([+e.r.v[k], 0, 0]); else if (c === 20) out.at(-1)[1] = +e.r.v[k]; else if (c === 42) out.at(-1)[2] = +e.r.v[k]; });
+    return out.map((v) => v.map((x) => Math.round(x * 100) / 100));
+  };
+  await step('TODO 163b: hover a polyline vertex 300 ms -> exactly Stretch, Insert vertex, Remove vertex; a line segment mid Stretch, Insert vertex, Convert to Arc; an arc segment mid Stretch, Insert vertex, Convert to Line; Remove vertex is not offered on 2 vertices; a rectangle keeps its resizing sides; light and dark', async () => {
+    const { list, hover, labels } = g163;
+    await menuItem('View', 'Theme: light');
+    mkdirSync('E:/Project B/Claude/Project D extras/runs30/shots-163b', { recursive: true });
+    await openGrips(g163bDoc(), 'g163b.dxf');
+    await pick(35, 30, 7);                                       // 4 vertices + 3 segment mid grips (the arc segment's at the top of its arc)
+    const arcMid = await gripBox('0:e2'), want = await at(105, 95);
+    assert.ok(near(arcMid.x, want.x, 2) && near(arcMid.y, want.y, 2), 'the arc segment grip is at the top of its arc');
+    for (const theme of ['light', 'dark']) {
+      await page.keyboard.press('Escape'); await menuItem('View', 'Theme: ' + theme); await pick(35, 30, 7);
+      for (const [id, name, items] of [['0:v1', 'vertex', ['Stretch', 'Insert vertex', 'Remove vertex']], ['0:e0', 'line-segment', ['Stretch', 'Insert vertex', 'Convert to Arc']], ['0:e2', 'arc-segment', ['Stretch', 'Insert vertex', 'Convert to Line']]]) {
+        await hover(id); assert.deepEqual(await list(), items);
+        await frames(); await page.screenshot({ path: `E:/Project B/Claude/Project D extras/runs30/shots-163b/${name}-${theme}.png` });
+        await page.keyboard.press('Escape'); await t('ctx-menu').waitFor({ state: 'detached' });
+        assert.equal(await gripCount(), 7, 'Esc closed only the list');
+      }
+    }
+    await menuItem('View', 'Theme: light');
+    // two vertices: no Remove vertex; a closed polyline has its closing segment's grip; a rectangle keeps its edge grips and the resize hint
+    await pick(170, 30, 3);
+    await hover('1:v0'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex']); await page.keyboard.press('Escape');
+    await pick(170, 90, 8);
+    await hover('2:e3'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Convert to Arc'], 'the closing segment too'); await page.keyboard.press('Escape');
+    await pick(40, 150, 8);
+    assert.match(await t('grip-hint').textContent(), /drag an edge to resize/);
+    await hover('3:e0'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Convert to Arc'], 'a rectangle side too'); await page.keyboard.press('Escape');
+    await dragGripTo('3:e0', 40, 140);
+    assert.equal((await labels()).at(-1), 'Resize rectangle');
+    assert.ok((await g163bVerts(3)).map((v) => v[1]).every((y, k) => near(y, [140, 140, 180, 180][k], 0.5)), 'Stretch on a rectangle side still resizes it');
+    await closeTabs(/./);
+  });
+  await step('TODO 163b: Insert vertex (live drag, after the hovered vertex, one Undo) and Remove vertex (at once, one Undo); Esc cancels an Insert vertex run', async () => {
+    const { list, hover, pickItem, hotWhen, hist, undo, labels } = g163;
+    await openGrips(g163bDoc(), 'g163b.dxf');
+    await pick(35, 30, 7);
+    await hover('0:v1'); await list(); await pickItem('Insert vertex'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify new vertex point:'); assert.match(await hist(), /\*\* INSERT VERTEX \*\*/);
+    const to = await at(55, 55); await page.mouse.move(to.x, to.y); await frames();
+    assert.ok(await page.locator('[data-testid=grip-preview]').count() >= 1, 'the new polyline follows the pointer');
+    await page.mouse.click(to.x, to.y); await hotWhen(0); await gripWhen(9);
+    let v = await g163bVerts(0);
+    assert.equal(v.length, 5); assert.ok(near(v[2][0], 55, 1.5) && near(v[2][1], 55, 1.5), `the new vertex is after the hovered one: ${v}`);
+    assert.deepEqual([v[0], v[1], v[3], v[4]], [[20, 30, 0], [80, 30, 0], [80, 70, -1], [130, 70, 0]], 'the others and their bulges stay');
+    assert.equal((await labels()).at(-1), 'Insert vertex');
+    await undo(); assert.equal((await g163bVerts(0)).length, 4, 'one Undo');
+    // Esc in the run changes nothing
+    await pick(35, 30, 7);
+    await hover('0:e0'); await list(); await pickItem('Insert vertex'); await hotWhen(1);
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    assert.equal((await g163bVerts(0)).length, 4, 'Esc changed nothing');
+    // typed point into a segment
+    await pick(35, 30, 7);
+    await hover('0:e0'); await list(); await pickItem('Insert vertex'); await hotWhen(1);
+    await typeCmd('zz'); assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'a word is no point');
+    await typeCmd('50,45'); await hotWhen(0);
+    assert.deepEqual((await g163bVerts(0)).slice(0, 3), [[20, 30, 0], [50, 45, 0], [80, 30, 0]], 'into the segment');
+    await undo();
+    // Remove vertex: at once from the list, no run, one Undo
+    await pick(35, 30, 7);
+    await hover('0:v1'); await list(); await pickItem('Remove vertex'); await hotWhen(0); await gripWhen(5);
+    assert.deepEqual(await g163bVerts(0), [[20, 30, 0], [80, 70, -1], [130, 70, 0]], 'the arc segment is kept');
+    assert.equal((await labels()).at(-1), 'Remove vertex');
+    await undo(); assert.equal((await g163bVerts(0)).length, 4, 'one Undo');
+    await closeTabs(/./);
+  });
+  await step('TODO 163b: Convert to Arc through a point (ghost arc, a point on the chord refused), Convert to Line at once, Stretch on an arc segment keeps its ends, on a line segment moves both', async () => {
+    const { list, hover, pickItem, hotWhen, hist, undo, labels } = g163;
+    await openGrips(g163bDoc(), 'g163b.dxf');
+    await pick(35, 30, 7);
+    await hover('0:e0'); await list(); await pickItem('Convert to Arc'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify midpoint of arc segment:'); assert.match(await hist(), /\*\* CONVERT TO ARC \*\*/);
+    await typeCmd('50,30'); assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'a point on the chord is refused, the run goes on');
+    assert.match(await hist(), /no arc passes through it/);
+    assert.equal((await g163bVerts(0))[0][2], 0, 'the segment is unchanged');
+    const to = await at(50, 50); await page.mouse.move(to.x, to.y); await frames();
+    assert.ok(await page.locator('[data-testid=grip-preview]').count() >= 1, 'the ghost arc follows the pointer');
+    await page.mouse.click(to.x, to.y); await hotWhen(0);
+    const b = (await g163bVerts(0))[0][2];
+    assert.ok(b < -0.2 && b > -0.8, `the segment is an arc now, bulging up (negative bulge, as AutoCAD): ${b}`);
+    assert.equal((await labels()).at(-1), 'Convert to Arc');
+    await undo(); assert.equal((await g163bVerts(0))[0][2], 0, 'one Undo');
+    // Convert to Line at once
+    await pick(35, 30, 7);
+    await hover('0:e2'); await list(); await pickItem('Convert to Line'); await hotWhen(0);
+    assert.deepEqual((await g163bVerts(0))[2], [80, 70, 0]); assert.equal((await labels()).at(-1), 'Convert to Line');
+    await undo(); assert.deepEqual((await g163bVerts(0))[2], [80, 70, -1], 'one Undo');
+    // Stretch on the arc segment: the ends stay, the arc passes through the pointer
+    await pick(35, 30, 7);
+    await hover('0:e2'); await list(); await pickItem('Stretch'); await hotWhen(1);
+    await typeCmd('105,120'); await hotWhen(0);
+    const v = await g163bVerts(0);
+    assert.deepEqual([v[2].slice(0, 2), v[3].slice(0, 2)], [[80, 70], [130, 70]], 'both ends stay');
+    assert.ok(near(v[2][2], -2, 0.02), `a bulge of 2 puts the top at 120: ${v[2]}`);
+    assert.equal((await labels()).at(-1), 'Arc bulge');
+    await undo();
+    // Stretch on a line segment moves both its ends
+    await pick(35, 30, 7);
+    await hover('0:e0'); await list(); await pickItem('Stretch'); await hotWhen(1);
+    await typeCmd('@0,10'); await hotWhen(0);
+    assert.deepEqual((await g163bVerts(0)).slice(0, 3), [[20, 40, 0], [80, 40, 0], [80, 70, -1]], 'both ends moved up 10');
+    await undo();
+    // a closed polyline's closing segment
+    await pick(170, 90, 8);
+    await hover('2:e3'); await list(); await pickItem('Convert to Arc'); await hotWhen(1);
+    await typeCmd('150,115'); await hotWhen(0);
+    assert.ok(Math.abs((await g163bVerts(2))[3][2]) > 0.1, 'the closing segment became an arc');
+    await undo();
+    await closeTabs(/./);
+  });
+  await step('TODO 163b: Ctrl in a polyline run: vertex Stretch <-> Insert vertex; line segment Stretch -> Insert vertex -> Convert to Arc; arc segment Stretch <-> Insert vertex; right-click lists the options, Remove vertex from it', async () => {
+    const { hotWhen, hist, list, pickItem, undo } = g163;
+    const clickGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await hotWhen(1); };
+    const ctrl = async () => { await page.keyboard.press('Control'); await frames(); return prompt(); };
+    await openGrips(g163bDoc(), 'g163b.dxf');
+    await pick(35, 30, 7);
+    await clickGrip('0:v1');
+    assert.equal(await ctrl(), 'Specify new vertex point:'); assert.match(await hist(), /\*\* INSERT VERTEX \*\*/);
+    assert.match(await ctrl(), /^Specify stretch point/);
+    assert.equal(await ctrl(), 'Specify new vertex point:', 'Remove vertex is never in the cycle');
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    await clickGrip('0:e0');
+    assert.equal(await ctrl(), 'Specify new vertex point:');
+    assert.equal(await ctrl(), 'Specify midpoint of arc segment:'); assert.match(await hist(), /\*\* CONVERT TO ARC \*\*/);
+    assert.match(await ctrl(), /^Specify stretch point/);
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    await clickGrip('0:e2');
+    assert.equal(await ctrl(), 'Specify new vertex point:');
+    assert.match(await ctrl(), /^Specify stretch point/, 'Convert to Line is list-only');
+    assert.equal(await ctrl(), 'Specify new vertex point:');
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    // the right-click menu lists the grip's options in place of Stretch; Remove vertex applies at once
+    await clickGrip('0:v1'); await ctrl();
+    const rc = await at(60, 45); await page.mouse.click(rc.x, rc.y, { button: 'right' });
+    await t('ctx-menu').waitFor();
+    assert.deepEqual(await list(), ['Enter', 'Stretch', 'Insert vertex✓', 'Remove vertex', 'Move', 'Rotate', 'Scale', 'Mirror', 'Base Point', 'Copy', 'Properties', 'Exit']);
+    await pickItem('Remove vertex'); await hotWhen(0);
+    assert.equal((await g163bVerts(0)).length, 3, 'Remove vertex from the run menu');
+    await undo(); assert.equal((await g163bVerts(0)).length, 4);
+    await closeTabs(/./);
+  });
+  await step('TODO 163b: polyline Grip options on a Compare snapshot (routes to the source) and on a layout object', async () => {
+    const { list, hover, pickItem, hotWhen } = g163;
+    await openGrips(g163bDoc(), 'g163b-compare.dxf');
+    await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
+    await click(35, 30); await frames(); await gripWhen(7);
+    await hover('0:v1'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Remove vertex']); await pickItem('Remove vertex'); await hotWhen(0);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'g163b-compare.dxf' }) }).click();
+    assert.equal((await g163bVerts(0)).length, 3, 'the source drawing lost the vertex');
+    await closeTabs(/./);
+    // a layout object
+    await freshLayoutWithPlate();
+    await typeCmd('polyline'); for (const p of ['50,600', '150,600', '150,700']) await typeCmd(p);
+    await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(75, 600); await frames(); await gripWhen(5);
+    const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    await hover(await gid('v1')); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Remove vertex']); await pickItem('Remove vertex'); await hotWhen(0);
+    await frames(); await gripWhen(3);
     await closeTabs(/./);
   });
 
@@ -10524,7 +10696,7 @@ try {
   await step('Grips: screenshots, light and dark (blue squares on each kind; a grip being dragged: hot, ghost, rubber band, readout)', async () => {
     await openGrips();
     await click(70, 30); await click(190, 100, { shift: true }); await click(60, 130, { shift: true }); await click(170, 30, { shift: true });
-    await gripWhen(16);
+    await gripWhen(19);
     await shotBoth('grips', async () => { await wait(150); }, async () => {});
     await page.keyboard.press('Escape');
     await click(70, 30); await gripWhen(3);
@@ -18686,7 +18858,8 @@ try {
     await menuItem('Modify', 'Text to outlines');
     await page.waitForFunction(() => /→/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 15000 });
     const outlines = (await savedDoc()).entities, vertices = outlines.reduce((n, e) => n + e.r.c.filter((c) => c === 10).length, 0);
-    assert.ok(vertices > GR.MAX_SELECTED && vertices <= GR.MAX_GRIPS && outlines.length < GR.MAX_SELECTED, 'many vertices on a few outlines, within the handle cap');
+    const handles = outlines.reduce((n, e) => { const k = e.r.c.filter((c) => c === 10).length, closed = (+e.r.v[e.r.c.indexOf(70)] || 0) & 1; return n + k + (closed ? k : k - 1); }, 0);       // 163b: a grip per vertex and per segment
+    assert.ok(vertices > GR.MAX_SELECTED && handles <= GR.MAX_GRIPS && outlines.length < GR.MAX_SELECTED, 'many vertices on a few outlines, within the handle cap');
     await frames();
     assert.equal(await t('sel-count').textContent(), `${outlines.length} selected`, 'the TXO result is selected before checking its hidden grips');
     assert.equal(await page.locator('[data-testid=grip], [data-testid=grip-hot]').count(), 0, 'the immediate TXO result keeps the letters readable');
@@ -18696,7 +18869,7 @@ try {
     }
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
     await page.keyboard.press('Control+a');
-    await gripWhen(vertices);
+    await gripWhen(handles);
     await closeTabs(/./);
   });
 

@@ -80,8 +80,8 @@ test('only closed straight four-corner rectangles get edge grips', () => {
     circle(0, 0, 10), ellipse(0, 0, 10, 0, .5)
   ];
   for (const ent of entities) {
-    assert.ok(GR.gripsOf(ent).every((g) => g.kind !== 'edge'));
-    assert.equal(GR.dragGrip(ent, 'e0', [5, 5]), null);
+    assert.ok(GR.gripsOf(ent).every((g) => !g.rect), 'no resizing side');       // 163b: a polyline has segment mid grips (kind edge), only a rectangle's resize it
+    assert.notEqual(GR.dragGrip(ent, 'e0', [5, 5])?.label, 'Resize rectangle');
   }
 });
 
@@ -140,7 +140,7 @@ test('a polyline: a vertex moves, the bulges stay, closed or open', () => {
   const p = rect(0, 0, 10, 5);
   const m = GR.dragGrip(p, 'v2', [12, 8]);
   assert.equal(m.label, 'Stretch polyline');
-  assert.deepEqual(pts(GR.gripsOf(m.ent)), [[0, 0], [10, 0], [12, 8], [0, 5]]);
+  assert.deepEqual(pts(GR.gripsOf(m.ent).filter((g) => g.kind === 'vertex')), [[0, 0], [10, 0], [12, 8], [0, 5]]);
   assert.equal(val(m.ent, 70), 1, 'still closed');
   const r = lwpoly([[0, 0, 0.5], [10, 0], [10, 5, -0.2]]);
   const k = GR.dragGrip(r, 'v1', [11, 1]);
@@ -192,7 +192,7 @@ test('a grip drag saves and reopens: the changed entities come back as they were
   assert.deepEqual([val(back[0], 11), val(back[0], 21)], [120, 80]);
   assert.equal(val(back[1], 40), 25);
   nearPt([val(back[2], 10), val(back[2], 20)], [val(a, 10), val(a, 20)], 1e-5);
-  assert.deepEqual(pts(GR.gripsOf(back[3])), [[0, 0], [10, 0], [12, 8], [0, 5]]);
+  assert.deepEqual(pts(GR.gripsOf(back[3]).filter((g) => g.kind === 'vertex')), [[0, 0], [10, 0], [12, 8], [0, 5]]);
   assert.ok(reopen(l));
 });
 
@@ -343,7 +343,7 @@ test('wholeHot: every defining grip hot (or the middle / centre) moves the objec
   const m = GR.translate(ln, 10, 0);
   assert.deepEqual([10, 20, 11, 21].map((c) => val(m, c)), [10, 0, 20, 0]);
   assert.deepEqual(GR.translate(ld, 1, 2).model.pts, [[1, 2], [11, 2], [11, 7]]);
-  assert.deepEqual(pts(GR.gripsOf(GR.translate(pl, 1, 2))), [[1, 2], [11, 2], [11, 7]]);
+  assert.deepEqual(pts(GR.gripsOf(GR.translate(pl, 1, 2)).filter((g) => g.kind === 'vertex')), [[1, 2], [11, 2], [11, 7]]);
 });
 
 test('163a Grip options: the list per grip', () => {
@@ -351,7 +351,7 @@ test('163a Grip options: the list per grip', () => {
   assert.deepEqual(ids(line(0, 0, 50, 0)), { a: ['Stretch', 'Lengthen'], m: [], b: ['Stretch', 'Lengthen'] });
   assert.deepEqual(ids(arc(0, 0, 10, 0, 90)), { a: ['Stretch', 'Lengthen'], m: ['Stretch', 'Radius'], b: ['Stretch', 'Lengthen'], c: [] });
   assert.deepEqual(ids(circle(0, 0, 5)), { c: [], q0: [], q1: [], q2: [], q3: [] });
-  assert.deepEqual(GR.optionsOf(rect(0, 0, 10, 5), 'v0'), []);
+  assert.deepEqual(GR.optionsOf(rect(0, 0, 10, 5), 'v0'), ['Stretch', 'Insert vertex', 'Remove vertex']);       // 163b
   assert.equal(GR.optionPrompt(line(0, 0, 5, 0), 'Lengthen'), 'Specify end point:');
   assert.equal(GR.optionPrompt(arc(0, 0, 10, 0, 90), 'Lengthen'), 'Specify end point of arc:');
   assert.equal(GR.optionPrompt(arc(0, 0, 10, 0, 90), 'Radius'), 'Specify radius:');
@@ -403,6 +403,126 @@ test('163a Radius: the arc middle grip sets the radius; the centre and angles st
   near(val(GR.typedOption(reopen(line(0, 0, 10, 0)), 'b', 'Lengthen', 5).ent, 11), 15);
   assert.equal(GR.setRadius(ar, 0), null); assert.equal(GR.setRadius(ar, -3), null); assert.equal(GR.setRadius(ar, NaN), null);
   assert.equal(GR.setRadius(reopen(circle(0, 0, 5)), 3), null, 'Radius is for the arc middle only');
+});
+
+// ---- 163b polyline Grip options: AutoCAD's tested polyline (acad-163.txt): 10,70 40,70 40,90 + arc (bulge -1) to 70,90 ----
+const acadPoly = () => reopen(lwpoly([[10, 70], [40, 70], [40, 90, -1], [70, 90]]));
+const verts = (e) => GR.lwVertices(e.r).map((v) => [v.x, v.y, v.b]);
+const at4 = (e) => verts(e).map(([x, y, b]) => [x, y, +b.toFixed(4)]);
+
+test('163b segment mid grips: one per segment (open 3, closed 4), an arc segment\'s at the top of its arc; rectangle sides keep resizing', () => {
+  const p = acadPoly(), g = GR.gripsOf(p);
+  assert.deepEqual(g.map((x) => x.id), ['v0', 'v1', 'v2', 'v3', 'e0', 'e1', 'e2']);
+  assert.ok(g.filter((x) => x.kind === 'edge').every((x) => x.rect === undefined));
+  nearPt([g[4].x, g[4].y], [25, 70]); nearPt([g[5].x, g[5].y], [40, 80]); nearPt([g[6].x, g[6].y], [55, 105]);       // AutoCAD: the arc mid grip at 55,105
+  const closed = GR.gripsOf(reopen(lwpoly([[0, 0], [10, 0], [10, 10], [0, 20]], { closed: true })));
+  assert.deepEqual(closed.filter((x) => x.kind === 'edge').map((x) => [x.x, x.y]), [[5, 0], [10, 5], [5, 15], [0, 10]], 'the closing segment too');
+  assert.equal(GR.gripsOf(rect(0, 0, 10, 5)).filter((x) => x.rect).length, 4);
+  assert.equal(GR.dragGrip(rect(0, 0, 10, 5), 'e1', [14, 2.5]).label, 'Resize rectangle');
+  assert.equal(GR.gripsOf(lwpoly([[0, 0]])).length, 1, 'one vertex: no segment');
+  assert.equal(GR.gripsOf(lwpoly([[0, 0], [5, 5]])).length, 3);
+});
+
+test('163b Stretch on a segment mid: a line segment moves with both ends, an arc segment keeps its ends and bends through the pointer', () => {
+  const p = acadPoly();
+  const l = GR.dragGrip(p, 'e0', [25, 80]);                                // the mid (25,70) up by 10: both ends move by (0,10)
+  assert.equal(l.label, 'Stretch polyline');
+  assert.deepEqual(at4(l.ent), [[10, 80, 0], [40, 80, 0], [40, 90, -1], [70, 90, 0]]);
+  const a = GR.dragGrip(p, 'e2', [55, 110]);                               // the arc mid (55,105) to 110: ends stay
+  assert.equal(a.label, 'Arc bulge');
+  assert.deepEqual(at4(a.ent).map((v) => v.slice(0, 2)), [[10, 70], [40, 70], [40, 90], [70, 90]]);
+  assert.ok(Math.abs(verts(a.ent)[2][2]) > 0.3 && verts(a.ent)[2][2] < 0, 'still bulging the same way');
+  const m = GR.gripsOf(a.ent).find((x) => x.id === 'e2');
+  nearPt([m.x, m.y], [55, 110]);                                           // the new arc passes through the pointer
+  assert.equal(GR.dragGrip(p, 'e2', [55, 90]), null, 'a point on the chord is no arc');
+  assert.equal(GR.dragGrip(p, 'e0', [25, 70]), null, 'not moved');
+  const c = reopen(lwpoly([[0, 0], [10, 0], [10, 10]], { closed: true })), z = GR.dragGrip(c, 'e2', [5, 8]);
+  assert.deepEqual(at4(z.ent).map((v) => v.slice(0, 2)), [[0, 3], [10, 0], [10, 13]], 'the closing segment moves vertices 2 and 0');
+});
+
+test('163b Insert vertex: after the hovered vertex or into the segment, bulges of the other segments kept, the split halves straight', () => {
+  const p = acadPoly();
+  const v = GR.insertVertex(p, 1, [32, 82]);                               // AutoCAD: 10,70 40,70 32,82 40,90 70,90, arc kept on the last segment
+  assert.equal(v.label, 'Insert vertex');
+  assert.deepEqual(at4(v.ent), [[10, 70, 0], [40, 70, 0], [32, 82, 0], [40, 90, -1], [70, 90, 0]]);
+  assert.equal(val(v.ent, 90), 5, 'the vertex count');
+  assert.deepEqual(at4(GR.insertVertex(p, 0, [22, 80]).ent).map((q) => q.slice(0, 2)), [[10, 70], [22, 80], [40, 70], [40, 90], [70, 90]], 'into segment 0');
+  const split = GR.insertVertex(p, 2, [55, 105]);                          // splitting the arc segment: both halves straight (our guess)
+  assert.deepEqual(at4(split.ent), [[10, 70, 0], [40, 70, 0], [40, 90, 0], [55, 105, 0], [70, 90, 0]]);
+  assert.deepEqual(at4(GR.insertVertex(p, 3, [80, 100]).ent).slice(-2), [[70, 90, 0], [80, 100, 0]], 'after the last vertex of an open polyline: a new end');
+  const c = reopen(lwpoly([[0, 0], [10, 0], [10, 10]], { closed: true }));
+  assert.deepEqual(at4(GR.insertVertex(c, 2, [0, 5]).ent).map((q) => q.slice(0, 2)), [[0, 0], [10, 0], [10, 10], [0, 5]], 'the closing segment: a new last vertex');
+  assert.equal(val(GR.insertVertex(c, 2, [0, 5]).ent, 70), 1, 'still closed');
+  assert.equal(GR.insertVertex(p, 1, [40, 70]), null, 'on the hovered vertex');
+  assert.equal(GR.insertVertex(p, 1, [40, 90]), null, 'on the next vertex');
+  assert.equal(GR.insertVertex(p, 9, [1, 1]), null); assert.equal(GR.insertVertex(p, 1, [NaN, 1]), null);
+  assert.equal(GR.insertVertex(circle(0, 0, 5), 0, [1, 1]), null);
+  assert.deepEqual(verts(p).length, 4, 'the source stays');
+  const withId = reopen(lwpoly([[0, 0], [10, 0], [10, 10]])); withId.r = { c: [...withId.r.c.slice(0, withId.r.c.indexOf(20) + 1), 91, ...withId.r.c.slice(withId.r.c.indexOf(20) + 1)], v: [...withId.r.v.slice(0, withId.r.c.indexOf(20) + 1), '7', ...withId.r.v.slice(withId.r.c.indexOf(20) + 1)] };
+  assert.equal(GR.insertVertex(withId, 0, [5, 5]).ent.r.c.filter((x) => x === 91).length, 1, 'a copied vertex ID is not kept');
+});
+
+test('163b Remove vertex: first / middle / last, open and closed; the joined segment is straight; refused at the limit', () => {
+  const p = acadPoly();
+  assert.deepEqual(at4(GR.removeVertex(p, 1).ent), [[10, 70, 0], [40, 90, -1], [70, 90, 0]]);       // AutoCAD: 10,70 40,90 70,90, arc kept
+  assert.equal(GR.removeVertex(p, 1).label, 'Remove vertex');
+  assert.deepEqual(at4(GR.removeVertex(p, 0).ent), [[40, 70, 0], [40, 90, -1], [70, 90, 0]]);
+  assert.deepEqual(at4(GR.removeVertex(p, 3).ent), [[10, 70, 0], [40, 70, 0], [40, 90, 0]], 'the last vertex goes with its segment');
+  assert.deepEqual(at4(GR.removeVertex(p, 3).ent).length, 3); assert.equal(val(GR.removeVertex(p, 3).ent, 90), 3);
+  assert.deepEqual(at4(GR.removeVertex(p, 2).ent), [[10, 70, 0], [40, 70, 0], [70, 90, 0]], 'the arc into the removed vertex does not survive');
+  const c = reopen(lwpoly([[0, 0, 0.5], [10, 0], [10, 10], [0, 10]], { closed: true }));
+  assert.deepEqual(at4(GR.removeVertex(c, 0).ent), [[10, 0, 0], [10, 10, 0], [0, 10, 0]], 'closed, the first vertex: its bulge goes');
+  assert.deepEqual(at4(GR.removeVertex(c, 3).ent), [[0, 0, 0.5], [10, 0, 0], [10, 10, 0]], 'closed, the last: the closing segment is straight');
+  assert.equal(val(GR.removeVertex(c, 3).ent, 70), 1);
+  assert.equal(GR.removeVertex(GR.removeVertex(c, 3).ent, 0), null, 'a closed polyline keeps 3 vertices');
+  const two = reopen(lwpoly([[0, 0], [5, 5]]));
+  assert.equal(GR.removeVertex(two, 0), null, 'an open one keeps 2');
+  assert.ok(GR.removeVertex(reopen(lwpoly([[0, 0], [5, 5], [9, 1]])), 1));
+  assert.equal(GR.removeVertex(p, 7), null);
+  assert.equal(GR.removeVertex(circle(0, 0, 5), 0), null);
+});
+
+test('163b Convert to Arc / Line: the arc passes through the point; a point on the chord is refused; a line stays a line', () => {
+  const p = acadPoly();
+  const a = GR.convertToArc(p, 0, [25, 75]);                               // AutoCAD: 5 above the mid of 10,70-40,70: bulge -0.3334
+  assert.equal(a.label, 'Convert to Arc'); near(verts(a.ent)[0][2], -1 / 3, 1e-9);
+  nearPt([GR.gripsOf(a.ent)[4].x, GR.gripsOf(a.ent)[4].y], [25, 75]);
+  assert.ok(verts(GR.convertToArc(p, 0, [25, 65]).ent)[0][2] > 0, 'below the chord: the other way');
+  assert.deepEqual(at4(a.ent).slice(1), at4(p).slice(1), 'the other segments stay');
+  assert.equal(GR.convertToArc(p, 0, [20, 70]), null, 'a point on the chord line');
+  assert.equal(GR.convertToArc(p, 0, [100, 70]), null, 'on the chord line, beyond it');
+  assert.equal(GR.convertToArc(p, 0, [NaN, 70]), null); assert.equal(GR.convertToArc(p, 5, [25, 75]), null);
+  const l = GR.convertToLine(p, 2);
+  assert.equal(l.label, 'Convert to Line'); assert.deepEqual(at4(l.ent), [[10, 70, 0], [40, 70, 0], [40, 90, 0], [70, 90, 0]]);
+  assert.equal(GR.convertToLine(p, 0), null, 'a line is a line already');
+  const c = reopen(lwpoly([[0, 0], [10, 0], [10, 10]], { closed: true }));
+  assert.ok(Math.abs(verts(GR.convertToArc(c, 2, [3, 7]).ent)[2][2]) > 0, 'the closing segment converts');
+  const noCode = lwpoly([[0, 0], [10, 0], [10, 10]]); noCode.r = { c: noCode.r.c.filter((x) => x !== 42), v: noCode.r.v.filter((_, k) => noCode.r.c[k] !== 42) };
+  assert.ok(Math.abs(verts(GR.convertToArc(noCode, 0, [5, -3]).ent)[0][2]) > 0, 'a vertex with no bulge code gets one');
+});
+
+test('163b optionsOf for polylines: the lists as tested, Remove vertex only above the limit, nothing for a leader', () => {
+  const p = acadPoly(), o = (e, id) => GR.optionsOf(e, id);
+  assert.deepEqual(o(p, 'v1'), ['Stretch', 'Insert vertex', 'Remove vertex']);
+  assert.deepEqual(o(p, 'e0'), ['Stretch', 'Insert vertex', 'Convert to Arc']);
+  assert.deepEqual(o(p, 'e2'), ['Stretch', 'Insert vertex', 'Convert to Line']);
+  assert.deepEqual(o(reopen(lwpoly([[0, 0], [5, 5]])), 'v0'), ['Stretch', 'Insert vertex'], 'two vertices: no Remove vertex');
+  assert.deepEqual(o(reopen(lwpoly([[0, 0], [5, 5], [9, 1]], { closed: true })), 'v0'), ['Stretch', 'Insert vertex'], 'a triangle: no Remove vertex');
+  assert.deepEqual(o(rect(0, 0, 10, 5), 'e0'), ['Stretch', 'Insert vertex', 'Convert to Arc'], 'a rectangle side too');
+  assert.deepEqual(o(p, 'v9'), []);
+  assert.deepEqual(o({ type: 'LEADER', model: { pts: [[0, 0], [5, 5]] } }, 'v0'), []);
+  assert.ok(GR.IMMEDIATE.has('Remove vertex') && GR.IMMEDIATE.has('Convert to Line') && !GR.IMMEDIATE.has('Insert vertex'));
+  assert.equal(GR.optionPrompt(p, 'Insert vertex'), 'Specify new vertex point:');
+  assert.equal(GR.optionPrompt(p, 'Convert to Arc'), 'Specify midpoint of arc segment:');
+  assert.equal(GR.optionPrompt(p, 'Remove vertex'), 'Pick to remove vertex:');
+  assert.equal(GR.optionPrompt(p, 'Convert to Line'), 'Pick to convert to line segment:');
+  assert.equal(GR.dragOption(p, 'e0', 'Convert to Arc', [25, 75]).label, 'Convert to Arc');
+  assert.equal(GR.dragOption(p, 'v1', 'Insert vertex', [32, 82]).label, 'Insert vertex');
+  assert.equal(GR.applyOption(p, 'v1', 'Remove vertex').label, 'Remove vertex');
+  assert.equal(GR.applyOption(p, 'e2', 'Convert to Line').label, 'Convert to Line');
+  assert.equal(GR.applyOption(p, 'v1', 'Insert vertex'), null);
+  assert.equal(GR.readoutOf(p, 'v1', GR.insertVertex(p, 1, [32, 82]).ent), '5 vertices');
+  assert.equal(GR.readoutOf(p, 'v1', GR.removeVertex(p, 1).ent), '3 vertices');
 });
 
 console.log(n + ' grips tests passed');

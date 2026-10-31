@@ -4659,7 +4659,7 @@ function renderCommand() {
   if (state.grip && (ed || lay)) {
     const gg = state.grip, M = gg.opt ? gg.opts[gg.opt].toUpperCase() : GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0 || gg.copy;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
     ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M, gg.copy) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
-    ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.id.startsWith('e') && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : gg.opt ? GR.optionPrompt(gg.ent, gg.opts[gg.opt]) : acad ? GM.prompt(M) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
+    ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.opt ? GR.optionPrompt(gg.ent, gg.opts[gg.opt]) : GR.isRectEdge(gg.ent, gg.id) && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
     return;
   }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
@@ -6652,7 +6652,7 @@ function drawOvl(paint = false) {
   if (ui.gripHint) {
     const gh = d && (d.lay ? gd : d), grips = gh && gripOn(gh) ? gripList(gh) : [];
     ui.gripHint.hidden = !grips.length;
-    ui.gripHint.textContent = grips.some((g) => g.kind === 'edge') ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+    ui.gripHint.textContent = grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
   if (!tip) { t.hidden = true; return; }
@@ -8634,13 +8634,20 @@ function gripOptionsOpen(hit) {
 /** The hot grip's option i (Ctrl cycles them, the list picks one): its header and prompt, the preview follows the pointer. */
 function gripOptionTo(g, i, cursor) {
   if (i && g.copy) { note(`${g.opts[i]} makes no copies`); return; }       // the run stays in Stretch with its copies
+  if (GR.IMMEDIATE.has(g.opts[i])) {                                       // 163b Remove vertex / Convert to Line: applied the moment it is picked, no point to ask for
+    const r = GR.applyOption(g.ent, g.id, g.opts[i]);
+    if (!r) { note(`${g.opts[i]}: nothing to do here`); return; }
+    g.hot = true; g.opt = i; g.next = r.ent; g.label = r.label; g.to = g.base; ui.cmdUI.message(`** ${g.opts[i].toUpperCase()} **`);
+    gripDone(g, false); return;
+  }
   g.hot = true; g.cursor = g.cursor || cursor; g.opt = i; state.msg = null;
   ui.cmdUI.message(g.opt ? `** ${g.opts[i].toUpperCase()} **` : GM.header('STRETCH', g.copy)); gripRefresh(g);
 }
 /** Ctrl tapped in a hot grip run: the grip's next option (Stretch → Lengthen → Stretch; arc middle Stretch ↔ Radius). A Ctrl held for a Ctrl-click is no tap. */
 function gripOptionCycle() {
   const g = state.grip;
-  if (g && g.hot && !g.mode && g.opts.length > 1 && !g.baseAsk && !g.ref) gripOptionTo(g, (g.opt + 1) % g.opts.length);
+  const ring = g ? g.opts.map((_, i) => i).filter((i) => !GR.IMMEDIATE.has(g.opts[i])) : [];       // 163b: Ctrl cycles only the options that take a point
+  if (g && g.hot && !g.mode && ring.length > 1 && !g.baseAsk && !g.ref) gripOptionTo(g, ring[(ring.indexOf(g.opt) + 1) % ring.length]);
 }
 function gripMove(e) {
   const g = state.grip;
@@ -8714,7 +8721,7 @@ function gripTyped(raw) {
   if (g.ref && g.ref.step !== 'new') { refTyped(...gripRefCtx(g), raw); return; }
   if (g.mode) { gripModeTyped(g, inp, raw); return; }
   if (g.opt) { gripOptionTyped(g, inp); return; }
-  if (g.id.startsWith('e')) { note('Drag the edge to resize; typing a size is not available yet'); return; }
+  if (GR.isRectEdge(g.ent, g.id)) { note('Drag the edge to resize; typing a size is not available yet'); return; }
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
   const refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
   let mm = null;
@@ -8731,6 +8738,13 @@ function gripTyped(raw) {
 /** Typed in an option (163a): Radius the radius, Lengthen on a line the distance ADDED, on an arc the end's new angle in degrees (AutoCAD); mm for the first two. */
 function gripOptionTyped(g, inp) {
   const name = g.opts[g.opt], deg = name === 'Lengthen' && g.ent.type === 'ARC';
+  if (name === 'Insert vertex' || name === 'Convert to Arc') {             // 163b: a point, as the click
+    const mm = DR.typedPoint(inp, g.base.map((v) => v * g.d.factor));
+    if (!mm) { note(`Type the point as x,y or @dx,dy, or click it. ${GR.optionPrompt(g.ent, name)}`); return; }
+    gripAim(g, mm.map((v) => v / g.d.factor));
+    if (!g.next) { note(`${name === 'Insert vertex' ? 'That is on a neighbouring vertex' : 'That point is on the segment\'s line, so no arc passes through it'}. ${GR.optionPrompt(g.ent, name)}`); return; }
+    gripDone(g, false); return;
+  }
   if (inp.kind !== 'len') { note(`Type ${deg ? 'an angle in degrees' : name === 'Radius' ? 'the radius' : 'the length to add'}, or click a point`); return; }
   const r = GR.typedOption(g.ent, g.id, name, deg ? inp.v : inp.v / g.d.factor);
   if (!r) { note(`That would leave nothing of the shape, or change nothing. ${GR.optionPrompt(g.ent, name)}`); return; }

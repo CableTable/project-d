@@ -6,6 +6,7 @@
 //   gripsOf(ent)                 → [{ id, kind: 'end' | 'mid' | 'centre' | 'quad' | 'vertex' | 'edge', x, y }]
 //   dragGrip(ent, id, to, shift) → { ent: the changed record, label } or null (nothing sensible: the point is the same, three points in a line)
 //   optionsOf(ent, id)           → 163a Grip options: ['Stretch', 'Lengthen'] / ['Stretch', 'Radius'] / []; lengthen, setRadius, dragOption, typedOption do them
+//                                  163b polylines: vertex Stretch / Insert vertex / Remove vertex, segment mid Stretch / Insert vertex / Convert to Arc | Line (insertVertex, removeVertex, convertToArc, convertToLine)
 //   refPoint(ent, id)            → the point the rubber band starts from (the fixed end of a line, the centre of a circle, else the grip itself)
 //   shapeOf(ent, factor)         → the shape in mm as draw.js svgPath draws it
 //   (a leader, leader.js, is passed in as { type: 'LEADER', model } and has a grip at each of its points)
@@ -14,6 +15,7 @@
 //   capGrips(list)               → the list, or [] when it exceeds MAX_GRIPS handles
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)
+import { bulgeOf3 } from './contour.js';             // 163b: the bulge of the arc through a pointer
 
 export const MAX_SELECTED = 200;
 export const GRIP_SIZE = 5;                 // 155r: GRIPSIZE 5, AutoCAD's half side: the square is 2 * 5 + 1 px
@@ -136,10 +138,16 @@ export function gripsOf(ent) {
     const a = arcOf(r);
     return [{ id: 'a', kind: 'end', x: a.s[0], y: a.s[1] }, { id: 'm', kind: 'mid', x: a.m[0], y: a.m[1] }, { id: 'b', kind: 'end', x: a.e[0], y: a.e[1] }, { id: 'c', kind: 'centre', x: a.c[0], y: a.c[1] }];
   }
-  const vertices = lwVertices(r).map((v, i) => ({ id: 'v' + i, kind: 'vertex', x: v.x, y: v.y }));
-  const rect = rectangleVertices(r);
-  return rect ? vertices.concat(rect.map((v, i) => ({ id: 'e' + i, kind: 'edge', x: (v.x + rect[(i + 1) % 4].x) / 2, y: (v.y + rect[(i + 1) % 4].y) / 2 }))) : vertices;
+  const vs = lwVertices(r), vertices = vs.map((v, i) => ({ id: 'v' + i, kind: 'vertex', x: v.x, y: v.y })), rect = !!rectangleVertices(r);
+  // 163b: a mid grip on every segment (the closing one too); an arc segment's is the top of its arc (chord middle + bulge * (dy, -dx) / 2); a rectangle's resize its side
+  const edges = Array.from({ length: segmentCount(r, vs.length) }, (_, j) => {
+    const a = vs[j], b = vs[(j + 1) % vs.length];
+    return { id: 'e' + j, kind: 'edge', x: (a.x + b.x) / 2 + a.b * (b.y - a.y) / 2, y: (a.y + b.y) / 2 - a.b * (b.x - a.x) / 2, ...(rect ? { rect: true } : {}) };
+  });
+  return vertices.concat(edges);
 }
+/** How many segments a polyline of n vertices has (segment j runs from vertex j to j + 1; a closed one has the closing one too); 0 under 2 vertices. */
+const segmentCount = (r, n) => (n < 2 ? 0 : (get(r, 70) ?? 0) & 1 ? n : n - 1);
 
 const find = (ent, id) => gripsOf(ent).find((g) => g.id === id) || null;
 
@@ -239,6 +247,13 @@ export function dragGrip(ent, id, to, shift = false) {
     if (!f) return null;
     return { ent: withValues(ent, [[at(r, 10), f.c[0]], [at(r, 20), f.c[1]], [at(r, 40), f.r], [at(r, 50), f.a0], [at(r, 51), f.a1]]), label: id === 'm' ? 'Arc bulge' : 'Stretch arc' };
   }
+  if (g.kind === 'edge' && !g.rect) {       // 163b: a segment's mid grip: a line segment moves with both ends, an arc segment bends through the pointer, its ends stay
+    const vs = lwVertices(r), a = vs[+id.slice(1)], b = vs[(+id.slice(1) + 1) % vs.length];
+    if (dist([g.x, g.y], to) < 1e-12) return null;
+    if (a.b) { const bulge = bulgeThrough(a, b, to); return bulge && Math.abs(bulge - a.b) > 1e-12 ? { ent: withValues(ent, [[a.kb, bulge]]), label: 'Arc bulge' } : null; }
+    const dx = to[0] - g.x, dy = to[1] - g.y;
+    return { ent: withValues(ent, [[a.kx, a.x + dx], [a.ky, a.y + dy], [b.kx, b.x + dx], [b.ky, b.y + dy]]), label: 'Stretch polyline' };
+  }
   if (g.kind === 'edge') {
     const vs = rectangleVertices(r), i = +id.slice(1), j = (i + 1) % 4;
     const a = vs[(i + 2) % 4], b = vs[(i + 3) % 4], ox = (a.x + b.x) / 2, oy = (a.y + b.y) / 2;
@@ -262,10 +277,93 @@ export function dragGrip(ent, id, to, shift = false) {
 export function optionsOf(ent, id) {
   if (!ent || !ent.r || !hasGrips(ent)) return [];
   if ((ent.type === 'LINE' || ent.type === 'ARC') && (id === 'a' || id === 'b')) return ['Stretch', 'Lengthen'];
+  if (ent.type === 'LWPOLYLINE' && find(ent, id)) {       // 163b: a vertex Stretch / Insert vertex / Remove vertex; a segment mid Stretch / Insert vertex / Convert to Arc (a line) or Line (an arc)
+    const vs = lwVertices(ent.r), i = +id.slice(1);
+    if (id[0] === 'v') return ['Stretch', 'Insert vertex', ...(vs.length - 1 >= minVertices(ent.r) ? ['Remove vertex'] : [])];
+    return ['Stretch', 'Insert vertex', vs[i].b ? 'Convert to Line' : 'Convert to Arc'];
+  }
   return ent.type === 'ARC' && id === 'm' ? ['Stretch', 'Radius'] : [];
 }
+const minVertices = (r) => ((get(r, 70) ?? 0) & 1 ? 3 : 2);       // fewer would leave no segment (open) or no area (closed)
+/** Options that apply the moment they are picked (no point to ask for, and Ctrl skips them). */
+export const IMMEDIATE = new Set(['Remove vertex', 'Convert to Line']);
+/** Is grip `id` a rectangle's side (it resizes the rectangle) rather than a polyline segment's middle? */
+export const isRectEdge = (ent, id) => !!find(ent, id)?.rect;
 /** AutoCAD's prompt of an option (as tested 2027): the arc asks for "end point of arc". */
-export const optionPrompt = (ent, name) => (name === 'Radius' ? 'Specify radius:' : ent.type === 'ARC' ? 'Specify end point of arc:' : 'Specify end point:');
+export const optionPrompt = (ent, name) => ({
+  Radius: 'Specify radius:', 'Insert vertex': 'Specify new vertex point:', 'Convert to Arc': 'Specify midpoint of arc segment:',
+  'Remove vertex': 'Pick to remove vertex:', 'Convert to Line': 'Pick to convert to line segment:',
+}[name] || (ent.type === 'ARC' ? 'Specify end point of arc:' : 'Specify end point:'));
+
+// ---- 163b polyline edits: pure, each returns { ent, label } or null (refused, nothing to do) ----
+/** The record split into its header and one group per vertex (10, 20, 40, 41, 42, 91 belong to a vertex; copies, so they can be changed). */
+function splitPoly(r) {
+  const head = { c: [], v: [] }, vs = [];
+  for (let k = 0; k < r.c.length; k++) {
+    const c = r.c[k];
+    if (c === 10) vs.push({ c: [], v: [] });
+    const t = vs.length && [10, 20, 40, 41, 42, 91].includes(c) ? vs[vs.length - 1] : head;
+    t.c.push(c); t.v.push(r.v[k]);
+  }
+  return { head, vs };
+}
+/** The entity with these vertex groups (and the vertex count in code 90). */
+function joinPoly(ent, head, vs) {
+  const c = head.c.slice(), v = head.v.slice(), k = c.indexOf(90);
+  if (k >= 0) v[k] = String(vs.length);
+  for (const x of vs) { c.push(...x.c); v.push(...x.v); }
+  return { ...ent, r: { ...ent.r, c, v } };
+}
+function setBulge(group, b) {
+  const k = group.c.indexOf(42);
+  if (k >= 0) group.v[k] = text(b); else if (b) { group.c.push(42); group.v.push(text(b)); }
+}
+/** The bulge of the arc from vertex a to vertex b through the point p (0 when p is on the chord's line). */
+const bulgeThrough = (a, b, p) => bulgeOf3([a.x, a.y], p, [b.x, b.y]);
+const segmentOK = (ent, j) => ent && ent.type === 'LWPOLYLINE' && hasGrips(ent) && Number.isInteger(j) && j >= 0 && j < segmentCount(ent.r, lwVertices(ent.r).length);
+
+/** Insert vertex: a new vertex at `to` after vertex `after` (a vertex grip), or into segment `after` (a segment grip): the same place. The split segment's halves are straight. Refused on a neighbour's spot. */
+export function insertVertex(ent, after, to) {
+  if (!ent || ent.type !== 'LWPOLYLINE' || !hasGrips(ent) || !to || !to.every(Number.isFinite)) return null;
+  const ps = lwVertices(ent.r), n = ps.length;
+  if (!Number.isInteger(after) || after < 0 || after >= n) return null;
+  const next = (get(ent.r, 70) ?? 0) & 1 || after < n - 1 ? ps[(after + 1) % n] : null;
+  if ([ps[after], next].some((p) => p && dist([p.x, p.y], to) < 1e-9)) return null;
+  const { head, vs } = splitPoly(ent.r), fresh = { c: vs[after].c.slice(), v: vs[after].v.slice() };
+  const id = fresh.c.indexOf(91); if (id >= 0) { fresh.c.splice(id, 1); fresh.v.splice(id, 1); }       // a copied vertex ID would be a second one
+  fresh.v[fresh.c.indexOf(10)] = text(to[0]); fresh.v[fresh.c.indexOf(20)] = text(to[1]);
+  setBulge(fresh, 0); setBulge(vs[after], 0);
+  vs.splice(after + 1, 0, fresh);
+  return { ent: joinPoly(ent, head, vs), label: 'Insert vertex' };
+}
+/** Remove vertex i; the segment that joins its neighbours is straight. Refused when fewer than 2 (open) or 3 (closed) vertices would be left. */
+export function removeVertex(ent, i) {
+  if (!ent || ent.type !== 'LWPOLYLINE' || !hasGrips(ent)) return null;
+  const n = lwVertices(ent.r).length;
+  if (!Number.isInteger(i) || i < 0 || i >= n || n - 1 < minVertices(ent.r)) return null;
+  const { head, vs } = splitPoly(ent.r), prev = (get(ent.r, 70) ?? 0) & 1 ? (i + n - 1) % n : i - 1;
+  if (prev >= 0) setBulge(vs[prev], 0);
+  vs.splice(i, 1);
+  return { ent: joinPoly(ent, head, vs), label: 'Remove vertex' };
+}
+/** Convert to Line: segment j straight (refused when it is a line already). */
+export function convertToLine(ent, j) {
+  if (!segmentOK(ent, j) || !lwVertices(ent.r)[j].b) return null;
+  const { head, vs } = splitPoly(ent.r);
+  setBulge(vs[j], 0);
+  return { ent: joinPoly(ent, head, vs), label: 'Convert to Line' };
+}
+/** Convert to Arc: segment j becomes the arc through the point `to`; refused for a point on the chord's line (no arc). */
+export function convertToArc(ent, j, to) {
+  if (!segmentOK(ent, j) || !to || !to.every(Number.isFinite)) return null;
+  const ps = lwVertices(ent.r), bulge = bulgeThrough(ps[j], ps[(j + 1) % ps.length], to);
+  if (!bulge || !Number.isFinite(bulge)) return null;
+  const { head, vs } = splitPoly(ent.r);
+  setBulge(vs[j], bulge);
+  return { ent: joinPoly(ent, head, vs), label: 'Convert to Arc' };
+}
+/** An option that applies at once (IMMEDIATE): the grip's own vertex or segment. */
+export const applyOption = (ent, id, name) => (name === 'Remove vertex' ? removeVertex(ent, +id.slice(1)) : name === 'Convert to Line' ? convertToLine(ent, +id.slice(1)) : null);
 const wrap360 = (t) => ((t % 360) + 360) % 360;
 /**
  * Lengthen: a line's end grip moved along the line's own direction, or an arc's end along the arc. `how`: { to } the pointer ([x, y]), { add } a typed
@@ -293,7 +391,7 @@ export function setRadius(ent, rad) {
   return { ent: withValues(ent, [[at(ent.r, 40), rad]]), label: 'Radius' };
 }
 /** The option `name` with the pointer at `to` (drawing units). */
-export const dragOption = (ent, id, name, to) => (name === 'Radius' ? setRadius(ent, dist(arcOf(ent.r).c, to)) : lengthen(ent, id, { to }));
+export const dragOption = (ent, id, name, to) => (name === 'Radius' ? setRadius(ent, dist(arcOf(ent.r).c, to)) : name === 'Insert vertex' ? insertVertex(ent, +id.slice(1), to) : name === 'Convert to Arc' ? convertToArc(ent, +id.slice(1), to) : lengthen(ent, id, { to }));
 /** The option `name` with a typed number: Radius the radius, Lengthen on a line the distance added (both drawing units), on an arc the end angle in degrees. */
 export const typedOption = (ent, id, name, v) => (name === 'Radius' ? setRadius(ent, v) : lengthen(ent, id, ent.type === 'ARC' ? { deg: v } : { add: v }));
 
@@ -320,6 +418,7 @@ export function readoutOf(ent, id, next, factor = 1) {
   if (ent.type === 'CIRCLE' && id.startsWith('q')) return `R ${n2(shapeOf(next, f).r)}`;
   if (ent.type === 'ARC' && (id === 'a' || id === 'b' || id === 'm')) { const n = shapeOf(next, f); return `R ${n2(n.r)} · ${n2(sweepOf(n.a0, n.a1))}°`; }
   if (ent.type === 'ELLIPSE' && id !== 'c') { const q = ellipseOf(next.r), a = Math.hypot(...q.m) * f; return `Major ${n2(2 * a)} · Minor ${n2(2 * a * q.ratio)} mm`; }
+  if (ent.type === 'LWPOLYLINE' && lwVertices(next.r).length !== lwVertices(ent.r).length) return `${lwVertices(next.r).length} vertices`;       // Insert / Remove vertex
   if (ent.type === 'LWPOLYLINE' || ent.type === 'LEADER') { const n = find(next, id); return `X ${n2(n.x * f)} · Y ${n2(n.y * f)}`; }
   const n = find(next, id);
   return `Move ΔX ${n2((n.x - g.x) * f)} ΔY ${n2((n.y - g.y) * f)}`;
