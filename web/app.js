@@ -39,7 +39,7 @@ import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
 import { openAttributes } from './attributedlg.js';
 import { attributeRows } from './attribute-edit.js';
-import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText } from './dimension-text.js';
+import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import * as GM from './gripmode.js';
@@ -3769,6 +3769,7 @@ function cmdEnter(raw) {
   if (modLive() && modTyped(editable(), raw)) return;
   if (layModLive() && modTyped(curDoc(), raw)) return;
   if (state.tool === 'text' && (editable() || curLay()) && !textEditing()) { textTyped(raw); return; }
+  if (dimAutoLive() && dimAutoTyped(raw)) return;
   const d = state.tool === 'measure' || layModLive() ? measureTarget() : pointTarget(), pointAction = pointToolAction();
   if (d && pointAction) {
     const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw);
@@ -5624,9 +5625,10 @@ function keepMeasure() {
 }
 /// Dimension: first point, second point, then the callout follows the mouse sideways and a third click places it (AutoCAD's way). Linear is the
 // same with the pointer choosing a horizontal or a vertical line. Radius and diameter: pick a circle or an arc, then place it. Angle: pick two lines, then the arc.
-const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null, ghost: null });
+// Automatic also keeps: text (the override typed with T), as ('radius' | 'diameter' from R / D), askText (the "Enter dimension text" prompt is on), hot (the line hovered as a second line for an angle), run (the history length after each dimension of this DIM run, for Undo).
+const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null, ghost: null, text: '', as: null, askText: false, hot: null, run: [] });
 const dimBusy = (D) => D.pts.length > 0 || !!D.obj || D.lines.length > 0;
-function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.ghost = null; D.lines = []; D.force = null; D.typed = false; }
+function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.ghost = null; D.lines = []; D.force = null; D.typed = false; D.text = ''; D.as = null; D.askText = false; D.hot = null; }
 const dimAutoLive = () => !!state.dim && state.dimType === 'auto';
 function dimAutoEnd() { dimClear(state.dim); setTool('select'); }       // Enter or Space ends Automatic DIM, which otherwise repeats
 /** What the command line asks for next. */
@@ -5635,7 +5637,7 @@ function dimPrompt() {
   const t = dimTarget();
   if (!t) return 'Dimension: open a drawing tab or a layout first';
   if (!D) return null;
-  if (type === 'auto') return D.obj ? 'Specify dimension line location:' : 'Select a line, arc or circle to dimension:';
+  if (type === 'auto') return D.askText ? `Enter dimension text <${dimMeasured() || ''}>:` : AD.promptOf(D);
   if (type === 'aligned') return ['Dimension: first point (it snaps to ends and centres)', 'Dimension: second point', 'Dimension: move the line up or down and click to place it'][D.pts.length];
   if (type === 'linear') return ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location [Horizontal/Vertical]:'][D.pts.length];
   if (type === 'angle') return ['Select first line:', 'Select second line:', 'Specify dimension arc location:'][D.lines.length];
@@ -5656,8 +5658,11 @@ function dimDraft(at) {
     const axis = D.force || Ed.linearAxis(a, b, at);
     return { kind: 'linear', params: { a, b, axis, offset: Ed.dimOffsetAt(a, b, at, axis) } };
   }
-  if (type === 'angle') { const m = D.lines.length === 2 && at && Ed.angleBetween(D.lines[0], D.lines[1], at); return m ? { kind: 'angle', params: m } : null; }
-  if (type === 'auto') return D.obj && AD.autoDraft(D.obj, at);
+  if (type === 'angle' || D.lines.length === 2) { const m = D.lines.length === 2 && at && Ed.angleBetween(D.lines[0], D.lines[1], at); return m ? { kind: 'angle', params: m } : null; }
+  if (type === 'auto') {       // points mode (two origins, the cursor rule of a line pick), or the picked line / arc / circle
+    if (D.pts.length) return D.pts.length === 2 ? AD.autoDraft({ type: 'line', l: [...D.pts[0].slice(0, 2), ...D.pts[1].slice(0, 2)] }, at) : D.hover && { kind: 'aligned', params: { a: D.pts[0], b: D.hover, offset: 0 } };
+    return D.obj && AD.autoDraft(D.obj, at, D.as);
+  }
   if (!D.obj || !at) return null;
   if (type === 'radius') return { kind: 'radius', params: { c: D.obj.c, r: D.obj.r, p: at } };
   const ends = Ed.diameterEnds(D.obj.c, D.obj.r, at);
@@ -5669,10 +5674,12 @@ function previewDim(d) {
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
   if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset }, d.factor, G.dp);
-  const D = state.dim, look = dimNew(d), ghost = D && state.dimType === 'auto' && !D.obj && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
-  const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
-  const g = m ? Ed.dimGeom(m.kind, { ...m.params, ...look }, d.factor, state.dp) : null;
-  if (g && ghost) g.ghost = true;
+  const D = state.dim, look = dimNew(d), auto = D && state.dimType === 'auto', ghost = auto && !D.obj && !D.pts.length && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
+  const hot = auto && D.hot && D.cursor && !D.lines.length;                                                          // ... and a second line under the pointer: a faint angle to it, the line marked
+  const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : hot ? { kind: 'angle', params: Ed.angleBetween(D.obj.l, D.hot, D.cursor) } : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
+  const g = m ? Ed.dimGeom(m.kind, { ...m.params, ...look, override: auto ? D.text : '' }, d.factor, state.dp) : null;
+  if (g && (ghost || hot)) g.ghost = true;
+  if (g && hot) g.hot = D.hot;
   return g;
 }
 /** Automatic: the line, polyline segment, arc or circle under p (see autodim.js targetOf), or null. */
@@ -5683,39 +5690,93 @@ function autoTarget(d, p) {
 function dimHover(d, p, shift) {
   const D = state.dim;
   D.cursor = p; D.shift = shift;
-  if (D.pts.length < 2 && (state.dimType === 'aligned' || state.dimType === 'linear')) D.hover = pickPoint(d, p, D.pts, shift, true);
-  if (state.dimType === 'auto' && !D.obj) D.ghost = autoTarget(d, p);
+  if (D.pts.length < 2 && (state.dimType === 'aligned' || state.dimType === 'linear' || state.dimType === 'auto' && D.pts.length === 1)) D.hover = pickPoint(d, p, D.pts, shift, true);
+  if (state.dimType === 'auto') {
+    D.ghost = D.obj || D.pts.length ? null : autoTarget(d, p);
+    D.hot = D.obj && !D.lines.length ? AD.secondLine(D.obj, autoTarget(d, p)) : null;
+  }
   paintOverlay();
+}
+/** Automatic: the measured text of the dimension as it stands at the pointer, for the Text option's default. */
+function dimMeasured() {
+  const d = dimTarget(), D = state.dim, m = d && D && dimDraft(D.cursor), g = m && Ed.dimGeom(m.kind, { ...m.params, ...dimNew(d) }, d.factor, state.dp);
+  return g && g.measured;
 }
 /** Puts the dimension m ({ kind, params }) in the drawing (one undo step) and starts the next. */
 function dimPlace(d, m) {
   if (!m) { note(state.dimType === 'angle' ? 'Dimension: no angle there, try another place' : 'Dimension: nothing to measure there, try another place'); return; }
   const names = d.lay ? LD.dimensionNames(d.lay) : null, taken = names ? names.taken : d.raw.blocks;
-  const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(taken, m.kind, m.params.axis), state.dp);
+  const D = state.dim, dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d), override: D.text }, d.factor, Ed.freeName(taken, m.kind, m.params.axis), state.dp);
   if (!dim) { note('Dimension: nothing to measure there, try another place'); return; }
-  dimClear(state.dim);
+  dimClear(D);
   if (d.lay) {                                                       // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
     names.taken.add(dim.name.toLowerCase());
     layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block }, names);
+    D.run.push(histLen());
     note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
+  D.run.push(histLen());
   note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
   return true;
+}
+const histLen = () => { const h = historyOf(curDoc()); return h ? h.labels().past.length : 0; };
+/** Automatic: a click or typed point, by what DIM waits for (autodim.js stageOf): an object or a first origin, a second origin, a second line for an angle, or the location. */
+function dimAutoPoint(d, p, shift, typed) {
+  const D = state.dim, st = AD.stageOf(D);
+  D.askText = false;                                                 // a click leaves the Text prompt, keeping what was typed before
+  if (st !== 'first' && st !== 'second') {
+    const l2 = st === 'line' && !typed && AD.secondLine(D.obj, autoTarget(d, p));
+    if (!l2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
+    D.lines = [D.obj.l, l2]; D.hot = null;                           // two lines: our Angle dimension, then its location
+  } else if (st === 'second') {
+    const q = typed ? p : pickPoint(d, p, D.pts, shift);
+    if (Math.hypot(q[0] - D.pts[0][0], q[1] - D.pts[0][1]) < 1e-9) { note('Dimension: that is the first point again, pick another'); return; }
+    D.pts.push(q); D.hover = null;
+  } else {
+    const v = d.lay ? layObjDoc(d) : d;
+    if (d.lay && partRefused(v, { kind: 'dimension' }, p)) return;
+    D.obj = typed ? null : AD.targetOf(v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))], p);
+    D.ghost = null;
+    if (!D.obj) { D.pts = [typed ? p : pickPoint(d, p, [], shift)]; D.hover = null; }      // nothing to dimension there: points mode
+  }
+  state.pointLast = p.slice(0, 2); D.cursor = p; note(dimPrompt()); paintOverlay();
+}
+/** Automatic: a word of the bar (Text, Undo, Diameter, Radius, or the dimension text itself). True when it was one of those. */
+function dimAutoTyped(raw) {
+  const D = state.dim, d = dimTarget();
+  if (!d) return false;
+  if (D.askText) { D.askText = false; D.text = overrideText(raw.trim()); note(dimPrompt()); paintOverlay(); return true; }       // Enter keeps the measured text, <> inside stands for it
+  const o = AD.optionOf(D, raw);
+  if (!o) return false;
+  if (o === 'Text') D.askText = true;
+  else if (o === 'Undo') { dimAutoUndo(); return true; }
+  else D.as = o.toLowerCase();
+  note(dimPrompt()); paintOverlay();
+  return true;
+}
+/** Undo of Automatic DIM: one pick back inside a dimension, at the first prompt the last dimension of this run. */
+function dimAutoUndo() {
+  const D = state.dim, b = AD.back(D);
+  if (b) {
+    Object.assign(D, b, { hover: null, hot: null, askText: false });
+    if (!b.obj && !b.pts.length) { D.text = ''; D.as = null; }       // back at the first prompt: a new dimension starts clean
+    note(dimPrompt()); paintOverlay(); return;
+  }
+  if (D.run.length && D.run.at(-1) === histLen()) { D.run.pop(); undoCurrent(); note('Dimension taken back. ' + dimPrompt()); return; }
+  note('Nothing to undo in this DIM. ' + dimPrompt());
 }
 function dimensionPoint(d, p, shift = false, typed = false) {
   const D = state.dim, type = state.dimType;
   if (!D || !dimTarget()) return;
-  if (type === 'radius' || type === 'diameter' || type === 'angle' || type === 'auto') {
+  if (type === 'auto') { dimAutoPoint(d, p, shift, typed); return; }
+  if (type === 'radius' || type === 'diameter' || type === 'angle') {
     if (D.obj || D.lines.length === 2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
     const v = d.lay ? layObjDoc(d) : d;
     if (d.lay && partRefused(v, { kind: 'dimension' }, p)) return;
     const ent = v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))];
-    if (type === 'auto') {
-      D.obj = AD.targetOf(ent, p);
-      if (!D.obj) { note('Select a line, arc or circle: click on one'); return; }
-    } else if (type === 'angle') {
+    if (type === 'angle') {
       const l = Ed.lineOf(ent);
       if (!l) { note('Select a line: click on one'); return; }
       if (D.lines.length && Ed.angleBetween(D.lines[0], l, [0, 0]) == null) { note('Those lines are parallel, there is no angle. Select another line'); return; }
@@ -6941,6 +7002,7 @@ function modEnter(d) {
 /** Words the active modify tool takes itself, so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
   if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
+  if (dimAutoLive() && state.dim.askText) return true;              // Automatic DIM's "Enter dimension text" takes any text
   const m = state.mod;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
   if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
@@ -8783,6 +8845,7 @@ function editKey(e) {
     else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
     else if (state.dimDrag) { state.dimDrag.cancelled = true; state.dimDrag = null; note('Move cancelled'); paintOverlay(); }
+    else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }
     else if (state.dim && dimBusy(state.dim)) { dimClear(state.dim); note('Dimension cancelled. ' + dimPrompt()); paintOverlay(); }
     else if (state.ldr && state.ldr.pts.length) { state.ldr.pts = []; state.ldr.hover = null; note('Leader cancelled. ' + ldrPrompt()); paintOverlay(); }
     else if (state.bal && state.bal.tip) { state.bal.tip = null; note('Balloon cancelled. ' + balPrompt()); paintOverlay(); }

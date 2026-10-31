@@ -1,6 +1,7 @@
 // autodim.js — which dimension a hover / pick gives, and how the pointer shapes it.   node autodim.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import * as AD from './web/autodim.js';
 import { targetOf, lineAxis, autoDraft, ghostAt } from './web/autodim.js';
 import { dimGeom } from './web/edit.js';
 import { line, circle, arc, ellipse, lwpoly, rect, text } from './web/dxf-write.js';
@@ -57,4 +58,60 @@ test('ghostAt: a line\'s ghost sits beside the line; an arc or circle uses the p
   const g = ghostAt({ type: 'line', l: [0, 0, 10, 0] }, [5, 0], 4);
   near(g[0], 5); near(g[1], 4);
   assert.deepEqual(ghostAt({ type: 'circle', c: [0, 0], r: 1 }, [1, 0], 4), [1, 0]);
+});
+
+const S = (o = {}) => ({ obj: null, lines: [], pts: [], as: null, ...o });
+const LINE = { type: 'line', l: [0, 0, 10, 0] }, ARC = { type: 'arc', c: [0, 0], r: 30 }, CIRC = { type: 'circle', c: [0, 0], r: 20 };
+
+test('stages and prompts: the text of each, with its options', () => {
+  assert.equal(AD.stageOf(S()), 'first');
+  assert.equal(AD.stageOf(S({ pts: [[0, 0]] })), 'second');
+  assert.equal(AD.stageOf(S({ pts: [[0, 0], [1, 1]] })), 'points');
+  assert.equal(AD.stageOf(S({ obj: LINE })), 'line');
+  assert.equal(AD.stageOf(S({ obj: LINE, lines: [LINE.l, [0, 0, 0, 5]] })), 'angle');
+  assert.equal(AD.promptOf(S()), 'Select a line, arc or circle, or specify first extension line origin [Undo]:');
+  assert.equal(AD.promptOf(S({ pts: [[0, 0]] })), 'Specify second extension line origin or [Undo]:');
+  assert.equal(AD.promptOf(S({ pts: [[0, 0], [1, 1]] })), 'Specify dimension line location or [Text/Undo]:');
+  assert.equal(AD.promptOf(S({ obj: LINE })), 'Specify dimension line location or second line for angle [Text/Undo]:');
+  assert.equal(AD.promptOf(S({ obj: LINE, lines: [LINE.l, [0, 0, 0, 5]] })), 'Specify angular dimension location or [Text/Undo]:');
+  assert.equal(AD.promptOf(S({ obj: ARC })), 'Specify radius dimension location or [Diameter/Text/Undo]:');
+  assert.equal(AD.promptOf(S({ obj: ARC, as: 'diameter' })), 'Specify diameter dimension location or [Radius/Text/Undo]:');
+  assert.equal(AD.promptOf(S({ obj: CIRC })), 'Specify diameter dimension location or [Radius/Text/Undo]:');
+  assert.equal(AD.promptOf(S({ obj: CIRC, as: 'radius' })), 'Specify radius dimension location or [Diameter/Text/Undo]:');
+});
+
+test('option letters: T / U everywhere, D / R only on an arc or circle, never on a line', () => {
+  assert.equal(AD.optionOf(S({ obj: LINE }), 't'), 'Text');
+  assert.equal(AD.optionOf(S({ obj: LINE }), 'Undo'), 'Undo');
+  assert.equal(AD.optionOf(S({ obj: LINE }), 'd'), null);
+  assert.equal(AD.optionOf(S({ obj: ARC }), 'd'), 'Diameter');
+  assert.equal(AD.optionOf(S({ obj: ARC }), 'r'), null, 'an arc is a radius already');
+  assert.equal(AD.optionOf(S({ obj: CIRC }), 'R'), 'Radius');
+  assert.equal(AD.optionOf(S(), 't'), null, 'no Text before a pick');
+  assert.equal(AD.optionOf(S(), 'u'), 'Undo');
+  assert.equal(AD.optionOf(S(), ''), null);
+});
+
+test('Undo steps back one pick, and is null at the first prompt', () => {
+  assert.equal(AD.back(S()), null);
+  assert.deepEqual(AD.back(S({ pts: [[0, 0]] })), { obj: null, lines: [], pts: [] });
+  assert.deepEqual(AD.back(S({ pts: [[0, 0], [1, 1]] })).pts, [[0, 0]]);
+  assert.deepEqual(AD.back(S({ obj: LINE })), { obj: null, lines: [], pts: [] });
+  assert.deepEqual(AD.back(S({ obj: LINE, lines: [LINE.l, [0, 0, 0, 5]] })), { obj: LINE, lines: [], pts: [] }, 'the angle goes back to the line');
+});
+
+test('a second line for the angle: a line that is not parallel; the same, a parallel one, an arc or nothing is not', () => {
+  assert.deepEqual(AD.secondLine(LINE, { type: 'line', l: [0, 0, 0, 5] }), [0, 0, 0, 5]);
+  assert.equal(AD.secondLine(LINE, LINE), null, 'the same line');
+  assert.equal(AD.secondLine(LINE, { type: 'line', l: [0, 5, 20, 5] }), null, 'parallel');
+  assert.equal(AD.secondLine(LINE, ARC), null);
+  assert.equal(AD.secondLine(LINE, null), null);
+  assert.equal(AD.secondLine(ARC, LINE), null);
+});
+
+test('R / D: an arc can be made a diameter and a circle a radius', () => {
+  const d = AD.autoDraft(ARC, [20, 20], 'diameter');
+  assert.equal(d.kind, 'diameter'); near(dimGeom(d.kind, { ...d.params, textH: 3 }, 1).mm, 60);
+  const r = AD.autoDraft(CIRC, [10, 10], 'radius');
+  assert.equal(r.kind, 'radius'); near(dimGeom(r.kind, { ...r.params, textH: 3 }, 1).mm, 20);
 });

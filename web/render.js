@@ -198,6 +198,10 @@ export function drawDimPreview(c, g, T, dpr, accent) {
     c.fillText(t.label, 0, 0);
     c.restore();
   }
+  if (g.hot) {                                                         // the second line of an angle under the pointer: marked in full
+    const a = P(g.hot[0], g.hot[1]), b = P(g.hot[2], g.hot[3]);
+    c.globalAlpha = 1; c.lineWidth = 2.6 * dpr; c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke();
+  }
   c.globalAlpha = 1;
 }
 
