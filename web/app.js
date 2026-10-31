@@ -4320,8 +4320,8 @@ function paintEditable(c, d, base, marks) {
     markCol: cssVar('--mark', '#c2410c'),
     accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
     dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-  const move = state.drawingRotate?.drag || state.entityDrag || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
-  c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
+  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
+  c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   return drawn;
 }
 
@@ -8244,19 +8244,23 @@ function gripPick(g, cx, cy, shift, hover) {
 }
 /** The grip's drag is now at q: what the shape becomes. */
 function gripAim(g, q, shift = false) {
-  g.to = q;
+  g.to = q; g.move = null;
   if (g.baseAsk || g.ref && g.ref.step !== 'new') { g.val = null; g.res = null; g.next = null; return; }       // picking a base point or the reference: nothing to preview yet
   if (g.mode) { g.val = gripRefVal(g, GM.valueAt(GM.MODES[g.mode], g.base, q)); gripModeRun(g); return; }
   if (g.hots) { gripStretchHots(g, q, shift); return; }
   const r = GR.dragGrip(g.ent, g.id, [g.pos[0] + q[0] - g.base[0], g.pos[1] + q[1] - g.base[1]], shift);       // a Base point sets where the offset starts
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
+  // a text, hatch or block has no outline to draw: the canvas shows it moved, as when a selection is dragged (155e4); a layout has no such canvas
+  const fl = r && GR.movesWhole(g.ent, g.id) && !g.d.vlay && g.d.fl;
+  if (fl && !g.items) g.items = fl.items.filter((it) => it.e === g.e);
+  g.move = fl ? { items: g.items, preview: { ...fl, items: g.items }, dx: q[0] - g.base[0], dy: q[1] - g.base[1] } : null;
 }
 /** Stretch with several hot grips (155e3): every one moves by the vector base → q; an object with its middle / centre hot moves whole. g.nexts: object index → the changed entity. */
 function gripStretchHots(g, q, shift) {
   const v = [q[0] - g.base[0], q[1] - g.base[1]], nexts = new Map();
   g.label = null;
   for (const [e, ent] of g.ents) {
-    const mine = g.hots.filter((x) => x.e === e), ids = new Set(mine.map((x) => x.id)), round = ent.type === 'CIRCLE' || ent.type === 'ARC', all = GR.gripsOf(ent);
+    const mine = g.hots.filter((x) => x.e === e), ids = new Set(mine.map((x) => x.id)), round = ent.type === 'CIRCLE' || ent.type === 'ARC' || ent.type === 'ELLIPSE', all = GR.gripsOf(ent);
     // whole: a line's middle, a circle / arc's centre, or every other grip of a circle / arc hot (Grill Q2: all grips hot = the object moves)
     const whole = ent.type === 'LINE' ? mine.find((x) => x.id === 'm') : round && (ids.has('c') || all.every((x) => x.id === 'c' || ids.has(x.id))) ? all.find((x) => x.id === 'c') : null;
     let cur = ent;
@@ -8268,7 +8272,7 @@ function gripStretchHots(g, q, shift) {
 /** The hint added to the note when some hot objects would not change in a Stretch (they stay as they were). */
 const leftNote = (g) => (g.nexts && !g.mode && g.left ? (g.left === 1 ? '. 1 object would not change and was left as it was' : `. ${g.left} objects would not change and were left as they were`) : '');
 /** The objects a grip run is previewing (the overlay draws them, not the drawing): the dragged one, or every one a hot grip changes. */
-const gripShown = (g) => (!g.next ? [] : g.nexts ? [...g.nexts.keys()] : [g.e]);
+const gripShown = (g) => (!g.next ? [] : g.nexts ? [...g.nexts].filter(([, n]) => previewShape(n, 1)).map(([e]) => e) : g.move || previewShape(g.next, 1) ? [g.e] : []);       // a text, hatch or block with no preview stays drawn where it was
 /** With Reference on (155e2) the pick's angle / distance v becomes the turn / factor against the reference; null when it cannot. */
 function gripRefVal(g, v) {
   const R = g.ref;
@@ -8290,7 +8294,7 @@ function gripCycle() {
 /** Mode i (Space / Enter cycle it, the right-click menu picks it). */
 function gripModeTo(g, i) {
   if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj || isDimPart(x.part))) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
-  g.mode = i; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
+  g.mode = i; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
 }
@@ -8535,7 +8539,7 @@ function gripOvl(d, out, k, grips) {
   if (g && g.d === d) {
     const targets = g.ents ? [...g.ents] : [[g.e, g.ent]];
     for (const [, ent] of targets) {
-      const ghost = GR.shapeOf(ent, d.factor);
+      const ghost = previewShape(ent, d.factor);
       if (ghost) out.push(s('path', { class: 'gr-ghost', transform: drawingTransform(d), d: DR.svgPath(ghost, state.sheetH) }));
     }
     for (const ent of g.acc.entities.slice(d.raw.entities.length, d.raw.entities.length + 300)) {       // Stretch copies so far
@@ -8543,7 +8547,7 @@ function gripOvl(d, out, k, grips) {
       if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
     }
     for (const ent of g.nexts ? g.nexts.values() : g.next ? [g.next] : []) {
-      const nw = GR.shapeOf(ent, d.factor);
+      const nw = previewShape(ent, d.factor);
       if (nw) out.push(s('path', { class: 'gr-new', transform: drawingTransform(d), d: DR.svgPath(nw, state.sheetH), 'data-testid': 'grip-preview' }));
     }
     const hotKeys = g.hots && new Set(g.hots.map((x) => x.e + ':' + x.id)), cold = [], hotSq = [];

@@ -12,6 +12,7 @@
 //   MAX_SELECTED                 → grips are off when more entities than this are selected
 //   capGrips(list)               → the list, or [] when it exceeds MAX_GRIPS handles
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
+import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)
 
 export const MAX_SELECTED = 200;
 export const GRIP_SIZE = 5;                 // 155r: GRIPSIZE 5, AutoCAD's half side: the square is 2 * 5 + 1 px
@@ -33,14 +34,47 @@ export function withValues(ent, edits) {
   return { ...ent, r: { ...ent.r, v } };
 }
 
-/** Does this entity have grips? (A mirrored one does not: its numbers are in its own turned frame.) */
+/** Is the record drawn in the world frame? (A mirrored or tilted one has its numbers in its own turned frame.) */
+function upright(r) {
+  const k = at(r, 210);
+  return !(k >= 0 && (num(r.v[k]) !== 0 || num(r.v[k + 1]) !== 0 || num(r.v[k + 2]) < 0));
+}
+/** Does this entity have curve grips (a line, arc, circle, polyline or leader)? Trim, Extend, Offset, Mirror and Properties ask this: text, hatch, ellipse and blocks are not in it. */
 export function hasGrips(ent) {
   if (ent && ent.type === 'LEADER' && ent.model) return true;
-  if (!ent || !ent.r || !TYPES.has(ent.type)) return false;
-  const k = at(ent.r, 210);
-  if (k >= 0 && (num(ent.r.v[k]) !== 0 || num(ent.r.v[k + 1]) !== 0 || num(ent.r.v[k + 2]) < 0)) return false;
-  return true;
+  return !!ent && !!ent.r && TYPES.has(ent.type) && upright(ent.r);
 }
+/** 155e4: the kinds whose grip moves the whole object (an ellipse only by its centre); the word is for the undo step. */
+const MOVES = { TEXT: 'text', MTEXT: 'text', INSERT: 'block', HATCH: 'hatch', ELLIPSE: 'ellipse' };
+export const movesWhole = (ent, id) => !!MOVES[ent.type] && (ent.type !== 'ELLIPSE' || id === 'c');
+const TAU = 2 * Math.PI;
+/** The numbers of an ELLIPSE: centre c, major half-axis m, minor half-axis n (m turned 90° and scaled by the ratio), start / end parameter. */
+function ellipseOf(r) {
+  const c = [get(r, 10) ?? 0, get(r, 20) ?? 0], m = [get(r, 11) ?? 0, get(r, 21) ?? 0], ratio = get(r, 40) ?? 1;
+  return { c, m, n: [-m[1] * ratio, m[0] * ratio], ratio, t0: get(r, 41) ?? 0, t1: get(r, 42) ?? TAU, arc: at(r, 41) >= 0 && at(r, 42) >= 0 && (((get(r, 42) - get(r, 41)) % TAU) + TAU) % TAU > 1e-9 };
+}
+/** Centre of a HATCH's extents (boundary points; an arc, circle or ellipse edge counts as its full radius round its centre), or null. shortcut: not the exact arc extents, upgrade if a centre must be exact. */
+function hatchCentre(r) {
+  let stage = 'head', flags = 0, edge = 0, x = 0, cx = 0, cy = 0, mx = 0;
+  const xs = [], ys = [], put = (px, py, rad = 0) => { xs.push(px - rad, px + rad); ys.push(py - rad, py + rad); };
+  for (let k = 0; k < r.c.length; k++) {
+    const c = r.c[k], v = num(r.v[k]);
+    if (c === 91 && stage === 'head') stage = 'paths';
+    else if (c === 75 && stage === 'paths') stage = 'pattern';
+    else if (stage !== 'paths') continue;
+    else if (c === 92) { flags = v; edge = 0; }
+    else if (c === 72 && !(flags & 2)) edge = v;
+    else if (c === 10 || (c === 11 && edge !== 3)) x = v;
+    else if (c === 20 || (c === 21 && edge !== 3)) { if (c === 20) { cx = x; cy = v; } if (edge !== 2 && edge !== 3) put(x, v); }
+    else if (c === 40 && edge === 2) put(cx, cy, v);
+    else if (c === 11) mx = v;
+    else if (c === 21 && edge === 3) put(cx, cy, Math.hypot(mx, v));
+  }
+  return xs.length ? [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2] : null;
+}
+
+/** Can this entity show grips of any kind? */
+const gripped = (ent) => hasGrips(ent) || (!!ent && !!ent.r && !!MOVES[ent.type] && upright(ent.r) && (ent.type !== 'HATCH' || !!hatchCentre(ent.r)));
 
 export function lwVertices(r) {
   const vs = [];
@@ -74,9 +108,20 @@ function rectangleVertices(r) {
 
 /** The grips of an entity: [{ id, kind, x, y }] (empty when it has none). */
 export function gripsOf(ent) {
-  if (!hasGrips(ent)) return [];
+  if (!gripped(ent)) return [];
   if (ent.type === 'LEADER') return ent.model.pts.map((p, i) => ({ id: 'v' + i, kind: 'vertex', x: p[0], y: p[1] }));
   const r = ent.r;
+  if (MOVES[ent.type]) {
+    if (ent.type === 'HATCH') { const c = hatchCentre(r); return [{ id: 'c', kind: 'centre', x: c[0], y: c[1] }]; }
+    if (ent.type === 'ELLIPSE') {
+      const q = ellipseOf(r), at1 = (t) => [q.c[0] + q.m[0] * Math.cos(t) + q.n[0] * Math.sin(t), q.c[1] + q.m[1] * Math.cos(t) + q.n[1] * Math.sin(t)];
+      const ends = [['m0', q.m, 1], ['m1', q.m, -1], ['n0', q.n, 1], ['n1', q.n, -1]].map(([id, v, s]) => ({ id, kind: 'quad', x: q.c[0] + s * v[0], y: q.c[1] + s * v[1] }));
+      const arcEnds = q.arc ? [['s', q.t0], ['t', q.t1]].map(([id, t]) => ({ id, kind: 'end', x: at1(t)[0], y: at1(t)[1] })) : [];
+      return [{ id: 'c', kind: 'centre', x: q.c[0], y: q.c[1] }, ...ends, ...arcEnds];
+    }
+    const p = { id: 'i', kind: 'insert', x: get(r, 10) ?? 0, y: get(r, 20) ?? 0 };
+    return ent.type === 'TEXT' && ((get(r, 72) ?? 0) || (get(r, 73) ?? 0)) ? [p, { id: 'a', kind: 'insert', x: get(r, 11) ?? 0, y: get(r, 21) ?? 0 }] : [p];       // a justified text has a second grip at its alignment point
+  }
   if (ent.type === 'LINE') {
     const a = [get(r, 10) ?? 0, get(r, 20) ?? 0], b = [get(r, 11) ?? 0, get(r, 21) ?? 0];
     return [{ id: 'a', kind: 'end', x: a[0], y: a[1] }, { id: 'm', kind: 'mid', x: (a[0] + b[0]) / 2, y: (a[1] + b[1]) / 2 }, { id: 'b', kind: 'end', x: b[0], y: b[1] }];
@@ -102,8 +147,28 @@ export function refPoint(ent, id) {
   if (!g) return null;
   if (ent.type === 'LEADER') { const p = ent.model.pts, o = p[+id.slice(1) ? +id.slice(1) - 1 : 1]; return [o[0], o[1]]; }       // the neighbouring point
   if (ent.type === 'LINE' && (id === 'a' || id === 'b')) { const o = find(ent, id === 'a' ? 'b' : 'a'); return [o.x, o.y]; }
-  if (ent.type === 'CIRCLE' && id.startsWith('q')) { const c = find(ent, 'c'); return [c.x, c.y]; }
+  if ((ent.type === 'CIRCLE' && id.startsWith('q')) || (ent.type === 'ELLIPSE' && id !== 'c')) { const c = find(ent, 'c'); return [c.x, c.y]; }
   return [g.x, g.y];
+}
+
+/**
+ * An ellipse's axis or arc-end grip dragged to `to` (the centre grip moves it whole: movesWhole). A major end sets the major half-axis to centre → pointer
+ * (length and angle), the minor length stays; a minor end sets the minor length to the pointer's distance across the major axis; when the new major would be
+ * shorter than the minor the two swap (the major always stays the longer). An arc end sets that end's parameter to the pointer's.
+ */
+function dragEllipse(ent, id, g, to) {
+  if (dist([g.x, g.y], to) < 1e-12) return null;
+  const r = ent.r, q = ellipseOf(r), a = Math.hypot(q.m[0], q.m[1]), b = a * q.ratio, d = [to[0] - q.c[0], to[1] - q.c[1]];
+  const axes = (m, minor) => {
+    const len = Math.hypot(m[0], m[1]);
+    if (!(len > 1e-9) || !(minor > 1e-9)) return null;
+    const big = len >= minor ? { m, ratio: minor / len } : { m: [-m[1] * minor / len, m[0] * minor / len], ratio: len / minor };
+    return { ent: withValues(ent, [[at(r, 11), big.m[0]], [at(r, 21), big.m[1]], [at(r, 40), big.ratio]]), label: 'Ellipse axis' };
+  };
+  if (id === 'm0' || id === 'm1') return axes(id === 'm0' ? d : [-d[0], -d[1]], b);
+  if (id === 'n0' || id === 'n1') return axes(q.m, Math.abs((-d[0] * q.m[1] + d[1] * q.m[0]) / a));
+  const t = Math.atan2((d[0] * q.n[0] + d[1] * q.n[1]) / (b * b), (d[0] * q.m[0] + d[1] * q.m[1]) / (a * a));
+  return { ent: withValues(ent, [[at(r, id === 's' ? 41 : 42), (t + TAU) % TAU]]), label: 'Ellipse arc' };
 }
 
 /**
@@ -121,6 +186,11 @@ export function dragGrip(ent, id, to, shift = false) {
     return { ent: { ...ent, model: { ...ent.model, pts: p.map((q, k) => (k === i ? [to[0], to[1]] : q)) } }, label: 'Stretch leader' };
   }
   const r = ent.r, T = ent.type;
+  if (movesWhole(ent, id)) {
+    if (dist([g.x, g.y], to) < 1e-12) return null;
+    return { ent: moveEntities({ entities: [ent], blocks: {} }, new Set([0]), to[0] - g.x, to[1] - g.y).entities[0], label: 'Move ' + MOVES[T] };
+  }
+  if (T === 'ELLIPSE') return dragEllipse(ent, id, g, to);
   if (T === 'LINE') {
     const [k10, k20, k11, k21] = [at(r, 10), at(r, 20), at(r, 11), at(r, 21)];
     if (id === 'm') {
@@ -194,10 +264,11 @@ export function readoutOf(ent, id, next, factor = 1) {
   if (ent.type === 'LINE' && id !== 'm') { const n = shapeOf(next, f); return `${n2(dist(n.a, n.b))} mm · ${n2(angleOf(n.a, n.b))}°`; }
   if (ent.type === 'CIRCLE' && id.startsWith('q')) return `R ${n2(shapeOf(next, f).r)}`;
   if (ent.type === 'ARC' && (id === 'a' || id === 'b' || id === 'm')) { const n = shapeOf(next, f); return `R ${n2(n.r)} · ${n2(sweepOf(n.a0, n.a1))}°`; }
+  if (ent.type === 'ELLIPSE' && id !== 'c') { const q = ellipseOf(next.r), a = Math.hypot(...q.m) * f; return `Major ${n2(2 * a)} · Minor ${n2(2 * a * q.ratio)} mm`; }
   if (ent.type === 'LWPOLYLINE' || ent.type === 'LEADER') { const n = find(next, id); return `X ${n2(n.x * f)} · Y ${n2(n.y * f)}`; }
   const n = find(next, id);
   return `Move ΔX ${n2((n.x - g.x) * f)} ΔY ${n2((n.y - g.y) * f)}`;
 }
 
 /** The name of the command line's word for dragging this grip. */
-export const commandOf = (ent, id) => (ent.type === 'LINE' ? (id === 'm' ? 'MOVE' : 'STRETCH') : ent.type === 'CIRCLE' ? (id === 'c' ? 'MOVE' : 'STRETCH') : ent.type === 'ARC' ? (id === 'c' ? 'MOVE' : 'STRETCH') : 'STRETCH');
+export const commandOf = (ent, id) => (movesWhole(ent, id) ? 'MOVE' : ent.type === 'LINE' ? (id === 'm' ? 'MOVE' : 'STRETCH') : ent.type === 'CIRCLE' ? (id === 'c' ? 'MOVE' : 'STRETCH') : ent.type === 'ARC' ? (id === 'c' ? 'MOVE' : 'STRETCH') : 'STRETCH');
