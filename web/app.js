@@ -3736,7 +3736,7 @@ function activeCmd() {
   const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
-  return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes };
+  return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes, endsOnSpace: dimAutoLive() };
 }
 
 /** The function that takes a picked or typed point for the point tool that is on (Set length, Measure, Dimension, Leader, Balloon, Mirror), or null. */
@@ -3781,6 +3781,7 @@ function cmdEnter(raw) {
   }
   const c = raw.trim().toLowerCase();
   if (state.txoWait) { state.txoWait = false; if (!c) { textToOutlines(); return; } }          // "Select text": Enter runs it, a typed command replaces it
+  if (!c && dimAutoLive()) { dimAutoEnd(); return; }
   if (!c && !(state.lref && state.mode === 'rotate' && curLay() && selectedPlaced())) return;       // Enter at the layout "angle <0>" prompt takes 0
   if (state.mode === 'rotate' && curLay() && selectedPlaced()) {
     const lr = state.lref;
@@ -5626,6 +5627,8 @@ function keepMeasure() {
 const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null, ghost: null });
 const dimBusy = (D) => D.pts.length > 0 || !!D.obj || D.lines.length > 0;
 function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.ghost = null; D.lines = []; D.force = null; D.typed = false; }
+const dimAutoLive = () => !!state.dim && state.dimType === 'auto';
+function dimAutoEnd() { dimClear(state.dim); setTool('select'); }       // Enter or Space ends Automatic DIM, which otherwise repeats
 /** What the command line asks for next. */
 function dimPrompt() {
   const D = state.dim, type = state.dimType;
@@ -8802,7 +8805,7 @@ function editKey(e) {
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
-  if (e.key === 'Enter' && !mod && !e.altKey && !dialog && state.dim && state.dimType === 'auto' && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimClear(state.dim); setTool('select'); return; }       // Automatic dimension repeats until Enter or Esc
+  if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && dimAutoLive() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimAutoEnd(); return; }       // Automatic dimension repeats until Enter, Space or Esc
   if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;

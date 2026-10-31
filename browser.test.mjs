@@ -11735,8 +11735,22 @@ try {
     assert.deepEqual(dims, ['aligned', 'diameter', 'linearh', 'radius']);
     await undo(); assert.equal(Object.keys(await dimBlocks()).length, 3, 'one Undo takes back one dimension');
     await page.keyboard.press('Control+y'); assert.equal(Object.keys(await dimBlocks()).length, 4);
-    await page.keyboard.press('Enter');
+    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location:');
+    await page.keyboard.press('Escape');
+    assert.match(await prompt(), /Dimension cancelled\. Select a line, arc or circle to dimension:/, 'Esc after a line pick cancels the pick');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', 'DIM goes on after the first Esc');
+    assert.equal(Object.keys(await dimBlocks()).length, 4, 'the cancelled pick placed nothing');
+    await page.keyboard.press('Escape');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'a second Esc ends DIM');
+    await typeCmd('dim'); assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension');
+    await typeCmd('');                                                                    // Enter in the command bar at once
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter in the command bar ends DIM');
+    await typeCmd('dim'); await page.keyboard.press('Enter');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends DIM');
+    await typeCmd('dim'); await page.keyboard.press('Space');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Space ends DIM');
+    await typeCmd('dim'); await cmdLine().press('Space');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Space in the command bar ends DIM');
     await closeTabs(/./);
   });
 
@@ -17276,6 +17290,56 @@ try {
     await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo removes the dimension');
     await page.keyboard.press('Enter');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends DIM');
+  });
+
+  await step('TODO 155l1: in an editable Compare drawing, DIM (Automatic) ghosts the line under the pointer and places it in the linked source (one Undo)', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const first = newDoc(4), second = newDoc(1);
+    addEntities(first, [dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], true)]);
+    addEntities(second, [dxfPoly([[110, 120], [170, 120], [170, 180], [110, 180]].map((pt) => pt.map((v) => v / 25.4)), true)]);
+    const open = async (name, raw) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const move = async (x, y) => { const pt = await point(x, y); await p.mouse.move(pt.x, pt.y, { steps: 3 }); await p.waitForTimeout(150); };
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const prompt = () => q('cmd-prompt').textContent();
+    const teal = () => p.getByTestId('drawing').evaluate((c) => {
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 100 && d[i + 1] - d[i] > 25 && d[i + 2] - d[i] > 25 && Math.abs(d[i + 1] - d[i + 2]) < 40) k++;
+      return k;
+    });
+    const saved = async () => { const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]); return readDxf(readFileSync(await download.path(), 'utf8')); };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('first-155l1.dxf', first); await open('second-155l1.dxf', second); await tab('first-155l1.dxf').click();
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-name-2').click(); await q('cmp-run').click();
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill('dim'); await q('cmd-input').press('Enter');
+      assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+      await move(100, 150);
+      assert.equal(await teal(), 0, 'nothing under the pointer, no ghost');
+      await move(40, 20);
+      assert.ok(await teal() > 30, 'hovering the bottom edge ghosts its dimension in Compare');
+      await click(40, 20); assert.equal(await prompt(), 'Specify dimension line location:');
+      await click(40, 8);
+      assert.match(await prompt(), /Dimension placed: 60\.00 mm/);
+      await tab('second-155l1.dxf').click();
+      assert.equal((await saved()).entities.length, 2, 'the dimension is in the linked source');
+      await tab('Compare').click(); await q('cmp-name-2').click();
+      await p.evaluate(() => document.activeElement?.blur()); await p.keyboard.press('Control+z');
+      await tab('second-155l1.dxf').click();
+      assert.equal((await saved()).entities.length, 1, 'one Undo takes it back');
+    } finally { await context.close(); }
   });
 
   await step('TODO 156b2c3a: double-click a dimension edits its text on a drawing and on a layout (Esc cancels, one Undo); mixed <> text follows a grip; save and reopen', async () => {
