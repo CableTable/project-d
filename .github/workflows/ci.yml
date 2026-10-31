@@ -45,8 +45,9 @@ jobs:
           if [ "$EVENT" = "pull_request" ] && [ "$ACTION" = "synchronize" ] && [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             files=$(git diff --no-renames --name-only "$BEFORE" "$AFTER" || echo "?")
             # An empty or failed diff stays code=true.
-            # Skip only if the previous push's test and build were green (a cancelled, red or missing run, or an API error, keeps code=true).
-            green=$(gh api "repos/$REPO/commits/$BEFORE/check-runs?per_page=100" --jq '[.check_runs[] | select(.name == "build" or (.name | startswith("test")))] | length > 0 and all(.conclusion == "success" or .conclusion == "skipped")' || echo false)
+            # Skip only if the previous push's `changes` job succeeded and its test and build were green or skipped
+            # (a failed `changes` makes them skipped too; a cancelled, red or missing run, or an API error, keeps code=true).
+            green=$(gh api "repos/$REPO/commits/$BEFORE/check-runs?per_page=100" --jq '.check_runs as $c | ([$c[] | select(.name == "changes")] | length > 0 and all(.conclusion == "success")) and ([$c[] | select(.name == "build" or (.name | startswith("test")))] | length > 0 and all(.conclusion == "success" or .conclusion == "skipped"))' || echo false)
             if [ "$green" = "true" ] && [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qv '\.md$'; then code=false; fi
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
