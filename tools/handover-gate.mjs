@@ -1,7 +1,7 @@
 // The launcher's handover gate (TODO 165): at most LIMIT new-item launches per Rook, so the pipeline drains to a clean break.
 // A rule in WORKFLOW.md did not hold (Rook S29 built 9 items), so `rook.mjs build` / `knight` count and refuse.
 // State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
-export const LIMIT = 3;
+export const LIMIT = 2;
 const ROW = /^(\s*)(?:- \[([ x])\] )?(\d+[a-z]*\d*)\.\s*(✅)?/; // "- [x] 160." / "    155a. ✅" / "1. ✅"; ids repeat in old lists, so rows are keyed id#occurrence
 
 // shortcut: id#occurrence miscounts when a same-number open row is inserted above a ticked one; it only feeds the queue line (never a launch), upgrade if the line misleads.

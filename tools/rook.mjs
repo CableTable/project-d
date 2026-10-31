@@ -5,7 +5,7 @@
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>]   launch the reviewer on a commit, detached
 //   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over]   launch a Claude build on a new branch in its worktree, detached
 //   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--over]   launch a Knight build on a new branch in its clone, detached
-//     build / knight count against the handover gate (3 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed), --over = a 4th item with his OK
+//     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed), --over = a 3rd item with his OK
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
 import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';

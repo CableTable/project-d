@@ -40,9 +40,9 @@ test('state: the same Rook keeps its launches, a new uuid starts empty at the cu
 });
 
 test('queue line: counts, the limit and HANDOVER DUE; line 2 is replaced or inserted, CRLF kept', () => {
-  assert.equal(queueLine('Rook S30', 1, 2), 'items since start (Rook S30): 1 ticked, 2 launched / 3');
-  assert.equal(queueLine('Rook S30', 0, 3), 'items since start (Rook S30): 0 ticked, 3 launched / 3 -> HANDOVER DUE');
-  assert.match(queueLine('Rook S30', 3, 1), /HANDOVER DUE$/);
+  assert.equal(queueLine('Rook S30', 1, 1), 'items since start (Rook S30): 1 ticked, 1 launched / 2');
+  assert.equal(queueLine('Rook S30', 0, 2), 'items since start (Rook S30): 0 ticked, 2 launched / 2 -> HANDOVER DUE');
+  assert.match(queueLine('Rook S30', 2, 1), /HANDOVER DUE$/);
   assert.equal(setLine2('title\r\nPUSHED x\r\n', 'L'), 'title\r\nL\r\nPUSHED x\r\n');
   assert.equal(setLine2('title\nitems since start (old): 9 ticked\nPUSHED x', 'L'), 'title\nL\nPUSHED x');
   assert.equal(setLine2('title', 'L'), 'title\nL');
@@ -58,28 +58,28 @@ function world(uuid = 'uuid-1') {
 }
 const state = (w) => JSON.parse(w.files['/x/runs30/rook-gate.json']);
 
-test('gate: 3 item launches pass, the 4th is refused; fix rounds never count; --over passes and is logged', () => {
+test('gate: 2 item launches pass, the 3rd is refused; fix rounds never count; --over passes and is logged', () => {
   const w = world();
   const rec = (o = {}) => w.gate.record({ fix: false, over: false, brief: 'b.txt', ...o });
-  for (const b of ['k/1', 'k/2', 'k/3']) { w.gate.check(false, false); rec({ branch: b }); }
+  for (const b of ['k/1', 'k/2']) { w.gate.check(false, false); rec({ branch: b }); }
   w.gate.check(true, false); // a fix round passes at the limit
   rec({ fix: true, branch: 'k/fix' });
-  assert.throws(() => w.gate.check(false, false), /^Error: handover due: 3 new items launched since Rook S30 started \(k\/1, k\/2, k\/3\)\. Hand over \(WORKFLOW\.md Handover\), or pass --over with his OK\.$/);
+  assert.throws(() => w.gate.check(false, false), /^Error: handover due: 2 new items launched since Rook S30 started \(k\/1, k\/2\)\. Hand over \(WORKFLOW\.md Handover\), or pass --over with his OK\.$/);
   w.gate.check(false, true);
-  rec({ over: true, branch: 'k/4' });
+  rec({ over: true, branch: 'k/3' });
   const s = state(w);
-  assert.deepEqual(s.launches.map((l) => [l.kind, l.branch, l.over]), [['item', 'k/1', undefined], ['item', 'k/2', undefined], ['item', 'k/3', undefined], ['fix', 'k/fix', undefined], ['item', 'k/4', true]]);
+  assert.deepEqual(s.launches.map((l) => [l.kind, l.branch, l.over]), [['item', 'k/1', undefined], ['item', 'k/2', undefined], ['fix', 'k/fix', undefined], ['item', 'k/3', true]]);
   assert.deepEqual([s.uuid, s.startSha], ['uuid-1', 'head0']);
-  assert.equal(w.files['/x/runs30/queue.txt'], 'title\nitems since start (Rook S30): 0 ticked, 4 launched / 3 -> HANDOVER DUE\nPUSHED a\n');
+  assert.equal(w.files['/x/runs30/queue.txt'], 'title\nitems since start (Rook S30): 0 ticked, 3 launched / 2 -> HANDOVER DUE\nPUSHED a\n');
 });
 
 test('gate: a new Rook (other uuid) starts at 0; `gate` writes the queue line without a launch; a failing queue update does not fail the launch', () => {
   const w = world();
   w.gate.record({ fix: false, over: false, brief: 'b', branch: 'k/1' });
   w.files['/x/rook-next.txt'] = 'uuid-2\nRook S30b\n/x/runs30/resume-rook.txt\n';
-  assert.equal(w.gate.report(), 'items since start (Rook S30b): 0 ticked, 0 launched / 3');
+  assert.equal(w.gate.report(), 'items since start (Rook S30b): 0 ticked, 0 launched / 2');
   assert.equal(state(w).uuid, 'uuid-2');
-  assert.equal(w.files['/x/runs30/queue.txt'].split('\n')[1], 'items since start (Rook S30b): 0 ticked, 0 launched / 3');
+  assert.equal(w.files['/x/runs30/queue.txt'].split('\n')[1], 'items since start (Rook S30b): 0 ticked, 0 launched / 2');
   const bad = world();
   bad.env.git = (...a) => { if (a[0] === 'show') throw new Error('no TODO.md'); return 'head0'; };
   const err = console.error, seen = [];

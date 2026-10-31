@@ -148,7 +148,7 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 
 # One call does the folder check, `switch -c` and launch below (raw commands are the fallback):
 #   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--over]   (default king: claude3 in ProjectD-king; bishop: claude2 in ProjectD-s15fix)
-#   Handover gate (TODO 165): the 4th NEW-item launch per Rook is refused ("handover due"); --fix marks a fix round (always allowed); --over lets a 4th item through (his OK only); `node tools/rook.mjs gate` rewrites queue.txt line 2.
+#   Handover gate (TODO 165): the 3rd NEW-item launch per Rook is refused ("handover due"); --fix marks a fix round (always allowed); --over lets a 3rd item through (his OK only); `node tools/rook.mjs gate` rewrites queue.txt line 2.
 # King's shell rules: .claude/agents/builder.md step 0.
 R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"; unset FORCE_COLOR
 /c/Users/raksh/.local/bin/claude3.cmd -p --agent builder --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
@@ -273,14 +273,14 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - **His new rule** (session 27 retro): in the same turn, grep CLAUDE.md, WORKFLOW.md, AGENTS.md, .claude/agents/ and memory/ for the old wording, change every hit, and list the files in the reply.
 - A plan for him stops at this PR's merge; later items are listed under "session <N+1>".
 - **Handover** (his call, 2026-10-29; replaces "fresh Rook after every merge"): Rook hands over at a clean break (no runs
-  going, last item pushed and CI green, queue.txt current) once ANY of: 3 TODO items built and reviewed since this Rook
+  going, last item pushed and CI green, queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
   started (his call 2026-10-30, after S28 auto-compacted; review fix bundles and tool tickets don't count), its context
   passes ~150k (hard stop 250k), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
   the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end).
-  **The launcher enforces the 3** (his ask 2026-10-31, TODO 165; S29 built 9 against this rule): `rook.mjs build` / `knight` count
-  the new-item launches per Rook (rook-next.txt line 1 = the uuid; state in runs<N>/rook-gate.json), refuse the 4th, and keep line 2 of
-  queue.txt ("items since start ...", `rook.mjs gate` rewrites it). Fix rounds pass `--fix`; a 4th item needs `--over` with his OK.
+  **The launcher enforces the 2** (his ask 2026-10-31, TODO 165; S29 built 9 against this rule): `rook.mjs build` / `knight` count
+  the new-item launches per Rook (rook-next.txt line 1 = the uuid; state in runs<N>/rook-gate.json), refuse the 3rd, and keep line 2 of
+  queue.txt ("items since start ...", `rook.mjs gate` rewrites it). Fix rounds pass `--fix`; a 3rd item needs `--over` with his OK.
   A new Rook rewrites rook-next.txt (new uuid) at its start; that resets the count. Until the new Rook's `claude/session<N+1>` branch exists locally, item launches are refused (fix / `--over` pass).
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
 
