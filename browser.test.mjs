@@ -10094,6 +10094,31 @@ try {
     await typeCmd('@20,0'); await hotWhen(0);
     assert.ok(close(await lineOf(0), [20, 30, 140, 30]) && close(await lineOf(1), [20, 60, 140, 60]), 'both ends moved 20');
     await undo(); await frames();
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]) && close(await lineOf(1), [20, 60, 120, 60]), 'one Ctrl+Z restores both lines');
+    // Esc in the middle of a run with several hot grips changes nothing; the Undo button is on in a run on a fresh file
+    await openGrips(two()); await pick(70, 30, 3); await click(70, 60, { shift: true }); await frames(); await gripWhen(6);
+    await shiftGrip('0:b'); await shiftGrip('1:b'); await hotWhen(2);
+    assert.equal(await t('undo').isDisabled(), true, 'nothing to undo before the run');
+    await clickGrip('0:b');
+    assert.equal(await t('undo').isDisabled(), false, 'Undo is on in a grip run');
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]) && close(await lineOf(1), [20, 60, 120, 60]), 'Esc changes nothing');
+    // Copy: the copies are made and both originals stay
+    await selectTwo(); await shiftGrip('0:b'); await shiftGrip('1:b'); await clickGrip('0:b');
+    await typeCmd('c'); await typeCmd('@20,0'); await typeCmd(''); await hotWhen(0);
+    const copied = await savedDoc();
+    assert.equal(copied.entities.length, 4, 'two copies');
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]) && close(await lineOf(1), [20, 60, 120, 60]), 'the originals stay');
+    assert.ok(close(await lineOf(2), [20, 30, 140, 30]) && close(await lineOf(3), [20, 60, 140, 60]), 'the copies are moved');
+    await undo(); await frames();
+    assert.equal((await savedDoc()).entities.length, 2, 'one Ctrl+Z takes the copies back');
+    // an arc with a, m, b hot (the centre not) moves whole: centre and radius stay a circle's
+    await openGrips(); await pick(60, 130, 4);
+    await shiftGrip('2:a'); await shiftGrip('2:m'); await shiftGrip('2:b'); await hotWhen(3);
+    await clickGrip('2:a'); await typeCmd('@20,0'); await hotWhen(0);
+    const arc = entOf(await savedDoc(), 2);
+    assert.ok([10, 20, 40].every((k, i) => near(fieldOf(arc, k), [80, 100, 30][i], 1e-6)), 'the arc moved whole: centre (80,100), radius 30');
+    await undo(); await frames();
     // the right-click grip menu
     await selectTwo(); await clickGrip('0:a');
     await rightClick(70, 45);
@@ -10131,8 +10156,9 @@ try {
     const [ga, gb] = [await gid('a'), await gid('b')];
     await shiftGrip(ga); await shiftGrip(gb); await hotWhen(2);
     await clickGrip(ga); await typeCmd('@20,0'); await hotWhen(0); await frames(); await gripWhen(3);
-    const moved = await gripBox(await gid('a')), where = await at(70, 600);
+    const moved = await gripBox(await gid('a')), where = await at(70, 600), movedB = await gripBox(await gid('b')), whereB = await at(320, 600);
     assert.ok(near(moved.x, where.x, 2) && near(moved.y, where.y, 2), 'the layout line moved 20 with both ends');
+    assert.ok(near(movedB.x, whereB.x, 2) && near(movedB.y, whereB.y, 2), 'the far end moved 20 too');
     await closeTabs(/./);
   });
 

@@ -416,7 +416,7 @@ function buildMenus() {
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
-    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!historyOf(curDoc())?.canUndo],
+    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!state.grip || !!historyOf(curDoc())?.canUndo],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
@@ -5178,7 +5178,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
   if (state.snap && d.lay) for (const x of extra) sn = preferSnap(sn, x, ...p, tol, types);       // the tool's own points (a polyline's first point and vertices)
   if (state.snap && ed) {
-    if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
+    if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || (skip instanceof Set ? skip.has(ed.items[snapRef.piece.it].e) : ed.items[snapRef.piece.it].e === skip))) snapRef = null;
     const piece = Ed.snapReference(ed, ...p, tol, skip);
     snapWatch(piece ? { ed, piece } : null);
     if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
@@ -8234,7 +8234,7 @@ function gripAt(d, cx, cy) {
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
-  let q = snapPoint(d, p, g.e);                                  // not to the shape being dragged: its old place is going away
+  let q = snapPoint(d, p, g.hots ? g.skip : g.e);                // not to the shape(s) being dragged: the old place is going away
   const ref = g.mode || g.hots ? g.base : GR.refPoint(g.ent, g.id), base = ref && (g.mode || g.hots || !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC') ? ref : null, straight = !!((shift || state.ortho) && base);       // a grip mode works from the hot grip itself
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;
@@ -8256,13 +8256,17 @@ function gripStretchHots(g, q, shift) {
   const v = [q[0] - g.base[0], q[1] - g.base[1]], nexts = new Map();
   g.label = null;
   for (const [e, ent] of g.ents) {
-    const mine = g.hots.filter((x) => x.e === e), whole = mine.find((x) => (ent.type === 'LINE' && x.id === 'm') || ((ent.type === 'CIRCLE' || ent.type === 'ARC') && x.id === 'c'));
+    const mine = g.hots.filter((x) => x.e === e), ids = new Set(mine.map((x) => x.id)), round = ent.type === 'CIRCLE' || ent.type === 'ARC', all = GR.gripsOf(ent);
+    // whole: a line's middle, a circle / arc's centre, or every other grip of a circle / arc hot (Grill Q2: all grips hot = the object moves)
+    const whole = ent.type === 'LINE' ? mine.find((x) => x.id === 'm') : round && (ids.has('c') || all.every((x) => x.id === 'c' || ids.has(x.id))) ? all.find((x) => x.id === 'c') : null;
     let cur = ent;
     for (const x of whole ? [whole] : mine) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
     if (cur !== ent) nexts.set(e, cur);
   }
-  g.nexts = nexts; g.next = nexts.values().next().value || null;
+  g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
 }
+/** The hint added to the note when some hot objects would not change in a Stretch (they stay as they were). */
+const leftNote = (g) => (g.nexts && !g.mode && g.left ? (g.left === 1 ? '. 1 object would not change and was left as it was' : `. ${g.left} objects would not change and were left as they were`) : '');
 /** The objects a grip run is previewing (the overlay draws them, not the drawing): the dragged one, or every one a hot grip changes. */
 const gripShown = (g) => (!g.next ? [] : g.nexts ? [...g.nexts.keys()] : [g.e]);
 /** With Reference on (155e2) the pick's angle / distance v becomes the turn / factor against the reference; null when it cannot. */
@@ -8349,7 +8353,7 @@ function gripCopy(g, ctrl) {
   const next = g.mode ? g.res : g.next && { entities: [...g.acc.entities, ...(g.nexts ? g.nexts.values() : [g.next])], blocks: g.acc.blocks };
   if (!next) { note(g.err || 'That would not change anything, so no copy is made'); gripRefresh(g); return; }
   g.hist.push(g.acc); g.acc = next;
-  note(`${GM.nameOf(M)}: ${g.hist.length} cop${g.hist.length === 1 ? 'y' : 'ies'}. Specify the next point; Enter or Esc ends, U takes the last back`);
+  note(`${GM.nameOf(M)}: ${g.hist.length} cop${g.hist.length === 1 ? 'y' : 'ies'}${leftNote(g)}. Specify the next point; Enter or Esc ends, U takes the last back`);
   gripRefresh(g);
 }
 /** Enter, Esc or X: the copies so far go into the drawing in one undo step; with none (or no Copy) the grip edit is cancelled. */
@@ -8398,8 +8402,8 @@ function gripDown(e) {
   }
   const hots = map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all
   state.hots = null;
-  state.grip = { hots, ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
-  state.msg = null; renderCommand(); paintOverlay();
+  state.grip = { hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
+  state.msg = null; renderCommand(); renderEdit(); paintOverlay();       // renderEdit: the Undo button is on in a run
   return true;
 }
 function gripMove(e) {
@@ -8417,7 +8421,7 @@ function gripUp(e) {
   g.hot = true; g.cursor = [e.clientX, e.clientY];                  // a click on the grip: it is hot until the next click puts it down
   ui.cmdUI.message(GM.header('STRETCH', g.copy)); renderCommand(); paintOverlay();
 }
-function gripCancel() { state.grip = null; trackClear(); renderCommand(); paintOverlay(); }
+function gripCancel() { state.grip = null; trackClear(); renderCommand(); renderEdit(); paintOverlay(); }
 /** Puts the dragged grip down: one undo step, named for what it did; the selection stays. */
 function gripCommit() {
   const g = state.grip;
@@ -8432,7 +8436,7 @@ function gripCommit() {
     commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
     setSel(d, g.sel);
   }
-  note(`${label}: ${text}. Ctrl+Z takes it back`);
+  note(`${label}: ${text}${leftNote(g)}. Ctrl+Z takes it back`);
 }
 /** The drawing after a Stretch of several hot grips: the changed objects in place, dimensions following, leaders through their own model. */
 function gripHotsRaw(g) {
@@ -9732,7 +9736,7 @@ function renderEdit() {
   ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
   for (const [id, fix] of [['unit-up', UF.UNIT_FIXES.up], ['unit-down', UF.UNIT_FIXES.down]]) { ui[id].disabled = !scalable; ui[id].title = UF.unitFixTip(fix, b); }
-  ui.undo.disabled = !historyOf(curDoc()).canUndo; ui.redo.disabled = !historyOf(curDoc()).canRedo;
+  ui.undo.disabled = !state.grip && !historyOf(curDoc()).canUndo; ui.redo.disabled = !historyOf(curDoc()).canRedo;
   const gl = gapsOf(d);
   ui.gapRow.hidden = !d.ed;
   const countOnly = gl && gl.length > Ed.GAP_MARK_CAP;
