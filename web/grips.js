@@ -163,13 +163,14 @@ export function wholeHot(ent, ids) {
  */
 export function stretchHots(ent, hots) {
   if (ent.type !== 'LWPOLYLINE') return hots;
-  const all = new Map(gripsOf(ent).map((x) => [x.id, x])), vs = lwVertices(ent.r), ids = new Set(hots.map((x) => x.id)), out = new Map();
+  const all = new Map(gripsOf(ent).map((x) => [x.id, x])), vs = lwVertices(ent.r), moving = new Set(hots.map((x) => x.id)), out = new Map();
+  const endsOf = (x) => { const j = +x.id.slice(1); return ['v' + j, 'v' + ((j + 1) % vs.length)]; };
+  const plain = (x) => all.get(x.id)?.kind !== 'edge' || all.get(x.id).rect;       // not a segment mid we expand or drop
+  for (const x of hots) if (!plain(x) && !vs[+x.id.slice(1)].b) endsOf(x).forEach((id) => moving.add(id));       // every end of a hot line-segment mid, whatever the order
   for (const x of hots) {
-    const edge = all.get(x.id);
-    if (edge?.kind !== 'edge' || edge.rect) { out.set(x.id, x); continue; }
-    const j = +x.id.slice(1), ends = ['v' + j, 'v' + ((j + 1) % vs.length)];
-    if (!vs[j].b) ends.forEach((id) => out.set(id, out.get(id) || hots.find((y) => y.id === id) || all.get(id)));
-    else if (!ends.some((id) => ids.has(id))) out.set(x.id, x);
+    if (plain(x)) out.set(x.id, x);
+    else if (!vs[+x.id.slice(1)].b) endsOf(x).forEach((id) => out.set(id, out.get(id) || hots.find((y) => y.id === id) || all.get(id)));
+    else if (!endsOf(x).some((id) => moving.has(id))) out.set(x.id, x);
   }
   return [...out.values()];
 }
