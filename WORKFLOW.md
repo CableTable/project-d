@@ -31,7 +31,7 @@ briefs, reading short reports and merging.
    to the **"Project D Mockups"** canvas: https://claude.ai/artifact/QgsKW8CrQbt4rURJeY9sSD.
    Mock-ups are never committed. He picks an option; the lead answers open questions with a recommendation.
 3. **Build:** a fresh builder session with a brief (spec = the chosen artboard, decisions for DECISIONS.md,
-   tests, screenshots light + dark, tick TODO.md, commit + push, don't stage `mockups/`). Keep its `session_id`.
+   tests, screenshots light + dark, tick TODO.md, commit (never push), don't stage `mockups/`). Keep its `session_id`.
 4. **Review:** a Bishop-review session on the build's commits (ranked findings, "ship as is" / "fix first").
 5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run.
 6. **As built:** every UI build gets an AB board (mockups/R<n>_AB_*.html, local), drawn from the screenshots (his call, 2026-10-20).
@@ -109,6 +109,7 @@ usage-agent-install.ps1.
    A ticket is one tool family or one command, plus its save / reopen; a brief listing more than ~5 behaviours is two
    tickets (session 26 retro: every King build peaked 171k-216k). Count behaviours, not numbered lines: each transform family, output format and follow trigger is one (156b2c1: 5 lines, ~9 behaviours, peak 217k). Builders make a WIP commit of each passing slice
    (said in the report's first line), so a cut-off run loses nothing.
+   Briefs for pure geometry (S29 retro) name the **case grid** (positions before / at / inside / beyond, both orders, both picks; every entity type that shares the code) and ask for ONE table-driven unit test over it.
    Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it);
    when an item changes existing behaviour, name the old browser steps that check it (`grep -n` in browser.test.mjs) and say to update
    them in the same commit; tests are `npm.cmd test` and the item's steps by argument (`node browser.test.mjs <port> '<name>'`), never an
@@ -120,7 +121,7 @@ after the reset, like Bishop. At the cap Rook finishes the step it is on, says s
 (`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
 wait for a reset, or pause the session. **Knight builds** (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): every build
 goes to Knight; a small fix round goes to King (his OK 2026-10-31, S29 retro: Knight fix ~18 min, King ~2.5 min). King-build (claude3) takes one when Knight is above 85% of its 5-hour limit (his call 2026-10-27, within Bishop's daily cap), at 100% weekly, or he says to
-run it on Bishop. Knight busy (2 runs) is not a reason: the build waits in the queue.
+run it on Bishop. Knight busy (1 run at a time) is not a reason: the build waits in the queue.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
 
@@ -166,7 +167,7 @@ R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Projec
 # run the tests and time things without touching a builder's folder (2026-10-20, his call). Never add `git -C:*` to the
 # allowlist: `git -C … commit/push` would slip past the commit and push denies.
 # One call does all of the below (checks, detaches the worktree, launches detached, fails loudly; raw commands are the fallback):
-#   node tools/rook.mjs review <sha> <brief file> <out jsonl> [--as bishop|king] [--from <clone folder> <branch>]   (default bishop: claude2 in ProjectD-s15fix; king: claude3 in ProjectD-king2; --from = a Knight build's clone and branch; also runs `npm.cmd ci` there)
+#   node tools/rook.mjs review <sha> <brief file> <out jsonl> [--as bishop|king] [--from <clone folder> <branch>]   (Bishop paused or its worktree busy: --as king; Rook never reviews inside its own session, and when he asks for Rook reviews it offers King first in one line) (default bishop: claude2 in ProjectD-s15fix; king: claude3 in ProjectD-king2; --from = a Knight build's clone and branch; also runs `npm.cmd ci` there)
 # Reviews run in ProjectD-s15fix (worktree of this repo, trusted on account 2; ProjectD-review was removed twice, session 28 moved). A Knight build: first `git fetch "<extras>/ProjectD-rowan" <branch>` in the repo, or the sha is unknown here (S28 lost a launch).
 WT="E:/Project B/Claude/Project D extras/ProjectD-s15fix"; git -C "$WT" switch --detach <sha> && cd "$WT" || exit 1; npm.cmd ci --silent  # once per review
 $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 \
@@ -231,6 +232,8 @@ codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowa
 # writes only in its own folder; never run it in the repo, never with --dangerously-skip-permissions.
 cd ~/agy-research && "/c/Users/raksh/AppData/Local/agy/bin/agy.exe" -p "<question; max N lines; cite URLs>" --output-format json --print-timeout 10m
 # Every Pawn brief says "open https links only, skip http ones, run no commands": one blocked action ends a headless run.
+# A Pawn run holds at most 2 questions; more = parallel runs, one file each (S29 retro). A timeout with an empty
+# response: rerun with --conversation <id> and "answer now from what you read".
 # Big research (many sources) goes to Bishop (Sonnet + WebSearch) instead; Pawn takes quick lookups only.
 # (2026-10-19: two multi-page Pawn runs died on one blocked action each: a shell command, then a URL.)
 # follow-up: --conversation <conversation_id>; its quota: /usage inside agy (interactive only; he pastes it)
@@ -274,14 +277,16 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - A plan for him stops at this PR's merge; later items are listed under "session <N+1>".
 - **Handover** (his call, 2026-10-29; replaces "fresh Rook after every merge"): Rook hands over at a clean break (no runs
   going, last item pushed and CI green, queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
-  started (his call 2026-10-30, after S28 auto-compacted; review fix bundles and tool tickets don't count), its context
-  passes ~150k (hard stop 250k), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
+  started (his call 2026-10-31, was 3 from 2026-10-30; review fix bundles and tool tickets don't count), its context
+  passes ~150k (auto-compact fires at ~218k: S29, 3 times), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
   the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end).
   **The launcher enforces the 2** (his ask 2026-10-31, TODO 165; S29 built 9 against this rule): `rook.mjs build` / `knight` count
   the new-item launches per Rook (rook-next.txt line 1 = the uuid; state in runs<N>/rook-gate.json), refuse the 3rd, and keep line 2 of
   queue.txt ("items since start ...", `rook.mjs gate` rewrites it). Fix rounds pass `--fix`; a 3rd item needs `--over` with his OK.
   A new Rook rewrites rook-next.txt (new uuid) at its start; that resets the count. Until the new Rook's `claude/session<N+1>` branch exists locally, item launches are refused (fix / `--over` pass).
+- Give him a handover time only as "after <named run> + CI", never a clock time (S29 retro).
+- Call a run "building" only after this turn's `node tools/rook.mjs result <file>` says it is still running; end a turn with a run going only once its waiter has started (S29: builds sat done 4.7 h while Rook said "still building").
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, launches the **retro** on Bishop first (never inline) (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
@@ -300,8 +305,9 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   Every Rook turn re-reads the whole conversation, so each CI wake-up costs; say nothing on a job that passed.
   **Probes (S28 retro):** a change to `tools/`, `.github/` or a test helper gets a `workflow_dispatch` probe (`gh workflow run <file> --ref <probe branch>`)
   before it goes onto the session branch (Linux CI has no git history and no Windows paths). A 2nd red in a step the change does not
-  touch gets a probe first; revert only if the probe is red too. Until a probe confirms a cause, tell him "likely cause".
-- **Context limit 250k** (his call, 2026-10-21): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
+  touch gets a probe first; revert only if the probe is red too. CI-trigger changes (the `changes` job): a dispatch run always
+  runs the code jobs, so the first real doc-only push is the probe; watch it. Until a probe confirms a cause, tell him "likely cause".
+- **Context limit 250k** (his call, 2026-10-21; in practice auto-compact fires at ~218k, S29 3 times): `autoCompactWindow: 250000` in his ~/.claude/settings.json compacts Rook
   automatically there. If it ever doesn't fire, Rook finishes its step at ~250k and asks him to type `/compact`.
 - **Bishop-support** (his call, 2026-10-21): an interactive claude2 (Sonnet) in a Terminal tab answers his questions while he
   uses the app and adds tickets (T1, T2, …) to `E:/Project B/Claude/support/tickets.md` (local, never on GitHub; prompt:
@@ -369,6 +375,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
   While fixing, filter on their own step only (`'TODO <id>'`); widen once, before commit, to whole step-name pieces they grepped, never single words like `Text` (session 26 King retro: 5 unrelated slow steps per run).
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
+  Each finding names its **case grid** (S29 retro: 155h2 and 155e3 each needed an extra round because only the repro was fixed): every input sharing the cause; the fix covers the grid and adds ONE table-driven unit test over it.
 - Rook writes briefs to `runs<N>/b*.txt` with the Write tool, never a heredoc (one hung Rook in session 25).
 - Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
 - **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in

@@ -21,7 +21,9 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 
 ## Tests (both must pass before you commit)
 - `npm.cmd test` (eslint + unit tests)
-- While working: your new / changed steps, `node browser.test.mjs <port> '<step names>'`. Once before commit: the full
+- Brief paths `runs<N>/...` are under `E:/Project B/Claude/Project D extras/`. Search with `git grep -n` (`rg` is not installed).
+- A fix round runs only the brief's filter, not the full suite (Rook runs it; S29 retro: fix rounds took 18-19 min).
+- While working: your new / changed steps, `node browser.test.mjs <port> '<step names>'`. Once before committing a new item: the full
   suite, `node tools/browser-parallel.mjs <port>` (`npm.cmd run test:browser` exits 1 on npm's notice inside the sandbox).
 - A failing step you didn't touch (filtered or full): rerun it alone on the base; if it fails there too, note it as a
   filter artifact or old failure and go on.
