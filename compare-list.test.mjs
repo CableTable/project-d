@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import * as L from './web/compare-list.js';
 import * as C from './web/compare.js';
 import { flatten, readDxf } from './web/drawing.js';
-import { newDoc, addEntities, writeDxf, rect, circle, line } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, writeDxf, rect, circle, line } from './web/dxf-write.js';
 
 function source(name, entities, factor = 1) {
   const doc = newDoc(4); addEntities(doc, entities);
@@ -94,4 +94,40 @@ test('measurements reuse closed loops with holes, joined lines, open lengths and
   assert.ok(Math.abs(item.metrics.perimeter - 53 * 25.4) < 1e-6);
   assert.equal(item.metrics.w, 635);
   assert.equal(item.metrics.h, 254);
+});
+
+test('hiding a layer in one snapshot recomputes its outlines and leaves the source and the other snapshots alone', () => {
+  const doc = newDoc(4); addLayer(doc, 'Holes'); addEntities(doc, [rect(0, 0, 30, 20, { layer: '0' }), circle(10, 10, 2, { layer: 'Holes' })]);
+  const raw = readDxf(writeDxf(doc)), src = { name: 'p', raw, fl: flatten(raw), factor: 1, off: new Set() };
+  const [a, b] = L.addItem(L.addItem([], src), src).slice(0, 2);
+  const holes = a.fl.layers.findIndex((l) => l.name === 'Holes');
+  const hidden = L.setItemOff(a, new Set([holes]));
+  assert.ok(hidden.off.has(holes) && hidden.polys.length < a.polys.length, 'the circle is gone from the outlines');
+  assert.ok(hidden.metrics.perimeter < a.metrics.perimeter);
+  assert.equal(hidden.id, a.id);
+  assert.equal(src.off.size, 0, 'the source keeps its own list');
+  assert.equal(b.off.size, 0, 'the other snapshot keeps its own list');
+  assert.deepEqual(L.setItemOff(hidden, new Set()).polys, a.polys, 'showing it again brings the outline back');
+});
+
+test('a refreshed snapshot keeps its hidden layers by name when the layer numbers shift', () => {
+  const make = (...pairs) => {
+    const doc = newDoc(4); pairs.forEach(([name]) => addLayer(doc, name));
+    addEntities(doc, pairs.flatMap(([name, x]) => rect(x, 0, 10, 10, { layer: name })));
+    const raw = readDxf(writeDxf(doc));
+    return { name: 'p', raw, fl: flatten(raw), factor: 1, off: new Set() };
+  };
+  const [item] = L.addItem([], make(['A', 0], ['B', 20]));
+  const hidden = L.setItemOff(item, new Set([item.fl.layers.findIndex((l) => l.name === 'B')]));
+  const refreshed = { ...hidden, ...L.refreshGeometry(hidden, make(['B', 20], ['C', 40])) };      // A emptied: B is now number 0, the new C number 1
+  assert.deepEqual([...refreshed.off].map((i) => refreshed.fl.layers[i].name), ['B'], 'B stays hidden, C is shown');
+  assert.equal(refreshed.polys.length, 1, 'only C is drawn');
+  for (const [why, pairs] of [['renamed', [['A', 0], ['Renamed B', 20]]], ['removed', [['A', 0], ['C', 40]]]]) {
+    const source = make(...pairs), before = structuredClone(source);
+    const next = { ...hidden, ...L.refreshGeometry(hidden, source) };
+    assert.equal(next.off.size, 0, `a ${why} hidden layer does not hide the layer reusing its number`);
+    assert.equal(next.polys.length, 2, why + ': both current layers are visible');
+    assert.deepEqual(source, before, 'refresh leaves the source unchanged');
+    assert.deepEqual([...hidden.off], [...item.fl.layers.keys()].filter((i) => item.fl.layers[i].name === 'B'), 'the old snapshot keeps its own hidden list');
+  }
 });

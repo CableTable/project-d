@@ -26,7 +26,7 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
     copyFileSync(new URL('./usage-site/public/usage-window.js', import.meta.url), join(repo, 'usage-site/public/usage-window.js'));
     const usage = join(repo, 'mockups', '_design', 'usage');
     mkdirSync(usage, { recursive: true });
-    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) {
+    for (const file of ['rook.mjs', 'rook-cache.mjs', 'rook-result.mjs', 'rook-launch.mjs', 'usage-agent.mjs', 'usage-agent-policy.mjs']) {
       copyFileSync(new URL('./tools/' + file, import.meta.url), join(repo, 'tools', file));
     }
     writeFileSync(join(repo, 'package.json'), '{"type":"module"}');

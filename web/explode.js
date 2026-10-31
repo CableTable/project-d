@@ -1,7 +1,9 @@
 // Explode, pure: one level of polylines or block members, in drawing units.
 import { bulgeArc, mmul, mapply } from './drawing.js';
 import { lwVertices, get } from './grips.js';
-import { entity, line, arc, circle, ellipse, lwpoly, insert } from './dxf-write.js';
+import { entity, line, arc, circle, ellipse, lwpoly, insert, mtext } from './dxf-write.js';
+import { DIM_BLOCK, usedBlocks } from './edit.js';
+import { textRecord } from './dimension-text.js';
 
 const DEG = Math.PI / 180, TAU = 2 * Math.PI, ID = [1, 0, 0, 1, 0, 0];
 const val = (e, c, fallback = 0) => get(e.r, c) ?? fallback;
@@ -90,6 +92,13 @@ export function explodeInsert(e, raw) {
     if (e.flip) m = mmul(m, [-1, 0, 0, 1, 0, 0]);
     if (!m.every(Number.isFinite) || Math.abs(det(m)) < 1e-15) throw new Error('invalid block scale');
     const p = (c) => mapply(m, val(e, c), val(e, c + 10));
+    if (e.type === 'DIMENSION') {                       // its block is in sheet coordinates: carried as one INSERT of a copy of that block under a plain name (no longer a dimension; a *D name would reopen as a part)
+      const block = blocks[field(e, 2)];
+      if (!block || block.xref) throw new Error('missing block or external reference');
+      let n = 1; while (blocks['PD_EXPLODE_' + n]) n++;
+      blocks['PD_EXPLODE_' + n] = block;
+      return transform(insert('PD_EXPLODE_' + n, block.base?.[0] || 0, block.base?.[1] || 0, e), m, depth);
+    }
     if (e.type === 'INSERT') {
       const name = field(e, 2), block = blocks[name];
       if (!block || block.xref) throw new Error('missing block or external reference');
@@ -178,16 +187,39 @@ export function explodeInsert(e, raw) {
   return { entities: members(e, parent, 0), blocks };
 }
 
+/** Is this entity the INSERT of a PD_DIM block that `blocks` holds? */
+export const isDimInsert = (e, blocks) => e.type === 'INSERT' && DIM_BLOCK.test(field(e, 2) || '') && !!blocks[field(e, 2)];
+
+/** A dimension as plain pieces: its lines, arcs and SOLID arrowheads, and its text as one MTEXT (the TEXT already shows the override with `<>` filled in). No PD_DIM_TEXT attdef is left. */
+export function explodeDimension(e, raw) {
+  const name = field(e, 2), block = raw.blocks[name], att = textRecord(block.entities), keep = block.entities.filter((c) => c !== att && c.type !== 'POINT');
+  const pieces = explodeInsert(e, { ...raw, blocks: { ...raw.blocks, [name]: { ...block, entities: keep } } }).entities;
+  // TEXT 72 = 1 (centre) with 73 = 1 / 2 / 3 (bottom / middle / top) is MTEXT attachment 8 / 5 / 2
+  return pieces.map((p) => {
+    if (p.type !== 'TEXT') return p;
+    let rot = val(p, 50), attach = { 3: 2, 2: 5 }[val(p, 73)] ?? 8;
+    if (val(p, 71) & 6) {       // mirrored: dimension text still reads left to right, so turn it half a turn
+      let turned = false;
+      rot = ((rot % 360) + 360) % 360;
+      if (rot > 90 && rot <= 270) { rot -= 180; turned = true; } else if (rot > 270) rot -= 360;
+      // top and bottom swap when the text is upside down (71 & 4) XOR it was turned: the turn undoes the flip, so it keeps its side of the line
+      if (!!(val(p, 71) & 4) !== turned) attach = { 2: 8, 8: 2 }[attach] ?? attach;
+    }
+    return mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), field(p, 1).replace(/[\\{}]/g, '\\$&'), { ...p, attach, rot });
+  });
+}
+
 /** Replace only explodable selected entities, preserving draw order and returning the new selection. */
 export function explodeSelection(raw, selection, locked = new Set()) {
   let blocks = raw.blocks, exploded = 0, skipped = 0;
-  const entities = [], selected = new Set(), errors = [];
+  const entities = [], selected = new Set(), errors = [], dims = new Set();
   raw.entities.forEach((e, i) => {
     let pieces;
     if (selection.has(i)) {
       if (locked.has(e.layer)) skipped++;
       else try {
-        if (e.type === 'INSERT') { const r = explodeInsert(e, { ...raw, blocks }); pieces = r.entities; if (pieces.length) blocks = r.blocks; }
+        if (isDimInsert(e, blocks)) { pieces = explodeDimension(e, { ...raw, blocks }); dims.add(field(e, 2)); }
+        else if (e.type === 'INSERT') { const r = explodeInsert(e, { ...raw, blocks }); pieces = r.entities; if (pieces.length) blocks = r.blocks; }
         else pieces = explodePolyline(e);
       } catch (err) { errors.push(err.message); }
     }
@@ -196,5 +228,7 @@ export function explodeSelection(raw, selection, locked = new Set()) {
       for (const piece of pieces) { selected.add(entities.length); entities.push(piece); }
     } else entities.push(e);
   });
+  const used = usedBlocks(blocks, entities);
+  if ([...dims].some((n) => !used.has(n))) { blocks = { ...blocks }; for (const n of dims) if (!used.has(n)) delete blocks[n]; }       // a dimension's block nothing else uses goes with it, as on Delete
   return { entities, blocks, selected, exploded, skipped, errors: [...new Set(errors)] };
 }

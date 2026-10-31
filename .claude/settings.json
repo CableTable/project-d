@@ -32,6 +32,7 @@
       "Bash(gh pr edit:*)",
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
+	  "Bash(gh run download:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(head:*)",
@@ -67,7 +68,7 @@
   },
   "hooks": {
     "Stop": [
-      { "hooks": [ { "type": "command", "command": "node tools/stop-hook.mjs" } ] }
+      { "hooks": [ { "type": "command", "command": "node \"$CLAUDE_PROJECT_DIR/tools/stop-hook.mjs\"" } ] }
     ]
   }
 }

@@ -36,6 +36,8 @@ import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
+import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText } from './dimension-text.js';
+import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
@@ -439,7 +441,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
-  menus.Modify.push(['Explode', explodeSelected, 'X', () => !curLay()]);
+  menus.Modify.push(['Explode', explodeSelected, 'X']);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
   menus.Modify.push(...Object.entries(SH.OPS).map(([op, o], i) => ['Shaping: ' + o.label, () => shapeSelection(op), null, null, SHAPING_TITLE[op], i === 0]));
@@ -667,7 +669,7 @@ function ribbonContents(kind) {
     group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true))),
-    group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>'),
+    group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>', false, undefined, true),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
       op === 'boundary' ? '<path d="M4 8l8-4 8 5v8l-8 4-8-5z" stroke-dasharray="3 2"/>' : op === 'trim' ? toolIcon('trim') : '<rect x="3" y="5" width="12" height="12"/><rect x="9" y="9" width="12" height="12"/>' + (op === 'intersect' ? '<rect x="9" y="9" width="6" height="8" fill="currentColor" stroke="none" opacity=".55"/>' : ''), false, op === 'trim' ? 'shapetrim' : op, true)),
@@ -834,7 +836,7 @@ function applyKind() {
   ui.canvas.classList.toggle('part', !lay);
   renderWorkArea();
   for (const sec of [ui.partsSec, ui.stepSec, ui.stepFoot, ui.gapSec]) sec.hidden = !lay || lib;
-  ui.layersSec.hidden = lib || !!(d && d.cmp); ui.libSec.hidden = !lib;
+  ui.layersSec.hidden = lib; ui.libSec.hidden = !lib;
   if (state.ptab === 'library' && !lib) state.ptab = 'drawing';
   if (state.ptab === 'step' && !lay) state.ptab = 'drawing';
   renderDocker();
@@ -1268,6 +1270,11 @@ function buildRail() {
   });
   return h('nav', { class: 'rail', 'aria-label': 'Tools' }, items);
 }
+/** In Compare a picked library part has no source drawing to add the outlines to: Contour is greyed. */
+function railContour() {
+  const b = ui.toolBtns?.contour, item = cmpDoc() && cmpSelected(cmpDoc().cmp), part = !!item?.part && !editable(), closed = !!item && !item.part && !cmpSourceTab(item), t = TOOLS.find((x) => x.id === 'contour');
+  if (b) { b.disabled = part; b.title = part ? "Open the part's drawing to contour it" : closed ? `Open ${item.name} to edit` : commandTooltip(t.label, t.id, t.description); }
+}
 function paintRailTooltips() {
   for (const t of TOOLS) if (BUILT.has(t.id) && ui.toolBtns[t.id]) ui.toolBtns[t.id].title = commandTooltip(t.label, t.id, t.description);
   paintDimButton();
@@ -1303,9 +1310,9 @@ function setTool(id) {
   state.orthoAsk = false;
   state.colourTool = null; endReadout();
   if (id === 'measure' && !measureTarget()) { note('Measure: open a drawing, layout or Compare tab first'); return; }
-  if (cmpDoc() && (MOD_KINDS.includes(id) || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
+  if (cmpDoc() && (MOD_KINDS.includes(id) || id === 'contour' || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
   if (id === 'balloon' && !editable()) { note('Balloons work on a drawing tab (a PDF or a picture too): open one first'); return; }
-  if (id === 'contour' && (cmpDoc() || !editable() && !curLay())) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
+  if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable() && !(curLay() && LAY_MODS.includes(id))) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
   state.text.drag = null; state.grip = null; state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
@@ -1384,9 +1391,15 @@ function buildCanvas() {
   ui.textHintEd = h('div', { class: 'texted-hint', 'data-testid': 'text-editor-hint' }, h('strong', null, 'Typing in place'), h('span', null, 'Enter = done · Shift+Enter = new line'));
   ui.textEd = h('div', { class: 'texted', hidden: true, 'data-testid': 'text-edit-box' }, ui.textArea, ui.textHintEd);
   ui.textArea.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); textCommit(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (state.text.ed && state.text.ed.ldr) textCancel(); else textCommit(); }       // a leader's note: Esc cancels
+    if (e.key === 'Enter' && e.shiftKey && state.text.ed?.dim) { e.preventDefault(); return; }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); textCommit(); } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (state.text.ed && (state.text.ed.ldr || state.text.ed.dim)) textCancel(); else textCommit(); }       // a leader's note or dimension: Esc cancels
   });
-  ui.textArea.addEventListener('input', placeTextEditor);
+  ui.textArea.addEventListener('beforeinput', () => { if (state.text.ed?.dim) state.text.ed.dim.selection = [ui.textArea.selectionStart, ui.textArea.selectionEnd]; });
+  ui.textArea.addEventListener('input', (e) => {
+    const dim = state.text.ed?.dim;
+    if (dim) { dim.editor = changeDimensionEditor(dim.editor, ui.textArea.value, dim.selection, e.inputType); delete dim.selection; }
+    placeTextEditor();
+  });
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
   ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
@@ -1499,7 +1512,7 @@ function buildPanel() {
     buildLibrary(),
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
+        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
       h('div', { class: 'osr lsr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.layerSearch = h('input', { type: 'text', placeholder: 'Search layers…', 'aria-label': 'Search layers', 'data-testid': 'layer-search', autocomplete: 'off', spellcheck: 'false' })),
       ui.layerRows),
     buildObjects());
@@ -1879,7 +1892,7 @@ function undoLay() {
   const d = curDoc();
 
   if (!d?.lay) { if (d?.hist) undo(d); return; }
-  if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }       // a Line with only its first point: nothing made to undo
+  if (dropLinePoint(d)) return;
   const st = layHist(d).undo(laySnap(d.lay));
   if (!st) { note('Nothing to undo'); return; }
   layRestore(d, st); note('Undone');
@@ -1909,7 +1922,10 @@ function undoCurrent(forward = false) {
     if (tab?.cmp && d !== tab && !cmpEdit()) return;
     if (forward) redo(d); else undo(d);
   }
-  else if (tab?.cmp) { if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit(); }
+  else if (tab?.cmp) {
+    if (!forward && dropLinePoint(editable())) return;       // a Line's first point is dropped before any step is undone (a first point has no step: the source may have no history yet)
+    if (cmpSourceTab(cmpSelected(tab.cmp))) note(forward ? 'Nothing to redo' : 'Nothing to undo'); else cmpEdit();
+  }
   else if (forward) redoLay(); else undoLay();
 }
 /** Edit → Undo history… (TODO 30): the steps of the open tab by name, oldest first, the current one marked; a click goes there (several undos, or redos, at once). */
@@ -3016,7 +3032,7 @@ function exportPdf() {
     setTitleBlock: (value) => { d.titleBlock = value; d.dirty = true; renderTabs(); } });
 }
 
-const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : d.raw, d.titleBlock);
+const rawForSave = (d) => withTitleBlock(d.lay ? LD.layoutRaw(d.lay) : nativeDimensionOverrides(d.raw), d.titleBlock);
 
 // ---- save ----
 const dxfName = (n) => (/\.dxf$/i.test(n) ? n : n + '.dxf');
@@ -3367,6 +3383,8 @@ function layerSearchInit() {
 }
 function renderLayers() {
   const d = curDoc(), q = d && d.layerQuery || '';
+  ui.layerAdd.hidden = !!d?.cmp;                                  // Compare draws onto the source drawing: new layers are made there
+  if (d?.cmp) { renderCmpLayers(d, q); return; }
   if (ui.layerSearch.value !== q) ui.layerSearch.value = q;       // also while the box has focus (Ctrl+Tab to another tab): typed text is already in d.layerQuery
   ui.layerRows.replaceChildren(...layerRows().filter((l) => OB.nameMatches(l.name, q)).map((l) => {
     const isFile = l.fileLayer != null;
@@ -3388,6 +3406,24 @@ function renderLayers() {
     return row;
   }));
   if (state.ptab === 'objects') renderObjects();
+}
+
+/** Compare: the layers of the picked snapshot. On / off acts on that snapshot's own list; its source drawing keeps its own. */
+function renderCmpLayers(tab, q) {
+  if (ui.layerSearch.value !== q) ui.layerSearch.value = q;
+  const item = cmpSelected(tab.cmp);
+  if (!item) { ui.layerRows.replaceChildren(h('p', { style: 'color:var(--muted);font-size:12px;margin:0', 'data-testid': 'layers-empty' }, 'Pick a drawing')); return; }
+  ui.layerRows.replaceChildren(...item.fl.layers.map((l, i) => [l, i]).filter(([l]) => OB.nameMatches(l.name, q)).map(([l, i]) => {
+    const hid = item.off.has(i);
+    const vis = h('button', { class: 'vis live', type: 'button', 'data-layer': 'f' + i, title: 'Show / hide ' + l.name, onclick: () => cmpToggleLayer(tab, item.id, i) }, icon(hid ? EYE_OFF : EYE, { size: 16, label: hid ? 'Hidden' : 'Visible' }));
+    return h('div', { class: 'layer' + (hid ? ' hidden-layer' : ''), 'data-file-layer': i }, h('span', { class: 'swatch', 'aria-hidden': 'true', style: 'background:' + ink(l.css, isDark()) }), h('span', { class: 'nm' }, l.name), vis);
+  }));
+}
+function cmpToggleLayer(tab, id, i) {
+  const item = tab.cmp.items.find((x) => x.id === id), off = new Set(item.off);
+  if (!off.delete(i)) off.add(i);
+  tab.cmp.items = CMP.setItem(tab.cmp.items, id, CMP.setItemOff(item, off));
+  cmpMoved(tab);
 }
 
 // ---- the Objects tab (TODO 39, mock-up R11a Option A): the open file as a tree, layer by layer; the tree itself is objects.js ----
@@ -3793,7 +3829,7 @@ function runCommand(cmd) {
   if (!cmd) return;
   const n = cmd.name, label = n[0].toUpperCase() + n.slice(1), lay = curLay();
   if (cmd.where === 'layout' && !lay) { note(`${label} is on a layout tab: New layout, or Add to layout`); return; }
-  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
+  if (cmd.where === 'draw' && lay && cmd.cat !== 'Draw' && n !== 'textoutlines' && n !== 'explode' && n !== 'dimension' && !DIM_OF[n] && !LAY_MODS.includes(TOOL_OF[n] || n)) { note(`${label} works on a drawing tab: open a drawing first`); return; }
   if (DIM_OF[n]) { if (cmpDoc() && !cmpEdit()) return; if (dimTarget()) setDimType(DIM_OF[n]); else note('Dimensions work on a drawing tab or a layout: open one first'); }
   else if (DO[n]) DO[n]();
   else setTool(TOOL_OF[n] || n);
@@ -4045,7 +4081,8 @@ function objHit(part, p, H) {
     }
   }
   if (!dd) return s('polygon', { class: 'part-hit ob', points: polyPoints(PL.corners(part, p), H) });
-  return s('path', { class: 'part-hit ob', d: dd, transform: `matrix(${placedMat(part, p, H).join(' ')})` });
+  const transform = `matrix(${placedMat(part, p, H).join(' ')})`, path = s('path', { class: 'part-hit ob', d: dd, transform });
+  return isDimPart(part) ? s('g', null, path, part.fl.items.filter((it) => it.k === 't').map((it) => s('rect', { fill: 'transparent', cursor: 'move', x: it.b[0], y: it.b[1], width: it.b[2] - it.b[0], height: it.b[3] - it.b[1], transform }))) : path;
 }
 
 /** Points of an SVG polygon from sheet points (mm, y up). */
@@ -4237,10 +4274,11 @@ function paintOverlay(gesture = false) {
         for (const p of placedNow) { if (p.src === 'loose' && p.i === gripped) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
         for (const [id, part] of Object.entries(d.lay.parts)) {
           if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
+          const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
           const mine = byPart.get(id) || [], slotsOf = (list) => list.map((p) => placedMat(part, p, state.sheetH));
           const on = mine.filter((p) => !p.off), outside = mine.filter((p) => p.off);          // a part off the sheet is drawn in the mark colour
-          if (on.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
-          if (outside.length) paintDrawing(c, { ...base, keep: true, fl: part.fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
+          if (on.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(on) });
+          if (outside.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
       if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
@@ -4270,8 +4308,9 @@ function paintOverlay(gesture = false) {
 }
 
 function paintEditable(c, d, base, marks) {
-  const drawn = paintDrawing(c, { ...base, fl: d && d.fl, off: d && d.off, factor: d ? d.factor : 1,
-    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+  const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
+  const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
+    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
@@ -4516,6 +4555,7 @@ function attachCanvasEvents() {
     state.entityDrag = null;
   });
   c.addEventListener('click', (e) => { const gh = e.target.closest && e.target.closest('[data-gap]'); if (gh && !state.setlen && state.tool !== 'measure') pickGap(gh.dataset.gap); });
+  c.addEventListener('mousedown', (e) => { if (curLay() && e.button === 0 && e.detail === 2) { textDblClick(e); if (state.text.ed?.dim) e.preventDefault(); } });       // layout selection rebuilds its SVG before dblclick can fire
   c.addEventListener('dblclick', (e) => { if (!balDbl(e)) textDblClick(e); });
   c.addEventListener('mousedown', (e) => { if (e.button === 0 && state.tool === 'text' && !e.target.closest('.texted, .zoombox, .contourpanel')) e.preventDefault(); });      // the click places a text: it must not take the focus from the box it opens
   c.addEventListener('pointercancel', () => { if (state.drawingRotate) state.drawingRotate.drag = null; if (state.grip && !state.grip.hot) gripCancel(); state.entityDrag = null; state.balDrag = null; if (state.text.drag) textDragEnd(true); if (gdrag) cancelGuideDrag(); if (pdrag) cancelPlacedDrag(); drag = null; lrub = null; lmod = null; state.dimDrag = null; hideRubber(); paintOverlay(); end(); });
@@ -4644,15 +4684,15 @@ function renderProps() {
 
 const linkBase = new WeakMap();      // layout → LD.linkView() as of the last update: what a dimension on a layout follows (TODO 156b2c1)
 /** Dimensions on a layout: a moved / turned one gets its placement baked into its block, and one whose object moved or was grip-edited follows it. Undo / redo only rebases (layRestore). */
-function layDimsSettle(lay) {
+function layDimsSettle(lay, names) {
   if (!Object.values(lay.parts).some(isDimPart)) { linkBase.delete(lay); return; }
-  LD.settleDims(lay, () => 'o' + uid());
+  LD.settleDims(lay, () => 'o' + uid(), names);
   const cur = LD.linkView(lay), prev = linkBase.get(lay);
   linkBase.set(lay, prev && LD.followDims(lay, prev, cur, () => 'o' + uid()) ? LD.linkView(lay) : cur);
 }
-function update(refit = false) {
+function update(refit = false, dimNames) {
   const lay = curLay();
-  if (lay) layDimsSettle(lay);
+  if (lay) layDimsSettle(lay, dimNames);
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
@@ -4665,7 +4705,7 @@ function update(refit = false) {
   clampSel();
   state.msg = null;
   ui.svg.setAttribute('aria-label', lay ? `Sheet ${state.sheetW} by ${state.sheetH} mm with ${placedNow.length} placed parts` : 'Sheet');
-  renderStep(); renderPartsList(); renderCommand(); renderProps(); renderLayers(); drawSheet(); renderStatus(); renderEdit(); renderGaps(); renderGuidePanel(); renderCompare();
+  renderStep(); renderPartsList(); renderCommand(); renderProps(); renderLayers(); drawSheet(); renderStatus(); renderEdit(); renderGaps(); renderGuidePanel(); renderCompare(); railContour();
   if (refit) fit(); else paintOverlay();
 }
 
@@ -4799,9 +4839,44 @@ function breakApartSelected() {
   note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
 }
 
+/** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects, a dimension its lines, arrows and text; one level, one undo step. */
+function explodeOnLayout() {
+  const all = selItems(), d = curDoc(), isDim = (x) => x.p.src === 'loose' && isDimPart(x.part), dims = all.filter(isDim), items = all.filter((x) => !isDim(x));
+  if (!all.length) { note('Explode: select a placed part or the grid first'); return; }
+  const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, dims.length ? `Explode ${all.length} objects` : grid ? 'Explode the grid' : items.length > 1 ? `Explode ${items.length} parts` : `Explode ${items[0].part.name}`);
+  const dimPs = dims.filter((x) => !x.p.lock).map((x) => d.lay.placed[x.p.i]);          // by object: the explode of the parts moves the indexes
+  const at = grid ? gLooseMany(g, items.map((x) => x.i)) : items.map((x) => x.i);       // in lay.placed, item for item; a grid copy first loosens the whole grid
+  const gridPl = items.flatMap((x, k) => (x.p.src === 'grid' ? [d.lay.placed[at[k]]] : []));
+  const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = dims.length - dimPs.length + rest.filter((q) => q.x.part.obj || q.x.p.lock).length;
+  gMark(g);
+  const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid()) : { done: 0, pieces: [], errors: [] };
+  const made = r.pieces.map((i) => d.lay.placed[i]), beforeDims = new Set(d.lay.placed);
+  const nd = dimPs.length ? LD.explodeDims(d.lay, dimPs.map((p) => d.lay.placed.indexOf(p)), () => 'o' + uid()) : 0;
+  made.push(...d.lay.placed.filter((p) => !beforeDims.has(p)));
+  const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
+  if (!grid && !r.done && !nd) { note('Explode: nothing explodable (0 exploded)' + why); return; }
+  if (r.done) tidyGroups(d.lay);
+  gCommit(g);
+  selLooseMany = [...gridPl, ...made].map((p) => d.lay.placed.indexOf(p)); update();
+  const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} dimension${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
+  if (grid) note(`Explode: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : '. Explode again to break a part into outlines') + why + '. Ctrl+Z puts the grid back');
+  else note('Explode: ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
+}
+
 function explodeSelected() {
+  const lay = curLay() && curDoc();
+  if (lay) {                                                         // on a layout: dimensions alone -> lines, arrows and text (156b2c3b); anything else -> placed parts and grids (156b4)
+    const items = selItems();
+    if (!items.length || !items.every((x) => x.p.src === 'loose' && isDimPart(x.part))) { explodeOnLayout(); return; }
+    const ats = items.map((x) => x.p.i), snap = laySnap(lay.lay);
+    const n = LD.explodeDims(lay.lay, ats, () => 'o' + uid());
+    if (!n) { note('Explode: nothing explodable (0 exploded)'); return; }
+    state.sel = -1; pushLay(lay, snap, '', 'Explode'); touch(); update();
+    note(`Explode: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
+    return;
+  }
   const d = editable();
-  if (!d) { note('Explode works on a drawing tab: open a drawing first'); return; }
+  if (!d) { if (!cmpDoc() || cmpEdit()) note('Explode works on a drawing tab: open a drawing first'); return; }      // in Compare, cmpEdit() says why a library part or hidden drawing cannot
   const r = explodeSelection(d.raw, d.sel, d.locked);
   const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
   if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }
@@ -5354,9 +5429,14 @@ function deleteSelection() {
   commit(d, Ed.removeEntities(d.raw, d.sel), `Delete ${n}`);
   note(`Deleted ${n}. Ctrl+Z brings them back`);
 }
+/** A Line with only its first point has nothing made to undo: Ctrl+Z drops the point. */
+function dropLinePoint(d) {
+  if (!d || !state.draw || state.drawDoc !== d || DR.toolUndoSeg(state.draw) !== 'point') return false;
+  state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return true;
+}
 function undo(d) {
   if (d.vlay) { undoLay(); return; }
-  if (state.draw && state.drawDoc === d && DR.toolUndoSeg(state.draw) === 'point') { state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return; }   // a Line with only its first point: nothing made to undo
+  if (dropLinePoint(d)) return;
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
   const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; }
@@ -5491,7 +5571,6 @@ function dimPrompt() {
   const t = dimTarget();
   if (!t) return 'Dimension: open a drawing tab or a layout first';
   if (!D) return null;
-  if (t.lay && type !== 'aligned' && type !== 'linear') return 'Dimension: radius, diameter and angle on a layout are not built yet (TODO 156b2c2). Pick Aligned or Linear';
   if (type === 'aligned') return ['Dimension: first point (it snaps to ends and centres)', 'Dimension: second point', 'Dimension: move the line up or down and click to place it'][D.pts.length];
   if (type === 'linear') return ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location [Horizontal/Vertical]:'][D.pts.length];
   if (type === 'angle') return ['Select first line:', 'Select second line:', 'Specify dimension arc location:'][D.lines.length];
@@ -5536,13 +5615,14 @@ function dimHover(d, p, shift) {
 /** Puts the dimension m ({ kind, params }) in the drawing (one undo step) and starts the next. */
 function dimPlace(d, m) {
   if (!m) { note(state.dimType === 'angle' ? 'Dimension: no angle there, try another place' : 'Dimension: nothing to measure there, try another place'); return; }
-  const taken = d.lay ? Object.fromEntries(Object.values(d.lay.parts).flatMap((q) => Object.keys(q.raw?.blocks || {})).map((n) => [n, 1])) : d.raw.blocks;
+  const names = d.lay ? LD.dimensionNames(d.lay) : null, taken = names ? names.taken : d.raw.blocks;
   const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(taken, m.kind, m.params.axis), state.dp);
   if (!dim) { note('Dimension: nothing to measure there, try another place'); return; }
   dimClear(state.dim);
   if (d.lay) {                                                       // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
-    layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block });
-    note(`Dimension placed: ${dim.label}${dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
+    names.taken.add(dim.name.toLowerCase());
+    layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block }, names);
+    note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
@@ -5552,10 +5632,11 @@ function dimPlace(d, m) {
 function dimensionPoint(d, p, shift = false, typed = false) {
   const D = state.dim, type = state.dimType;
   if (!D || !dimTarget()) return;
-  if (d.lay && type !== 'aligned' && type !== 'linear') { note(dimPrompt()); return; }
   if (type === 'radius' || type === 'diameter' || type === 'angle') {
     if (D.obj || D.lines.length === 2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
-    const ent = d.raw.entities[Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d))];
+    const v = d.lay ? layObjDoc(d) : d;
+    if (d.lay && partRefused(v, { kind: 'dimension' }, p)) return;
+    const ent = v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))];
     if (type === 'angle') {
       const l = Ed.lineOf(ent);
       if (!l) { note('Select a line: click on one'); return; }
@@ -6340,7 +6421,7 @@ function toolMenu(e) {
   return true;
 }
 /** Drawn shapes on a layout: each is a layout object on the current layer (layoutdoc.js objectPart), all in ONE undo step. */
-function layObjectsAdd(d, label, ents, blocks = {}) {
+function layObjectsAdd(d, label, ents, blocks = {}, dimNames) {
   const lay = d.lay, names = new Set(Object.values(lay.parts).map((p) => p.name));
   pushLay(d, null, '', label);
   if (Object.keys(blocks).length && !LD.layersOf(lay)[Ed.DIM_LAYER]) { lay.layers = { ...LD.layersOf(lay) }; addLayer(lay, Ed.DIM_LAYER, { aci: 5, tc: 0x0f766e }); }       // (a dimension's layer, as Ed.addDimension makes it)
@@ -6350,7 +6431,7 @@ function layObjectsAdd(d, label, ents, blocks = {}) {
     if (!part) continue;
     names.add(part.name); lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
   }
-  touch(); update();
+  touch(); update(false, dimNames);
 }
 function layDrawCommit(d, kind, shapes, attrs) {
   layObjectsAdd(d, DR.LABELS[kind], shapes.map((sh) => DR.toEntity(sh, attrs, 1)));
@@ -7586,19 +7667,34 @@ function placeTextEditor() {
 }
 
 /** Opens the editor: a new text at drawing point p, or the text at entity e to change (its lines in the box). */
-function textOpen(d, p, e = null, ldr = null) {
+function textOpen(d, p, e = null, ldr = null, dim = null) {
   textCommit();
   const c = state.text.cfg;
   let m, orig = null;
-  if (ldr) { m = { ...LR.geometry(ldr.model).text }; e = ldr.e; }                 // a leader's note: where it lands, in the leader's text height
+  if (dim) {
+    m = TX.decode(dim.raw.blocks[dim.name].entities.find((x) => x.type === 'TEXT'));
+    const fl = flatten(dim.raw), it = fl.items.find((x) => x.e === e && x.k === 't'), mat = it && fl.mats[it.m];
+    if (!m || !it) return;
+    dim.fl = { ...fl, items: fl.items.filter((x) => x.e !== e || x.k !== 't') };
+    if (mat) {
+      [m.x, m.y] = mapply(mat, m.x, m.y);
+      m.h *= Math.hypot(mat[0], mat[1]); m.angle += Math.atan2(mat[1], mat[0]) * 180 / Math.PI;
+    }
+    dim.editor = dimensionEditor(measuredText(dim.raw.blocks[dim.name].entities), dim.params.override);
+    m.lines = [dim.editor.value];
+    if (!d.lay) setSel(d, new Set([e]));
+  }
+  else if (ldr) { m = { ...LR.geometry(ldr.model).text }; e = ldr.e; }                 // a leader's note: where it lands, in the leader's text height
   else if (e != null) { orig = TX.decode(d.raw.entities[e]); m = { ...orig }; setSel(d, new Set([e])); }
   else m = { type: 'TEXT', x: p[0], y: p[1], h: c.h / d.factor, lines: [''], angle: c.angle || 0, ha: c.ha, font: c.font, styleName: c.font, bold: c.bold };
   if (p && e == null && !ldr) state.pointLast = p.slice(0, 2);
-  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model };
+  state.text.ed = { d, e, m, orig, ldr: ldr && ldr.model, dim };
   ui.textArea.value = m.lines.join('\n');
+  ui.textHintEd.lastChild.textContent = dim ? 'Enter = done · Esc = cancel' : 'Enter = done · Shift+Enter = new line';
   ui.textEd.hidden = false;
   placeTextEditor();
   ui.textArea.focus({ preventScroll: true }); ui.textArea.setSelectionRange(ui.textArea.value.length, ui.textArea.value.length);
+  if (dim?.editor.ranges.length) ui.textArea.setSelectionRange(...dim.editor.ranges[0]);
   state.msg = null; renderCommand(); paintOverlay(); renderEdit();
 }
 /** Enter, Esc or clicking away: the typed lines become the text (a new one, or the changed one). */
@@ -7608,6 +7704,18 @@ function textCommit() {
   state.text.ed = null; ui.textEd.hidden = true; ui.textArea.blur();      // hiding alone moves focus only at the next frame: a key pressed sooner would still go to the textarea
   const lines = TX.linesOf(ui.textArea.value), d = ed.d;
   if (!state.docs.includes(d) || !(d.raw || d.lay)) return;
+  if (ed.dim) {
+    const dim = ed.dim, override = dimensionEditorOverride(dim.editor).replace(/\r?\n/g, ' ');
+    if (override === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); return; }
+    const built = Ed.buildDim(dim.kind, { ...dim.params, override }, d.factor || 1, dim.name, dim.dp);
+    if (d.lay) {
+      const snap = laySnap(d.lay);
+      if (!LD.replaceDim(d.lay, dim.placed, dim.raw.entities[ed.e], { ...dim.raw.blocks, [dim.name]: built.block }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((p) => p.name)))) return;
+      pushLay(d, snap, '', 'Dimension text'); touch(); update();
+    } else { commit(d, Ed.replaceDimension(d.raw, built), 'Dimension text'); setSel(d, new Set([ed.e])); }
+    note('Dimension text changed. Ctrl+Z takes it back');
+    return;
+  }
   if (ed.ldr) {                                                       // a leader's note
     if (!lines) { if (ed.e == null && state.ldr) state.ldr.pts = []; renderCommand(); renderEdit(); paintOverlay(); if (ed.e == null) note('Leader: nothing typed, so nothing was made'); return; }
     if (ed.e == null) ldrAdd(d, { ...ed.ldr, lines });
@@ -7641,10 +7749,21 @@ function textToolDown(e) {
 }
 /** Double-click on a text with the Select tool: change it. */
 function textDblClick(e) {
-  const d = editable();
-  if (!d || state.tool !== 'select' || state.setlen) return;
+  const d = dimTarget();
+  if (!d || state.tool !== 'select' || state.setlen || state.text.ed?.dim) return;
+  if (d.lay) {
+    const hit = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
+    const p = hit && placedNow[+hit.dataset.i], part = p && d.lay.parts[p.partId];
+    if (p && partSelectable(p) && isDimPart(part)) {
+      const dim = Ed.dimOfEntity(part.raw, 0);
+      if (dim) { pdrag = null; state.mode = 'select'; update(); textOpen(d, null, 0, null, { ...dim, raw: part.raw, placed: d.lay.placed[p.i] }); }
+    }
+    return;
+  }
   const hit = hitAt(d, toDrawing(d, e.clientX, e.clientY));
-  if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) textOpen(d, null, hit);
+  const dim = hit >= 0 && Ed.dimOfEntity(d.raw, hit);
+  if (dim) textOpen(d, null, hit, null, { ...dim, raw: d.raw });
+  else if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) textOpen(d, null, hit);
   else if (hit >= 0 && ldrPseudo(d, hit)) ldrEdit(d, hit, ldrPseudo(d, hit).model);
 }
 
@@ -9242,7 +9361,7 @@ function cmpRefresh(d) {
   for (const tab of state.docs) if (tab.cmp?.items.some((x) => x.tabId === d.tabId)) {
     const c = tab.cmp, previous = c.sources.get(d.tabId);
     if (previous?.length === next.length && next.every((v, i) => v === previous[i])) continue;
-    c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.snapshotGeometry(d) } : x);
+    c.items = c.items.map((x) => x.tabId === d.tabId ? { ...x, ...CMP.refreshGeometry(x, d) } : x);
     c.sources.set(d.tabId, next);
     cmpCalc(c);
   }
@@ -9429,7 +9548,7 @@ function cmpPaint(canvas, c, base, marks) {
   paintDrawing(canvas, { ...base, fl: null, factor: 1 });                                      // clears
   for (const sd of c.items) {
     if (!sd.visible) continue;
-    const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour) };
+    const target = sd.id === c.selected && cmpSourceTab(sd), placed = { ...base, ox: base.ox - sd.offset[0], oy: base.oy + sd.offset[1], keep: true, tint: cmpCss(sd.colour), cmpOff: sd.off };
     if (target) paintEditable(canvas, target, placed, state.tool === 'measure' ? null : marks);
     else paintDrawing(canvas, { ...placed, fl: sd.fl, off: sd.off, factor: sd.factor });
   }

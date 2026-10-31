@@ -54,7 +54,7 @@ Set up in session 1, the same shape as Project R:
      change to a live screen, even one asked for without a mock-up, updates it in the same PR.
   4. A difference on purpose is a decision: say it, change the mock-up, add it to DECISIONS.md.
 - Work on a branch → pull request → CI runs the tests and the build.
-- **One PR per session, merged once.** All of a session's changes go on ONE branch, a commit per
+- **One PR per session number, merged once.** A session number (`claude/session<N>`, `runs<N>`) may span several Rook sessions (`Rook S28`, `Rook S28b`, …). All of its changes go on ONE branch, a commit per
   change, in ONE pull request, with the PR body's list of changes kept up to date. Merge only when
   he says so (or at session end with his OK), on a green run for the head commit
   (`gh pr merge <n> --merge --match-head-commit <sha>`). When he asks for **auto-merge**: label the
@@ -105,6 +105,6 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   A new worktree folder needs trusting once on account 2.
 - **Keep the context lean**: screenshot checks and broad searches go to a helper agent that reports
   back in a few lines. Never print whole logs, diffs or files. Edit CLAUDE.md at most once a
-  session, near the end. After a PR merges, suggest `/compact` or a new session.
+  session, near the end. Rook hands over to a fresh Rook session at an ideal time (WORKFLOW.md "Handover"), not at every merge.
 - When something important happens, add a dated paragraph to HISTORY.md, and keep this file to
   what's true now.

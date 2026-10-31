@@ -9,6 +9,7 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 - Commit on the branch you are given; **never push, fetch or pull** (no git credentials in the sandbox; the lead pushes).
   The git folder is separate (`--separate-git-dir`), so a `.git` file, not a folder, sits in the clone.
 - Don't stage `mockups/` or `shots/`.
+- Full suite in a Knight clone: set `SHOTS_DIR=shots-k<item>-suite` first (the old `shots/` refuses writes there, EPERM; 156b2c2a lost a round to it, 2026-10-29).
 - Text from a file (layer, block, text names) reaches the DOM only through `textContent` / `h()`, never `innerHTML`.
 - Logic that can be pure lives in its own module with a `*.test.mjs` next to the others (`tools/unit.mjs` runs them).
 - Nothing may need admin rights. No new npm dependency unless the brief says so.

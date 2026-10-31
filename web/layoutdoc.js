@@ -14,13 +14,13 @@
 // apps ignore (or at most list) an unused block; our reader (drawing.js readDxf) keeps it, and layoutFromRaw() reads it back.
 import { readDxf, flatten } from './drawing.js';
 import { writeDxf, text as dxfText, addBlock, addEntities, newDoc, insert } from './dxf-write.js';
-import { explodeInsert } from './explode.js';
+import { explodeInsert, explodeDimension } from './explode.js';
 import { unitFactor, startHidden } from './doc.js';
 import { stepRepeat, markGeometry } from './layout.js';
 import { buildLayoutDoc, gridPlacements, placedBox, partFromDrawing, placement1 } from './apply.js';
-import { keepOnly, DIM_LAYER, DIM_BLOCK } from './edit.js';
+import { keepOnly, newLayerName, DIM_LAYER, DIM_BLOCK, dimTag } from './edit.js';
 import { followDimensions } from './linked-dimensions.js';
-import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName, tagOf } from './layoutdim.js';
+import { isDimPart, dimName, isSettled, bakeBlock, turnedTag, freeBlockName } from './layoutdim.js';
 import { cleanGuides } from './guides.js';
 import { TITLE_BLOCK } from './pdf-export.js';
 import { colourKey, withColour } from './props.js';
@@ -57,7 +57,8 @@ export function layersOf(lay) {
 /** A layout object from one entity (sheet mm; `layers` is the layer table; `blocks`: the one a dimension's INSERT names), or null when it has no extents. */
 export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   const raw = { header: { ...header }, layers, ltypes: {}, blocks, entities: [{ ...ent, ps: false }] };
-  const fl = flatten(raw), box = fl.boxes && fl.boxes.model;
+  const fl = flatten(raw), shown = flatten({ ...raw, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box is made with the entity's layer on: an off layer keeps its objects (hidden by `off`)
+  const box = shown.boxes && shown.boxes.model;
   if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
   return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
 }
@@ -99,12 +100,12 @@ export function objectDoc(lay, skip = () => false) {
   const raw = { header: {}, layers: layersOf(lay), ltypes: {}, blocks: {}, entities }, fl = flatten(raw);
   return { raw, fl, off: startHidden(fl), at, lockedEnts };
 }
-const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline' };
+const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline', SOLID: 'Solid', MTEXT: 'Text' };
 /** What a command left of objectDoc(lay) (`entities`): objects whose entity is gone are removed (and their part, if nothing else is placed from it), each new entity becomes an object. */
 export function objectCommit(lay, view, entities, newId) {
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
-  const fresh = entities.filter((e) => !view.at.has(e)), one = gone.size === 1 && fresh.length === 1 ? lay.placed[[...gone][0]] : null;       // one object replaced by one piece (a trim): it keeps its group, lock and name
+  const fresh = entities.filter((e) => !view.at.has(e)), oneAt = gone.size === 1 && fresh.length === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // one object replaced by one piece (a trim): it keeps its slot, group, lock and name
   const oneName = one && lay.parts[one.partId]?.name;
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
@@ -116,9 +117,49 @@ export function objectCommit(lay, view, entities, newId) {
     const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers), pl = part && objectPlacement(part);
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
-    names.add(part.name); lay.parts[part.id] = part; lay.placed.push(pl);
+    names.add(part.name); lay.parts[part.id] = part;
+    if (one) lay.placed.splice(oneAt, 0, pl); else lay.placed.push(pl);
     bakedCache.set(part, new Map([[bakeKey(pl), e]]));
   }
+}
+
+/** A placed part's loose entities (sheet mm) with its placement baked in, one level (a block or dimension inside stays one INSERT): { entities, blocks }. Throws when a member cannot be carried. */
+export function explodePart(part, p) {
+  const mini = newDoc(4), f = part.factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
+  mini.layers = part.raw.layers; mini.blocks = { ...part.raw.blocks };
+  addBlock(mini, 'PD_PART', part.raw.entities.filter((e) => (e.ps ? 1 : 0) === part.space), [part.box[0], part.box[1]]);
+  return explodeInsert(insert('PD_PART', p.x, p.y, { layer: '0', rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini);       // layer 0 stays layer 0, as AutoCAD
+}
+/** Explode the placed parts at `idxs` (indexes in lay.placed; layout objects and locked parts stay): each becomes its loose entities as layout objects, in its slot, on the part's layers (added to the layout when missing).
+ * → { done (parts exploded), pieces (indexes in lay.placed of the new objects), errors } */
+export function explodePlaced(lay, idxs, newId) {
+  const at = new Set(idxs), out = [], pieces = [], errors = new Set(), table = { ...layersOf(lay) }, names = new Set(Object.values(lay.parts).map((q) => q.name));
+  const find = (t, n) => Object.keys(t).find((k) => k.toLowerCase() === String(n).toLowerCase());
+  let done = 0;
+  const renamed = new Map();
+  lay.placed.forEach((p, i) => {
+    const part = lay.parts[p.partId], mine = [];
+    if (at.has(i) && part && !part.obj && !p.lock) {
+      try {
+        const r = explodePart(part, p);
+        for (let e of r.entities) {
+          const k = find(part.raw.layers || {}, e.layer), def = () => (k === undefined ? { aci: 7 } : structuredClone(part.raw.layers[k]));
+          if (isReserved(e.layer)) {                       // Sheet, Marks and Parts are not read back as objects: such a piece goes on a layer of its own
+            const low = e.layer.toLowerCase();
+            if (!renamed.has(low)) { const name = newLayerName([...Object.keys(table), ...RESERVED_LAYERS]); table[name] = def(); renamed.set(low, name); }
+            e = { ...e, layer: renamed.get(low) };
+          } else if (find(table, e.layer) === undefined) table[e.layer] = def();
+          const o = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), e, table, {}, e.type === 'INSERT' ? r.blocks : {});
+          if (o) { names.add(o.name); mine.push(o); } else errors.add('pieces with no extent were dropped');
+        }
+      } catch (err) { errors.add(err.message); mine.length = 0; }
+    }
+    if (!mine.length) { out.push(p); return; }
+    done++;
+    for (const o of mine) { lay.parts[o.id] = o; pieces.push(out.length); out.push(objectPlacement(o)); }
+  });
+  if (done) { lay.placed = out; lay.layers = table; }       // a new layer table, so an undo snapshot keeps the old one
+  return { done, pieces, errors: [...errors] };
 }
 
 /** A grip edit: the object of entity `ent` (from objectDoc `view`) becomes `next`, in place: the same slot, name, group and lock (a part shared with a copy is left to the copy, and the new one gets a name of its own).
@@ -137,25 +178,56 @@ export function objectReplace(lay, view, ent, next, newId) {
 
 // ---------------------------------------------------------------- dimensions on a layout (TODO 156b2c1; layoutdim.js)
 
+/** Block names, ignoring case; drawings' names also reserve a dimension's existing name. */
+export function dimensionNames(lay) {
+  const taken = new Set(), drawn = new Set();
+  for (const q of Object.values(lay.parts)) for (const n of Object.keys(q.raw?.blocks || {})) { taken.add(n.toLowerCase()); if (!q.obj) drawn.add(n.toLowerCase()); }
+  return { taken, drawn };
+}
+/** Replace a dimension with its new entity and blocks, keeping its placement slot and metadata. */
+export function replaceDim(lay, p, ent, blocks, newId, names) {
+  const part = lay.parts[p.partId], shared = lay.placed.filter((q) => q.partId === p.partId).length > 1;
+  const next = objectPart(newId(), shared ? nextName('Dimension', names) : part.name, ent, layersOf(lay), part.raw.header, blocks);
+  if (!next) return false;
+  names.add(next.name); lay.parts[next.id] = next;
+  Object.assign(p, objectPlacement(next));
+  return true;
+}
+/** Explode the dimensions at `lay.placed` indexes `ats`: each becomes its lines, arrowheads and text as separate objects in its slot (its lock kept; the pieces follow nothing). → the number of dimensions exploded. */
+export function explodeDims(lay, ats, newId) {
+  const layers = layersOf(lay), names = new Set(Object.values(lay.parts).map((q) => q.name));
+  let n = 0;
+  for (const p of ats.map((i) => lay.placed[i])) {
+    const part = lay.parts[p.partId], at = lay.placed.indexOf(p);
+    if (!isDimPart(part) || !isSettled(part, p)) continue;
+    const pieces = [];
+    for (const e of explodeDimension(part.raw.entities[0], { blocks: part.raw.blocks, layers })) {
+      const obj = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), { ...e, ps: false }, layers);
+      if (!obj) continue;
+      names.add(obj.name); lay.parts[obj.id] = obj;
+      pieces.push(Object.assign(objectPlacement(obj), p.lock ? { lock: true } : {}));
+    }
+    lay.placed.splice(at, 1, ...pieces); n++;
+  }
+  dropUnusedDims(lay);
+  return n;
+}
 /** Bakes the placement of every moved / turned / scaled / mirrored dimension into its block (a new part, the placement back to the identity).
  * Also gives a dimension a block name of its own when a placed drawing's block, or another dimension (pasted from another layout), has it: they all land in one file. → true when any changed. */
-export function settleDims(lay, newId) {
-  const taken = new Set(), drawn = new Set(), owner = new Map(), names = new Set(Object.values(lay.parts).map((q) => q.name));
-  for (const q of Object.values(lay.parts)) for (const n of Object.keys(q.raw?.blocks || {})) { taken.add(n.toLowerCase()); if (!q.obj) drawn.add(n.toLowerCase()); }   // block names ignore case
+export function settleDims(lay, newId, { taken, drawn } = dimensionNames(lay)) {
+  const owner = new Map(), names = new Set(Object.values(lay.parts).map((q) => q.name));
   let changed = false;
   for (const p of lay.placed) {
     const part = lay.parts[p.partId];
     if (!isDimPart(part)) continue;
     const old = dimName(part), lo = old.toLowerCase(), settled = isSettled(part, p), clash = drawn.has(lo) || owner.has(lo) && owner.get(lo) !== p.partId;
     if (settled && !clash) { owner.set(lo, p.partId); continue; }
-    const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = settled ? tagOf(old) : turnedTag(tagOf(old), p.rot);
-    const name = !shared && !clash && tag === tagOf(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
+    const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1, tag = settled ? dimTag(old) : turnedTag(dimTag(old), p.rot);
+    const name = !shared && !clash && tag === dimTag(old) ? old : freeBlockName(taken, tag), ent = part.raw.entities[0];
     taken.add(name.toLowerCase());
-    const next = objectPart(newId(), shared ? nextName('Dimension', names) : part.name, { ...ent, r: { ...ent.r, v: ent.r.v.map((v, k) => (ent.r.c[k] === 2 ? name : v)) } },
-      layersOf(lay), part.raw.header, { [name]: settled ? part.raw.blocks[old] : bakeBlock(part.raw.blocks[old], part, p) });
-    if (!next) continue;
-    names.add(next.name); lay.parts[next.id] = next; owner.set(name.toLowerCase(), next.id);
-    Object.assign(p, objectPlacement(next)); delete p.sc;
+    if (!replaceDim(lay, p, { ...ent, r: { ...ent.r, v: ent.r.v.map((v, k) => (ent.r.c[k] === 2 ? name : v)) } },
+      { [name]: settled ? part.raw.blocks[old] : bakeBlock(part.raw.blocks[old], part, p) }, newId, names)) continue;
+    owner.set(name.toLowerCase(), p.partId); delete p.sc;
     changed = true;
   }
   dropUnusedDims(lay);
@@ -189,7 +261,8 @@ function pairUp(pv, cv) {
   const left = [];
   for (const i of rest) { const l = byId.get(cur[i].id); if (l && l.length) { const j = l.shift(); used.add(j); out.push([i, j]); } else left.push(i); }
   // a grip edit renames the part of a copy that shares one (objectReplace keeps the slot), so what is left pairs by slot
-  for (const i of left) { const j = prev.findIndex((_, j) => !used.has(j) && pv.at[j] === cv.at[i]); if (j >= 0) { used.add(j); out.push([i, j]); } }
+  const bySlot = new Map(pv.at.map((slot, j) => [slot, j]));
+  for (const i of left) { const j = bySlot.get(cv.at[i]); if (j !== undefined && !used.has(j)) { used.add(j); out.push([i, j]); } }
   return out.sort((a, b) => a[0] - b[0]);
 }
 /** Dimensions follow the objects they measure: `prev` and `cur` are linkView()s before and after an edit; a dimension whose end sat on a point that moved is rebuilt (drawings' linked dimensions, linked-dimensions.js). → true when any changed. */
@@ -200,15 +273,13 @@ export function followDims(lay, prev, cur, newId) {
   const next = { entities: common.map(([i]) => cur.entities[i]), blocks: cur.blocks }, out = followDimensions(before, next, 1);
   if (out === next) return false;
   let changed = false;
+  const names = new Set(Object.values(lay.parts).map((q) => q.name));
   common.forEach(([i]) => {
     const p = lay.placed[cur.at[i]], part = lay.parts[p.partId];
     if (!isDimPart(part)) return;
     const name = dimName(part), block = out.blocks[name];
     if (!block || block === part.raw.blocks[name]) return;
-    const shared = lay.placed.filter((q) => q.partId === p.partId).length > 1;
-    const made = objectPart(newId(), shared ? nextName('Dimension', new Set(Object.values(lay.parts).map((q) => q.name))) : part.name, part.raw.entities[0], layersOf(lay), part.raw.header, { [name]: block });
-    if (!made) return;
-    lay.parts[made.id] = made; Object.assign(p, objectPlacement(made)); changed = true;
+    if (replaceDim(lay, p, part.raw.entities[0], { [name]: block }, newId, names)) changed = true;
   });
   dropUnusedDims(lay);
   return changed;

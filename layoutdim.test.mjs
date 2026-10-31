@@ -1,11 +1,12 @@
 // layoutdim.js + the dimension parts of layoutdoc.js — a dimension on a layout (TODO 156b2c1).   node layoutdim.test.mjs
 import assert from 'node:assert/strict';
-import { line } from './web/dxf-write.js';
+import { line, circle, arc } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
 import { writeDxf } from './web/dxf-write.js';
 import * as LD from './web/layoutdoc.js';
 import * as Ed from './web/edit.js';
 import { isDimPart, dimName, turnedTag, freeBlockName } from './web/layoutdim.js';
+import { trimEntity } from './web/modify.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -228,11 +229,209 @@ test('a grip edit on a copy that shares its part keeps its dimension following',
   near(dimOf(lay, d).params.b[0], 160);
 });
 
+for (const [slot, where] of ['first', 'middle', 'last'].entries()) test(`Trim of the ${where} shared copy: only its dimension follows by slot`, () => {
+  const lay = layoutWith(), a = addLine(lay, 'l1', [0, 0], [100, 0]);
+  lay.placed.push({ ...a, y: 50 }, { ...a, y: 100 });
+  const dims = [0, 50, 100].map((y, i) => addDim(lay, 'd' + i, [0, y], [100, y], 10, `PD_DIM_${i + 1}`));
+  const blocks = dims.map((p) => { const q = lay.parts[p.partId]; return q.raw.blocks[dimName(q)]; });
+  const prev = LD.linkView(lay), view = LD.objectDoc(lay), ent = view.raw.entities[slot];
+  const cut = trimEntity(ent, [line(60, -10, 60, 110)], [90, slot * 50]);
+  assert.equal(cut.ents.length, 1);
+  LD.objectCommit(lay, view, view.raw.entities.flatMap((e) => e === ent ? cut.ents : [e]), newId);
+  LD.settleDims(lay, newId);
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+  assert.equal(LD.objectDoc(lay).raw.entities[slot], cut.ents[0], 'Trim keeps the edited copy in its slot');
+  dims.forEach((p, i) => {
+    const d = dimOf(lay, p);
+    near(d.params.a[0], 0); near(d.params.a[1], i * 50);
+    near(d.params.b[0], i === slot ? 60 : 100); near(d.params.b[1], i * 50);
+    assert.equal(labelOf(lay, p), i === slot ? '60.00' : '100.00');
+    if (i !== slot) assert.equal(d.part.raw.blocks[d.name], blocks[i], 'another copy\'s dimension block is untouched');
+  });
+});
+
+for (const [slot, where] of ['first', 'last'].entries()) test(`Trim of the ${where} shared copy after the copy before it was deleted: its own dimension follows`, () => {
+  const lay = layoutWith(), a = addLine(lay, 'l1', [0, 0], [100, 0]);
+  lay.placed.push({ ...a, y: 50 }, { ...a, y: 100 });
+  const dims = [0, 50, 100].map((y, i) => addDim(lay, 'd' + i, [0, y], [100, y], 10, `PD_DIM_${i + 1}`));
+  lay.placed.splice(lay.placed.indexOf(a), 1);   // the y = 0 copy is gone; the copies at 50 and 100 now sit in slots 0 and 1
+  const prev = LD.linkView(lay), view = LD.objectDoc(lay), ent = view.raw.entities[slot];
+  const cut = trimEntity(ent, [line(60, -10, 60, 110)], [90, 50 + slot * 50]);
+  assert.equal(cut.ents.length, 1);
+  LD.objectCommit(lay, view, view.raw.entities.flatMap((e) => e === ent ? cut.ents : [e]), newId);
+  LD.settleDims(lay, newId);
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+  dims.forEach((p, i) => {
+    const cutOne = i === slot + 1;
+    near(dimOf(lay, p).params.b[0], cutOne ? 60 : 100);
+    assert.equal(labelOf(lay, p), cutOne ? '60.00' : '100.00');
+  });
+});
+
+for (const kind of ['radius', 'diameter']) for (const shape of ['circle', 'arc']) {
+  const tag = kind === 'radius' ? 'R' : 'D';
+  const makeShape = (r) => shape === 'circle' ? circle(100, 100, r) : arc(100, 100, r, 20, 160);
+  const setup = () => {
+    const lay = layoutWith(), part = LD.objectPart('s', 'Shape', makeShape(20), LD.layersOf(lay));
+    lay.parts.s = part; lay.placed.push(LD.objectPlacement(part));
+    const params = kind === 'radius' ? { c: [100, 100], r: 20, p: [130, 130] } : { a: [80, 100], b: [120, 100], offset: 0 };
+    const dim = Ed.buildDim(kind, params, 1, `PD_DIM_${tag}1`, 3), dp = LD.objectPart('d', 'Dimension', dim.insert, LD.layersOf(lay), {}, { [dim.name]: dim.block });
+    lay.parts.d = dp; lay.placed.push(LD.objectPlacement(dp));
+    return lay;
+  };
+  const centreRadius = (d) => {
+    const p = d.params;
+    return kind === 'radius' ? [...p.c, p.r] : [(p.a[0] + p.b[0]) / 2, (p.a[1] + p.b[1]) / 2, Math.hypot(p.b[0] - p.a[0], p.b[1] - p.a[1]) / 2];
+  };
+
+  test(`${kind} on a ${shape}: R/D block saves and reopens as a dimension object`, () => {
+    const lay = setup(), back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))), 'L');
+    const p = back.placed.find((q) => isDimPart(back.parts[q.partId]));
+    assert.ok(p);
+    assert.equal(dimOf(back, p).kind, kind);
+    assert.equal(dimOf(back, p).name, `PD_DIM_${tag}1`);
+    centreRadius(dimOf(back, p)).forEach((v, i) => near(v, [100, 100, 20][i]));
+    assert.equal(labelOf(back, p).replace('\\U+00D8', 'Ø'), kind === 'radius' ? 'R20.000' : 'Ø40.000');
+  });
+
+  test(`${kind} on a ${shape}: follows Scale, Move, rotation, mirror and a radius grip`, () => {
+    const lay = setup(), p = lay.placed[0], d = lay.placed[1];
+    const follow = (change) => {
+      const prev = LD.linkView(lay);
+      change(); LD.settleDims(lay, newId);
+      assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+      const q = Ed.circleOf(LD.objectDoc(lay).raw.entities[0]);
+      centreRadius(dimOf(lay, d)).forEach((v, i) => near(v, [...q.c, q.r][i]));
+    };
+    follow(() => { p.sc = 2; });
+    assert.equal(labelOf(lay, d), kind === 'radius' ? 'R40.000' : 'Ø80.000');
+    follow(() => { p.x += 30; p.y += 5; });
+    follow(() => { p.rot = 90; });
+    follow(() => { p.mirrorX = true; });
+    follow(() => {
+      const view = LD.objectDoc(lay), ent = view.raw.entities[0], q = Ed.circleOf(ent);
+      const next = { ...ent, r: { ...ent.r, v: ent.r.v.map((v, i) => ent.r.c[i] === 40 ? String(q.r + 10) : v) } };
+      assert.ok(LD.objectReplace(lay, view, ent, next, newId));
+    });
+    assert.equal(labelOf(lay, d), kind === 'radius' ? 'R50.000' : 'Ø100.000');
+  });
+
+  test(`${kind}: baking its own scale, rotation and mirror keeps its tag and measured value`, () => {
+    const lay = setup(), d = lay.placed[1];
+    d.sc = 2; d.rot = 35; d.mirrorX = true;
+    assert.equal(LD.settleDims(lay, newId), true);
+    assert.equal(dimOf(lay, d).kind, kind);
+    assert.equal(labelOf(lay, d), kind === 'radius' ? 'R40.000' : 'Ø80.000');
+    near(centreRadius(dimOf(lay, d))[2], 40);
+    assert.equal(LD.settleDims(lay, newId), false);
+  });
+}
+
+function angleLayout(reverse = false) {
+  const lay = layoutWith();
+  addLine(lay, 'l1', reverse ? [200, 100] : [100, 100], reverse ? [100, 100] : [200, 100]);
+  addLine(lay, 'l2', [100, 100], [100, 200]);
+  const dim = Ed.buildDim('angle', { v: [100, 100], r: 40, a0: 0, a1: 90, textH: 2, arrow: 2 }, 1, 'PD_DIM_A1', 3);
+  const part = LD.objectPart('d', 'Angle', dim.insert, LD.layersOf(lay), {}, { [dim.name]: dim.block });
+  lay.parts.d = part; lay.placed.push(LD.objectPlacement(part));
+  return lay;
+}
+
+test('angle: A block saves and reopens as a dimension object, with its look and decimals', () => {
+  const lay = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(angleLayout()))), 'L'), d = lay.placed[2];
+  assert.ok(isDimPart(lay.parts[d.partId]));
+  const m = dimOf(lay, d);
+  assert.equal(m.name, 'PD_DIM_A1'); assert.equal(m.kind, 'angle');
+  assert.equal(labelOf(lay, d), '90.000°');
+  near(m.params.v[0], 100); near(m.params.v[1], 100); near(m.params.r, 40);
+  near(m.params.textH, 2); near(m.params.arrow, 2, 1e-5);
+});
+
+for (const reverse of [false, true]) for (const change of ['Move', 'Rotate', 'Rotate 90', 'Rotate 180', 'Mirror', 'Mirror Y', 'Scale', 'first grip', 'second grip']) {
+  test(`angle: follows ${change} of its lines (${reverse ? 'reversed' : 'forward'} first line)`, () => {
+    const lay = angleLayout(reverse), d = lay.placed[2], prev = LD.linkView(lay);
+    if (change.endsWith('grip')) {
+      const view = LD.objectDoc(lay), first = change === 'first grip';
+      const ent = view.raw.entities[first ? 0 : 1];
+      const next = first ? (reverse ? line(200, 200, 100, 100) : line(100, 100, 200, 200)) : line(100, 100, 0, 200);
+      assert.ok(LD.objectReplace(lay, view, ent, next, newId));
+    } else for (const p of lay.placed.slice(0, 2)) {
+      if (change === 'Move') { p.x += 30; p.y += 5; }
+      if (change.startsWith('Rotate')) p.rot = +change.slice(7) || 35;
+      if (change === 'Mirror') p.mirrorX = true;
+      if (change === 'Mirror Y') p.mirrorY = true;
+      if (change === 'Scale') p.sc = 2;
+    }
+    LD.settleDims(lay, newId);
+    assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+    const m = dimOf(lay, d).params;
+    near(m.v[0], change === 'Move' ? 130 : 100); near(m.v[1], change === 'Move' ? 105 : 100);
+    assert.equal(labelOf(lay, d), change === 'first grip' ? '45.000°' : change === 'second grip' ? '135.000°' : '90.000°');
+    const lines = LD.objectDoc(lay).raw.entities.slice(0, 2).map(Ed.lineOf);
+    for (const a of [m.a0, m.a1]) assert.ok(lines.some((l) => Math.abs((l[2] - l[0]) * Math.sin(a * Math.PI / 180) - (l[3] - l[1]) * Math.cos(a * Math.PI / 180)) < 1e-5), 'each ray follows a source line');
+  });
+}
+
+test('angle: moving one line moves the intersection even when its direction opposes the dimension ray', () => {
+  const lay = angleLayout(true), d = lay.placed[2], prev = LD.linkView(lay);
+  lay.placed[0].y += 20;
+  assert.equal(LD.followDims(lay, prev, LD.linkView(lay), newId), true);
+  near(dimOf(lay, d).params.v[0], 100); near(dimOf(lay, d).params.v[1], 120);
+});
+
+test('angle: baking its own scale, rotation and mirror keeps its A tag and value', () => {
+  const lay = angleLayout(), d = lay.placed[2];
+  d.sc = 2; d.rot = 35; d.mirrorX = true;
+  assert.equal(LD.settleDims(lay, newId), true);
+  assert.equal(dimOf(lay, d).kind, 'angle'); assert.equal(dimOf(lay, d).name, 'PD_DIM_A1');
+  assert.equal(labelOf(lay, d), '90.000°'); near(dimOf(lay, d).params.r, 80);
+  assert.equal(LD.settleDims(lay, newId), false);
+});
+
+for (const [change, set, rays] of [['Rotate 90', (p) => { p.rot = 90; }, [90, 180]], ['Rotate 180', (p) => { p.rot = 180; }, [180, 270]], ['Mirror Y', (p) => { p.mirrorY = true; }, [270, 0]]]) {
+  test(`angle: its own ${change} is baked, the arc keeps its 90° sweep`, () => {
+    const lay = angleLayout(), d = lay.placed[2];
+    set(d);
+    assert.equal(LD.settleDims(lay, newId), true);
+    const m = dimOf(lay, d);
+    assert.equal(m.kind, 'angle'); assert.equal(m.name, 'PD_DIM_A1'); assert.equal(labelOf(lay, d), '90.000°');
+    near(m.params.r, 40);
+    near(m.params.a0, rays[0]); near(m.params.a1, rays[1]);   // a mirror reverses the ends, so the arc still runs counter-clockwise from a0 to a1
+    assert.equal(LD.settleDims(lay, newId), false);
+  });
+}
+
 test('names: turnedTag and freeBlockName', () => {
   assert.equal(turnedTag('H', 90), 'V'); assert.equal(turnedTag('V', 270), 'H'); assert.equal(turnedTag('H', 180), 'H'); assert.equal(turnedTag('H', 45), '');
   assert.equal(turnedTag('', 90), ''); assert.equal(turnedTag('R', 45), 'R');
   assert.equal(freeBlockName(new Set(['PD_DIM_1', 'PD_DIM_2']), ''), 'PD_DIM_3');
   assert.equal(freeBlockName(new Set(['pd_dim_1', 'pd_dim_h1']), ''), 'PD_DIM_2'); assert.equal(freeBlockName(new Set(['pd_dim_h1']), 'H'), 'PD_DIM_H2');
+  assert.equal(freeBlockName(new Set(['pd_dim_r1']), 'R'), 'PD_DIM_R2');
+  assert.equal(freeBlockName(new Set(['pd_dim_d1']), 'D'), 'PD_DIM_D2');
+  assert.equal(freeBlockName(new Set(['pd_dim_a1']), 'A'), 'PD_DIM_A2');
+});
+
+test('explodeDims: a dimension becomes its lines, arrows and one text as objects in its slot; the dimension part is gone; a locked one stays locked', () => {
+  const lay = layoutWith();
+  addLine(lay, 'l1', [0, 0], [100, 0]);
+  const p = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1'); p.lock = true;
+  addLine(lay, 'l2', [0, 50], [100, 50]);
+  assert.equal(LD.explodeDims(lay, [1], newId), 1);
+  const kinds = lay.placed.map((q) => lay.parts[q.partId].raw.entities[0].type);
+  assert.deepEqual(kinds, ['LINE', 'LINE', 'LINE', 'LINE', 'SOLID', 'SOLID', 'MTEXT', 'LINE'], 'in the dimension\'s slot, between the two lines');
+  assert.ok(lay.placed.slice(1, 7).every((q) => q.lock) && !lay.placed[0].lock && !lay.placed[7].lock);
+  assert.ok(Object.values(lay.parts).every((part) => !isDimPart(part)), 'no dimension part left');
+  assert.ok(lay.placed.slice(1, 7).every((q) => lay.parts[q.partId].raw.entities[0].layer === Ed.DIM_LAYER));
+  const mt = lay.parts[lay.placed[6].partId].raw.entities[0];
+  assert.equal(mt.r.v[mt.r.c.indexOf(1)], '100.00');
+  assert.equal(LD.explodeDims(lay, [0], newId), 0, 'a plain line does not explode');
+});
+
+test('explodeDims: a copy sharing the part keeps its dimension', () => {
+  const lay = layoutWith(), p = addDim(lay, 'd1', [0, 0], [100, 0], 10, 'PD_DIM_1');
+  lay.placed.push({ ...p });
+  assert.equal(LD.explodeDims(lay, [0], newId), 1);
+  assert.ok(isDimPart(lay.parts[lay.placed.at(-1).partId]));
 });
 
 console.log(n + ' tests');

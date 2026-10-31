@@ -5,10 +5,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
+import { RUNNING_PROMPT } from './tools/running-prompt.mjs';
 import { chromium } from 'playwright';
 import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
+import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf } from './web/layoutdoc.js';
@@ -98,7 +100,7 @@ async function runStep(page, { name, fn, afterStep }, shotDir) {
     await fn();
     await page.keyboard.press('Escape');
     await page.keyboard.press('Escape');
-    assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), /Specify|Next point|Click inside|Select destination|Type the text|Esc (?:ends|cancels)[).:\s]*$/, `${name} left a command running`);
+    assert.doesNotMatch(await page.getByTestId('cmd-prompt').textContent(), RUNNING_PROMPT, `${name} left a command running`);
     console.log('ok', name);
   } catch (e) {
     failed++;
@@ -4214,9 +4216,9 @@ try {
       assert.ok(Math.abs(fade.x + fade.width / 2 - canvas.x - canvas.width / 2) < 1, 'toasts centred in the canvas');
       assert.ok(fade.y + fade.height < canvas.y + canvas.height, 'toasts above the status bar');
       assert.equal(await t('cmd-fade').locator('.cb-fade-rows > div').evaluateAll((rows) => rows.length === 3 && rows.every((row) => {
-        const css = getComputedStyle(row), panel = getComputedStyle(document.querySelector('.cbar')), ink = getComputedStyle(document.querySelector('.cb-in input'));       // 157b: the command bar keeps its own colours
-        return css.opacity === '1' && css.color === ink.color &&css.backgroundColor === panel.backgroundColor && css.borderTopStyle === 'solid' && parseFloat(css.borderTopWidth) >= 1;
-      })), true, 'all three toast rows use opaque theme panel/text colours and a border');
+        const css = getComputedStyle(row);
+        return css.opacity === '1' && css.fontSize === '11px' && css.height === '16px' && /^rgba\(.+, 0\.88\)$/.test(css.backgroundColor);
+      })), true, 'all three toast rows use compact translucent boxes');
     };
     await checkToasts();
     await page.screenshot({ path: dir + '/s11-51-light.png' });
@@ -4629,6 +4631,176 @@ try {
       await command('d'); assert.match(await q('cmd-prompt').textContent(), /Open the part as a drawing to edit/);
       await p.keyboard.press('Control+z'); assert.match(await q('cmd-prompt').textContent(), /Open the part as a drawing to edit/);
       assert.deepEqual(await diff(), copies, 'refused edits change nothing');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 156c2: Compare Layers panel hides a layer in one snapshot only; Contour lands in the source with one Undo; a library part greys Contour', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => {
+      const raw = newDoc(4); addLayer(raw, 'Plate'); addLayer(raw, 'Notes');
+      addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true, layer: 'Plate' }), dxfLine(20, 30, 60, 30, { layer: 'Notes' }));
+      return raw;
+    };
+    const open = async (name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(make())) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const saveDoc = async () => {
+      const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await download.path(), 'utf8'));
+    };
+    const dock = (id) => q('ptab-' + id).click();
+    const pick = async (n) => { await dock('drawing'); await q('cmp-name-' + n).click(); await dock('layers'); };
+    const rows = () => p.locator('[data-file-layer]');
+    const hiddenRows = () => p.locator('[data-file-layer].hidden-layer');
+    const compareMenu = async () => { await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click(); };
+    const inkAt = async (x, y) => {                 // coloured pixels around a drawing point: the Notes line is there
+      await p.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      const a = await point(x - 2, y + 2), b = await point(x + 2, y - 2);
+      return q('drawing').evaluate((c, { a, b }) => {
+        const box = c.getBoundingClientRect(), scale = c.width / box.width;
+        const px = c.getContext('2d').getImageData(Math.round((a.x - box.x) * scale), Math.round((a.y - box.y) * scale), Math.max(1, Math.round((b.x - a.x) * scale)), Math.max(1, Math.round((b.y - a.y) * scale))).data;
+        let n = 0; for (let i = 3; i < px.length; i += 4) if (px[i] > 100) n++;
+        return n;
+      }, { a, b });
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await compareMenu(); await dock('layers');
+      assert.equal(await q('layers-empty').textContent(), 'Pick a drawing', 'no snapshot picked');
+      assert.equal(await q('layer-add').isVisible(), false, 'Compare has no + Add layer');
+      await tab('Compare').locator('.x').click();
+      await open('one-156c2.dxf');
+      await p.keyboard.press('Control+a'); await q('bar-extract').click();
+      await q('name-input').fill('Part 156c2'); await q('name-ok').click(); await q('name-dialog').waitFor({ state: 'detached' });
+      await open('two-156c2.dxf');
+      await tab('one-156c2.dxf').click(); await compareMenu();
+      await dock('drawing'); await q('cmp-name-2').click(); await q('cmp-run').click(); await dock('layers');
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'the picked snapshot lists its layers');
+      assert.equal(await q('layer-add').isVisible(), false, 'Compare has no + Add layer');
+      await dock('drawing'); await q('cmp-eye').first().click(); await dock('layers');                  // snapshot 1 hidden: only snapshot 2 paints
+      assert.ok(await inkAt(40, 30) > 0, 'Notes line shows');
+      await rows().nth(1).locator('.vis').click();
+      assert.equal(await hiddenRows().count(), 1);
+      assert.equal(await inkAt(40, 30), 0, 'Notes hidden in the picked snapshot');
+      await pick(1); assert.equal(await hiddenRows().count(), 0, 'snapshot 1 keeps its own layers');
+      await pick(2); assert.equal(await hiddenRows().count(), 1, 'snapshot 2 remembers its hidden layer');
+      await tab('two-156c2.dxf').click();
+      assert.equal(await hiddenRows().count(), 0, 'the source tab keeps its layers');
+      assert.equal(await inkAt(40, 30) > 0, true, 'the source tab still draws Notes');
+      await tab('Compare').click(); await pick(2);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-menu=View]').click(); await p.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + theme) }).click();
+        await p.screenshot({ path: `${shotDir}/todo156c2-${theme}.png` });
+      }
+      // Contour: the outline of the picked snapshot's source gets a ring on the layer Contour, one Undo in the source
+      await rows().nth(1).locator('.vis').click();
+      await p.locator('[data-tool=select]').click(); await click(40, 20);
+      await dock('drawing'); await p.locator('[data-tool=contour]').click(); await q('contour-apply').click();
+      assert.match(await q('cmd-prompt').textContent(), /^Contour: 1 new outline/);
+      await q('contour-close').click(); await dock('layers');
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes', 'Contour'], 'the snapshot is refreshed with the new layer');
+      await tab('two-156c2.dxf').click();
+      const contoured = (await saveDoc()).entities.filter((e) => e.layer === 'Contour').length;
+      assert.ok(contoured > 0, 'the rings are in the source drawing');
+      await p.locator('[data-tool=select]').click(); await click(40, 30); await p.keyboard.press('Delete');
+      const edited = await saveDoc();
+      assert.equal(edited.entities.filter((e) => e.layer === 'Notes').length, 0, 'source can still be edited after Contour');
+      assert.equal(edited.entities.filter((e) => e.layer === 'Contour').length, contoured, 'source edit preserves the contour');
+      await tab('Compare').click(); await pick(2);
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Contour'], 'source edit refreshes the contoured snapshot');
+      await tab('two-156c2.dxf').click(); await p.keyboard.press('Control+z');
+      const restored = await saveDoc();
+      assert.equal(restored.entities.filter((e) => e.layer === 'Notes').length, 1, 'Ctrl+Z in the source brings the Notes line back');
+      assert.equal(restored.entities.filter((e) => e.layer === 'Contour').length, contoured, 'and the contour is still there');
+      await tab('Compare').click(); await pick(2);
+      await p.keyboard.press('Control+z');
+      assert.deepEqual(await rows().locator('.nm').allTextContents(), ['Plate', 'Notes'], 'one Undo takes the whole contour away');
+      await tab('two-156c2.dxf').click();
+      assert.equal((await saveDoc()).entities.filter((e) => e.layer === 'Contour').length, 0);
+      // Esc in the middle of Contour ends it and adds nothing
+      const names = () => rows().locator('.nm').allTextContents();
+      await tab('Compare').click(); await pick(2); await dock('drawing');
+      await p.locator('[data-tool=contour]').click(); await p.keyboard.press('Escape');
+      assert.match(await p.locator('[data-tool=select]').getAttribute('class'), /on/, 'Esc ends Contour');
+      await dock('layers'); assert.deepEqual(await names(), ['Plate', 'Notes'], 'nothing was added');
+      // a hidden layer stays hidden by name when an edit empties the layer before it
+      await rows().nth(1).locator('.vis').click();
+      await p.locator('[data-tool=select]').click(); await click(40, 20); await p.keyboard.press('Delete');
+      assert.deepEqual(await names(), ['Notes'], 'Plate is gone from the snapshot');
+      assert.equal(await hiddenRows().count(), 1, 'Notes is still hidden');
+      await p.keyboard.press('Control+z');
+      assert.deepEqual(await names(), ['Plate', 'Notes']);
+      assert.deepEqual(await hiddenRows().locator('.nm').allTextContents(), ['Notes']);
+      // the source tab closed: Contour stays on and its tooltip says what to open
+      await dock('drawing'); const closedName = await q('cmp-name-2').textContent();
+      p.once('dialog', (d) => d.accept()); await tab('two-156c2.dxf').locator('.x').click();      // the edited source asks before it closes
+      await tab('two-156c2.dxf').waitFor({ state: 'detached' });
+      const contourBtn = p.locator('[data-tool=contour]');
+      assert.equal(await contourBtn.isDisabled(), false);
+      assert.equal(await contourBtn.getAttribute('title'), `Open ${closedName} to edit`);
+      await contourBtn.click(); assert.equal(await q('cmd-prompt').textContent(), `Open ${closedName} to edit`);
+      // a library part has no source tab: Contour is greyed
+      await tab('Compare').click(); await dock('drawing');
+      await q('cmp-add-library').click(); await p.getByRole('menuitem', { name: 'Part 156c2', exact: true }).click();
+      const contour = p.locator('[data-tool=contour]');
+      assert.equal(await contour.isDisabled(), true);
+      assert.equal(await contour.getAttribute('title'), "Open the part's drawing to contour it");
+      await p.locator('[data-tool=select]').click(); await p.keyboard.type('explode'); await p.keyboard.press('Enter');
+      assert.equal(await q('cmd-prompt').textContent(), 'Open the part as a drawing to edit', 'Explode on a library part says why not');
+    } finally { await context.close(); }
+  });
+
+  await step('TODO 156c3: Ctrl+Z drops a Line point in Compare, then falls to the source Undo', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+    const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id));
+    p.on('pageerror', (e) => errors.push(String(e)));
+    p.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const make = () => { const raw = newDoc(4); addEntities(raw, dxfPoly([[10, 20], [70, 20], [70, 80], [10, 80]], { closed: true })); return raw; };
+    const open = async (name) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(make())) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const tab = (name) => p.locator('.dtab').filter({ has: p.locator('.tname', { hasText: name.replace(/\.dxf$/, '') }) });
+    const point = (x, y) => p.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), b = sheet.getBoundingClientRect(), sc = b.width / +sheet.getAttribute('width');
+      return { x: b.x + x * sc, y: b.y + (+sheet.getAttribute('height') - y) * sc };
+    }, [x, y]);
+    const click = async (x, y) => { const pt = await point(x, y); await p.mouse.click(pt.x, pt.y); };
+    const command = async (word) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(word); await q('cmd-input').press('Enter');
+    };
+    const entities = async () => {
+      const [download] = await Promise.all([p.waitForEvent('download'), q('save').click()]);
+      return readDxf(readFileSync(await download.path(), 'utf8')).entities.length;
+    };
+    try {
+      await p.goto(URL_); await p.locator('[data-tool=select]').waitFor();
+      await open('one-156c3.dxf'); await open('two-156c3.dxf');
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-name-2').click();
+      await command('line'); await click(30, 50);
+      assert.match(await q('cmd-prompt').textContent(), /^Next point/);
+      await p.keyboard.press('Control+z');
+      assert.match(await q('cmd-prompt').textContent(), /^Specify first point/, 'Ctrl+Z drops the only picked point (the source has no step to undo)');
+      await click(30, 50); await click(50, 50);                              // a segment is made: one step in the source
+      await p.keyboard.press('Control+z');
+      assert.equal(await p.locator('.dtab.on .dot').count(), 0, 'the segment is undone, the source is clean again');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await p.keyboard.press('Control+z');
+      assert.match(await q('cmd-prompt').textContent(), /Nothing to undo/, 'nothing to drop and nothing to undo');
+      await tab('two-156c3.dxf').click();
+      assert.equal(await entities(), 1, 'the source drawing was not changed');
     } finally { await context.close(); }
   });
 
@@ -9226,6 +9398,56 @@ try {
           `command messages sit above the grip hint without overlapping at ${size.width}x${size.height}: ${JSON.stringify({ messages, hint })}`);
       }
     } finally { await page.setViewportSize(viewport); }
+  });
+
+  await step('TODO 159: command log rows small', async () => {
+    await openGrips();
+    const theme = await page.locator('html').getAttribute('data-theme');
+    try {
+      for (const mode of ['light', 'dark']) {
+        await page.evaluate((mode) => { document.documentElement.dataset.theme = mode; }, mode);
+        await typeCmd('line'); await typeCmd('0,0'); await typeCmd('10,10');
+        const rows = page.locator('.cb-fade-rows');
+        const style = await rows.evaluate((el) => {
+          const css = getComputedStyle(el);
+          return { gap: css.rowGap, height: css.height, background: css.backgroundColor };
+        });
+        assert.deepEqual(style, { gap: '2px', height: '52px', background: 'rgba(0, 0, 0, 0)' });
+        const boxes = await rows.locator(':scope > div').evaluateAll((els) => els.map((el) => {
+          const css = getComputedStyle(el);
+          return { font: css.fontSize, height: css.height, padding: css.padding, background: css.backgroundColor, color: css.color };
+        }));
+        assert.equal(boxes.length, 3);
+        for (const box of boxes) {
+          assert.equal(box.font, '11px'); assert.equal(box.height, '16px'); assert.equal(box.padding, '0px 6px');
+          assert.equal(box.background, mode === 'light' ? 'rgba(60, 60, 60, 0.88)' : 'rgba(74, 74, 74, 0.88)');
+          assert.equal(box.color, mode === 'light' ? 'rgb(230, 230, 230)' : 'rgb(221, 221, 221)');
+        }
+        const answerColor = await rows.locator('.ans').first().evaluate((el) => getComputedStyle(el).color);
+        assert.equal(answerColor, mode === 'light' ? 'rgb(173, 217, 255)' : 'rgb(194, 226, 255)');
+        assert.notEqual(answerColor, boxes[0].color, 'answers differ from normal row text');
+        await page.screenshot({ path: `${shotDir}/todo159-command-log-${mode}.png` });
+        await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+        await typeCmd(`unknowncommand${mode}`);
+        const error = rows.locator('.er', { hasText: `Unknown command: unknowncommand${mode}` });
+        await error.waitFor();
+        const errorColor = await error.evaluate((el) => getComputedStyle(el).color);
+        assert.equal(errorColor, mode === 'light' ? 'rgb(255, 193, 140)' : 'rgb(255, 218, 184)');
+        assert.notEqual(errorColor, await rows.locator(':scope > div:not(.er)').first().evaluate((el) => getComputedStyle(el).color),
+          'errors differ from normal rows');
+        for (const color of [answerColor, errorColor]) {
+          const hex = color.match(/\d+/g).map((c) => Number(c).toString(16).padStart(2, '0')).join('');
+          assert.ok(contrastRatio(hex, mode === 'light' ? '535353' : '606060') >= 4.5,
+            'error and answer colours are readable even with the translucent box over white artwork');
+        }
+        await page.screenshot({ path: `${shotDir}/todo159-command-log-error-${mode}.png` });
+      }
+    } finally {
+      await page.evaluate((theme) => {
+        if (theme === null) delete document.documentElement.dataset.theme;
+        else document.documentElement.dataset.theme = theme;
+      }, theme);
+    }
   });
 
   await step('TODO 156a: drawing corner arrows, Shift turn, moved pivot, preview, undo, grips and layout arrows', async () => {
@@ -15000,6 +15222,7 @@ try {
         return Math.abs(r.x + r.width / 2 - x) < 2 && Math.abs(r.y + r.height / 2 - y) < 2;
       }, await at(x, y));
     };
+    const pickLine = async () => { await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(175, 600); await frames(); await gripWhen(3); }; // ends any command, then picks the line itself
     const rectAt = async (x, y, w, hh) => { await typeCmd('rect'); await typeCmd(`${x},${y}`); await typeCmd(`${w},${hh}`); };
     await draw('50,600', '300,600');
     await rectAt(50, 300, 100, 80); await rectAt(120, 320, 100, 80);
@@ -15007,7 +15230,7 @@ try {
     assert.equal(await nParts(), n0 + 3);
     const l0 = (await histLabels()).length;
     // grips: the line's two ends and middle; the end goes where it is dragged, in one history step
-    await page.keyboard.press('Escape'); await click(175, 600); await frames(); await gripWhen(3);
+    await pickLine();
     await t('grip-hint').waitFor({ state: 'visible' });
     await dragGripTo(await gid('b'), 300, 650);
     await frames(); await gripWhen(3);
@@ -15017,7 +15240,7 @@ try {
     assert.equal((await histLabels()).length, l0 + 1, 'one history step for the grip edit');
     assert.equal(await nParts(), n0 + 3, 'the same object, not a new one');
     await undo(); assert.equal((await histLabels()).length, l0, 'one Undo takes it back');
-    await page.keyboard.press('Escape'); await click(175, 600); await frames(); await gripWhen(3);
+    await pickLine();
     await waitForEnd(300, 600);
     const back = await gripBox(await gid('b')), was = await at(300, 600);
     assert.ok(near(back.x, was.x, 2) && near(back.y, was.y, 2), 'the end is back');
@@ -15217,6 +15440,354 @@ try {
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dims-lay2.dxf');
     assert.deepEqual(labelsOf((await save())), ['200.00', '200.00', '300.00'], 'and after reopening');
     await page.locator('[data-tool=select]').click();
+    // Trim the first of three copies sharing one part: only its dimension follows, and one Undo restores it.
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('100,150'); await typeCmd('300,150'); await typeCmd('');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    for (const dy of [100, 200]) {
+      await page.keyboard.press('Escape'); await click(200, 150);
+      await typeCmd('copy'); await typeCmd('0,0'); await typeCmd('0,' + dy);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    }
+    await typeCmd('line'); await typeCmd('220,100'); await typeCmd('220,400'); await typeCmd('');
+    await page.keyboard.press('Escape');
+    for (const y of [150, 250, 350]) {
+      await typeCmd('dli'); await typeCmd('100,' + y); await typeCmd('300,' + y); await typeCmd('200,' + (y + 30));
+      await page.keyboard.press('Escape');
+    }
+    const beforeTrim = dimsIn(await save());
+    assert.deepEqual(Object.values(beforeTrim).map((q) => Math.round(q.params.a[1])).sort((a, b) => a - b), [150, 250, 350]);
+    await typeCmd('trim'); await typeCmd('o'); await typeCmd('q'); await click(270, 150);
+    await page.keyboard.press('Escape');
+    const afterTrim = dimsIn(await save());
+    assert.deepEqual(Object.keys(afterTrim).sort(), Object.keys(beforeTrim).sort());
+    for (const [name, q] of Object.entries(beforeTrim)) {
+      if (Math.abs(q.params.a[1] - 150) < 1e-3) {
+        assert.deepEqual([afterTrim[name].params.a, afterTrim[name].params.b].map((p) => p.map((v) => Math.round(v * 1e6) / 1e6)), [[100, 150], [220, 150]], 'the first copy\'s dimension follows Trim');
+      } else assert.deepEqual(afterTrim[name], q, 'another copy\'s dimension does not move');
+    }
+    await undo();
+    assert.deepEqual(dimsIn(await save()), beforeTrim, 'one Undo restores the dimensions with the trimmed copy');
+  });
+
+  await step('TODO 156b2c2a: on a layout, Radius and Diameter Dimension pick circles and arcs (one Undo, Esc cancels); save and reopen as dimension objects; Scale, Move and a radius grip carry their values and positions', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const dimsIn = (text) => Object.fromEntries(Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([k, b]) => [k, readDim(k, b)]));
+    const labelsIn = (text) => Object.entries(readDxf(text).blocks).filter(([k]) => /^PD_DIM_/.test(k)).map(([, b]) => b.entities.find((e) => e.type === 'TEXT').r.v[b.entities.find((e) => e.type === 'TEXT').r.c.indexOf(1)].replace('\\U+00D8', 'Ø')).sort();
+    await t('decimals').selectOption('3');
+    await typeCmd('circle'); await typeCmd('200,200'); await typeCmd('40');
+    await typeCmd('arc'); await typeCmd('430,200'); await typeCmd('400,230'); await typeCmd('370,200');
+    await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 2);
+    for (const [command, prefix, value] of [['dra', 'R', 40], ['ddi', 'Ø', 80]]) {
+      await typeCmd(command);
+      assert.equal(await prompt(), 'Select arc or circle:');
+      await click(500, 350);
+      assert.match(await prompt(), /Dimension works on layout objects, not placed parts/);
+      await click(160, 200);
+      assert.equal(await prompt(), 'Specify dimension line location:');
+      await page.keyboard.press('Escape');
+      assert.equal(await nParts(), n0 + (command === 'dra' ? 2 : 3), 'Esc after the circle pick adds nothing');
+      await typeCmd(command); await click(160, 200);
+      const p = await at(...(command === 'dra' ? [270, 240] : [200, 270]));
+      await page.mouse.move(p.x, p.y); await frames();
+      await page.mouse.click(p.x, p.y);
+      assert.ok((await prompt()).includes(`Dimension placed: ${prefix}${value.toFixed(3)} mm`));
+      assert.equal((await histLabels()).at(-1), 'Dimension');
+      const placed = await nParts();
+      await undo(); assert.equal(await nParts(), placed - 1, 'one Undo removes the dimension');
+      await page.keyboard.press('Control+y'); assert.equal(await nParts(), placed);
+      await page.keyboard.press('Escape');
+    }
+    // Both kinds also pick an arc through the drawing tool's same path.
+    await typeCmd('dra'); await click(400, 230); await typeCmd('450,170'); await page.keyboard.press('Escape');
+    await typeCmd('ddi'); await click(400, 230); await typeCmd('450,200'); await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 6);
+    let text = await save();
+    assert.deepEqual(labelsIn(text), ['R30.000', 'R40.000', 'Ø60.000', 'Ø80.000']);
+    assert.deepEqual(Object.values(dimsIn(text)).map((q) => q.kind).sort(), ['diameter', 'diameter', 'radius', 'radius']);
+    const zoom = async (a, b) => {
+      const p = await at(...a), q = await at(...b);
+      await typeCmd('zw'); await page.mouse.move(p.x, p.y); await page.mouse.down();
+      await page.mouse.move(q.x, q.y, { steps: 5 }); await page.mouse.up(); await frames();
+    };
+    const fadeHistory = () => page.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle'));
+    await zoom([130, 140], [310, 280]);
+    await shotBoth('layout-radius-diameter', fadeHistory);
+    await typeCmd('zp');
+    await zoom([350, 160], [490, 270]);
+    await shotBoth('layout-arc-radius-diameter', fadeHistory);
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'radius-diameter-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'radius-diameter-lay.dxf');
+    assert.equal(await nParts(), n0 + 6);
+    const reopened = layoutFromRaw(readDxf(text));
+    assert.equal(Object.values(reopened.parts).filter((p) => p.obj).length, 6);
+    assert.deepEqual(labelsIn(await save()), labelsIn(text), 'all four dimension blocks survive reopening');
+    await page.locator('[data-tool=select]').click(); await click(160, 200);
+    await typeCmd('scale'); await typeCmd('200,200'); await typeCmd('2');
+    text = await save();
+    assert.deepEqual(labelsIn(text), ['R30.000', 'R80.000', 'Ø160.000', 'Ø60.000'], 'Scale updates only the circle dimensions');
+    await undo(); assert.deepEqual(labelsIn(await save()), ['R30.000', 'R40.000', 'Ø60.000', 'Ø80.000']);
+    await page.keyboard.press('Control+y');
+    await page.keyboard.press('Escape'); await click(120, 200);
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,40');
+    text = await save();
+    for (const [name, q] of Object.entries(dimsIn(text))) {
+      const c = q.kind === 'radius' ? q.params.c : [(q.params.a[0] + q.params.b[0]) / 2, (q.params.a[1] + q.params.b[1]) / 2], moved = name.endsWith('1');
+      assert.ok(Math.abs(c[0] - (moved ? 200 : 400)) < 1e-3 && Math.abs(c[1] - (moved ? 240 : 200)) < 1e-3, moved ? 'Move carries the measured centre' : 'the arc\'s dimensions stay at its centre');
+    }
+    await page.keyboard.press('Escape'); await click(120, 240); await frames(); await gripWhen(5);
+    const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id.endsWith(':q0')));
+    const g = await gripBox(gid); await page.mouse.click(g.x, g.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+    await typeCmd('300,240'); await frames();
+    assert.deepEqual(labelsIn(await save()), ['R100.000', 'R30.000', 'Ø200.000', 'Ø60.000'], 'a radius grip updates both values');
+    await page.keyboard.press('Escape'); await undo();
+    assert.deepEqual(labelsIn(await save()), labelsIn(text), 'one Undo restores the circle and its dimensions');
+    await t('decimals').selectOption('2');
+    await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 156b2c3a: double-click a dimension edits its text on a drawing and on a layout (Esc cancels, one Undo); mixed <> text follows a grip; save and reopen', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const dimIn = (text) => {
+      const [name, block] = Object.entries(readDxf(text).blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5 }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'dimension-text.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'dimension-text.dxf');
+      }
+      await t('decimals').selectOption('2');
+      await page.locator('[data-tool=select]').click();
+      if (tab === 'layout') assert.equal(await nParts(), 3, 'one plate, one line and one dimension hit target');
+      const edit = async (expected) => {
+        const p = await at(190, 200); await page.mouse.dblclick(p.x, p.y);
+        await t('text-editor').waitFor().catch((e) => { throw new Error(`${tab}, editing ${expected}: ${e.message}`); });
+        assert.equal(await t('text-editor').inputValue(), expected, tab + ': prefilled with the shown text');
+      };
+      const apply = async (text, expected = '150.00') => { await edit(expected); await t('text-editor').fill(text); await page.keyboard.press('Enter'); };
+      const start = await save();
+      assert.equal(dimIn(start).label, '150.00');
+      const history = await histLabels();
+      await edit('150.00');
+      assert.deepEqual(await t('text-editor').evaluate((el) => [el.selectionStart, el.selectionEnd]), [0, 6], tab + ': measured number selected');
+      await page.keyboard.press('Shift+Enter');
+      assert.equal(await t('text-editor').inputValue(), '150.00', tab + ': Shift+Enter does nothing');
+      await page.keyboard.press('Enter');
+      assert.deepEqual(await histLabels(), history, tab + ': unchanged number stays measured without history');
+      await edit('150.00'); await t('text-editor').fill('CANCEL THIS'); await page.keyboard.press('Escape');
+      assert.equal(await t('text-edit-box').isVisible(), false);
+      assert.deepEqual(await histLabels(), history, tab + ': Esc adds no history');
+      assert.deepEqual(dimIn(await save()), dimIn(start));
+      await edit('150.00'); await page.keyboard.insertText('7.125'); await page.keyboard.press('Control+z');
+      assert.equal(await t('text-editor').inputValue(), '150.00', tab + ': typing Undo restores the number');
+      await page.keyboard.press('Home'); await page.keyboard.insertText('Width ');
+      await page.keyboard.press('Enter');
+      assert.equal(dimIn(await save()).override, 'Width <>', tab + ': typing Undo restores its live range');
+      await undo(); assert.deepEqual(dimIn(await save()), dimIn(start));
+      await apply('7.125');
+      assert.equal(dimIn(await save()).label, '7.125');
+      assert.equal((await histLabels()).at(-1), 'Dimension text');
+      await undo(); assert.deepEqual(dimIn(await save()), dimIn(start), tab + ': one Undo restores measured text');
+      await edit('150.00'); await page.keyboard.press('Home'); await page.keyboard.insertText('Width ');
+      await page.keyboard.press('End'); await page.keyboard.insertText(' mm'); await page.keyboard.press('Enter');
+      const overridden = await save();
+      assert.equal(dimIn(overridden).label, 'Width 150.00 mm');
+      assert.equal(dimIn(overridden).override, 'Width <> mm', tab + ': untouched number remains live');
+      if (tab === 'drawing') assert.match(overridden, /\r\nDIMENSION\r\n(?:(?!\r\n  0\r\n)[\s\S])*?\r\n  1\r\nWidth <> mm\r\n/, 'drawing saves the override as native DIMENSION group 1');
+      await edit('Width 150.00 mm'); await t('text-editor').fill('CANCEL AGAIN'); await page.keyboard.press('Escape');
+      assert.equal(dimIn(await save()).override, 'Width <> mm');
+      for (const reset of ['', '<>']) {
+        await apply(reset, 'Width 150.00 mm'); assert.equal(dimIn(await save()).label, '150.00');
+        await undo(); assert.equal(dimIn(await save()).override, 'Width <> mm');
+      }
+      const a = await at(120, 120), b = await at(350, 230);
+      await typeCmd('zw'); await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); await frames();
+      await shotBoth('dimension-text-' + tab, () => edit('Width 150.00 mm'), () => page.keyboard.press('Escape'));
+      await page.keyboard.press('Escape'); await click(220, 150); await frames(); await gripWhen(3);
+      const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id === 'b' || id.endsWith(':b')));
+      const g = await gripBox(gid); await page.mouse.click(g.x, g.y);
+      await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+      await typeCmd('330,150'); await frames();
+      let text = await save();
+      assert.equal(dimIn(text).label, 'Width 180.00 mm', tab + ': <> stays live after a source grip');
+      assert.equal(dimIn(text).override, 'Width <> mm');
+      await page.keyboard.press('Escape'); await undo(); assert.equal(dimIn(await save()).label, 'Width 150.00 mm');
+      await page.keyboard.press('Control+y'); await page.keyboard.press('Escape');
+      await click(220, 150); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,10');
+      text = await save(); assert.equal(dimIn(text).label, 'Width 180.00 mm');
+      assert.ok(Math.abs(dimIn(text).params.a[1] - 160) < 1e-3, tab + ': Move still carries the dimension');
+      await closeTabs(/./);
+      const filename = 'dimension-text-' + tab + '.dxf';
+      await t('picker').setInputFiles({ name: filename, mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+      await page.waitForFunction((name) => document.querySelector('.tabs .dtab.on .tname').textContent === name, filename);
+      assert.deepEqual(dimIn(await save()), dimIn(text), tab + ': override and geometry survive save/reopen');
+      await page.locator('[data-tool=select]').click();
+      const dim = dimIn(text), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
+      const p = await at(tx.x, tx.y + tx.h / 2); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+      assert.equal(await t('text-editor').inputValue(), 'Width 180.00 mm', tab + ': reopened text is editable');
+      await page.keyboard.press('Escape');
+    }
+  });
+
+  await step('TODO 156b2c3b: Explode a dimension on a drawing and on a layout: lines, SOLID arrows and one MTEXT on its layer, no attdef or block, one Undo restores it', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const shots = 'shots-k156b2c3b';
+    mkdirSync(shots, { recursive: true });
+    const dimBlocks = (text) => Object.keys(readDxf(text).blocks).filter((k) => /^PD_DIM_/.test(k));
+    const onDimLayer = (text) => readDxf(text).entities.filter((e) => e.layer === 'Dimensions');
+    // where the dimension is: every x and y of its block and of what sits on its layer
+    const dimAt = (text) => {
+      const d = readDxf(text), es = [...onDimLayer(text), ...Object.entries(d.blocks).filter(([k]) => /^PD_DIM_/.test(k)).flatMap(([, b]) => b.entities)];
+      return es.reduce((n, e) => n + (GR.get(e.r, 10) || 0) + (GR.get(e.r, 20) || 0), 0);
+    };
+    const moveLine = async () => { await click(250, 150); await frames(); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('30,40'); await page.keyboard.press('Escape'); };
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150));
+        Object.assign(raw, addDimension(raw, buildDim('linear', { a: [150, 150], b: [300, 150], offset: 50, axis: 'h', textH: 5, override: 'Width <> mm' }, 1, 'PD_DIM_H1', 2)));
+        await t('picker').setInputFiles({ name: 'explode-dim.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim.dxf');
+      }
+      await t('decimals').selectOption('2');
+      await page.locator('[data-tool=select]').click();
+      const start = await save();
+      assert.equal(dimBlocks(start).length, 1, tab + ': a dimension to begin with');
+      await click(170, 200); await frames();
+      await typeCmd('explode'); await frames();
+      assert.match(await prompt(), /^Explode: 1/, tab);
+      assert.equal((await histLabels()).at(-1), 'Explode', tab + ': one history step');
+      const text = await save(), pieces = onDimLayer(text);
+      assert.deepEqual(pieces.map((e) => e.type).sort(), ['LINE', 'LINE', 'LINE', 'MTEXT', 'SOLID', 'SOLID'], tab + ': three lines, two arrows and one text on the dimension layer');
+      assert.equal(dimBlocks(text).length, 0, tab + ': no dimension block left');
+      assert.equal(/PD_DIM_TEXT/.test(text), false, tab + ': no attdef');
+      const shown = pieces.find((e) => e.type === 'MTEXT').r;
+      assert.equal(shown.v[shown.c.indexOf(1)], tab === 'drawing' ? 'Width 150.00 mm' : '150.00', tab + ': the text it showed');
+      for (const colour of ['light', 'dark']) {
+        if (colour === 'dark') await menuItem('View', 'Theme: dark');
+        await page.waitForTimeout(250); await page.screenshot({ path: `${shots}/explode-dimension-${tab}-${colour}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      await moveLine();
+      assert.equal(dimAt(await save()), dimAt(text), tab + ': the pieces stay when the line moves');
+      await undo(); await frames();
+      await undo(); await frames();
+      const back = await save();
+      assert.equal(dimBlocks(back).length, 1, tab + ': one Undo brings the dimension back');
+      assert.deepEqual(onDimLayer(back).map((e) => e.type).sort(), onDimLayer(start).map((e) => e.type).sort());
+      await moveLine();
+      assert.notEqual(dimAt(await save()), dimAt(back), tab + ': after Undo the dimension is linked to its line again and follows it');
+      await undo(); await frames();
+    }
+    // an aligned and an angle dimension on a drawing
+    await closeTabs(/./);
+    const both = newDoc(4);
+    Object.assign(both, addDimension(both, buildDim('aligned', { a: [150, 150], b: [300, 200], offset: 30, textH: 5 }, 1, 'PD_DIM_1')));
+    Object.assign(both, addDimension(both, buildDim('angle', { v: [200, 300], r: 50, a0: 0, a1: 60, textH: 5 }, 1, 'PD_DIM_A1', 2)));
+    await t('picker').setInputFiles({ name: 'explode-dim2.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(both), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim2.dxf');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: 2/);
+    const both2 = await save();
+    assert.equal(dimBlocks(both2).length, 0, 'aligned and angle: no dimension block left');
+    assert.deepEqual(onDimLayer(both2).map((e) => e.type).sort(), ['ARC', 'LINE', 'LINE', 'LINE', 'MTEXT', 'MTEXT', 'SOLID', 'SOLID', 'SOLID', 'SOLID'], 'aligned and angle: lines, arc, arrows and two texts');
+    // a mirrored dimension (dimension line at y -200): the text keeps its side of the line, hanging from just beyond it, not sitting on it
+    await closeTabs(/./);
+    const flipped = newDoc(4);
+    Object.assign(flipped, addDimension(flipped, buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1')));
+    flipped.entities[flipped.entities.length - 1] = dxfInsert('PD_DIM_1', 0, 0, { layer: 'Dimensions', sy: -1 });
+    await t('picker').setInputFiles({ name: 'explode-dim3.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(flipped), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-dim3.dxf');
+    await page.locator('[data-tool=select]').click(); await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: 1/);
+    const flat = onDimLayer(await save()), mt = flat.find((e) => e.type === 'MTEXT').r, ty = GR.get(mt, 20);
+    assert.equal(GR.get(mt, 71), 2, 'mirrored: the text hangs from its anchor (top attachment)');
+    assert.ok(ty < -200 && ty > -206, `mirrored: the text is anchored beyond the dimension line (y ${ty}), not on it`);
+  });
+
+  await step('TODO 156b2c2b: on a layout, Angle Dimension picks two lines (one Undo, Esc cancels), refuses placed parts; saves and reopens as a dimension object; a line grip updates the angle and Move carries it', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const angleIn = (text) => {
+      const [name, block] = Object.entries(readDxf(text).blocks).find(([k]) => /^PD_DIM_A\d+$/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { name, ...readDim(name, block), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    await t('decimals').selectOption('3');
+    await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+    await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,300'); await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 2);
+    await typeCmd('dan'); assert.equal(await prompt(), 'Select first line:');
+    await click(500, 350); assert.match(await prompt(), /Dimension works on layout objects, not placed parts/);
+    await click(250, 150); assert.equal(await prompt(), 'Select second line:');
+    await click(250, 150); assert.match(await prompt(), /Those lines are parallel/);
+    await page.keyboard.press('Escape'); assert.equal(await nParts(), n0 + 2, 'Esc after the first pick adds nothing');
+    await typeCmd('dan'); await click(250, 150); await click(250, 250);
+    assert.equal(await prompt(), 'Specify dimension arc location:');
+    await page.keyboard.press('Escape'); assert.equal(await nParts(), n0 + 2, 'Esc before placement adds nothing');
+    await typeCmd('dan'); await click(250, 150); await click(250, 250);
+    const p = await at(230, 180); await page.mouse.move(p.x, p.y); await frames(); await page.mouse.click(p.x, p.y);
+    assert.match(await prompt(), /Dimension placed: 45\.000°, on the layer Dimensions/);
+    assert.equal((await histLabels()).at(-1), 'Dimension');
+    assert.equal(await nParts(), n0 + 3);
+    await undo(); assert.equal(await nParts(), n0 + 2, 'one Undo removes only the dimension');
+    await page.keyboard.press('Control+y'); assert.equal(await nParts(), n0 + 3);
+    await page.keyboard.press('Escape');
+    let text = await save();
+    assert.equal(angleIn(text).name, 'PD_DIM_A1'); assert.equal(angleIn(text).kind, 'angle');
+    assert.equal(angleIn(text).label, '45.000°');
+    const a = await at(120, 120), b = await at(340, 330);
+    await typeCmd('zw'); await page.mouse.move(a.x, a.y); await page.mouse.down();
+    await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); await frames();
+    await shotBoth('layout-angle', () => page.waitForFunction(() => document.querySelector('[data-testid=cmd-fade]').classList.contains('idle')));
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'angle-lay.dxf', mimeType: 'text/plain', buffer: Buffer.from(text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'angle-lay.dxf');
+    assert.equal(await nParts(), n0 + 3);
+    assert.equal(Object.values(layoutFromRaw(readDxf(text)).parts).filter((q) => q.obj).length, 3);
+    assert.deepEqual(angleIn(await save()), angleIn(text), 'the A block reopens as an angle dimension');
+    await page.locator('[data-tool=select]').click(); await click(250, 250); await frames(); await gripWhen(3);
+    const gid = await page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id.endsWith(':b')));
+    const g = await gripBox(gid); await page.mouse.click(g.x, g.y);
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
+    await typeCmd('150,300'); await frames();
+    text = await save(); assert.equal(angleIn(text).label, '90.000°', 'the line grip changes the angle value after reopening');
+    await page.keyboard.press('Escape'); await undo(); assert.equal(angleIn(await save()).label, '45.000°');
+    await page.keyboard.press('Control+y'); await page.keyboard.press('Escape');
+    await click(250, 150); await page.keyboard.down('Shift'); await click(150, 250); await page.keyboard.up('Shift');
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('30,40');
+    text = await save();
+    const moved = angleIn(text);
+    assert.equal(moved.label, '90.000°');
+    assert.ok(Math.abs(moved.params.v[0] - 180) < 1e-3 && Math.abs(moved.params.v[1] - 190) < 1e-3, 'Move carries the angle vertex with both source lines');
+    await undo(); assert.ok(Math.abs(angleIn(await save()).params.v[1] - 150) < 1e-3, 'one Undo restores the lines and angle');
+    await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
   });
 
   await step('TODO 156b fixes: Esc cancels a hot grip with 2 objects selected; Polyline snaps to its own first point on a layout; lock and group of objects survive save and reopen; the counts say parts only; Add to layout after objects starts the grid', async () => {
@@ -15308,7 +15879,7 @@ try {
     const rotate = page.locator('.ribbon-body').getByRole('button', { name: 'Rotate', exact: true });
     assert.equal(await rotate.isEnabled(), true);
     await page.locator('[data-menu=Modify]').click();
-    assert.equal(await page.getByRole('menuitem', { name: 'Explode', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('menuitem', { name: 'Explode', exact: true }).isEnabled(), true);       // 156b4: Explode works on a placed part
     await page.keyboard.press('Escape');
     await rotate.click(); assert.match(await prompt(), /^Angle <0\.00>/);
     await typeCmd('90'); assert.equal(await t('rot-angle').inputValue(), '90°');
@@ -17833,6 +18404,117 @@ try {
     }
     await page.keyboard.press('F12'); assert.equal(await chipOn('tog-dyn'), true);
     await closeTabs(/./);
+  });
+
+  await step('TODO 156b4: Explode a placed part and a grid on a layout (X): a rotated part becomes its objects where it was, on its layers (one Undo); a grid becomes separate placed parts, one level each', async () => {
+    mkdirSync('shots-k156b4', { recursive: true });
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const layerNames = () => page.locator('.layers-rows .layer .nm').allTextContents();
+    const bracket = () => {
+      const raw = newDoc(4);
+      addLayer(raw, 'CUT', { aci: 1 }); addLayer(raw, 'MARK', { aci: 3 });
+      addEntities(raw, dxfLine(0, 0, 60, 0, { layer: 'CUT' }), dxfLine(60, 0, 60, 40, { layer: 'CUT' }), dxfLine(60, 40, 0, 40, { layer: 'CUT' }), dxfLine(0, 40, 0, 0, { layer: 'CUT' }), dxfLine(0, 0, 60, 40, { layer: 'MARK' }));
+      return makePart('b', 'Bracket', raw, 1, 'bracket');
+    };
+    const open = async (name, lay) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    };
+    const shots = async (name) => {
+      await page.screenshot({ path: `shots-k156b4/${name}-light.png` });
+      await menuItem('View', 'Theme: dark'); await page.waitForTimeout(300); await page.screenshot({ path: `shots-k156b4/${name}-dark.png` });
+      await menuItem('View', 'Theme: light'); await page.waitForTimeout(100);
+    };
+    // a part turned 90°
+    const one = newLayout('Explode one');
+    one.parts.b = bracket(); one.placed.push({ partId: 'b', x: 300, y: 200, rot: 90, mirrorX: false, mirrorY: false });
+    await open('explode-one.dxf', one);
+    assert.equal(await nParts(), 1);
+    await click(310, 220);
+    const p0 = await pos();
+    await typeCmd('x');
+    assert.match(await prompt(), /Explode: 1 part exploded → 5 objects/);
+    assert.equal(await nParts(), 5);
+    assert.ok((await layerNames()).includes('CUT') && (await layerNames()).includes('MARK'), 'the part layers are in the Layers panel');
+    const p1 = await pos();
+    approx(p1[0], p0[0], 0.01, 'same X'); approx(p1[1], p0[1], 0.01, 'same Y');
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text, saved = readDxf(text);
+    assert.deepEqual(saved.entities.filter((e) => e.layer === 'CUT' || e.layer === 'MARK').map((e) => e.type), ['LINE', 'LINE', 'LINE', 'LINE', 'LINE'], 'plain lines in the file');
+    assert.equal(saved.entities.filter((e) => e.layer === 'Parts').length, 0, 'the pieces no longer count as the part');
+    await shots('explode-part');
+    await undo();
+    assert.equal(await nParts(), 1, 'one Undo brings the part back');
+    assert.ok(!(await layerNames()).includes('MARK'), 'and takes the layers it added');
+    await page.keyboard.press('Control+y');
+    assert.equal(await nParts(), 5);
+    await typeCmd('x');
+    assert.match(await prompt(), /nothing explodable/, 'objects are not parts: Explode leaves them');
+    assert.equal(await nParts(), 5);
+    // a step-and-repeat grid
+    const grid = newLayout('Explode grid');
+    grid.parts.b = bracket(); grid.s.gridPart = 'b'; grid.s.fit = false; grid.s.rows = 2; grid.s.cols = 2;
+    await open('explode-grid.dxf', grid);
+    assert.equal(await nParts(), 4);
+    await click(...(await pos()).map((v, k) => v + (k ? 5 : 5)));
+    await typeCmd('x');
+    assert.match(await prompt(), /grid's copies are separate placed parts/);
+    assert.equal(await nParts(), 4, 'four separate placed parts');
+    await click(...(await pos()).map((v) => v + 5));
+    await typeCmd('x');
+    assert.equal(await nParts(), 8, 'a second Explode breaks one copy into its 5 objects');
+    await undo(); assert.equal(await nParts(), 4);
+    await undo(); assert.equal(await nParts(), 4, 'Undo takes the grid back');
+    await shots('explode-grid');
+  });
+
+  await step('S28 Lows B: Explode a dimension and a placed part together on a layout: both explode, one Undo puts both back', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const dimBlocks = (text) => Object.keys(readDxf(text).blocks).filter((k) => /^PD_DIM_/.test(k)).length;
+    await freshLayoutWithPlate();
+    await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+    await typeCmd('dli'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+    await page.locator('[data-tool=select]').click();
+    const n0 = await nParts();
+    assert.equal(dimBlocks(await save()), 1, 'a dimension to begin with');
+    await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: 1 part exploded → \d+ objects; 1 dimension exploded/);
+    assert.equal(dimBlocks(await save()), 0, 'the dimension is lines, arrows and text');
+    assert.ok((await nParts()) > n0 + 1, 'the part is objects too');
+    assert.equal(await t('placed-name').textContent(), `${(await nParts()) - 1} parts selected`, 'all dimension and part pieces are selected, without the source line');
+    assert.match((await histLabels()).at(-1), /^Explode 3 objects/, 'one history step');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames();
+    assert.equal(await nParts(), n0, 'one Undo puts the part back');
+    assert.equal(dimBlocks(await save()), 1, 'and the dimension');
+    const mixed = layoutFromRaw(readDxf(await save()));
+    await click(170, 200); await frames();
+    await t('bar-lock').click();
+    await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: 1 part exploded.*; 2 locked or layout objects skipped/, 'the locked dimension and source line are skipped');
+    assert.equal(dimBlocks(await save()), 1, 'the locked dimension stays intact');
+    assert.equal(await t('placed-name').textContent(), `${(await nParts()) - 2} parts selected`, 'only the part pieces are selected');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames();
+    assert.equal(await nParts(), n0, 'one Undo puts the part back beside the locked dimension');
+
+    const part = mixed.placed.find((p) => !mixed.parts[p.partId].obj);
+    mixed.placed = mixed.placed.filter((p) => p !== part);
+    mixed.s.gridPart = part.partId; mixed.s.fit = false; mixed.s.rows = 2; mixed.s.cols = 2;
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'explode-mixed-grid.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(mixed))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'explode-mixed-grid.dxf');
+    const gridN = await nParts();
+    await page.keyboard.press('Control+a'); await frames();
+    await typeCmd('explode'); await frames();
+    assert.match(await prompt(), /^Explode: the grid's copies are separate placed parts now; 1 dimension exploded/);
+    assert.equal(dimBlocks(await save()), 0, 'the dimension beside the grid is lines, arrows and text');
+    assert.equal(await nParts(), gridN + 5, 'the four grid copies stay parts and the dimension becomes six objects');
+    assert.equal(await t('placed-name').textContent(), `${(await nParts()) - 1} parts selected`, 'all grid and dimension pieces are selected, without the source line');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames();
+    assert.equal(await nParts(), gridN, 'one Undo puts the grid back');
+    assert.equal(dimBlocks(await save()), 1, 'and its dimension');
+    assert.equal(readMeta(readDxf(await save())).s.gridPart, part.partId, 'the grid is restored');
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

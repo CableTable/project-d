@@ -7,6 +7,8 @@ import { flatten, readDxf } from './web/drawing.js';
 import { followDimensions } from './web/linked-dimensions.js';
 import { labelOf } from './web/objects.js';
 import { explodeSelection } from './web/explode.js';
+import { rotateEntities } from './web/rotate.js';
+import { mirrorEntity } from './web/modify.js';
 
 function drawing(shape, params, kind = 'aligned', factor = 1) {
   const raw = W.newDoc(4);
@@ -20,7 +22,7 @@ const point = (a, b) => a.forEach((v, i) => close(v, b[i]));
 const grip = (raw, id, to) => followDimensions(raw, {
   entities: raw.entities.map((e, i) => i === 0 ? dragGrip(e, id, to).ent : e), blocks: raw.blocks
 });
-const label = (raw) => { const r = raw.blocks[E.dimOfEntity(raw, 1).name].entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
+const label = (raw, e = 1) => { const r = raw.blocks[E.dimOfEntity(raw, e).name].entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
 
 test('rectangle corner: aligned dimension value and position follow, one Undo / Redo restores both', () => {
   const raw = drawing(W.lwpoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), { a: [120, 20], b: [120, 80] });
@@ -243,6 +245,55 @@ test('angle dimension follows its two lines: Move of one, a tilt, and a Move of 
   point(model(both).params.v, [5, 7]); close(model(both).params.a1, 90);
   const tilt = followDimensions(raw, { entities: raw.entities.map((e, i) => i === 0 ? W.line(0, 0, 100, 100) : e), blocks: raw.blocks });
   close(model(tilt).params.a0, 45); close(model(tilt).params.a1, 90); assert.equal(label(tilt), '45.000°');
+});
+
+test('angle dimension keeps its 90° arc when its lines are mirrored (a reflection reverses the arc ends)', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { v: [0, 0], r: 20, a0: 0, a1: 90 }, 'angle');
+  W.addEntities(raw, W.line(0, 0, 0, 100));
+  const follow = (a, b) => followDimensions(raw, { entities: raw.entities.map((e, i) => i === 0 ? a : i === 2 ? b : e), blocks: raw.blocks });
+  for (const [name, next, a0, a1] of [['across the y axis', follow(W.line(0, 0, -100, 0), raw.entities[2]), 90, 180], ['across the x axis', follow(raw.entities[0], W.line(0, 0, 0, -100)), 270, 0]]) {
+    const p = model(next).params;
+    close(p.a0, a0); close(p.a1, a1); point(p.v, [0, 0]); assert.equal(label(next), '90.000°', name);
+  }
+});
+
+test('angle dimension in a mirrored / turned INSERT keeps its angle and rays when its two lines Move (rays 180 and 90 under an X mirror)', () => {
+  for (const [name, sx, sy, rot] of [['X mirror', -1, 1, 0], ['Y mirror', 1, -1, 0], ['X mirror + 90', -1, 1, 90], ['Y mirror + 90', 1, -1, 90], ['X mirror + 270', -1, 1, 270], ['Y mirror + 270', 1, -1, 270], ['turned 90', 1, 1, 90], ['non-uniform scale', 2, .5, 0]]) {
+    for (const [a0, a1] of [[180, 90], [90, 180], [0, 90], [30, 120], [200, 100]]) {
+      const raw = W.newDoc(4), c = Math.cos(rot * Math.PI / 180), s = Math.sin(rot * Math.PI / 180);
+      const world = ([x, y]) => [3 + c * sx * x - s * sy * y, 4 + s * sx * x + c * sy * y];   // the insert's matrix, at (3, 4)
+      Object.assign(raw, E.addDimension(raw, E.buildDim('angle', { textH: 2, v: [1, 2], r: 20, a0, a1 }, 1, 'PD_DIM_A1', 3)));
+      const v = world([1, 2]), ray = (a) => world([1 + 100 * Math.cos(a * Math.PI / 180), 2 + 100 * Math.sin(a * Math.PI / 180)]);
+      Object.assign(raw.entities[0].r, { c: [8, 2, 10, 20, 30, 41, 42, 43, 50], v: ['Dimensions', 'PD_DIM_A1', '3', '4', '0', String(sx), String(sy), '1', String(rot)] });
+      W.addEntities(raw, W.line(...v, ...ray(a0)));
+      W.addEntities(raw, W.line(...v, ...ray(a1)));
+      const next = followDimensions(raw, E.moveEntities(raw, new Set([1, 2]), 5, 7)), p = E.dimOfEntity(next, 0).params;
+      const sweep = (((a1 - a0) % 360) + 360) % 360;
+      close(p.a0, a0 % 360); close(p.a1, a1 % 360); assert.equal(label(next, 0), sweep.toFixed(3) + '°', `${name} ${a0}/${a1}`);
+      point(p.v, [1 + (c * 5 + s * 7) / sx, 2 + (-s * 5 + c * 7) / sy]);
+    }
+  }
+});
+
+test('angle follows rotated lines under a mirrored or non-uniform INSERT', () => {
+  for (const [sx, sy, a0, a1] of [[-1, 1, 330, 60], [2, 1, 49.10660535086909, 106.10211375198602]]) {
+    const raw = W.newDoc(4);
+    Object.assign(raw, E.addDimension(raw, E.buildDim('angle', { textH: 2, v: [0, 0], r: 20, a0: 0, a1: 90 }, 1, 'PD_DIM_A1', 3)));
+    raw.entities[0] = W.insert('PD_DIM_A1', 0, 0, { sx, sy, layer: 'Dimensions' });
+    W.addEntities(raw, W.line(0, 0, 100 * sx, 0), W.line(0, 0, 0, 100 * sy));
+    const next = followDimensions(raw, rotateEntities(raw, new Set([1, 2]), [0, 0], 30)), p = E.dimOfEntity(next, 0).params;
+    close(p.a0, a0); close(p.a1, a1); point(p.v, [0, 0]);
+    assert.equal(label(next, 0), ((a1 - a0 + 360) % 360).toFixed(3) + '°');
+  }
+});
+
+test('mirroring a reflex angle keeps its reflex sweep and reverses its rays', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { v: [0, 0], r: 20, a0: 90, a1: 0 }, 'angle');
+  W.addEntities(raw, W.line(0, 0, 0, 100));
+  const entities = raw.entities.map((e, i) => i === 1 ? e : mirrorEntity(e, [0, 0], [0, 1], raw.blocks).ent);
+  const next = followDimensions(raw, { entities, blocks: raw.blocks }), p = model(next).params;
+  close(p.a0, 180); close(p.a1, 90); point(p.v, [0, 0]);
+  assert.equal(label(next), '270.000°');
 });
 
 test('angle at a rectangle corner follows a grip drag of the corner; a vertex off the lines does not link', () => {

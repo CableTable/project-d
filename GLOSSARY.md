@@ -56,6 +56,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Dimension style**: A named preset for dimension appearance, including text height, arrow size, decimals and units. Where: `TODO.md`, item 27; `web/dims.js`.
 
+**Dimension text override**: Text replacing a dimension's measured label; `<>` inside it shows the live measured value. Empty text or `<>` alone restores the measured label. Where: `DECISIONS.md`, Dimension text edit, both tabs.
+
 **Drawing tab**: A tab for editing a drawing and preparing parts before putting them on a layout. Where: `DECISIONS.md`, Layout page.
 
 **Duplicate**: Makes copies of a placed part along a chosen direction, with distance measured edge to edge. Where: `DECISIONS.md`, Duplicate and Duplicate both ways.
@@ -203,7 +205,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Cut layer**: Any layer whose name contains `cut`, ignoring case, used by Preflight to check path closure across connected ends. Where: `DECISIONS.md`, Cut layer by name. Avoid: A special DXF layer flag.
 
-**DIMENSION**: An imported DXF measurement entity drawn from its block, while Project D's own dimension callouts use INSERT blocks instead. Where: `web/drawing.js`, `DECISIONS.md`, More dimension types.
+**DIMENSION**: A native DXF measurement entity drawn from its block. Project D edits its own dimensions as INSERT blocks; drawing saves export overridden ones as DIMENSION entities with the override in group 1. Where: `web/drawing.js`, `DECISIONS.md`, More dimension types and Dimension text edit, both tabs.
 
 **DWG**: The planned AutoCAD drawing input format to be converted through LibreDWG and saved here as DXF. Where: `Project-D-scope.md`, section 4; `TODO.md`, Next sessions. Avoid: An already built reader.
 

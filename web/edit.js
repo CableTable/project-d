@@ -19,6 +19,7 @@ import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
+import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord } from './dimension-text.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -858,7 +859,7 @@ export function joinGaps(raw, ed, gaps, method = 'average') {
 const fieldOf = (r, code) => { const k = r.c.indexOf(code); return k < 0 ? '' : String(r.v[k]).trim(); };
 
 /** The block names a list of entities uses, and the blocks those use in turn. */
-function usedBlocks(blocks, entities) {
+export function usedBlocks(blocks, entities) {
   const used = new Set(), todo = [];
   const scan = (list) => { for (const e of list) if (e.type === 'INSERT' || e.type === 'DIMENSION' || e.type === 'ACAD_TABLE') { const nm = fieldOf(e.r, 2); if (nm && !used.has(nm)) { used.add(nm); todo.push(nm); } } };
   scan(entities);
@@ -973,11 +974,18 @@ export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (uni
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
 /** A scaled dimension's text says its new length: the old number times s, with as many decimals as it had (an angle keeps its value). */
 export function relabel(ents, s) {
+  const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
+  const scaled = (t) => {
+    const m = /^([RØ]?)(-?\d+(?:\.\d+)?)(["°]?)$/.exec(t);
+    return !m || m[3] === '°' ? t : m[1] + dimText(+m[2] * s, placesOf(t)) + m[3];
+  };
   return ents.map((e) => {
+    if (e === record) return overrideRecord(override, scaled(measured));
     if (e.type !== 'TEXT') return e;
-    const k = e.r.c.indexOf(1), m = k < 0 ? null : /^([RØ]?)(-?\d+(?:\.\d+)?)(["°]?)$/.exec(unesc(e.r.v[k]));
-    if (!m || m[3] === '°') return e;
-    const vv = e.r.v.slice(); vv[k] = m[1] + dimText(+m[2] * s, placesOf(unesc(e.r.v[k]))) + m[3];
+    const k = e.r.c.indexOf(1);
+    if (k < 0) return e;
+    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(scaled(measured), override) : scaled(unesc(vv[k]));
+    if (vv[k] === unesc(e.r.v[k])) return e;
     return { ...e, r: { ...e.r, v: vv } };
   });
 }
@@ -992,6 +1000,7 @@ export function relabelDims(raw, factor, dp) {
     const m = readDim(nm, b), g = m && dimGeom(m.kind, m.params, factor || 1, dp);
     if (!g) continue;
     const ents = b.entities.map((e) => {
+      if (e === textRecord(b.entities)) { if (measuredText(b.entities) !== g.measured) changed = true; return overrideRecord(readOverride(b.entities), g.measured); }
       if (e.type !== 'TEXT') return e;
       const k = e.r.c.indexOf(1);
       if (k < 0 || unesc(e.r.v[k]) === g.label) return e;
@@ -1299,7 +1308,7 @@ export function linearAxis(a, b, p) {
  * scale with the text height; the text is 0.4 text heights above the line or, with pos 'centre', in the line, which is then broken round it. → { line, ext, more, lines, arrows, text: { x, y, h,
  * rot, label, va }, mm, label, th } or null for two equal points.
  */
-export function dimGeometry({ a, b, offset = 0, textH, arrow, gap, pos = 'above', units = 'mm', axis = null, prefix = '' }, factor, dp = 2) {
+export function dimGeometry({ a, b, offset = 0, textH, arrow, gap, pos = 'above', units = 'mm', axis = null, prefix = '', override }, factor, dp = 2) {
   const dx = b[0] - a[0], dy = b[1] - a[1], f = factor || 1;
   const len = axis === 'h' ? Math.abs(dx) : axis === 'v' ? Math.abs(dy) : Math.hypot(dx, dy);
   if (!(len > 1e-9)) return null;
@@ -1315,38 +1324,38 @@ export function dimGeometry({ a, b, offset = 0, textH, arrow, gap, pos = 'above'
   }
   const flip = ux < -1e-9 || (Math.abs(ux) <= 1e-9 && uy < 0);              // read it left to right (bottom to top when upright)
   const rx = flip ? -ux : ux, ry = flip ? -uy : uy, rot = Math.atan2(ry, rx) / DEG;
-  const label = dimLabel(mm, dp, units, prefix), mid = [(a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2], tg = 0.4 * th, centred = pos === 'centre';
+  const measured = dimLabel(mm, dp, units, prefix), label = dimensionText(measured, override), mid = [(a2[0] + b2[0]) / 2, (a2[1] + b2[1]) / 2], tg = 0.4 * th, centred = pos === 'centre';
   const text = centred ? { x: mid[0], y: mid[1], h: th, rot, label, va: 2 } : { x: mid[0] - ry * tg, y: mid[1] + rx * tg, h: th, rot, label, va: 1 };
   const hw = 0.3 * th * label.length + tg;                                    // half the text and its gap, along the line
   let line = [a2[0], a2[1], b2[0], b2[1]], more = [];
   if (centred && 2 * hw < len - 2 * ar) { line = [a2[0], a2[1], mid[0] - ux * hw, mid[1] - uy * hw]; more = [[mid[0] + ux * hw, mid[1] + uy * hw, b2[0], b2[1]]]; }
-  return { line, ext, more, lines: [line, ...ext, ...more], arrows: [arrowHead(b2, ux, uy, ar, half), arrowHead(a2, -ux, -uy, ar, half)], text, mm, label, th };
+  return { line, ext, more, lines: [line, ...ext, ...more], arrows: [arrowHead(b2, ux, uy, ar, half), arrowHead(a2, -ux, -uy, ar, half)], text, mm, label, measured, th };
 }
 /**
  * A radius dimension, from { c, r (the circle), p (the pointer), textH, arrow, units }: a line from the centre through p to a short landing
  * with the text beyond it on the side p is on, and an arrowhead on the circle pointing out. Same shape as dimGeometry, or null.
  */
-export function radiusGeometry({ c, r, p, textH, arrow, units = 'mm' }, factor, dp = 2) {
+export function radiusGeometry({ c, r, p, textH, arrow, units = 'mm', override }, factor, dp = 2) {
   const f = factor || 1, d = Math.hypot(p[0] - c[0], p[1] - c[1]);
   if (!(r > 1e-9) || !(d > 1e-9)) return null;
   const ux = (p[0] - c[0]) / d, uy = (p[1] - c[1]) / d, th = textH > 0 ? textH : defaultTextH(r, f), ar = Math.min(arrow > 0 ? arrow : 1.1 * th, r * 0.4);
   const tip = [c[0] + ux * r, c[1] + uy * r], q = d >= r ? p : tip, side = ux < -1e-9 ? -1 : 1, end = [q[0] + side * th, q[1]];     // a pointer inside the circle is put on it
-  const label = dimLabel(r * f, dp, units, 'R'), line = [c[0], c[1], q[0], q[1]], more = [[q[0], q[1], end[0], end[1]]];
-  return { line, ext: [], more, lines: [line, ...more], arrows: [arrowHead(tip, ux, uy, ar, ar * 0.18)], mm: r * f, label, th,
+  const measured = dimLabel(r * f, dp, units, 'R'), label = dimensionText(measured, override), line = [c[0], c[1], q[0], q[1]], more = [[q[0], q[1], end[0], end[1]]];
+  return { line, ext: [], more, lines: [line, ...more], arrows: [arrowHead(tip, ux, uy, ar, ar * 0.18)], mm: r * f, label, measured, th,
     text: { x: end[0] + side * (0.4 * th + 0.3 * th * label.length), y: q[1] - 0.5 * th, h: th, rot: 0, label, va: 1 } };
 }
 /**
  * An angle dimension, from { v (the vertex), r (the arc's radius), a0, a1 (degrees: the arc runs anticlockwise from a0 to a1), textH, arrow }:
  * the arc with an arrowhead at each end and the value outside it, upright. Same shape as dimGeometry (arcs: [[cx, cy, r, a0, a1]]), or null.
  */
-export function angleGeometry({ v, r, a0, a1, textH, arrow }, factor, dp = 2) {
+export function angleGeometry({ v, r, a0, a1, textH, arrow, override }, factor, dp = 2) {
   const f = factor || 1, sw = (((a1 - a0) % 360) + 360) % 360;
   if (!(r > 1e-9) || !(sw > 1e-6)) return null;
   const th = textH > 0 ? textH : defaultTextH(r, f), ar = Math.min(arrow > 0 ? arrow : 1.1 * th, r * sw * DEG * 0.4), half = ar * 0.18;
   const at = (a) => [v[0] + r * Math.cos(a * DEG), v[1] + r * Math.sin(a * DEG)];
-  const am = (a0 + sw / 2) * DEG, dm = [Math.cos(am), Math.sin(am)], label = dimText(sw, dp) + '°';
+  const am = (a0 + sw / 2) * DEG, dm = [Math.cos(am), Math.sin(am)], measured = dimText(sw, dp) + '°', label = dimensionText(measured, override);
   const reach = r + 0.4 * th + (0.6 * th * label.length * Math.abs(dm[0]) + th * Math.abs(dm[1])) / 2;
-  return { line: null, ext: [], more: [], lines: [], arcs: [[v[0], v[1], r, ((a0 % 360) + 360) % 360, (((a0 + sw) % 360) + 360) % 360]], mm: sw, label, th,
+  return { line: null, ext: [], more: [], lines: [], arcs: [[v[0], v[1], r, ((a0 % 360) + 360) % 360, (((a0 + sw) % 360) + 360) % 360]], mm: sw, label, measured, th,
     arrows: [arrowHead(at(a0), Math.sin(a0 * DEG), -Math.cos(a0 * DEG), ar, half), arrowHead(at(a0 + sw), -Math.sin((a0 + sw) * DEG), Math.cos((a0 + sw) * DEG), ar, half)],
     text: { x: v[0] + dm[0] * reach, y: v[1] + dm[1] * reach - th / 2, h: th, rot: 0, label, va: 1 } };
 }
@@ -1400,6 +1409,7 @@ export function dimBlock(g, name) {
 }
 export const buildDim = (kind, params, factor, name, dp = 2) => {
   const g = dimGeom(kind, params, factor, dp), built = g && dimBlock(g, name);
+  if (built && overrideText(params.override)) built.block.entities.push(overrideRecord(params.override, g.measured));
   // Keep the axis in-session too when rebuilding an old untagged Linear block.
   if (built && kind === 'linear') built.block.dimAxis = params.axis;
   return built;
@@ -1409,16 +1419,21 @@ export const buildDimension = (params, factor, name, dp = 2) => buildDim('aligne
 /** First free name: PD_DIM_n aligned, H / V linear, R radius, D diameter or A angle. */
 export function freeName(blocks, kind = 'aligned', axis = null) {
   const tag = kind === 'linear' ? { h: 'H', v: 'V' }[axis] || '' : { radius: 'R', diameter: 'D', angle: 'A' }[kind] || '';
+  const taken = new Set((blocks instanceof Set ? [...blocks] : Object.keys(blocks)).map((n) => n.toLowerCase()));
   let n = 1;
-  while (blocks['PD_DIM_' + tag + n]) n++;
+  while (taken.has(('PD_DIM_' + tag + n).toLowerCase())) n++;
   return 'PD_DIM_' + tag + n;
 }
+/** The tag letter ('' | H | V | R | D | A) of a PD_DIM block name. */
+export const dimTag = (name) => (/^PD_DIM_([RDAHV]?)\d+$/.exec(name) || [, ''])[1];
 
 /** How a dimension looks, read back from its block: text height, arrow size, units and text position (all in drawing units). */
 function lookOf(ents) {
   const tx = ents.find((e) => e.type === 'TEXT'), sd = ents.find((e) => e.type === 'SOLID'), g = (e, c) => +fieldOf(e.r, c);
   const th = tx ? g(tx, 40) : NaN;
-  const look = { textH: th > 0 ? th : null, units: tx && unesc(fieldOf(tx.r, 1)).endsWith('"') ? 'inch' : 'mm', pos: tx && g(tx, 73) === 2 ? 'centre' : 'above' };
+  const look = { textH: th > 0 ? th : null, units: measuredText(ents).endsWith('"') ? 'inch' : 'mm', pos: tx && g(tx, 73) === 2 ? 'centre' : 'above' };
+  const override = readOverride(ents);
+  if (override) look.override = override;
   if (sd) look.arrow = Math.hypot((g(sd, 11) + g(sd, 12)) / 2 - g(sd, 10), (g(sd, 21) + g(sd, 22)) / 2 - g(sd, 20));
   return look;
 }
@@ -1447,7 +1462,7 @@ export function dimParams(block) {
 /** A kept dimension's kind and parameters from its block name and block: { kind, params } for dimGeom, or null when it is not one. */
 export function readDim(name, block) {
   if (!block || !DIM_BLOCK.test(name)) return null;
-  const tag = (/^PD_DIM_([RDAHV])\d+$/.exec(name) || [])[1], ents = block.entities || [], g = (e, c) => +fieldOf(e.r, c);
+  const tag = dimTag(name), ents = block.entities || [], g = (e, c) => +fieldOf(e.r, c);
   if (tag === 'R' || tag === 'A') {
     const ln = ents.find((e) => e.type === 'LINE'), sd = ents.find((e) => e.type === 'SOLID'), ar = ents.find((e) => e.type === 'ARC'), look = lookOf(ents);
     if (tag === 'R' && ln && sd) { const c = [g(ln, 10), g(ln, 20)]; return { kind: 'radius', params: { ...look, c, r: Math.hypot(g(sd, 10) - c[0], g(sd, 20) - c[1]), p: [g(ln, 11), g(ln, 21)] } }; }
@@ -1476,8 +1491,8 @@ export function dimOfEntity(raw, e) {
   if (!ent || ent.type !== 'INSERT') return null;
   const name = fieldOf(ent.r, 2), block = raw.blocks[name], m = readDim(name, block);
   if (!m) return null;
-  const tx = block.entities.find((x) => x.type === 'TEXT'), k = tx ? tx.r.c.indexOf(1) : -1;
-  return { name, ...m, dp: k < 0 ? 2 : placesOf(unesc(tx.r.v[k])) };
+  const label = measuredText(block.entities);
+  return { name, ...m, dp: label ? placesOf(label) : 2 };
 }
 /** { entities, blocks } with dimension block `built.name` rebuilt (the INSERT stays); the label follows the new geometry. */
 export function replaceDimension(raw, built) {
