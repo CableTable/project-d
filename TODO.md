@@ -279,7 +279,9 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
       155i3. ✅ (built, Knight, Rook S30b full control, 2026-10-31) Attribute double-click editors and EATTEDIT: Attribute editor for an insert (Apply / OK / Cancel), Edit Attribute Definition for a loose ATTDEF; changed writes are one Undo, locked objects refused. Drawings, Layouts and Compare; light / dark captures in `shots-155i3/` (Q1-Q9 of `runs30/grill-155i3.md`, Q8 of `runs29/grill-155i.md`).
     155j. ✅ (built, 2026-10-28, Knight) Mirror blocks, dimensions, hatches and partial ellipses; shared block inserts, private readable dimension blocks, MIRRHATCH 0, Erase Yes / No and one undo.
     155k. ✅ Snaps: Tab cycles the hovered object's candidates; all 14 snap types have ticks with exact 2D support and documented geometry limits; `osnap` / `os` opens the tick list, `ortho` asks ON / OFF. F3 / F8 come from 73; no `polar` command (AutoCAD has none). See DECISIONS "TODO 155k as built".
-    155l. DIM with automatic type and hover preview (M).
+    155l. DIM with automatic type and hover preview (M). (`runs30/grill-155l.md`)
+      155l1. ✅ (built, King, Rook S30b full control, 2026-10-31) DIM core: Automatic entry in the Dimension flyout (typed `DIM`), faint hover ghost (line / segment aligned, arc radius, circle diameter), line pick follows the cursor (beside = aligned, beyond an end = horizontal / vertical), arc = radius, circle = diameter, repeats until Enter / Esc, one Undo per dimension. Drawings and Layouts (loose objects); light / dark captures in `shots-155l/`.
+      155l2. The rest: Text / Undo / R / D options in the prompt, a second line makes an angle dimension (Q5), points mode for empty-space picks (Q6), all tabs (Compare check too).
     155m. Extend splines and elliptical arcs (S). (elliptical arcs built; ellipses and splines also work as boundaries; splines still wait for the AutoCAD test)
     155m2. Extend to an ellipse: a line within ~0.02 mm of tangent can snap to the far crossing; solve line vs ellipse as a quadratic and take the nearer root (review `runs26/rv155mfix2.out`, Low) (S).
     155n. Copy Array (later).

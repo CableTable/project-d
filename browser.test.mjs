@@ -11555,7 +11555,7 @@ try {
     await openGrips(dimDoc(), 'dims.dxf');
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension (D)');
     await t('dim-flyout').click();
-    assert.deepEqual(await flyoutItems(), ['Aligned D', 'Linear DLI', 'Radius DRA', 'Diameter DDI', 'Angle DAN']);
+    assert.deepEqual(await flyoutItems(), ['Automatic DIM', 'Aligned D', 'Linear DLI', 'Radius DRA', 'Diameter DDI', 'Angle DAN']);
     await page.locator('.ctxmenu .mi', { hasText: 'Linear' }).click();
     assert.equal(await page.locator('[data-tool=dimension].on').count(), 1);
     assert.equal(await page.locator('[data-tool=dimension]').getAttribute('title'), 'Dimension · Linear (DLI)', 'the button shows the type last used');
@@ -11683,6 +11683,60 @@ try {
     await page.screenshot({ path: shotDir + '/s12-dimtypes-dark.png' });
     await page.keyboard.press('Escape');
     await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+  });
+
+  // ---- TODO 155l1: DIM, the Automatic dimension: hover ghost, line / arc / circle picks, repeats until Enter ----
+  const tealInk = () => t('drawing').evaluate((c) => {            // pixels in the dimension colour's hue (teal), also when faint
+    const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let k = 0; for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 100 && d[i + 1] - d[i] > 25 && d[i + 2] - d[i] > 25 && Math.abs(d[i + 1] - d[i + 2]) < 40) k++;
+    return k;
+  });
+  const hoverAt = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x, p.y, { steps: 3 }); await page.waitForTimeout(150); };
+  await step('TODO 155l1: DIM (Automatic): hover a line / circle shows a faint ghost, a line pick follows the cursor (beside = aligned, beyond an end = horizontal), arc = R, circle = Ø, Enter ends, one Undo per dimension', async () => {
+    await openGrips(dimDoc(), 'auto.dxf');
+    await menuItem('View', 'Theme: light');
+    await t('dim-flyout').click();
+    assert.equal((await flyoutItems())[0], 'Automatic DIM');
+    await page.locator('.ctxmenu .mi', { hasText: 'Automatic' }).click();
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension');
+    assert.match(await page.locator('[data-tool=dimension]').getAttribute('title'), /Automatic/);
+    assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+    assert.equal(await histLine(), 'Command: DIM');
+    await hoverAt(60, 150);
+    assert.equal(await tealInk(), 0, 'nothing under the pointer, no ghost');
+    await hoverAt(60, 60);
+    assert.ok(await tealInk() > 30, 'hovering the sloped line ghosts its dimension');
+    mkdirSync('shots-155l', { recursive: true });
+    await page.screenshot({ path: 'shots-155l/hover-ghost-light.png' });
+    await menuItem('View', 'Theme: dark'); await hoverAt(70, 70); await hoverAt(60, 60); await page.waitForTimeout(250);
+    await page.screenshot({ path: 'shots-155l/hover-ghost-dark.png' });
+    await menuItem('View', 'Theme: light');
+    await hoverAt(175, 100);
+    assert.ok(await tealInk() > 30, 'hovering the circle ghosts its diameter');
+    await hoverAt(60, 150);
+    assert.equal(await tealInk(), 0, 'the ghost goes when the pointer leaves');
+    await click(60, 150);
+    assert.equal(await prompt(), 'Select a line, arc or circle: click on one', 'a click on nothing');
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location:');
+    await click(50, 70);                                                                  // beside the line
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm/);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', 'DIM goes on');
+    await click(80, 80); await click(90, 140);                                            // beyond the top end, above it
+    assert.match(await prompt(), /Dimension placed: 80\.00 mm/);
+    await click(200, 170);                                                                // the arc
+    await click(215, 190);
+    assert.match(await prompt(), /Dimension placed: R20\.00 mm/);
+    await click(175, 100);                                                                // the circle
+    await click(190, 120);
+    assert.match(await prompt(), /Dimension placed: Ø50\.00 mm/);
+    let dims = Object.values(await dimBlocks()).map((q) => q.kind + (q.params.axis || '')).sort();
+    assert.deepEqual(dims, ['aligned', 'diameter', 'linearh', 'radius']);
+    await undo(); assert.equal(Object.keys(await dimBlocks()).length, 3, 'one Undo takes back one dimension');
+    await page.keyboard.press('Control+y'); assert.equal(Object.keys(await dimBlocks()).length, 4);
+    await page.keyboard.press('Enter');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends DIM');
     await closeTabs(/./);
   });
 
@@ -17200,6 +17254,28 @@ try {
     assert.deepEqual(labelsIn(await save()), labelsIn(text), 'one Undo restores the circle and its dimensions');
     await t('decimals').selectOption('2');
     await page.locator('[data-tool=select]').click();
+  });
+
+  await step('TODO 155l1: on a layout, DIM (Automatic) ghosts and dimensions a loose circle (Ø, one Undo), refuses a placed part; Enter ends', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts(), undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await typeCmd('circle'); await typeCmd('200,200'); await typeCmd('40');
+    await page.keyboard.press('Escape');
+    assert.equal(await nParts(), n0 + 1);
+    await typeCmd('dim');
+    assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+    const h = await at(240, 200); await page.mouse.move(h.x, h.y, { steps: 3 }); await frames();
+    assert.ok(await tealInk() > 5, 'the ghost shows on a layout (a thin line at this zoom)');
+    await click(500, 350);
+    assert.match(await prompt(), /Dimension works on layout objects, not placed parts/);
+    await click(240, 200);
+    assert.equal(await prompt(), 'Specify dimension line location:');
+    const p = await at(230, 250); await page.mouse.move(p.x, p.y); await frames(); await page.mouse.click(p.x, p.y);
+    assert.match(await prompt(), /Dimension placed: Ø/);
+    assert.equal(await nParts(), n0 + 2);
+    await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo removes the dimension');
+    await page.keyboard.press('Enter');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends DIM');
   });
 
   await step('TODO 156b2c3a: double-click a dimension edits its text on a drawing and on a layout (Esc cancels, one Undo); mixed <> text follows a grip; save and reopen', async () => {

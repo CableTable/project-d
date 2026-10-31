@@ -16,6 +16,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Auto-nest**: Packs mixed parts by their actual outlines from the sheet's bottom-left, using allowed quarter turns and keeping gaps and grippers clear. Where: `DECISIONS.md`, Auto-nest method and UI.
 
+**Automatic dimension**: The `DIM` command: hover a line, arc or circle to see the dimension a click would make, click it, then place it; it repeats until Enter or Esc. Where: `DECISIONS.md`, TODO 155l1. Avoid: Dimension type picker.
+
 **Autosave**: Copies changed tabs into local recovery storage every two minutes without writing over drawing files. Where: `DECISIONS.md`, Autosave and recovery. Avoid: Save.
 
 **Background picture**: A dimmed, locked JPG, PNG or rendered PDF page beneath a drawing that can be scaled and measured but is left out of DXF Save and part PDF output. Where: `DECISIONS.md`, Background, Part PDF and Autosave and recovery.

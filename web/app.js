@@ -8802,6 +8802,7 @@ function editKey(e) {
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
+  if (e.key === 'Enter' && !mod && !e.altKey && !dialog && state.dim && state.dimType === 'auto' && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimClear(state.dim); setTool('select'); return; }       // Automatic dimension repeats until Enter or Esc
   if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
