@@ -9486,7 +9486,7 @@ try {
         await page.mouse.move(a.x, a.y); await page.mouse.down();
         await page.mouse.move(pv.x + dx * Math.cos(angle) + dy * Math.sin(angle), pv.y - dx * Math.sin(angle) + dy * Math.cos(angle), { steps: 6 });
         await frames();
-        assert.equal(await page.locator('.ovl .rot-label').count(), 1, 'live angle preview');
+        await page.waitForFunction(() => document.querySelectorAll('.ovl .rot-label').length === 1);
         assert.ok(Math.abs(parseFloat(await page.locator('.ovl .rot-label').textContent()) - (shift ? Math.round(degrees / 15) * 15 : degrees)) < .1);
         assert.ok(await accentInk() > 0, 'live selection preview is painted');
         if (cancel) await page.keyboard.press('Escape');
