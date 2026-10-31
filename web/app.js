@@ -8459,7 +8459,7 @@ function gripStretchHots(g, q, shift) {
     let cur = ent;
     // whole (Grill Q2: all grips hot = the object moves): never grip by grip, the first grip would land on the next one's old spot
     if (GR.wholeHot(ent, new Set(mine.map((x) => x.id)))) { if (v[0] || v[1]) cur = GR.translate(ent, v[0], v[1]); g.label = g.label || 'Move'; }
-    else for (const x of mine) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
+    else for (const x of GR.stretchHots(ent, mine)) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
     if (cur !== ent) nexts.set(e, cur);
   }
   g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;

@@ -10491,6 +10491,28 @@ try {
     await undo();
     await closeTabs(/./);
   });
+  await step('TODO 163b: a segment mid hot with its own vertex (either order) moves each vertex once; Esc in a Convert to Arc run leaves the polyline as it was', async () => {
+    const { hover, list, pickItem, hotWhen, undo } = g163;
+    const shiftGrip = async (id) => { const a = await gripBox(id); await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { await page.keyboard.up('Shift'); } await frames(); };
+    await openGrips(g163bDoc(), 'g163b.dxf');
+    for (const [first, second] of [['0:v1', '0:e0'], ['0:e0', '0:v1']]) {
+      await pick(35, 30, 7);
+      await shiftGrip(first); await shiftGrip(second); await hotWhen(2);
+      const a = await gripBox('0:v1'); await page.mouse.click(a.x, a.y); await frames();
+      await typeCmd('@0,10'); await hotWhen(0);
+      assert.deepEqual((await g163bVerts(0)).slice(0, 3), [[20, 40, 0], [80, 40, 0], [80, 70, -1]], `${first} then ${second}: each vertex moved 10 once`);
+      await undo();
+      assert.deepEqual((await g163bVerts(0)).slice(0, 2), [[20, 30, 0], [80, 30, 0]], 'one Undo');
+    }
+    // Esc with the ghost arc showing changes nothing
+    await pick(35, 30, 7);
+    await hover('0:e0'); await list(); await pickItem('Convert to Arc'); await hotWhen(1);
+    const to = await at(50, 50); await page.mouse.move(to.x, to.y); await frames();
+    assert.ok(await page.locator('[data-testid=grip-preview]').count() >= 1, 'the ghost arc shows');
+    await page.keyboard.press('Escape'); await hotWhen(0);
+    assert.deepEqual(await g163bVerts(0), [[20, 30, 0], [80, 30, 0], [80, 70, -1], [130, 70, 0]], 'Esc left the polyline as it was');
+    await closeTabs(/./);
+  });
   await step('TODO 163b: Ctrl in a polyline run: vertex Stretch <-> Insert vertex; line segment Stretch -> Insert vertex -> Convert to Arc; arc segment Stretch <-> Insert vertex; right-click lists the options, Remove vertex from it', async () => {
     const { hotWhen, hist, list, pickItem, undo } = g163;
     const clickGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await hotWhen(1); };

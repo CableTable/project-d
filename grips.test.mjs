@@ -440,6 +440,18 @@ test('163b Stretch on a segment mid: a line segment moves with both ends, an arc
   assert.deepEqual(at4(z.ent).map((v) => v.slice(0, 2)), [[0, 3], [10, 0], [10, 13]], 'the closing segment moves vertices 2 and 0');
 });
 
+test('163b review: a segment mid hot with its own vertex moves each vertex once, in either hot order; the record keeps its group order', () => {
+  const p = reopen(lwpoly([[0, 0], [10, 0], [10, 10]])), h = (id) => GR.gripsOf(p).find((x) => x.id === id);
+  const stretch = (ent, ids) => GR.stretchHots(ent, ids.map(h)).reduce((cur, x) => GR.dragGrip(cur, x.id, [x.x, x.y + 5]).ent, ent);       // what gripStretchHots does for one object, both +5 in y
+  for (const ids of [['v1', 'e0'], ['e0', 'v1']]) assert.deepEqual(at4(stretch(p, ids)).map((v) => v.slice(0, 2)), [[0, 5], [10, 5], [10, 10]], ids.join(' '));
+  assert.deepEqual(GR.stretchHots(p, [h('e0')]).map((x) => x.id), ['v0', 'v1'], 'the mid alone: both ends');
+  const q = acadPoly();       // an arc segment (e2) with its end hot: the end moves, the bulge stays; alone it still bends
+  assert.deepEqual(GR.stretchHots(q, ['e2', 'v3'].map((id) => GR.gripsOf(q).find((x) => x.id === id))).map((x) => x.id), ['v3']);
+  assert.deepEqual(GR.stretchHots(q, [GR.gripsOf(q).find((x) => x.id === 'e2')]).map((x) => x.id), ['e2']);
+  const z = reopen(lwpoly([[0, 0], [10, 0], [10, 10]])); z.r.c.push(210, 220, 230); z.r.v.push('0', '0', '1');
+  for (const out of [GR.insertVertex(z, 0, [5, 1]).ent, GR.removeVertex(z, 1).ent, GR.convertToArc(z, 0, [5, 2]).ent]) assert.deepEqual(out.r.c.slice(-3), [210, 220, 230], 'the extrusion stays after the vertices');
+});
+
 test('163b Insert vertex: after the hovered vertex or into the segment, bulges of the other segments kept, the split halves straight', () => {
   const p = acadPoly();
   const v = GR.insertVertex(p, 1, [32, 82]);                               // AutoCAD: 10,70 40,70 32,82 40,90 70,90, arc kept on the last segment

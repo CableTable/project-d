@@ -157,6 +157,23 @@ export function wholeHot(ent, ids) {
   return all.length > 0 && (ids.has(centre) || all.every((x) => x.id === centre || x.kind === 'edge' || ids.has(x.id)));
 }
 
+/**
+ * 163b: the hot grips [{ id, x, y }] of one object, as a Stretch moves them: a polyline's line-segment mid becomes its two vertices and an arc-segment mid
+ * is dropped when one of its ends is hot, so every vertex moves once whatever the hot order (the mid is derived from the vertices).
+ */
+export function stretchHots(ent, hots) {
+  if (ent.type !== 'LWPOLYLINE') return hots;
+  const all = new Map(gripsOf(ent).map((x) => [x.id, x])), vs = lwVertices(ent.r), ids = new Set(hots.map((x) => x.id)), out = new Map();
+  for (const x of hots) {
+    const edge = all.get(x.id);
+    if (edge?.kind !== 'edge' || edge.rect) { out.set(x.id, x); continue; }
+    const j = +x.id.slice(1), ends = ['v' + j, 'v' + ((j + 1) % vs.length)];
+    if (!vs[j].b) ends.forEach((id) => out.set(id, out.get(id) || hots.find((y) => y.id === id) || all.get(id)));
+    else if (!ends.some((id) => ids.has(id))) out.set(x.id, x);
+  }
+  return [...out.values()];
+}
+
 /** The entity moved whole by (dx, dy), drawing units (a leader through its points, the rest the way the Move command does). */
 export function translate(ent, dx, dy) {
   if (ent.type === 'LEADER') return { ...ent, model: { ...ent.model, pts: ent.model.pts.map((p) => [p[0] + dx, p[1] + dy]) } };
@@ -301,7 +318,7 @@ function splitPoly(r) {
   const head = { c: [], v: [] }, vs = [];
   for (let k = 0; k < r.c.length; k++) {
     const c = r.c[k];
-    if (c === 10) vs.push({ c: [], v: [] });
+    if (c === 10) { if (!vs.length) head.at = head.c.length; vs.push({ c: [], v: [] }); }       // head.at: where the vertices sit among the other groups
     const t = vs.length && [10, 20, 40, 41, 42, 91].includes(c) ? vs[vs.length - 1] : head;
     t.c.push(c); t.v.push(r.v[k]);
   }
@@ -311,7 +328,8 @@ function splitPoly(r) {
 function joinPoly(ent, head, vs) {
   const c = head.c.slice(), v = head.v.slice(), k = c.indexOf(90);
   if (k >= 0) v[k] = String(vs.length);
-  for (const x of vs) { c.push(...x.c); v.push(...x.v); }
+  const pos = head.at ?? c.length;       // the vertices go back where they were (a code 210 after them stays after them)
+  c.splice(pos, 0, ...vs.flatMap((x) => x.c)); v.splice(pos, 0, ...vs.flatMap((x) => x.v));
   return { ...ent, r: { ...ent.r, c, v } };
 }
 function setBulge(group, b) {
