@@ -16192,7 +16192,7 @@ try {
 
   await step('TODO 155i1: Explode native dimensions in Drawings and Layouts, keep resolved override text and Undo once', async () => {
     await menuItem('View', 'Theme: light');
-    const raw = newDoc(4), built = buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1');
+    const raw = newDoc(4), built = buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5, override: 'Width <> mm' }, 1, 'PD_DIM_1');
     addBlock(raw, '*D1', [...built.block.entities, entity('POINT', [[10, 150], [20, 150]], { layer: 'Defpoints' })]);
     const native = entity('DIMENSION', [[2, '*D1'], [70, 33], [1, 'Width <> mm'], [42, 150], [13, 150], [23, 150], [14, 300], [24, 150], [10, 300], [20, 200]]);
     addEntities(raw, dxfLine(150, 150, 300, 150), native);

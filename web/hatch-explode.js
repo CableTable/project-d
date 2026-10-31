@@ -47,6 +47,7 @@ export function explodeHatch(e) {
     const emit = (x0, x1, y) => {
       if (x1 - x0 <= 1e-9) return;
       count++;
+      if (count > 1000000) throw new Error('Hatch too dense to explode (more than 1,000,000 lines)');
       if (count <= LIMIT) segments.push([(x0 * c - y * s) * (e.flip ? -1 : 1), x0 * s + y * c, (x1 * c - y * s) * (e.flip ? -1 : 1), x1 * s + y * c]);
     };
     const period = f.d.reduce((n, d) => n + Math.abs(d), 0);

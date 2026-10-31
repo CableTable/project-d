@@ -233,13 +233,13 @@ export function explodeDimension(e, raw) {
   const att = textRecord(block.entities), layer = /^defpoints$/i.test(e.layer) ? '0' : e.layer;
   let keep = block.entities.filter((c) => c !== att && c.type !== 'POINT');
   if (native) {
-    const override = e.r.v[e.r.c.indexOf(1)], style = raw.dimstyles?.[field(e, 3)];
+    const override = generated ? e.r.v[e.r.c.indexOf(1)] : null; // The graphics block already has AutoCAD's resolved text.
     let measured = generated?.measured;
     if (override?.includes('<>')) {
       if (e.r.c.includes(42)) {
-        const kind = val(e, 70) & 7, dp = generated?.dp ?? (style && get(style, 271)) ?? +(raw.header?.$DIMDEC ?? 2);
+        const kind = val(e, 70) & 7, dp = generated.dp;
         measured = (kind === 4 ? 'R' : kind === 3 ? 'Ø' : '') + dimText(val(e, 42), dp) + ([2, 5].includes(kind) ? '°' : '');
-      } else if (!measured) measured = nativeGeometry(e, raw).measured;
+      }
     }
     keep = keep.map((c) => {
       const onLayer = { ...c, layer: /^defpoints$/i.test(c.layer) ? layer : c.layer };

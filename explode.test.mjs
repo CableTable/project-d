@@ -252,10 +252,10 @@ test('a second DIMENSION, or an existing PD_EXPLODE_1, gets the next PD_EXPLODE_
   assert.equal(out.blocks.PD_EXPLODE_2, doc.blocks['*D1']); assert.equal(out.blocks.PD_EXPLODE_3, doc.blocks['*D2']);
 });
 
-test('TODO 155i1: native DIMENSION uses its world-coordinate *D block, resolves override and drops POINTs / Defpoints', () => {
+test('TODO 155i1: native DIMENSION uses its world-coordinate *D block, keeps resolved text and drops POINTs / Defpoints', () => {
   const doc = newDoc(4);
   addLayer(doc, 'Notes', { aci: 3 }); addLayer(doc, 'Defpoints', { aci: 7 });
-  const built = buildDim('aligned', { a: [10, 20], b: [110, 20], offset: 30, textH: 5 }, 1, 'PD_DIM_1');
+  const built = buildDim('aligned', { a: [10, 20], b: [110, 20], offset: 30, textH: 5, override: 'Width <> mm' }, 1, 'PD_DIM_1');
   addBlock(doc, '*D1', [...built.block.entities, entity('POINT', [[10, 10], [20, 20]], { layer: 'Defpoints' }), line(10, 20, 10, 30, { layer: 'defPOINTS' })], [7, 9]);
   const native = entity('DIMENSION', [[2, '*D1'], [70, 33], [1, 'Width <> mm'], [42, 100], [10, 110], [20, 50]], { layer: 'Notes', tc: 0x123456 });
   doc.entities = [native];
@@ -266,10 +266,21 @@ test('TODO 155i1: native DIMENSION uses its world-coordinate *D block, resolves 
   assert.equal(out.entities.filter((e) => e.type === 'SOLID').length, 2);
   assert.equal(textOf(out.entities.find((e) => e.type === 'MTEXT')), 'Width 100.00 mm');
   const spaced = structuredClone(doc); spaced.entities[0].r.v[spaced.entities[0].r.c.indexOf(1)] = ' Width <> mm ';
-  assert.equal(textOf(explodeSelection(spaced, new Set([0])).entities.find((e) => e.type === 'MTEXT')), ' Width 100.00 mm ');
+  assert.equal(textOf(explodeSelection(spaced, new Set([0])).entities.find((e) => e.type === 'MTEXT')), 'Width 100.00 mm');
   assert.ok(!out.blocks['*D1']); assert.deepEqual(doc, before);
   doc.entities.push({ ...native });
   assert.ok(explodeSelection(doc, new Set([0])).blocks['*D1'], 'another dimension still uses the anonymous block');
+});
+
+test('TODO 155i1: ISO-25-like native block text is already resolved, including units and suppressed zeros', () => {
+  for (const type of ['TEXT', 'MTEXT']) {
+    const doc = newDoc(4);
+    addBlock(doc, '*D1', [entity(type, [[10, 50], [20, 5], [40, 2.5], [1, '100 mm']])]);
+    doc.entities = [entity('DIMENSION', [[2, '*D1'], [70, 1], [1, '<> mm'], [42, 100]])];
+    const out = explodeSelection(doc, new Set([0]));
+    assert.equal(out.exploded, 1); assert.deepEqual(out.errors, []);
+    assert.equal(textOf(out.entities.find((e) => e.type === 'MTEXT')), '100 mm');
+  }
 });
 
 test('TODO 155i1: native DIMENSION without a block builds lines, SOLID arrows and MTEXT; rotated and aligned geometry', () => {
@@ -289,21 +300,17 @@ test('TODO 155i1: native DIMENSION without a block builds lines, SOLID arrows an
   }
 });
 
-test('TODO 155i1: native block MTEXT keeps formatting and explicit override, blank text is suppressed; invalid fallback leaves source', () => {
+test('TODO 155i1: native block MTEXT keeps resolved formatting and chunks regardless of override; invalid fallback leaves source', () => {
   const doc = newDoc(4);
-  addBlock(doc, '*D1', [line(0, 0, 30, 0), entity('MTEXT', [[10, 15], [20, 2], [40, 2], [3, 'old'], [1, 'value']])]);
+  addBlock(doc, '*D1', [line(0, 0, 30, 0), entity('MTEXT', [[10, 15], [20, 2], [40, 2], [3, '{\\C1;Width '], [1, '30,0}']])]);
   doc.entities = [entity('DIMENSION', [[2, '*D1'], [70, 0], [1, '{\\C1;Width <>}'], [42, 30]])];
-  const out = explodeSelection(doc, new Set([0]));
-  const tx = out.entities.find((e) => e.type === 'MTEXT');
-  assert.equal(textOf(tx), '{\\C1;Width 30.00}'); assert.equal(tx.r.c.includes(3), false);
   doc.header.$DIMDEC = '3';
-  doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = ' Width <> ';
-  assert.equal(textOf(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT')), ' Width 30.000 ', 'override spaces and source precision survive');
-  doc.header.$DIMDEC = '2';
-  doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = '<>';
-  assert.equal(textOf(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT')), '30.00');
-  doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = ' ';
-  assert.deepEqual(explodeSelection(doc, new Set([0])).entities.map((e) => e.type), ['LINE']);
+  for (const override of ['{\\C1;Width <>}', ' Width <> ', '<>', 'Custom', ' ']) {
+    doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = override;
+    const tx = explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT');
+    assert.equal(textOf(tx), '30,0}');
+    assert.equal(tx.r.v[tx.r.c.indexOf(3)], '{\\C1;Width ');
+  }
   doc.entities = [entity('DIMENSION', [[70, 1]])];
   const invalid = explodeSelection(doc, new Set([0]));
   assert.equal(invalid.exploded, 0); assert.equal(invalid.entities[0], doc.entities[0]);
@@ -311,7 +318,7 @@ test('TODO 155i1: native block MTEXT keeps formatting and explicit override, bla
 });
 
 test('TODO 155i1: native dimensions are loose layout objects, survive Save, explode with their placement and undo snapshot stays intact', () => {
-  const doc = newDoc(4), built = buildDim('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5 }, 1, 'PD_DIM_1');
+  const doc = newDoc(4), built = buildDim('aligned', { a: [0, 0], b: [100, 0], offset: 20, textH: 5, override: 'Width <>' }, 1, 'PD_DIM_1');
   addBlock(doc, '*D1', built.block.entities);
   const e = entity('DIMENSION', [[2, '*D1'], [70, 1], [42, 100], [1, 'Width <>']]);
   const lay = LD.newLayout('Native');
