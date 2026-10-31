@@ -5,6 +5,7 @@ import { ellipse, entity, newDoc, writeDxf } from './web/dxf-write.js';
 import { readDxf, nurbsAt } from './web/drawing.js';
 import { curveShape, isBoundary, rayHit } from './web/extend.js';
 import { get } from './web/grips.js';
+import { offsetStats } from './web/offsetcurve.js';
 
 const shape = (ent) => pathOf(curveShape(ent));
 const offset = (ent, d, at) => {
@@ -114,4 +115,45 @@ test('TODO 155g2: a closed rational NURBS offsets with its weights, stays closed
     }
   }
   assert.match(offsetEntity(ring, 41, [0, 0]).error, /nothing is left/);
+});
+
+// A cubic spline with a triple control point: straight along y = 0 to (100, 0), a sharp corner there, then straight up x = 100.
+const corner = () => spline([[0, 0], [50, 0], [100, 0], [100, 0], [100, 0], [100, 50], [100, 100]], [0, 0, 0, 0, 1, 2, 3, 4, 4, 4, 4]);
+const line = (a, b, n) => Array.from({ length: n }, (_, i) => [a[0] + (b[0] - a[0]) * (i + 0.5) / n, a[1] + (b[1] - a[1]) * (i + 0.5) / n]);
+
+test('TODO 155g2: a spline corner is rounded outside (to 0.01) and clipped at the crossing inside', () => {
+  const source = corner();
+  const outside = shape(offset(source, 5, [50, -10]));
+  const round = Array.from({ length: 20 }, (_, i) => { const t = -Math.PI / 2 + (i + 0.5) * Math.PI / 40; return [100 + 5 * Math.cos(t), 5 * Math.sin(t)]; });
+  [...line([0, -5], [100, -5], 40), ...round, ...line([105, 0], [105, 100], 40)].forEach((p, i) => assert.ok(closest(outside, p).d <= 0.01, `outside point ${i}: ${closest(outside, p).d}`));
+  const inside = shape(offset(source, 5, [50, 10]));
+  [...line([0, 5], [90, 5], 50), ...line([95, 10], [95, 100], 49), [95, 5]].forEach((p, i) => assert.ok(closest(inside, p).d <= 0.01, `inside point ${i}: ${closest(inside, p).d}`));
+  assert.ok(closest(inside, [100, 5]).d > 4, 'nothing runs on into the overlap');
+  assert.match(offsetEntity(source, 200, [50, 10]).error, /nothing is left/);
+});
+
+test('TODO 155g2: a tiny ellipse (R 0.25) offsets within 0.001 of its size (the bounding-box diagonal)', () => {
+  const source = ellipse(0, 0, 0.25, 0, 1), size = 0.5 * Math.SQRT2;
+  for (const [side, r] of [[1, 0.3], [-1, 0.2]]) {
+    const P = shape(offset(source, 0.05, side > 0 ? [1, 0] : [0, 0]));
+    for (let i = 0; i < 100; i++) {
+      const t = (i + 0.37) * Math.PI * 2 / 100, miss = closest(P, [r * Math.cos(t), r * Math.sin(t)]).d;
+      assert.ok(miss < 0.001 * size, `side ${side}, point ${i}: ${miss}`);
+    }
+    P.segs.forEach((s) => assert.ok(Math.abs(Math.hypot(...s.a) - r) < 0.001 * size));
+    assert.ok(P.segs.length > 30, 'still smooth: more than the 8-ish points 0.008 would keep');
+  }
+});
+
+test('TODO 155g2: the same entity, distance and side is worked out once (the live preview)', () => {
+  const source = ellipse(0, 0, 100, 0, 0.4), before = offsetStats.builds;
+  offsetEntity(source, 5, [150, 0]); offsetEntity(source, 5, [200, 10]); offsetEntity(source, 5, [150, 0]);
+  assert.equal(offsetStats.builds, before + 1, 'same side, same distance: one build');
+  offsetEntity(source, 6, [150, 0]);
+  assert.equal(offsetStats.builds, before + 2, 'another distance builds again');
+  offsetEntity(source, 6, [0, 0]);
+  assert.equal(offsetStats.builds, before + 3, 'the other side builds again');
+  source.r.v[source.r.c.indexOf(40)] = '120';
+  offsetEntity(source, 6, [0, 0]);
+  assert.equal(offsetStats.builds, before + 4, 'an edited entity builds again');
 });
