@@ -24,7 +24,7 @@ export function overlayBox(o, T, dpr) {
   const add = (x, y, pad = 0) => { const [px, py] = mapply(T, x, y); bounds = unionBox(bounds, [px / dpr - pad, py / dpr - pad, px / dpr + pad, py / dpr + pad]); };
   const g = o.dim;
   if (g) {
-    for (const l of g.lines) { add(l[0], l[1]); add(l[2], l[3]); }
+    for (const l of g.hot ? [...g.lines, g.hot] : g.lines) { add(l[0], l[1]); add(l[2], l[3]); }
     for (const [cx, cy, r] of g.arcs || []) for (const [dx, dy] of [[-1, -1], [-1, 1], [1, -1], [1, 1]]) add(cx + dx * r, cy + dy * r);
     for (const tri of g.arrows) for (const q of tri) add(q[0], q[1]);
     if (g.text) { const px = g.text.h * Math.hypot(T[0], T[1]) / dpr; add(g.text.x, g.text.y, Math.max(px, g.text.label.length * px * 0.3)); }

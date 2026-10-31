@@ -11701,7 +11701,7 @@ try {
     await page.locator('.ctxmenu .mi', { hasText: 'Automatic' }).click();
     assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension');
     assert.match(await page.locator('[data-tool=dimension]').getAttribute('title'), /Automatic/);
-    assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+    assert.equal(await prompt(), 'Select a line, arc or circle, or specify first extension line origin [Undo]:');
     assert.equal(await histLine(), 'Command: DIM');
     await hoverAt(60, 150);
     assert.equal(await tealInk(), 0, 'nothing under the pointer, no ghost');
@@ -11717,9 +11717,10 @@ try {
     await hoverAt(60, 150);
     assert.equal(await tealInk(), 0, 'the ghost goes when the pointer leaves');
     await click(60, 150);
-    assert.equal(await prompt(), 'Select a line, arc or circle: click on one', 'a click on nothing');
+    assert.equal(await prompt(), 'Specify second extension line origin or [Undo]:', 'a click on nothing starts points mode');
+    await page.keyboard.press('Escape');
     const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
-    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location:');
+    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:');
     await click(50, 70);                                                                  // beside the line
     assert.match(await prompt(), /Dimension placed: 113\.14 mm/);
     assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', 'DIM goes on');
@@ -11735,9 +11736,9 @@ try {
     assert.deepEqual(dims, ['aligned', 'diameter', 'linearh', 'radius']);
     await undo(); assert.equal(Object.keys(await dimBlocks()).length, 3, 'one Undo takes back one dimension');
     await page.keyboard.press('Control+y'); assert.equal(Object.keys(await dimBlocks()).length, 4);
-    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location:');
+    await click(60, 60); assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:');
     await page.keyboard.press('Escape');
-    assert.match(await prompt(), /Dimension cancelled\. Select a line, arc or circle to dimension:/, 'Esc after a line pick cancels the pick');
+    assert.match(await prompt(), /Dimension cancelled\. Select a line, arc or circle, or specify first extension line origin \[Undo\]:/, 'Esc after a line pick cancels the pick');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', 'DIM goes on after the first Esc');
     assert.equal(Object.keys(await dimBlocks()).length, 4, 'the cancelled pick placed nothing');
     await page.keyboard.press('Escape');
@@ -11751,6 +11752,112 @@ try {
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Space ends DIM');
     await typeCmd('dim'); await cmdLine().press('Space');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Space in the command bar ends DIM');
+    await closeTabs(/./);
+  });
+
+  // ---- TODO 155l2: DIM options (Text, Undo, Diameter / Radius), a second line makes an angle, empty space is points mode ----
+  await step('TODO 155l2: DIM: T text override, U back one pick, arc D = diameter, circle R = radius, two lines = angle (ghost light + dark), empty space = points mode, U at the first prompt takes back the last dimension', async () => {
+    await openGrips(dimDoc(), 'auto2.dxf');
+    await menuItem('View', 'Theme: light');
+    mkdirSync('shots-155l', { recursive: true });
+    const count = async () => Object.keys(await dimBlocks()).length;
+    const overrides = async () => Object.values((await savedDoc()).blocks).filter((b) => b.entities.some((e) => e.type === 'ATTDEF')).map((b) => readOverride(b.entities));
+    await typeCmd('dim');
+    // a sloped line + T: the text prompt shows the measured value, <> stands for it
+    await click(60, 60);
+    assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:');
+    await typeCmd('t');
+    assert.match(await prompt(), /^Enter dimension text <[\d.]+>:$/);
+    await typeCmd('Len <> mm');
+    assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:', 'back at the placement prompt');
+    await click(50, 70);
+    assert.match(await prompt(), /Dimension placed: Len 113\.14 mm,/, 'a text override gets no second "mm"');
+    assert.deepEqual(await overrides(), ['Len <> mm']);
+    // U inside a dimension goes back one pick; at the first prompt there is nothing of this dimension to undo
+    await click(60, 60); await typeCmd('u');
+    assert.equal(await prompt(), 'Select a line, arc or circle, or specify first extension line origin [Undo]:');
+    assert.equal(await count(), 1, 'U inside a dimension places nothing and removes nothing');
+    // arc: radius, D switches to a diameter; circle: diameter, R switches to a radius
+    await click(200, 170);
+    assert.equal(await prompt(), 'Specify radius dimension location or [Diameter/Text/Undo]:');
+    await typeCmd('d');
+    assert.equal(await prompt(), 'Specify diameter dimension location or [Radius/Text/Undo]:');
+    await click(215, 190);
+    assert.match(await prompt(), /Dimension placed: Ø40\.00 mm/);
+    await click(175, 100);
+    assert.equal(await prompt(), 'Specify diameter dimension location or [Radius/Text/Undo]:');
+    await typeCmd('r');
+    assert.equal(await prompt(), 'Specify radius dimension location or [Diameter/Text/Undo]:');
+    await click(190, 120);
+    assert.match(await prompt(), /Dimension placed: R25\.00 mm/);
+    // two lines: the second line under the pointer is marked and ghosts the angle; a click makes the Angle dimension
+    await click(60, 60);
+    await hoverAt(150, 22);                                                           // a hair above the line: the angle is drawn on the pointer's side
+    assert.ok(await tealInk() > 30, 'hovering a second line ghosts the angle');
+    await page.screenshot({ path: 'shots-155l/angle-ghost-light.png' });
+    await menuItem('View', 'Theme: dark'); await hoverAt(140, 22); await hoverAt(150, 22); await page.waitForTimeout(250);
+    await page.screenshot({ path: 'shots-155l/angle-ghost-dark.png' });
+    await menuItem('View', 'Theme: light');
+    await click(150, 20);
+    assert.equal(await prompt(), 'Specify angular dimension location or [Text/Undo]:');
+    await typeCmd('u');                                                               // back to the first line
+    assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:');
+    await click(150, 20);
+    await click(50, 35);
+    assert.match(await prompt(), /Dimension placed: 45\.00°/);
+    // empty space: points mode, two origins, then the location follows the cursor
+    await click(60, 150);
+    assert.equal(await prompt(), 'Specify second extension line origin or [Undo]:');
+    await click(120, 150);
+    assert.equal(await prompt(), 'Specify dimension line location or [Text/Undo]:');
+    await typeCmd('u');
+    assert.equal(await prompt(), 'Specify second extension line origin or [Undo]:', 'U goes back one origin');
+    await click(120, 150); await click(90, 170);
+    assert.match(await prompt(), /Dimension placed: 60\.\d\d mm/, 'horizontal, as the cursor is above the two points (the mouse picks to the pixel)');
+    assert.equal(await count(), 5);
+    // U at the first prompt takes back the dimensions of this run, newest first, then says so
+    await typeCmd('u'); assert.match(await prompt(), /^Dimension taken back\. Select a line/); assert.equal(await count(), 4);
+    for (let i = 0; i < 4; i++) await typeCmd('u');
+    assert.equal(await count(), 0);
+    await typeCmd('u');
+    assert.match(await prompt(), /^Nothing to undo in this DIM\./);
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension');
+    // Enter at the Text prompt keeps the measured value (no override); Esc at the Text prompt goes back to the placement prompt
+    const place = 'Specify dimension line location or second line for angle [Text/Undo]:';
+    await click(60, 60); await typeCmd('t'); await typeCmd('');
+    assert.equal(await prompt(), place);
+    await click(50, 70);
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm,/);
+    assert.deepEqual(await overrides(), [], 'Enter at the Text prompt added no override');
+    await click(60, 60); await typeCmd('t'); await page.keyboard.press('Escape');
+    assert.equal(await prompt(), place, 'Esc at the Text prompt keeps the line pick');
+    await click(50, 70);
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm,/);
+    assert.equal(await count(), 2);
+    // U after a tab switch does not undo the other tab (same history length in both)
+    await t('picker').setInputFiles({ name: 'auto2b.dxf', mimeType: 'text/plain', buffer: Buffer.from(dimDoc(), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'auto2b.dxf');
+    await click(175, 100); await click(190, 120); await click(200, 170); await click(215, 190);
+    assert.equal(await count(), 2, 'tab B holds two dimensions of its own');
+    await page.locator('.tabs .dtab').first().click();                                    // tab A (renamed once edited)
+    await typeCmd('u');
+    assert.match(await prompt(), /^Nothing to undo in this DIM\./);
+    assert.equal(await count(), 2, 'U in tab A did not undo anything');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  // a second line parallel to the first has no angle: the click is the location
+  await step('TODO 155l2: DIM: a parallel second line is the location of the first line\'s dimension', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 20, 100, 100), dxfLine(70, 20, 120, 70));
+    await openGrips(writeDxf(doc), 'parallel.dxf');
+    await typeCmd('dim');
+    await click(60, 60);
+    await click(100, 50);                                                                 // on the parallel line
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm,/);
+    assert.equal(Object.keys(await dimBlocks()).length, 1);
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
 
@@ -17277,19 +17384,48 @@ try {
     await page.keyboard.press('Escape');
     assert.equal(await nParts(), n0 + 1);
     await typeCmd('dim');
-    assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+    assert.equal(await prompt(), 'Select a line, arc or circle, or specify first extension line origin [Undo]:');
     const h = await at(240, 200); await page.mouse.move(h.x, h.y, { steps: 3 }); await frames();
     assert.ok(await tealInk() > 5, 'the ghost shows on a layout (a thin line at this zoom)');
     await click(500, 350);
     assert.match(await prompt(), /Dimension works on layout objects, not placed parts/);
     await click(240, 200);
-    assert.equal(await prompt(), 'Specify dimension line location:');
+    assert.equal(await prompt(), 'Specify diameter dimension location or [Radius/Text/Undo]:');
     const p = await at(230, 250); await page.mouse.move(p.x, p.y); await frames(); await page.mouse.click(p.x, p.y);
     assert.match(await prompt(), /Dimension placed: Ø/);
     assert.equal(await nParts(), n0 + 2);
     await undo(); assert.equal(await nParts(), n0 + 1, 'one Undo removes the dimension');
     await page.keyboard.press('Enter');
     assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Enter ends DIM');
+  });
+
+  await step('TODO 155l2: on a layout, DIM: a loose circle takes R and T (the text override), empty space is points mode, U at the first prompt takes back the last dimension', async () => {
+    await freshLayoutWithPlate();
+    const n0 = await nParts();
+    await typeCmd('circle'); await typeCmd('200,200'); await typeCmd('40');
+    await page.keyboard.press('Escape');
+    await typeCmd('dim');
+    await click(240, 200);
+    assert.equal(await prompt(), 'Specify diameter dimension location or [Radius/Text/Undo]:');
+    await typeCmd('r');
+    assert.equal(await prompt(), 'Specify radius dimension location or [Diameter/Text/Undo]:');
+    await typeCmd('t'); await typeCmd('Rad <>');
+    const p = await at(230, 250); await page.mouse.move(p.x, p.y); await frames(); await page.mouse.click(p.x, p.y);
+    assert.match(await prompt(), /Dimension placed: Rad R/, 'the text keeps the measured value where <> stands');
+    assert.equal(await nParts(), n0 + 2);
+    await click(300, 150);                                                            // nothing there: points mode
+    assert.equal(await prompt(), 'Specify second extension line origin or [Undo]:');
+    await click(360, 150);
+    assert.equal(await prompt(), 'Specify dimension line location or [Text/Undo]:');
+    await click(330, 180);
+    assert.match(await prompt(), /Dimension placed: /);
+    assert.equal(await nParts(), n0 + 3);
+    await typeCmd('u'); assert.equal(await nParts(), n0 + 2, 'U takes back the last dimension');
+    await typeCmd('u'); assert.equal(await nParts(), n0 + 1, 'and the one before it');
+    await typeCmd('u'); assert.match(await prompt(), /^Nothing to undo in this DIM\./);
+    assert.equal(await nParts(), n0 + 1, 'the circle stays');
+    await page.keyboard.press('Enter');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
   });
 
   await step('TODO 155l1: in an editable Compare drawing, DIM (Automatic) ghosts the line under the pointer and places it in the linked source (one Undo)', async () => {
@@ -17325,12 +17461,12 @@ try {
       await q('cmp-name-2').click(); await q('cmp-run').click();
       if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
       await q('cmd-input').fill('dim'); await q('cmd-input').press('Enter');
-      assert.equal(await prompt(), 'Select a line, arc or circle to dimension:');
+      assert.equal(await prompt(), 'Select a line, arc or circle, or specify first extension line origin [Undo]:');
       await move(100, 150);
       assert.equal(await teal(), 0, 'nothing under the pointer, no ghost');
       await move(40, 20);
       assert.ok(await teal() > 30, 'hovering the bottom edge ghosts its dimension in Compare');
-      await click(40, 20); assert.equal(await prompt(), 'Specify dimension line location:');
+      await click(40, 20); assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:');
       await click(40, 8);
       assert.match(await prompt(), /Dimension placed: 60\.00 mm/);
       await tab('second-155l1.dxf').click();

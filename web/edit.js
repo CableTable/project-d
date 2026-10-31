@@ -1237,7 +1237,7 @@ export function combinedHistory(histories) {
   const steps = histories.filter(Boolean).map((history) => ({ history, ...history.steps() }));
   const entries = (side) => steps.flatMap((x) => x[side].map((e) => ({ ...e, history: x.history }))).sort((a, b) => a.order - b.order);
   const past = entries('past'), future = entries('future');
-  return { canUndo: !!past.length, canRedo: !!future.length, undoHistory: past.at(-1)?.history, redoHistory: future[0]?.history,
+  return { canUndo: !!past.length, canRedo: !!future.length, undoHistory: past.at(-1)?.history, redoHistory: future[0]?.history, order: past.at(-1)?.order,
     labels: () => ({ past: past.map((e) => e.label), future: future.map((e) => e.label) }) };
 }
 
