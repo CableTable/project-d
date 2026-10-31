@@ -117,6 +117,22 @@ export function objectDoc(lay, skip = () => false) {
   const raw = { header: {}, layers: layersOf(lay), ltypes: {}, blocks: {}, entities }, fl = flatten(raw);
   return { raw, fl, off: startHidden(fl), at, lockedEnts };
 }
+
+/** Quick Select / Select similar: Layout objects only, with indices mapped back to placedAll() (parts survive Append). */
+export function objectSelection(lay, placed, selected, skip = () => false) {
+  const entities = [], at = [], scope = [], fromPlaced = new Map(), layers = layersOf(lay);
+  placed.forEach((p, i) => {
+    const part = lay.parts[p.partId];
+    if (p.src !== 'loose' || !part?.obj) return;
+    const source = part.raw.entities[0], e = source.type === 'INSERT' ? source : bakedEntity(part, p) || source;
+    const k = entities.length, layer = layers[e.layer];
+    entities.push(e); at.push(i); fromPlaced.set(i, k);
+    const hidden = part.fl.layers.some((l, n) => l.name === e.layer && part.off?.has(n));
+    if (!skip(p.partId) && !hidden && !p.lock && !layer?.off && !layer?.frozen && !(layer?.flags & 4)) scope.push(k);
+  });
+  return { entities, layers, scope, selection: new Set(selected.map((i) => fromPlaced.get(i)).filter((i) => i != null)), factor: 1,
+    apply: (indices, append = false) => [...new Set([...(append ? selected : []), ...indices.map((i) => at[i])])] };
+}
 const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline', SOLID: 'Solid', MTEXT: 'Text' };
 /** What a command left of objectDoc(lay) (`entities`): objects whose entity is gone are removed (and their part, if nothing else is placed from it), each new entity becomes an object. */
 export function objectCommit(lay, view, entities, newId) {

@@ -8808,6 +8808,16 @@ function selectAll() {
 }
 
 function startQuickSelect() {
+  if (curLay()) {
+    if (drawLive() && DR.toolBusy(state.draw)) return;
+    const source = layoutSelection();
+    openQuickSelect({ ...source, dp: state.dp, onApply: (indices, append) => {
+      if (sheetSelOn()) selectSheet(false);
+      selectMany(source.apply(indices, append)); update();
+      note(`${indices.length} item(s) selected.`);
+    } });
+    return;
+  }
   const d = editable();
   if (!d) { note('Quick Select: open an editable drawing first'); return; }
   if (drawLive() && DR.toolBusy(state.draw)) return;
@@ -9183,14 +9193,20 @@ function setSelect(sel, options, current) {
   sel.value = current;
 }
 function renderPropsPanel(d) {
-  const show = !!d;
+  const lay = curLay(), show = !!d || !!lay;
   ui.propSec.hidden = !show;
   if (!show) return;
+  if (lay) {
+    ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
+    ui.propQuick.hidden = false;
+    ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
+    return;
+  }
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
   ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none;
   ui.propCommon.hidden = none; ui.propGeo.hidden = none;
   ui.propSimilar.hidden = ui.propMatch.hidden = none;
-  ui.propQuick.hidden = !!curLay();       // 162b adds Layouts
+  ui.propQuick.hidden = false;
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
   const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
   ui.propWidthHint.textContent = 'Selection · mm';
@@ -9306,22 +9322,29 @@ function toggleProps() {
 
 // -- Select similar: every shape on the same layer, in the same colour or of the same type as the first one selected
 const hiddenLayerNames = (d) => new Set([...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name));
+const layoutSelection = () => LD.objectSelection(curLay(), placedNow, selIdxs(), (id) => !!state.hidden.parts || partHid({ partId: id }));
 function similarList(d, by) {
+  if (curLay()) {
+    const source = layoutSelection(), first = [...source.selection][0];
+    if (first == null) return null;
+    const ref = source.entities[first], matches = new Set(PR.similar(source.entities, ref, by, source.layers));
+    return { ref, layers: source.layers, list: source.apply(source.scope.filter((i) => matches.has(i))) };
+  }
   const first = [...d.sel].find((e) => d.raw.entities[e] && d.raw.entities[e].layer !== Ed.DIM_LAYER);
   if (first == null) return null;
   const off = new Set([...hiddenLayerNames(d), ...(d.locked || [])]), ents = d.raw.entities;        // a locked layer's shapes are not picked up, as by a click
   return { ref: ents[first], list: PR.similar(ents, ents[first], by, layerMap(d), Ed.DIM_LAYER).filter((i) => !off.has(ents[i].layer)) };
 }
 function selectSimilar(by) {
-  const d = editable(), r = d && similarList(d, by);
+  const d = editable(), r = (curLay() || d) && similarList(d, by);
   if (!r) return;
-  setSel(d, new Set(r.list));
-  const what = by === 'layer' ? 'on layer ' + r.ref.layer : by === 'colour' ? PR.colourLabel(PR.effectiveColour(r.ref, layerMap(d))).toLowerCase() : 'of the type ' + PR.typeName(r.ref).toLowerCase();
+  if (curLay()) { selectMany(r.list); update(); } else setSel(d, new Set(r.list));
+  const what = by === 'layer' ? 'on layer ' + r.ref.layer : by === 'colour' ? PR.colourLabel(PR.effectiveColour(r.ref, r.layers || layerMap(d))).toLowerCase() : 'of the type ' + PR.typeName(r.ref).toLowerCase();
   note(`Selected ${r.list.length} shape${r.list.length === 1 ? '' : 's'} ${by === 'colour' ? 'in colour ' : ''}${what}`);
 }
 function selectSimilarMenu(btn) {
   const d = editable();
-  if (!d) return;
+  if (!d && !curLay()) return;
   const items = [['layer', 'Layer'], ['colour', 'Colour'], ['type', 'Type']].map(([by, text]) => { const r = similarList(d, by); return [`${text} (${r ? r.list.length : 0})`, () => selectSimilar(by), null, !!r && r.list.length > 0]; });
   const b = btn.getBoundingClientRect();
   popMenu(b.left, b.bottom + 2, items);

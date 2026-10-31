@@ -10472,8 +10472,8 @@ try {
       await dialog.getByRole('button', { name: 'Cancel' }).click();
     }
     await menuItem('View', 'Theme: light');
-    await typeCmd('newlayout'); assert.equal(await t('prop-qselect').isVisible(), false, 'Layouts wait for 162b');
-    await typeCmd('QSELECT'); assert.equal(await dialog.count(), 0);
+    await typeCmd('newlayout'); assert.equal(await t('prop-qselect').isVisible(), true, 'Quick Select is available on Layouts');
+    await typeCmd('QSELECT'); assert.equal(await dialog.count(), 1); await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
 
@@ -10502,6 +10502,84 @@ try {
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'qselect-compare.dxf' }) }).click();
     assert.equal(await propVal('radius'), '20.00', 'the selection belongs to the source drawing');
     assert.equal(fieldOf(entOf(await savedDoc(), 5), 40), 20); await closeTabs(/./);
+  });
+
+  const openLayout162b = async () => {
+    await closeTabs(/./);
+    const lay = newLayout('Quick Select Layouts'), raw = newDoc(4);
+    lay.layers = newDoc(4).layers;
+    addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 });
+    addEntities(raw, roundRect(0, 0, 100, 60, 0, { layer: 'A' }));
+    lay.parts.part = makePart('part', 'Placed part', raw, 1);
+    lay.placed.push({ partId: 'part', x: 650, y: 350, rot: 0 });
+    for (const [id, e] of [['a', dxfLine(100, 100, 250, 100, { layer: 'A' })],
+      ['c', dxfCircle(300, 200, 25, { layer: 'A' })], ['b', dxfLine(100, 300, 250, 300, { layer: 'B' })],
+      ['d', dxfLine(100, 400, 250, 400, { layer: 'B' })]]) {
+      lay.parts[id] = objectPart(id, id, e, lay.layers); lay.placed.push(objectPlacement(lay.parts[id]));
+    }
+    await t('picker').setInputFiles({ name: 'qselect-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'qselect-layout.dxf');
+    await page.locator('[data-tool=select]').click(); await propsOnNow();
+  };
+  const picked162b = async (n) => {
+    await page.waitForFunction((k) => document.querySelectorAll('[data-group=tools] .sel-box').length === k, n);
+    return page.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => Math.min(...el.getAttribute('points').split(' ').map((p) => Number(p.split(',')[0])))).sort((a, b) => a - b));
+  };
+  await step('TODO 162b: Layouts Properties button and typed QSELECT, Layer scope, mixed Append / replace, Cancel / Esc, source edit and Undo; light and dark', async () => {
+    await openLayout162b();
+    assert.equal(await t('prop-qselect').isVisible(), true);
+    const dialog = page.getByRole('dialog', { name: 'Quick Select', exact: true });
+    const combo = (name) => dialog.getByRole(name === 'Properties' ? 'listbox' : 'combobox', { name, exact: true });
+    const layerA = async () => {
+      await combo('Properties').selectOption('layer'); await combo('Value').selectOption('A');
+      await dialog.getByRole('radio', { name: 'Include in new selection set', exact: true }).check();
+    };
+    const accept = async (n) => { await dialog.getByRole('button', { name: 'OK', exact: true }).click(); await picked162b(n); assert.equal(await prompt(), '2 item(s) selected.'); };
+    await typeCmd('QSELECT'); await dialog.waitFor();
+    assert.deepEqual(await combo('Apply to').locator('option').allTextContents(), ['Entire drawing']);
+    await layerA(); await accept(2);
+    assert.deepEqual(await picked162b(2), [100, 275], 'only Layout objects on A, never the part on A');
+    await t('prop-qselect').click(); assert.equal(await combo('Apply to').inputValue(), 'selection');
+    await combo('Object type').selectOption('LINE'); await combo('Operator').selectOption('all');
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click(); await picked162b(1);
+    assert.deepEqual(await histLabels(), ['Start'], 'Quick Select adds no Undo entry');
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('20,0');
+    const sourceX = async () => fieldOf((await savedDoc()).entities.find((e) => e.type === 'LINE' && e.layer === 'A'), 10);
+    assert.equal(await sourceX(), 120, 'selected Layout source is editable');
+    await page.keyboard.press('Control+z'); assert.equal(await sourceX(), 100, 'one Undo restores the source edit');
+    await page.keyboard.press('Escape'); await frames();
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true }); await picked162b(1);
+    await typeCmd('QSELECT');
+    assert.deepEqual(await combo('Apply to').locator('option').allTextContents(), ['Entire drawing'], 'a part alone does not offer Current selection');
+    await layerA(); await dialog.getByRole('checkbox').check(); await accept(3);
+    assert.deepEqual(await picked162b(3), [100, 275, 650], 'Append keeps the selected part');
+    await typeCmd('QSELECT'); assert.equal(await combo('Apply to').inputValue(), 'selection');
+    assert.equal(await dialog.getByRole('checkbox').isChecked(), false);
+    await layerA(); await accept(2); assert.deepEqual(await picked162b(2), [100, 275], 'replace drops the part');
+    await typeCmd('QSELECT'); await combo('Apply to').selectOption('drawing'); await layerA();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click(); await picked162b(2);
+    await typeCmd('QSELECT'); await page.keyboard.press('Escape'); await picked162b(2);
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await t('prop-qselect').click();
+      await combo('Apply to').selectOption('drawing'); await layerA();
+      await page.screenshot({ path: `${shotDir}/todo162b-layout-dialog-${theme}.png` });
+      await page.keyboard.press('Escape');
+    }
+    await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 162b: Select similar on a Layout line uses Layout objects only for Layer, Colour and Type', async () => {
+    await openLayout162b(); await click(175, 100); await picked162b(1);
+    await t('prop-similar').click();
+    assert.deepEqual(await page.locator('[data-testid=ctx-menu] button').allTextContents(), ['Layer (2)', 'Colour (2)', 'Type (3)']);
+    await page.getByRole('menuitem', { name: 'Type (3)', exact: true }).click();
+    assert.deepEqual(await picked162b(3), [100, 100, 100], 'only the three Layout lines');
+    assert.equal(await prompt(), 'Selected 3 shapes of the type line');
+    assert.deepEqual(await histLabels(), ['Start'], 'Select similar adds no Undo entry');
+    await page.keyboard.press('Escape'); await frames(); await click(175, 100); await picked162b(1);
+    await t('prop-similar').click(); await page.getByRole('menuitem', { name: 'Layer (2)', exact: true }).click();
+    assert.deepEqual(await picked162b(2), [100, 275]);
+    assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
   await step('Properties: View / Ctrl+1 toggle the whole docker; the Properties tab asks for a selection', async () => {

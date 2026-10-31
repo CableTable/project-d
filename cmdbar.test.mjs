@@ -70,6 +70,12 @@ test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve(''), null);
 });
 
+test('TODO 162b: QSELECT is available on Layouts with no alias', () => {
+  assert.equal(CB.resolve('QSELECT', 'layout').where, '');
+  assert.deepEqual(CB.resolve('QSELECT', 'layout').alias, []);
+  assert.equal(CB.suggest('qsel', 'layout')[0].cmd.name, 'qselect');
+});
+
 test('suggest: an exact alias first, then names that start with the text, with how much is typed', () => {
   const s = CB.suggest('ro', 'layout');
   assert.equal(s[0].cmd.name, 'rotate');

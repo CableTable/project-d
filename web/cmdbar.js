@@ -79,7 +79,7 @@ const TABLE = [
   ['paste', 'Edit', 'Paste drawing objects at the same coordinates', [], '', 'Ctrl+V'],
   ['history', 'Edit', 'Undo history: go back to any step', ['uh'], ''],
   ['selectall', 'Edit', 'Select everything', ['all'], '', 'Ctrl+A'],
-  ['qselect', 'Edit', 'Quick Select by object type and property', [], 'draw'],
+  ['qselect', 'Edit', 'Quick Select by object type and property', [], ''],
   ['delete', 'Edit', 'Delete the selection', ['del', 'erase'], '', 'Delete'],
   ['fit', 'View', 'Fit the view to the window', ['z', 'zoom', 'ze'], '', 'Ctrl+0'],
   ['zoomwindow', 'View', 'Zoom into a box you drag', ['zw'], ''],
