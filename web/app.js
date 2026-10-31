@@ -36,6 +36,8 @@ import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
+import { openAttributes } from './attributedlg.js';
+import { attributeRows } from './attribute-edit.js';
 import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
@@ -51,7 +53,7 @@ import * as PR from './props.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
-import { layoutSnap, layoutCandidates, layoutReference } from './layoutsnap.js';
+import { layoutSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { isDimPart } from './layoutdim.js';
 import { dropPart } from './dropin.js';
@@ -1312,6 +1314,7 @@ function setDimType(type) {
 function setTool(id) {
   state.orthoAsk = false;
   state.attdispAsk = null;
+  state.eatteditAsk = null;
   state.colourTool = null; endReadout();
   if (id === 'measure' && !measureTarget()) { note('Measure: open a drawing, layout or Compare tab first'); return; }
   if (cmpDoc() && (MOD_KINDS.includes(id) || id === 'contour' || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
@@ -3721,6 +3724,7 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
+  if (state.eatteditAsk) return { label: 'EATTEDIT', prompt: 'Select a block:', takes: () => false };
   if (state.attdispAsk) {
     const d = state.attdispAsk, mode = d.lay ? d.lay.s.attmode : +(d.raw.header.$ATTMODE ?? 1);
     return { label: 'ATTDISP', prompt: `Enter attribute visibility setting [Normal/ON/OFF] <${['OFF', 'Normal', 'ON'][mode] || 'Normal'}>:`, takes: (c) => ['normal', 'on', 'off'].includes(c) };
@@ -3739,6 +3743,7 @@ const pointToolAction = () => state.setlen ? lengthPoint : state.tool === 'measu
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
 function cmdEnter(raw) {
+  if (state.eatteditAsk) { renderCommand(); return; }
   if (state.attdispAsk) {
     const c = raw.trim().toLowerCase(), mode = { normal: 1, on: 2, off: 0 }[c], d = state.attdispAsk;
     if (c && !['normal', 'on', 'off'].includes(c)) { note('Enter Normal, ON or OFF'); renderCommand(); return; }
@@ -3811,6 +3816,12 @@ function cmdEnter(raw) {
 const TOOL_OF = { rectangle: 'rect' };
 const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  eattedit: () => {
+    if (cmpDoc() && !cmpEdit()) return;
+    const d = dimTarget();
+    if (!d) { note('EATTEDIT: open a drawing or layout first'); return; }
+    setTool('select'); state.eatteditAsk = d; renderCommand();
+  },
   osnap: () => document.getElementById('snap-types').showPopover(),
   ortho: () => { state.orthoAsk = true; renderCommand(); },
   attdisp: () => {
@@ -4455,6 +4466,7 @@ function attachCanvasEvents() {
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
+    if (state.eatteditAsk && e.button === 0) { attributePick(e, true); e.preventDefault(); return; }
     if (state.orthoAsk || state.attdispAsk) return;
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
@@ -4616,6 +4628,7 @@ function attachCanvasEvents() {
 
 // ---- keeping the panels in step with the layout ----
 function renderCommand() {
+  if (state.eatteditAsk) { ui.hist.textContent = 'Command: EATTEDIT'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.attdispAsk) { ui.hist.textContent = 'Command: ATTDISP'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.orthoAsk) { ui.hist.textContent = 'Command: ORTHO'; ui.prompt.textContent = activeCmd().prompt; return; }
   const cycling = selectionCycle && state.msg === `${selectionCycle.index + 1} of ${selectionCycle.hits.length} objects here`;
@@ -5242,7 +5255,7 @@ function snapObjectCandidates(q, candidates = true) {
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
 }
 function snapTab(e) {
-  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || state.attdispAsk || !state.snap || !snapPointer || snapPointer.buttons) return;
+  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || state.attdispAsk || state.eatteditAsk || !state.snap || !snapPointer || snapPointer.buttons) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu], :popover-open')) return;
   if (e.target !== document.body && !ui.canvas.contains(e.target) || e.target.closest?.('input, textarea, select, button, a, [contenteditable=true]')) return;
   if (cursorDynamic() && DI.hasTyped(cursorInput())) return;
@@ -6663,7 +6676,7 @@ function cursorClick(d, p, shift) {
   return true;
 }
 function cursorKey(e) {
-  if (state.orthoAsk || state.attdispAsk) return;
+  if (state.orthoAsk || state.attdispAsk || state.eatteditAsk) return;
   if (!cursorDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
@@ -7999,6 +8012,7 @@ function textToolDown(e) {
 function textDblClick(e) {
   const d = dimTarget();
   if (!d || state.tool !== 'select' || state.setlen || state.text.ed?.dim) return;
+  if (attributePick(e)) { e.preventDefault(); return; }
   if (d.lay) {
     const hit = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
     const p = hit && placedNow[+hit.dataset.i], part = p && d.lay.parts[p.partId];
@@ -8013,6 +8027,56 @@ function textDblClick(e) {
   if (dim) textOpen(d, null, hit, null, { ...dim, raw: d.raw });
   else if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) textOpen(d, null, hit);
   else if (hit >= 0 && ldrPseudo(d, hit)) ldrEdit(d, hit, ldrPseudo(d, hit).model);
+}
+
+/** Pick the top-level entity even on a locked layer, so the editor can explain the refusal. */
+function attributePick(e, command = false) {
+  const d = dimTarget();
+  if (!d || command && state.eatteditAsk !== d || document.querySelector('[data-testid=attribute-dialog]')) return false;
+  let raw = d.raw, hit, part, placed, slot;
+  const point = toDrawing(d, e.clientX, e.clientY);
+  if (d.lay) {
+    const el = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
+    // Insert SVG hit paths can omit transformed members and attribute text.
+    const slots = el ? [+el.dataset.i] : placedNow.map((_, i) => i).reverse();
+    for (slot of slots) {
+      placed = placedNow[slot]; part = d.lay.parts[placed.partId];
+      if (!part?.raw || state.hidden.parts || partHid(placed)) continue;
+      hit = Ed.hitEntity(partIndex(part), ...toPart(part, placed, ...point), pickTol(d) / ((part.factor || 1) * (placed.sc || 1)));
+      if (hit >= 0) break;
+    }
+    if (!(hit >= 0)) return false;
+    raw = part.raw;
+  } else hit = Ed.hitEntity(edIndex(d), ...point, pickTol(d));
+  const ent = raw.entities[hit];
+  if (!ent || (command ? ent.type !== 'INSERT' : !['INSERT', 'ATTDEF'].includes(ent.type))) return false;
+  const rows = ent.type === 'INSERT' && attributeRows(ent, raw.blocks);
+  if (!command && rows && !rows.length) return false;
+  state.eatteditAsk = null;
+  if (d.lay ? placed.lock : lockedEnt(d, hit)) { note('Object is on a locked layer.'); return true; }
+  if (rows && !rows.length) { note('That block has no editable attributes.'); return true; }
+  pdrag = null; state.drawingRotate = null; state.mode = 'select'; renderCommand();
+  let loose = placed?.src === 'loose' ? placed.i : null;
+  openAttributes(ent, raw.blocks, (next) => {
+    if (d.lay) {
+      const g = startGesture(d, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor');
+      const pl = loose == null ? placementOf(placedNow[slot]) : d.lay.placed[loose], old = d.lay.parts[pl.partId], id = 'o' + uid();
+      const changed = { ...old.raw, entities: old.raw.entities.map((x, i) => i === hit ? next : x) };
+      const shared = d.lay.s.gridPart === old.id || d.lay.placed.some((p, i) => i !== loose && p.partId === old.id);
+      const name = shared ? LD.nextName(old.name, new Set(Object.values(d.lay.parts).map((p) => p.name))) : old.name;
+      const updated = LD.makePart(id, name, changed, old.factor, old.src);
+      if (!updated) throw new Error('The edited object has no extents.');
+      // A wider value can change the reference corner; keep the geometry in place, including after reopening.
+      const origin = mapply(placedMat(old, pl, 0), updated.box[0], updated.box[1]);
+      gMark(g);
+      if (loose == null) loose = gLoose(g, slot);
+      d.lay.parts[id] = { ...old, ...updated };
+      d.lay.placed[loose] = { ...pl, partId: id, x: origin[0], y: -origin[1] };
+      if (!shared) delete d.lay.parts[old.id];
+      gCommit(g); update();
+    } else commit(d, { entities: d.raw.entities.map((x, i) => i === hit ? next : x), blocks: d.raw.blocks }, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor');
+  });
+  return true;
 }
 
 // -- the corner handles of a selected text: a corner drag scales the height
@@ -8670,6 +8734,7 @@ function editKey(e) {
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
+    if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.attdispAsk) { e.preventDefault(); state.attdispAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.orthoAsk) { e.preventDefault(); state.orthoAsk = false; ui.cmdUI.escape(); renderCommand(); return; }
     if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
