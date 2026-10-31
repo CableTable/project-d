@@ -226,6 +226,24 @@ test('Polyline option replaces arcs between straight segments and radius zero re
   assert.equal(filletAllPolyline(untouched, 2).ents[0], untouched, 'arcs without two flanking lines stay');
 });
 
+test('Polyline option keeps arcs between diverging lines and still replaces converging ones', () => {
+  for (const winding of [1, -1]) {
+    const slot = poly([[0, -10], [50, -5, 1], [50, 5], [0, 10, 1]]
+      .map(([x, y, b = 0]) => [x, y * winding, b * winding]), { closed: true });
+    const before = structuredClone(slot), f = filletAllPolyline(slot, 2);
+    assert.equal(f.count, 1); assert.equal(f.short, 0);
+    const sh = filletPolylineShape(savedPoly(f.ents[0]));
+    assert.deepEqual([sh.pts[0], sh.pts.at(-1)], [[0, -10 * winding, 0], [0, 10 * winding, winding]]);
+    const arcs = pathOf(sh).segs.filter((s) => s.bulge);
+    assert.equal(arcs.length, 2); near(geo(arcs[0]).r, 2); near(arcs[1].bulge, winding);
+    assert.deepEqual(slot, before);
+    const keyhole = poly([[10, -5], [0, -10, 1], [0, 10], [10, 5]]
+      .map(([x, y, b = 0]) => [x, y * winding, b * winding]));
+    const g = filletAllPolyline(keyhole, 2);
+    assert.equal(g.count, 0); assert.equal(g.short, 0); assert.equal(g.ents[0], keyhole);
+  }
+});
+
 test('No trim keeps the picked lines or arcs and adds only the fillet arc', () => {
   const a = W.line(0, 0, 10, 0), b = W.line(10, 0, 10, 10);
   const f = filletEntities(a, [5, 0], b, [10, 5], 2, false);

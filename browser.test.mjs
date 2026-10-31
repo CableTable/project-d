@@ -14205,6 +14205,13 @@ try {
     assert.equal(await message(), 'Current settings: Mode = NO TRIM, Radius = 10 mm');
     await typeCmd('t'); assert.equal(await prompt(), 'Enter Trim mode option [Trim/No trim] <No trim>:');
     await typeCmd(''); assert.equal(await prompt(), first);
+    const sharpHistory = await histLabels();
+    await click(170, 20); await click(200, 60, { shift: true });
+    assert.match(await message(), /^Already a sharp corner\./);
+    assert.equal(await prompt(), first);
+    assert.deepEqual(await histLabels(), sharpHistory, 'No trim with Shift adds no Undo step');
+    assert.equal(await page.locator('.tabs .dtab.on .dot').count(), 0, 'No trim with Shift keeps the tab saved');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
     await click(170, 20);
     assert.equal(await prompt(), 'Select second object or shift-select to apply corner or [Radius]:');
     await typeCmd('r'); await typeCmd('10');
@@ -14259,6 +14266,18 @@ try {
     await typeCmd('p'); await click(200, 100); await page.keyboard.press('Escape'); await undo();
     assert.deepEqual((await savedDoc()).entities, layoutBefore, 'one Ctrl+Z restores the layout object');
     await closeTabs(/./);
+    const review = newDoc(4);
+    addEntities(review, dxfPoly([[100, 0], [180, 0], [180, 3], [100, 3]], { closed: true }),
+      dxfPoly([[0, -10], [50, -5, 1], [50, 5], [0, 10, 1]], { closed: true }));
+    await openGrips(writeDxf(review), 'fillet-155h1-review.dxf');
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('2');
+    await typeCmd('p'); await click(140, 0);
+    assert.equal(await message(), '2 lines were filleted. 2 were too short');
+    await typeCmd('p'); await click(25, -7.5);
+    assert.equal(await message(), '1 lines were filleted');
+    const slot = GR.lwVertices((await savedDoc()).entities[1].r);
+    assert.deepEqual([slot[0], slot.at(-1)].map(({ x, y, b }) => [x, y, b]), [[0, -10, 0], [0, 10, 1]], 'the diverging end keeps its arc and endpoints');
+    await page.keyboard.press('Escape'); await closeTabs(/./);
   });
 
   await step('TODO 66g: Fillet a legacy POLYLINE corner', async () => {

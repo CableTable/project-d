@@ -208,6 +208,8 @@ export function filletAllPolyline(e, r) {
     if (!b || b === a || b.bulge) continue;
     const f = filletLines([a.a, a.b], a.a, [b.a, b.b], b.b, r);
     if (f.error) { if (!/parallel/.test(f.error)) short++; continue; }
+    // Kept endpoints retain their references; a new tangent can coincide with an endpoint after an earlier fillet.
+    if (f.l1[0] !== a.a || f.l2[1] !== b.b) continue;
     const t1 = f.l1[1], t2 = f.l2[0];
     const sign = cross(sub(a.b, a.a), sub(b.b, b.a)) > 0 ? 1 : -1;
     const bulge = f.arc ? sign * Math.tan(norm(f.arc.a1 - f.arc.a0) / DEG / 4) : 0;

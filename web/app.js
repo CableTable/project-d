@@ -7537,12 +7537,13 @@ function filletDo(d, ent, p, sharp) {
   if (!ent) { note('Fillet: nothing there. Click the second line, arc or polyline segment'); return; }
   const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); return; }
-  if (r.ents.length === 1 && r.ents[0] === m.ent) {
+  if ((r.ents.length === 1 && r.ents[0] === m.ent) ||
+      (r.ents.length === 2 && r.ents[0] === m.ent && r.ents[1] === ent)) {
     m.stage = 'obj'; m.ent = null;
     note('Already a sharp corner. Pick the next first line, arc or polyline segment, or Esc ends'); paintOverlay(); return;
   }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
-  if (!(r.ents.length === 2 && r.ents[0] === m.ent && r.ents[1] === ent)) filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
+  filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
   m.stage = 'obj'; m.ent = null;
   note(`${!sharp && state.filR > 0 ? `Filleted, radius ${mmText(state.filR)} mm` : 'Corner made'}. Pick the next first line, arc or polyline segment, or Esc ends. Ctrl+Z takes it back`);
 }
