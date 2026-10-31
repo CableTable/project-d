@@ -22,5 +22,5 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
     const files = readFileSync(process.argv[2], 'utf8').split(/\r?\n/).filter(Boolean);
     answer = codeChanged(files, JSON.parse(readFileSync(process.argv[3], 'utf8')).check_runs);
   } catch { /* any error keeps code=true */ }
-  console.log(answer);
+  console.log(String(answer)); // a string, so FORCE_COLOR never wraps it in ANSI codes
 }

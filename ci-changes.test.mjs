@@ -58,15 +58,15 @@ test('ci-changes: an API error (null check runs) keeps code=true', () => {
 test('ci-changes CLI prints true / false and true on any error', () => {
   const dir = mkdtempSync(join(tmpdir(), 'cich-'));
   try {
-    const cli = (files, runs) => spawnSync(process.execPath, ['tools/ci-changes.mjs', join(dir, files), join(dir, runs)], { encoding: 'utf8' }).stdout.trim();
+    const cli = (files, runs) => spawnSync(process.execPath, ['tools/ci-changes.mjs', join(dir, files), join(dir, runs)], { encoding: 'utf8', env: { ...process.env, FORCE_COLOR: '1' } }).stdout; // colour on must not leak ANSI codes into code=
     writeFileSync(join(dir, 'docs.txt'), 'TODO.md\r\nHISTORY.md\r\n');
     writeFileSync(join(dir, 'code.txt'), 'TODO.md\nweb/app.js\n');
     writeFileSync(join(dir, 'runs.json'), JSON.stringify({ check_runs: GREEN }));
     writeFileSync(join(dir, 'bad.json'), 'not json');
-    assert.equal(cli('docs.txt', 'runs.json'), 'false');
-    assert.equal(cli('code.txt', 'runs.json'), 'true');
-    assert.equal(cli('docs.txt', 'bad.json'), 'true');
-    assert.equal(cli('docs.txt', 'missing.json'), 'true');
-    assert.equal(cli('missing.txt', 'runs.json'), 'true');
+    assert.equal(cli('docs.txt', 'runs.json'), 'false\n');
+    assert.equal(cli('code.txt', 'runs.json'), 'true\n');
+    assert.equal(cli('docs.txt', 'bad.json'), 'true\n');
+    assert.equal(cli('docs.txt', 'missing.json'), 'true\n');
+    assert.equal(cli('missing.txt', 'runs.json'), 'true\n');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
