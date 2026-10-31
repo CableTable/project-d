@@ -103,7 +103,7 @@ function ellipseRay(q, end, u, min, full) {
   const a = B[0] * B[0] + B[1] * B[1], b = A[0] * B[0] + A[1] * B[1], c = A[0] * A[0] + A[1] * A[1] - 1, disc = b * b - a * c;
   if (disc < -1e-12 * (b * b + 1)) return null;                 // misses; a touching ray (disc ~ 0) hits at the touch point
   const r = Math.sqrt(Math.max(0, disc));
-  return [(-b - r) / a, (-b + r) / a].find((s) => s > min && (full || wrap(Math.atan2(A[1] + s * B[1], A[0] + s * B[0]) - q.t0) <= q.t1 - q.t0 + 1e-9)) ?? null;
+  return [(-b - r) / a, (-b + r) / a].find((s) => s > min && (full || wrap(Math.atan2(A[1] + s * B[1], A[0] + s * B[0]) - q.t0 + 1e-9) <= q.t1 - q.t0 + 2e-9)) ?? null;      // 1e-9 slack at both ends: a root at t0 minus rounding must not wrap to 2pi
 }
 
 /**

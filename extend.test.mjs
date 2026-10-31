@@ -192,10 +192,19 @@ test('rayHit ellipse: solved exactly: near-tangent crossing, a part ellipse, a m
   const h1 = rayHit([p[0] - 101 * u[0], p[1] - 101 * u[1]], [p[0] - 100 * u[0], p[1] - 100 * u[1]], [big]);
   const h2 = rayHit([p[0] + 101 * u[0], p[1] + 101 * u[1]], [p[0] + 100 * u[0], p[1] + 100 * u[1]], [big]);
   assert.ok(res(h1) < 1e-9 && res(h2) < 1e-9, `${h1} ${h2}`);
+  const qa = (u[0] / 1e4) ** 2 + (u[1] / 5e3) ** 2, qb = p[0] * u[0] / 1e8 + p[1] * u[1] / 2.5e7, qc = (p[0] / 1e4) ** 2 + (p[1] / 5e3) ** 2 - 1;      // the line p + s·u met directly
+  const sq = Math.sqrt(qb * qb - qa * qc), s1 = (-qb - sq) / qa, s2 = (-qb + sq) / qa;
+  close(h1, [p[0] + s1 * u[0], p[1] + s1 * u[1]]); close(h2, [p[0] + s2 * u[0], p[1] + s2 * u[1]]);      // from behind: the near crossing (s1); from ahead: the one at s2
   assert.ok((h1[0] - h2[0]) * u[0] + (h1[1] - h2[1]) * u[1] < -1, `${h1} ${h2}`);          // forward from behind hits the near crossing, forward from ahead the other: they are apart
   const quarter = curveShape(ellipse(0, 0, 10, 0, 0.5, 0, PI / 2));                         // first quadrant only
   close(rayHit([-20, 3], [-15, 3], [quarter]), [8, 3]);                                      // the nearer root (x = -8) is off the arc, so the far one counts
   assert.equal(rayHit([-20, -3], [-15, -3], [quarter]), null);                               // both roots are off the arc
+  const x0 = 9.800665778412416;                                                              // 10·cos 0.2: straight down through the start point of an arc from t = 0.2
+  close(rayHit([x0, 10], [x0, 5], [curveShape(ellipse(0, 0, 10, 0, 0.5, 0.2, 1.7))]), [x0, 5 * Math.sin(0.2)]);
+  const flipQ = curveShape(entity('ELLIPSE', [[10, 0], [20, 0], [30, 0], [11, 10], [21, 0], [31, 0], [40, 0.5], [41, 0], [42, PI / 2], [230, -1]]));      // flipped: t 0..π/2 is the fourth quadrant
+  close(rayHit([-20, -3], [-15, -3], [flipQ]), [8, -3]); assert.equal(rayHit([-20, 3], [-15, 3], [flipQ]), null);
+  const wrapQ = curveShape(ellipse(0, 0, 10, 0, 0.5, 5, 1));                                 // t0 = 5, t1 = 1: the right-hand side, through t = 0
+  close(rayHit([-20, 4], [-15, 4], [wrapQ]), [6, 4]); close(rayHit([-20, -4], [-15, -4], [wrapQ]), [6, -4]);
   assert.equal(rayHit([-20, 6], [-15, 6], [curveShape(ellipse(0, 0, 10, 0, 0.5))]), null);  // y = 6 misses the minor radius 5
   close(rayHit([-20, 5], [-15, 5], [curveShape(ellipse(0, 0, 10, 0, 0.5))]), [0, 5]);        // y = 5 just touches
 });
