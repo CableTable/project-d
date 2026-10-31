@@ -190,6 +190,7 @@ export function offsetCurve(ent, d, at) {
       if (sh.closed) out.push(out[0]);
     }
     out = simplify(out, tol);
+    if (out.reduce((sum, p, i) => sum + (i ? length(sub(p, out[i - 1])) : 0), 0) < tol) return gone;       // an offset of exactly the shorter leg clips to nothing
     if (sh.closed) out.pop();
     return { out };
   };

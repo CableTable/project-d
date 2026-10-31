@@ -157,3 +157,18 @@ test('TODO 155g2: the same entity, distance and side is worked out once (the liv
   offsetEntity(source, 6, [0, 0]);
   assert.equal(offsetStats.builds, before + 4, 'an edited entity builds again');
 });
+
+test('TODO 155e3: an inside offset of exactly the shorter leg leaves nothing; a fold in a spline with corners; the closed seam joins', () => {
+  assert.match(offsetEntity(corner(), 100, [50, 10]).error, /nothing is left/, 'a zero-length SPLINE is not made');
+  assert.ok(offsetEntity(corner(), 99, [50, 10]).ent, 'just short of the leg still offsets');
+  const fold = spline([[0, 0], [50, 0], [100, 0], [100, 0], [100, 0], [100, 20], [80, 20], [80, 0], [80, -30]], [0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 6, 6, 6]);
+  assert.ok(offsetEntity(fold, 3, [50, 10]).ent);
+  assert.match(offsetEntity(fold, 12, [50, 10]).error, /nothing is left/);
+  // a closed square with a corner at every vertex, the seam at (0, 0): inside it is the 5..95 square, outside the seam corner is rounded
+  const cp = [[0, 0], [50, 0], [100, 0], [100, 0], [100, 0], [100, 50], [100, 100], [100, 100], [100, 100], [50, 100], [0, 100], [0, 100], [0, 100], [0, 50], [0, 0]];
+  const sq = spline(cp, [0, 0, 0, 0, ...Array.from({ length: 11 }, (_, i) => i + 1), 12, 12, 12, 12], true);
+  const inside = shape(offset(sq, 5, [50, 50]));
+  [[5, 5], [95, 5], [95, 95], [5, 95], [50, 5], [5, 50]].forEach((p) => assert.ok(closest(inside, p).d <= 0.01, `inside ${p}: ${closest(inside, p).d}`));
+  const outside = shape(offset(sq, 5, [50, -20]));
+  assert.ok(closest(outside, [-5 * Math.SQRT1_2, -5 * Math.SQRT1_2]).d <= 0.01, 'the seam corner is rounded');
+});
