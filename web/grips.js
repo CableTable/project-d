@@ -142,6 +142,18 @@ export function gripsOf(ent) {
 
 const find = (ent, id) => gripsOf(ent).find((g) => g.id === id) || null;
 
+/** Does a Stretch with these hot grips (a Set of ids) move the object whole? Its middle (line) or centre is hot, or every defining grip is (edge grips are derived). */
+export function wholeHot(ent, ids) {
+  const all = gripsOf(ent), centre = ent.type === 'LINE' ? 'm' : 'c';
+  return all.length > 0 && (ids.has(centre) || all.every((x) => x.id === centre || x.kind === 'edge' || ids.has(x.id)));
+}
+
+/** The entity moved whole by (dx, dy), drawing units (a leader through its points, the rest the way the Move command does). */
+export function translate(ent, dx, dy) {
+  if (ent.type === 'LEADER') return { ...ent, model: { ...ent.model, pts: ent.model.pts.map((p) => [p[0] + dx, p[1] + dy]) } };
+  return moveEntities({ entities: [ent], blocks: {} }, new Set([0]), dx, dy).entities[0];
+}
+
 /** Where the rubber band starts: a line's other end, a circle's centre; any other grip stretches from where it was. */
 export function refPoint(ent, id) {
   const g = find(ent, id);

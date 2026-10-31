@@ -303,4 +303,20 @@ test('ellipse seen from below (extrusion -1) has no grips', () => {
   assert.deepEqual(GR.gripsOf(e), []);
 });
 
+test('wholeHot: every defining grip hot (or the middle / centre) moves the object whole; translate moves lines, polylines and leaders', () => {
+  const ids = (...a) => new Set(a);
+  const ln = line(0, 0, 10, 0), pl = lwpoly([[0, 0], [10, 0], [10, 5]]), rc = rect(0, 0, 10, 5), ci = circle(0, 0, 5), ar = arc(0, 0, 10, 0, 90);
+  const ld = { type: 'LEADER', model: { pts: [[0, 0], [10, 0], [10, 5]] } };
+  assert.ok(GR.wholeHot(ln, ids('a', 'b')) && GR.wholeHot(ln, ids('m')) && !GR.wholeHot(ln, ids('a')));
+  assert.ok(GR.wholeHot(pl, ids('v0', 'v1', 'v2')) && !GR.wholeHot(pl, ids('v0', 'v1')));
+  assert.ok(GR.wholeHot(rc, ids('v0', 'v1', 'v2', 'v3')), 'edge grips do not count');
+  assert.ok(GR.wholeHot(ld, ids('v0', 'v1', 'v2')) && !GR.wholeHot(ld, ids('v0', 'v2')));
+  assert.ok(GR.wholeHot(ci, ids('q0', 'q1', 'q2', 'q3')) && !GR.wholeHot(ci, ids('q0', 'q1')) && GR.wholeHot(ci, ids('c')));
+  assert.ok(GR.wholeHot(ar, ids('a', 'm', 'b')) && !GR.wholeHot(ar, ids('a', 'b')));
+  const m = GR.translate(ln, 10, 0);
+  assert.deepEqual([10, 20, 11, 21].map((c) => val(m, c)), [10, 0, 20, 0]);
+  assert.deepEqual(GR.translate(ld, 1, 2).model.pts, [[1, 2], [11, 2], [11, 7]]);
+  assert.deepEqual(pts(GR.gripsOf(GR.translate(pl, 1, 2))), [[1, 2], [11, 2], [11, 7]]);
+});
+
 console.log(n + ' grips tests passed');

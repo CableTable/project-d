@@ -10119,6 +10119,38 @@ try {
     const arc = entOf(await savedDoc(), 2);
     assert.ok([10, 20, 40].every((k, i) => near(fieldOf(arc, k), [80, 100, 30][i], 1e-6)), 'the arc moved whole: centre (80,100), radius 30');
     await undo(); await frames();
+    // a line with a and b hot (not the middle) moves whole, not grip by grip (a would land on b's old spot)
+    await openGrips(); await pick(70, 30, 3);
+    await shiftGrip('0:a'); await shiftGrip('0:b'); await hotWhen(2);
+    await clickGrip('0:a'); await typeCmd('@10,0'); await hotWhen(0);
+    assert.ok(close(await lineOf(0), [30, 30, 130, 30]), 'the line moved 10 whole');
+    await undo(); await frames();
+    // a circle with all four quadrants hot moves whole, the radius stays
+    await pick(190, 100, 5);
+    for (const q of ['q0', 'q1', 'q2', 'q3']) await shiftGrip('1:' + q);
+    await hotWhen(4); await clickGrip('1:q0'); await typeCmd('@10,0'); await hotWhen(0);
+    const circ = entOf(await savedDoc(), 1);
+    assert.ok([10, 20, 40].every((k, i) => near(fieldOf(circ, k), [180, 100, 20][i], 1e-6)), 'the circle moved whole: centre (180,100), radius 20');
+    await undo(); await frames();
+    // a polyline with every vertex hot moves whole
+    await pick(170, 30, 4);
+    for (const v of ['v0', 'v1', 'v2', 'v3']) await shiftGrip('3:' + v);
+    await hotWhen(4); await clickGrip('3:v0'); await typeCmd('@10,0'); await hotWhen(0); await gripWhen(4);
+    const pv = await gripBox('3:v3'), pw = await at(160, 70);
+    assert.ok(near(pv.x, pw.x, 2) && near(pv.y, pw.y, 2), 'the polyline moved 10 with every vertex');
+    await undo(); await frames();
+    // a hot object that would not change is left as it was, and the note says so: a to b's spot (line stays), the circle quadrant stretches
+    await pick(70, 30, 3); await click(190, 100, { shift: true }); await frames(); await gripWhen(8);
+    await shiftGrip('0:a'); await shiftGrip('1:q0'); await hotWhen(2);
+    await clickGrip('0:a'); await typeCmd('@100,0'); await hotWhen(0);
+    assert.match(await prompt(), /1 object would not change and was left as it was/);
+    await undo(); await frames();
+    // a run that ends without a change (a click back on the same spot) leaves Undo off on a fresh file
+    await openGrips(); await pick(70, 30, 3);
+    await clickGrip('0:a'); assert.equal(await t('undo').isDisabled(), false, 'Undo is on in the run');
+    await typeCmd('@0,0'); await hotWhen(0);       // the grip put down where it was
+    assert.match(await prompt(), /would not change/);
+    assert.equal(await t('undo').isDisabled(), true, 'Undo is off again after a run that changed nothing');
     // the right-click grip menu
     await selectTwo(); await clickGrip('0:a');
     await rightClick(70, 45);

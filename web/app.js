@@ -8260,11 +8260,11 @@ function gripStretchHots(g, q, shift) {
   const v = [q[0] - g.base[0], q[1] - g.base[1]], nexts = new Map();
   g.label = null;
   for (const [e, ent] of g.ents) {
-    const mine = g.hots.filter((x) => x.e === e), ids = new Set(mine.map((x) => x.id)), round = ent.type === 'CIRCLE' || ent.type === 'ARC' || ent.type === 'ELLIPSE', all = GR.gripsOf(ent);
-    // whole: a line's middle, a circle / arc's centre, or every other grip of a circle / arc hot (Grill Q2: all grips hot = the object moves)
-    const whole = ent.type === 'LINE' ? mine.find((x) => x.id === 'm') : round && (ids.has('c') || all.every((x) => x.id === 'c' || ids.has(x.id))) ? all.find((x) => x.id === 'c') : null;
+    const mine = g.hots.filter((x) => x.e === e);
     let cur = ent;
-    for (const x of whole ? [whole] : mine) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
+    // whole (Grill Q2: all grips hot = the object moves): never grip by grip, the first grip would land on the next one's old spot
+    if (GR.wholeHot(ent, new Set(mine.map((x) => x.id)))) { if (v[0] || v[1]) cur = GR.translate(ent, v[0], v[1]); g.label = g.label || 'Move'; }
+    else for (const x of mine) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
     if (cur !== ent) nexts.set(e, cur);
   }
   g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
@@ -8431,6 +8431,7 @@ function gripCommit() {
   const g = state.grip;
   state.grip = null; trackClear();
   if (!g) return;
+  renderEdit();       // every end of the run, also one that changes nothing: the Undo button follows the run
   if (g.mode) { gripModeCommit(g); return; }
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
   const d = g.d, label = g.nexts ? 'Stretch grips' : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor) : GR.readoutOf(g.ent, g.id, g.next, d.factor);
