@@ -16179,6 +16179,45 @@ try {
     assert.equal(layoutPieces.entities.filter((e) => e.type === 'LINE').length, lines.length);
     assert.equal(layoutPieces.entities.filter((e) => e.type === 'LWPOLYLINE' && e.layer === '0').length, 1);
     await undo(); assert.equal(await nParts(), 2, 'one layout Undo restores hatch and boundary');
+    raw.entities = [boundary, hatch(false)];
+    await open('compare-hatch-explode.dxf', raw);
+    await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click();
+    await click(150, 125); await typeCmd('x');
+    assert.match(await prompt(), /Hatch boundary associativity removed\./);
+    await page.locator('.tabs .dtab', { hasText: 'compare-hatch-explode' }).click();
+    assert.equal((await savedDoc()).entities.filter((e) => e.type === 'LINE').length, lines.length, 'Compare explodes the linked drawing');
+    await undo(); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LWPOLYLINE', 'HATCH']);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 155i1: Explode native dimensions in Drawings and Layouts, keep resolved override text and Undo once', async () => {
+    await menuItem('View', 'Theme: light');
+    const raw = newDoc(4), built = buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1');
+    addBlock(raw, '*D1', [...built.block.entities, entity('POINT', [[10, 150], [20, 150]], { layer: 'Defpoints' })]);
+    const native = entity('DIMENSION', [[2, '*D1'], [70, 33], [1, 'Width <> mm'], [42, 150], [13, 150], [23, 150], [14, 300], [24, 150], [10, 300], [20, 200]]);
+    addEntities(raw, dxfLine(150, 150, 300, 150), native);
+    for (const tab of ['drawing', 'layout']) {
+      await closeTabs(/./);
+      let doc = raw;
+      if (tab === 'layout') {
+        const lay = newLayout('Native explode');
+        lay.parts.d = objectPart('d', 'Native dimension', native, raw.layers, raw.header, raw.blocks);
+        lay.parts.l = objectPart('l', 'Source', raw.entities[0], raw.layers);
+        lay.placed = [objectPlacement(lay.parts.l), objectPlacement(lay.parts.d)]; doc = layoutRaw(lay);
+      }
+      const name = `native-explode-${tab}.dxf`;
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await click(170, 200); await typeCmd('x');
+      assert.match(await prompt(), /^Explode: 1/);
+      const result = await savedDoc(), pieces = result.entities.filter((e) => e.layer === '0');
+      assert.deepEqual(pieces.map((e) => e.type).sort(), ['LINE', 'LINE', 'LINE', 'LINE', 'MTEXT', 'SOLID', 'SOLID'], tab);
+      const tx = pieces.find((e) => e.type === 'MTEXT').r;
+      assert.equal(tx.v[tx.c.indexOf(1)], 'Width 150.00 mm');
+      assert.ok(!result.entities.some((e) => e.type === 'POINT' || /^defpoints$/i.test(e.layer)));
+      await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames();
+      assert.equal((await savedDoc()).entities.filter((e) => e.type === 'DIMENSION').length, 1, tab + ': one Undo restores the native dimension');
+    }
     await closeTabs(/./);
   });
 

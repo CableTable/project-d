@@ -265,6 +265,8 @@ test('TODO 155i1: native DIMENSION uses its world-coordinate *D block, resolves 
   nearAll(numbers(out.entities[0], [10, 20, 11, 21]), [10, 50, 110, 50]);
   assert.equal(out.entities.filter((e) => e.type === 'SOLID').length, 2);
   assert.equal(textOf(out.entities.find((e) => e.type === 'MTEXT')), 'Width 100.00 mm');
+  const spaced = structuredClone(doc); spaced.entities[0].r.v[spaced.entities[0].r.c.indexOf(1)] = ' Width <> mm ';
+  assert.equal(textOf(explodeSelection(spaced, new Set([0])).entities.find((e) => e.type === 'MTEXT')), ' Width 100.00 mm ');
   assert.ok(!out.blocks['*D1']); assert.deepEqual(doc, before);
   doc.entities.push({ ...native });
   assert.ok(explodeSelection(doc, new Set([0])).blocks['*D1'], 'another dimension still uses the anonymous block');
@@ -294,6 +296,12 @@ test('TODO 155i1: native block MTEXT keeps formatting and explicit override, bla
   const out = explodeSelection(doc, new Set([0]));
   const tx = out.entities.find((e) => e.type === 'MTEXT');
   assert.equal(textOf(tx), '{\\C1;Width 30.00}'); assert.equal(tx.r.c.includes(3), false);
+  doc.header.$DIMDEC = '3';
+  doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = ' Width <> ';
+  assert.equal(textOf(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT')), ' Width 30.000 ', 'override spaces and source precision survive');
+  doc.header.$DIMDEC = '2';
+  doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = '<>';
+  assert.equal(textOf(explodeSelection(doc, new Set([0])).entities.find((e) => e.type === 'MTEXT')), '30.00');
   doc.entities[0].r.v[doc.entities[0].r.c.indexOf(1)] = ' ';
   assert.deepEqual(explodeSelection(doc, new Set([0])).entities.map((e) => e.type), ['LINE']);
   doc.entities = [entity('DIMENSION', [[70, 1]])];
@@ -337,4 +345,16 @@ test('TODO 155i1: native fallback radius, diameter, two-line and three-point ang
     assert.equal(textOf(out.entities.find((e) => e.type === 'MTEXT')), 'Value ' + label);
     assert.ok(out.entities.some((e) => e.type === 'SOLID'));
   }
+});
+
+test('TODO 155i1: layout native dimension without a graphics block also has extents and explodes through explodeDims', () => {
+  const lay = LD.newLayout('Fallback'), raw = newDoc(4);
+  const e = entity('DIMENSION', [[70, 1], [1, 'Width <>'], [13, 0], [23, 0], [14, 100], [24, 0], [10, 100], [20, 20]]);
+  lay.parts.d = LD.objectPart('d', 'Native', e, raw.layers);
+  assert.ok(lay.parts.d);
+  lay.placed = [LD.objectPlacement(lay.parts.d)];
+  let id = 0;
+  assert.equal(LD.explodeDims(lay, [0], () => 'o' + id++), 1);
+  assert.equal(lay.placed.length, 6);
+  assert.equal(textOf(lay.placed.map((p) => lay.parts[p.partId].raw.entities[0]).find((e) => e.type === 'MTEXT')), 'Width 100.00');
 });

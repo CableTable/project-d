@@ -233,20 +233,21 @@ export function explodeDimension(e, raw) {
   const att = textRecord(block.entities), layer = /^defpoints$/i.test(e.layer) ? '0' : e.layer;
   let keep = block.entities.filter((c) => c !== att && c.type !== 'POINT');
   if (native) {
+    const override = e.r.v[e.r.c.indexOf(1)], style = raw.dimstyles?.[field(e, 3)];
     let measured = generated?.measured;
-    if (field(e, 1)?.includes('<>')) {
+    if (override?.includes('<>')) {
       if (e.r.c.includes(42)) {
-        const kind = val(e, 70) & 7, dp = generated?.dp ?? +(raw.header?.$DIMDEC ?? 2);
+        const kind = val(e, 70) & 7, dp = generated?.dp ?? (style && get(style, 271)) ?? +(raw.header?.$DIMDEC ?? 2);
         measured = (kind === 4 ? 'R' : kind === 3 ? 'Ø' : '') + dimText(val(e, 42), dp) + ([2, 5].includes(kind) ? '°' : '');
       } else if (!measured) measured = nativeGeometry(e, raw).measured;
     }
     keep = keep.map((c) => {
       const onLayer = { ...c, layer: /^defpoints$/i.test(c.layer) ? layer : c.layer };
-      if (!['TEXT', 'MTEXT'].includes(c.type) || !field(e, 1) || field(e, 1) === '<>') return onLayer;
-      const label = dimensionText(measured, field(e, 1));
+      if (!['TEXT', 'MTEXT'].includes(c.type) || !override?.trim()) return onLayer;
+      const label = dimensionText(measured, override);
       return entity(c.type, c.r.c.flatMap((code, i) => code === 3 ? [] : [[code, code === 1 ? label : c.r.v[i]]]), onLayer);
     });
-    if (e.r.v[e.r.c.indexOf(1)] === ' ') keep = keep.filter((c) => !['TEXT', 'MTEXT'].includes(c.type));
+    if (override === ' ') keep = keep.filter((c) => !['TEXT', 'MTEXT'].includes(c.type));
   }
   const source = native ? insert(name, ...(block.base || [0, 0]), { ...e, layer }) : e;
   const pieces = explodeInsert(source, { ...raw, blocks: { ...raw.blocks, [name]: { ...block, entities: keep } } }).entities;
@@ -261,7 +262,7 @@ export function explodeDimension(e, raw) {
       // top and bottom swap when the text is upside down (71 & 4) XOR it was turned: the turn undoes the flip, so it keeps its side of the line
       if (!!(val(p, 71) & 4) !== turned) attach = { 2: 8, 8: 2 }[attach] ?? attach;
     }
-    return mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), field(p, 1).replace(/[\\{}]/g, '\\$&'), { ...p, attach, rot });
+    return mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), (native ? p.r.v[p.r.c.indexOf(1)] : field(p, 1)).replace(/[\\{}]/g, '\\$&'), { ...p, attach, rot });
   });
 }
 

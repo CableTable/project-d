@@ -57,7 +57,11 @@ export function layersOf(lay) {
 /** A layout object from one entity (sheet mm; `layers` is the layer table; `blocks`: the one a dimension's INSERT names), or null when it has no extents. */
 export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   const raw = { header: { ...header }, layers, ltypes: {}, blocks, entities: [{ ...ent, ps: false }] };
-  const fl = flatten(raw), shown = flatten({ ...raw, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box is made with the entity's layer on: an off layer keeps its objects (hidden by `off`)
+  let drawing = raw;
+  if (ent.type === 'DIMENSION' && !blocks[String(ent.r.v[ent.r.c.indexOf(2)] || '').trim()]) {
+    try { drawing = { ...raw, entities: explodeDimension(ent, raw) }; } catch { return null; }
+  }
+  const fl = flatten(drawing), shown = flatten({ ...drawing, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box is made with the entity's layer on: an off layer keeps its objects (hidden by `off`)
   const box = shown.boxes && shown.boxes.model;
   if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
   return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
@@ -210,9 +214,10 @@ export function explodeDims(lay, ats, newId) {
   let n = 0;
   for (const p of ats.map((i) => lay.placed[i])) {
     const part = lay.parts[p.partId], at = lay.placed.indexOf(p);
-    if (!isDimPart(part) || !isSettled(part, p)) continue;
+    const native = part?.obj && part.raw.entities[0]?.type === 'DIMENSION';
+    if (!native && (!isDimPart(part) || !isSettled(part, p))) continue;
     const pieces = [];
-    for (const e of explodeDimension(part.raw.entities[0], { blocks: part.raw.blocks, layers })) {
+    for (const e of native ? explodePart(part, p).entities : explodeDimension(part.raw.entities[0], { ...part.raw, layers })) {
       const obj = objectPart(newId(), nextName(OBJ_NAMES[e.type] || 'Object', names), { ...e, ps: false }, layers);
       if (!obj) continue;
       names.add(obj.name); lay.parts[obj.id] = obj;
