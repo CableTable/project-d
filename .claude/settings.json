@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+	  "Bash(node tools/base-check.mjs:*)",
       "Edit",
       "Write",
       "Read",
