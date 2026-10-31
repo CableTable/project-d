@@ -1,4 +1,4 @@
-// Fillet lines and finite arcs, pure: fillet.test.mjs. Drawing units, y up; angles in degrees, counter-clockwise.
+// Fillet lines, finite arcs and circles, pure: fillet.test.mjs. Drawing units, y up; angles in degrees, counter-clockwise.
 import { shapeOf, get } from './grips.js';
 import { rebuilt, pathOf, geo, closest } from './modify.js';
 import { fmt } from './dxf-write.js';
@@ -31,7 +31,7 @@ function intersections(a, b) {
 }
 
 function offsets(s, r) {
-  if (s.t === 'arc') return [s.r + r, Math.abs(s.r - r)].filter((v) => v > EPS).map((v) => ({ ...s, r: v }));
+  if (s.t !== 'line') return [s.r + r, Math.abs(s.r - r)].filter((v) => v > EPS).map((v) => ({ ...s, r: v }));
   const u = sub(s.b, s.a), n = Math.hypot(...u), v = turn(u).map((x) => x / n);
   return [r, -r].map((d) => ({ t: 'line', a: along(s.a, v, d), b: along(s.b, v, d) }));
 }
@@ -53,6 +53,7 @@ function arcPosition(s, p) {
 
 /** Keep the picked side of corner X; without a crossing, the tangent point divides the entity. */
 function kept(s, p, T, X) {
+  if (s.t === 'circle') return { shape: s };
   if (s.t === 'line') {
     const d = sub(s.b, s.a), n = Math.hypot(...d), u = d.map((v) => v / n), x = X || T;
     const sign = dot(sub(p, x), u) >= 0 ? 1 : -1, v = u.map((k) => k * sign);
@@ -68,7 +69,7 @@ function kept(s, p, T, X) {
 }
 
 function filletCurves(a, p1, b, p2, r, corner) {
-  const X = corner || intersections(a, b).sort((x, y) => dist(x, p1) + dist(x, p2) - dist(y, p1) - dist(y, p2))[0];
+  const X = corner || (![a, b].some((s) => s.t === 'circle') && intersections(a, b).sort((x, y) => dist(x, p1) + dist(x, p2) - dist(y, p1) - dist(y, p2))[0]);
   if (!r) {
     if (!X) return { error: 'Radius 0 needs a line and arc, or arcs, that intersect' };
     const k1 = kept(a, p1, X, X), k2 = kept(b, p2, X, X);
@@ -77,9 +78,9 @@ function filletCurves(a, p1, b, p2, r, corner) {
   let best = null;
   for (const o1 of offsets(a, r)) for (const o2 of offsets(b, r)) {
     let centres = intersections(o1, o2);
-    if (o1.t === 'arc' && o2.t === 'arc' && dist(o1.c, o2.c) < EPS && Math.abs(o1.r - o2.r) < EPS) {
+    if (o1.t !== 'line' && o2.t !== 'line' && dist(o1.c, o2.c) < EPS && Math.abs(o1.r - o2.r) < EPS) {
       // Coincident offset circles give a family of semicircles; the picks and sweep boundaries choose a member.
-      const angles = [angle(o1.c, p1), angle(o1.c, p2), a.a0, a.a1, b.a0, b.a1].flatMap((v) => [norm(v), norm(v + 180)]).sort((x, y) => x - y);
+      const angles = [angle(o1.c, p1), angle(o1.c, p2), a.a0, a.a1, b.a0, b.a1].filter(Number.isFinite).flatMap((v) => [norm(v), norm(v + 180)]).sort((x, y) => x - y);
       const samples = angles.flatMap((v, i) => [v, v + norm(angles[(i + 1) % angles.length] - v) / 2]);
       centres = samples.map((v) => along(o1.c, [Math.cos(v / DEG), Math.sin(v / DEG)], o1.r));
     }
@@ -90,7 +91,7 @@ function filletCurves(a, p1, b, p2, r, corner) {
         const area = cross(sub(t1, c), sub(t2, c));
         for (const sign of Math.abs(area) < EPS * r * r ? [1, -1] : [area > 0 ? 1 : -1]) {
           const v1 = turn(sub(t1, c)), v2 = turn(sub(t2, c));
-          if (dot(k1.away, v1) * sign >= -EPS || dot(k2.away, v2) * sign <= EPS) continue;
+          if ((k1.away && dot(k1.away, v1) * sign >= -EPS) || (k2.away && dot(k2.away, v2) * sign <= EPS)) continue;
           const score = dist(t1, corner || p1) + dist(t2, corner || p2);
           if (!best || score < best.score) best = { score, shapes: [k1.shape, k2.shape, { t: 'arc', c, r, a0: angle(c, sign > 0 ? t1 : t2), a1: angle(c, sign > 0 ? t2 : t1) }] };
         }
@@ -102,6 +103,7 @@ function filletCurves(a, p1, b, p2, r, corner) {
 
 function drawingShape(e) {
   const s = shapeOf(e, 1);
+  if (s.t === 'circle' && (get(e.r, 230) ?? 1) < 0) return { ...s, c: [-s.c[0], s.c[1]] };
   if (s.t === 'arc' && (get(e.r, 230) ?? 1) < 0) return { ...s, c: [-s.c[0], s.c[1]], a0: norm(180 - s.a1), a1: norm(180 - s.a0) };
   return s;
 }
@@ -112,7 +114,15 @@ export function filletLines(l1, p1, l2, p2, r) {
   const d1 = sub(l1[1], l1[0]), d2 = sub(l2[1], l2[0]), n1 = Math.hypot(...d1), n2 = Math.hypot(...d2);
   if (n1 < EPS || n2 < EPS) return { error: 'A line has no length' };
   const den = d1[0] * d2[1] - d1[1] * d2[0];
-  if (Math.abs(den) < EPS * n1 * n2) return { error: 'The lines are parallel: Fillet needs lines that meet' };
+  if (Math.abs(den) < EPS * n1 * n2) {
+    const end = dist(l1[0], p1) <= dist(l1[1], p1) ? 0 : 1, T1 = l1[end];
+    const T2 = along(l2[0], d2, dot(sub(T1, l2[0]), d2) / dot(d2, d2)), gap = dist(T1, T2);
+    if (gap < EPS) return { error: 'The lines are parallel: Fillet needs lines that meet' };
+    const near = dist(l2[0], T2) <= dist(l2[1], T2) ? 0 : 1;
+    const c = along(T1, sub(T2, T1), .5), ccw = dot(turn(sub(T1, c)), sub(l1[1 - end], T1)) < 0;
+    return { l1, l2: near === 0 ? [T2, l2[1]] : [l2[0], T2],
+      arc: { c, r: gap / 2, a0: angle(c, ccw ? T1 : T2), a1: angle(c, ccw ? T2 : T1) } };
+  }
   const s = ((l2[0][0] - l1[0][0]) * d2[1] - (l2[0][1] - l1[0][1]) * d2[0]) / den, X = along(l1[0], d1, s);
   // kept side: towards the pick point; the far end on that side stays, the other end moves to the tangent point
   const side = (l, d, n, p) => {
@@ -131,29 +141,31 @@ export function filletLines(l1, p1, l2, p2, r) {
   return { l1: keep(l1, a, T1), l2: keep(l2, b, T2), arc: { c, r, a0: angle(c, ccw ? T1 : T2), a1: angle(c, ccw ? T2 : T1) } };
 }
 
-/** LINE / ARC pair → { ents: [first, second, arc?] }; the fillet takes the first entity's properties. */
+/** LINE / ARC / CIRCLE pair → { ents: [first, second, arc?] }; the fillet takes the first entity's properties. */
 export function filletEntities(e1, p1, e2, p2, r, trim = true) {
   if ([e1, e2].some(isPolyline)) {
     if (e1 !== e2) return { error: 'Pick two adjacent segments of the same polyline; separate objects cannot be filleted to a polyline' };
     return filletPolyline(e1, p1, p2, r, trim);
   }
-  if (e1 === e2) return { error: 'Pick a second, different line or arc' };
-  if (![e1, e2].every((e) => ['LINE', 'ARC'].includes(e?.type))) return { error: 'Fillet takes lines, arcs and polyline corners; circles are not supported' };
+  if (e1 === e2) return { error: 'Pick a second, different line, arc or circle' };
+  if (![e1, e2].every((e) => ['LINE', 'ARC', 'CIRCLE'].includes(e?.type))) return { error: 'Fillet takes lines, arcs, circles and polyline corners' };
   if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
-  if ([e1, e2].some((e) => e.type === 'ARC' && (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS))) return { error: 'Fillet needs arcs in the drawing plane' };
+  if (!r && [e1, e2].some((e) => e.type === 'CIRCLE')) return { error: 'Fillet with a circle needs a radius above 0' };
+  if ([e1, e2].some((e) => ['ARC', 'CIRCLE'].includes(e.type) && (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS))) return { error: 'Fillet needs arcs and circles in the drawing plane' };
   const s1 = drawingShape(e1), s2 = drawingShape(e2);
-  if ([s1, s2].some((s) => s.t === 'arc' ? !(s.r > EPS) || norm(s.a1 - s.a0) < EPS : dist(s.a, s.b) < EPS)) return { error: 'A line or arc has no length' };
-  if (s1.t === 'arc' || s2.t === 'arc') {
+  if ([s1, s2].some((s) => s.t === 'line' ? dist(s.a, s.b) < EPS : !(s.r > EPS) || (s.t === 'arc' && norm(s.a1 - s.a0) < EPS))) return { error: 'A line, arc or circle has no length' };
+  if (s1.t !== 'line' || s2.t !== 'line') {
     const f = filletCurves(s1, p1, s2, p2, r);
     if (f.error) return f;
-    const ents = f.shapes.map((s, i) => rebuilt(s, i === 1 ? e2 : e1));
-    if (ents.some((e) => { const s = shapeOf(e, 1); return s.t === 'arc' ? !s.r || !norm(s.a1 - s.a0) : dist(s.a, s.b) < EPS; })) return { error: 'The fillet would leave an arc or line too small for drawing precision' };
+    const ents = f.shapes.map((s, i) => s.t === 'circle' ? (i === 1 ? e2 : e1) : rebuilt(s, i === 1 ? e2 : e1));
+    if (ents.some((e) => { const s = shapeOf(e, 1); return s.t === 'line' ? dist(s.a, s.b) < EPS : !s.r || (s.t === 'arc' && !norm(s.a1 - s.a0)); })) return { error: 'The fillet would leave an arc or line too small for drawing precision' };
     return { ents: trim ? ents : [e1, e2, ...ents.slice(2)] };
   }
   const f = filletLines([s1.a, s1.b], p1, [s2.a, s2.b], p2, r);
   if (f.error) return f;
-  const ents = [rebuilt({ t: 'line', a: f.l1[0], b: f.l1[1] }, e1), rebuilt({ t: 'line', a: f.l2[0], b: f.l2[1] }, e2)];
+  const ents = [f.l1[0] === s1.a && f.l1[1] === s1.b ? e1 : rebuilt({ t: 'line', a: f.l1[0], b: f.l1[1] }, e1), rebuilt({ t: 'line', a: f.l2[0], b: f.l2[1] }, e2)];
   if (f.arc) ents.push(rebuilt({ t: 'arc', ...f.arc }, e1));
+  if (f.arc && !get(ents[2].r, 40)) return { error: 'The fillet would leave an arc too small for drawing precision' };
   return { ents: trim ? ents : [e1, e2, ...ents.slice(2)] };
 }
 

@@ -6923,7 +6923,7 @@ function modTyped(d, raw) {
     const v = Number(c);
     if (m.askR && Number.isFinite(v) && v >= 0) {
       state.filR = v; m.askR = false; try { localStorage.setItem(FILLET_SAVED, String(v)); } catch { /* ignore */ }
-      note(`Fillet radius ${mmText(v)} mm. Pick the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment`); paintOverlay(); return true;
+      note(`Fillet radius ${mmText(v)} mm. Pick the ${m.stage === 'obj' ? 'first' : 'second'} line, arc, circle or polyline segment`); paintOverlay(); return true;
     }
     if (!m.askR && DR.parseInput(raw).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". ${m.askR ? 'Type a radius of 0 or more' : 'Type R to change the radius'}`); return true;
@@ -7058,8 +7058,8 @@ function modUp(d, was, p, shift, crossing) {
     const ent = modEntAt(d, was.p);
     if (m.stage === 'poly') filletPolyDo(d, ent);
     else if (m.stage === 'obj') {
-      if (!ent) { note('Fillet: nothing there. Click a line, arc or polyline segment'); return; }
-      if (!['LINE', 'ARC', 'LWPOLYLINE', 'POLYLINE'].includes(ent.type)) { note('Fillet takes lines, arcs and polyline corners; circles are not supported'); return; }
+      if (!ent) { note('Fillet: nothing there. Click a line, arc, circle or polyline segment'); return; }
+      if (!['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE', 'POLYLINE'].includes(ent.type)) { note('Fillet takes lines, arcs, circles and polyline corners'); return; }
       m.ent = ent; m.p0 = was.p; m.askR = false; m.stage = 'second'; note(modPrompt(d).prompt); paintOverlay();
     } else filletDo(d, ent, was.p, shift || was.shift);
   } else if (m.kind === 'extend' || m.kind === 'trim') {
@@ -7547,18 +7547,19 @@ function filletPolyDo(d, ent) {
 /** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
 function filletDo(d, ent, p, sharp) {
   const m = state.mod;
-  if (!ent) { note('Fillet: nothing there. Click the second line, arc or polyline segment'); return; }
+  if (!ent) { note('Fillet: nothing there. Click the second line, arc, circle or polyline segment'); return; }
   const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); return; }
   if ((r.ents.length === 1 && r.ents[0] === m.ent) ||
       (r.ents.length === 2 && r.ents[0] === m.ent && r.ents[1] === ent)) {
     m.stage = 'obj'; m.ent = null;
-    note('Already a sharp corner. Pick the next first line, arc or polyline segment, or Esc ends'); paintOverlay(); return;
+    note('Already a sharp corner. Pick the next first line, arc, circle or polyline segment, or Esc ends'); paintOverlay(); return;
   }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
   filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
   m.stage = 'obj'; m.ent = null;
-  note(`${!sharp && state.filR > 0 ? `Filleted, radius ${mmText(state.filR)} mm` : 'Corner made'}. Pick the next first line, arc or polyline segment, or Esc ends. Ctrl+Z takes it back`);
+  const radius = r.ents[2]?.type === 'ARC' ? GR.get(r.ents[2].r, 40) * d.factor : sharp ? 0 : state.filR;
+  note(`${radius > 0 ? `Filleted, radius ${mmText(radius)} mm` : 'Corner made'}. Pick the next first line, arc, circle or polyline segment, or Esc ends. Ctrl+Z takes it back`);
 }
 /** mOde answered (Trim and Extend share it): Quick = no edge picking (every object is an edge); Standard = pick the edges first. Remembered. */
 function trimMode(quick) {

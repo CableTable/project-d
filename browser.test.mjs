@@ -14323,7 +14323,8 @@ try {
     assert.equal(await t('mod-preview').count(), 3, 'releasing Shift restores the saved radius preview');
     await click(60, 40, { shift: true });
     doc = await savedDoc(); assert.equal(doc.entities.length, 3); assert.deepEqual(coords(doc.entities[0]), [20, 20, 60, 20]); await undo();
-    await click(40, 20); await click(40, 70); assert.match(await histLine(), /parallel/);
+    await click(40, 20); await click(40, 70); assert.equal(fieldOf((await savedDoc()).entities[3], 40), 25);
+    await undo(); await click(40, 20);
     await page.keyboard.press('Escape'); assert.match(await prompt(), /^Select first object/);
     await typeCmd('r'); await typeCmd('100'); await click(40, 20); await click(60, 40); assert.match(await histLine(), /too big/);
     assert.deepEqual((await savedDoc()).entities, before.entities); assert.equal(await page.evaluate(() => localStorage.getItem('pd-fillet')), '100');
@@ -14360,7 +14361,7 @@ try {
       assert.deepEqual((await savedDoc()).entities, before.entities);
     };
     await typeCmd('f'); await typeCmd('r'); await typeCmd('5');
-    await click(130, 70); assert.match(await histLine(), /circles.*not supported/);
+    await click(130, 70); assert.match(await prompt(), /^Select second object or shift-select/); await page.keyboard.press('Escape');
     await click(15, 40); assert.match(await prompt(), /^Select second object or shift-select/);
     const hover = () => hoverPreview(36, 28);
     await hover(); assert.equal(await t('mod-preview').count(), 3);
@@ -14558,6 +14559,78 @@ try {
     const slot = GR.lwVertices((await savedDoc()).entities[1].r);
     assert.deepEqual([slot[0], slot.at(-1)].map(({ x, y, b }) => [x, y, b]), [[0, -10, 0], [0, 10, 1]], 'the diverging end keeps its arc and endpoints');
     await page.keyboard.press('Escape'); await closeTabs(/./);
+  });
+
+  await step('TODO 155h2: Fillet circles and parallel lines, preview, Shift, No trim, Undo, source edit and Layout / Compare', async () => {
+    await menuItem('View', 'Theme: light'); await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(20, 20, 120, 20), dxfCircle(70, 50, 20),
+      dxfLine(160, 20, 240, 20), dxfLine(170, 60, 220, 60));
+    await openGrips(writeDxf(raw), 'fillet-155h2.dxf');
+    const before = (await savedDoc()).entities;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('10'); await typeCmd('t'); await typeCmd('trim');
+    await click(40, 20); await page.keyboard.press('Escape');
+    assert.match(await prompt(), /^Select first object/); assert.deepEqual((await savedDoc()).entities, before, 'Esc cancels the first pick');
+    await click(40, 20); await hoverPreview(58, 34);
+    assert.equal(await t('mod-preview').count(), 3, 'line, circle and tangent arc preview');
+    await click(58, 34, { shift: true });
+    assert.match(await histLine(), /Fillet with a circle needs a radius above 0/);
+    assert.deepEqual((await savedDoc()).entities, before);
+    await shotBoth('155h2-circle', () => hoverPreview(58, 34));
+    await click(58, 34);
+    let doc = (await savedDoc()).entities;
+    assert.equal(doc.length, 5); assert.equal(doc[4].type, 'ARC'); assert.equal(fieldOf(doc[4], 40), 10);
+    assert.deepEqual(doc[1], before[1], 'the circle is never trimmed'); assert.notDeepEqual(doc[0], before[0]);
+    await page.keyboard.press('Escape'); await undo();
+    assert.deepEqual((await savedDoc()).entities, before, 'one Ctrl+Z restores the line / circle pair');
+    await typeCmd('f'); await typeCmd('t'); await typeCmd('no trim');
+    await click(58, 34); await click(40, 20);
+    assert.deepEqual((await savedDoc()).entities.slice(0, 4), before, 'No trim with a circle first keeps both sources');
+    await typeCmd('u'); assert.deepEqual((await savedDoc()).entities, before);
+    await typeCmd('t'); await typeCmd('trim'); await click(58, 34); await click(40, 20);
+    await page.keyboard.press('Escape');
+    await click(70, 70); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('5,5');
+    doc = (await savedDoc()).entities;
+    assert.equal(fieldOf(doc[1], 10), 75); assert.equal(fieldOf(doc[1], 20), 55); assert.equal(fieldOf(doc[1], 40), 20);
+    await page.keyboard.press('Escape'); await undo(); await undo();
+    assert.deepEqual((await savedDoc()).entities, before, 'the circle stays editable after filleting');
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('100');
+    await click(235, 20); await hoverPreview(210, 60);
+    assert.equal(await t('mod-preview').count(), 3, 'parallel lines preview a semicircle despite the saved radius');
+    await shotBoth('155h2-parallel', () => hoverPreview(210, 60));
+    await click(210, 60, { shift: true });
+    doc = (await savedDoc()).entities;
+    assert.equal(doc.length, 5); assert.deepEqual(doc[2], before[2], 'the first parallel line stays');
+    assert.equal(fieldOf(doc[3], 11), 240, 'the second line extends to the first endpoint');
+    assert.deepEqual([10, 20, 40].map((c) => fieldOf(doc[4], c)), [240, 40, 20]);
+    assert.equal((fieldOf(doc[4], 51) - fieldOf(doc[4], 50) + 360) % 360, 180);
+    assert.equal(await page.evaluate(() => localStorage.getItem('pd-fillet')), '100', 'parallel and Shift leave the remembered radius alone');
+    await page.keyboard.press('Escape'); await undo();
+    assert.deepEqual((await savedDoc()).entities, before, 'one Ctrl+Z restores the parallel pair');
+    await typeCmd('f'); await typeCmd('t'); await typeCmd('no trim'); await click(235, 20); await click(210, 60);
+    assert.deepEqual((await savedDoc()).entities.slice(0, 4), before, 'No trim keeps parallel sources');
+    await typeCmd('u'); assert.deepEqual((await savedDoc()).entities, before);
+    await typeCmd('t'); await typeCmd('trim'); await page.keyboard.press('Escape');
+    await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click();
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('10'); await click(58, 34); await click(40, 20);
+    assert.match(await histLine(), /Filleted/); await page.keyboard.press('Escape');
+    await page.locator('.tabs .dtab', { hasText: 'fillet-155h2' }).click();
+    doc = (await savedDoc()).entities; assert.equal(doc.length, 5); assert.deepEqual(doc[1], before[1]);
+    await undo(); assert.deepEqual((await savedDoc()).entities, before, 'Compare edits the linked drawing with one Undo');
+    await closeTabs(/./); await t('new-layout').click();
+    await typeCmd('line'); await typeCmd('100,100'); await typeCmd('300,100'); await typeCmd('');
+    await typeCmd('circle'); await typeCmd('200,160'); await typeCmd('40');
+    const layoutBefore = (await savedDoc()).entities, circle = layoutBefore.find((e) => e.type === 'CIRCLE');
+    assert.ok(circle);
+    await typeCmd('f'); await typeCmd('r'); await typeCmd('20'); await click(176, 128); await hoverPreview(150, 100);
+    assert.equal(await t('mod-preview').count(), 3, 'Layout previews circle / line fillets too');
+    await click(150, 100); doc = (await savedDoc()).entities;
+    const record = (e) => e.r.c.flatMap((c, i) => c === 5 ? [] : [[c, e.r.v[i]]]); // Layout Save numbers handles in entity order.
+    assert.equal(doc.length, layoutBefore.length + 1); assert.deepEqual(record(doc.find((e) => e.type === 'CIRCLE')), record(circle));
+    await page.keyboard.press('Escape'); await undo();
+    assert.deepEqual((await savedDoc()).entities, layoutBefore, 'Layout circle / line is one Ctrl+Z');
+    await closeTabs(/./);
   });
 
   await step('TODO 66g: Fillet a legacy POLYLINE corner', async () => {
