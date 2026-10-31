@@ -10386,6 +10386,124 @@ try {
   const propsOpen = async () => { await openGrips(propsDoc(), 'props.dxf'); };
   const propVal = (key) => page.locator(`[data-prop=${key}]`).inputValue();
   const propsOnNow = async () => { await t('ptab-drawing').click(); const button = t('props-panel').locator('.section-toggle'); if (await button.getAttribute('aria-expanded') === 'false') await button.click(); await t('props-panel').waitFor(); };
+  const qselectDoc = () => {
+    const doc = newDoc(4);
+    addLayer(doc, 'A', { aci: 1 }); addLayer(doc, 'B', { aci: 5 });
+    addLayer(doc, 'Off', { off: true }); addLayer(doc, 'Frozen', { frozen: true }); addLayer(doc, 'Locked');
+    addEntities(doc, dxfLine(10, 10, 60, 10), dxfLine(10, 30, 60, 30, { layer: 'A', aci: 1 }), dxfLine(10, 50, 60, 50, { layer: 'A' }),
+      dxfCircle(90, 60, 10, { layer: 'A' }), dxfLine(10, 80, 60, 80, { layer: 'B' }), dxfCircle(150, 60, 20, { layer: 'B' }),
+      dxfText(10, 110, 5, 'Pump <b>', { layer: 'B' }),
+      ...['Off', 'Frozen', 'Locked'].map((layer) => dxfCircle(100, 150, 25, { layer })));
+    return writeDxf(doc);
+  };
+  await step('TODO 162a: QSELECT and Properties button, scope, operators, Exclude, Append, wildcard, Cancel / Esc, source edit and Undo; dialog light and dark', async () => {
+    await openGrips(qselectDoc(), 'quick-select.dxf');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click(); await propsOnNow();
+    const dialog = page.getByRole('dialog', { name: 'Quick Select', exact: true });
+    const combo = (name) => dialog.getByRole(name === 'Properties' ? 'listbox' : 'combobox', { name, exact: true });
+    const select = async (type, property, operator, value) => {
+      await combo('Object type').selectOption(type); await combo('Properties').selectOption(property); await combo('Operator').selectOption(operator);
+      if (operator !== 'all') {
+        if (await dialog.getByRole('textbox', { name: 'Value', exact: true }).isVisible()) await dialog.getByRole('textbox', { name: 'Value', exact: true }).fill(value);
+        else await combo('Value').selectOption(value);
+      }
+    };
+    const accept = async (n, matches = n) => { await dialog.getByRole('button', { name: 'OK', exact: true }).click(); await waitSel(`${n} selected`); assert.equal(await prompt(), `${matches} item(s) selected.`); };
+    await typeCmd('QSELECT'); assert.deepEqual(errors, []); await dialog.waitFor();
+    assert.deepEqual(await combo('Apply to').locator('option').allTextContents(), ['Entire drawing']);
+    assert.deepEqual(await combo('Object type').locator('option').allTextContents(), ['Multiple', 'Circle', 'Line', 'Text']);
+    assert.deepEqual(await combo('Properties').locator('option').allTextContents(), ['Colour', 'Layer', 'Line type', 'Line weight']);
+    assert.deepEqual(await combo('Value').locator('option').allTextContents(), ['Black', 'Blue', 'Red'], 'Colour lists drawn colours only, no ByLayer entry');
+    assert.equal(await dialog.getByRole('radio', { name: 'Include in new selection set', exact: true }).isChecked(), true);
+    assert.equal(await dialog.getByRole('checkbox').isChecked(), false);
+    assert.deepEqual(await dialog.getByRole('button').allTextContents(), ['OK', 'Cancel']);
+    await combo('Properties').selectOption('layer'); assert.equal(await combo('Value').inputValue(), '0');
+    await select('Multiple', 'layer', 'eq', 'A'); await accept(3);
+    assert.equal(await t('prop-layer').inputValue(), 'A');
+    await typeCmd('QSELECT'); assert.equal(await combo('Apply to').inputValue(), 'selection');
+    assert.deepEqual(await combo('Object type').locator('option').allTextContents(), ['Multiple', 'Circle', 'Line']);
+    await select('CIRCLE', 'radius', 'gt', '15'); await dialog.getByRole('radio', { name: 'Exclude from new selection set', exact: true }).check();
+    await dialog.getByRole('button', { name: 'Cancel' }).click(); await waitSel('3 selected');
+    await t('prop-qselect').click(); assert.equal(await dialog.getByRole('radio', { name: 'Include in new selection set', exact: true }).isChecked(), true);
+    await select('CIRCLE', 'radius', 'gt', '15'); await page.keyboard.press('Escape'); await waitSel('3 selected');
+    const entCount = async () => (await savedDoc()).entities.length;
+    const before = await entCount();
+    await t('prop-qselect').click(); await dialog.getByRole('button', { name: 'Cancel' }).focus(); await page.keyboard.press('Delete');
+    assert.equal(await dialog.count(), 1, 'Delete does not close the dialog'); await waitSel('3 selected');
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' }); await waitSel('3 selected'); assert.equal(await entCount(), before);
+    await t('prop-qselect').click(); await combo('Apply to').selectOption('drawing');
+    await select('CIRCLE', 'radius', 'all');
+    assert.equal(await dialog.getByRole('textbox', { name: 'Value' }).isDisabled(), true); await accept(2);
+    await typeCmd('QSELECT');
+    assert.equal(await combo('Apply to').inputValue(), 'selection');
+    assert.deepEqual(await combo('Object type').locator('option').allTextContents(), ['Circle']);
+    await combo('Properties').selectOption('radius');
+    assert.equal(await dialog.getByRole('button', { name: 'OK', exact: true }).isDisabled(), true);
+    await combo('Operator').selectOption('gt'); await dialog.getByRole('textbox', { name: 'Value' }).fill('15'); await accept(1);
+    assert.equal(await propVal('radius'), '20.00');
+    assert.deepEqual(await histLabels(), ['Start'], 'selection adds no Undo entry');
+    await page.locator('[data-prop=radius]').fill('25'); await page.keyboard.press('Enter');
+    assert.equal(fieldOf(entOf(await savedDoc(), 5), 40), 25, 'the selected source can still be edited');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.equal(fieldOf(entOf(await savedDoc(), 5), 40), 20, 'one Undo restores the source edit');
+    await typeCmd('QSELECT'); await combo('Apply to').selectOption('drawing'); await select('Multiple', 'layer', 'eq', 'A');
+    await dialog.getByRole('radio', { name: 'Exclude from new selection set', exact: true }).check(); await accept(4);
+    await typeCmd('QSELECT'); assert.equal(await dialog.getByRole('radio', { name: 'Exclude from new selection set', exact: true }).isChecked(), true);
+    assert.equal(await dialog.getByRole('checkbox').isChecked(), false);
+    await combo('Apply to').selectOption('drawing'); await select('Multiple', 'layer', 'eq', 'A');
+    await dialog.getByRole('radio', { name: 'Include in new selection set', exact: true }).check(); await dialog.getByRole('checkbox').check(); await accept(7, 3);
+    await typeCmd('QSELECT'); assert.equal(await dialog.getByRole('checkbox').isChecked(), false);
+    await combo('Apply to').selectOption('drawing'); await select('TEXT', 'contents', 'wildcard', 'p?mp*'); await accept(1);
+    assert.equal(await t('prop-chip').textContent(), 'Text');
+    await typeCmd('QSELECT'); await select('TEXT', 'contents', 'eq', 'no match'); await dialog.getByRole('checkbox').check(); await accept(1, 0);
+    await typeCmd('QSELECT'); await select('TEXT', 'contents', 'eq', 'no match');
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    assert.equal(await prompt(), '0 item(s) selected.'); assert.equal(await t('prop-empty').isVisible(), true);
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Off] [data-act=vis]').click(); await propsOnNow();
+    await typeCmd('QSELECT'); await select('CIRCLE', 'radius', 'gt', '15'); await accept(2);
+    await page.keyboard.press('Escape');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Off] [data-act=vis]').click(); await propsOnNow();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await t('prop-qselect').click();
+      await select('CIRCLE', 'radius', 'gt', '15');
+      const fits = await dialog.evaluate((el) => { const b = el.getBoundingClientRect(); return b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight; });
+      assert.ok(fits); await page.screenshot({ path: `${shotDir}/todo162a-dialog-${theme}.png` });
+      await dialog.getByRole('button', { name: 'Cancel' }).click();
+    }
+    await menuItem('View', 'Theme: light');
+    await typeCmd('newlayout'); assert.equal(await t('prop-qselect').isVisible(), false, 'Layouts wait for 162b');
+    await typeCmd('QSELECT'); assert.equal(await dialog.count(), 0);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 162a: Compare Quick Select routes to the linked drawing selection and source edit with one Undo', async () => {
+    await openGrips(qselectDoc(), 'qselect-compare.dxf');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click(); await propsOnNow();
+    await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+    await t('cmp-name-1').click(); await typeCmd('QSELECT'); assert.deepEqual(errors, []);
+    const dialog = page.getByRole('dialog', { name: 'Quick Select', exact: true });
+    await dialog.getByRole('combobox', { name: 'Object type', exact: true }).selectOption('CIRCLE');
+    await dialog.getByRole('listbox', { name: 'Properties', exact: true }).selectOption('radius');
+    await dialog.getByRole('combobox', { name: 'Operator', exact: true }).selectOption('gt');
+    await dialog.getByRole('textbox', { name: 'Value', exact: true }).fill('15');
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    assert.equal(await prompt(), '1 item(s) selected.'); assert.equal(await propVal('radius'), '20.00');
+    await t('prop-qselect').click(); await page.keyboard.press('Escape'); assert.equal(await propVal('radius'), '20.00');
+    await page.locator('[data-prop=radius]').fill('30'); await page.keyboard.press('Enter');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    await typeCmd('QSELECT');
+    await dialog.getByRole('combobox', { name: 'Object type', exact: true }).selectOption('CIRCLE');
+    await dialog.getByRole('listbox', { name: 'Properties', exact: true }).selectOption('radius');
+    await dialog.getByRole('combobox', { name: 'Operator', exact: true }).selectOption('gt');
+    await dialog.getByRole('textbox', { name: 'Value', exact: true }).fill('15');
+    await dialog.getByRole('button', { name: 'OK', exact: true }).click();
+    assert.equal(await propVal('radius'), '20.00');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'qselect-compare.dxf' }) }).click();
+    assert.equal(await propVal('radius'), '20.00', 'the selection belongs to the source drawing');
+    assert.equal(fieldOf(entOf(await savedDoc(), 5), 40), 20); await closeTabs(/./);
+  });
+
   await step('Properties: View / Ctrl+1 toggle the whole docker; the Properties tab asks for a selection', async () => {
     await propsOpen(); await propsOnNow();
     assert.equal(await t('prop-empty').isVisible(), true);

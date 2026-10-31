@@ -80,7 +80,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Selection cycling**: Repeated Alt + click on one spot steps through the overlapping objects under the cursor, highlighting the current one. Where: `DECISIONS.md`, Window / crossing selection (TODO 71c).
 
-**Quick Select**: A dialog (typed QSELECT) that selects every object of one type whose property meets a rule, such as Layer equals A or Radius greater than 15, or every object that does not. Where: `DECISIONS.md`, Quick Select (TODO 162). Avoid: filter (the list search boxes), Select similar (matches the first selected object).
+**Quick Select**: A dialog (typed QSELECT or the Properties button) that selects every object of one type whose property meets a rule, such as Layer equals A or Radius greater than 15, or every object that does not. Apply to the entire drawing or current selection; Append adds to the selection. Compare uses the linked source drawing. Where: `web/qselect.js`, `web/qselectdlg.js`; `DECISIONS.md`, Quick Select (TODO 162a). Avoid: filter (the list search boxes), Select similar (matches the first selected object).
 
 **Zoom Selection**: Fills the view with what is selected. Where: `DECISIONS.md`, More zooms (TODO 74). Avoid: Zoom to (the panel menu for one item).
 

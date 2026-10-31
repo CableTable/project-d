@@ -51,6 +51,7 @@ import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, refer
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
 import * as PR from './props.js';
+import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
@@ -3861,7 +3862,7 @@ const DO = {
   undo: () => undoCurrent(),
   redo: () => undoCurrent(true),
   paste: pasteSelection,
-  history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
+  history: () => showHistory(), selectall: () => selectAll(), qselect: startQuickSelect, delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: fitView, zoomwindow: zoomWindow, zoomselection: zoomSelection, zoomprevious: zoomPrevious, rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(),
   shortcuts: () => showShortcuts(),
@@ -8806,8 +8807,22 @@ function selectAll() {
   }
 }
 
+function startQuickSelect() {
+  const d = editable();
+  if (!d) { note('Quick Select: open an editable drawing first'); return; }
+  if (drawLive() && DR.toolBusy(state.draw)) return;
+  const hidden = hiddenLayerNames(d);
+  // Layer visibility and locks can change for this session without changing the file's layer table.
+  const layers = Object.fromEntries(Object.entries(layerMap(d)).map(([name, def]) => [name, { ...def, off: hidden.has(name), frozen: false, flags: d.locked?.has(name) ? 4 : 0 }]));
+  openQuickSelect({ entities: d.raw.entities, layers, factor: d.factor, dp: state.dp,
+    scope: edIndex(d).shown.filter((i) => !lockedEnt(d, i)), selection: new Set(d.sel), onApply: (indices, append) => {
+      setSel(d, new Set([...(append ? d.sel : []), ...indices]));
+      note(`${indices.length} item(s) selected.`);
+    } });
+}
+
 function editKey(e) {
-  if (document.querySelector('[data-testid=pdf-dialog]')) return;
+  if (document.querySelector('[data-testid=pdf-dialog], [data-testid=qselect-dialog]')) return;       // a dialog's own handlers take every key, wherever focus is
   const inField = e.target?.closest?.('input, textarea, select');
   if (['F3', 'F7', 'F8', 'F9', 'F12'].includes(e.key) && ((inField && e.target !== ui.cmd) || e.target?.isContentEditable)) return;
   if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
@@ -9150,14 +9165,15 @@ function buildPropsSection() {
     h('p', { class: 'lbl widthnote' }, 'True width on screen · scales with zoom'));
   ui.propGeo = h('div', { class: 'propgeo', 'data-testid': 'prop-geo' });
   ui.propSimilar = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-similar', title: 'Select every shape like the first one selected', onclick: (e) => selectSimilarMenu(e.currentTarget) }, 'Select similar ▾');
+  ui.propQuick = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-qselect', onclick: startQuickSelect }, 'Quick Select');
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
   ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), ui.propFillRow, row('Line type', ui.propLt));
-  ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch);
-  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo, ui.propButtons);
+  ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propQuick, ui.propMatch);
+  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
-    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody);
+    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, ui.propButtons);
   return ui.propSec;
 }
 
@@ -9172,7 +9188,9 @@ function renderPropsPanel(d) {
   if (!show) return;
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
   ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none;
-  ui.propCommon.hidden = none; ui.propGeo.hidden = none; ui.propButtons.hidden = none;
+  ui.propCommon.hidden = none; ui.propGeo.hidden = none;
+  ui.propSimilar.hidden = ui.propMatch.hidden = none;
+  ui.propQuick.hidden = !!curLay();       // 162b adds Layouts
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
   const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
   ui.propWidthHint.textContent = 'Selection · mm';
