@@ -9811,6 +9811,10 @@ try {
       assert.deepEqual(await lineOf(), [20, 30, 120, 30], `Scale ${bad} changed nothing`);
     }
     await mode('SCALE');
+    const s00 = await gripBox('0:a'); await page.mouse.click(s00.x, s00.y);       // a clicked point on the base: factor 0
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'a clicked Scale 0 asks again: the grip stays hot');
+    assert.match(await t('cmd-hist').textContent(), /scale factor must be between 0\.0001 and 10000/);
+    assert.deepEqual(await lineOf(), [20, 30, 120, 30], 'a clicked Scale 0 changed nothing');
     await typeCmd('2'); await noHot();
     assert.deepEqual(await lineOf(), [20, 30, 220, 30]);
     await undo();
@@ -9870,6 +9874,16 @@ try {
     await hotGrip(await gid('b')); await press(' ');
     await mode('STRETCH');
     assert.match(await t('cmd-hist').textContent(), /take loose objects only here: use the ribbon command for Parts and dimensions/);
+    await press('Escape'); await noHot();
+    // a layout dimension with the line (a loose object too) stays in STRETCH with the same note
+    await typeCmd('dli'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('175,640');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click();
+    const w0 = await at(30, 570), w1 = await at(330, 680);       // a window round the line and its dimension (not the plate)
+    await page.mouse.move(w0.x, w0.y); await page.mouse.down(); await page.mouse.move(w1.x, w1.y, { steps: 5 }); await page.mouse.up(); await frames();
+    assert.match(await prompt(), /^2 parts selected/);
+    await hotGrip(await gid('b')); await press(' ');
+    await mode('STRETCH');
+    assert.match(await t('cmd-hist').textContent(), /take loose objects only here/);
     await press('Escape'); await noHot();
     await closeTabs(/./);
   });
@@ -9947,6 +9961,18 @@ try {
     assert.ok(close(await lineOf(0), [20, 30, 120, 30]), 'the original stayed');
     const cp = await lineOf(4);
     assert.ok(near(cp[0], 50, 0.8) && near(cp[1], 50, 0.8) && near(cp[2] - cp[0], 100, 1e-6), `the copy is at the pointer: ${cp}`);
+    await undo();
+    // C in Stretch: each pick copies the line with its grip moved, the original stays
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:b');
+    await typeCmd('c'); assert.match(await hist(), /\*\* STRETCH \(multiple\) \*\*/);
+    const st1 = await at(120, 80); await page.mouse.move(st1.x, st1.y); await frames(); await page.mouse.click(st1.x, st1.y); await frames();
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the run goes on after a pick');
+    await typeCmd(''); await noHot();
+    assert.equal(await count(), 5, 'one copy');
+    assert.ok(close(await lineOf(0), [20, 30, 120, 30]), 'the original stays');
+    const sc1 = await lineOf(4);
+    assert.ok(near(sc1[0], 20, 1e-6) && near(sc1[1], 30, 1e-6) && near(sc1[2], 120, 0.8) && near(sc1[3], 80, 0.8), `the copy has its end at the pointer: ${sc1}`);
+    assert.equal((await labelsNow()).at(-1), 'Copy Stretch');
     await undo();
     // the (multiple) header in the screenshots, light and dark
     await rotating();

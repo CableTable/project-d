@@ -8186,7 +8186,7 @@ function gripCycle() {
   const g = state.grip;
   if (!g) return;
   if (g.copy) { gripExit(); return; }                                // Enter ends a multiple run
-  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj)) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
+  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj || isDimPart(x.part))) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
   g.mode = GM.cycle(g.mode); g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
@@ -8240,6 +8240,7 @@ function gripPut(g, e) {
   if (g.baseAsk) { gripBase(g, q); return; }
   if (g.ref && g.ref.step !== 'new') { gripRefPick(g, q); return; }
   gripAim(g, q, e.shiftKey);
+  if (g.err) { note(g.err); paintOverlay(); return; }       // a Scale of 0 or outside 0.0001 .. 10000: asks again, the grip stays hot, as a typed value
   gripDone(g, e.ctrlKey);
 }
 /** One more copy for the run: the drawing with it becomes g.acc (the document itself changes only when the run ends). */
