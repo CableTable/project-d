@@ -10277,12 +10277,17 @@ try {
     await hover('0:a'); await list(); await pickItem('Lengthen'); await hotWhen(1);
     await page.keyboard.press('Escape'); await hotWhen(0);
     assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 120, 30], 'Esc changed nothing');
-    // the right-click grip menu in Lengthen has no tick on Stretch
+    // the right-click grip menu in Lengthen lists the grip's options in place of Stretch, Lengthen ticked; Stretch switches back as a Ctrl tap does
     await pick(70, 30, 3);
     await hover('0:b'); await list(); await pickItem('Lengthen'); await hotWhen(1);
     const rc = await at(70, 45); await page.mouse.click(rc.x, rc.y, { button: 'right' });
     await t('ctx-menu').waitFor();
-    assert.deepEqual(await list(), ['Enter', 'Stretch', 'Move', 'Rotate', 'Scale', 'Mirror', 'Base Point', 'Copy', 'Properties', 'Exit']);
+    assert.deepEqual(await list(), ['Enter', 'Stretch', 'Lengthen✓', 'Move', 'Rotate', 'Scale', 'Mirror', 'Base Point', 'Copy', 'Properties', 'Exit']);
+    await pickItem('Stretch'); await frames();
+    assert.match(await prompt(), /^Specify stretch point/); assert.match(await hist(), /\*\* STRETCH \*\*/);
+    await page.mouse.click(rc.x, rc.y, { button: 'right' });
+    await t('ctx-menu').waitFor();
+    assert.deepEqual(await list(), ['Enter', 'Stretch✓', 'Move', 'Rotate', 'Scale', 'Mirror', 'Base Point', 'Copy', 'Properties', 'Exit'], 'a plain Stretch run keeps the old menu');
     await pickItem('Exit'); await hotWhen(0);
     // an arc: end Stretch / Lengthen (typed = the end angle), middle Stretch / Radius (typed = the radius, the centre stays), no list on the centre
     await pick(60, 130, 4);
@@ -10322,6 +10327,25 @@ try {
     await pick(190, 100, 5);
     await hover('1:q0'); await page.waitForTimeout(600);
     assert.equal(await page.locator('[data-testid=ctx-menu]').count(), 0, 'a circle has no list');
+    await closeTabs(/./);
+  });
+  await step('TODO 163a copies then Ctrl: a Ctrl-click copy in Stretch, then a Ctrl tap -> "Lengthen makes no copies", the run stays in Stretch and the copy is kept', async () => {
+    const { hotWhen, hist, ent } = g163;
+    await openGrips();
+    await pick(70, 30, 3);
+    const b = await gripBox('0:b'); await page.mouse.click(b.x, b.y); await hotWhen(1);
+    const to = await at(120, 80); await page.mouse.move(to.x, to.y); await frames();
+    await page.keyboard.down('Control'); try { await page.mouse.click(to.x, to.y); } finally { await page.keyboard.up('Control'); }
+    await frames();
+    assert.match(await hist(), /\*\* STRETCH \(multiple\) \*\*/);
+    await page.keyboard.press('Control'); await frames();
+    assert.match(await hist(), /Lengthen makes no copies/);
+    assert.match(await hist(), /\*\* STRETCH \(multiple\) \*\*/);
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the run stays in Stretch');
+    await typeCmd(''); await hotWhen(0);
+    const copy = await ent(4);
+    assert.ok(copy[0] === 20 && copy[1] === 30 && near(copy[2], 120, 1) && near(copy[3], 80, 1), `the copy was kept: ${copy}`);
+    assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 120, 30], 'the original stayed');
     await closeTabs(/./);
   });
   await step('TODO 163a: Grip options on a Compare snapshot (routes to the source) and on a layout object', async () => {

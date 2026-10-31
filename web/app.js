@@ -8508,7 +8508,10 @@ function gripMenu(e) {
   const M = GM.MODES[state.grip.mode], on = (fn) => () => { if (state.grip) fn(state.grip); };
   popMenu(e.clientX, e.clientY, [
     ['Enter', on(() => gripCycle())],
-    ...GM.MODES.map((m, i) => [GM.nameOf(m), on((g) => gripModeTo(g, i)), state.grip.mode === i && !state.grip.opt ? '✓' : null]),
+    ...(state.grip.opt   // 163a: in an option run the grip's options stand in place of Stretch, the current one ticked
+      ? state.grip.opts.map((name, i) => [name, on((g) => gripOptionTo(g, i)), state.grip.opt === i ? '✓' : null])
+      : [[GM.nameOf(GM.MODES[0]), on((g) => gripModeTo(g, 0)), state.grip.mode === 0 ? '✓' : null]]),
+    ...GM.MODES.slice(1).map((m, i) => [GM.nameOf(m), on((g) => gripModeTo(g, i + 1)), state.grip.mode === i + 1 ? '✓' : null]),
     ['Base Point', on(gripBaseAsk)], ['Copy', on(gripCopyOn)],
     ...(M === 'ROTATE' || M === 'SCALE' ? [['Reference', on(gripRefOn)]] : []),
     ...(state.grip.copy && state.grip.hist.length ? [['Undo', on(gripUndoCopy)]] : []),
@@ -8630,6 +8633,7 @@ function gripOptionsOpen(hit) {
 }
 /** The hot grip's option i (Ctrl cycles them, the list picks one): its header and prompt, the preview follows the pointer. */
 function gripOptionTo(g, i, cursor) {
+  if (i && g.copy) { note(`${g.opts[i]} makes no copies`); return; }       // the run stays in Stretch with its copies
   g.hot = true; g.cursor = g.cursor || cursor; g.opt = i; state.msg = null;
   ui.cmdUI.message(g.opt ? `** ${g.opts[i].toUpperCase()} **` : GM.header('STRETCH', g.copy)); gripRefresh(g);
 }
