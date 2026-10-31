@@ -18,7 +18,36 @@ permissions:
   contents: read
 
 jobs:
+  # A PR push that changes only .md files skips test and build (they count as green).
+  # Not `paths-ignore`: for pull_request it filters on the whole PR diff, so once a PR has code every push runs.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Does this push change anything but .md?
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+        run: |
+          code=true
+          if [ "$EVENT" = "pull_request" ] && [ "$ACTION" = "synchronize" ] && [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only "$BEFORE" "$AFTER" || echo "?")
+            # An empty or failed diff stays code=true.
+            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qv '\.md$'; then code=false; fi
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
+
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -63,6 +92,8 @@ jobs:
           if-no-files-found: ignore
 
   build:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -115,8 +146,9 @@ jobs:
   # Auto-merge (as in Project R): a PR labelled `automerge` is merged here once test and
   # build pass, only the commit that was tested; then main is built and released.
   merge:
-    needs: [test, build]
-    if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'automerge') && github.event.pull_request.head.repo.full_name == github.repository
+    needs: [changes, test, build]
+    # always(): test / build are skipped on a doc-only push, and then nothing may merge.
+    if: always() && needs.test.result == 'success' && needs.build.result == 'success' && github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'automerge') && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     permissions:
       contents: write
