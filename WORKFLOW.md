@@ -148,15 +148,9 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 
 # One call does the folder check, `switch -c` and launch below (raw commands are the fallback):
 #   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop]   (default king: claude3 in ProjectD-king; bishop: claude2 in ProjectD-s15fix)
-# King-build (claude3, Sonnet high) in its worktree ProjectD-king (session 25 retro: this block was written nowhere).
-# Its cwd is the worktree: one bare command per call, no `cd … &&`. Find code with Grep or `grep -n`, read with Read
-# offset/limit, change it with Edit (`replace_all` for repeats); never awk / node -e with braces, sed -i, python
-# heredocs or PowerShell script blocks. A throwaway script goes to a file with Write, then `node <file>`.
-# Session 26 King retro: a throwaway script only READS repo files (every change goes through Edit); it lives in the
-# worktree as tmp-*.mjs (gitignored), never in "Project D extras". Repo files are CRLF on disk: split on /\r?\n/.
-# Where tests live: web/x.js -> x.test.mjs at the repo root; a ticket's browser step: grep "step('TODO <id>" in browser.test.mjs.
+# King's shell rules: .claude/agents/builder.md step 0.
 R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"; unset FORCE_COLOR
-/c/Users/raksh/.local/bin/claude3.cmd -p --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
+/c/Users/raksh/.local/bin/claude3.cmd -p --agent builder --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
   --add-dir "E:/Project B/Claude/Project D/.git" --add-dir "E:/Project B/Claude/Project D extras" \
   --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" \
   --allowedTools "Bash(echo:*)" "Bash(tee:*)" "Bash(npx.cmd:*)" "Bash(npm.cmd:*)" "PowerShell(Select-String:*)" \

@@ -74,7 +74,7 @@ export const reviewerArgs = (extras = EXTRAS) => ['-p', '--agent', 'reviewer', '
   '--output-format', 'stream-json', '--verbose'];
 
 // WORKFLOW.md's King-build flags (the same for either account): the repo's git folder and the extras folder (the brief lives there).
-export const buildArgs = (extras = EXTRAS, gitDir = MAIN_GIT) => ['-p', '--strict-mcp-config', '--model', 'claude-sonnet-5-5', '--effort', 'high',
+export const buildArgs = (extras = EXTRAS, gitDir = MAIN_GIT) => ['-p', '--agent', 'builder', '--strict-mcp-config', '--model', 'claude-sonnet-5-5', '--effort', 'high',
   '--permission-mode', 'acceptEdits', '--max-budget-usd', '8', '--add-dir', gitDir, '--add-dir', extras,
   '--disallowedTools', 'Bash(gh pr merge:*)', 'PowerShell(gh pr merge:*)', 'Agent', 'Bash(git push:*)', 'Bash(taskkill:*)', 'PowerShell(Stop-Process:*)',
   '--allowedTools', 'Bash(echo:*)', 'Bash(tee:*)', 'Bash(npx.cmd:*)', 'Bash(npm.cmd:*)', 'PowerShell(Select-String:*)', 'PowerShell(Select-Object:*)',
