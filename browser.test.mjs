@@ -12079,6 +12079,101 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/trim-hover/);
   });
 
+  await step('TODO 155a2: a freehand path (press on empty space, drag past 4 px) trims / extends everything it crosses on release, one undo step; Shift at release swaps; Esc mid-drag changes nothing; under 4 px is still a click fence; the same on a layout', async () => {
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    const shotMid = async (name) => {
+      for (const th of ['light', 'dark']) { await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th); await page.waitForTimeout(250); await page.screenshot({ path: `${shotDir}/155a2-${name}-${th}.png` }); }
+      await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    };
+    /** Press at the first point (mm), move through the others, optionally shoot / press Esc / hold Shift before the release. */
+    const drawPath = async (pts, { shift = false, esc = false, shot = '' } = {}) => {
+      const q0 = await at(...pts[0]);
+      await page.mouse.move(q0.x, q0.y); await page.mouse.down();
+      for (const p of pts.slice(1)) { const q = await at(...p); await page.mouse.move(q.x, q.y, { steps: 6 }); }
+      await frames();
+      if (shot) { assert.ok(await t('trim-fence').count() > 2, 'the path is drawn while dragging'); await shotMid(shot); }
+      if (esc) await page.keyboard.press('Escape');
+      if (shift) await page.keyboard.down('Shift');
+      await page.mouse.up();
+      if (shift) await page.keyboard.up('Shift');
+      await frames();
+    };
+    const rows = async (y) => (await savedDoc()).entities.filter((e) => e.type === 'LINE' && fieldOf(e, 20) === y && fieldOf(e, 21) === y).map((e) => [fieldOf(e, 10), fieldOf(e, 11)].sort((a, b) => a - b)).sort((a, b) => a[0] - b[0]);
+    const coords = async (i) => { const e = (await savedDoc()).entities[i]; return [10, 20, 11, 21].map((c) => fieldOf(e, c)); };
+    const MAIN = 'Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase';
+    const wiggle = [[100, 95], [135, 60], [110, 40], [125, 15]];
+    // Trim: a bent path across both long lines between the two uprights
+    const doc1 = newDoc(4);
+    addEntities(doc1, dxfLine(20, 30, 220, 30), dxfLine(20, 70, 220, 70), dxfLine(80, 10, 80, 90), dxfLine(160, 10, 160, 90));
+    await openGrips(writeDxf(doc1), 'trim-path.dxf');
+    await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');
+    await page.keyboard.press('Escape');
+    await page.locator('[data-tool=trim]').click();
+    const steps0 = (await histLabels()).length;
+    await drawPath(wiggle, { shot: 'trim-path' });
+    assert.equal(await entCount(), 6, 'both long lines are cut in two');
+    assert.deepEqual(await rows(30), [[20, 80], [160, 220]]); assert.deepEqual(await rows(70), [[20, 80], [160, 220]]);
+    assert.equal((await histLabels()).length, steps0 + 1, 'one undo step for the whole path'); assert.equal((await histLabels()).at(-1), 'Trim');
+    assert.equal(await t('trim-fence').count(), 0, 'no path is left on screen');
+    assert.ok((await prompt()).startsWith(MAIN) && (await prompt()).endsWith('/Undo]:'), 'the command stays on');
+    await typeCmd('u'); assert.equal(await entCount(), 4, 'U takes the whole path back'); assert.deepEqual(await rows(30), [[20, 220]]);
+    // Esc in the middle of the drag: nothing changes, no fence is started by the release
+    const hl = (await histLabels()).length;
+    await drawPath(wiggle, { esc: true });
+    assert.equal(await entCount(), 4); assert.equal((await histLabels()).length, hl);
+    assert.equal(await t('trim-fence').count(), 0); assert.ok((await prompt()).startsWith(MAIN), 'still the main prompt, no fence');
+    assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'Esc cancelled the path only');
+    // under 4 px is still a click: it starts the click fence
+    const s = await at(120, 95);
+    await page.mouse.move(s.x, s.y); await page.mouse.down(); await page.mouse.move(s.x + 3, s.y, { steps: 3 }); await page.mouse.up(); await frames();
+    assert.match(await prompt(), /^Specify next fence point/, 'a short press is a click');
+    await page.keyboard.press('Escape');
+    // a press on an object stays a pick: it trims the piece under the press, not a path
+    const on = await at(120, 30);
+    await page.mouse.move(on.x, on.y); await page.mouse.down(); await page.mouse.move(on.x, on.y + 20, { steps: 4 }); await page.mouse.up(); await frames();
+    assert.equal(await entCount(), 5, 'the press on the line cut it (one cut), no path'); await typeCmd('u');
+    // Extend: the same path
+    await page.keyboard.press('Escape'); await closeTabs(/trim-path/);
+    const doc2 = newDoc(4);
+    addEntities(doc2, dxfLine(20, 30, 60, 30), dxfLine(20, 45, 60, 45), dxfLine(100, 10, 100, 50), dxfLine(20, 70, 60, 70), dxfLine(20, 110, 140, 110), dxfLine(100, 90, 100, 130));
+    await openGrips(writeDxf(doc2), 'extend-path.dxf');
+    await typeCmd('ex'); await typeCmd('o'); await typeCmd('q');
+    const steps1 = (await histLabels()).length;
+    await drawPath([[50, 5], [45, 30], [50, 60]], { shot: 'extend-path' });
+    assert.deepEqual(await coords(0), [20, 30, 100, 30]); assert.deepEqual(await coords(1), [20, 45, 100, 45]); assert.deepEqual(await coords(3), [20, 70, 60, 70], 'a line the path misses stays');
+    assert.equal((await histLabels()).length, steps1 + 1); assert.equal((await histLabels()).at(-1), 'Extend');
+    await typeCmd('u'); assert.deepEqual(await coords(1), [20, 45, 60, 45], 'one U undoes both');
+    // Shift at release swaps: Extend trims, Trim extends
+    await drawPath([[130, 120], [130, 100]], { shift: true });
+    assert.deepEqual(await coords(4), [20, 110, 100, 110]); assert.equal((await histLabels()).at(-1), 'Trim');
+    await typeCmd('u'); assert.deepEqual(await coords(4), [20, 110, 140, 110]);
+    await page.keyboard.press('Escape');
+    await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');
+    await drawPath([[50, 5], [45, 30], [50, 60]], { shift: true });
+    assert.deepEqual(await coords(0), [20, 30, 100, 30]); assert.equal((await histLabels()).at(-1), 'Extend');
+    await typeCmd('u'); assert.deepEqual(await coords(0), [20, 30, 60, 30]);
+    await page.keyboard.press('Escape'); await closeTabs(/extend-path/);
+    // a layout: the path trims a layout object; Esc mid-drag keeps the command
+    await freshLayoutWithPlate();
+    const draw = async (...pts) => { await typeCmd('line'); for (const p of pts) await typeCmd(p); await typeCmd(''); };
+    await draw('50,600', '300,600'); await draw('150,550', '150,650');
+    const n1 = await nParts();
+    const labels = async () => {
+      await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
+      const r = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
+      await page.keyboard.press('Escape'); await t('hist-dialog').waitFor({ state: 'detached' });
+      return r.slice(1);
+    };
+    const l0 = (await labels()).length;
+    await typeCmd('trim'); await typeCmd('o'); await typeCmd('q');
+    await drawPath([[250, 640], [250, 560]], { esc: true });
+    assert.equal((await labels()).length, l0, 'Esc: nothing cut'); assert.equal(await t('tool-chip').textContent(), 'Tool: Trim', 'Esc cancelled the path, not the command');
+    await drawPath([[250, 640], [255, 600], [250, 560]]);
+    assert.equal((await labels()).length, l0 + 1); assert.equal((await labels()).at(-1), 'Trim');
+    assert.equal(await nParts(), n1, 'the line lost its right part and is still one line');
+    await page.keyboard.press('Escape');
+  });
+
   await step('TODO 78: Trim preview', async () => {
     const workArea = async (name) => { await page.locator('[data-menu=View]').click(); await page.getByRole('menuitemcheckbox', { name: new RegExp('Work area: ' + name + '$') }).click(); await frames(); };
     await menuItem('View', 'Theme: light'); await workArea('Follow app');

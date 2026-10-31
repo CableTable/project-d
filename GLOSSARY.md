@@ -381,4 +381,6 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Eyedropper**: The tool that picks the line colour and fill from one object and applies them to the others you click.
 
+**Freehand path**: A fence drawn by dragging with the mouse in Quick Trim or Extend; when you let go, everything it crosses is trimmed (Extend: extended).
+
 **Colour readout**: The tool that shows the R G B, C M Y K and hex of the object, picture pixel or panel under the cursor inside the app; a click copies the hex.

@@ -4485,6 +4485,7 @@ function attachCanvasEvents() {
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
+    if (drag && modLive()) trimPathMove(drag, mdoc(d), e); else if (lmod && layModLive()) trimPathMove(lmod, mdoc(curDoc()), e);
     if (state.text.drag) textDragMove(e);
     if (state.grip) gripMove(e); else gripHoverAt(e);
     if (state.balDrag) balMove(e);
@@ -4517,7 +4518,7 @@ function attachCanvasEvents() {
     if (state.grip) gripUp(e);
     if (state.balDrag) balUp();
     if (pdrag) placedUp();
-    if (lmod) { const r = lmod; lmod = null; if (!r.moved && e.button === 0 && layModLive()) { const ld = curDoc(); modUp(ld, { p: toDrawing(ld, r.x, r.y), moved: false, shift: r.shift }, toDrawing(ld, e.clientX, e.clientY), e.shiftKey, false); } }
+    if (lmod) { const r = lmod; lmod = null; if (r.path) trimPathUp(mdoc(curDoc()), e); else if (!r.moved && e.button === 0 && layModLive()) { const ld = curDoc(); modUp(ld, { p: toDrawing(ld, r.x, r.y), moved: false, shift: r.shift }, toDrawing(ld, e.clientX, e.clientY), e.shiftKey, false); } }
     if (state.drawingRotate?.drag) drawingRotateUp(e);
     if (lrub) { const r = lrub; lrub = null; hideRubber(); if (r.zoom) zoomWindowUp(r, e); else layoutBoxSelect(r, e); }
     const was = drag; drag = null;
@@ -4525,7 +4526,8 @@ function attachCanvasEvents() {
     if (was && d && e.button === 0) {
       hideRubber();
       const p = toDrawing(d, e.clientX, e.clientY);
-      if ((state.setlen || state.tool === 'measure' || modLive() ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
+      if (was.path) trimPathUp(mdoc(d), e);
+      else if ((state.setlen || state.tool === 'measure' || modLive() ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
       else if (state.setlen) { if (!was.moved) lengthPoint(d, p, e.shiftKey); }
       else if (state.tool === 'measure') { if (!was.moved) measurePoint(d, p, e.shiftKey); }
       else if (state.tool === 'dimension') dimensionPoint(d, p, e.shiftKey);
@@ -6762,6 +6764,7 @@ function modPrompt(d) {
 }
 
 function modEsc(d) {
+  if (state.mod.path) { state.mod.path = null; note(`${state.mod.kind === 'extend' ? 'Extend' : 'Trim'}: path cancelled, nothing changed`); paintOverlay(); return; }
   d = mdoc(d);
   if (d.lay && !(state.mod.kind === 'array' && state.mod.ask)) { const was = state.mod; setTool('select'); note(modLabel(was.kind) + (was.kind === 'array' && was.stage !== 'pick' ? ' cancelled: nothing added' : ' ended')); return; }
   const m = state.mod;
@@ -7434,6 +7437,30 @@ function trimFenceRun(d) {
   else trimRegionDo(d, MD.fenceHit(pts), 'The fence');
   renderCommand(); paintOverlay();
 }
+/** Quick Trim / Extend (TODO 155a2): a press on empty space dragged past 4 px draws a freehand path (a point per 2 px); trimPathUp runs it like a fence. */
+function trimPathMove(r, d, e) {
+  const m = state.mod;
+  if (r.nopath || (r.path && !m.path) || !(m.kind === 'trim' || m.kind === 'extend') || !m.quick || m.stage !== 'cut' || m.fence || m.cross || m.erase || m.askMode) return;
+  if (!m.path) {
+    if (Math.hypot(e.clientX - r.x, e.clientY - r.y) <= 4) return;
+    const p0 = toDrawing(d, r.x, r.y);
+    if (hitAt(d, p0) >= 0 || Ed.hitEntity(edIndex(d), p0[0], p0[1], pickTol(d)) >= 0) { r.nopath = true; return; }       // a press on an object stays a pick
+    m.path = [p0]; m.pathAt = [r.x, r.y]; r.path = r.moved = true;
+  }
+  if (Math.hypot(e.clientX - m.pathAt[0], e.clientY - m.pathAt[1]) < 2) return;
+  m.path.push(toDrawing(d, e.clientX, e.clientY)); m.pathAt = [e.clientX, e.clientY]; paintOverlay();
+}
+function trimPathUp(d, e) {
+  const m = state.mod, pts = m?.path;
+  if (!pts) return;
+  m.path = null;
+  const end = toDrawing(d, e.clientX, e.clientY), last = pts.at(-1);
+  if (Math.hypot(end[0] - last[0], end[1] - last[1]) > 1e-9) pts.push(end);
+  const kind = m.kind;
+  if (e.shiftKey) m.kind = kind === 'extend' ? 'trim' : 'extend';             // Shift at release swaps Trim and Extend, as Shift + click does
+  try { if (pts.length > 1) trimRegionDo(d, MD.fenceHit(pts), 'The path'); } finally { m.kind = kind; }
+  renderCommand(); paintOverlay();
+}
 function trimCross(d, p) {
   const m = state.mod;
   if (!m.cross.p1) { m.cross.p1 = p; note(modPrompt(d).prompt); renderCommand(); paintOverlay(); return; }
@@ -7545,6 +7572,7 @@ function modOvl(d, out) {
     else if (m.kind === 'trim' || m.fence || m.cross) m.p = null;      // Extend's preview stays while the mouse is over the command box
     const rub = (a, b, tid) => add({ t: 'line', a: [a[0] * f, a[1] * f], b: [b[0] * f, b[1] * f] }, 'dr-guide', tid);
     if (m.fence) { m.fence.slice(1).forEach((q, i) => rub(m.fence[i], q, 'trim-fence')); if (m.p) rub(m.fence.at(-1), m.p, 'trim-fence'); }
+    else if (m.path) m.path.slice(1).forEach((q, i) => rub(m.path[i], q, 'trim-fence'));
     else if (m.cross) {
       const a = m.cross.p1, b = m.p;
       if (a && b) [[a, [b[0], a[1]]], [[b[0], a[1]], b], [b, [a[0], b[1]]], [[a[0], b[1]], a]].forEach(([u, v]) => rub(u, v, 'trim-cross'));
