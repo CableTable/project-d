@@ -50,7 +50,10 @@ test('every numeric operator uses the panel decimals, including unit conversion 
   assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '15.00', operator: 'gt' }, rounds), [1]);
   assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '254', factor: 25.4 }), [2]);
   assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '15.004', dp: 3 }, rounds), [0]);          // decimals follow the panel
-  assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '10', scope: [2, 3] }, [...ents, entity('CIRCLE', [[10, 0], [20, 0], [40, 10], [230, -1]], { layer: 'A' })]), [2]);          // a mirrored circle outside the scope does not hide Radius
+  assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '15.00', dp: 3 }, rounds), []);          // 15.004 is not 15.000 at 3 decimals
+  const mirrored = [...ents, entity('CIRCLE', [[10, 0], [20, 0], [40, 10], [210, 0], [220, 0], [230, -1]], { layer: 'A' })];
+  assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '10' }, mirrored), []);          // a mirrored circle in the scope hides Radius
+  assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value: '10', scope: [2, 3] }, mirrored), [2]);          // outside the scope it does not
   assert.deepEqual(select({ property: 'layer', value: 'A', scope: [0, 6] }, [...ents, insert('Blk', 0, 0, { layer: 'A' })]), [0, 6]);          // INSERT under Multiple
   for (const value of ['', ' ', 'NaN', 'Infinity', '12junk']) assert.deepEqual(select({ type: 'CIRCLE', property: 'radius', value }), []);
 });

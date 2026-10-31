@@ -10426,8 +10426,12 @@ try {
     await dialog.getByRole('button', { name: 'Cancel' }).click(); await waitSel('3 selected');
     await t('prop-qselect').click(); assert.equal(await dialog.getByRole('radio', { name: 'Include in new selection set', exact: true }).isChecked(), true);
     await select('CIRCLE', 'radius', 'gt', '15'); await page.keyboard.press('Escape'); await waitSel('3 selected');
-    await t('prop-qselect').click(); await dialog.getByRole('button', { name: 'Cancel' }).focus(); await page.keyboard.press('Escape');
-    await dialog.waitFor({ state: 'detached' }); await waitSel('3 selected');
+    const entCount = async () => (await savedDoc()).entities.length;
+    const before = await entCount();
+    await t('prop-qselect').click(); await dialog.getByRole('button', { name: 'Cancel' }).focus(); await page.keyboard.press('Delete');
+    assert.equal(await dialog.count(), 1, 'Delete does not close the dialog'); await waitSel('3 selected');
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' }); await waitSel('3 selected'); assert.equal(await entCount(), before);
     await t('prop-qselect').click(); await combo('Apply to').selectOption('drawing');
     await select('CIRCLE', 'radius', 'all');
     assert.equal(await dialog.getByRole('textbox', { name: 'Value' }).isDisabled(), true); await accept(2);
