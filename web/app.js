@@ -4220,7 +4220,7 @@ let canvasPreviewBounds = null;
 function previewBounds() {
   const canvas = ui.canvas.getBoundingClientRect();
   let bounds = canvasPreviewBounds;
-  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-fade, .dr-trim-ext, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
+  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-under, .dr-trim-fade, .dr-trim-ext, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
@@ -6728,9 +6728,9 @@ function trimPreview(d, m, e) {
 /** The region preview is worked out only on paint, and kept until its geometry, action or source changes. */
 function trimRegionPreview(d, m, paint) {
   if (!m.p) return null;
-  const pts = m.cross ? m.cross.p1 && [m.cross.p1, m.p] : [...(m.fence || m.path), m.p];
+  const pts = m.cross ? m.cross.p1 && [m.cross.p1, m.p] : m.fence || [...m.path, m.p];
   if (!pts) return null;
-  const key = JSON.stringify([!!m.cross, pts, [...(d.locked || [])]]), ext = (m.kind === 'extend') !== !!m.shift, edges = trimEdges(d, m), ix = edIndex(d), c = m.regionPv;
+  const key = JSON.stringify([!!m.cross, pts, [...(d.locked || [])], [...(d.lockedEnts || [])]]), ext = (m.kind === 'extend') !== !!m.shift, edges = trimEdges(d, m), ix = edIndex(d), c = m.regionPv;
   if (c && c.key === key && c.ext === ext && c.ix === ix && c.raw === d.raw.entities && c.edges.length === edges.length && c.edges.every((e, i) => e === edges[i])) return c.r;
   if (!paint) { paintOverlay(); return null; }
   // shortcut: preview only the first 300 crossed objects; raise the cap when region geometry can be worked out off the UI thread.
@@ -7664,7 +7664,7 @@ function modOvl(d, out, paint) {
   const m = state.mod, H = state.sheetH, f = d.factor;
   modSync(d);
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, transform: drawingTransform(d), d: DR.svgPath(shape, H), 'data-testid': tid || null }));
-  const addEnt = (ent, cls, tid) => { const sh = previewShape(ent, f, m.kind === 'fillet'); if (sh) add(sh, cls, tid); };
+  const addEnt = (ent, cls, tid) => { const sh = previewShape(ent, f, m.kind === 'fillet'); if (sh) { if (cls === 'dr-trim-fade') add(sh, 'dr-trim-under'); add(sh, cls, tid); } };
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) {
     if (m.p1 && m.cur) {
       const R = m.ref, typed = m.kind === 'rotate' && !R ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too

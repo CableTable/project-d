@@ -12674,7 +12674,13 @@ try {
   });
 
   await step('TODO 155a3: fence, path and crossing preview the committed pieces; Shift swaps live; Esc, Undo, source edits, Layouts, Compare and Standard drag', async () => {
-    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    const previewTheme = async (mode) => {
+      // Use the theme action so the canvas palette refreshes, without releasing the held path.
+      await page.locator('[data-menu=View]').evaluate((el) => el.click());
+      await page.getByRole('menuitemcheckbox', { name: new RegExp('Theme: ' + mode + '\\b') }).evaluate((el) => el.click());
+      await frames();
+    };
+    await previewTheme('light');
     const histLabels = async () => {
       await menuItem('Edit', 'Undo history…'); await t('hist-dialog').waitFor();
       const rows = await page.locator('[data-testid=hist-row]:not(.later) > span:last-child').allTextContents();
@@ -12699,17 +12705,34 @@ try {
     const cutRows = async () => { assert.deepEqual(await rows(30), [[20, 80], [160, 220]]); assert.deepEqual(await rows(70), [[20, 80], [160, 220]]); };
     await typeCmd('tr'); await typeCmd('o'); await typeCmd('q');
     const h0 = (await histLabels()).length;
-    // Fence: the live rubber segment crosses both lines before the final click.
-    await click(120, 95); await hover(120, 15); await faded(cuts);
-    await click(120, 15); await typeCmd(''); await cutRows();
+    // Fence: only clicked segments count; the rubber band crosses a third line without fading or cutting it.
+    await click(120, 95); await hover(120, 15); await faded([]);
+    await click(120, 15); await hover(50, 120); await faded(cuts);
+    assert.equal(await t('trim-fence').count(), 2, 'the rubber band stays drawn');
+    await typeCmd(''); await cutRows(); assert.deepEqual(await rows(110), [[20, 60]]);
     assert.equal((await histLabels()).length, h0 + 1); await typeCmd('u'); assert.deepEqual(await rows(30), [[20, 220]]);
+    // The shared fade style covers the source stroke in both one-click and region previews.
+    const covered = async () => {
+      const fades = page.locator('.dr-trim-fade');
+      assert.deepEqual(await paths('dr-trim-under'), await paths('dr-trim-fade'));
+      for (const el of await fades.all()) assert.ok(await el.evaluate((e) => {
+        const under = e.previousElementSibling, c = getComputedStyle(under);
+        return under.classList.contains('dr-trim-under') && Number.parseFloat(c.strokeWidth) > Number.parseFloat(getComputedStyle(e).strokeWidth)
+          && c.strokeOpacity === '1' && c.stroke === getComputedStyle(document.querySelector('.sheet')).fill;
+      }), 'an opaque background stroke covers the source beneath each faded piece');
+    };
+    await hover(120, 30);
+    for (const theme of ['light', 'dark']) {
+      await previewTheme(theme); await faded([cuts[0]]); await covered();
+      await page.screenshot({ path: `${shotDir}/155a3-click-${theme}.png` });
+    }
     // Path: inspect while the button is held, then compare the removed intervals with the saved result.
     await drag(stroke); await faded(cuts);
     for (const theme of ['light', 'dark']) {
-      await page.evaluate((v) => { document.documentElement.dataset.theme = v; }, theme); await frames(); await faded(cuts);
+      await previewTheme(theme); await faded(cuts); await covered();
       await page.screenshot({ path: `${shotDir}/155a3-path-${theme}.png` });
     }
-    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await previewTheme('light');
     await page.mouse.up(); await cutRows(); assert.equal((await histLabels()).length, h0 + 1);
     await typeCmd('u');
     // Crossing: preview before the opposite corner is clicked.
@@ -12730,8 +12753,8 @@ try {
     // Extend -> Trim, plus Shift for click fences and crossing windows, all use the same region action.
     await page.keyboard.press('Escape'); await typeCmd('ex'); await drag(stroke); await page.keyboard.down('Shift'); await frames(); await faded(cuts);
     await page.mouse.up(); await page.keyboard.up('Shift'); await cutRows(); await typeCmd('u'); await page.keyboard.press('Escape'); await typeCmd('tr');
-    await click(50, 145); await hover(50, 95); await page.keyboard.down('Shift'); await frames();
-    assert.deepEqual(await paths('dr-trim-ext'), await expected(grows)); await click(50, 95); await page.keyboard.press('Enter'); await page.keyboard.up('Shift');
+    await click(50, 145); await click(50, 95); await page.keyboard.down('Shift'); await frames();
+    assert.deepEqual(await paths('dr-trim-ext'), await expected(grows)); await page.keyboard.press('Enter'); await page.keyboard.up('Shift');
     assert.deepEqual(await rows(110), [[20, 100]]); await typeCmd('u');
     await typeCmd('c'); await click(45, 140); await hover(55, 100); await page.keyboard.down('Shift'); await frames();
     assert.deepEqual(await paths('dr-trim-ext'), await expected(grows)); await click(55, 100); await page.keyboard.up('Shift');

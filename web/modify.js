@@ -489,10 +489,9 @@ export function shapeOfPiece(segs, srcType) {
 }
 
 /** Where the cutting edges cross a path (segment index + fraction), sorted, no doubles; the ends of an open path are dropped. */
-function cutParams(P, edges) {
+function cutParams(P, paths) {
   const n = P.segs.length, cuts = [];
-  for (const e of edges) {
-    const E = pathOf(e);
+  for (const E of paths) {
     P.segs.forEach((s, i) => { for (const t of E.segs.filter((q) => dist(q.a, q.b) >= 1e-9)) for (const h of segInter(s, t)) cuts.push(i + h.fs); });
   }
   let cs = cuts.map((u) => (P.closed && u >= n - 1e-9 ? 0 : u)).sort((a, b) => a - b);
@@ -508,7 +507,7 @@ function cutParams(P, edges) {
 export function trimShape(sh, edges, pick, quick = false) {
   const P = pathOf(sh), n = P.segs.length;
   if (P.segs.some((s) => dist(s.a, s.b) < 1e-9)) return { error: 'The polyline has a side without length' };
-  const cs = cutParams(P, edges);
+  const cs = cutParams(P, edges.map(pathOf));
   if (!cs.length) return quick ? { shapes: [], removed: sh } : { error: 'Nothing crosses it here: pick a part between cutting edges' };     // Quick: an object nothing crosses goes whole
   const up = closest(P, pick).u;
   let pieces, removed;
@@ -587,20 +586,38 @@ export function windowHit(a, b) {
   return (segs) => (inside(segs[0].a) ? segs[0].a : touches(segs, lines));
 }
 
+function pathBox(P) {
+  const b = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const s of P.segs) {
+    const g = geo(s);
+    // Full-circle bounds conservatively include bulged arcs beyond their endpoints.
+    const q = g.line ? [Math.min(s.a[0], s.b[0]), Math.min(s.a[1], s.b[1]), Math.max(s.a[0], s.b[0]), Math.max(s.a[1], s.b[1])]
+      : [g.c[0] - g.r, g.c[1] - g.r, g.c[0] + g.r, g.c[1] + g.r];
+    b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[2]); b[3] = Math.max(b[3], q[3]);
+  }
+  const pad = 1e-7 * (1 + Math.max(...b.map(Math.abs)));      // retain intersections accepted by the segment solver's tolerance
+  return [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
+}
+
 /**
  * Quick Trim of many at once: each piece of `ents` (the stretch between the `cutters`' crossings; an object nothing crosses is one piece)
  * for which hit(segs) is true goes, and what stays is joined into as few pieces as possible.
  * Returns { changed: [{ i, ents }] (kept pieces), preview: [cut pieces], skipped }. `limit` caps crossed objects for previews.
  */
-export function trimRegion(ents, cutters, hit, limit = Infinity) {
-  const changed = [], preview = [], shapes = cutters.filter(canModify).map((e) => ({ e, sh: shapeOf(e, 1) }));
+export function trimRegion(ents, cutters, hit, limit = Infinity, makePath = pathOf) {
+  const changed = [], preview = [], paths = new Map(cutters.filter(canModify).map((e) => {
+    const P = makePath(shapeOf(e, 1));
+    return [e, { P, box: pathBox(P) }];
+  }));
   let skipped = 0, crossed = 0;
   ents.forEach((ent, i) => {
     if (crossed >= limit || !canModify(ent)) return;
-    const P = pathOf(shapeOf(ent, 1)), n = P.segs.length;
+    const cached = paths.get(ent), P = cached?.P || makePath(shapeOf(ent, 1)), n = P.segs.length;
     if (P.segs.some((s) => dist(s.a, s.b) < 1e-9) || !hit(P.segs)) return;
     crossed++;
-    const cs = cutParams(P, shapes.filter((c) => c.e !== ent).map((c) => c.sh));
+    const b = cached?.box || pathBox(P), edges = [];
+    for (const [e, c] of paths) if (e !== ent && c.box[0] <= b[2] && c.box[2] >= b[0] && c.box[1] <= b[3] && c.box[3] >= b[1]) edges.push(c.P);
+    const cs = cutParams(P, edges);
     if (P.closed && cs.length === 1) { skipped++; return; }
     const bounds = !cs.length ? [0, n] : P.closed ? [...cs, cs[0] + n] : [0, ...cs, n];
     let pieces = bounds.slice(1).map((u, k) => [bounds[k], u]);

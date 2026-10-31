@@ -771,4 +771,25 @@ test('TODO 155a3: region dry runs return exactly the cut pieces / added stretche
   assert.equal(extendRegion(rows, [boundary], fence).changed.length, 301);
 });
 
+test('TODO 155a3 review: cutter paths are built once, disjoint boxes skip intersections, curved bounds include their bulges', () => {
+  const rows = [line(0, 0, 100, 0), line(0, 20, 100, 20)], edges = [line(30, -10, 30, 30), line(70, -10, 70, 30)], all = [...rows, ...edges];
+  const hit = M.fenceHit([[50, -5], [50, 25]]), calls = [];
+  const result = M.trimRegion(all, all, hit, Infinity, (sh) => { calls.push(sh); return M.pathOf(sh); });
+  assert.deepEqual(calls, all.map(S), 'one pathOf call per cutter, also reused when it is a target');
+  assert.deepEqual(result, M.trimRegion(all, all, hit));
+  assert.deepEqual(result.preview.map(S), [S(line(30, 0, 70, 0)), S(line(30, 20, 70, 20))]);
+  const far = line(300, -10, 300, 30);
+  let reads = 0;
+  assert.deepEqual(M.trimRegion(rows, [far], hit, Infinity, (sh) => {
+    const P = M.pathOf(sh);
+    return sh.a[0] === 300 ? { ...P, get segs() { reads++; return P.segs; } } : P;
+  }).changed, [{ i: 0, ents: [] }, { i: 1, ents: [] }]);
+  assert.equal(reads, 1, 'a disjoint cutter is read for its box only');
+  for (const edge of [circle(50, 0, 20), arc(50, 0, 20, 0, 180), lwpoly([[30, 0, -1], [70, 0]])]) {
+    const row = line(0, 10, 100, 10), pick = [50, 10];
+    assert.deepEqual(M.trimRegion([row], [edge], M.fenceHit([[50, 5], [50, 15]])).preview.map(S),
+      [S(M.trimEntity(row, [edge], pick, true).removed)], edge.type + ' can cross outside its endpoint box');
+  }
+});
+
 console.log(`${n} modify tests passed`);
