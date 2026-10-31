@@ -94,6 +94,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Grid cell**: One row-and-column position in a Step and repeat grid, holding one copy of the part. Where: `TODO.md`, item 127. Avoid: Snap grid square.
 
+**Grip options**: The short list that opens when the pointer rests on a grip of a selected object, such as Stretch / Lengthen on a line end or Insert vertex / Remove vertex on a polyline vertex (AutoCAD's multifunctional grips); Ctrl cycles them in a hot-grip run. Where: `DECISIONS.md`, Grip options (TODO 163). Avoid: grip menu (the right-click menu in a grip run), hover menu.
+
 **Grip mode**: What a hot grip does: Stretch (the first), Move, Rotate, Scale or Mirror, cycled with Space or Enter (AutoCAD's way); the last four act on every selected object about the hot grip, and a click or a typed angle, factor or point puts the result down and ends the grip edit. Where: `web/gripmode.js`, `DECISIONS.md`, Grip modes. Avoid: Gripper.
 
 **Gripper**: A reserved band in mm on any sheet edge that parts must keep clear of, with zero meaning none. Where: `DECISIONS.md`, Gripper. Avoid: Grip; an extra margin added to a gripper.
