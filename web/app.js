@@ -5709,20 +5709,21 @@ function dimPlace(d, m) {
   const names = d.lay ? LD.dimensionNames(d.lay) : null, taken = names ? names.taken : d.raw.blocks;
   const D = state.dim, dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d), override: D.text }, d.factor, Ed.freeName(taken, m.kind, m.params.axis), state.dp);
   if (!dim) { note('Dimension: nothing to measure there, try another place'); return; }
+  const suffix = D.text || m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm';       // read before dimClear: a text override is shown as typed
   dimClear(D);
-  if (d.lay) {                                                       // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
+  if (d.lay) {                                                    // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
     names.taken.add(dim.name.toLowerCase());
     layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block }, names);
-    state.dimRun.push(histLen());
-    note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
+    state.dimRun.push(histTop());
+    note(`Dimension placed: ${dim.label}${suffix}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
-  state.dimRun.push(histLen());
-  note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
+  state.dimRun.push(histTop());
+  note(`Dimension placed: ${dim.label}${suffix}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
   return true;
 }
-const histLen = () => { const h = historyOf(curDoc()); return h ? h.labels().past.length : 0; };
+const histTop = () => { const h = historyOf(curDoc()); return { tab: curDoc(), order: h ? (h.steps ? h.steps().past.at(-1)?.order : h.order) : undefined }; };
 /** Automatic: a click or typed point, by what DIM waits for (autodim.js stageOf): an object or a first origin, a second origin, a second line for an angle, or the location. */
 function dimAutoPoint(d, p, shift, typed) {
   const D = state.dim, st = AD.stageOf(D);
@@ -5765,7 +5766,8 @@ function dimAutoUndo() {
     if (!b.obj && !b.pts.length) { D.text = ''; D.as = null; }       // back at the first prompt: a new dimension starts clean
     note(dimPrompt()); paintOverlay(); return;
   }
-  if (state.dimRun.at(-1) === histLen()) { state.dimRun.pop(); undoCurrent(); note('Dimension taken back. ' + dimPrompt()); return; }
+  const run = state.dimRun.at(-1), top = histTop();
+  if (run && run.tab === top.tab && run.order === top.order) { state.dimRun.pop(); undoCurrent(); note('Dimension taken back. ' + dimPrompt()); return; }
   note('Nothing to undo in this DIM. ' + dimPrompt());
 }
 function dimensionPoint(d, p, shift = false, typed = false) {

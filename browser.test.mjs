@@ -11771,7 +11771,7 @@ try {
     await typeCmd('Len <> mm');
     assert.equal(await prompt(), 'Specify dimension line location or second line for angle [Text/Undo]:', 'back at the placement prompt');
     await click(50, 70);
-    assert.match(await prompt(), /Dimension placed: Len 113\.14 mm mm/);
+    assert.match(await prompt(), /Dimension placed: Len 113\.14 mm,/, 'a text override gets no second "mm"');
     assert.deepEqual(await overrides(), ['Len <> mm']);
     // U inside a dimension goes back one pick; at the first prompt there is nothing of this dimension to undo
     await click(60, 60); await typeCmd('u');
@@ -11822,6 +11822,41 @@ try {
     await typeCmd('u');
     assert.match(await prompt(), /^Nothing to undo in this DIM\./);
     assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension');
+    // Enter at the Text prompt keeps the measured value (no override); Esc at the Text prompt goes back to the placement prompt
+    const place = 'Specify dimension line location or second line for angle [Text/Undo]:';
+    await click(60, 60); await typeCmd('t'); await typeCmd('');
+    assert.equal(await prompt(), place);
+    await click(50, 70);
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm,/);
+    assert.deepEqual(await overrides(), [], 'Enter at the Text prompt added no override');
+    await click(60, 60); await typeCmd('t'); await page.keyboard.press('Escape');
+    assert.equal(await prompt(), place, 'Esc at the Text prompt keeps the line pick');
+    await click(50, 70);
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm,/);
+    assert.equal(await count(), 2);
+    // U after a tab switch does not undo the other tab (same history length in both)
+    await t('picker').setInputFiles({ name: 'auto2b.dxf', mimeType: 'text/plain', buffer: Buffer.from(dimDoc(), 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'auto2b.dxf');
+    await click(175, 100); await click(190, 120); await click(200, 170); await click(215, 190);
+    assert.equal(await count(), 2, 'tab B holds two dimensions of its own');
+    await page.locator('.tabs .dtab').first().click();                                    // tab A (renamed once edited)
+    await typeCmd('u');
+    assert.match(await prompt(), /^Nothing to undo in this DIM\./);
+    assert.equal(await count(), 2, 'U in tab A did not undo anything');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await closeTabs(/./);
+  });
+
+  // a second line parallel to the first has no angle: the click is the location
+  await step('TODO 155l2: DIM: a parallel second line is the location of the first line\'s dimension', async () => {
+    const doc = newDoc(4);
+    addEntities(doc, dxfLine(20, 20, 100, 100), dxfLine(70, 20, 120, 70));
+    await openGrips(writeDxf(doc), 'parallel.dxf');
+    await typeCmd('dim');
+    await click(60, 60);
+    await click(100, 50);                                                                 // on the parallel line
+    assert.match(await prompt(), /Dimension placed: 113\.14 mm,/);
+    assert.equal(Object.keys(await dimBlocks()).length, 1);
     await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     await closeTabs(/./);
   });
