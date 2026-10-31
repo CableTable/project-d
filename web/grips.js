@@ -175,8 +175,10 @@ function dragEllipse(ent, id, g, to) {
   const axes = (m, minor) => {
     const len = Math.hypot(m[0], m[1]);
     if (!(len > 1e-9) || !(minor > 1e-9)) return null;
-    const big = len >= minor ? { m, ratio: minor / len } : { m: [-m[1] * minor / len, m[0] * minor / len], ratio: len / minor };
-    return { ent: withValues(ent, [[at(r, 11), big.m[0]], [at(r, 21), big.m[1]], [at(r, 40), big.ratio]]), label: 'Ellipse axis' };
+    const swap = len < minor, big = swap ? { m: [-m[1] * minor / len, m[0] * minor / len], ratio: len / minor } : { m, ratio: minor / len };
+    const edits = [[at(r, 11), big.m[0]], [at(r, 21), big.m[1]], [at(r, 40), big.ratio]];
+    if (swap && q.arc) edits.push([at(r, 41), (q.t0 - Math.PI / 2 + TAU) % TAU], [at(r, 42), (q.t1 - Math.PI / 2 + TAU) % TAU]);       // the parameters are measured from the major axis, which turned a quarter: the arc stays where it was
+    return { ent: withValues(ent, edits), label: 'Ellipse axis' };
   };
   if (id === 'm0' || id === 'm1') return axes(id === 'm0' ? d : [-d[0], -d[1]], b);
   if (id === 'n0' || id === 'n1') return axes(q.m, Math.abs((-d[0] * q.m[1] + d[1] * q.m[0]) / a));

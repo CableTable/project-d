@@ -649,9 +649,9 @@ input.cursor-field[aria-invalid='true'] { border-color: #dc2626; outline: 1px so
 .ovl .tx-base { fill: none; stroke: var(--mark); stroke-width: 1; stroke-dasharray: 2 3; vector-effect: non-scaling-stroke; }
 
 /* Grips (grips.js; mock-up R5c): blue squares, the hot grip red, the dragged shape dashed over a dashed ghost of what it was */
-.ovl .gr { fill: var(--grip-cold); stroke: var(--muted); stroke-width: 1.2; vector-effect: non-scaling-stroke; }
-.ovl .gr.hover { fill: var(--grip-hover); stroke: var(--grip-hover); }       /* 155r: GRIPHOVER ACI 11 #ff7f7f, GRIPHOT ACI 12 #a50000 */
-.ovl .gr.hot { fill: var(--grip-hot); stroke: var(--grip-hot); }
+.ovl .gr { fill: var(--grip-cold); stroke: var(--partline); stroke-width: 1.2; vector-effect: non-scaling-stroke; }       /* the outline is the drawing's contrast colour (dark on light, white on dark) so a grip shows on any fill */
+.ovl .gr.hover { fill: var(--grip-hover); }       /* 155r: GRIPHOVER ACI 11 #ff7f7f, GRIPHOT ACI 12 #a50000 */
+.ovl .gr.hot { fill: var(--grip-hot); }
 .ovl .gr-tick { stroke: var(--hot); stroke-width: 1.2; fill: none; vector-effect: non-scaling-stroke; }
 .ovl .gr-cross { stroke: var(--accent); stroke-width: 1; fill: none; vector-effect: non-scaling-stroke; }
 .ovl .gr-spoke { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; fill: none; vector-effect: non-scaling-stroke; }

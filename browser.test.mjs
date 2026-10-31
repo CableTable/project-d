@@ -10262,6 +10262,71 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 155e4 fixes: grips on one selected text beside its handles, grips with a contrasting outline, Esc mid-drag on a hatch grip, live previews of hot text / hatch grips and on a layout', async () => {
+    await menuItem('View', 'Theme: light');
+    mkdirSync('shots-155e4', { recursive: true });
+    const doc = newDoc(4), hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'SOLID'], [70, 1], [71, 0], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 50], [10, 60], [20, 50], [10, 60], [20, 80], [10, 20], [20, 80], [97, 0], [75, 0], [76, 1], [98, 1], [10, 40], [20, 65]]);
+    addEntities(doc, dxfText(30, 120, 8, 'HELLO'), hatch);
+    const preview = async () => +(await t('drawing').getAttribute('data-preview') || 0);
+    const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);
+    const shiftGrip = async (id) => { const a = await gripBox(id); await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { await page.keyboard.up('Shift'); } await frames(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    await openGrips(writeDxf(doc), 'e4fix.dxf');
+    // one text: its grip and its text handles together; the grip moves it, a corner handle still scales the height
+    await pick(32, 123, 1);
+    assert.equal(await t('text-box').count(), 1, 'the text box shows');
+    assert.equal(await page.locator('[data-testid^=text-handle-]').count(), 4, 'with its four corner handles');
+    assert.equal(await t('grip-hint').isVisible(), true);
+    await dragGripTo('0:i', 70, 100);
+    let tx = entOf(await savedDoc(), 0);
+    assert.ok(near(fieldOf(tx, 10), 70, 0.6) && near(fieldOf(tx, 20), 100, 0.6), 'the insertion grip moved the text');
+    await undo(); await pick(32, 123, 1);
+    const hb = await handleBox(2);
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await page.mouse.down();
+    await page.mouse.move(hb.x + hb.width / 2 + 40, hb.y + hb.height / 2 - 40, { steps: 4 }); await page.mouse.up(); await frames();
+    tx = entOf(await savedDoc(), 0);
+    assert.ok(fieldOf(tx, 40) > 8.5, 'a corner handle changed the height: ' + fieldOf(tx, 40));
+    await undo();
+    // the grip outline is the drawing's contrast colour, light and dark
+    for (const [theme, want] of [['light', 'rgb(29, 29, 29)'], ['dark', 'rgb(238, 241, 244)']]) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await pick(40, 65, 1); await gripWhen(1);
+      assert.equal(await page.locator('[data-testid=grip]').first().evaluate((el) => getComputedStyle(el).stroke), want, 'grip outline, ' + theme);
+      await page.screenshot({ path: `shots-155e4/grip-outline-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    // Esc in the middle of a hatch grip drag changes nothing
+    await pick(40, 65, 1);
+    const before = JSON.stringify(entOf(await savedDoc(), 1).r.v);
+    await dragGripTo('1:c', 90, 100, { hold: true }); await frames();
+    assert.ok(await preview() > 0, 'the hatch is previewed moved while dragged');
+    await page.keyboard.press('Escape'); await page.mouse.up(); await frames();
+    assert.equal(JSON.stringify(entOf(await savedDoc(), 1).r.v), before, 'Esc: the hatch is where it was');
+    assert.equal(await preview(), 0, 'no preview left');
+    // two hot grips (text + hatch): Stretch shows both moved while the pointer travels, then Esc leaves both
+    await pick(32, 123, 1); await click(40, 65, { shift: true }); await frames(); await gripWhen(2);
+    await shiftGrip('0:i'); await shiftGrip('1:c'); await hotWhen(2);
+    const a = await gripBox('0:i'), b = await at(100, 100);       // (text is entity 0, the hatch 1)
+    await page.mouse.click(a.x, a.y); await frames();
+    await page.mouse.move(b.x, b.y, { steps: 4 }); await frames();
+    assert.ok(await preview() > 0, 'both are previewed moved');
+    await page.keyboard.press('Escape'); await frames();
+    assert.equal(await preview(), 0);
+    const kept = await savedDoc();
+    assert.equal(JSON.stringify(entOf(kept, 1).r.v), before, 'the hatch is where it was');
+    assert.ok(near(fieldOf(entOf(kept, 0), 10), 30, 1e-6), 'and the text');
+    // on a layout: an ellipse loose on the plate, its centre grip dragged shows the moved drawing live
+    await freshLayoutWithPlate();
+    await typeCmd('ellipse'); await typeCmd('175,600'); await typeCmd('225,600'); await typeCmd('20');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(225, 600); await frames(); await gripWhen(5);
+    const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    await dragGripTo(await gid('c'), 250, 640, { hold: true }); await frames();
+    assert.ok(await preview() > 0, 'the layout shows the moved object while dragged');
+    await page.keyboard.press('Escape'); await page.mouse.up(); await frames();
+    assert.equal(await preview(), 0);
+    await closeTabs(/./);
+  });
+
   await step('Grips: off past 200 selected shapes (and on for fewer)', async () => {
     const doc = newDoc(4);
     addEntities(doc, Array.from({ length: 205 }, (_, i) => dxfLine(10 + (i % 41) * 4, 20 + Math.floor(i / 41) * 20, 12 + (i % 41) * 4, 26 + Math.floor(i / 41) * 20)));

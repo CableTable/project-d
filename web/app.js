@@ -4285,6 +4285,8 @@ function paintOverlay(gesture = false) {
           if (outside.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
+      const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
+      c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
       if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
         const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
         drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
@@ -8207,8 +8209,8 @@ function gripDoc() {
   const v = layObjSelDoc(d);
   return v.sel.size ? v : null;
 }
-/** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things), and no text handles in the way. */
-const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
+/** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
+const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textEditing();
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -8250,8 +8252,8 @@ function gripAim(g, q, shift = false) {
   if (g.hots) { gripStretchHots(g, q, shift); return; }
   const r = GR.dragGrip(g.ent, g.id, [g.pos[0] + q[0] - g.base[0], g.pos[1] + q[1] - g.base[1]], shift);       // a Base point sets where the offset starts
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
-  // a text, hatch or block has no outline to draw: the canvas shows it moved, as when a selection is dragged (155e4); a layout has no such canvas
-  const fl = r && GR.movesWhole(g.ent, g.id) && !g.d.vlay && g.d.fl;
+  // a text, hatch or block has no outline to draw: the canvas shows it moved, as when a selection is dragged (155e4); a layout paints it from its objects' drawing (g.d.fl)
+  const fl = r && GR.movesWhole(g.ent, g.id) && g.d.fl;
   if (fl && !g.items) g.items = fl.items.filter((it) => it.e === g.e);
   g.move = fl ? { items: g.items, preview: { ...fl, items: g.items }, dx: q[0] - g.base[0], dy: q[1] - g.base[1] } : null;
 }
@@ -8268,11 +8270,15 @@ function gripStretchHots(g, q, shift) {
     if (cur !== ent) nexts.set(e, cur);
   }
   g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
+  // a text, hatch or block moved whole has no outline to draw: the canvas shows it moved by the same vector (as a single grip does)
+  const es = new Set([...nexts].filter(([e, n]) => GR.movesWhole(g.ents.get(e), 'c') && !previewShape(n, 1)).map(([e]) => e)), fl = es.size && g.d.fl;
+  g.move = fl ? { items: fl.items.filter((it) => es.has(it.e)), es, dx: v[0], dy: v[1] } : null;
+  if (g.move) g.move.preview = { ...fl, items: g.move.items };
 }
 /** The hint added to the note when some hot objects would not change in a Stretch (they stay as they were). */
 const leftNote = (g) => (g.nexts && !g.mode && g.left ? (g.left === 1 ? '. 1 object would not change and was left as it was' : `. ${g.left} objects would not change and were left as they were`) : '');
 /** The objects a grip run is previewing (the overlay draws them, not the drawing): the dragged one, or every one a hot grip changes. */
-const gripShown = (g) => (!g.next ? [] : g.nexts ? [...g.nexts].filter(([, n]) => previewShape(n, 1)).map(([e]) => e) : g.move || previewShape(g.next, 1) ? [g.e] : []);       // a text, hatch or block with no preview stays drawn where it was
+const gripShown = (g) => (!g.next ? [] : g.nexts ? [...g.nexts].filter(([e, n]) => g.move?.es.has(e) || previewShape(n, 1)).map(([e]) => e) : g.move || previewShape(g.next, 1) ? [g.e] : []);       // a text, hatch or block with no preview stays drawn where it was
 /** With Reference on (155e2) the pick's angle / distance v becomes the turn / factor against the reference; null when it cannot. */
 function gripRefVal(g, v) {
   const R = g.ref;

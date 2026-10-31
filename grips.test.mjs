@@ -298,6 +298,33 @@ test('ellipse: the minor end is the distance across the major axis; the centre m
   assert.deepEqual(GR.refPoint(e, 'm0'), [0, 0]);
 });
 
+test('ellipse arc: when the axes swap the arc stays where it was (the parameters turn a quarter)', () => {
+  const a = ellipse(0, 0, 40, 0, 0.5, 0, Math.PI);                           // the upper half
+  const sw = GR.dragGrip(a, 'm0', [10, 0]);                                  // major 10 < minor 20: swap, major now (0,20)
+  nearPt([val(sw.ent, 11), val(sw.ent, 21)], [0, 20]);
+  const g = pts(GR.gripsOf(sw.ent)).slice(5);                                // the arc ends: right (10,0) and left (-10,0), not the lower half
+  nearPt(g[0], [10, 0]); nearPt(g[1], [-10, 0]);
+  const [mx, my, ratio] = [val(sw.ent, 11), val(sw.ent, 21), val(sw.ent, 40)], mid = val(sw.ent, 41) + Math.PI / 2;       // the middle of the 180° piece is the top, (0, 20)
+  nearPt([mx * Math.cos(mid) - my * ratio * Math.sin(mid), my * Math.cos(mid) + mx * ratio * Math.sin(mid)], [0, 20]);
+  const n = GR.dragGrip(a, 'n0', [0, 60]);                                   // a minor end past the major (60 vs 40): swap by the other branch
+  const ng = pts(GR.gripsOf(n.ent)).slice(5);
+  nearPt(ng[0], [40, 0]); nearPt(ng[1], [-40, 0]);
+  assert.equal(GR.gripsOf(GR.dragGrip(ellipse(0, 0, 40, 0, 0.5), 'm0', [10, 0]).ent).length, 5, 'a full ellipse has no arc ends and gains none');
+});
+
+test('block insert with attributes and a hatch with several seed points move whole', () => {
+  const att = { type: 'ATTRIB', c: [10, 20, 1], v: ['6', '7', 'TAG'] };
+  const ins = { type: 'INSERT', layer: '0', r: { type: 'INSERT', c: [2, 10, 20, 30], v: ['B', '5', '6', '0'] }, kids: [att] };
+  const m = GR.dragGrip(ins, 'i', [8, 10]);                                  // by (3, 4)
+  assert.deepEqual(m.ent.kids[0].v, ['9', '11', 'TAG'], 'the attribute moves with its block');
+  assert.deepEqual(ins.kids[0].v, ['6', '7', 'TAG'], 'the original stays');
+  const h = hatchOf(0, 0, 10, 10);
+  h.r = { ...h.r, c: [...h.r.c, 10, 20], v: [...h.r.v, '7', '8'] };
+  h.r.v[h.r.c.indexOf(98)] = '2';
+  const mh = GR.dragGrip(h, 'c', [15, 15]);                                  // by (10, 10)
+  assert.deepEqual(hatchPts(mh.ent).slice(-2), [[11, 11], [17, 18]], 'every seed point moves');
+});
+
 test('ellipse seen from below (extrusion -1) has no grips', () => {
   const e = ellipse(0, 0, 100, 0, 0.5); e.r = { ...e.r, c: [...e.r.c, 210, 220, 230], v: [...e.r.v, '0', '0', '-1'] };
   assert.deepEqual(GR.gripsOf(e), []);
