@@ -84,7 +84,7 @@ function inherited(e, parent, layers) {
 }
 
 /** Returns { entities, blocks }; throws before editing if a member cannot be transformed safely. */
-export function explodeInsert(e, raw) {
+export function explodeInsert(e, raw, burst = false) {
   if (e.type !== 'INSERT') return null;
   const blocks = { ...raw.blocks };
   function transform(e, m, depth = 0) {
@@ -116,7 +116,9 @@ export function explodeInsert(e, raw) {
       blocks[madeName] = { base: [0, 0], xref: false, entities: [] };
       const local = m.slice(); local[4] -= at[0]; local[5] -= at[1];
       blocks[madeName].entities = members(e, local, depth + 1, false);
-      return [insert(madeName, ...at, e)];
+      const made = insert(madeName, ...at, e);
+      made.kids = e.kids?.map((r) => transform(fromRecord(r), m, depth)[0].r);
+      return [made];
     }
     if (['CIRCLE', 'ARC', 'ELLIPSE'].includes(e.type)) {
       const ell = e.type === 'ELLIPSE', r = val(e, 40), u = ell ? [val(e, 11), val(e, 21)] : [r, 0];
@@ -165,27 +167,30 @@ export function explodeInsert(e, raw) {
     }
     return [entity(e.type, pairs, e)];
   }
-  function members(e, parent, depth, inherit = true) {
+  function members(e, parent, depth, inherit = true, values = false) {
     const block = blocks[field(e, 2)];
     if (!block || block.xref) throw new Error('missing block or external reference');
     const out = [], cols = val(e, 70, 1), rows = val(e, 71, 1);
     if (![cols, rows].every((n) => Number.isInteger(n) && n > 0 && n <= 100)) throw new Error('invalid block array');
     for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
       const m = mmul(parent, placement(e, block.base, col, row));
-      for (const child of block.entities) out.push(...transform(inherit ? inherited(child, e, raw.layers) : child, m, depth));
+      for (const child of block.entities) {
+        if (values && child.type === 'ATTDEF') continue;
+        const member = inherit ? inherited(child, e, raw.layers) : child;
+        out.push(...transform(child.type === 'ATTDEF' ? { ...member, layer: child.layer } : member, m, depth));
+      }
     }
-    for (const r of e.kids || []) {
-      if ((get(r, 70) ?? 0) & 1) continue;                     // a hidden attribute stays hidden: drop it, as the drawing does
-      const keep = r.c.map((c, i) => i).filter((i) => r.c[i] !== 70 && r.c[i] !== 73);       // ATTRIB's flags and field length mean nothing on a TEXT
+    for (const r of values ? e.kids || [] : []) {
+      if (r.type !== 'ATTRIB') continue;
+      const keep = r.c.map((c, i) => i).filter((i) => ![2, 3, 60, 70, 73, 100, 280].includes(r.c[i]));       // attribute metadata and invisibility do not belong on the visible TEXT
       const attr = fromRecord({ ...r, type: 'TEXT', c: keep.map((i) => (r.c[i] === 74 ? 73 : r.c[i])), v: keep.map((i) => r.v[i]) });       // ATTRIB's vertical alignment is 74, TEXT's is 73
-      if (attr.hidden) continue;
-      out.push(...transform(attr, parent, depth));
+      out.push(...transform({ ...attr, layer: e.layer, ps: e.ps }, parent, depth));
     }
     return out;
   }
   const parent = e.flip ? [-1, 0, 0, 1, 0, 0] : ID;
   if (val(e, 210) || val(e, 220)) throw new Error('tilted inserts stay intact');
-  return { entities: members(e, parent, 0), blocks };
+  return { entities: members(e, parent, 0, true, burst && e.kids?.some((r) => r.type === 'ATTRIB')), blocks };
 }
 
 /** Is this entity the INSERT of a PD_DIM block that `blocks` holds? */
@@ -267,7 +272,7 @@ export function explodeDimension(e, raw) {
 }
 
 /** Replace only explodable selected entities, preserving draw order and returning the new selection. */
-export function explodeSelection(raw, selection, locked = new Set()) {
+export function explodeSelection(raw, selection, locked = new Set(), burst = false) {
   let blocks = raw.blocks, exploded = 0, skipped = 0;
   const entities = [], selected = new Set(), errors = [], messages = new Set(), dims = new Set();
   raw.entities.forEach((e, i) => {
@@ -276,7 +281,7 @@ export function explodeSelection(raw, selection, locked = new Set()) {
       if (locked.has(e.layer)) skipped++;
       else try {
         if (e.type === 'DIMENSION' || isDimInsert(e, blocks)) { pieces = explodeDimension(e, { ...raw, blocks }); dims.add(field(e, 2)); }
-        else if (e.type === 'INSERT') { const r = explodeInsert(e, { ...raw, blocks }); pieces = r.entities; if (pieces.length) blocks = r.blocks; }
+        else if (e.type === 'INSERT') { const r = explodeInsert(e, { ...raw, blocks }, burst); pieces = r.entities; if (pieces.length) blocks = r.blocks; }
         else if (e.type === 'HATCH') { pieces = explodeHatch(e); if (pieces.length) messages.add('Hatch boundary associativity removed.'); }
         else pieces = explodePolyline(e);
       } catch (err) { errors.push(err.message); }

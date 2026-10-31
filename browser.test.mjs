@@ -16122,6 +16122,99 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 155i2a: Explode shows ATTDEF tags, BURST keeps both attribute values, loose tags move and snap; Layout and Compare parity', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-155i2', { recursive: true });
+    const raw = newDoc(4);
+    addLayer(raw, 'Cut', { aci: 7 }); addLayer(raw, 'Definitions', { aci: 3 });
+    addBlock(raw, 'Attributed', [dxfLine(0, 0, 100, 0), ...[0, 1].map((n) => entity('ATTDEF',
+      [[10, 10], [20, 10 + n * 20], [40, 6], [2, n ? 'TAG_HIDDEN' : 'TAG_SHOWN'], [1, 'Default'], [70, n]], { layer: 'Definitions' }))]);
+    const ins = dxfInsert('Attributed', 100, 100, { layer: 'Cut' });
+    ins.kids = [0, 1].map((n) => entity('ATTRIB', [[10, 110], [20, 110 + n * 20], [40, 6], [2, n ? 'TAG_HIDDEN' : 'TAG_SHOWN'], [1, n ? 'Value hidden' : 'Value shown'], [70, n]], { layer: 'Definitions' }).r);
+    addEntities(raw, ins);
+    await page.evaluate(() => {
+      window.__attrTexts = [];
+      window.__attrFill = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__attrTexts.push(String(text));
+        return window.__attrFill.call(this, text, ...args);
+      };
+    });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await frames();
+    };
+    const clearPaint = () => page.evaluate(() => { window.__attrTexts = []; });
+    const painted = async (texts) => {
+      await frames();
+      const drawn = await page.evaluate(() => window.__attrTexts);
+      for (const text of texts) assert.ok(drawn.includes(text), 'canvas draws ' + text);
+    };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    try {
+      await open('attributes.dxf', raw);
+      await click(150, 100); await waitSel('1 selected');
+      await clearPaint(); await typeCmd('explode');
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'ATTDEF', 'ATTDEF']);
+      await painted(['TAG_SHOWN', 'TAG_HIDDEN']);
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        await page.screenshot({ path: `shots-155i2/explode-tags-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      await undo(); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT'], 'one Undo restores attributes');
+      await click(150, 100); await cmdLine().fill('burst'); await page.keyboard.press('Escape');
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT'], 'Esc cancels the unsubmitted command');
+      await click(150, 100); await clearPaint(); await typeCmd('burst');
+      assert.match(await prompt(), /^Burst: 1 exploded/);
+      const burst = await savedDoc();
+      assert.deepEqual(burst.entities.map((e) => e.type), ['LINE', 'TEXT', 'TEXT']);
+      assert.ok(burst.entities.every((e) => e.layer === 'Cut'));
+      await painted(['Value shown', 'Value hidden']);
+      assert.equal((await histLabels()).at(-1), 'Burst');
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        await page.screenshot({ path: `shots-155i2/burst-values-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      await undo(); assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['INSERT']);
+      await click(150, 100); await menuItem('Modify', 'Burst');
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'TEXT', 'TEXT'], 'Modify menu runs BURST');
+      await undo(); await click(150, 100); await typeCmd('explode');
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+      await click(115, 132); await waitSel('1 selected');
+      await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0'); await page.keyboard.press('Escape');
+      const moved = (await savedDoc()).entities.find((e) => e.type === 'ATTDEF' && e.r.v[e.r.c.indexOf(2)] === 'TAG_HIDDEN');
+      assert.equal(GR.get(moved.r, 10), 120, 'invisible loose ATTDEF is selectable and movable');
+      await typeCmd('line'); await click(120.6, 130.4); await typeCmd('150,160'); await page.keyboard.press('Escape');
+      const snapped = (await savedDoc()).entities.at(-1);
+      assert.equal(snapped.type, 'LINE');
+      assert.deepEqual([GR.get(snapped.r, 10), GR.get(snapped.r, 20)], [120, 130], 'insertion snaps to the moved ATTDEF');
+      const lay = newLayout('Attributes');
+      lay.parts.b = objectPart('b', 'Attributed block', ins, raw.layers, raw.header, raw.blocks);
+      lay.placed = [objectPlacement(lay.parts.b)];
+      await open('layout-attributes.dxf', layoutRaw(lay));
+      await click(150, 100); await clearPaint(); await typeCmd('explode');
+      assert.equal(await nParts(), 3); await painted(['TAG_SHOWN', 'TAG_HIDDEN']);
+      await undo(); assert.equal(await nParts(), 1);
+      await click(150, 100); await clearPaint(); await typeCmd('burst');
+      assert.equal(await nParts(), 3); await painted(['Value shown', 'Value hidden']);
+      await undo(); assert.equal(await nParts(), 1, 'one layout Undo restores the insert');
+      await open('compare-attributes.dxf', raw);
+      await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click();
+      await click(150, 100); await clearPaint(); await typeCmd('explode'); await painted(['TAG_SHOWN', 'TAG_HIDDEN']);
+      await undo(); await click(150, 100); await clearPaint(); await typeCmd('burst'); await painted(['Value shown', 'Value hidden']);
+      await page.locator('.tabs .dtab', { hasText: 'compare-attributes' }).click();
+      assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LINE', 'TEXT', 'TEXT']);
+    } finally {
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__attrFill; delete window.__attrFill; delete window.__attrTexts; });
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 155i1: Explode pattern hatches into clipped LINEs, keep the boundary, refuse solid hatches and undo once; Layout parity', async () => {
     await menuItem('View', 'Theme: light');
     await closeTabs(/./);

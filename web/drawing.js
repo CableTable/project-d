@@ -426,6 +426,7 @@ export function flatten(doc, hidden = new Set()) {
           break;
         }
         case 'TEXT': text(base, f, false, put); break;
+        case 'ATTDEF': if (!depth) text(base, { ...f, 1: f[2] }, true, put); break;
         case 'MTEXT': mtext(base, r, f, put); break;
         case 'SOLID': case 'TRACE': {
           const p = [10, 11, 12, 13].map((c) => f[c] == null ? null : [num(f[c]), num(f[c + 10])]);
@@ -506,7 +507,7 @@ export function flatten(doc, hidden = new Set()) {
           vports.push({ cx: num(f[10]), cy: num(f[20]), w: num(f[40]), h: num(f[41]), vcx: num(f[12]), vcy: num(f[22]), vh: num(f[45]), tw: num(f[51]) * DEG, frozen });
           break;
         }
-        case 'ATTDEF': case 'SEQEND': case 'ENDBLK': break;
+        case 'SEQEND': case 'ENDBLK': break;
         default: skip(e.type);
       }
     }

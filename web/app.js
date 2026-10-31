@@ -443,6 +443,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
+  menus.Modify.push(['Burst', burstSelected]);
   menus.Modify.push(['Explode', explodeSelected, 'X']);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
@@ -3806,6 +3807,7 @@ const DO = {
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
+  burst: () => burstSelected(),
   breakapart: () => breakApartSelected(),
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
@@ -4854,49 +4856,53 @@ function breakApartSelected() {
 }
 
 /** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects, a dimension its lines, arrows and text; one level, one undo step. */
-function explodeOnLayout() {
+function explodeOnLayout(burst = false) {
+  const label = burst ? 'Burst' : 'Explode';
   const all = selItems(), d = curDoc(), isDim = (x) => x.p.src === 'loose' && isDimPart(x.part), dims = all.filter(isDim), items = all.filter((x) => !isDim(x));
-  if (!all.length) { note('Explode: select a placed part or the grid first'); return; }
-  const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, dims.length ? `Explode ${all.length} objects` : grid ? 'Explode the grid' : items.length > 1 ? `Explode ${items.length} parts` : `Explode ${items[0].part.name}`);
+  if (!all.length) { note(`${label}: select a placed part or the grid first`); return; }
+  const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, dims.length ? `${label} ${all.length} objects` : grid ? `${label} the grid` : items.length > 1 ? `${label} ${items.length} parts` : `${label} ${items[0].part.name}`);
   const dimPs = dims.filter((x) => !x.p.lock).map((x) => d.lay.placed[x.p.i]);          // by object: the explode of the parts moves the indexes
   const at = grid ? gLooseMany(g, items.map((x) => x.i)) : items.map((x) => x.i);       // in lay.placed, item for item; a grid copy first loosens the whole grid
   const gridPl = items.flatMap((x, k) => (x.p.src === 'grid' ? [d.lay.placed[at[k]]] : []));
   const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = dims.length - dimPs.length + rest.filter((q) => q.x.part.obj && !LD.canExplodeObject(q.x.part) || q.x.p.lock).length;
   gMark(g);
-  const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid()) : { done: 0, pieces: [], errors: [], messages: [] };
+  const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid(), burst) : { done: 0, pieces: [], errors: [], messages: [] };
   const made = r.pieces.map((i) => d.lay.placed[i]), beforeDims = new Set(d.lay.placed);
   const nd = dimPs.length ? LD.explodeDims(d.lay, dimPs.map((p) => d.lay.placed.indexOf(p)), () => 'o' + uid()) : 0;
   made.push(...d.lay.placed.filter((p) => !beforeDims.has(p)));
   const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '') + (r.messages.length ? '. ' + r.messages.join(' ') : '');
-  if (!grid && !r.done && !nd) { note('Explode: nothing explodable (0 exploded)' + why); return; }
+  if (!grid && !r.done && !nd) { note(label + ': nothing explodable (0 exploded)' + why); return; }
   if (r.done) tidyGroups(d.lay);
   gCommit(g);
   selLooseMany = [...gridPl, ...made].map((p) => d.lay.placed.indexOf(p)); update();
   const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} dimension${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
-  if (grid) note(`Explode: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : '. Explode again to break a part into outlines') + why + '. Ctrl+Z puts the grid back');
-  else note('Explode: ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
+  if (grid) note(`${label}: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : `. ${label} again to break a part into outlines`) + why + '. Ctrl+Z puts the grid back');
+  else note(label + ': ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
 }
 
-function explodeSelected() {
+function explodeSelected() { explodeOrBurst(false); }
+function burstSelected() { explodeOrBurst(true); }
+function explodeOrBurst(burst) {
+  const label = burst ? 'Burst' : 'Explode';
   const lay = curLay() && curDoc();
   if (lay) {                                                         // on a layout: dimensions alone -> lines, arrows and text (156b2c3b); anything else -> placed parts and grids (156b4)
     const items = selItems();
-    if (!items.length || !items.every((x) => x.p.src === 'loose' && isDimPart(x.part))) { explodeOnLayout(); return; }
+    if (!items.length || !items.every((x) => x.p.src === 'loose' && isDimPart(x.part))) { explodeOnLayout(burst); return; }
     const ats = items.map((x) => x.p.i), snap = laySnap(lay.lay);
     const n = LD.explodeDims(lay.lay, ats, () => 'o' + uid());
-    if (!n) { note('Explode: nothing explodable (0 exploded)'); return; }
-    state.sel = -1; pushLay(lay, snap, '', 'Explode'); touch(); update();
-    note(`Explode: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
+    if (!n) { note(label + ': nothing explodable (0 exploded)'); return; }
+    state.sel = -1; pushLay(lay, snap, '', label); touch(); update();
+    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
     return;
   }
   const d = editable();
-  if (!d) { if (!cmpDoc() || cmpEdit()) note('Explode works on a drawing tab: open a drawing first'); return; }      // in Compare, cmpEdit() says why a library part or hidden drawing cannot
-  const r = explodeSelection(d.raw, d.sel, d.locked);
+  if (!d) { if (!cmpDoc() || cmpEdit()) note(`${label} works on a drawing tab: open a drawing first`); return; }      // in Compare, cmpEdit() says why a library part or hidden drawing cannot
+  const r = explodeSelection(d.raw, d.sel, d.locked, burst);
   const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
-  if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }
-  commit(d, { entities: r.entities, blocks: r.blocks }, 'Explode');
+  if (!r.exploded) { note(label + ': nothing explodable (0 exploded)' + skipped); return; }
+  commit(d, { entities: r.entities, blocks: r.blocks }, label);
   setSel(d, r.selected);
-  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
+  note(`${label}: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
 }
 
 // ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----

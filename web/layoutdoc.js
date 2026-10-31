@@ -129,12 +129,12 @@ export function objectCommit(lay, view, entities, newId) {
 }
 
 /** A placed part's loose entities (sheet mm) with its placement baked in, one level (a block or dimension inside stays one INSERT): { entities, blocks }. Throws when a member cannot be carried. */
-export function explodePart(part, p) {
+export function explodePart(part, p, burst = false) {
   const mini = newDoc(4), f = part.factor || 1, k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * f * k, sy = (p.mirrorY ? -1 : 1) * f * k;
   mini.layers = part.raw.layers; mini.blocks = { ...part.raw.blocks };
   let entities = part.raw.entities.filter((e) => (e.ps ? 1 : 0) === part.space), messages = [];
   if (part.obj) {
-    const r = explodeSelection({ ...part.raw, entities }, new Set([0]));
+    const r = explodeSelection({ ...part.raw, entities }, new Set([0]), new Set(), burst);
     if (r.errors.length) throw new Error(r.errors.join('; '));
     if (!r.exploded) return { entities: [], blocks: mini.blocks, messages };
     entities = r.entities; mini.blocks = r.blocks; messages = r.messages;
@@ -142,11 +142,11 @@ export function explodePart(part, p) {
   addBlock(mini, 'PD_PART', entities, [part.box[0], part.box[1]]);
   return { ...explodeInsert(insert('PD_PART', p.x, p.y, { layer: '0', rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini), messages };       // layer 0 stays layer 0, as AutoCAD
 }
-/** Hatches and native dimensions are also explodable when they are loose layout objects. */
-export const canExplodeObject = (part) => !!part?.obj && ['HATCH', 'DIMENSION'].includes(part.raw.entities[0]?.type);
+/** Blocks, hatches and native dimensions are also explodable when they are loose layout objects. */
+export const canExplodeObject = (part) => !!part?.obj && ['HATCH', 'DIMENSION', 'INSERT'].includes(part.raw.entities[0]?.type);
 /** Explode the placed parts at `idxs` (indexes in lay.placed; layout objects and locked parts stay): each becomes its loose entities as layout objects, in its slot, on the part's layers (added to the layout when missing).
  * → { done (parts exploded), pieces (indexes in lay.placed of the new objects), errors } */
-export function explodePlaced(lay, idxs, newId) {
+export function explodePlaced(lay, idxs, newId, burst = false) {
   const at = new Set(idxs), out = [], pieces = [], errors = new Set(), messages = new Set(), table = { ...layersOf(lay) }, names = new Set(Object.values(lay.parts).map((q) => q.name));
   const find = (t, n) => Object.keys(t).find((k) => k.toLowerCase() === String(n).toLowerCase());
   let done = 0;
@@ -155,7 +155,7 @@ export function explodePlaced(lay, idxs, newId) {
     const part = lay.parts[p.partId], mine = [];
     if (at.has(i) && part && (!part.obj || canExplodeObject(part)) && !p.lock) {
       try {
-        const r = explodePart(part, p);
+        const r = explodePart(part, p, burst);
         for (const message of r.messages) messages.add(message);
         for (let e of r.entities) {
           const k = find(part.raw.layers || {}, e.layer), def = () => (k === undefined ? { aci: 7 } : structuredClone(part.raw.layers[k]));

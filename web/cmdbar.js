@@ -39,6 +39,7 @@ const TABLE = [
   ['textoutlines', 'Edit', 'Turn the selected text into closed outlines', ['txo'], 'draw'],
   ['weld', 'Edit', 'Shaping: join the selected closed outlines into one', [], 'draw'],
   ['explode', 'Edit', 'Split polylines, blocks or dimensions into their members', ['x'], ''],
+  ['burst', 'Edit', 'Explode blocks and keep attribute values as visible text', [], ''],
   ['breakapart', 'Edit', 'Separate a group or block into outlines', [], '', 'Ctrl+K'],
   ['shapetrim', 'Edit', 'Shaping: cut the other outlines out of the last picked one', ['strim'], 'draw'],
   ['intersect', 'Edit', 'Shaping: keep the area the selected outlines share', ['int'], 'draw'],

@@ -3,9 +3,9 @@ import test from 'node:test';
 import { explodePolyline, explodeInsert, explodeSelection } from './web/explode.js';
 import { newDoc, addLayer, addBlock, addEntities, line, arc, circle, ellipse, lwpoly, insert, entity, text, writeDxf } from './web/dxf-write.js';
 import { get } from './web/grips.js';
-import { flatten, mapply, readDxf } from './web/drawing.js';
+import { flatten, mapply, readDxf, pickIndex } from './web/drawing.js';
 import { resolve } from './web/cmdbar.js';
-import { buildDim, addDimension } from './web/edit.js';
+import { buildDim, addDimension, moveEntities } from './web/edit.js';
 import * as LD from './web/layoutdoc.js';
 
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} ≠ ${expected}`);
@@ -105,25 +105,103 @@ test('block arrays, text and an elliptical member retain their geometry', () => 
   assert.equal(pieces[2].type, 'ELLIPSE'); near(get(pieces[2].r, 40), .5);
 });
 
-test('insert attributes become text at their drawing position with their own properties', () => {
-  const doc = blockDoc([line(1, 2, 2, 2)], { rot: 90, sx: 2, sy: 3 });
+test('Explode drops ATTRIB values and releases transformed ATTDEFs on their definition layers', () => {
+  const doc = blockDoc([line(1, 2, 2, 2),
+    entity('ATTDEF', [[10, 2], [20, 3], [11, 2], [21, 3], [40, 2], [2, 'TAG'], [1, 'Default'], [70, 1], [72, 1], [74, 2]], { layer: 'Own' }),
+    entity('ATTDEF', [[10, 1], [20, 2], [40, 1], [2, 'ZERO'], [1, 'Default']], { layer: '0' }),
+  ], { rot: 90, sx: 2, sy: 3 });
   doc.entities[0].kids = [entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Value'], [62, 2]], { layer: 'Own' }).r];
   const pieces = result(doc).entities;
-  assert.equal(pieces[1].type, 'TEXT'); assert.equal(pieces[1].layer, 'Own'); assert.equal(pieces[1].aci, 2);
-  nearAll(numbers(pieces[1], [10, 20, 40]), [25, 35, 2]);
+  assert.deepEqual(pieces.map((e) => e.type), ['LINE', 'ATTDEF', 'ATTDEF']);
+  assert.deepEqual(pieces.map((e) => e.layer), ['Cut', 'Own', '0']);
+  nearAll(numbers(pieces[1], [10, 20, 11, 21, 40, 50]), [7, 22, 7, 22, 6, 90]);
+  near(get(pieces[1].r, 41), 2 / 3);
+  assert.equal(get(pieces[1].r, 70), 1); assert.equal(get(pieces[1].r, 74), 2);
+  assert.deepEqual(flatten({ ...doc, entities: pieces }).items.filter((it) => it.k === 't').map((it) => it.lines[0]), ['TAG', 'ZERO']);
 });
 
-test('a hidden attribute is dropped, and an attribute\'s vertical alignment (74) becomes the TEXT one (73)', () => {
-  const doc = blockDoc([line(1, 2, 2, 2)]);
+test('BURST keeps all values as visible TEXT on the insert layer, with TEXT vertical alignment and valid saved subclasses', () => {
+  const doc = blockDoc([line(1, 2, 2, 2), entity('ATTDEF', [[10, 1], [20, 2], [40, 2], [2, 'TAG'], [1, 'Default']])], { rot: 90, sx: 2, sy: 3 });
   doc.entities[0].kids = [
     entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Shown'], [70, 0], [73, 5], [74, 2]], { layer: 'Own' }).r,
     entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Hidden'], [70, 1]], { layer: 'Own' }).r,
     entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Invisible'], [60, 1]], { layer: 'Own' }).r,
   ];
-  const pieces = result(doc).entities;
-  assert.equal(pieces.length, 2); assert.equal(pieces[1].type, 'TEXT');
-  assert.deepEqual(pieces[1].r.v[pieces[1].r.c.indexOf(1)], 'Shown');
+  const loaded = readDxf(writeDxf(doc)), before = structuredClone(loaded);
+  const r = explodeSelection(loaded, new Set([0]), new Set(), true), pieces = r.entities;
+  assert.deepEqual(pieces.map((e) => e.type), ['LINE', 'TEXT', 'TEXT', 'TEXT']);
+  assert.ok(pieces.every((e) => e.layer === 'Cut' && !e.hidden));
+  assert.deepEqual(pieces.slice(1).map((e) => e.r.v[e.r.c.indexOf(1)]), ['Shown', 'Hidden', 'Invisible']);
+  nearAll(numbers(pieces[1], [10, 20, 40]), [25, 35, 2]);
   assert.equal(get(pieces[1].r, 73), 2); assert.equal(get(pieces[1].r, 74), null); assert.equal(get(pieces[1].r, 70), null);
+  const saved = readDxf(writeDxf({ ...loaded, ...r }));
+  assert.ok(saved.entities.slice(1).every((e) => !e.r.v.includes('AcDbAttribute') && e.r.v.includes('AcDbText')));
+  assert.deepEqual(flatten(saved).items.filter((it) => it.k === 't').map((it) => it.lines[0]), ['Shown', 'Hidden', 'Invisible']);
+  assert.deepEqual(loaded, before);
+  assert.equal(explodeSelection(loaded, new Set([0]), new Set(['Cut']), true).skipped, 1);
+  assert.equal(resolve('BURST', 'draw').name, 'burst'); assert.equal(resolve('BURST', 'layout').name, 'burst');
+  loaded.entities[0].kids[0].v[loaded.entities[0].kids[0].c.indexOf(1)] = 'Edited source value';
+  loaded.blocks.B.entities[0].r.v[loaded.blocks.B.entities[0].r.c.indexOf(11)] = '999';
+  assert.equal(pieces[1].r.v[pieces[1].r.c.indexOf(1)], 'Shown');
+  assert.notEqual(get(pieces[0].r, 11), 999, 'editing the source after BURST leaves its loose results fixed');
+});
+
+test('BURST without attributes is Explode; nested inserts keep their attributes, including under shear', () => {
+  const inner = insert('Inner', 3, 4, { rot: 35 });
+  inner.kids = [entity('ATTRIB', [[10, 4], [20, 5], [40, 2], [1, 'Inner value'], [2, 'INNER'], [70, 1]]).r];
+  for (const sx of [2, 3]) {
+    const doc = blockDoc([inner], { sx, sy: 3, rot: 90 });
+    addBlock(doc, 'Inner', [line(0, 0, 2, 1), entity('ATTDEF', [[10, 1], [20, 1], [40, 2], [2, 'INNER'], [1, 'Default']])]);
+    const plain = explodeInsert(doc.entities[0], doc), burst = explodeInsert(doc.entities[0], doc, true);
+    assert.deepEqual(burst, plain);
+    assert.deepEqual(burst.entities.map((e) => e.type), ['INSERT']);
+    const nested = burst.entities[0];
+    assert.equal(nested.kids.length, 1); assert.equal(nested.kids[0].type, 'ATTRIB');
+    assert.equal(nested.kids[0].v[nested.kids[0].c.indexOf(1)], 'Inner value');
+    assert.equal(get(nested.kids[0], 70), 1);
+    nearAll([get(nested.kids[0], 10), get(nested.kids[0], 20)], [1, 20 + 3 * sx]);
+    const again = explodeInsert(nested, { ...doc, ...burst }, true);
+    assert.deepEqual(again.entities.map((e) => e.type), ['LINE', 'TEXT']);
+    doc.entities[0].kids = [entity('ATTRIB', [[10, 25], [20, 35], [40, 2], [1, 'Outer value']]).r];
+    assert.deepEqual(explodeInsert(doc.entities[0], doc, true).entities.map((e) => e.type), ['INSERT', 'TEXT']);
+  }
+});
+
+test('loose invisible ATTDEF draws its tag with TEXT styling, can move and supplies an insertion snap; definitions inside blocks stay undrawn', () => {
+  const pairs = [[10, 10], [20, 20], [11, 30], [21, 40], [40, 3], [50, 35], [41, 1.5], [71, 2], [72, 1], [74, 2], [7, 'Standard'], [70, 1], [2, 'TAG'], [1, 'Default']];
+  const doc = newDoc(), att = entity('ATTDEF', pairs);
+  addEntities(doc, att);
+  const fl = flatten(doc), it = fl.items[0];
+  const equivalent = entity('TEXT', pairs.filter(([c]) => ![1, 2, 70].includes(c)).map(([c, v]) => [c === 74 ? 73 : c, v]).concat([[1, 'TAG']]));
+  assert.deepEqual(it, flatten({ ...doc, entities: [equivalent] }).items[0]);
+  assert.deepEqual(pickIndex(fl, false).snaps.filter((s) => s.kind === 'insertion').map(({ x, y }) => [x, y]), [[30, 40]]);
+  const moved = moveEntities(doc, new Set([0]), 5, 7).entities[0];
+  nearAll(numbers(moved, [10, 20, 11, 21]), [15, 27, 35, 47]);
+  addBlock(doc, 'B', [att]); doc.entities = [insert('B', 0, 0)];
+  assert.equal(flatten(doc).items.length, 0);
+});
+
+test('layout INSERT Explode and BURST carry ATTDEF tags or both visible values through placement, save and reopen; locks skip', () => {
+  const doc = blockDoc([line(1, 2, 11, 2), ...[0, 1].map((n) => entity('ATTDEF', [[10, 1], [20, 4 + n * 5], [40, 2], [2, 'TAG' + n], [1, 'Default'], [70, n]], { layer: 'Own' }))]);
+  doc.entities[0].kids = [0, 1].map((n) => entity('ATTRIB', [[10, 10], [20, 22 + n * 5], [40, 2], [2, 'TAG' + n], [1, 'Value' + n], [70, n]], { layer: 'Own' }).r);
+  for (const burst of [false, true]) {
+    const lay = LD.newLayout('Attributes');
+    lay.parts.b = LD.objectPart('b', 'Block', doc.entities[0], doc.layers, doc.header, doc.blocks);
+    lay.placed = [{ ...LD.objectPlacement(lay.parts.b), x: 100, y: 100, rot: 90 }];
+    let id = 0;
+    const original = structuredClone(lay.placed);
+    lay.placed[0].lock = true;
+    assert.equal(LD.explodePlaced(lay, [0], () => 'o' + id++, burst).done, 0);
+    lay.placed = original;
+    const r = LD.explodePlaced(lay, [0], () => 'o' + id++, burst);
+    assert.equal(r.done, 1); assert.equal(r.pieces.length, 3);
+    const pieces = lay.placed.map((p) => lay.parts[p.partId].raw.entities[0]);
+    assert.deepEqual(pieces.map((e) => e.type), ['LINE', burst ? 'TEXT' : 'ATTDEF', burst ? 'TEXT' : 'ATTDEF']);
+    assert.deepEqual(pieces.slice(1).map((e) => e.layer), burst ? ['Cut', 'Cut'] : ['Own', 'Own']);
+    const saved = readDxf(writeDxf(LD.layoutRaw(lay))), reopened = LD.layoutFromRaw(saved);
+    assert.equal(reopened.placed.length, 3);
+    assert.deepEqual(flatten(saved).items.filter((it) => it.k === 't').map((it) => it.lines[0]), burst ? ['Value0', 'Value1'] : ['TAG0', 'TAG1']);
+  }
 });
 
 test('a polyline seen from below keeps the mirrored arc sweep', () => {
