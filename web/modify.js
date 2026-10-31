@@ -537,9 +537,23 @@ export function offsetEntity(ent, d, at) {
   if (!canModify(ent)) return { error: 'Offset takes a line, arc, circle or polyline' };
   const sh = shapeOf(ent, 1);
   if (d === null) {
-    const P = pathOf(sh), s = P.segs[closest(P, at).index], g = s && geo(s);
+    const P = pathOf(sh), near = closest(P, at), s = P.segs[near.index], g = s && geo(s);
     if (!g) return { error: 'The object has no offset path' };
-    d = g.line ? Math.abs(cross(g.u, sub(at, s.a))) : Math.abs(dist(at, g.c) - g.r);
+    const distance = (g) => g.line ? Math.abs(cross(g.u, sub(at, g.a))) : Math.abs(dist(at, g.c) - g.r);
+    d = distance(g);
+    if (sh.t === 'poly') {
+      // At a shared endpoint, the other segment may be the one whose offset passes through the pick.
+      const f = near.u - near.index, other = f < 1e-9 ? near.index - 1 : f > 1 - 1e-9 ? near.index + 1 : near.index;
+      let error;
+      for (let i of new Set([near.index, other])) {
+        if (P.closed) i = (i + P.segs.length) % P.segs.length;
+        if (!P.segs[i]) continue;
+        const r = offsetShape(sh, distance(geo(P.segs[i])), at);
+        if (r.shape && closest(pathOf(r.shape), at).d < 1e-6) return { ent: rebuilt(r.shape, ent) };
+        error ||= r.error;
+      }
+      return { error: error || 'The through point cannot lie on an offset of this polyline' };
+    }
   }
   const r = offsetShape(sh, d, at);
   return r.error ? r : { ent: rebuilt(r.shape, ent) };

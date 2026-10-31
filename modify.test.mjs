@@ -57,6 +57,10 @@ test('Offset Through uses the picked line or circular segment, retaining editabl
   near(S(M.offsetEntity(arc(0, 0, 10, 0, 90), null, [12, 12]).ent).r, Math.hypot(12, 12));
   const poly = M.offsetEntity(rect(0, 0, 100, 50), null, [40, -7]).ent;
   near(Math.min(...S(poly).pts.map((p) => p[1])), -7);
+  for (const at of [[-10, -5], [-5, -10], [110, 55], [105, 60]]) {
+    const corner = M.offsetEntity(rect(0, 0, 100, 50), null, at);
+    near(M.closest(M.pathOf(S(corner.ent)), at).d, 0);
+  }
   assert.match(M.offsetEntity(line(0, 0, 100, 0), null, [40, 0]).error, /more than 0/);
 });
 
