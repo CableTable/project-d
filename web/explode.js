@@ -4,6 +4,7 @@ import { lwVertices, get } from './grips.js';
 import { entity, line, arc, circle, ellipse, lwpoly, insert, mtext } from './dxf-write.js';
 import { DIM_BLOCK, usedBlocks } from './edit.js';
 import { textRecord } from './dimension-text.js';
+import { explodeHatch } from './hatch-explode.js';
 
 const DEG = Math.PI / 180, TAU = 2 * Math.PI, ID = [1, 0, 0, 1, 0, 0];
 const val = (e, c, fallback = 0) => get(e.r, c) ?? fallback;
@@ -212,7 +213,7 @@ export function explodeDimension(e, raw) {
 /** Replace only explodable selected entities, preserving draw order and returning the new selection. */
 export function explodeSelection(raw, selection, locked = new Set()) {
   let blocks = raw.blocks, exploded = 0, skipped = 0;
-  const entities = [], selected = new Set(), errors = [], dims = new Set();
+  const entities = [], selected = new Set(), errors = [], messages = new Set(), dims = new Set();
   raw.entities.forEach((e, i) => {
     let pieces;
     if (selection.has(i)) {
@@ -220,6 +221,7 @@ export function explodeSelection(raw, selection, locked = new Set()) {
       else try {
         if (isDimInsert(e, blocks)) { pieces = explodeDimension(e, { ...raw, blocks }); dims.add(field(e, 2)); }
         else if (e.type === 'INSERT') { const r = explodeInsert(e, { ...raw, blocks }); pieces = r.entities; if (pieces.length) blocks = r.blocks; }
+        else if (e.type === 'HATCH') { pieces = explodeHatch(e); if (pieces.length) messages.add('Hatch boundary associativity removed.'); }
         else pieces = explodePolyline(e);
       } catch (err) { errors.push(err.message); }
     }
@@ -230,5 +232,5 @@ export function explodeSelection(raw, selection, locked = new Set()) {
   });
   const used = usedBlocks(blocks, entities);
   if ([...dims].some((n) => !used.has(n))) { blocks = { ...blocks }; for (const n of dims) if (!used.has(n)) delete blocks[n]; }       // a dimension's block nothing else uses goes with it, as on Delete
-  return { entities, blocks, selected, exploded, skipped, errors: [...new Set(errors)] };
+  return { entities, blocks, selected, exploded, skipped, errors: [...new Set(errors)], messages: [...messages] };
 }

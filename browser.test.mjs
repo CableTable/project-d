@@ -16122,6 +16122,53 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 155i1: Explode pattern hatches into clipped LINEs, keep the boundary, refuse solid hatches and undo once; Layout parity', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-155i1', { recursive: true });
+    const raw = newDoc(4), points = [[100, 100], [200, 100], [200, 150], [100, 150]];
+    const hatch = (solid) => entity('HATCH', [[2, solid ? 'SOLID' : 'ANSI31'], [70, solid ? 1 : 0], [71, 1], [91, 1],
+      [92, 2], [72, 0], [73, 1], [93, 4], ...points.flatMap(([x, y]) => [[10, x], [20, y]]), [97, 0],
+      [75, 0], [76, 1], [52, 45], [41, 1], [77, 0], [78, 1], [53, 45], [43, 100], [44, 100], [45, -3.535534], [46, 3.535534], [79, 0], [98, 0]], { aci: 1, lt: 'CONTINUOUS' });
+    const boundary = dxfPoly(points, { closed: true });
+    addEntities(raw, boundary, hatch(false));
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+    };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    await open('hatch-explode.dxf', raw);
+    await click(150, 125); await waitSel('1 selected');
+    await typeCmd('explode');
+    assert.match(await prompt(), /Hatch boundary associativity removed\./);
+    const pieces = await savedDoc(), lines = pieces.entities.filter((e) => e.type === 'LINE');
+    assert.ok(lines.length > 20);
+    assert.deepEqual(pieces.entities.filter((e) => e.type === 'LWPOLYLINE'), readDxf(writeDxf(raw)).entities.filter((e) => e.type === 'LWPOLYLINE'), 'boundary stays unchanged');
+    assert.ok(!pieces.entities.some((e) => e.type === 'HATCH'));
+    assert.ok(lines.every((e) => e.aci === 1 && e.lt === 'CONTINUOUS'));
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: `shots-155i1/hatch-explode-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    await undo();
+    assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['LWPOLYLINE', 'HATCH'], 'one Undo restores hatch and boundary');
+    await click(150, 125); await typeCmd('x');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    await click(125, 100); await waitSel('1 selected'); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0'); await page.keyboard.press('Escape');
+    assert.deepEqual((await savedDoc()).entities.filter((e) => e.type === 'LINE'), lines, 'editing the former boundary leaves the loose pattern lines fixed');
+    raw.entities = [hatch(true)];
+    await open('solid-explode.dxf', raw);
+    await click(150, 125); await waitSel('1 selected');
+    const history = await histLabels();
+    await typeCmd('x');
+    assert.match(await prompt(), /0 exploded.*Cannot explode HATCH/);
+    assert.deepEqual(await histLabels(), history);
+    assert.deepEqual((await savedDoc()).entities.map((e) => e.type), ['HATCH']);
+    await closeTabs(/./);
+  });
+
   await step('TODO 91 / T10: Explode menu, X / EXPLODE, new pieces selected and one Undo restores the polyline', async () => {
     await closeTabs(/./);
     const doc = newDoc();

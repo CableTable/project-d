@@ -4896,7 +4896,7 @@ function explodeSelected() {
   if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Explode');
   setSel(d, r.selected);
-  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. Ctrl+Z puts the originals back');
+  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
 }
 
 // ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----

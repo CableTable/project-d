@@ -690,7 +690,7 @@ function hatch(e, base, put) {
     for (let i = 0; i < lines && c[k] === 53; i++) {
       const a = take(53) * DEG, bx = take(43) || 0, by = take(44) || 0, ox = take(45) || 0, oy = take(46) || 0, nd = take(79) || 0, d = [];
       for (let j = 0; j < nd && c[k] === 49; j++) d.push(take(49));
-      fam.push({ a, bx, by, ox, oy, dash: dashArray(d) });
+      fam.push({ a, bx, by, ox, oy, d, dash: dashArray(d) });
     }
   }
   put({ k: 'h', ...base2, ops, fam, b });
@@ -698,9 +698,14 @@ function hatch(e, base, put) {
 
 /** The ops of a HATCH's boundary (all loops in one path), null when it draws nothing. */
 export function hatchOps(e) {
-  let ops = null;
-  hatch(e, {}, (it) => { if (it.k === 'p') ops = it.ops; });
-  return ops;
+  return hatchPattern(e)?.ops || null;
+}
+
+/** The same boundary and pattern families used for drawing, in hatch coordinates. */
+export function hatchPattern(e) {
+  let item = null;
+  hatch(e, {}, (it) => { item = it; });
+  return item;
 }
 
 /** A multileader: its lines, arrows and text (the parts most drawings use). */
