@@ -236,6 +236,19 @@ test('No trim keeps the picked lines or arcs and adds only the fillet arc', () =
   assert.equal(g.ents[0], line); assert.equal(g.ents[1], arc); assert.equal(g.ents[2].type, 'ARC');
 });
 
+test('No trim on adjacent polyline segments keeps the source and adds a standalone arc in drawing coordinates', () => {
+  for (const legacy of [false, true]) for (const flip of [1, -1]) {
+    const e = poly([[0, 0], [10, 0], [10, 10]], { legacy });
+    e.r.c.push(210, 220, 230); e.r.v.push('0', '0', String(flip));
+    const f = filletEntities(e, [5 * flip, 0], e, [10 * flip, 5], 2, false);
+    assert.equal(f.ents[0], e); assert.equal(f.ents.length, 2); assert.equal(f.ents[1].type, 'ARC');
+    const arc = shapeOf(savedPoly(f.ents[1]));
+    pt(arc.c, [8 * flip, 2]); close(arc.r, 2);
+    pt(end(arc, arc.a0), flip > 0 ? [8, 0] : [-10, 2]);
+    pt(end(arc, arc.a1), flip > 0 ? [10, 2] : [-8, 0]);
+  }
+});
+
 test('open polyline: one entity, tangent vertex pair, other bulges, widths, flags and elevation survive Save', () => {
   for (const legacy of [false, true]) for (const reverse of [false, true]) {
     const e = poly([[0, 0], [10, 0], [10, 10, .25], [20, 10]], { legacy, widths: true }), before = structuredClone(e);

@@ -135,7 +135,7 @@ export function filletLines(l1, p1, l2, p2, r) {
 export function filletEntities(e1, p1, e2, p2, r, trim = true) {
   if ([e1, e2].some(isPolyline)) {
     if (e1 !== e2) return { error: 'Pick two adjacent segments of the same polyline; separate objects cannot be filleted to a polyline' };
-    return filletPolyline(e1, p1, p2, r);
+    return filletPolyline(e1, p1, p2, r, trim);
   }
   if (e1 === e2) return { error: 'Pick a second, different line or arc' };
   if (![e1, e2].every((e) => ['LINE', 'ARC'].includes(e?.type))) return { error: 'Fillet takes lines, arcs and polyline corners; circles are not supported' };
@@ -237,7 +237,7 @@ export function filletAllPolyline(e, r) {
 }
 
 /** Replace one shared vertex by two tangent vertices; the new arc copies the first picked segment's widths. */
-function filletPolyline(e, p1, p2, r) {
+function filletPolyline(e, p1, p2, r, trim) {
   if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
   if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS ||
       (e.type === 'POLYLINE' && ((get(e.r, 70) ?? 0) & (2 | 4 | 8 | 16 | 64)))) return { error: 'Fillet needs a plain 2D polyline in the drawing plane' };
@@ -282,6 +282,10 @@ function filletPolyline(e, p1, p2, r) {
   const saved = [a.a, t1, t2, b.b].map((p) => p.slice(0, 2).map((v) => +fmt(v)));
   if (saved.slice(1).some((p, k) => dist(p, saved[k]) < EPS) || !+fmt(arcBulge) ||
       gs.some((g, k) => !g.line && !+fmt(bulge(shapes[k], g)))) return { error: 'The fillet would leave a segment too small for drawing precision' };
+  if (!trim) {
+    const world = flip > 0 ? arc : { ...arc, c: [-arc.c[0], arc.c[1]], a0: norm(180 - arc.a1), a1: norm(180 - arc.a0) };
+    return { ents: [e, rebuilt(world, e)] };
+  }
   const out = vertices.slice();
   out[i] = recordWith(vertices[i], [[42, bulge(shapes[0], gs[0])]]);
   const start = recordWith(vertices[first], [[10, t1[0]], [20, t1[1]], [42, arcBulge]]);

@@ -46,7 +46,7 @@ import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
-import { filletEntities, filletPolylineShape } from './fillet.js';
+import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
 import * as PR from './props.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
@@ -6658,6 +6658,7 @@ function cursorKey(e) {
 const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
 const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
+const FILLET_TRIM_SAVED = 'pd-fillet-trim';
 const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
 const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
 const objViews = new WeakMap();
@@ -6745,7 +6746,11 @@ function modStart(id) {
   if (d.lay && !OBJ_MODS.includes(id)) { layModStart(id); return; }
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
-  else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line, arc or polyline segment (radius ${mmText(state.filR)} mm; R changes it)`; }
+  else if (id === 'fillet') {
+    state.filR = loadFilletR(); m.trim = true;
+    try { m.trim = localStorage.getItem(FILLET_TRIM_SAVED) !== 'no-trim'; } catch { /* default Trim */ }
+    state.msg = filletSettings(m); ui.cmdUI.message(state.msg);
+  }
   else if (id === 'offset') {
     state.offDist = loadOffsetDist();
     let opts; try { opts = JSON.parse(localStorage.getItem(OFFSET_OPTIONS_SAVED)); } catch { /* defaults */ }
@@ -6775,7 +6780,11 @@ function modPrompt(d) {
   if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode) };
   if (m.kind === 'array') return arrayPrompt(d, m);
-  if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):` };
+  if (m.kind === 'fillet') return { status: 'Command: FILLET', prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:`
+    : m.askTrim ? `Enter Trim mode option [Trim/No trim] <${m.trim ? 'Trim' : 'No trim'}>:`
+    : m.stage === 'poly' ? 'Select 2D polyline:'
+    : m.stage === 'second' ? 'Select second object or shift-select to apply corner or [Radius]:'
+    : 'Select first object or [Undo/Polyline/Radius/Trim/Multiple]:' };
   if (m.kind === 'offset') return { status: `Command: OFFSET   ${m.through ? 'Through' : `Distance <${mmText(state.offDist)}> mm`}`, prompt: offsetPrompt(m) };
   const ext = m.kind === 'extend', undoOpt = () => (trimUndoable(d, m) ? '/Undo' : '');
   if ((m.kind === 'trim' || ext) && m.askMode) return { status: `Command: ${m.kind.toUpperCase()}   Mode: ${m.quick ? 'Quick' : 'Standard'}`, prompt: `Enter ${ext ? 'an extend' : 'a trim'} mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
@@ -6802,7 +6811,7 @@ function modEsc(d) {
   const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
   if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
   if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note(`${ext ? 'Extend' : 'Trim'}: cancelled. ${again}`); renderCommand(); paintOverlay(); return; }
-  if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line, arc or polyline segment'); paintOverlay(); return; }
+  if (m.kind === 'fillet' && (m.askR || m.askTrim || m.stage !== 'obj')) { m.askR = m.askTrim = false; m.stage = 'obj'; m.ent = null; note(modPrompt(d).prompt); paintOverlay(); return; }
   if (m.kind === 'mirror' && m.stage === 'pick' && d.sel.size) { setSel(d, new Set()); renderCommand(); return; }
   if (m.kind === 'array' && m.ask) { m.ask = null; note('Array: option cancelled'); renderCommand(); paintOverlay(); return; }
   if (m.kind === 'array' && m.stage !== 'pick') { setTool('select'); note('Array cancelled: nothing added'); return; }
@@ -6822,6 +6831,11 @@ function modEnter(d) {
     else modEsc(d);
     return;
   }
+  if (m.kind === 'fillet') {
+    if (m.askTrim || m.askR) { m.askTrim = m.askR = false; note(modPrompt(d).prompt); paintOverlay(); }
+    else { setTool('select'); note('Fillet ended'); }
+    return;
+  }
   if (m.askMode) { trimMode(m.quick); return; }
   if (m.fence) { trimFenceRun(d); return; }
   if (m.erase) { trimEraseRun(d); return; }
@@ -6839,7 +6853,6 @@ function modEnter(d) {
     else offsetEnd(d);
     paintOverlay(); return;
   }
-  if (m.kind === 'fillet') { modEsc(d); return; }
   if (m.kind === 'extend') {
     if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc or open polyline to extend`); paintOverlay(); }
     else modEsc(d);
@@ -6862,6 +6875,7 @@ function modTakes(c) {
   if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
   const m = state.mod;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
+  if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
   if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
   if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!(modLive() || layModLive()) || !['trim', 'extend'].includes(m.kind)) return false;
@@ -6889,6 +6903,18 @@ function modTyped(d, raw) {
   }
   if (m.kind === 'array' && m.stage !== 'pick') return arrayTyped(d, raw, c);
   if (m.kind === 'fillet') {
+    if (m.askTrim) {
+      if (!/^(t|trim|n|no|no trim)$/.test(c)) { note(modPrompt(d).prompt); return true; }
+      m.trim = c === 't' || c === 'trim'; m.askTrim = false;
+      try { localStorage.setItem(FILLET_TRIM_SAVED, m.trim ? 'trim' : 'no-trim'); } catch { /* applies this session */ }
+      note(filletSettings(m)); ui.cmdUI.message(state.msg); paintOverlay(); return true;
+    }
+    if (!m.askR && m.stage === 'obj') {
+      if (c === 'u' || c === 'undo') { filletUndo(d); return true; }
+      if (c === 'm' || c === 'multiple') { note('Multiple is on'); ui.cmdUI.message(state.msg); return true; }
+      if (c === 'p' || c === 'polyline') { m.stage = 'poly'; note(modPrompt(d).prompt); paintOverlay(); return true; }
+      if (c === 't' || c === 'trim') { m.askTrim = true; note(modPrompt(d).prompt); return true; }
+    }
     if (!m.askR && (c === 'r' || c === 'radius')) { m.askR = true; note(`Fillet radius <${mmText(state.filR)}> mm: type it`); return true; }
     const v = Number(c);
     if (m.askR && Number.isFinite(v) && v >= 0) {
@@ -7024,11 +7050,13 @@ function modUp(d, was, p, shift, crossing) {
       m.ent = ent; m.stage = 'side'; m.p = was.p; note(offsetPrompt(m)); paintOverlay();
     } else if (m.stage === 'side') offsetDo(d, was.p);
   } else if (m.kind === 'fillet') {
+    if (m.askR || m.askTrim) return;
     const ent = modEntAt(d, was.p);
-    if (m.stage === 'obj') {
+    if (m.stage === 'poly') filletPolyDo(d, ent);
+    else if (m.stage === 'obj') {
       if (!ent) { note('Fillet: nothing there. Click a line, arc or polyline segment'); return; }
       if (!['LINE', 'ARC', 'LWPOLYLINE', 'POLYLINE'].includes(ent.type)) { note('Fillet takes lines, arcs and polyline corners; circles are not supported'); return; }
-      m.ent = ent; m.p0 = was.p; m.askR = false; m.stage = 'second'; note('Fillet: pick the second line, arc or polyline segment (Shift = sharp corner)'); paintOverlay();
+      m.ent = ent; m.p0 = was.p; m.askR = false; m.stage = 'second'; note(modPrompt(d).prompt); paintOverlay();
     } else filletDo(d, ent, was.p, shift || was.shift);
   } else if (m.kind === 'extend' || m.kind === 'trim') {
     const ext = m.kind === 'extend', word = ext ? 'boundary' : 'cutting';
@@ -7481,19 +7509,40 @@ function offsetUndo(d) {
   m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
   note(offsetPrompt(m)); paintOverlay();
 }
-/** Fillet: both entities trimmed (lines can extend) and the arc added, one undo step; Shift = radius 0 this once. Then the next corner. */
+const filletSettings = (m) => `Current settings: Mode = ${m.trim ? 'TRIM' : 'NO TRIM'}, Radius = ${mmText(state.filR)} mm`;
+/** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
+function filletCommit(d, entities) {
+  const m = state.mod, hist = historyOf(d.vlay || d), n = hist.labels().past.length;
+  m.base = Math.min(m.base, n);
+  view.fitted = false;
+  commit(d, { entities, blocks: d.raw.blocks }, 'Fillet');
+  m.base -= n + 1 - hist.labels().past.length;
+}
+function filletUndo(d) {
+  const m = state.mod, past = historyOf(d.vlay || d).labels().past;
+  if (past.length <= m.base || past.at(-1) !== 'Fillet') { note('Nothing to undo in this Fillet'); ui.cmdUI.message(state.msg); return; }
+  m.stage = 'obj'; m.ent = null;
+  undo(d); note('Last fillet undone'); ui.cmdUI.message(state.msg); paintOverlay();
+}
+function filletPolyDo(d, ent) {
+  const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor);
+  if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
+  m.stage = 'obj'; m.ent = null;
+  if (r.ents[0] !== ent) filletCommit(d, d.raw.entities.map((e) => e === ent ? r.ents[0] : e));
+  note(`${r.count} lines were filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
+}
+/** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
 function filletDo(d, ent, p, sharp) {
   const m = state.mod;
   if (!ent) { note('Fillet: nothing there. Click the second line, arc or polyline segment'); return; }
-  const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor);
+  const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); return; }
   if (r.ents.length === 1 && r.ents[0] === m.ent) {
     m.stage = 'obj'; m.ent = null;
     note('Already a sharp corner. Pick the next first line, arc or polyline segment, or Esc ends'); paintOverlay(); return;
   }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
-  view.fitted = false;
-  commit(d, { entities: [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(2)], blocks: d.raw.blocks }, 'Fillet');
+  if (!(r.ents.length === 2 && r.ents[0] === m.ent && r.ents[1] === ent)) filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
   m.stage = 'obj'; m.ent = null;
   note(`${!sharp && state.filR > 0 ? `Filleted, radius ${mmText(state.filR)} mm` : 'Corner made'}. Pick the next first line, arc or polyline segment, or Esc ends. Ctrl+Z takes it back`);
 }
@@ -7677,7 +7726,7 @@ function modOvl(d, out, paint) {
     else if (m.ent) { addEnt(m.ent, 'dr-guide'); const r = m.p ? MD.offsetEntity(m.ent, offDistU(d), m.p) : null; if (r && r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
   } else if (m.kind === 'fillet') {
     if (m.ent) addEnt(m.ent, 'dr-guide');
-    const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f) : null;
+    const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f, m.trim) : null;
     if (r?.ents) for (const k of r.ents) addEnt(k, 'dr-shape', 'mod-preview');
   } else if (m.kind === 'trim' || m.kind === 'extend') {
     for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
