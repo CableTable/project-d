@@ -118,8 +118,8 @@ by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. Fro
 after the reset, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
 **Usage gate** (his call, 2026-10-20): before every sub-agent launch, read the cached usage
 (`node tools/rook.mjs usage --cached`, no prompts; the PC agent refreshes it hourly) and pick the worker with headroom,
-wait for a reset, or pause the session. **Knight builds** (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): every build or fix
-round goes to Knight. King-build (claude3) takes one when Knight is above 85% of its 5-hour limit (his call 2026-10-27, within Bishop's daily cap), at 100% weekly, or he says to
+wait for a reset, or pause the session. **Knight builds** (his call, 2026-10-26, replaces 2026-10-22's lower-usage rule): every build
+goes to Knight; a small fix round goes to King (his OK 2026-10-31, S29 retro: Knight fix ~18 min, King ~2.5 min). King-build (claude3) takes one when Knight is above 85% of its 5-hour limit (his call 2026-10-27, within Bishop's daily cap), at 100% weekly, or he says to
 run it on Bishop. Knight busy (2 runs) is not a reason: the build waits in the queue.
 
 Two claude2 sessions may run at once only on separate files (e.g. a mock-up while a build runs).
