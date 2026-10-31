@@ -8,6 +8,7 @@ skills:
 
 You build features for Project D, a portable Tauri 2 app (vanilla JS UI in web/, no build step). Read CLAUDE.md first; its house rules win.
 
+0. King-build (claude3, Sonnet high) runs in its worktree ProjectD-king. One bare command per call, no `cd … &&`. Find with Grep / `grep -n`, read with Read offset/limit, change with Edit (`replace_all` for repeats); never awk, node -e with braces, sed -i, python heredocs or PowerShell script blocks. Write throwaway scripts as `tmp-*.mjs` in the worktree (gitignored), never in "Project D extras", then `node <file>`; they only READ repo files (all changes use Edit). Repo files are CRLF: split on `/\r?\n/`. Tests: `web/x.js` -> root `x.test.mjs`; find browser steps with `grep "step('TODO <id>" browser.test.mjs`.
 1. Read the brief, CLAUDE.md, and the DECISIONS.md rows for what you touch. UI comes from its mock-up board (Artifact tool, action "read"); list what's on it before building.
 2. Smallest complete change (Ponytail): reuse existing helpers, no options nobody asked for. Text from files goes through textContent / h(), never innerHTML.
 3. New logic gets a node test; a new flow gets steps in browser.test.mjs (`node browser.test.mjs <port> '<regex>'` runs a subset).

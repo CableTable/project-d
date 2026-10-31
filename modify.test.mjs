@@ -51,6 +51,35 @@ test('Offset a line: to the side of the pick, d away, same length, same layer', 
   assert.match(M.offsetEntity(l, -2, [0, 1]).error, /more than 0/);
 });
 
+test('Offset Through uses the picked line or circular segment, retaining editable geometry', () => {
+  nearPt(S(M.offsetEntity(line(0, 0, 100, 0), null, [40, 27]).ent).a, [0, 27]);
+  near(S(M.offsetEntity(circle(0, 0, 10), null, [0, 24]).ent).r, 24);
+  near(S(M.offsetEntity(arc(0, 0, 10, 0, 90), null, [12, 12]).ent).r, Math.hypot(12, 12));
+  const poly = M.offsetEntity(rect(0, 0, 100, 50), null, [40, -7]).ent;
+  near(Math.min(...S(poly).pts.map((p) => p[1])), -7);
+  for (const at of [[-10, -5], [-5, -10], [110, 55], [105, 60]]) {
+    const corner = M.offsetEntity(rect(0, 0, 100, 50), null, at);
+    near(M.closest(M.pathOf(S(corner.ent)), at).d, 0);
+  }
+  assert.equal(M.offsetEntity(circle(0, 0, 10), null, [0, 0]).error, "The through point is the circle's centre");
+  for (const ent of [line(0, 0, 100, 0), circle(40, 10, 10), arc(40, 10, 10, 180, 360), rect(0, 0, 100, 50)]) {
+    assert.equal(M.offsetEntity(ent, null, [40, 0]).error, 'The through point is on the object');
+  }
+});
+
+test('Offset Through past an open polyline end matches AutoCAD 2027', () => {
+  const source = lwpoly([[0, 0], [100, 0], [100, 50]]);
+  for (const [at, points] of [
+    [[-20, 5], [[0, 5], [95, 5], [95, 50]]],
+    [[110, 70], [[0, -10], [110, -10], [110, 50]]],
+  ]) {
+    const result = M.offsetEntity(source, null, at);
+    assert.ok(result.ent, result.error);
+    S(result.ent).pts.forEach((p, i) => nearPt(p, points[i]));
+    assert.equal(S(result.ent).pts.length, points.length);
+  }
+});
+
 test('Offset a circle: out or in by the side picked; more than the radius is refused', () => {
   const c = circle(10, 20, 15, base);
   let r = M.offsetEntity(c, 5, [10, 100]);
@@ -140,8 +169,7 @@ test('Offset a polyline with a bulge: the arc keeps its centre and takes the new
 });
 
 test('Offset: other kinds are refused with a message', () => {
-  assert.match(M.offsetEntity(text(0, 0, 5, 'Hi'), 5, [0, 0]).error, /line, arc, circle or polyline/);
-  assert.match(M.offsetEntity(ellipse(0, 0, 10, 0, 0.5), 5, [0, 0]).error, /line, arc, circle or polyline/);
+  assert.match(M.offsetEntity(text(0, 0, 5, 'Hi'), 5, [0, 0]).error, /line, arc, circle, ellipse, spline or polyline/);
   assert.equal(M.canModify(line(0, 0, 1, 1)), true);
   assert.equal(M.canModify(insert('B', 0, 0)), false);
 });
@@ -715,6 +743,53 @@ test('previewEdit (TODO 155a T4): the piece a click would cut, or the stretch it
   const pl = previewEdit(lwpoly([[0, 0], [20, 0]], base), [line(50, -20, 50, 20, base)], [19, 0], true);   // a polyline: its new end segment
   assert.equal(pl.act, 'extend'); nearPt(S(pl.add).a, [20, 0]); nearPt(S(pl.add).b, [50, 0]);  assert.match(previewEdit(line(0, 0, 20, 0, base), [], [18, 0], true).error, /No boundary/, 'nothing ahead: no preview');
   assert.ok(previewEdit(circle(0, 0, 10, base), [line(50, -20, 50, 20, base)], [10, 0], true).error, 'a closed shape cannot extend');
+});
+
+test('TODO 155a3: region dry runs return exactly the cut pieces / added stretches and cap crossed objects only for previews', () => {
+  const l = line(0, 0, 100, 0, base), edges = [line(30, -20, 30, 20), line(70, -20, 70, 20)];
+  const before = structuredClone([l, ...edges]);
+  const r = M.trimRegion([l], edges, M.fenceHit([[10, -5], [10, 5], [90, 5], [90, -5]]));
+  assert.deepEqual(r.preview.map(S), [S(line(0, 0, 30, 0)), S(line(70, 0, 100, 0))], 'both crossed end pieces, with the middle kept');
+  assert.deepEqual(r.changed[0].ents.map(S), [S(line(30, 0, 70, 0))]);
+  assert.deepEqual([l, ...edges], before, 'dry run does not change sources or boundaries');
+  const c = circle(0, 0, 10, base);
+  assert.deepEqual(M.trimRegion([c], [], M.fenceHit([[-20, 0], [20, 0]])).preview.map(S), [S(c)], 'an uncut closed circle previews whole');
+  const cutCircle = M.trimRegion([c], [line(-20, 0, 20, 0)], M.fenceHit([[0, 5], [0, 15]]));
+  near(S(cutCircle.preview[0]).a0, 0); near(S(cutCircle.preview[0]).a1, 180);
+  near(S(cutCircle.changed[0].ents[0]).a0, 180); near(S(cutCircle.changed[0].ents[0]).a1, 0);
+  const short = line(0, 0, 20, 0), bound = line(50, -20, 50, 20);
+  const ex = extendRegion([short], [bound], M.windowHit([-5, -5], [25, 5]));
+  assert.deepEqual(ex.preview.map(S), [S(line(20, 0, 50, 0))], 'the fallback to the other end previews only its growth');
+  assert.deepEqual(ex.changed[0].ents.map(S), [S(line(0, 0, 50, 0))]);
+  const rows = Array.from({ length: 301 }, (_, i) => line(0, i, 20, i));
+  const miss = line(100, -1, 120, -1), fence = M.fenceHit([[10, -2], [10, 302]]);
+  const tr = M.trimRegion([miss, ...rows], [], fence, 300);
+  assert.equal(tr.preview.length, 300); assert.equal(tr.changed.at(-1).i, 300, 'misses do not consume the cap');
+  assert.equal(M.trimRegion([miss, ...rows], [], fence).changed.length, 301, 'commit is uncapped');
+  const boundary = line(50, -2, 50, 302), ext = extendRegion([miss, ...rows], [boundary], fence, 300);
+  assert.equal(ext.preview.length, 300); assert.equal(ext.changed.at(-1).i, 300);
+  assert.equal(extendRegion(rows, [boundary], fence).changed.length, 301);
+});
+
+test('TODO 155a3 review: cutter paths are built once, disjoint boxes skip intersections, curved bounds include their bulges', () => {
+  const rows = [line(0, 0, 100, 0), line(0, 20, 100, 20)], edges = [line(30, -10, 30, 30), line(70, -10, 70, 30)], all = [...rows, ...edges];
+  const hit = M.fenceHit([[50, -5], [50, 25]]), calls = [];
+  const result = M.trimRegion(all, all, hit, Infinity, (sh) => { calls.push(sh); return M.pathOf(sh); });
+  assert.deepEqual(calls, all.map(S), 'one pathOf call per cutter, also reused when it is a target');
+  assert.deepEqual(result, M.trimRegion(all, all, hit));
+  assert.deepEqual(result.preview.map(S), [S(line(30, 0, 70, 0)), S(line(30, 20, 70, 20))]);
+  const far = line(300, -10, 300, 30);
+  let reads = 0;
+  assert.deepEqual(M.trimRegion(rows, [far], hit, Infinity, (sh) => {
+    const P = M.pathOf(sh);
+    return sh.a[0] === 300 ? { ...P, get segs() { reads++; return P.segs; } } : P;
+  }).changed, [{ i: 0, ents: [] }, { i: 1, ents: [] }]);
+  assert.equal(reads, 1, 'a disjoint cutter is read for its box only');
+  for (const edge of [circle(50, 0, 20), arc(50, 0, 20, 0, 180), lwpoly([[30, 0, -1], [70, 0]])]) {
+    const row = line(0, 10, 100, 10), pick = [50, 10];
+    assert.deepEqual(M.trimRegion([row], [edge], M.fenceHit([[50, 5], [50, 15]])).preview.map(S),
+      [S(M.trimEntity(row, [edge], pick, true).removed)], edge.type + ' can cross outside its endpoint box');
+  }
 });
 
 console.log(`${n} modify tests passed`);

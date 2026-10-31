@@ -39,7 +39,9 @@ export function curveShape(ent) {
       if (c === 10) cp.push([v, y]); else if (c === 11) fit.push([v, y]); else if (c === 40) knots.push(v); else if (c === 41) w.push(v);
     });
     const pts = nurbs(cp, knots, get(r, 71) ?? 3, w, fit);
-    if (pts.length > 1) sh = { t: 'poly', pts, closed: ((get(r, 70) ?? 0) & 1) === 1 };
+    const closed = ((get(r, 70) ?? 0) & 1) === 1;
+    if (closed && pts === fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts.pop();   // fit points that repeat the first one (AutoCAD's closed form)
+    if (pts.length > 1) sh = { t: 'poly', pts, closed };
   }
   curves.set(ent, sh);
   return sh;
@@ -193,22 +195,23 @@ export function extendEntity(ent, edges, pick) {
 
 /**
  * Quick Extend of many at once: each of `ents` that `hit` (modify.js fenceHit / windowHit) touches is extended, at the end nearest where
- * it was touched, to the nearest of `boundaries`. Returns { changed: [{ i, ents: [the extended one] }], skipped } (skipped = touched
- * but nothing to reach, or a closed shape).
+ * it was touched, to the nearest of `boundaries`. Returns { changed: [{ i, ents: [the extended one] }], preview: [added stretches], skipped } (skipped = touched
+ * but nothing to reach, or a closed shape). `limit` caps crossed objects for previews.
  */
-export function extendRegion(ents, boundaries, hit) {
-  const changed = [];
-  let skipped = 0;
+export function extendRegion(ents, boundaries, hit, limit = Infinity) {
+  const changed = [], preview = [];
+  let skipped = 0, crossed = 0;
   ents.forEach((ent, i) => {
-    if (!extendable(ent)) return;
+    if (crossed >= limit || !extendable(ent)) return;
     const segs = pathOf(boundaryOf(ent)).segs, touched = hit(segs);
     if (!touched) return;
+    crossed++;
     const ends = [segs[0].a, segs[segs.length - 1].b];
     let r = extendEntity(ent, boundaries, touched);
     if (r.error) r = extendEntity(ent, boundaries, ends[dist(touched, ends[0]) <= dist(touched, ends[1]) ? 1 : 0]);      // nothing ahead at the touched end: try the other
-    if (r.ent) changed.push({ i, ents: [r.ent] }); else skipped++;
+    if (r.ent) { changed.push({ i, ents: [r.ent] }); preview.push(addedPiece(ent, r.ent)); } else skipped++;
   });
-  return { changed, skipped };
+  return { changed, preview, skipped };
 }
 
 /** Just the stretch an extension adds, as an entity, from the entity before (`ent`) and after (`ext`): a line's new tail, an arc's new sweep, a polyline's end segment. */

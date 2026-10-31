@@ -244,10 +244,11 @@ export function snapEnd(ed, x, y, tol) {
 /**
  * The closest enabled feature under (x, y) within tol (ends win a tie), else the nearest point on a line or arc.
  * → { x, y, kind } or null.
- * on: false → null (the exact clicked point is used). skip: an entity index left out (the one a grip is dragging).
+ * on: false → null (the exact clicked point is used). skip: an entity index (or a Set of them) left out (what a grip is dragging).
  * types: enabled ticks. extra: the current drawing tool's own points, subject to the same filter and priority.
  * from: the last picked point [x, y] (drawing units), for the perpendicular foot on a straight piece.
  */
+const skips = (skip, e) => skip instanceof Set ? skip.has(e) : e === skip;       // skip: one entity index or a Set of them
 export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TYPES, extra = [], from = null) {
   if (!on) return null;
   let best = null;
@@ -258,13 +259,13 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
   const i0 = at((x - tol - ix.x0) / ix.cell), i1 = at((x + tol - ix.x0) / ix.cell), j0 = at((y - tol - ix.y0) / ix.cell), j1 = at((y + tol - ix.y0) / ix.cell);
   for (let i = i0; i <= i1; i++) for (let j = j0; j <= j1; j++) for (const k of ix.sc.get(i * 4096 + j) || []) {
     const sn = ix.snaps[k];
-    if (!ed.vis[sn.it] || ed.items[sn.it].e === skip) continue;
+    if (!ed.vis[sn.it] || skips(skip, ed.items[sn.it].e)) continue;
     best = preferSnap(best, sn, x, y, tol, types);
   }
   const perp = from && types.perpendicular !== false, tangent = from && types.tangent !== false;
   if (types.intersection !== false || types.apparent !== false || perp || tangent) {
     // shortcut: only the 200 pieces nearest the cursor are crossed (k^2/2 pieceInter calls per hover); raise or index them if a dense drawing misses a crossing.
-    const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
+    const pieces = piecesNear(ix, x, y, tol, (i) => ed.vis[i] === 1 && !skips(skip, ed.items[i].e)).filter((p) => !p.ent.curve).sort((a, b) => a.d - b.d).slice(0, 200).map((p) => p.ent);
     const eps = 1e-9 * (1 + Math.abs(x) + Math.abs(y));
     if (types.intersection !== false || types.apparent !== false) for (let i = 0; i < pieces.length; i++) for (let j = i + 1; j < pieces.length; j++) {
       for (const [px, py] of pieceInter(pieces[i], pieces[j])) {
@@ -281,13 +282,13 @@ export function snapPick(ed, x, y, tol, on = true, skip = -1, types = DEFAULT_TY
   }
   if (best) return { x: best.x, y: best.y, kind: best.kind };
   if (types.near === false) return null;
-  const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip);
+  const p = pickAt(ix, x, y, tol, (i) => ed.vis[i] === 1 && !skips(skip, ed.items[i].e));
   return p.ent && p.near ? { x: p.near[0], y: p.near[1], kind: 'near' } : null;
 }
 
 /** The object under the cursor, including a centre / insertion / node away from its outline. */
 export function snapObject(ed, x, y, tol, skip = -1, types = DEFAULT_TYPES) {
-  const visible = (i) => ed.vis[i] === 1 && ed.items[i].e !== skip;
+  const visible = (i) => ed.vis[i] === 1 && !skips(skip, ed.items[i].e);
   const hit = pickAt(ed.ix, x, y, tol, visible);
   if (hit.ent) return ed.items[hit.ent.it].e;
   let best = null;
@@ -296,7 +297,7 @@ export function snapObject(ed, x, y, tol, skip = -1, types = DEFAULT_TYPES) {
 }
 
 export function snapReference(ed, x, y, tol, skip = -1) {
-  return piecesNear(ed.ix, x, y, tol, (i) => ed.vis[i] === 1 && ed.items[i].e !== skip)
+  return piecesNear(ed.ix, x, y, tol, (i) => ed.vis[i] === 1 && !skips(skip, ed.items[i].e))
     .filter((p) => p.ent.t === 's' && !p.ent.curve).sort((a, b) => a.d - b.d)[0]?.ent || null;
 }
 

@@ -5,6 +5,7 @@ import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'n
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { gateOps } from './handover-gate.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXTRAS = 'E:/Project B/Claude/Project D extras';
@@ -49,22 +50,24 @@ export function parseReview(args) {
 }
 
 export function parseBuild(args) {
-  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2]';
-  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1 }, usage);
+  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--over': 0 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   if (!SHA.test(pos[3])) throw new Error(`not a commit id: ${pos[3]}`);
   const as = account(flags, 'king', usage), dir = flags['--dir'] && flags['--dir'][0];
   if (dir && (dir !== 'king2' || as !== 'king')) throw new Error(`${usage}\n--dir king2 is for King (--as king)`);
-  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir };
+  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], over: !!flags['--over'] };
 }
 
 export function parseKnight(args) {
-  if (args.length !== 4) throw new Error('usage: knight <brief file> <report txt> <branch> <sha>');
-  const [brief, report, branch, sha] = args;
+  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--over]';
+  const { pos, flags } = parseFlags(args, { '--fix': 0, '--over': 0 }, usage);
+  if (pos.length !== 4) throw new Error(usage);
+  const [brief, report, branch, sha] = pos;
   if (!report.endsWith('.txt')) throw new Error(`report must end in .txt (the log goes next to it): ${report}`);
   if (!SHA.test(sha)) throw new Error(`not a commit id: ${sha}`);
   const abs = resolve(report);
-  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log') };
+  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], over: !!flags['--over'] };
 }
 
 // WORKFLOW.md's reviewer flags, plus the extras folder (the brief lives there).
@@ -74,7 +77,7 @@ export const reviewerArgs = (extras = EXTRAS) => ['-p', '--agent', 'reviewer', '
   '--output-format', 'stream-json', '--verbose'];
 
 // WORKFLOW.md's King-build flags (the same for either account): the repo's git folder and the extras folder (the brief lives there).
-export const buildArgs = (extras = EXTRAS, gitDir = MAIN_GIT) => ['-p', '--strict-mcp-config', '--model', 'claude-sonnet-5-5', '--effort', 'high',
+export const buildArgs = (extras = EXTRAS, gitDir = MAIN_GIT) => ['-p', '--agent', 'builder', '--strict-mcp-config', '--model', 'claude-sonnet-5-5', '--effort', 'high',
   '--permission-mode', 'acceptEdits', '--max-budget-usd', '8', '--add-dir', gitDir, '--add-dir', extras,
   '--disallowedTools', 'Bash(gh pr merge:*)', 'PowerShell(gh pr merge:*)', 'Agent', 'Bash(git push:*)', 'Bash(taskkill:*)', 'PowerShell(Stop-Process:*)',
   '--allowedTools', 'Bash(echo:*)', 'Bash(tee:*)', 'Bash(npx.cmd:*)', 'Bash(npm.cmd:*)', 'PowerShell(Select-String:*)', 'PowerShell(Select-Object:*)',
@@ -137,6 +140,8 @@ const io = {
   },
   launch: (bin, args, cwd, inFd, outFd, env = process.env, outPath) => launchRun(bin, args, cwd, inFd, outFd, env, outPath),
 };
+// The handover gate (tools/handover-gate.mjs) reads the Rook's files in the extras folder and the session branch in this repo.
+io.gate = gateOps({ extras: EXTRAS, read: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null), write: writeFileSync, git: (...a) => io.git(REPO, ...a) });
 
 const claude = (as) => join(homedir(), '.local', 'bin', ACCOUNTS[as].bin);
 const folder = (as, role) => `${EXTRAS}/${ACCOUNTS[as][role]}`;
@@ -178,8 +183,9 @@ export function review(args, x = io) {
 }
 
 export function build(args, x = io) {
-  const { brief, out, branch, sha, as, dir: second } = parseBuild(args);
-  const dir = second ? folder(as, 'review') : folder(as, 'build'); // king2 is King's review folder: needClean refuses it while a review runs
+  const { brief, out, branch, sha, as, dir: second, fix, over } = parseBuild(args);
+  x.gate.check(fix, over);
+  const dir =second ? folder(as, 'review') : folder(as, 'build'); // king2 is King's review folder: needClean refuses it while a review runs
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
@@ -191,10 +197,16 @@ export function build(args, x = io) {
   delete env.FORCE_COLOR;
   x.launch(claude(as), buildArgs(), dir, inFd, x.open(out, 'w'), env, out);
   console.log(`build ${branch} @ ${sha} (${as}) -> ${out}`);
+  const line = x.gate.record({ fix, over, brief, branch });
+  if (line) console.log(line);
 }
 
+// `rook.mjs gate`: rewrite line 2 of runs<N>/queue.txt now and print it.
+export const gate = (x = io) => x.gate.report();
+
 export function knight(args, x = io) {
-  const { brief, report, branch, sha, log } = parseKnight(args);
+  const { brief, report, branch, sha, log, fix, over } = parseKnight(args);
+  x.gate.check(fix, over);
   const clone = `${EXTRAS}/ProjectD-rowan`;
   x.need(brief, 'brief file');
   x.need(CODEX, basename(CODEX));
@@ -211,4 +223,6 @@ export function knight(args, x = io) {
   x.git(clone, 'switch', '-c', branch, sha);
   x.launch(CODEX, knightArgs(report, clone), clone, inFd, x.open(log, 'w'), undefined, report);
   console.log(`knight ${branch} @ ${sha} -> ${report}`);
+  const line = x.gate.record({ fix, over, brief, branch });
+  if (line) console.log(line);
 }

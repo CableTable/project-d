@@ -11,11 +11,11 @@ Started 2026-10-16. Unrelated to Projects B, P, R and WF in the parent folder, b
 
 ## Status
 
-Built so far: sessions 1-27 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
-AutoCAD-style draw / modify / dimension / snap tools in every tab, ribbon + panel UI in AutoCAD colours (157), CI that builds
-`ProjectD.exe` and publishes it to Releases on a merge to main. Repo **CableTable/project-d** (private).
-**Next:** TODO 156b2c (Dimension on layouts, c1 building), 156b4, 156c2, 156c3, then the rest of the 155 list, then
-TODO.md "Rakshith's list". Push after every finished item and tick it in TODO.md (his rule, 2026-10-17).
+Built so far: sessions 1-29 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
+AutoCAD-style draw / modify / dimension / snap / grip / Fillet / Offset / Explode tools in every tab, ribbon + panel UI in AutoCAD
+colours, CI that builds `ProjectD.exe` and publishes it to Releases on a merge to main (doc-only PR pushes skip the tests and build).
+Repo **CableTable/project-d** (private). **Next:** TODO 155i2 (brief `runs29/b-155i2.txt`), 155i3, 155l, 155m2, 166, 162-164, 167-170,
+then TODO.md "Rakshith's list". Commit each finished item and tick it in TODO.md at once; push once per Rook handover (his call, 2026-10-31).
 
 ## The app
 
@@ -59,7 +59,8 @@ Set up in session 1, the same shape as Project R:
   he says so (or at session end with his OK), on a green run for the head commit
   (`gh pr merge <n> --merge --match-head-commit <sha>`). When he asks for **auto-merge**: label the
   PR `automerge`, then push; the CI run's `merge` job merges once the tests and the build pass
-  (as in Project R; GitHub's own auto-merge needs a paid plan). Never merge on red; revert rather than patch forward. Every failed
+  (as in Project R; GitHub's own auto-merge needs a paid plan). A doc-only last push skips the `merge` job: merge it by hand
+  with `--match-head-commit` once its run is green. Never merge on red; revert rather than patch forward. Every failed
   run emails him, so get each push right.
 - Releases go through GitHub, never by hand: a merge to main builds the exe and publishes it.
 - **Still Rakshith's, not Claude's:** keys, passwords, code-signing certificates, billing
@@ -93,13 +94,12 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
   them (his rule, 2026-10-27, after a hand-written handover left it out). A handover file Rook writes repeats this line.
 - **How a session runs: WORKFLOW.md** (the roles, the exact commands, the loop, the budgets). In short:
   **Rook** is the lead (Opus, main account, this session): plans, writes briefs, reads short reports,
-  merges, and writes no code: review findings, however small, go to Knight (his call, 2026-10-20). **Bishop** is everything on the 2nd account
-  (`claude2`): Bishop-build (Sonnet high, a FRESH session per build or fix round, capped with
-  `--max-budget-usd`), Bishop-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every
-  build gets one), Bishop-look (Haiku), Bishop-test (the exe on his PC). **Knight** (Codex, his ChatGPT Go
-  plan) builds (it commits, Rook pushes) and does web research, never reviews. **Knight builds** (his call,
-  2026-10-26): Bishop-build only when Knight is at 100% (5-hour or weekly) or he says to use Bishop; Bishop also takes
-  mock-ups and screenshots. **Pawn** (Antigravity) only quick lookups.
+  merges, and writes no code: review findings, however small, go to Knight or King (his call, 2026-10-20). **Bishop** is everything on the 2nd account
+  (`claude2`): Bishop-review (Opus medium, `--agent reviewer`, in its own throwaway worktree, every build gets one),
+  Bishop-look (Haiku), Bishop-acad (his AutoCAD), Bishop-test (the exe on his PC); Bishop never builds. **Knight** (Codex, his
+  ChatGPT Go plan) builds new items (it commits, Rook pushes) and does web research, never reviews. **King** (`claude3`) builds
+  when Knight is above 85% of its 5-hour limit or at 100% weekly, and takes every small fix round (his OK, 2026-10-31).
+  Bishop also takes mock-ups and screenshots. **Pawn** (Antigravity) only quick lookups.
   Bishop never merges or force-pushes; a Stop hook keeps a builder from finishing on red tests.
   **Bishop's budget:** at most 14% of its weekly limit per day (above only with his OK). No usage report after a merge: the band and the usage page show it (his call, 2026-10-21).
   A new worktree folder needs trusting once on account 2.

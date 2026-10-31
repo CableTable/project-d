@@ -39,6 +39,8 @@ test('TODO 68a: snap index filters every type, respects SNAP off and filters unf
   const pointRaw = D.readDxf(W.writeDxf(doc)), pointEd = E.makeIndex(pointRaw, D.flatten(pointRaw));
   assert.equal(E.snapPick(pointEd, 5.1, 5.1, .5).kind, 'node');
   assert.equal(E.snapPick(pointEd, 5.1, 5.1, .5, true, -1, snapTypes({ node: false })), null);
+  assert.equal(E.snapPick(pointEd, 5.1, 5.1, .5, true, new Set([0, 3]), snapTypes()), null, 'a Set skips every index in it');
+  assert.equal(E.snapPick(pointEd, 5.1, 5.1, .5, true, new Set([1, 3]), snapTypes()).kind, 'node', 'and only those');
   const extra = [{ x: 5, y: 5, kind: 'end' }], emptyRaw = W.newDoc(4), empty = E.makeIndex(emptyRaw, D.flatten(emptyRaw));
   assert.deepEqual(E.snapPick(empty, 5.1, 5.1, .5, true, -1, snapTypes(), extra), extra[0]);
   assert.equal(E.snapPick(empty, 5.1, 5.1, .5, true, -1, snapTypes({ end: false }), extra), null);

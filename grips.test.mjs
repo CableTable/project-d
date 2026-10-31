@@ -31,8 +31,7 @@ test('a circle has its centre and four quadrants; an arc its ends, middle and ce
   const p = GR.gripsOf(rect(0, 0, 10, 5));
   assert.deepEqual(p.map((x) => x.id), ['v0', 'v1', 'v2', 'v3', 'e0', 'e1', 'e2', 'e3']);
   assert.deepEqual(pts(p), [[0, 0], [10, 0], [10, 5], [0, 5], [5, 0], [10, 2.5], [5, 5], [0, 2.5]]);
-  assert.deepEqual(GR.gripsOf(ellipse(0, 0, 10, 0, 0.5)), [], 'no grips on an ellipse');
-  assert.deepEqual(GR.gripsOf(text(0, 0, 5, 'a')), []);
+  assert.deepEqual(GR.gripsOf({ type: 'SPLINE', layer: '0', r: { c: [10, 20], v: ['0', '0'] } }), [], 'no grips on a spline');
   assert.deepEqual(GR.gripsOf(null), []);
 });
 
@@ -215,6 +214,136 @@ test('capGrips: show all handles through 5000, then none, even on one huge polyl
   const many = Array.from({ length: GR.MAX_SELECTED }, (_, e) => dense.slice(0, 26).map((g) => ({ ...g, e }))).flat();
   assert.deepEqual(GR.capGrips(many), [], 'total handles across 200 shapes also exceed the cap');
   assert.deepEqual(GR.capGrips([]), []);
+});
+
+// ---- 155e4: text, ellipse, hatch and blocks
+const hatchOf = (x0, y0, w, h) => ({ type: 'HATCH', layer: '0', r: { type: 'HATCH', c: [10, 20, 30, 2, 70, 71, 91, 92, 72, 73, 93, 10, 20, 10, 20, 10, 20, 10, 20, 97, 75, 76, 98, 10, 20], v: ['0', '0', '0', 'SOLID', '1', '0', '1', '3', '0', '1', '4', x0, y0, x0 + w, y0, x0 + w, y0 + h, x0, y0 + h, '0', '0', '1', '1', x0 + 1, y0 + 1].map(String) } });
+const hatchPts = (e) => { const out = []; let seen = false; e.r.c.forEach((c, k) => { if (c === 93) seen = true; if (seen && c === 10) out.push([+e.r.v[k], +e.r.v[k + 1]]); }); return out; };
+
+test('text: one grip at the insertion, a second at the alignment point when justified; either moves both points', () => {
+  const t = text(10, 20, 5, 'Hi');
+  assert.deepEqual(GR.gripsOf(t).map((g) => g.id), ['i']);
+  assert.equal(GR.hasGrips(t), false, 'the curve grips (Trim, Extend, Offset…) stay off text');
+  const j = text(10, 20, 5, 'Hi', {}); j.r = { ...j.r, c: [...j.r.c, 72, 11, 21, 31], v: [...j.r.v, '1', '30', '40', '0'] };
+  assert.deepEqual(pts(GR.gripsOf(j)), [[10, 20], [30, 40]]);
+  const m = GR.dragGrip(j, 'a', [35, 45]);
+  assert.equal(m.label, 'Move text');
+  assert.deepEqual(pts(GR.gripsOf(m.ent)), [[15, 25], [35, 45]]);
+  assert.equal(GR.dragGrip(j, 'i', [10, 20]), null);
+  assert.equal(GR.commandOf(j, 'i'), 'MOVE');
+  assert.ok(GR.readoutOf(j, 'i', GR.dragGrip(j, 'i', [12, 23]).ent).startsWith('Move ΔX 2.00 ΔY 3.00'));
+});
+
+test('mtext and a block insert: one insertion grip that moves the object; a mirrored one has none', () => {
+  const t = reopen(text(0, 0, 5, 'x')), mt = { ...t, type: 'MTEXT', r: { ...t.r, type: 'MTEXT' } };
+  assert.deepEqual(GR.gripsOf(mt).map((g) => g.id), ['i']);
+  const ins = { type: 'INSERT', layer: '0', r: { type: 'INSERT', c: [2, 10, 20, 30], v: ['B', '5', '6', '0'] } };
+  const moved = GR.dragGrip(ins, 'i', [8, 10]);
+  assert.deepEqual(pts(GR.gripsOf(moved.ent)), [[8, 10]]); assert.equal(moved.label, 'Move block');
+  const flip = { ...ins, r: { ...ins.r, c: [...ins.r.c, 210, 220, 230], v: [...ins.r.v, '0', '0', '-1'] } };
+  assert.deepEqual(GR.gripsOf(flip), []);
+});
+
+test('hatch: the grip is the centre of the extents; dragging it moves the boundary and the seed point', () => {
+  const h = hatchOf(10, 20, 100, 40);
+  assert.deepEqual(pts(GR.gripsOf(h)), [[60, 40]]);
+  assert.equal(GR.gripsOf(h)[0].kind, 'centre');
+  const m = GR.dragGrip(h, 'c', [70, 50]);
+  assert.equal(m.label, 'Move hatch');
+  assert.deepEqual(hatchPts(m.ent), [[20, 30], [120, 30], [120, 70], [20, 70], [21, 31]]);
+  assert.deepEqual(pts(GR.gripsOf(m.ent)), [[70, 50]]);
+  assert.deepEqual(GR.gripsOf({ type: 'HATCH', layer: '0', r: { type: 'HATCH', c: [10, 20], v: ['0', '0'] } }), [], 'no boundary, no grip');
+});
+
+test('hatch centre counts a circle edge by its radius', () => {
+  const h = { type: 'HATCH', layer: '0', r: { type: 'HATCH', c: [91, 92, 93, 72, 10, 20, 40, 50, 51, 73, 97, 75], v: ['1', '0', '1', '2', '5', '5', '10', '0', '360', '1', '0', '0'] } };
+  assert.deepEqual(pts(GR.gripsOf(h)), [[5, 5]]);
+});
+
+test('ellipse: centre, four axis ends, arc ends only for an arc', () => {
+  const e = ellipse(0, 0, 100, 0, 0.5);
+  assert.deepEqual(GR.gripsOf(e).map((g) => g.id), ['c', 'm0', 'm1', 'n0', 'n1']);
+  assert.deepEqual(pts(GR.gripsOf(e)).map((p) => p.map((v) => Math.round(v * 1e6) / 1e6)), [[0, 0], [100, 0], [-100, 0], [0, 50], [0, -50]]);
+  assert.equal(GR.gripsOf(reopen(e)).length, 5, 'saved as 6.283185 it is still a full ellipse');
+  const a = ellipse(0, 0, 100, 0, 0.5, 0, Math.PI / 2);
+  assert.deepEqual(GR.gripsOf(a).map((g) => g.id), ['c', 'm0', 'm1', 'n0', 'n1', 's', 't']);
+  nearPt(pts(GR.gripsOf(a)).slice(5)[0], [100, 0]); nearPt(pts(GR.gripsOf(a)).slice(5)[1], [0, 50]);
+});
+
+test('ellipse: the major end sets length and angle, the minor length stays; swap when shorter', () => {
+  const e = ellipse(10, 10, 100, 0, 0.5);
+  const r = GR.dragGrip(e, 'm0', [10, 210]);                                 // the major axis now points up, 200 long
+  nearPt([val(r.ent, 11), val(r.ent, 21)], [0, 200]); near(val(r.ent, 40), 0.25);          // the minor stays 50
+  const opp = GR.dragGrip(e, 'm1', [10 - 60, 10]);                           // the left end 60 out: major 60 along +x, ratio 50/60
+  nearPt([val(opp.ent, 11), val(opp.ent, 21)], [60, 0]); near(val(opp.ent, 40), 50 / 60);
+  const sw = GR.dragGrip(e, 'm0', [10 + 20, 10]);                            // shorter than the minor (50): they swap
+  nearPt([val(sw.ent, 11), val(sw.ent, 21)], [0, 50]); near(val(sw.ent, 40), 20 / 50);
+  assert.equal(GR.dragGrip(e, 'm0', [110, 10]), null);
+  assert.ok(GR.readoutOf(e, 'm0', r.ent).startsWith('Major 400.00 · Minor 100.00'));
+});
+
+test('ellipse: the minor end is the distance across the major axis; the centre moves it; arc ends set the parameters', () => {
+  const e = ellipse(0, 0, 100, 0, 0.5);
+  const n = GR.dragGrip(e, 'n0', [300, 80]);                                 // far along the axis does not matter: 80 across
+  near(val(n.ent, 40), 0.8); nearPt([val(n.ent, 11), val(n.ent, 21)], [100, 0]);
+  const big = GR.dragGrip(e, 'n1', [0, -150]);                               // wider than long: swap
+  nearPt([val(big.ent, 11), val(big.ent, 21)], [0, 150]); near(val(big.ent, 40), 100 / 150);
+  const c = GR.dragGrip(e, 'c', [5, 7]);
+  nearPt(pts(GR.gripsOf(c.ent))[1], [105, 7]); assert.equal(c.label, 'Move ellipse');
+  const a = ellipse(0, 0, 100, 0, 0.5, 0, Math.PI / 2);
+  const s = GR.dragGrip(a, 's', [0, -50]);                                   // 3π/2
+  near(val(s.ent, 41), 1.5 * Math.PI); near(val(s.ent, 42), Math.PI / 2);
+  const t = GR.dragGrip(a, 't', [-100, 0]);
+  near(val(t.ent, 42), Math.PI);
+  assert.deepEqual(GR.refPoint(e, 'm0'), [0, 0]);
+});
+
+test('ellipse arc: when the axes swap the arc stays where it was (the parameters turn a quarter)', () => {
+  const a = ellipse(0, 0, 40, 0, 0.5, 0, Math.PI);                           // the upper half
+  const sw = GR.dragGrip(a, 'm0', [10, 0]);                                  // major 10 < minor 20: swap, major now (0,20)
+  nearPt([val(sw.ent, 11), val(sw.ent, 21)], [0, 20]);
+  const g = pts(GR.gripsOf(sw.ent)).slice(5);                                // the arc ends: right (10,0) and left (-10,0), not the lower half
+  nearPt(g[0], [10, 0]); nearPt(g[1], [-10, 0]);
+  const [mx, my, ratio] = [val(sw.ent, 11), val(sw.ent, 21), val(sw.ent, 40)], mid = val(sw.ent, 41) + Math.PI / 2;       // the middle of the 180° piece is the top, (0, 20)
+  nearPt([mx * Math.cos(mid) - my * ratio * Math.sin(mid), my * Math.cos(mid) + mx * ratio * Math.sin(mid)], [0, 20]);
+  const n = GR.dragGrip(a, 'n0', [0, 60]);                                   // a minor end past the major (60 vs 40): swap by the other branch
+  const ng = pts(GR.gripsOf(n.ent)).slice(5);
+  nearPt(ng[0], [40, 0]); nearPt(ng[1], [-40, 0]);
+  assert.equal(GR.gripsOf(GR.dragGrip(ellipse(0, 0, 40, 0, 0.5), 'm0', [10, 0]).ent).length, 5, 'a full ellipse has no arc ends and gains none');
+});
+
+test('block insert with attributes and a hatch with several seed points move whole', () => {
+  const att = { type: 'ATTRIB', c: [10, 20, 1], v: ['6', '7', 'TAG'] };
+  const ins = { type: 'INSERT', layer: '0', r: { type: 'INSERT', c: [2, 10, 20, 30], v: ['B', '5', '6', '0'] }, kids: [att] };
+  const m = GR.dragGrip(ins, 'i', [8, 10]);                                  // by (3, 4)
+  assert.deepEqual(m.ent.kids[0].v, ['9', '11', 'TAG'], 'the attribute moves with its block');
+  assert.deepEqual(ins.kids[0].v, ['6', '7', 'TAG'], 'the original stays');
+  const h = hatchOf(0, 0, 10, 10);
+  h.r = { ...h.r, c: [...h.r.c, 10, 20], v: [...h.r.v, '7', '8'] };
+  h.r.v[h.r.c.indexOf(98)] = '2';
+  const mh = GR.dragGrip(h, 'c', [15, 15]);                                  // by (10, 10)
+  assert.deepEqual(hatchPts(mh.ent).slice(-2), [[11, 11], [17, 18]], 'every seed point moves');
+});
+
+test('ellipse seen from below (extrusion -1) has no grips', () => {
+  const e = ellipse(0, 0, 100, 0, 0.5); e.r = { ...e.r, c: [...e.r.c, 210, 220, 230], v: [...e.r.v, '0', '0', '-1'] };
+  assert.deepEqual(GR.gripsOf(e), []);
+});
+
+test('wholeHot: every defining grip hot (or the middle / centre) moves the object whole; translate moves lines, polylines and leaders', () => {
+  const ids = (...a) => new Set(a);
+  const ln = line(0, 0, 10, 0), pl = lwpoly([[0, 0], [10, 0], [10, 5]]), rc = rect(0, 0, 10, 5), ci = circle(0, 0, 5), ar = arc(0, 0, 10, 0, 90);
+  const ld = { type: 'LEADER', model: { pts: [[0, 0], [10, 0], [10, 5]] } };
+  assert.ok(GR.wholeHot(ln, ids('a', 'b')) && GR.wholeHot(ln, ids('m')) && !GR.wholeHot(ln, ids('a')));
+  assert.ok(GR.wholeHot(pl, ids('v0', 'v1', 'v2')) && !GR.wholeHot(pl, ids('v0', 'v1')));
+  assert.ok(GR.wholeHot(rc, ids('v0', 'v1', 'v2', 'v3')), 'edge grips do not count');
+  assert.ok(GR.wholeHot(ld, ids('v0', 'v1', 'v2')) && !GR.wholeHot(ld, ids('v0', 'v2')));
+  assert.ok(GR.wholeHot(ci, ids('q0', 'q1', 'q2', 'q3')) && !GR.wholeHot(ci, ids('q0', 'q1')) && GR.wholeHot(ci, ids('c')));
+  assert.ok(GR.wholeHot(ar, ids('a', 'm', 'b')) && !GR.wholeHot(ar, ids('a', 'b')));
+  const m = GR.translate(ln, 10, 0);
+  assert.deepEqual([10, 20, 11, 21].map((c) => val(m, c)), [10, 0, 20, 0]);
+  assert.deepEqual(GR.translate(ld, 1, 2).model.pts, [[1, 2], [11, 2], [11, 7]]);
+  assert.deepEqual(pts(GR.gripsOf(GR.translate(pl, 1, 2))), [[1, 2], [11, 2], [11, 7]]);
 });
 
 console.log(n + ' grips tests passed');

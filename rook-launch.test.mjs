@@ -10,7 +10,7 @@ const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
   + `--add-dir "${X}" --disallowedTools Agent "Bash(git commit:*)" "Bash(git push:*)" "Bash(git add:*)" "Bash(git checkout:*)" `
   + '"Bash(git switch:*)" "Bash(git stash:*)" "Bash(git restore:*)" "Bash(git pull:*)" --output-format stream-json --verbose';
-const BUILDER = 'claude2.cmd -p --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 '
+const BUILDER = 'claude2.cmd -p --agent builder --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 '
   + `--add-dir "E:/Project B/Claude/Project D/.git" --add-dir "${X}" `
   + '--disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" Agent "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" '
   + '--allowedTools "Bash(echo:*)" "Bash(tee:*)" "Bash(npx.cmd:*)" "Bash(npm.cmd:*)" "PowerShell(Select-String:*)" "PowerShell(Select-Object:*)" '
@@ -22,7 +22,7 @@ function recorder(fail = '') {
   const calls = [];
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
-  return { calls, x: { git: rec('git', ''), has: rec('has', true), need: rec('need'), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]) } };
+  return { calls, x: { git: rec('git', ''), has: rec('has', true), need: rec('need'), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { check: rec('gateCheck'), record: rec('gateRecord') } } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
@@ -41,7 +41,9 @@ test('review arguments: three positionals, optional --as and --from clone branch
 });
 
 test('build arguments: four positionals, optional --as (default king), a real commit id, paths absolute', () => {
-  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined });
+  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, over: false });
+  const flagged = parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--fix', '--over', '--as', 'king']);
+  assert.deepEqual([flagged.fix, flagged.over, flagged.as], [true, true, 'king']);
   assert.equal(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--as', 'bishop']).as, 'bishop');
   assert.throws(() => parseBuild(['b.txt', 'o.jsonl', 'king/x']), /usage: build/);
   assert.throws(() => parseBuild(['b.txt', 'o.jsonl', 'king/x', 'main']), /not a commit id/);
@@ -49,7 +51,8 @@ test('build arguments: four positionals, optional --as (default king), a real co
 
 test('knight arguments: four positionals, report ends in .txt, log sits next to it, paths absolute', () => {
   assert.deepEqual(parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234']),
-    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log') });
+    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, over: false });
+  assert.deepEqual(['--fix', '--over'].map((f) => parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234', f])).map((p) => [p.fix, p.over]), [[true, false], [false, true]]);
   assert.throws(() => parseKnight(['b.txt', 'k.txt', 'knight/x']), /usage: knight/);
   assert.throws(() => parseKnight(['b.txt', 'k.md', 'knight/x', 'abc1234']), /must end in \.txt/);
   assert.throws(() => parseKnight(['b.txt', 'k.txt', 'knight/x', 'main']), /not a commit id/);
@@ -185,4 +188,22 @@ test('build --dir king2 runs King in his review folder; a lock there refuses it;
   const locked = recorder();
   locked.x.locked = (dir) => dir.endsWith('ProjectD-king2');
   assert.throws(() => build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--dir', 'king2'], locked.x), /in use.*\.run-lock/);
+});
+
+test('handover gate: build and knight check it first, record after the launch; a refusal launches nothing; --fix / --over pass through', () => {
+  for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
+    const { calls, x } = recorder();
+    run([...args, '--fix'], x);
+    const at = (name) => calls.findIndex((c) => c[0] === name);
+    assert.equal(at('gateCheck'), 0, run.name);
+    assert.deepEqual(calls[0].slice(1), [true, false]);
+    assert.ok(at('launch') < at('gateRecord'), run.name);
+    assert.deepEqual(calls[at('gateRecord')][1], { fix: true, over: false, brief: resolve(args[0]), branch: 'br' });
+    const refused = recorder('gateCheck');
+    assert.throws(() => run(args, refused.x), /gateCheck failed/);
+    assert.deepEqual(refused.calls.map((c) => c[0]), ['gateCheck'], run.name);
+    const over = recorder();
+    run([...args, '--over'], over.x);
+    assert.deepEqual(over.calls[0].slice(1), [false, true]);
+  }
 });

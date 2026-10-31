@@ -2,8 +2,9 @@
 import { bulgeArc, mmul, mapply } from './drawing.js';
 import { lwVertices, get } from './grips.js';
 import { entity, line, arc, circle, ellipse, lwpoly, insert, mtext } from './dxf-write.js';
-import { DIM_BLOCK, usedBlocks } from './edit.js';
-import { textRecord } from './dimension-text.js';
+import { DIM_BLOCK, usedBlocks, dimGeom, dimBlock, dimOffsetAt, angleBetween, dimText, freeName } from './edit.js';
+import { textRecord, dimensionText } from './dimension-text.js';
+import { explodeHatch } from './hatch-explode.js';
 
 const DEG = Math.PI / 180, TAU = 2 * Math.PI, ID = [1, 0, 0, 1, 0, 0];
 const val = (e, c, fallback = 0) => get(e.r, c) ?? fallback;
@@ -190,10 +191,66 @@ export function explodeInsert(e, raw) {
 /** Is this entity the INSERT of a PD_DIM block that `blocks` holds? */
 export const isDimInsert = (e, blocks) => e.type === 'INSERT' && DIM_BLOCK.test(field(e, 2) || '') && !!blocks[field(e, 2)];
 
+/** Native dimension definition points when its anonymous graphics block is missing. */
+function nativeGeometry(e, raw) {
+  const kind = val(e, 70) & 7, p = (c) => [val(e, c), val(e, c + 10)], a = p(13), b = p(14), at = p(10);
+  const style = raw.dimstyles?.[field(e, 3)], st = (c, key, fallback) => (style && get(style, c)) ?? +(raw.header?.[key] ?? fallback);
+  const scale = st(40, '$DIMSCALE', 1), look = { textH: st(140, '$DIMTXT', 2.5) * scale, arrow: st(41, '$DIMASZ', 2.5) * scale };
+  const dp = (style && get(style, 271)) ?? +(raw.header?.$DIMDEC ?? 2);
+  let params, type, rot = 0;
+  if (kind === 0 || kind === 1) {
+    rot = kind === 0 ? val(e, 50) : 0;
+    const c = Math.cos(rot * DEG), s = Math.sin(rot * DEG), local = ([x, y]) => [x * c + y * s, -x * s + y * c];
+    const aa = local(a), bb = local(b), axis = kind === 0 ? 'h' : null;
+    params = { a: aa, b: bb, axis, offset: dimOffsetAt(aa, bb, local(at), axis) }; type = kind === 0 ? 'linear' : 'aligned';
+  } else if (kind === 3) { params = { a: at, b: p(15) }; type = 'diameter'; }
+  else if (kind === 4) { const q = p(15); params = { c: at, r: Math.hypot(q[0] - at[0], q[1] - at[1]), p: q }; type = 'radius'; }
+  else if (kind === 2) { params = angleBetween([...p(13), ...p(14)], [...p(15), ...p(16)], at); type = 'angle'; }
+  else if (kind === 5) {
+    const v = p(15), ang = (q) => Math.atan2(q[1] - v[1], q[0] - v[0]) / DEG;
+    params = { v, r: Math.hypot(at[0] - v[0], at[1] - v[1]), a0: ang(a), a1: ang(b) }; type = 'angle';
+  } else if (kind === 6) {
+    const axis = val(e, 70) & 64 ? 0 : 1;
+    params = { a, b, offset: 0, override: dimText(Math.abs(a[axis] - at[axis]), dp) }; type = 'aligned';
+  }
+  const g = params && dimGeom(type, { ...params, ...look }, 1, dp);
+  if (!g) throw new Error('Cannot explode DIMENSION: invalid definition points');
+  const block = dimBlock(g, freeName(raw.blocks)).block;
+  if (rot) {
+    const name = freeName(raw.blocks);
+    block.entities = explodeInsert(insert(name, 0, 0, { rot }), { ...raw, blocks: { ...raw.blocks, [name]: block } }).entities;
+  }
+  if (e.r.c.includes(11)) block.entities = block.entities.map((child) => child.type === 'TEXT'
+    ? { ...child, r: { ...child.r, v: child.r.v.map((v, i) => [10, 11].includes(child.r.c[i]) ? String(val(e, 11)) : [20, 21].includes(child.r.c[i]) ? String(val(e, 21)) : v) } } : child);
+  return { block, measured: g.label, dp };
+}
+
 /** A dimension as plain pieces: its lines, arcs and SOLID arrowheads, and its text as one MTEXT (the TEXT already shows the override with `<>` filled in). No PD_DIM_TEXT attdef is left. */
 export function explodeDimension(e, raw) {
-  const name = field(e, 2), block = raw.blocks[name], att = textRecord(block.entities), keep = block.entities.filter((c) => c !== att && c.type !== 'POINT');
-  const pieces = explodeInsert(e, { ...raw, blocks: { ...raw.blocks, [name]: { ...block, entities: keep } } }).entities;
+  const native = e.type === 'DIMENSION', generated = native && !raw.blocks[field(e, 2)] ? nativeGeometry(e, raw) : null;
+  const name = generated ? freeName(raw.blocks) : field(e, 2), block = generated?.block || raw.blocks[name];
+  if (!block || block.xref) throw new Error('missing block or external reference');
+  const att = textRecord(block.entities), layer = /^defpoints$/i.test(e.layer) ? '0' : e.layer;
+  let keep = block.entities.filter((c) => c !== att && c.type !== 'POINT');
+  if (native) {
+    const override = generated ? e.r.v[e.r.c.indexOf(1)] : null; // The graphics block already has AutoCAD's resolved text.
+    let measured = generated?.measured;
+    if (override?.includes('<>')) {
+      if (e.r.c.includes(42)) {
+        const kind = val(e, 70) & 7, dp = generated.dp;
+        measured = (kind === 4 ? 'R' : kind === 3 ? 'Ø' : '') + dimText(val(e, 42), dp) + ([2, 5].includes(kind) ? '°' : '');
+      }
+    }
+    keep = keep.map((c) => {
+      const onLayer = { ...c, layer: /^defpoints$/i.test(c.layer) ? layer : c.layer };
+      if (!['TEXT', 'MTEXT'].includes(c.type) || !override?.trim()) return onLayer;
+      const label = dimensionText(measured, override);
+      return entity(c.type, c.r.c.flatMap((code, i) => code === 3 ? [] : [[code, code === 1 ? label : c.r.v[i]]]), onLayer);
+    });
+    if (override === ' ') keep = keep.filter((c) => !['TEXT', 'MTEXT'].includes(c.type));
+  }
+  const source = native ? insert(name, ...(block.base || [0, 0]), { ...e, layer }) : e;
+  const pieces = explodeInsert(source, { ...raw, blocks: { ...raw.blocks, [name]: { ...block, entities: keep } } }).entities;
   // TEXT 72 = 1 (centre) with 73 = 1 / 2 / 3 (bottom / middle / top) is MTEXT attachment 8 / 5 / 2
   return pieces.map((p) => {
     if (p.type !== 'TEXT') return p;
@@ -205,21 +262,22 @@ export function explodeDimension(e, raw) {
       // top and bottom swap when the text is upside down (71 & 4) XOR it was turned: the turn undoes the flip, so it keeps its side of the line
       if (!!(val(p, 71) & 4) !== turned) attach = { 2: 8, 8: 2 }[attach] ?? attach;
     }
-    return mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), field(p, 1).replace(/[\\{}]/g, '\\$&'), { ...p, attach, rot });
+    return mtext(val(p, 11, val(p, 10)), val(p, 21, val(p, 20)), val(p, 40), (native ? p.r.v[p.r.c.indexOf(1)] : field(p, 1)).replace(/[\\{}]/g, '\\$&'), { ...p, attach, rot });
   });
 }
 
 /** Replace only explodable selected entities, preserving draw order and returning the new selection. */
 export function explodeSelection(raw, selection, locked = new Set()) {
   let blocks = raw.blocks, exploded = 0, skipped = 0;
-  const entities = [], selected = new Set(), errors = [], dims = new Set();
+  const entities = [], selected = new Set(), errors = [], messages = new Set(), dims = new Set();
   raw.entities.forEach((e, i) => {
     let pieces;
     if (selection.has(i)) {
       if (locked.has(e.layer)) skipped++;
       else try {
-        if (isDimInsert(e, blocks)) { pieces = explodeDimension(e, { ...raw, blocks }); dims.add(field(e, 2)); }
+        if (e.type === 'DIMENSION' || isDimInsert(e, blocks)) { pieces = explodeDimension(e, { ...raw, blocks }); dims.add(field(e, 2)); }
         else if (e.type === 'INSERT') { const r = explodeInsert(e, { ...raw, blocks }); pieces = r.entities; if (pieces.length) blocks = r.blocks; }
+        else if (e.type === 'HATCH') { pieces = explodeHatch(e); if (pieces.length) messages.add('Hatch boundary associativity removed.'); }
         else pieces = explodePolyline(e);
       } catch (err) { errors.push(err.message); }
     }
@@ -230,5 +288,5 @@ export function explodeSelection(raw, selection, locked = new Set()) {
   });
   const used = usedBlocks(blocks, entities);
   if ([...dims].some((n) => !used.has(n))) { blocks = { ...blocks }; for (const n of dims) if (!used.has(n)) delete blocks[n]; }       // a dimension's block nothing else uses goes with it, as on Delete
-  return { entities, blocks, selected, exploded, skipped, errors: [...new Set(errors)] };
+  return { entities, blocks, selected, exploded, skipped, errors: [...new Set(errors)], messages: [...messages] };
 }

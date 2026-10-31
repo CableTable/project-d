@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import { filletLines, filletEntities } from './web/fillet.js';
 import { shapeOf } from './web/grips.js';
-import { filletPolylineShape } from './web/fillet.js';
+import { filletPolylineShape, filletAllPolyline } from './web/fillet.js';
 import { pathOf, geo } from './web/modify.js';
 import { readDxf } from './web/drawing.js';
 
@@ -37,8 +37,7 @@ test('radius 0 makes a sharp corner and no arc', () => {
   pt(f.l1[1], [10, 0]); pt(f.l2[0], [10, 0]); assert.equal(f.arc, null);
 });
 
-test('invalid cases: parallel, radius too big, negative radius, zero-length line', () => {
-  assert.match(filletLines([[0, 0], [10, 0]], [5, 0], [[0, 5], [10, 5]], [5, 5], 1).error, /parallel/);
+test('invalid cases: collinear, radius too big, negative radius, zero-length line', () => {
   assert.match(filletLines([[0, 0], [10, 0]], [5, 0], [[20, 0], [30, 0]], [25, 0], 1).error, /parallel/);
   assert.match(filletLines([[0, 0], [10, 0]], [5, 0], [[10, 0], [10, 3]], [10, 2], 5).error, /too big/);
   assert.match(filletLines([[0, 0], [10, 0]], [5, 0], [[10, 0], [10, 10]], [10, 5], -1).error, /0 or more/);
@@ -52,7 +51,6 @@ test('entities: two LINEs keep their layer and colour; the arc joins on the firs
   close(value(ents[0], 11), 8); close(value(ents[1], 20), 2); close(value(ents[2], 40), 2);
   assert.equal(filletEntities(a, [5, 0], b, [10, 5], 0).ents.length, 2);
   assert.match(filletEntities(a, [5, 0], a, [6, 0], 1).error, /different/);
-  assert.match(filletEntities(a, [5, 0], W.circle(0, 0, 5), [5, 0], 1).error, /circles.*not supported/);
 });
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 3e-6, `${a} != ${b}`);
@@ -64,6 +62,12 @@ function tangent(ents, radius) {
   const fillet = shapeOf(ents[2]), ends = [end(fillet, fillet.a0), end(fillet, fillet.a1)];
   near(fillet.r, radius);
   for (const e of ents.slice(0, 2)) {
+    if (e.type === 'CIRCLE') {
+      const s = shapeOf(e), p = ends.slice().sort((p, q) => Math.abs(distance(p, s.c) - s.r) - Math.abs(distance(q, s.c) - s.r))[0];
+      near(distance(p, s.c), s.r);
+      near(((p[0] - s.c[0]) * (p[1] - fillet.c[1]) - (p[1] - s.c[1]) * (p[0] - fillet.c[0])) / (s.r * radius), 0);
+      continue;
+    }
     const s = shapeOf(e), points = s.t === 'line' ? [s.a, s.b] : [end(s, s.a0), end(s, s.a1)];
     const pairs = points.flatMap((p) => ends.map((q) => ({ p, q, d: distance(p, q) }))).sort((a, b) => a.d - b.d);
     near(pairs[0].d, 0);
@@ -76,6 +80,108 @@ function tangent(ents, radius) {
     if (s.t === 'arc') assert.ok((s.a1 - s.a0 + 360) % 360 > 0);
   }
 }
+
+test('LINE / CIRCLE: nearest tangent on either side of the picks, both orders, circle untouched and No trim', () => {
+  const line = W.line(-20, 0, 20, 0, { layer: 'Cut' }), circle = W.circle(0, 10, 5, { layer: 'Mark' });
+  const before = structuredClone([line, circle]);
+  for (const side of [-1, 1]) {
+    const p = [side * 10, 0], q = [0, 5], f = filletEntities(line, p, circle, q, 3);
+    assert.ok(f.ents, f.error); tangent(f.ents, 3);
+    assert.equal(f.ents[1], circle); assert.equal(f.ents[2].layer, 'Cut');
+    near(value(f.ents[2], 10), side * Math.sqrt(15)); near(value(f.ents[2], 20), 3);
+    const reversed = filletEntities(circle, q, line, p, 3);
+    tangent(reversed.ents, 3); assert.equal(reversed.ents[0], circle); assert.equal(reversed.ents[2].layer, 'Mark');
+    assert.deepEqual(reversed.ents[1], f.ents[0]);
+    const noTrim = filletEntities(line, p, circle, q, 3, false);
+    assert.equal(noTrim.ents[0], line); assert.equal(noTrim.ents[1], circle); assert.deepEqual(noTrim.ents[2], f.ents[2]);
+  }
+  assert.deepEqual([line, circle], before);
+});
+
+test('CIRCLE / CIRCLE: outside tangent solutions follow the picks and leave both sources unchanged', () => {
+  const a = W.circle(0, 0, 5), b = W.circle(16, 0, 5), before = structuredClone([a, b]);
+  for (const side of [-1, 1]) {
+    const p = [4, side * 3], q = [12, side * 3], f = filletEntities(a, p, b, q, 4);
+    assert.ok(f.ents, f.error); tangent(f.ents, 4);
+    assert.equal(f.ents[0], a); assert.equal(f.ents[1], b);
+    near(value(f.ents[2], 10), 8); near(value(f.ents[2], 20), side * Math.sqrt(17));
+    assert.deepEqual(filletEntities(b, q, a, p, 4).ents[2], f.ents[2]);
+    assert.deepEqual(filletEntities(a, p, b, q, 4, false).ents, f.ents);
+  }
+  assert.deepEqual([a, b], before);
+  const outer = W.circle(0, 0, 10), inner = W.circle(0, 0, 6);
+  const concentric = filletEntities(outer, [10, 0], inner, [6, 0], 2);
+  tangent(concentric.ents, 2); pt(shapeOf(concentric.ents[2]).c, [8, 0]);
+  assert.equal(concentric.ents[0], outer); assert.equal(concentric.ents[1], inner);
+});
+
+test('ARC / CIRCLE: trim the finite arc, preserve the circle; impossible and zero radii refuse', () => {
+  const arc = W.arc(0, 0, 5, 0, 180), circle = W.circle(16, 0, 5), before = structuredClone([arc, circle]);
+  const f = filletEntities(arc, [0, 5], circle, [12, 3], 4);
+  assert.ok(f.ents, f.error); tangent(f.ents, 4);
+  assert.equal(f.ents[1], circle); assert.ok(value(f.ents[0], 50) > 0); close(value(f.ents[0], 51), 180);
+  tangent(filletEntities(circle, [12, 3], arc, [0, 5], 4).ents, 4);
+  assert.deepEqual(filletEntities(arc, [0, 5], circle, [12, 3], 4, false).ents.slice(0, 2), [arc, circle]);
+  assert.match(filletEntities(W.arc(0, 0, 5, 0, 30), [4.9, .5], circle, [12, 3], 100).error, /No tangent.*radius.*miss or swallow/);
+  for (const other of [arc, W.line(-20, 0, 20, 0), W.circle(30, 0, 5)]) {
+    assert.equal(filletEntities(circle, [12, 3], other, [0, 5], 0).error, 'Fillet with a circle needs a radius above 0');
+    assert.equal(filletEntities(other, [0, 5], circle, [12, 3], 0).error, 'Fillet with a circle needs a radius above 0');
+  }
+  assert.match(filletEntities(W.circle(0, 0, 0), [0, 0], arc, [0, 5], 2).error, /no length/);
+  const tilted = structuredClone(circle); tilted.r.c.push(210); tilted.r.v.push('1');
+  assert.match(filletEntities(arc, [0, 5], tilted, [12, 3], 4).error, /drawing plane/);
+  assert.deepEqual([arc, circle], before);
+});
+
+test('parallel lines: a gap-sized semicircle at the first picked end, both orders, extend and No trim', () => {
+  for (const reverse of [false, true]) for (const side of [-1, 1]) for (const radius of [0, 1, 100]) {
+    const pair = [W.line(0, 0, 20, 0), W.line(2, 6, 18, 6)];
+    if (reverse) pair.reverse();
+    const [a, b] = pair, picks = [a, b].map((e) => [side < 0 ? value(e, 10) + 1 : value(e, 11) - 1, value(e, 20)]);
+    const f = filletEntities(a, picks[0], b, picks[1], radius), arc = shapeOf(f.ents[2]);
+    assert.equal(f.ents[0], a); tangent(f.ents, 3);
+    const x = value(a, side < 0 ? 10 : 11);
+    near(arc.c[0], x); near(arc.c[1], 3); near((arc.a1 - arc.a0 + 360) % 360, 180);
+    const mid = end(arc, arc.a0 + 90); assert.ok(side * (mid[0] - x) > 0, 'semicircle lies beyond the first endpoint');
+    close(value(f.ents[1], side < 0 ? 10 : 11), x);
+    const noTrim = filletEntities(a, picks[0], b, picks[1], radius, false);
+    assert.equal(noTrim.ents[0], a); assert.equal(noTrim.ents[1], b); assert.deepEqual(noTrim.ents[2], f.ents[2]);
+  }
+  const f = filletLines([[0, 20], [0, 0]], [0, 1], [[6, 8], [6, 30]], [6, 9], 50);
+  pt(f.arc.c, [3, 0]); pt(f.l2[0], [6, 0]); close(f.arc.r, 3);
+  assert.match(filletEntities(W.line(0, 0, 10, 0), [1, 0], W.line(0, 1e-7, 10, 1e-7), [1, 1e-7], 5).error, /precision/);
+});
+
+test('parallel lines: an interior contact keeps the second line on the first line\'s body side, both pick orders', () => {
+  const a = [[0, 0], [10, 0]], b = [[6, 5], [20, 5]];
+  const f = filletLines(a, [9, 0], b, [7, 5], 1);
+  assert.deepEqual(f.l1, a); assert.deepEqual(f.l2, [[6, 5], [10, 5]]);
+  tangent(filletEntities(W.line(0, 0, 10, 0), [9, 0], W.line(6, 5, 20, 5), [7, 5], 1).ents, 2.5);
+  const g = filletLines(b, [7, 5], a, [9, 0], 1);
+  assert.deepEqual(g.l1, b); assert.deepEqual(g.l2, [[6, 0], [10, 0]]);
+  tangent(filletEntities(W.line(6, 5, 20, 5), [7, 5], W.line(0, 0, 10, 0), [9, 0], 1).ents, 2.5);
+});
+
+test('parallel lines: a second line starting at or wholly past the arc end extends its near end, never zero length', () => {
+  const a = [[0, 0], [10, 0]];
+  for (const l2 of [[[10, 5], [20, 5]], [[12, 5], [20, 5]]]) {
+    const f = filletLines(a, [9, 0], l2, [15, 5], 1);
+    assert.deepEqual(f.l1, a); assert.deepEqual(f.l2, [[10, 5], [20, 5]]); close(f.arc.r, 2.5);
+  }
+  const g = filletLines(a, [1, 0], [[-3, 5], [6, 5]], [2, 5], 1);
+  assert.deepEqual(g.l2, [[0, 5], [6, 5]]);
+  for (const l2 of [[[-20, 5], [-12, 5]], [[-20, 5], [0, 5]]]) assert.deepEqual(filletLines(a, [1, 0], l2, [-15, 5], 1).l2, [[-20, 5], [0, 5]]);
+});
+
+test('OCS -Z circle: solve in drawing coordinates and keep the original circle record', () => {
+  const line = W.line(-20, 0, 20, 0), circle = W.circle(3, 10, 5), mirrored = W.circle(-3, 10, 5);
+  mirrored.r.c.push(210, 220, 230); mirrored.r.v.push('0', '0', '-1');
+  const f = filletEntities(line, [-10, 0], circle, [3, 5], 3), g = filletEntities(line, [-10, 0], mirrored, [3, 5], 3);
+  assert.deepEqual(g.ents[0], f.ents[0]); assert.deepEqual(g.ents[2], f.ents[2]); assert.equal(g.ents[1], mirrored);
+  const raw = W.newDoc(4); W.addEntities(raw, ...g.ents);
+  const saved = readDxf(W.writeDxf(raw)); assert.equal(saved.entities[1].flip, true);
+  assert.deepEqual(shapeOf(saved.entities[2]), shapeOf(f.ents[2]));
+});
 
 test('LINE / ARC: both line sides and both arc sides, including reversed entity order', () => {
   const line = W.line(-20, 0, 20, 0, { layer: 'Cut', aci: 3 });
@@ -182,6 +288,102 @@ const records = (e) => e.type === 'POLYLINE' ? e.kids : (() => {
 })();
 const widthsOf = (e) => records(e).map((r) => [40, 41].map((c) => r.c.includes(c) ? +r.v[r.c.indexOf(c)] : null));
 const savedPoly = (e) => { const d = W.newDoc(4); W.addEntities(d, e); return readDxf(W.writeDxf(d)).entities[0]; };
+
+test('Polyline option: closed and open corners, both windings, with saved tangent bulges and properties', () => {
+  for (const closed of [false, true]) for (const winding of [1, -1]) {
+    const e = poly([[0, 0], [20, 0], [20, winding * 20], [0, winding * 20]], { closed, widths: true });
+    const before = structuredClone(e), f = filletAllPolyline(e, 2), out = savedPoly(f.ents[0]);
+    assert.equal(f.count, closed ? 4 : 2); assert.equal(f.short, 0);
+    const sh = filletPolylineShape(out), arcs = pathOf(sh).segs.filter((s) => s.bulge);
+    assert.equal(sh.closed, closed); assert.equal(arcs.length, f.count);
+    assert.equal(sh.pts.length, closed ? 8 : 6);
+    for (const s of arcs) { near(s.bulge, winding * Math.tan(Math.PI / 8)); near(geo(s).r, 2); }
+    assert.equal(out.layer, 'Cut'); assert.equal(value(out, 43), 2); assert.equal(value(out, 38), 7);
+    assert.deepEqual(widthsOf(out).filter((_, i) => i % 2 === 0), closed ? [[1, 2], [2, 3], [3, 4], [4, 5]] : [[1, 2], [2, 3], [3, 4]]);
+    assert.deepEqual(e, before);
+  }
+});
+
+test('Polyline option in No trim leaves the polyline alone and adds one ARC per corner (AutoCAD)', () => {
+  for (const [closed, corners] of [[true, 4], [false, 2]]) {
+    const e = poly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed }), f = filletAllPolyline(e, 2, false);
+    assert.equal(f.count, corners); assert.equal(f.ents[0], e); assert.equal(f.ents.length, corners + 1);
+    for (const a of f.ents.slice(1)) { assert.equal(a.type, 'ARC'); near(value(a, 40), 2); }
+  }
+  const one = filletAllPolyline(poly([[0, 0], [20, 0], [20, 20]]), 2, false);
+  assert.equal(one.count, 1); assert.equal(one.ents.length, 2);
+});
+
+test('Polyline option skips short corners and prevents adjacent fillets from consuming a shared segment', () => {
+  const f = filletAllPolyline(poly([[0, 0], [20, 0], [20, 1], [40, 1], [40, 20]]), 2);
+  assert.equal(f.count, 1); assert.equal(f.short, 2);
+  assert.equal(filletPolylineShape(f.ents[0]).pts.filter((p) => p[2]).length, 1);
+  const g = filletAllPolyline(poly([[0, 0], [20, 0], [20, 3], [40, 3]]), 2);
+  assert.equal(g.count, 1); assert.equal(g.short, 1);
+  assert.match(filletAllPolyline(poly([[0, 0], [1, 0]]), -1).error, /0 or more/);
+  assert.match(filletAllPolyline(W.line(0, 0, 10, 0), 1).error, /LWPOLYLINE/);
+});
+
+test('Polyline option replaces arcs between straight segments and radius zero restores sharp corners', () => {
+  for (const closed of [false, true]) {
+    const e = poly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed });
+    const rounded = filletAllPolyline(e, 2).ents[0];
+    const again = filletAllPolyline(savedPoly(rounded), 3);
+    assert.equal(again.count, closed ? 4 : 2); assert.equal(again.short, 0);
+    const sh = filletPolylineShape(savedPoly(again.ents[0]));
+    assert.equal(sh.pts.length, closed ? 8 : 6);
+    for (const s of pathOf(sh).segs.filter((s) => s.bulge)) near(geo(s).r, 3);
+    const sharp = filletAllPolyline(rounded, 0);
+    assert.equal(sharp.count, closed ? 4 : 2); assert.equal(sharp.short, 0);
+    assert.deepEqual(filletPolylineShape(savedPoly(sharp.ents[0])), filletPolylineShape(e));
+    assert.equal(filletAllPolyline(e, 0).ents[0], e, 'already sharp adds no edit');
+  }
+  const untouched = poly([[0, 0, .5], [10, 0, .5], [20, 0]]);
+  assert.equal(filletAllPolyline(untouched, 2).ents[0], untouched, 'arcs without two flanking lines stay');
+});
+
+test('Polyline option keeps arcs between diverging lines and still replaces converging ones', () => {
+  for (const winding of [1, -1]) {
+    const slot = poly([[0, -10], [50, -5, 1], [50, 5], [0, 10, 1]]
+      .map(([x, y, b = 0]) => [x, y * winding, b * winding]), { closed: true });
+    const before = structuredClone(slot), f = filletAllPolyline(slot, 2);
+    assert.equal(f.count, 1); assert.equal(f.short, 0);
+    const sh = filletPolylineShape(savedPoly(f.ents[0]));
+    assert.deepEqual([sh.pts[0], sh.pts.at(-1)], [[0, -10 * winding, 0], [0, 10 * winding, winding]]);
+    const arcs = pathOf(sh).segs.filter((s) => s.bulge);
+    assert.equal(arcs.length, 2); near(geo(arcs[0]).r, 2); near(arcs[1].bulge, winding);
+    assert.deepEqual(slot, before);
+    const keyhole = poly([[10, -5], [0, -10, 1], [0, 10], [10, 5]]
+      .map(([x, y, b = 0]) => [x, y * winding, b * winding]));
+    const g = filletAllPolyline(keyhole, 2);
+    assert.equal(g.count, 0); assert.equal(g.short, 0); assert.equal(g.ents[0], keyhole);
+    const oversized = filletAllPolyline(keyhole, 20);
+    assert.equal(oversized.count, 0); assert.equal(oversized.short, 0); assert.equal(oversized.ents[0], keyhole);
+  }
+});
+
+test('No trim keeps the picked lines or arcs and adds only the fillet arc', () => {
+  const a = W.line(0, 0, 10, 0), b = W.line(10, 0, 10, 10);
+  const f = filletEntities(a, [5, 0], b, [10, 5], 2, false);
+  assert.equal(f.ents[0], a); assert.equal(f.ents[1], b); assert.equal(f.ents[2].type, 'ARC');
+  assert.deepEqual(filletEntities(a, [5, 0], b, [10, 5], 0, false).ents, [a, b]);
+  const arc = W.arc(3, 5, 10, 180, 360), line = W.line(-20, 0, 20, 0);
+  const g = filletEntities(line, [-15, 0], arc, [-6, -3], 2, false);
+  assert.equal(g.ents[0], line); assert.equal(g.ents[1], arc); assert.equal(g.ents[2].type, 'ARC');
+});
+
+test('No trim on adjacent polyline segments keeps the source and adds a standalone arc in drawing coordinates', () => {
+  for (const legacy of [false, true]) for (const flip of [1, -1]) {
+    const e = poly([[0, 0], [10, 0], [10, 10]], { legacy });
+    e.r.c.push(210, 220, 230); e.r.v.push('0', '0', String(flip));
+    const f = filletEntities(e, [5 * flip, 0], e, [10 * flip, 5], 2, false);
+    assert.equal(f.ents[0], e); assert.equal(f.ents.length, 2); assert.equal(f.ents[1].type, 'ARC');
+    const arc = shapeOf(savedPoly(f.ents[1]));
+    pt(arc.c, [8 * flip, 2]); close(arc.r, 2);
+    pt(end(arc, arc.a0), flip > 0 ? [8, 0] : [-10, 2]);
+    pt(end(arc, arc.a1), flip > 0 ? [10, 2] : [-8, 0]);
+  }
+});
 
 test('open polyline: one entity, tangent vertex pair, other bulges, widths, flags and elevation survive Save', () => {
   for (const legacy of [false, true]) for (const reverse of [false, true]) {

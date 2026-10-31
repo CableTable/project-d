@@ -13,6 +13,7 @@ import { toEntity } from './draw.js';
 import { LDR_BLOCK } from './edit.js';
 import * as L from './leader.js';
 import { insert } from './dxf-write.js';
+import { offsetCurve } from './offsetcurve.js';
 
 const TAU = Math.PI * 2, DEG = 180 / Math.PI;
 const dist = (a, b) => Math.hypot(b[0] - a[0], b[1] - a[1]);
@@ -488,10 +489,9 @@ export function shapeOfPiece(segs, srcType) {
 }
 
 /** Where the cutting edges cross a path (segment index + fraction), sorted, no doubles; the ends of an open path are dropped. */
-function cutParams(P, edges) {
+function cutParams(P, paths) {
   const n = P.segs.length, cuts = [];
-  for (const e of edges) {
-    const E = pathOf(e);
+  for (const E of paths) {
     P.segs.forEach((s, i) => { for (const t of E.segs.filter((q) => dist(q.a, q.b) >= 1e-9)) for (const h of segInter(s, t)) cuts.push(i + h.fs); });
   }
   let cs = cuts.map((u) => (P.closed && u >= n - 1e-9 ? 0 : u)).sort((a, b) => a - b);
@@ -507,7 +507,7 @@ function cutParams(P, edges) {
 export function trimShape(sh, edges, pick, quick = false) {
   const P = pathOf(sh), n = P.segs.length;
   if (P.segs.some((s) => dist(s.a, s.b) < 1e-9)) return { error: 'The polyline has a side without length' };
-  const cs = cutParams(P, edges);
+  const cs = cutParams(P, edges.map(pathOf));
   if (!cs.length) return quick ? { shapes: [], removed: sh } : { error: 'Nothing crosses it here: pick a part between cutting edges' };     // Quick: an object nothing crosses goes whole
   const up = closest(P, pick).u;
   let pieces, removed;
@@ -531,11 +531,37 @@ export function trimShape(sh, edges, pick, quick = false) {
 
 /** Can Offset and Trim take this entity? (A line, arc, circle or light polyline lying in the plane.) */
 export const canModify = (ent) => !!ent && hasGrips(ent) && ent.type !== 'LEADER';
+/** Offset also takes curves; keep Trim and cleanup on their existing exact shapes. */
+export const canOffset = (ent) => canModify(ent) || !!ent?.r && ['ELLIPSE', 'SPLINE'].includes(ent.type);
 
-/** The offset copy of an entity d away on the side of the point `at`: { ent } | { error }. */
+/** The offset copy d away towards `at`; null distance means Through: { ent } | { error }. */
 export function offsetEntity(ent, d, at) {
-  if (!canModify(ent)) return { error: 'Offset takes a line, arc, circle or polyline' };
-  const r = offsetShape(shapeOf(ent, 1), d, at);
+  if (!canOffset(ent)) return { error: 'Offset takes a line, arc, circle, ellipse, spline or polyline' };
+  if (['ELLIPSE', 'SPLINE'].includes(ent.type)) return offsetCurve(ent, d, at);
+  const sh = shapeOf(ent, 1);
+  if (d === null) {
+    const P = pathOf(sh), near = closest(P, at), s = P.segs[near.index], g = s && geo(s);
+    if (!g) return { error: 'The object has no offset path' };
+    if (sh.t === 'circle' && dist(at, sh.c) < 1e-9) return { error: "The through point is the circle's centre" };
+    if (near.d < 1e-9) return { error: 'The through point is on the object' };
+    const distance = (g) => g.line ? Math.abs(cross(g.u, sub(at, g.a))) : Math.abs(dist(at, g.c) - g.r);
+    d = distance(g);
+    if (sh.t === 'poly') {
+      // At a shared endpoint, the other segment may be the one whose offset passes through the pick.
+      const f = near.u - near.index, other = f < 1e-9 ? near.index - 1 : f > 1 - 1e-9 ? near.index + 1 : near.index;
+      let error;
+      for (let i of new Set([near.index, other])) {
+        if (P.closed) i = (i + P.segs.length) % P.segs.length;
+        if (!P.segs[i]) continue;
+        const r = offsetShape(sh, distance(geo(P.segs[i])), at);
+        if (r.shape && closest(pathOf(r.shape), at).d < 1e-6) return { ent: rebuilt(r.shape, ent) };
+        error ||= r.error;
+      }
+      if (P.closed) return { error: error || 'The through point cannot lie on an offset of this polyline' };
+      // Past an open end, AutoCAD uses the nearest segment's distance and side even when the copy misses the pick.
+    }
+  }
+  const r = offsetShape(sh, d, at);
   return r.error ? r : { ent: rebuilt(r.shape, ent) };
 }
 
@@ -560,29 +586,49 @@ export function windowHit(a, b) {
   return (segs) => (inside(segs[0].a) ? segs[0].a : touches(segs, lines));
 }
 
+function pathBox(P) {
+  const b = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const s of P.segs) {
+    const g = geo(s);
+    // Full-circle bounds conservatively include bulged arcs beyond their endpoints.
+    const q = g.line ? [Math.min(s.a[0], s.b[0]), Math.min(s.a[1], s.b[1]), Math.max(s.a[0], s.b[0]), Math.max(s.a[1], s.b[1])]
+      : [g.c[0] - g.r, g.c[1] - g.r, g.c[0] + g.r, g.c[1] + g.r];
+    b[0] = Math.min(b[0], q[0]); b[1] = Math.min(b[1], q[1]); b[2] = Math.max(b[2], q[2]); b[3] = Math.max(b[3], q[3]);
+  }
+  const pad = 1e-7 * (1 + Math.max(...b.map(Math.abs)));      // retain intersections accepted by the segment solver's tolerance
+  return [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
+}
+
 /**
  * Quick Trim of many at once: each piece of `ents` (the stretch between the `cutters`' crossings; an object nothing crosses is one piece)
  * for which hit(segs) is true goes, and what stays is joined into as few pieces as possible.
- * Returns { changed: [{ i, ents }] (ents = what is left of ents[i]), skipped } (a closed shape with one crossing is skipped).
+ * Returns { changed: [{ i, ents }] (kept pieces), preview: [cut pieces], skipped }. `limit` caps crossed objects for previews.
  */
-export function trimRegion(ents, cutters, hit) {
-  const changed = [], shapes = cutters.filter(canModify).map((e) => ({ e, sh: shapeOf(e, 1) }));
-  let skipped = 0;
+export function trimRegion(ents, cutters, hit, limit = Infinity, makePath = pathOf) {
+  const changed = [], preview = [], paths = new Map(cutters.filter(canModify).map((e) => {
+    const P = makePath(shapeOf(e, 1));
+    return [e, { P, box: pathBox(P) }];
+  }));
+  let skipped = 0, crossed = 0;
   ents.forEach((ent, i) => {
-    if (!canModify(ent)) return;
-    const P = pathOf(shapeOf(ent, 1)), n = P.segs.length;
+    if (crossed >= limit || !canModify(ent)) return;
+    const cached = paths.get(ent), P = cached?.P || makePath(shapeOf(ent, 1)), n = P.segs.length;
     if (P.segs.some((s) => dist(s.a, s.b) < 1e-9) || !hit(P.segs)) return;
-    const cs = cutParams(P, shapes.filter((c) => c.e !== ent).map((c) => c.sh));
+    crossed++;
+    const b = cached?.box || pathBox(P), edges = [];
+    for (const [e, c] of paths) if (e !== ent && c.box[0] <= b[2] && c.box[2] >= b[0] && c.box[1] <= b[3] && c.box[3] >= b[1]) edges.push(c.P);
+    const cs = cutParams(P, edges);
     if (P.closed && cs.length === 1) { skipped++; return; }
     const bounds = !cs.length ? [0, n] : P.closed ? [...cs, cs[0] + n] : [0, ...cs, n];
     let pieces = bounds.slice(1).map((u, k) => [bounds[k], u]);
     const cut = pieces.map(([u0, u1]) => !!hit(subPath(P, u0, u1)));
     if (!cut.includes(true)) return;
+    preview.push(...pieces.filter((_, k) => cut[k]).map(([u0, u1]) => !cs.length ? shapeOf(ent, 1) : shapeOfPiece(subPath(P, u0, u1), P.type)).filter(Boolean).map((sh) => rebuilt(sh, ent)));
     const s = P.closed ? (cut.indexOf(true) + 1) % pieces.length : 0;           // a closed shape: start just after a cut piece, so no run wraps
     pieces = pieces.slice(s).concat(pieces.slice(0, s).map(([a, b]) => [a + n, b + n]));
     const keep = cut.slice(s).concat(cut.slice(0, s)).map((c) => !c), runs = [];
     pieces.forEach((pc, k) => { if (!keep[k]) return; if (k && keep[k - 1]) runs[runs.length - 1][1] = pc[1]; else runs.push([pc[0], pc[1]]); });
     changed.push({ i, ents: runs.map(([u0, u1]) => shapeOfPiece(subPath(P, u0, u1), P.type)).filter(Boolean).map((sh) => rebuilt(sh, ent)) });
   });
-  return { changed, skipped };
+  return { changed, preview, skipped };
 }

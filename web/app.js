@@ -39,13 +39,14 @@ import * as TX from './text.js';
 import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
+import * as GM from './gripmode.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
-import { filletEntities, filletPolylineShape } from './fillet.js';
+import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
 import * as PR from './props.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
@@ -244,7 +245,8 @@ const state = {
   drawCfg: { radius: 5 },          // the rounded rectangle's corner radius (mm), remembered on this PC
   drawHover: null,                 // where the pointer is for the drawing tool: [x, y (mm), snap kind]
   gripHover: null,                 // the id ('e:id') of the grip under the pointer, drawn in the hover colour (155r)
-  grip: null,                      // a grip being dragged: { d, e (the entity), id, ent, next (the changed entity), to, label, hot (click, then click), moved }
+  hots: null,                      // the hot grips made with Shift-click (155e3): { sel, ents (the selection and drawing they belong to), map ('e:id' -> grip) }
+  grip: null,                      // a grip being dragged: { d, e (the entity), id, ent, next (the changed entity), to, label, hot (click, then click), moved; hots / ents / nexts when several grips are hot }
   sheetSel: null, sheetDrag: null,   // the layout whose sheet is selected (Sheet resize, TODO 23); a handle being dragged: { side, p0, W, H, newW, newH, hot, moved }
   propsOn: true, match: null,     // The whole docker's visibility; Match properties in progress: { d, src (the source's index) }
   text: { cfg: null, ed: null, drag: null },   // the Text tool: the next text's height (mm), font, alignment, bold, angle; the editor open (or null); a corner being dragged
@@ -288,7 +290,7 @@ const clampSel = () => { if (state.sel >= placedNow.length) state.sel = placedNo
 /** The grid of the open layout: its step-and-repeat part laid out by the settings, or an empty grid (count 0). */
 const gridNow = () => { const lay = curLay(); return (lay && LD.gridOf(lay)) || stepRepeat({ ...state, partW: 0, partH: 0 }); };
 /** Something in the open layout was changed: it has unsaved changes now. */
-function touch() { const d = curDoc(); if (d && d.lay && !d.dirty) { d.dirty = true; renderTabs(); } }
+function touch(d = curDoc()) { if (d && d.lay && !d.dirty) { d.dirty = true; renderTabs(); } }
 
 // ---- theme ----
 function setTheme(mode) {
@@ -414,7 +416,7 @@ function buildMenus() {
   const menus = {
     File: () => [['Open…', openFile], ['New layout', newLayoutTab], ['Save', () => save(false), 'Ctrl+S'], ['Save As…', () => save(true), 'Ctrl+Shift+S'], ['Export for cutter…', exportCutter], ['Compare drawings…', cmpStart], ['Import background…', () => ui.bgPicker.click()], ['Trace bitmap…', traceBitmap], ['PDF / Print…', exportPdf],
       ...recentItems()],
-    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!historyOf(curDoc())?.canUndo],
+    Edit: [['Undo', () => undoCurrent(), 'Ctrl+Z', () => !!state.grip || !!historyOf(curDoc())?.canUndo],
       ['Redo', () => undoCurrent(true), 'Ctrl+Y', () => !!historyOf(curDoc())?.canRedo],
       ['Copy', copySelection, 'Ctrl+C', () => curLay() ? !!selItems().length : !!editable()?.sel.size],
       ['Cut', cutSelection, null, () => !!editable()?.sel.size],
@@ -985,7 +987,7 @@ function showDoc() {
   ribbon.context = null;
   state.gapSel = null; gapSig = ''; hideMenu();
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
-  state.setlen = null; state.grip = null; trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== (editable() || curLay() && curDoc())) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable() || curLay() && curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
+  state.setlen = null; gripEnd(); trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== (editable() || curLay() && curDoc())) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable() || curLay() && curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
   syncFields(); renderTabs(); applyKind(); update();
   if (view.fitted) fit(); else applyView();
 }
@@ -1315,7 +1317,7 @@ function setTool(id) {
   if (id === 'contour' && !editable() && !curLay()) { note('Contour works on a drawing tab or a layout: open one and pick a closed outline or a placed part'); return; }
   if (MOD_KINDS.includes(id) && !editable() && !(curLay() && LAY_MODS.includes(id))) { note(TOOLS.find((x) => x.id === id).label + ' works on a drawing tab: open a drawing first'); return; }
   if (state.text.ed && id !== 'text') textCommit();
-  state.text.drag = null; state.grip = null; state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
+  state.text.drag = null; gripEnd(); state.entityDrag = null; state.drawingRotate = null; state.txoWait = false; state.zwin = false; trackClear();
   if (state.match && id !== 'select') state.match = null;
   const drawId = DR.KINDS.includes(id) || id === 'text';
   if (drawId && !drawTarget()) { note('Drawing tools work on a drawing tab or a layout'); return; }
@@ -1916,6 +1918,8 @@ function pushHistory(d, snapshot, label) {
   d.hist.push(snapshot, label);
 }
 function undoCurrent(forward = false) {
+  const g = state.grip;
+  if (g) { if (forward) note('Redo: finish the grip first'); else if (g.copy) gripUndoCopy(g); else gripCancel(); return; }       // in a grip run Undo is the run's own: the last copy, else the grip edit
   const tab = curDoc(), hist = historyOf(tab);
   const d = tab?.cmp ? historyDocs(tab).find((x) => x.hist && x.hist === hist[forward ? 'redoHistory' : 'undoHistory']) : editable();
   if (d) {
@@ -4202,11 +4206,11 @@ function hidIdx(d) {
 }
 /** Entities not painted: the one a grip is dragging (the overlay draws it) and the ones hidden one by one in the Objects tab. */
 function hideNow(d) {
-  const drag = d && state.grip && state.grip.d === d && state.grip.next ? state.grip.e : null;
+  const drag = d && state.grip && state.grip.d === d ? gripShown(state.grip) : [];
   const move = state.drawingRotate?.drag || state.entityDrag;
-  if (!d || (drag == null && !move?.items && !(d.hid && d.hid.size))) return null;
+  if (!d || (!drag.length && !move?.items && !(d.hid && d.hid.size))) return null;
   const out = new Set(hidIdx(d) || []);
-  if (drag != null) out.add(drag);
+  for (const e of drag) out.add(e);
   if (move?.d === d && move.items && !move.copy) for (const e of move.sel) out.add(e);
   return out;
 }
@@ -4217,7 +4221,7 @@ let canvasPreviewBounds = null;
 function previewBounds() {
   const canvas = ui.canvas.getBoundingClientRect();
   let bounds = canvasPreviewBounds;
-  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-fade, .dr-trim-ext, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
+  for (const el of ui.canvas.querySelectorAll('.dr-shape, .dr-guide, .dr-trim-under, .dr-trim-fade, .dr-trim-ext, .dr-trim-cut, .gr-new, .ghost, .bal-cross, .tx-new, .tx-base, .ssel-new')) {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
@@ -4233,7 +4237,7 @@ function paintOverlay(gesture = false) {
   paintQueued = requestAnimationFrame(() => {
     paintQueued = 0;
     canvasPreviewBounds = null;
-    drawOvl();
+    drawOvl(true);
     const { w, h: ch } = canvasSize(), dpr = window.devicePixelRatio || 1, c = ui.dcanvas;
     const cw = Math.max(1, Math.round(w * dpr)), chh = Math.max(1, Math.round(ch * dpr));
     if (c.width !== cw || c.height !== chh) { c.width = cw; c.height = chh; }
@@ -4270,8 +4274,8 @@ function paintOverlay(gesture = false) {
     if (d && d.lay) {                       // a layout: each part painted once for all the places it is placed at (its matrix per place)
       paintDrawing(c, { ...base, fl: null, factor: 1 });                                      // clears
       if (!state.hidden.parts) {
-        const byPart = new Map(), gripped = state.grip?.next && state.grip.d.vlay === d ? state.grip.d.at.get(state.grip.ent) : -1;       // the object a grip drags is drawn by the overlay only
-        for (const p of placedNow) { if (p.src === 'loose' && p.i === gripped) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
+        const byPart = new Map(), gripped = new Set(state.grip && state.grip.d.vlay === d ? gripShown(state.grip).map((e) => state.grip.d.at.get(state.grip.ents ? state.grip.ents.get(e) : state.grip.ent)) : []);       // the objects a grip drags are drawn by the overlay only
+        for (const p of placedNow) { if (p.src === 'loose' && gripped.has(p.i)) continue; if (!byPart.has(p.partId)) byPart.set(p.partId, []); byPart.get(p.partId).push(p); }
         for (const [id, part] of Object.entries(d.lay.parts)) {
           if (d.hiddenParts && d.hiddenParts.has(id)) continue;                                // hidden in the Objects tab
           const fl = state.text.ed?.dim?.raw === part.raw ? state.text.ed.dim.fl : part.fl;
@@ -4281,6 +4285,8 @@ function paintOverlay(gesture = false) {
           if (outside.length) paintDrawing(c, { ...base, keep: true, fl, off: part.off, factor: part.factor || 1, slots: slotsOf(outside), tint: cssVar('--mark', '#c2410c') });
         }
       }
+      const gm = state.grip?.d.vlay === d && state.grip.move;                                 // a text, hatch or block a grip moves: its objects' drawing (sheet mm) shifted
+      c.dataset.preview = gm?.items ? paintDrawing(c, { ...base, ox: base.ox - gm.dx, oy: base.oy + gm.dy, keep: true, fl: gm.preview, off: state.grip.d.off, factor: 1, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
       if (state.layCt && state.tool === 'contour') {                                          // Contour's preview on the placed parts (sheet mm, y up)
         const k = base.scale * dpr, T = [k, 0, 0, -k, -base.ox * k, (base.sheetH - base.oy) * k];
         drawContour(c.getContext('2d'), state.layCt, T, dpr, contourColour(d).replace('var(--text)', base.dark ? '#ededef' : '#18181b'), contourStyle().dash);
@@ -4310,14 +4316,14 @@ function paintOverlay(gesture = false) {
 function paintEditable(c, d, base, marks) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
   const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
-    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => it.e !== state.grip.e) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
+    bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
     contourCol: d && d.cRes ? contourColour(d).replace('var(--text)', workDark() ? '#ededef' : '#18181b') : null, contourDash: contourStyle().dash,
     markCol: cssVar('--mark', '#c2410c'),
     accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
     dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-  const move = state.drawingRotate?.drag || state.entityDrag || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
-  c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
+  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
+  c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   return drawn;
 }
 
@@ -4485,6 +4491,7 @@ function attachCanvasEvents() {
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
+    if (drag && modLive()) trimPathMove(drag, mdoc(d), e); else if (lmod && layModLive()) trimPathMove(lmod, mdoc(curDoc()), e);
     if (state.text.drag) textDragMove(e);
     if (state.grip) gripMove(e); else gripHoverAt(e);
     if (state.balDrag) balMove(e);
@@ -4517,7 +4524,7 @@ function attachCanvasEvents() {
     if (state.grip) gripUp(e);
     if (state.balDrag) balUp();
     if (pdrag) placedUp();
-    if (lmod) { const r = lmod; lmod = null; if (!r.moved && e.button === 0 && layModLive()) { const ld = curDoc(); modUp(ld, { p: toDrawing(ld, r.x, r.y), moved: false, shift: r.shift }, toDrawing(ld, e.clientX, e.clientY), e.shiftKey, false); } }
+    if (lmod) { const r = lmod; lmod = null; if (r.path) trimPathUp(mdoc(curDoc()), e); else if (!r.moved && e.button === 0 && layModLive()) { const ld = curDoc(); modUp(ld, { p: toDrawing(ld, r.x, r.y), moved: false, shift: r.shift }, toDrawing(ld, e.clientX, e.clientY), e.shiftKey, false); } }
     if (state.drawingRotate?.drag) drawingRotateUp(e);
     if (lrub) { const r = lrub; lrub = null; hideRubber(); if (r.zoom) zoomWindowUp(r, e); else layoutBoxSelect(r, e); }
     const was = drag; drag = null;
@@ -4525,7 +4532,8 @@ function attachCanvasEvents() {
     if (was && d && e.button === 0) {
       hideRubber();
       const p = toDrawing(d, e.clientX, e.clientY);
-      if ((state.setlen || state.tool === 'measure' || modLive() ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
+      if (was.path) trimPathUp(mdoc(d), e);
+      else if ((state.setlen || state.tool === 'measure' || modLive() ? !was.moved : state.tool === 'dimension') && cursorClick(d, p, e.shiftKey)) { /* the click finished what was typed in the cursor fields */ }
       else if (state.setlen) { if (!was.moved) lengthPoint(d, p, e.shiftKey); }
       else if (state.tool === 'measure') { if (!was.moved) measurePoint(d, p, e.shiftKey); }
       else if (state.tool === 'dimension') dimensionPoint(d, p, e.shiftKey);
@@ -4562,7 +4570,8 @@ function attachCanvasEvents() {
   c.addEventListener('auxclick', (e) => e.preventDefault());
   c.addEventListener('contextmenu', (e) => {                       // right-click an outline on a drawing tab: Extract part… and the other things to do with it
     e.preventDefault();
-    if (e.shiftKey && toolMenu(e)) return;                         // Shift+right-click while a tool is on: its menu (plain right-click finishes, below)
+    if (state.grip) { gripMenu(e); return; }                       // a grip run: its own menu (155e3)
+    if (e.shiftKey && toolMenu(e)) return;                       // Shift+right-click while a tool is on: its menu (plain right-click finishes, below)
     const gh = e.target.closest && e.target.closest('[data-guide]');
     if (state.draw && !curLay()) { if (DR.toolBusy(state.draw)) drawFinish(); return; }
     if (modLive()) { modEnter(editable()); return; }
@@ -4603,7 +4612,12 @@ function renderCommand() {
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
-  if (state.grip && (ed || lay)) { const gg = state.grip; ui.hist.textContent = `Command: ${GR.commandOf(gg.ent, gg.id)}   ${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = gg.id.startsWith('e') ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : 'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):'; return; }
+  if (state.grip && (ed || lay)) {
+    const gg = state.grip, M = GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0 || gg.copy;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
+    ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M, gg.copy) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
+    ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.id.startsWith('e') && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
+    return;
+  }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
   if (layModLive()) { const mp = modPrompt(curDoc()); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
@@ -4847,13 +4861,13 @@ function explodeOnLayout() {
   const dimPs = dims.filter((x) => !x.p.lock).map((x) => d.lay.placed[x.p.i]);          // by object: the explode of the parts moves the indexes
   const at = grid ? gLooseMany(g, items.map((x) => x.i)) : items.map((x) => x.i);       // in lay.placed, item for item; a grid copy first loosens the whole grid
   const gridPl = items.flatMap((x, k) => (x.p.src === 'grid' ? [d.lay.placed[at[k]]] : []));
-  const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = dims.length - dimPs.length + rest.filter((q) => q.x.part.obj || q.x.p.lock).length;
+  const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = dims.length - dimPs.length + rest.filter((q) => q.x.part.obj && !LD.canExplodeObject(q.x.part) || q.x.p.lock).length;
   gMark(g);
-  const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid()) : { done: 0, pieces: [], errors: [] };
+  const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid()) : { done: 0, pieces: [], errors: [], messages: [] };
   const made = r.pieces.map((i) => d.lay.placed[i]), beforeDims = new Set(d.lay.placed);
   const nd = dimPs.length ? LD.explodeDims(d.lay, dimPs.map((p) => d.lay.placed.indexOf(p)), () => 'o' + uid()) : 0;
   made.push(...d.lay.placed.filter((p) => !beforeDims.has(p)));
-  const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
+  const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '') + (r.messages.length ? '. ' + r.messages.join(' ') : '');
   if (!grid && !r.done && !nd) { note('Explode: nothing explodable (0 exploded)' + why); return; }
   if (r.done) tidyGroups(d.lay);
   gCommit(g);
@@ -4882,7 +4896,7 @@ function explodeSelected() {
   if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }
   commit(d, { entities: r.entities, blocks: r.blocks }, 'Explode');
   setSel(d, r.selected);
-  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. Ctrl+Z puts the originals back');
+  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
 }
 
 // ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----
@@ -5166,7 +5180,7 @@ const snapPoint = (d, p, skip = -1, extra = [], from = null) => {
     : Ed.snapPick(ed, ...p, tol, state.snap, skip, types, extra, from);
   if (state.snap && d.lay) for (const x of extra) sn = preferSnap(sn, x, ...p, tol, types);       // the tool's own points (a polyline's first point and vertices)
   if (state.snap && ed) {
-    if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || ed.items[snapRef.piece.it].e === skip)) snapRef = null;
+    if (snapRef?.ed !== ed || snapRef && (!ed.vis[snapRef.piece.it] || (skip instanceof Set ? skip.has(ed.items[snapRef.piece.it].e) : ed.items[snapRef.piece.it].e === skip))) snapRef = null;
     const piece = Ed.snapReference(ed, ...p, tol, skip);
     snapWatch(piece ? { ed, piece } : null);
     if (snapRef && (!sn || sn.kind === 'near')) for (const candidate of lineSnaps(snapRef.piece, p, from)) sn = preferSnap(sn, candidate, ...p, tol, types);
@@ -5375,14 +5389,14 @@ function layObjCommit(v, next, label) {
   const d = v.vlay;
   pushLay(d, null, '', label);
   LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid());
-  touch(); update();
+  touch(d); update();       // the layout itself: a run ended by a tab change commits after state.doc moved on
 }
-/** A grip edit of one layout object (entity `ent` of layObjDoc `v` becomes `next`): the same object, in one undo step. False when nothing is left of it. */
-function layGripCommit(v, ent, next, label) {
+/** A grip edit of layout objects (each [entity of layObjDoc `v`, what it becomes]): the same objects, in one undo step. False (and nothing changed) when nothing is left of one. */
+function layGripCommit(v, pairs, label) {
   const d = v.vlay, snap = laySnap(d.lay);
-  if (!LD.objectReplace(d.lay, v, ent, next, () => 'o' + uid())) return false;
+  for (const [k, [ent, next]] of pairs.entries()) if (!LD.objectReplace(d.lay, v, ent, next, () => 'o' + uid())) { if (k) layRestore(d, snap, d.dirty); return false; }
   pushLay(d, snap, '', label);
-  touch(); update();
+  touch(d); update();
   return true;
 }
 function restoreBg(d, st) {
@@ -6459,7 +6473,7 @@ function drawTyped(raw) {
 }
 
 /** The overlay over the drawing: the shape being drawn, its helper lines and the readout. */
-function drawOvl() {
+function drawOvl(paint = false) {
   if (!ui.ovl) return;
   const tab = curDoc(), d = state.tool === 'measure' && tab?.cmp ? tab : editable() || tab, H = state.sheetH, out = [], grips = [];
   let tip = null;
@@ -6484,8 +6498,8 @@ function drawOvl() {
     const only = DI.readOnlyLength(CT), dynamic = only ? null : cursorPoint(), typed = dynamic?.point && DI.hasTyped(cursorInput());
     tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, single: DI.isSingle(DI.inputMode(CT)) ? DI.inputMode(CT) : null, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
   }
-  if (d && !d.lay && modLive()) modOvl(d, out);
-  else if (d && d.lay && layModLive() && OBJ_MODS.includes(state.mod.kind)) modOvl(layObjDoc(d), out);
+  if (d && !d.lay && modLive()) modOvl(d, out, paint);
+  else if (d && d.lay && layModLive() && OBJ_MODS.includes(state.mod.kind)) modOvl(layObjDoc(d), out, paint);
   if (d && !d.lay && editable() === d) {
     const bt = balOvl(d, out, 1 / view.scale), tt = state.drawingRotate ? null : textOvl(d, out, 1 / view.scale) || gripOvl(d, out, 1 / view.scale, grips);
     if (state.drawingRotate) drawingRotateOverlay(out);
@@ -6647,6 +6661,8 @@ function cursorKey(e) {
 // ---- Offset, Trim and Mirror (modify.js) ----
 const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
+const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
+const FILLET_TRIM_SAVED = 'pd-fillet-trim';
 const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
 const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
 const objViews = new WeakMap();
@@ -6680,14 +6696,17 @@ let copyMode = 'Multiple';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
-/** A fresh tool: Offset picks an object then a side; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: quick ? 'cut' : kind === 'offset' || kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: historyOf(editable() || curDoc())?.labels().past.length ?? 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
+/** A fresh tool: Offset asks distance first; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
+const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: kind === 'offset' ? 'distance' : quick ? 'cut' : kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: historyOf(editable() || curDoc())?.labels().past.length ?? 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
 const modLive = () => !!(state.mod && state.modDoc === editable() && editable());
-const offDistU = (d) => state.offDist / d.factor;
+const offDistU = (d) => state.mod.through ? null : state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
 /** Drops what an undo took away (the object Offset was holding, edges that are gone). */
 function modSync(d) {
   const m = state.mod, have = new Set(d.raw.entities);
+  if (m.kind === 'offset' && m.offsetRaw && (m.offsetRaw !== d.raw.entities || m.offsetRevision !== historyOf(d.vlay || d).revision)) {
+    m.offsetSteps = []; m.offsetRaw = null; m.offsetSource = null; m.multiple = false; m.ent = null; m.stage = 'obj';
+  }
   if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side' || m.stage === 'second') m.stage = 'obj'; }
   // an undone Trim brings the original entity back, not the pieces it made: an edge that is gone is swapped for the object it was cut from
   const back = (e) => { for (let k = 0; e && !have.has(e) && k < 1000; k++) e = m.was.get(e); return e; };
@@ -6711,6 +6730,19 @@ function trimPreview(d, m, e) {
   m.pv = { e, edges, ext, quick: m.quick, p: m.p, r };
   return r;
 }
+/** The region preview is worked out only on paint, and kept until its geometry, action or source changes. */
+function trimRegionPreview(d, m, paint) {
+  if (!m.p) return null;
+  const pts = m.cross ? m.cross.p1 && [m.cross.p1, m.p] : m.fence || [...m.path, m.p];
+  if (!pts) return null;
+  const key = JSON.stringify([!!m.cross, pts, [...(d.locked || [])], [...(d.lockedEnts || [])]]), ext = (m.kind === 'extend') !== !!m.shift, edges = trimEdges(d, m), ix = edIndex(d), c = m.regionPv;
+  if (c && c.key === key && c.ext === ext && c.ix === ix && c.raw === d.raw.entities && c.edges.length === edges.length && c.edges.every((e, i) => e === edges[i])) return c.r;
+  if (!paint) { paintOverlay(); return null; }
+  // shortcut: preview only the first 300 crossed objects; raise the cap when region geometry can be worked out off the UI thread.
+  const r = trimRegionResult(d, m.cross ? MD.windowHit(...pts) : MD.fenceHit(pts), ext, 300);
+  m.regionPv = { key, ext, edges, ix, raw: d.raw.entities, r };
+  return r;
+}
 
 /** A modify tool just chosen: Offset reads its remembered distance; Mirror takes the selection if there is one. */
 function modStart(id) {
@@ -6718,8 +6750,18 @@ function modStart(id) {
   if (d.lay && !OBJ_MODS.includes(id)) { layModStart(id); return; }
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
-  else if (id === 'fillet') { state.filR = loadFilletR(); state.msg = `Fillet: pick the first line, arc or polyline segment (radius ${mmText(state.filR)} mm; R changes it)`; }
-  else if (id === 'offset') { state.offDist = loadOffsetDist(); state.msg = 'Offset: pick an object, or type the distance first'; }
+  else if (id === 'fillet') {
+    state.filR = loadFilletR(); m.trim = true;
+    try { m.trim = localStorage.getItem(FILLET_TRIM_SAVED) !== 'no-trim'; } catch { /* default Trim */ }
+    state.msg = filletSettings(m); ui.cmdUI.message(state.msg);
+  }
+  else if (id === 'offset') {
+    state.offDist = loadOffsetDist();
+    let opts; try { opts = JSON.parse(localStorage.getItem(OFFSET_OPTIONS_SAVED)); } catch { /* defaults */ }
+    m.through = opts?.through === true; m.eraseSource = opts?.eraseSource === true; m.layer = opts?.layer === 'Current' ? 'Current' : 'Source'; m.offsetSteps = [];
+    state.msg = `Current settings: Erase source=${m.eraseSource ? 'Yes' : 'No'}  Layer=${m.layer}`;
+    ui.cmdUI.message(state.msg);
+  }
   else if (id === 'trim') state.msg = m.quick ? 'Trim: click the part to cut away (every object is a cutting edge)' : 'Trim: pick the cutting edges, then Enter (Enter alone = all)';
   else if (id === 'extend') state.msg = m.quick ? 'Extend: click near the end to extend (every object is a boundary)' : 'Extend: pick the boundary edges, then Enter (Enter alone = all)';
   else if (d.sel.size) { m.objs = [...d.sel].map((i) => d.raw.entities[i]); m.stage = 'p1'; state.msg = `${d.sel.size} selected: click the first point of the mirror line`; }
@@ -6742,8 +6784,12 @@ function modPrompt(d) {
   if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode) };
   if (m.kind === 'array') return arrayPrompt(d, m);
-  if (m.kind === 'fillet') return { status: `Command: FILLET   Radius <${mmText(state.filR)}> mm`, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:` : `Select the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment [Radius / Esc] (Shift = sharp corner):` };
-  if (m.kind === 'offset') return { status: `Command: OFFSET   Distance <${mmText(state.offDist)}> mm`, prompt: m.stage === 'obj' ? `Select the object to offset, or type the distance <${mmText(state.offDist)}>:` : `Click the side to offset to (or type a new distance <${mmText(state.offDist)}>):` };
+  if (m.kind === 'fillet') return { status: 'Command: FILLET', prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:`
+    : m.askTrim ? `Enter Trim mode option [Trim/No trim] <${m.trim ? 'Trim' : 'No trim'}>:`
+    : m.stage === 'poly' ? 'Select 2D polyline:'
+    : m.stage === 'second' ? 'Select second object or shift-select to apply corner or [Radius]:'
+    : 'Select first object or [Undo/Polyline/Radius/Trim/Multiple]:' };
+  if (m.kind === 'offset') return { status: `Command: OFFSET   ${m.through ? 'Through' : `Distance <${mmText(state.offDist)}> mm`}`, prompt: offsetPrompt(m) };
   const ext = m.kind === 'extend', undoOpt = () => (trimUndoable(d, m) ? '/Undo' : '');
   if ((m.kind === 'trim' || ext) && m.askMode) return { status: `Command: ${m.kind.toUpperCase()}   Mode: ${m.quick ? 'Quick' : 'Standard'}`, prompt: `Enter ${ext ? 'an extend' : 'a trim'} mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
   if ((m.kind === 'trim' || ext) && m.quick) {
@@ -6762,14 +6808,14 @@ function modPrompt(d) {
 }
 
 function modEsc(d) {
+  if (state.mod.path) { state.mod.path = null; note(`${state.mod.kind === 'extend' ? 'Extend' : 'Trim'}: path cancelled, nothing changed`); paintOverlay(); return; }
   d = mdoc(d);
   if (d.lay && !(state.mod.kind === 'array' && state.mod.ask)) { const was = state.mod; setTool('select'); note(modLabel(was.kind) + (was.kind === 'array' && was.stage !== 'pick' ? ' cancelled: nothing added' : ' ended')); return; }
   const m = state.mod;
   const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
   if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
   if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note(`${ext ? 'Extend' : 'Trim'}: cancelled. ${again}`); renderCommand(); paintOverlay(); return; }
-  if (m.kind === 'offset' && m.stage === 'side') { m.stage = 'obj'; m.ent = null; note('Offset: pick an object'); paintOverlay(); return; }
-  if (m.kind === 'fillet' && (m.askR || m.stage === 'second')) { m.askR = false; m.stage = 'obj'; m.ent = null; note('Fillet: pick the first line, arc or polyline segment'); paintOverlay(); return; }
+  if (m.kind === 'fillet' && (m.askR || m.askTrim || m.stage !== 'obj')) { m.askR = m.askTrim = false; m.stage = 'obj'; m.ent = null; note(modPrompt(d).prompt); paintOverlay(); return; }
   if (m.kind === 'mirror' && m.stage === 'pick' && d.sel.size) { setSel(d, new Set()); renderCommand(); return; }
   if (m.kind === 'array' && m.ask) { m.ask = null; note('Array: option cancelled'); renderCommand(); paintOverlay(); return; }
   if (m.kind === 'array' && m.stage !== 'pick') { setTool('select'); note('Array cancelled: nothing added'); return; }
@@ -6789,6 +6835,11 @@ function modEnter(d) {
     else modEsc(d);
     return;
   }
+  if (m.kind === 'fillet') {
+    if (m.askTrim || m.askR) { m.askTrim = m.askR = false; note(modPrompt(d).prompt); paintOverlay(); }
+    else { setTool('select'); note('Fillet ended'); }
+    return;
+  }
   if (m.askMode) { trimMode(m.quick); return; }
   if (m.fence) { trimFenceRun(d); return; }
   if (m.erase) { trimEraseRun(d); return; }
@@ -6796,11 +6847,16 @@ function modEnter(d) {
   if (m.kind === 'array') { arrayEnter(d); return; }
   if (['rotate', 'scale'].includes(m.kind)) {
     if (m.stage === 'pick') moveTake(d);
-    else if (m.ref && m.ref.step !== 'newpts' && !m.ref.pts.length) refGot(d, m.kind === 'scale' ? 1 / d.factor : 0);      // Enter takes the default <0> / <1.0000>
+    else if (m.ref && m.ref.step !== 'newpts' && !m.ref.pts.length) refGot(...refCtx(d), m.kind === 'scale' ? 1 / d.factor : 0);      // Enter takes the default <0> / <1.0000>
     else note(modPrompt(d).prompt);
     return;
   }
-  if (m.kind === 'offset' || m.kind === 'fillet') { modEsc(d); return; }
+  if (m.kind === 'offset') {
+    if (m.stage === 'distance') { m.stage = 'obj'; note(offsetPrompt(m)); }
+    else if (m.stage === 'erase' || m.stage === 'layer') { m.stage = 'distance'; note(offsetPrompt(m)); }
+    else offsetEnd(d);
+    paintOverlay(); return;
+  }
   if (m.kind === 'extend') {
     if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc or open polyline to extend`); paintOverlay(); }
     else modEsc(d);
@@ -6820,7 +6876,10 @@ function modEnter(d) {
 /** The command line while a modify tool is on. True when it took the text. */
 /** Words the active modify tool takes itself, so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
+  if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
   const m = state.mod;
+  if ((modLive() || layModLive()) && m.kind === 'offset') return true;
+  if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
   if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
   if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!(modLive() || layModLive()) || !['trim', 'extend'].includes(m.kind)) return false;
@@ -6832,6 +6891,7 @@ function modTyped(d, raw) {
   d = mdoc(d);
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (m.kind === 'offset') return offsetTyped(d, raw, c);
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     m.cursorInput = null;
     if (m.stage === 'mode') {
@@ -6847,16 +6907,29 @@ function modTyped(d, raw) {
   }
   if (m.kind === 'array' && m.stage !== 'pick') return arrayTyped(d, raw, c);
   if (m.kind === 'fillet') {
+    if (m.askTrim) {
+      if (!/^(t|trim|n|no|no trim)$/.test(c)) { note(modPrompt(d).prompt); return true; }
+      m.trim = c === 't' || c === 'trim'; m.askTrim = false;
+      try { localStorage.setItem(FILLET_TRIM_SAVED, m.trim ? 'trim' : 'no-trim'); } catch { /* applies this session */ }
+      note(filletSettings(m)); ui.cmdUI.message(state.msg); paintOverlay(); return true;
+    }
+    if (!m.askR && m.stage === 'obj') {
+      if (c === 'u' || c === 'undo') { filletUndo(d); return true; }
+      if (c === 'm' || c === 'multiple') { note('Multiple is on'); ui.cmdUI.message(state.msg); return true; }
+      if (c === 'p' || c === 'polyline') { m.stage = 'poly'; note(modPrompt(d).prompt); paintOverlay(); return true; }
+      if (c === 't' || c === 'trim') { m.askTrim = true; note(modPrompt(d).prompt); return true; }
+    }
     if (!m.askR && (c === 'r' || c === 'radius')) { m.askR = true; note(`Fillet radius <${mmText(state.filR)}> mm: type it`); return true; }
     const v = Number(c);
     if (m.askR && Number.isFinite(v) && v >= 0) {
       state.filR = v; m.askR = false; try { localStorage.setItem(FILLET_SAVED, String(v)); } catch { /* ignore */ }
-      note(`Fillet radius ${mmText(v)} mm. Pick the ${m.stage === 'obj' ? 'first' : 'second'} line, arc or polyline segment`); paintOverlay(); return true;
+      note(`Fillet radius ${mmText(v)} mm. Pick the ${m.stage === 'obj' ? 'first' : 'second'} line, arc, circle or polyline segment`); paintOverlay(); return true;
     }
     if (!m.askR && DR.parseInput(raw).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". ${m.askR ? 'Type a radius of 0 or more' : 'Type R to change the radius'}`); return true;
   }
-  if (m.ref && refTyped(d, raw, c)) return true;
+  if (m.ref && m.ref.step === 'new' && (c === 'p' || c === 'points')) { m.ref.step = 'newpts'; m.ref.pts = []; if (m.move) m.move.slots = null; note(modPrompt(d).prompt); paintOverlay(); return true; }
+  if (m.ref && refTyped(...refCtx(d), raw)) return true;
   if (m.kind === 'scale' && m.stage !== 'pick') {
     if (m.stage === 'p2' && !m.ref && (c === 'r' || c === 'reference')) { refStart(d); return true; }
     if (m.stage === 'p2' && (c === 'c' || c === 'copy')) { m.copy = !m.copy; note(m.copy ? 'Scale a copy: on' : 'Scale a copy: off'); return true; }
@@ -6901,12 +6974,6 @@ function modTyped(d, raw) {
     if (q) moveTo(d, q.map((v) => v / d.factor));
     else note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'dx,dy or a positive distance toward the cursor'}`);
     return true;
-  }
-  if (m.kind === 'offset' && /^\d*\.?\d+(\s*mm)?$/.test(c)) {
-    const v = Number(c.replace(/\s*mm$/, ''));
-    if (!(v > 0) || v > 1e6) { note('The offset distance must be more than 0'); return true; }
-    state.offDist = v; try { localStorage.setItem(OFFSET_SAVED, String(v)); } catch { /* ignore */ }
-    note(`Offset distance ${mmText(v)} mm`); paintOverlay(); return true;
   }
   if (m.kind === 'mirror' && m.stage === 'erase') {
     if (c === 'y' || c === 'yes') modAnswer(d, true); else if (c === 'n' || c === 'no') modAnswer(d, false); else note('Erase source objects? Type Yes or No (Enter = No)');
@@ -6982,16 +7049,18 @@ function modUp(d, was, p, shift, crossing) {
   if (m.kind === 'offset') {
     if (m.stage === 'obj') {
       const ent = modEntAt(d, was.p);
-      if (!ent) { note('Offset: nothing there. Click a line, arc, circle or polyline'); return; }
-      if (!MD.canModify(ent)) { note('Offset takes a line, arc, circle or polyline'); return; }
-      m.ent = ent; m.stage = 'side'; m.p = was.p; note('Click the side to offset to'); paintOverlay();
-    } else offsetDo(d, was.p);
+      if (!ent) { note('Offset: nothing there. Click a line, arc, circle, ellipse, spline or polyline'); return; }
+      if (!MD.canOffset(ent)) { note('Offset takes a line, arc, circle, ellipse, spline or polyline'); return; }
+      m.ent = m.src = ent; m.sideSig = null; m.stage = 'side'; m.p = was.p; note(offsetPrompt(m)); paintOverlay();
+    } else if (m.stage === 'side') offsetDo(d, was.p);
   } else if (m.kind === 'fillet') {
+    if (m.askR || m.askTrim) return;
     const ent = modEntAt(d, was.p);
-    if (m.stage === 'obj') {
-      if (!ent) { note('Fillet: nothing there. Click a line, arc or polyline segment'); return; }
-      if (!['LINE', 'ARC', 'LWPOLYLINE', 'POLYLINE'].includes(ent.type)) { note('Fillet takes lines, arcs and polyline corners; circles are not supported'); return; }
-      m.ent = ent; m.p0 = was.p; m.askR = false; m.stage = 'second'; note('Fillet: pick the second line, arc or polyline segment (Shift = sharp corner)'); paintOverlay();
+    if (m.stage === 'poly') filletPolyDo(d, ent);
+    else if (m.stage === 'obj') {
+      if (!ent) { note('Fillet: nothing there. Click a line, arc, circle or polyline segment'); return; }
+      if (!['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE', 'POLYLINE'].includes(ent.type)) { note('Fillet takes lines, arcs, circles and polyline corners'); return; }
+      m.ent = ent; m.p0 = was.p; m.askR = false; m.stage = 'second'; note(modPrompt(d).prompt); paintOverlay();
     } else filletDo(d, ent, was.p, shift || was.shift);
   } else if (m.kind === 'extend' || m.kind === 'trim') {
     const ext = m.kind === 'extend', word = ext ? 'boundary' : 'cutting';
@@ -7001,7 +7070,7 @@ function modUp(d, was, p, shift, crossing) {
       if (!(ext ? isBoundary(ent) : MD.canModify(ent))) { note(`A ${word} edge is a line, arc, circle, ${ext ? 'ellipse, spline ' : ''}or polyline`); return; }
       m.edges = m.edges.includes(ent) ? m.edges.filter((e) => e !== ent) : [...m.edges, ent];
       note(`${m.edges.length} ${word} edge${m.edges.length === 1 ? '' : 's'}. Click more, or press Enter`); paintOverlay();
-    } else if (m.cross) trimCross(d, was.p);
+    } else if (m.cross) trimCross(d, was.p, shift);
     else if (m.erase) trimErasePick(d, was.p);
     else if (m.fence) trimFencePoint(d, was.p);
     else editDo(d, was.p, shift || was.shift);
@@ -7161,36 +7230,36 @@ function refStart(d) {
   m.ref = { step: 'ref', pts: [], value: null }; if (m.move) m.move.slots = null;
   note(modPrompt(d).prompt); paintOverlay();
 }
+/** The Reference steps below serve the Rotate / Scale commands and the grip modes (155e2): (d, R the ref object, kind 'rotate' | 'scale', H) then the call's own arguments.
+ *  H = { base: the pivot / base point, again(): ask the next step, done(v): the new angle / length is known }. */
+const refCtx = (d) => { const m = state.mod; return [d, m.ref, m.kind, { base: m.p1, again: () => { note(modPrompt(d).prompt); paintOverlay(); }, done: (v) => transformDo(d, v) }]; };
 /** The reference value, or the new one, is known (degrees / drawing units). */
-function refGot(d, v) {
-  const m = state.mod, R = m.ref;
-  if (R.step === 'new' || R.step === 'newpts') { transformDo(d, v); return; }
-  if (m.kind === 'scale' && !(v > 1e-9)) { note('The reference length must be above 0'); return; }
+function refGot(d, R, kind, H, v) {
+  if (R.step === 'new' || R.step === 'newpts') { H.done(v); return; }
+  if (kind === 'scale' && !(v > 1e-9)) { note('The reference length must be above 0'); return; }
   R.value = v; R.step = 'new'; R.pts = []; R.measured = null;
-  note(modPrompt(d).prompt); paintOverlay();
+  H.again();
 }
-function refPoint(d, p, shift = false, typed = false) {
-  const R = state.mod.ref, r = lengthPick(d, R, p, shift, typed);
+function refPoint(d, R, kind, H, p, shift = false, typed = false) {
+  const r = lengthPick(d, R, p, shift, typed);
   if (r === 'same') { note('Those are the same point: pick two'); return; }
-  if (r === 'first') { note(modPrompt(d).prompt); paintOverlay(); return; }
+  if (r === 'first') { H.again(); return; }
   const [a, b] = R.pts;
-  R.pts = []; refGot(d, state.mod.kind === 'scale' ? R.measured / d.factor : rotationAngle(a, b));
+  R.pts = []; refGot(d, R, kind, H, kind === 'scale' ? R.measured / d.factor : rotationAngle(a, b));
 }
 function refClick(d, p, q, shift) {
-  const m = state.mod, scaling = m.kind === 'scale';
-  if (m.ref.step !== 'new') { refPoint(d, p, shift); return; }
+  const m = state.mod, scaling = m.kind === 'scale', ctx = refCtx(d);
+  if (m.ref.step !== 'new') { refPoint(...ctx, p, shift); return; }
   if (scaleDistance(m.p1, q) < 1e-9) { note(scaling ? 'Pick a point away from the base' : 'Click a point away from the pivot'); return; }
-  refGot(d, scaling ? scaleDistance(m.p1, q) : rotationAngle(m.p1, q, shift));
+  refGot(...ctx, scaling ? scaleDistance(m.p1, q) : rotationAngle(m.p1, q, shift));
 }
 /** What is typed at a Reference step. → true when taken (false lets a command word through) */
-function refTyped(d, raw, c) {
-  const m = state.mod, R = m.ref, scaling = m.kind === 'scale', f = d.factor;
-  if (R.step === 'new' && (c === 'p' || c === 'points')) { R.step = 'newpts'; R.pts = []; if (m.move) m.move.slots = null; note(modPrompt(d).prompt); paintOverlay(); return true; }
-  const inp = DR.parseInput(raw), from = (R.pts.at(-1) || m.p1).map((v) => v * f), q = DR.typedPoint(inp, from);
+function refTyped(d, R, kind, H, raw) {
+  const scaling = kind === 'scale', f = d.factor, inp = DR.parseInput(raw), from = (R.pts.at(-1) || H.base).map((v) => v * f), q = DR.typedPoint(inp, from);
   if (q) {
     const p = q.map((v) => v / f);
-    if (R.step === 'new') { if (DR.dist(m.p1, p) > 1e-9) refGot(d, scaling ? scaleDistance(m.p1, p) : rotationAngle(m.p1, p)); else note('Type a point away from the ' + (scaling ? 'base' : 'pivot')); }
-    else refPoint(d, p, false, true);
+    if (R.step === 'new') { if (DR.dist(H.base, p) > 1e-9) refGot(d, R, kind, H, scaling ? scaleDistance(H.base, p) : rotationAngle(H.base, p)); else note('Type a point away from the ' + (scaling ? 'base' : 'pivot')); }
+    else refPoint(d, R, kind, H, p, false, true);
     return true;
   }
   if (inp.kind === 'word') return false;
@@ -7198,7 +7267,7 @@ function refTyped(d, raw, c) {
   const v = scaling ? Number(raw.trim().replace(',', '.')) : PL.parseAngle(raw);
   if (v == null || !Number.isFinite(v)) { note(`I do not understand "${raw.trim()}". Type ${scaling ? 'a length in mm' : 'degrees'}, or click two points`); return true; }
   if (scaling && !(v > 0)) { note(`The ${R.step === 'ref' ? 'reference' : 'new'} length must be above 0`); return true; }
-  refGot(d, scaling ? v / f : v);
+  refGot(d, R, kind, H, scaling ? v / f : v);
   return true;
 }
 function transformDo(d, value) {
@@ -7360,29 +7429,137 @@ function sizeField(label, id, axis) {
 }
 
 
-function offsetDo(d, p) {
-  const m = state.mod, r = MD.offsetEntity(m.ent, offDistU(d), p);
-  if (r.error) { note(r.error); return; }
-  view.fitted = false;
-  commit(d, { entities: [...d.raw.entities, r.ent], blocks: d.raw.blocks }, 'Offset');
-  m.stage = 'obj'; m.ent = null;
-  note(`Offset ${mmText(state.offDist)} mm made on layer ${r.ent.layer}. Pick another object, or Esc ends. Ctrl+Z takes it back`);
+function offsetPrompt(m) {
+  if (m.stage === 'distance') return `Specify offset distance or [Through/Erase/Layer] <${m.through ? 'Through' : mmText(state.offDist)}>:`;
+  if (m.stage === 'erase') return `Erase source object after offsetting? [Yes/No] <${m.eraseSource ? 'Yes' : 'No'}>:`;
+  if (m.stage === 'layer') return `Enter layer option for offset objects [Current/Source] <${m.layer}>:`;
+  if (m.stage === 'obj') return 'Select object to offset or [Exit/Undo] <Exit>:';
+  const what = m.through ? 'Specify through point' : 'Specify point on side to offset';
+  return m.multiple ? `${what} or [Exit/Undo] <next object>:` : `${what} or [Exit/Multiple/Undo] <Exit>:`;
 }
-/** Fillet: both entities trimmed (lines can extend) and the arc added, one undo step; Shift = radius 0 this once. Then the next corner. */
+function offsetTyped(d, raw, c) {
+  const m = state.mod;
+  if (m.stage === 'distance') {
+    if (c === 't' || c === 'through') { m.through = true; m.stage = 'obj'; }
+    else if (c === 'e' || c === 'erase') m.stage = 'erase';
+    else if (c === 'l' || c === 'layer') m.stage = 'layer';
+    else {
+      const v = PL.parseMm(raw);
+      if (!(v > 0) || v > 1e6) { note('The offset distance must be more than 0 and at most 1000000 mm'); return true; }
+      state.offDist = v; m.through = false; m.stage = 'obj';
+      try { localStorage.setItem(OFFSET_SAVED, String(v)); } catch { /* applies for this session */ }
+    }
+  } else if (m.stage === 'erase' && /^(y|yes|n|no)$/.test(c)) { m.eraseSource = c.startsWith('y'); m.stage = 'distance'; }
+  else if (m.stage === 'layer' && /^(c|current|s|source)$/.test(c)) { m.layer = c.startsWith('c') ? 'Current' : 'Source'; m.stage = 'distance'; }
+  else if (['obj', 'side'].includes(m.stage) && /^(e|exit)$/.test(c)) { offsetEnd(d); return true; }
+  else if (['obj', 'side'].includes(m.stage) && /^(u|undo)$/.test(c)) { offsetUndo(d); return true; }
+  else if (m.stage === 'side' && /^(m|multiple)$/.test(c)) m.multiple = true;
+  else if (m.stage === 'side') {
+    const q = DR.typedPoint(DR.parseInput(raw), state.pointLast?.map((v) => v * d.factor));
+    if (q) { offsetDo(d, q.map((v) => v / d.factor)); return true; }
+    note(offsetPrompt(m)); return true;
+  } else { note(offsetPrompt(m)); return true; }
+  try { localStorage.setItem(OFFSET_OPTIONS_SAVED, JSON.stringify({ through: m.through, eraseSource: m.eraseSource, layer: m.layer })); } catch { /* applies for this session */ }
+  note(offsetPrompt(m)); paintOverlay(); return true;
+}
+/** What a click offsets: the newest copy, or (Multiple, AutoCAD) the SOURCE when the click is on its other side than the copies so far. */
+function offsetPick(d, p) {
+  const m = state.mod, rs = m.multiple && !m.through && d.raw.entities.includes(m.src) ? MD.offsetEntity(m.src, offDistU(d), p) : null, sig = rs?.ent?.r.v.join();
+  const far = !!sig && !!m.sideSig && sig !== m.sideSig, target = far ? m.src : m.ent;
+  return { target, sig, r: far ? rs : MD.offsetEntity(target, offDistU(d), p) };
+}
+/** Copies share one history entry; the per-copy snapshots let U restore just the last result. */
+function offsetDo(d, p) {
+  modSync(d);
+  const m = state.mod;
+  if (!m.ent || !d.raw.entities.includes(m.ent)) { note(offsetPrompt(m)); return; }
+  const { target, r, sig } = offsetPick(d, p);
+  if (r.error) { note(r.error); return; }
+  if (sig) m.sideSig = sig;
+  const tab = d.vlay || d, snap = d.vlay ? laySnap(tab.lay) : snapshotOf(d), index = d.raw.entities.indexOf(target), srcIndex = d.raw.entities.indexOf(m.src);
+  if (m.layer === 'Current') {
+    const name = curLayerName(tab);
+    if (!d.vlay && !d.raw.layers[name]) addLayer(d.raw, name);
+    r.ent = PR.withLayer(r.ent, name);
+  }
+  if (m.multiple && m.eraseSource && m.offsetSource == null) m.offsetSource = index;
+  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== target), r.ent], blocks: d.raw.blocks };
+  view.fitted = false; m.offsetRaw = null;
+  if (!m.offsetSteps.length) commit(d, next, 'Offset');
+  else if (d.vlay) { LD.objectCommit(tab.lay, d, next.entities, () => 'o' + uid()); touch(); update(); }
+  else restore(d, next);
+  m.offsetSteps.push({ snap });
+  const now = mdoc(tab);
+  m.ent = m.multiple ? now.raw.entities.at(-1) : null; m.stage = m.multiple ? 'side' : 'obj';
+  if (m.multiple) m.src = now.raw.entities[srcIndex];
+  m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
+  state.pointLast = p.slice(0, 2);
+  note(offsetPrompt(m)); paintOverlay();
+}
+/** Multiple keeps every copy; only a completed run erases its source, in the same Undo step. */
+function offsetEnd(d) {
+  modSync(d);
+  const m = state.mod;
+  if (m.offsetSource != null && m.offsetSteps.length) {
+    const entities = d.raw.entities.filter((_, i) => i !== m.offsetSource);
+    m.offsetRaw = null;
+    if (d.vlay) { LD.objectCommit(d.vlay.lay, d, entities, () => 'o' + uid()); touch(); update(); }
+    else restore(d, { entities, blocks: d.raw.blocks });
+  }
+  setTool('select'); note('Offset ended');
+}
+function offsetUndo(d) {
+  modSync(d);
+  const m = state.mod, step = m.offsetSteps.pop();
+  if (!step) { note('Nothing to undo in this Offset'); return; }
+  const tab = d.vlay || d;
+  m.offsetRaw = null;
+  if (!m.offsetSteps.length) { undo(d); historyOf(tab).clearRedo(); }
+  else if (d.vlay) layRestore(tab, step.snap);
+  else restore(d, step.snap);
+  const now = mdoc(tab);
+  m.offsetSource = null; m.multiple = false; m.ent = null; m.stage = 'obj';
+  m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
+  note(offsetPrompt(m)); paintOverlay();
+}
+const filletSettings = (m) => `Current settings: Mode = ${m.trim ? 'TRIM' : 'NO TRIM'}, Radius = ${mmText(state.filR)} mm`;
+/** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
+function filletCommit(d, entities) {
+  const m = state.mod, hist = historyOf(d.vlay || d), n = hist.labels().past.length;
+  m.base = Math.min(m.base, n);
+  view.fitted = false;
+  commit(d, { entities, blocks: d.raw.blocks }, 'Fillet');
+  m.base -= n + 1 - hist.labels().past.length;
+}
+function filletUndo(d) {
+  const m = state.mod, past = historyOf(d.vlay || d).labels().past;
+  if (past.length <= m.base || past.at(-1) !== 'Fillet') { note('Nothing to undo in this Fillet'); ui.cmdUI.message(state.msg); return; }
+  m.stage = 'obj'; m.ent = null;
+  undo(d); note('Last fillet undone'); ui.cmdUI.message(state.msg); paintOverlay();
+}
+function filletPolyDo(d, ent) {
+  const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor, m.trim);
+  if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
+  m.stage = 'obj'; m.ent = null;
+  if (r.ents[0] !== ent || r.ents.length > 1) filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)]);
+  note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
+}
+/** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
 function filletDo(d, ent, p, sharp) {
   const m = state.mod;
-  if (!ent) { note('Fillet: nothing there. Click the second line, arc or polyline segment'); return; }
-  const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor);
+  if (!ent) { note('Fillet: nothing there. Click the second line, arc, circle or polyline segment'); return; }
+  const r = filletEntities(m.ent, m.p0, ent, p, sharp ? 0 : state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); return; }
-  if (r.ents.length === 1 && r.ents[0] === m.ent) {
+  if ((r.ents.length === 1 && r.ents[0] === m.ent) ||
+      (r.ents.length === 2 && r.ents[0] === m.ent && r.ents[1] === ent)) {
     m.stage = 'obj'; m.ent = null;
-    note('Already a sharp corner. Pick the next first line, arc or polyline segment, or Esc ends'); paintOverlay(); return;
+    note('Already a sharp corner. Pick the next first line, arc, circle or polyline segment, or Esc ends'); paintOverlay(); return;
   }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
-  view.fitted = false;
-  commit(d, { entities: [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(2)], blocks: d.raw.blocks }, 'Fillet');
+  filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
   m.stage = 'obj'; m.ent = null;
-  note(`${!sharp && state.filR > 0 ? `Filleted, radius ${mmText(state.filR)} mm` : 'Corner made'}. Pick the next first line, arc or polyline segment, or Esc ends. Ctrl+Z takes it back`);
+  const radius = r.ents[2]?.type === 'ARC' ? GR.get(r.ents[2].r, 40) * d.factor : sharp ? 0 : state.filR;
+  note(`${radius > 0 ? `Filleted, radius ${mmText(radius)} mm` : 'Corner made'}. Pick the next first line, arc, circle or polyline segment, or Esc ends. Ctrl+Z takes it back`);
 }
 /** mOde answered (Trim and Extend share it): Quick = no edge picking (every object is an edge); Standard = pick the edges first. Remembered. */
 function trimMode(quick) {
@@ -7406,15 +7583,20 @@ function trimUndo(d) {
   if (!trimUndoable(d, m)) { note(`Nothing to undo in this ${m.kind === 'extend' ? 'Extend' : 'Trim'}`); return; }
   undo(d); renderCommand();
 }
-/** Quick Trim (or Extend) of a whole region (a fence or a crossing window): one undo step; what the edges were stays an edge as pieces. */
-function trimRegionDo(d, hit, what) {
-  const m = state.mod, ext = m.kind === 'extend', idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && (ext ? extendable : MD.canModify)(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
-  if (!ext && curveEdgesOnly(d, m)) { note("Ellipse and spline edges don't trim yet"); return false; }
-  const r = ext ? extendRegion(ents, trimEdges(d, m), hit) : MD.trimRegion(ents, trimEdges(d, m), hit);
+/** Dry run shared by region previews and commits: the same eligible objects, edges, kept pieces and removed / added pieces. */
+function trimRegionResult(d, hit, ext, limit = Infinity) {
+  const m = state.mod, idxs = edIndex(d).shown.filter((i) => !lockedEnt(d, i) && (ext ? extendable : MD.canModify)(d.raw.entities[i])), ents = idxs.map((i) => d.raw.entities[i]);
+  if (!ext && curveEdgesOnly(d, m)) return { error: "Ellipse and spline edges don't trim yet" };
+  return { idxs, ext, ...(ext ? extendRegion(ents, trimEdges(d, m), hit, limit) : MD.trimRegion(ents, trimEdges(d, m), hit, limit)) };
+}
+/** Quick Trim (or Extend) of a whole region: apply the dry run in one undo step; cutting edges stay edges as pieces. */
+function trimRegionDo(d, hit, what, shift = state.mod.shift) {
+  const m = state.mod, r = trimRegionResult(d, hit, (m.kind === 'extend') !== !!shift), { idxs, ext } = r;
+  if (r.error) { note(r.error); return false; }
   if (!r.changed.length) { note(ext ? `${what} reaches nothing to extend` + (r.skipped ? ` (${r.skipped} object${r.skipped === 1 ? '' : 's'} with no boundary ahead or closed)` : '') : `${what} crosses nothing to trim` + (r.skipped ? ` (${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone)` : '')); return false; }
   const rep = new Map(r.changed.map((c) => [idxs[c.i], c.ents]));
   for (const c of r.changed) {
-    const ent = ents[c.i];
+    const ent = d.raw.entities[idxs[c.i]];
     if (m.edges.includes(ent)) { for (const q of c.ents) m.was.set(q, ent); m.edges = m.edges.flatMap((e) => (e === ent ? c.ents : [e])); }
   }
   view.fitted = false;
@@ -7434,13 +7616,35 @@ function trimFenceRun(d) {
   else trimRegionDo(d, MD.fenceHit(pts), 'The fence');
   renderCommand(); paintOverlay();
 }
-function trimCross(d, p) {
+/** Quick Trim / Extend (TODO 155a2): a press on empty space dragged past 4 px draws a freehand path (a point per 2 px); trimPathUp runs it like a fence. */
+function trimPathMove(r, d, e) {
+  const m = state.mod;
+  if (r.nopath || (r.path && !m.path) || !(m.kind === 'trim' || m.kind === 'extend') || !m.quick || m.stage !== 'cut' || m.fence || m.cross || m.erase || m.askMode) return;
+  if (!m.path) {
+    if (Math.hypot(e.clientX - r.x, e.clientY - r.y) <= 4) return;
+    const p0 = toDrawing(d, r.x, r.y);
+    if (hitAt(d, p0) >= 0 || Ed.hitEntity(edIndex(d), p0[0], p0[1], pickTol(d)) >= 0) { r.nopath = true; return; }       // a press on an object stays a pick
+    m.path = [p0]; m.pathAt = [r.x, r.y]; r.path = r.moved = true;
+  }
+  if (Math.hypot(e.clientX - m.pathAt[0], e.clientY - m.pathAt[1]) < 2) return;
+  m.path.push(toDrawing(d, e.clientX, e.clientY)); m.pathAt = [e.clientX, e.clientY]; paintOverlay();
+}
+function trimPathUp(d, e) {
+  const m = state.mod, pts = m?.path;
+  if (!pts) return;
+  m.path = null;
+  const end = toDrawing(d, e.clientX, e.clientY), last = pts.at(-1);
+  if (Math.hypot(end[0] - last[0], end[1] - last[1]) > 1e-9) pts.push(end);
+  if (pts.length > 1) trimRegionDo(d, MD.fenceHit(pts), 'The path', e.shiftKey);
+  renderCommand(); paintOverlay();
+}
+function trimCross(d, p, shift) {
   const m = state.mod;
   if (!m.cross.p1) { m.cross.p1 = p; note(modPrompt(d).prompt); renderCommand(); paintOverlay(); return; }
   const a = m.cross.p1;
   m.cross = null;
   if (Math.hypot(p[0] - a[0], p[1] - a[1]) < 1e-9) note('Crossing cancelled (the corners are the same point)');
-  else trimRegionDo(d, MD.windowHit(a, p), 'The crossing window');
+  else trimRegionDo(d, MD.windowHit(a, p), 'The crossing window', shift);
   renderCommand(); paintOverlay();
 }
 /** eRase: a click takes an object into the list (again = out); Enter deletes them all, one undo step, and Trim goes on. */
@@ -7512,16 +7716,19 @@ function modAnswer(d, erase) {
   note(`Mirrored ${made.length}${erase ? ', the sources erased' : ''}` + (skipped.length ? `; ${skipped.length} left out (${[...new Set(skipped)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }
 
+/** The drawn shape of an entity in mm for a preview (a fillet shows a polyline's corners as they are), or null: shared by the modify tools and the grip modes. */
+function previewShape(ent, f, fillet) {
+  if (fillet && ['LWPOLYLINE', 'POLYLINE'].includes(ent?.type)) return filletPolylineShape(ent, f);
+  if (ent && GR.hasGrips(ent)) return GR.shapeOf(ent, f);
+  const c = curveShape(ent);                                        // an ellipse or spline (Extend's boundary or growing end)
+  return c && { ...c, pts: c.pts.map((q) => [q[0] * f, q[1] * f]) };
+}
 /** The overlay of a modify tool: what it holds (dashed), the cutting edges, and the result before the click. */
-function modOvl(d, out) {
+function modOvl(d, out, paint) {
   const m = state.mod, H = state.sheetH, f = d.factor;
   modSync(d);
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, transform: drawingTransform(d), d: DR.svgPath(shape, H), 'data-testid': tid || null }));
-  const addEnt = (ent, cls, tid) => {
-    if (m.kind === 'fillet' && ['LWPOLYLINE', 'POLYLINE'].includes(ent?.type)) add(filletPolylineShape(ent, f), cls, tid);
-    else if (ent && GR.hasGrips(ent)) add(GR.shapeOf(ent, f), cls, tid);
-    else if (curveShape(ent)) add({ ...curveShape(ent), pts: curveShape(ent).pts.map((q) => [q[0] * f, q[1] * f]) }, cls, tid);       // an ellipse or spline (Extend's boundary or growing end)
-  };
+  const addEnt = (ent, cls, tid) => { const sh = previewShape(ent, f, m.kind === 'fillet'); if (sh) { if (cls === 'dr-trim-fade') add(sh, 'dr-trim-under'); add(sh, cls, tid); } };
   if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) {
     if (m.p1 && m.cur) {
       const R = m.ref, typed = m.kind === 'rotate' && !R ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
@@ -7530,11 +7737,11 @@ function modOvl(d, out) {
       if (from) add({ t: 'line', a: from.map((v) => v * f), b: end.map((v) => v * f) }, 'dr-guide', 'mod-line');
     }
   } else if (m.kind === 'offset') {
-    if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canModify(e)) addEnt(e, 'dr-guide'); }
-    else if (m.ent) { addEnt(m.ent, 'dr-guide'); const r = m.p ? MD.offsetEntity(m.ent, offDistU(d), m.p) : null; if (r && r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
+    if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canOffset(e)) addEnt(e, 'dr-guide'); }
+    else if (m.ent) { const pick = m.p ? offsetPick(d, m.p) : null; addEnt(pick?.target ?? m.ent, 'dr-guide'); if (pick?.r.ent) addEnt(pick.r.ent, 'dr-shape', 'mod-preview'); }
   } else if (m.kind === 'fillet') {
     if (m.ent) addEnt(m.ent, 'dr-guide');
-    const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f) : null;
+    const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f, m.trim) : null;
     if (r?.ents) for (const k of r.ents) addEnt(k, 'dr-shape', 'mod-preview');
   } else if (m.kind === 'trim' || m.kind === 'extend') {
     for (const e of m.edges) addEnt(e, 'dr-edge', 'trim-edge');
@@ -7545,17 +7752,27 @@ function modOvl(d, out) {
     else if (m.kind === 'trim' || m.fence || m.cross) m.p = null;      // Extend's preview stays while the mouse is over the command box
     const rub = (a, b, tid) => add({ t: 'line', a: [a[0] * f, a[1] * f], b: [b[0] * f, b[1] * f] }, 'dr-guide', tid);
     if (m.fence) { m.fence.slice(1).forEach((q, i) => rub(m.fence[i], q, 'trim-fence')); if (m.p) rub(m.fence.at(-1), m.p, 'trim-fence'); }
+    else if (m.path) m.path.slice(1).forEach((q, i) => rub(m.path[i], q, 'trim-fence'));
     else if (m.cross) {
       const a = m.cross.p1, b = m.p;
       if (a && b) [[a, [b[0], a[1]]], [[b[0], a[1]], b], [b, [a[0], b[1]]], [[a[0], b[1]], a]].forEach(([u, v]) => rub(u, v, 'trim-cross'));
     } else if (m.erase) for (const e of m.erase) addEnt(e, 'dr-trim-cut', 'trim-erase');
-    else if (m.stage === 'cut' && m.p) {
+    const markX = () => {
+      const k = 1 / view.scale, [x, y] = toSheetPt(d, m.p), u = 4 * k, cx = x + 12 * k, cy = y + 12 * k;
+      out.push(s('path', { class: 'dr-trim-x', d: `M${cx - u} ${cy - u}L${cx + u} ${cy + u}M${cx - u} ${cy + u}L${cx + u} ${cy - u}`, 'data-testid': 'trim-x' }));
+    };
+    if (m.fence || m.path || m.cross) {
+      const pv = trimRegionPreview(d, m, paint);
+      if (pv?.changed?.length) {
+        for (const e of pv.preview) addEnt(e, pv.ext ? 'dr-trim-ext' : 'dr-trim-fade', 'mod-preview');
+        markX();
+      }
+    } else if (!m.erase && m.stage === 'cut' && m.p) {
       // only the piece a click would cut, faded with a small red x by the pointer; Extend shows the stretch it would grow by
       const e = modEntAt(d, m.p), pv = e && (MD.canModify(e) || extendable(e)) ? trimPreview(d, m, e) : null;
       if (pv?.act === 'trim' && pv.cut) {
-        const k = 1 / view.scale, [x, y] = toSheetPt(d, m.p), u = 4 * k, cx = x + 12 * k, cy = y + 12 * k;
         addEnt(pv.cut, 'dr-trim-fade', 'mod-preview');
-        out.push(s('path', { class: 'dr-trim-x', d: `M${cx - u} ${cy - u}L${cx + u} ${cy + u}M${cx - u} ${cy + u}L${cx + u} ${cy - u}`, 'data-testid': 'trim-x' }));
+        markX();
       } else if (pv?.act === 'extend') addEnt(pv.add, 'dr-trim-ext', 'mod-preview');
     }
   } else if (m.stage === 'p1' || m.stage === 'p2' || m.stage === 'erase') {
@@ -8002,8 +8219,8 @@ function gripDoc() {
   const v = layObjSelDoc(d);
   return v.sel.size ? v : null;
 }
-/** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things), and no text handles in the way. */
-const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textSel(d) && !textEditing();
+/** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
+const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textEditing();
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -8029,8 +8246,8 @@ function gripAt(d, cx, cy) {
 /** The point under the pointer for a grip: the snaps (the 0.01 mm grid when free), and Shift / ORTHO along X or Y from where the rubber band starts. */
 function gripPick(g, cx, cy, shift, hover) {
   const d = g.d, f = d.factor, p = toDrawing(d, cx, cy);
-  let q = snapPoint(d, p, g.e);                                  // not to the shape being dragged: its old place is going away
-  const ref = GR.refPoint(g.ent, g.id), base = ref && !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC' ? ref : null, straight = !!((shift || state.ortho) && base);
+  let q = snapPoint(d, p, g.hots ? g.skip : g.e);                // not to the shape(s) being dragged: the old place is going away
+  const ref = g.mode || g.hots ? g.base : GR.refPoint(g.ent, g.id), base = ref && (g.mode || g.hots || !g.id.startsWith('e') && g.ent.type !== 'CIRCLE' && g.ent.type !== 'ARC') ? ref : null, straight = !!((shift || state.ortho) && base);       // a grip mode works from the hot grip itself
   const tq = trackPick(d, p, q, base, straight, hover);
   if (tq) return tq;
   if (q.length === 2) q = [Math.round(q[0] * f * 100) / 100 / f, Math.round(q[1] * f * 100) / 100 / f];
@@ -8039,9 +8256,144 @@ function gripPick(g, cx, cy, shift, hover) {
 }
 /** The grip's drag is now at q: what the shape becomes. */
 function gripAim(g, q, shift = false) {
-  g.to = q;
-  const r = GR.dragGrip(g.ent, g.id, [q[0], q[1]], shift);
+  g.to = q; g.move = null;
+  if (g.baseAsk || g.ref && g.ref.step !== 'new') { g.val = null; g.res = null; g.next = null; return; }       // picking a base point or the reference: nothing to preview yet
+  if (g.mode) { g.val = gripRefVal(g, GM.valueAt(GM.MODES[g.mode], g.base, q)); gripModeRun(g); return; }
+  if (g.hots) { gripStretchHots(g, q, shift); return; }
+  const r = GR.dragGrip(g.ent, g.id, [g.pos[0] + q[0] - g.base[0], g.pos[1] + q[1] - g.base[1]], shift);       // a Base point sets where the offset starts
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
+  // a text, hatch or block has no outline to draw: the canvas shows it moved, as when a selection is dragged (155e4); a layout paints it from its objects' drawing (g.d.fl)
+  const fl = r && GR.movesWhole(g.ent, g.id) && g.d.fl;
+  if (fl && !g.items) g.items = fl.items.filter((it) => it.e === g.e);
+  g.move = fl ? { items: g.items, preview: { ...fl, items: g.items }, dx: q[0] - g.base[0], dy: q[1] - g.base[1] } : null;
+}
+/** Stretch with several hot grips (155e3): every one moves by the vector base → q; an object with its middle / centre hot moves whole. g.nexts: object index → the changed entity. */
+function gripStretchHots(g, q, shift) {
+  const v = [q[0] - g.base[0], q[1] - g.base[1]], nexts = new Map();
+  g.label = null;
+  for (const [e, ent] of g.ents) {
+    const mine = g.hots.filter((x) => x.e === e);
+    let cur = ent;
+    // whole (Grill Q2: all grips hot = the object moves): never grip by grip, the first grip would land on the next one's old spot
+    if (GR.wholeHot(ent, new Set(mine.map((x) => x.id)))) { if (v[0] || v[1]) cur = GR.translate(ent, v[0], v[1]); g.label = g.label || 'Move'; }
+    else for (const x of mine) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
+    if (cur !== ent) nexts.set(e, cur);
+  }
+  g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
+  // a text, hatch or block moved whole has no outline to draw: the canvas shows it moved by the same vector (as a single grip does)
+  const es = new Set([...nexts].filter(([e, n]) => GR.movesWhole(g.ents.get(e), 'c') && !previewShape(n, 1)).map(([e]) => e)), fl = es.size && g.d.fl;
+  g.move = fl ? { items: fl.items.filter((it) => es.has(it.e)), es, dx: v[0], dy: v[1] } : null;
+  if (g.move) g.move.preview = { ...fl, items: g.move.items };
+}
+/** The hint added to the note when some hot objects would not change in a Stretch (they stay as they were). */
+const leftNote = (g) => (g.nexts && !g.mode && g.left ? (g.left === 1 ? '. 1 object would not change and was left as it was' : `. ${g.left} objects would not change and were left as they were`) : '');
+/** The objects a grip run is previewing (the overlay draws them, not the drawing): the dragged one, or every one a hot grip changes. */
+const gripShown = (g) => (!g.next ? [] : g.nexts ? [...g.nexts].filter(([e, n]) => g.move?.es.has(e) || previewShape(n, 1)).map(([e]) => e) : g.move || previewShape(g.next, 1) ? [g.e] : []);       // a text, hatch or block with no preview stays drawn where it was
+/** With Reference on (155e2) the pick's angle / distance v becomes the turn / factor against the reference; null when it cannot. */
+function gripRefVal(g, v) {
+  const R = g.ref;
+  return !R ? v : GM.MODES[g.mode] === 'SCALE' ? referenceFactor(R.value, v) : referenceTurn(R.value, v);
+}
+/** Grip modes Move / Rotate / Scale / Mirror (155e1): what the mode does to the selection at value g.val → g.res (the drawing after it), g.err why not. */
+function gripModeRun(g) {
+  g.res = null; g.err = null; g.next = null;
+  if (g.val == null) return;
+  try { g.res = GM.apply(g.acc, g.sel, GM.MODES[g.mode], g.base, g.val, g.copy); } catch (err) { g.err = err.message; }       // g.acc: the drawing with the copies so far (d.raw when none)
+}
+/** Space or Enter on a hot grip: the next grip mode, AutoCAD's header in the history and its prompt (the preview follows the pointer). */
+function gripCycle() {
+  const g = state.grip;
+  if (!g) return;
+  if (g.copy) { gripExit(); return; }                                // Enter ends a multiple run
+  gripModeTo(g, GM.cycle(g.mode));
+}
+/** Mode i (Space / Enter cycle it, the right-click menu picks it). */
+function gripModeTo(g, i) {
+  if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj || isDimPart(x.part))) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
+  g.mode = i; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
+  if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
+  state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
+}
+/** The preview and the prompt follow the pointer again after an option (Base point, Copy, Undo, Reference) changed what a pick means. */
+function gripRefresh(g) {
+  g.res = null; g.err = null; g.next = null; g.val = null;
+  if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
+  renderCommand(); paintOverlay();
+}
+/** Right-click in a grip run (155e3): AutoCAD's grip menu; each item does what its key does. Reference only in Rotate / Scale, Undo only with a copy made. */
+function gripMenu(e) {
+  const M = GM.MODES[state.grip.mode], on = (fn) => () => { if (state.grip) fn(state.grip); };
+  popMenu(e.clientX, e.clientY, [
+    ['Enter', on(() => gripCycle())],
+    ...GM.MODES.map((m, i) => [GM.nameOf(m), on((g) => gripModeTo(g, i)), state.grip.mode === i ? '✓' : null]),
+    ['Base Point', on(gripBaseAsk)], ['Copy', on(gripCopyOn)],
+    ...(M === 'ROTATE' || M === 'SCALE' ? [['Reference', on(gripRefOn)]] : []),
+    ...(state.grip.copy && state.grip.hist.length ? [['Undo', on(gripUndoCopy)]] : []),
+    ['Properties', () => { if (state.grip) gripExit(); if (!state.propsOn) toggleProps(); }],       // the run ends as Enter does, the panel opens
+    ['Exit', on(() => gripExit())],
+  ]);
+}
+/** B: the next pick (or typed point) is the new base; for Stretch the grip still moves, the base only sets where the offset starts. */
+function gripBaseAsk(g) { g.baseAsk = true; note('Specify base point:'); gripRefresh(g); }
+function gripBase(g, q) { g.base = [q[0], q[1]]; g.baseSet = true; g.baseAsk = false; note(`Base point set. ${GM.prompt(GM.MODES[g.mode])}`); gripRefresh(g); }
+/** C: from now on each pick leaves a transformed copy and keeps the originals (`** ROTATE (multiple) **`). */
+function gripCopyOn(g) {
+  if (g.copy) { note('Copy is on already: Enter or Esc ends'); return; }
+  g.copy = true; ui.cmdUI.message(GM.header(GM.MODES[g.mode], true)); gripRefresh(g);
+}
+/** R (Rotate / Scale): the commands' Reference prompts; the reference first, typed or two points, then the new angle / length. */
+function gripRefOn(g) { g.ref = { step: 'ref', pts: [], value: null }; note(refPrompt({ ref: g.ref, kind: GM.MODES[g.mode].toLowerCase() })); gripRefresh(g); }
+/** The Reference steps (refPoint / refGot / refTyped, shared with Rotate and Scale) for this grip; the new angle / length ends in gripDone. */
+const gripRefCtx = (g) => [g.d, g.ref, GM.MODES[g.mode].toLowerCase(), {
+  base: g.base, again: () => gripRefresh(g),
+  done: (v) => { g.val = gripRefVal(g, v); g.to = g.to || g.base; gripModeRun(g); if (g.err || !g.res) { note(g.err || 'The new length must be above 0'); return; } gripDone(g, false); },
+}];
+/** U: takes the last copy of the run back. */
+function gripUndoCopy(g) {
+  if (!g.hist.length) { note('Nothing to undo'); return; }
+  g.acc = g.hist.pop(); note(`Last copy removed (${g.hist.length} left)`); gripRefresh(g);
+}
+/** A pick is final (the value is in g.val / g.next): a Ctrl pick or the Copy option leaves a copy and goes on, else the grip edit ends. */
+function gripDone(g, ctrl) { g.hot = true; if (ctrl || g.copy) gripCopy(g, ctrl); else gripCommit(); }
+/** A click (or the release of a drag) at the pointer: a base point, a Reference point, or the pick itself (Ctrl = a copy). */
+function gripPut(g, e) {
+  const q = gripPick(g, e.clientX, e.clientY, e.shiftKey);
+  g.hot = true; g.cursor = [e.clientX, e.clientY];
+  if (g.baseAsk) { gripBase(g, q); return; }
+  if (g.ref && g.ref.step !== 'new') { refPoint(...gripRefCtx(g), q, false, true); return; }       // q is picked already: typed = no second snap
+  gripAim(g, q, e.shiftKey);
+  if (g.err) { note(g.err); paintOverlay(); return; }       // a Scale of 0 or outside 0.0001 .. 10000: asks again, the grip stays hot, as a typed value
+  gripDone(g, e.ctrlKey);
+}
+/** One more copy for the run: the drawing with it becomes g.acc (the document itself changes only when the run ends). */
+function gripCopy(g, ctrl) {
+  if (ctrl && !g.copy) { g.copy = true; if (g.mode) gripModeRun(g); }       // Ctrl at a pick: this pick copies and the run is multiple from here on
+  const d = g.d, M = GM.MODES[g.mode];
+  if (!g.mode && (g.nexts ? [...g.nexts.values()].some((x) => x.type === 'LEADER') : ldrPseudo(d, g.e))) { note('A leader cannot be copied with Stretch yet'); return; }
+  const next = g.mode ? g.res : g.next && { entities: [...g.acc.entities, ...(g.nexts ? g.nexts.values() : [g.next])], blocks: g.acc.blocks };
+  if (!next) { note(g.err || 'That would not change anything, so no copy is made'); gripRefresh(g); return; }
+  g.hist.push(g.acc); g.acc = next;
+  note(`${GM.nameOf(M)}: ${g.hist.length} cop${g.hist.length === 1 ? 'y' : 'ies'}${leftNote(g)}. Specify the next point; Enter or Esc ends, U takes the last back`);
+  gripRefresh(g);
+}
+/** Enter, Esc or X: the copies so far go into the drawing in one undo step; with none (or no Copy) the grip edit is cancelled. */
+function gripExit() {
+  const g = state.grip, d = g.d, label = 'Copy ' + GM.nameOf(GM.MODES[g.mode]), n = g.hist.length;
+  if (!n) { const name = GM.nameOf(GM.MODES[g.mode]); gripCancel(); note(`${name} cancelled`); return; }
+  state.grip = null; trackClear();
+  view.fitted = false;
+  commit(d, g.acc, label);
+  if (!d.vlay) setSel(d, g.sel);
+  renderCommand(); paintOverlay();
+  note(`${label}: ${n} cop${n === 1 ? 'y' : 'ies'} made. Ctrl+Z takes them all back`);
+}
+/** A tab or tool change drops the grip; a run that has copies puts them into the drawing first. */
+function gripEnd() { if (state.grip && state.grip.hist.length) gripExit(); state.grip = null; }
+/** Esc: back from a Base point or Reference prompt to the mode prompt, else it ends the run. */
+function gripEsc() {
+  const g = state.grip;
+  if (g.baseAsk || g.ref) { g.baseAsk = false; g.ref = null; note(GM.prompt(GM.MODES[g.mode])); gripRefresh(g); return; }
+  gripExit();
 }
 /** The grip under the pointer turns the hover colour (GRIPHOVER); only the overlay is redrawn, and only when the grip under the pointer changes. */
 function gripHoverAt(e) {
@@ -8049,22 +8401,31 @@ function gripHoverAt(e) {
   if (id === state.gripHover) return;
   state.gripHover = id; drawOvl();
 }
+/** The hot grips (Shift-click) of d's selection as a Map 'e:id' → grip, or null when there are none or the selection / drawing changed since. */
+function hotsOf(d) {
+  const H = state.hots;
+  return H && H.sel === d.sel && H.ents === d.raw.entities && H.map.size ? H.map : null;
+}
 function gripDown(e) {
   const d = gripDoc();
   if (!d) return false;
   const g0 = state.grip;
-  if (g0 && g0.hot && g0.d === d) { gripAim(g0, gripPick(g0, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return true; }       // the second click of click, then click
+  if (g0 && g0.hot && g0.d === d) { gripPut(g0, e); return true; }       // the second click of click, then click
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
-  state.grip = { d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel) };
-  state.msg = null; renderCommand(); paintOverlay();
+  const key = hit.e + ':' + hit.id, map = hotsOf(d);
+  const hots = !e.shiftKey && map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all
+  if (!e.shiftKey) state.hots = null;                                // Shift: decided on release (gripUp: a click makes it hot, 155e3) or on the first move (a drag keeps proportions)
+  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
+  state.msg = null; renderCommand(); renderEdit(); paintOverlay();       // renderEdit: the Undo button is on in a run
   return true;
 }
 function gripMove(e) {
   const g = state.grip;
   if (!g || (g.d.vlay || g.d) !== (editable() || curDoc())) return;
   if (!g.moved && !g.hot && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) < 4) return;
+  if (g.tog) { g.tog = null; state.hots = null; }                    // a Shift drag past the threshold is a plain drag with Shift held
   g.moved = true; g.cursor = [e.clientX, e.clientY];
   gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey, true), e.shiftKey);
   paintOverlay();
@@ -8072,45 +8433,116 @@ function gripMove(e) {
 function gripUp(e) {
   const g = state.grip;
   if (!g || g.hot) return;
-  if (g.moved) { gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey), e.shiftKey); gripCommit(); return; }
+  if (g.moved) { gripPut(g, e); return; }
+  if (g.tog) {                                                       // Shift-click without a move: this grip turns hot, or cold again (155e3)
+    const d = g.d, key = g.tog.e + ':' + g.tog.id, m = hotsOf(d) || (state.hots = { sel: d.sel, ents: d.raw.entities, map: new Map() }).map;
+    gripCancel();
+    if (!m.delete(key)) m.set(key, g.tog);
+    paintOverlay(); return;
+  }
   g.hot = true; g.cursor = [e.clientX, e.clientY];                  // a click on the grip: it is hot until the next click puts it down
-  renderCommand(); paintOverlay();
+  ui.cmdUI.message(GM.header('STRETCH', g.copy)); renderCommand(); paintOverlay();
 }
-function gripCancel() { state.grip = null; trackClear(); renderCommand(); paintOverlay(); }
+function gripCancel() { state.grip = null; trackClear(); renderCommand(); renderEdit(); paintOverlay(); }
 /** Puts the dragged grip down: one undo step, named for what it did; the selection stays. */
 function gripCommit() {
   const g = state.grip;
   state.grip = null; trackClear();
   if (!g) return;
+  renderEdit();       // every end of the run, also one that changes nothing: the Undo button follows the run
+  if (g.mode) { gripModeCommit(g); return; }
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
-  const d = g.d, label = g.label, text = GR.readoutOf(g.ent, g.id, g.next, d.factor);
+  const d = g.d, label = g.nexts ? 'Stretch grips' : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor) : GR.readoutOf(g.ent, g.id, g.next, d.factor);
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, g.ent, g.next, label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
-    commit(d, g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
+    commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
     setSel(d, g.sel);
   }
-  note(`${label}: ${text}. Ctrl+Z takes it back`);
+  note(`${label}: ${text}${leftNote(g)}. Ctrl+Z takes it back`);
+}
+/** The drawing after a Stretch of several hot grips: the changed objects in place, dimensions following, leaders through their own model. */
+function gripHotsRaw(g) {
+  const d = g.d, plain = (i) => g.nexts.get(i) && g.nexts.get(i).type !== 'LEADER' ? g.nexts.get(i) : d.raw.entities[i];
+  let raw = followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => plain(i)), blocks: d.raw.blocks }, d.factor);
+  for (const n of g.nexts.values()) if (n.type === 'LEADER') raw = LR.replace(raw, n.name, n.model);
+  return raw;
 }
 /** Typed while a grip is dragged: x,y, @dx,dy (from where the grip was), @len<ang, or a length (the way the rubber band points; a circle's radius). */
 function gripTyped(raw) {
   const g = state.grip, d = g && g.d;
   if (!g || !d) return;
   const f = d.factor, inp = DR.parseInput(raw);
-  if (inp.kind === 'enter') { if (g.next) gripCommit(); else gripCancel(); return; }
-  if (inp.kind === 'word') { if (inp.w === 'x' || inp.w === 'exit' || inp.w === 'esc') { gripCancel(); note('Stretch cancelled'); } else note(`"${inp.w}" is not an option here: type x,y, @dx,dy or a length, or press Esc`); return; }
+  if (inp.kind === 'enter') { gripCycle(); return; }                // Enter on an empty bar cycles the grip mode, as Space (AutoCAD)
+  if (inp.kind === 'word') {
+    const word = inp.w, M = GM.MODES[g.mode];
+    if (word === 'x' || word === 'exit' || word === 'esc') gripExit();
+    else if (word === 'b' || word === 'base') gripBaseAsk(g);
+    else if (word === 'c' || word === 'copy') gripCopyOn(g);
+    else if ((word === 'r' || word === 'reference') && (M === 'ROTATE' || M === 'SCALE')) gripRefOn(g);
+    else if (g.ref && g.ref.step === 'new' && (word === 'p' || word === 'points')) { g.ref.step = 'newpts'; g.ref.pts = []; gripRefresh(g); }
+    else if (word === 'u' || word === 'undo') gripUndoCopy(g);
+    else note(`"${word}" is not an option here: type ${g.mode ? 'a value or a point' : 'x,y, @dx,dy or a length'}, or press Esc`);
+    return;
+  }
+  if (g.baseAsk) {
+    const mm = DR.typedPoint(inp, g.base.map((v) => v * f));
+    if (!mm) note('Type the base point as x,y or @dx,dy'); else gripBase(g, mm.map((v) => v / f));
+    return;
+  }
+  if (g.ref && g.ref.step !== 'new') { refTyped(...gripRefCtx(g), raw); return; }
+  if (g.mode) { gripModeTyped(g, inp, raw); return; }
   if (g.id.startsWith('e')) { note('Drag the edge to resize; typing a size is not available yet'); return; }
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
-  const grip = GR.gripsOf(g.ent).find((x) => x.id === g.id), origMm = [grip.x * f, grip.y * f], refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
+  const refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
   let mm = null;
   if (inp.kind === 'len') {
     const hover = g.to ? [g.to[0] * f, g.to[1] * f] : null;
-    mm = DR.directDistance(refMm, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [refMm[0] + inp.v, refMm[1]] : null);
+    const org = g.baseSet || g.hots ? g.base.map((v) => v * f) : refMm;       // after B the length counts from the base, as @dx,dy
+    mm = DR.directDistance(org, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [org[0] + inp.v, org[1]] : null);
     if (!mm) { note('Move the pointer the way you want it to go, then type the length'); return; }
-  } else mm = DR.typedPoint(inp, origMm);
+  } else mm = DR.typedPoint(inp, g.base.map((v) => v * f));       // @dx,dy counts from the base (the grip itself until B)
   if (!mm || !mm.every(Number.isFinite)) { note('Point coordinates must be finite'); return; }
   gripAim(g, [mm[0] / f, mm[1] / f]);
-  gripCommit();
+  gripDone(g, false);
+}
+/** Typed in a grip mode: an angle (Rotate) or factor (Scale) or a point (x,y, @dx,dy, @len<ang), or a length the way the rubber band points (Move, Mirror). */
+function gripModeTyped(g, inp, raw) {
+  const f = g.d.factor, M = GM.MODES[g.mode], baseMm = g.base.map((v) => v * f);
+  let v;
+  if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type ${M === 'ROTATE' ? 'an angle' : M === 'SCALE' ? 'a factor' : 'x,y or @dx,dy'}`); return; }
+  if (inp.kind === 'len' && (M === 'ROTATE' || M === 'SCALE')) v = gripRefVal(g, g.ref && M === 'SCALE' ? inp.v / f : inp.v);       // with Reference a typed scale is the new length (mm)
+  else {
+    const mm = inp.kind === 'len' ? DR.directDistance(baseMm, g.to && g.to.map((x) => x * f), inp.v) : DR.typedPoint(inp, baseMm);
+    if (!mm) { note(inp.kind === 'len' ? 'Move the pointer the way you want it to go, then type the length' : 'Point coordinates must be finite'); return; }
+    v = gripRefVal(g, GM.valueAt(M, g.base, mm.map((x) => x / f)));
+  }
+  g.val = v; g.to = g.to || g.base; gripModeRun(g);
+  if (g.err || (g.ref && !g.res)) { note(g.err || 'The new length must be above 0'); return; }       // a Scale of 0 or outside 0.0001 .. 10000: asks again, the grip stays hot (AutoCAD)
+  gripDone(g, false);
+}
+/** A grip mode (Move, Rotate, Scale, Mirror) puts its result down: every selected object, one undo step named for the mode; the grip edit ends. */
+function gripModeCommit(g) {
+  const d = g.d, M = GM.MODES[g.mode], label = GM.nameOf(M);
+  if (!g.res) { note(g.err || (g.to ? 'That would not change anything, so it stays as it was' : `${label} cancelled`)); renderCommand(); paintOverlay(); return; }
+  if (moveLocked(d, g.sel)) { paintOverlay(); return; }
+  view.fitted = false;
+  if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  else { commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label); setSel(d, g.sel); }
+  const left = g.res.skipped || [];
+  note(`${label}: ${GM.readout(M, g.base, g.val, d.factor)}` + (left.length ? `; ${left.length} left out (${[...new Set(left)].join('; ')})` : '') + '. Ctrl+Z takes it back');
+}
+/** The preview of a grip mode: the rubber line base → pointer, a faint ghost of the result, the grips (the hot one red) and the readout tip. */
+function gripModeOvl(d, out, grips, g, square) {
+  const f = d.factor, M = GM.MODES[g.mode], at = (p) => p.map((v) => v * f);
+  if (g.to && !g.baseAsk) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: at(g.base), b: at(g.to) }, state.sheetH), 'data-testid': 'grip-line' }));
+  const shapes = g.copy ? (g.res || g.acc).entities.slice(d.raw.entities.length, d.raw.entities.length + 300) : g.res ? [...g.sel].slice(0, 300).map((i) => g.res.entities[i]) : [];       // a multiple run shows every copy so far and the next
+  for (const ent of shapes) {
+    const sh = previewShape(ent, f);
+    if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
+  }
+  for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id));
+  return g.res && g.to ? { text: GM.readout(M, g.base, g.val, f), px: g.cursor || sheetPx(d, g.to) } : null;
 }
 /** Grips, and while one is dragged: the original as a dashed ghost, the new shape dashed, the hot grip, and the readout. Returns the readout tip or null. */
 function gripOvl(d, out, k, grips) {
@@ -8122,17 +8554,28 @@ function gripOvl(d, out, k, grips) {
     return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
       hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
   };
+  if (g && g.d === d && g.mode) return gripModeOvl(d, out, grips, g, square);
   if (g && g.d === d) {
-    const ghost = GR.shapeOf(g.ent, d.factor);
-    if (ghost) out.push(s('path', { class: 'gr-ghost', transform: drawingTransform(d), d: DR.svgPath(ghost, state.sheetH) }));
-    if (g.next) {
-      const nw = GR.shapeOf(g.next, d.factor);
+    const targets = g.ents ? [...g.ents] : [[g.e, g.ent]];
+    for (const [, ent] of targets) {
+      const ghost = previewShape(ent, d.factor);
+      if (ghost) out.push(s('path', { class: 'gr-ghost', transform: drawingTransform(d), d: DR.svgPath(ghost, state.sheetH) }));
+    }
+    for (const ent of g.acc.entities.slice(d.raw.entities.length, d.raw.entities.length + 300)) {       // Stretch copies so far
+      const sh = previewShape(ent, d.factor);
+      if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
+    }
+    for (const ent of g.nexts ? g.nexts.values() : g.next ? [g.next] : []) {
+      const nw = previewShape(ent, d.factor);
       if (nw) out.push(s('path', { class: 'gr-new', transform: drawingTransform(d), d: DR.svgPath(nw, state.sheetH), 'data-testid': 'grip-preview' }));
     }
-    const live = g.next ? GR.gripsOf(g.next) : GR.gripsOf(g.ent), hotG = live.find((x) => x.id === g.id);
-    for (const x of live) if (x.id !== g.id) grips.push(square([x.x, x.y], false, x.id));
-    if (hotG) grips.push(square([hotG.x, hotG.y], true, g.id));
-    if (g.next && g.to) { return { text: GR.readoutOf(g.ent, g.id, g.next, d.factor), px: g.cursor || sheetPx(d, [g.to[0], g.to[1]]) }; }
+    const hotKeys = g.hots && new Set(g.hots.map((x) => x.e + ':' + x.id)), cold = [], hotSq = [];
+    for (const [e, ent] of targets) for (const x of GR.gripsOf((g.nexts ? g.nexts.get(e) : g.next) || ent)) {
+      const key = e + ':' + x.id, hot = hotKeys ? hotKeys.has(key) : x.id === g.id;
+      (hot ? hotSq : cold).push(square([x.x, x.y], hot, hotKeys ? key : x.id));
+    }
+    grips.push(...cold, ...hotSq);
+    if (g.next && g.to) { return { text: g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor) : GR.readoutOf(g.ent, g.id, g.next, d.factor), px: g.cursor || sheetPx(d, [g.to[0], g.to[1]]) }; }
     return null;
   }
   if (!gripOn(d)) return null;
@@ -8144,8 +8587,9 @@ function gripOvl(d, out, k, grips) {
       out.push(s('path', { class: 'gr-spoke', d: `M${P(a)}L${P(c)}L${P(b)}` }));
     }
   }
+  const hots = hotsOf(d);
   for (const x of list) {
-    grips.push(square([x.x, x.y], false, x.e + ':' + x.id));
+    grips.push(square([x.x, x.y], !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;
@@ -8206,6 +8650,7 @@ function editKey(e) {
     else if (sheetSelOn() && !pdrag) selectSheet(false);
     else if (curLay() && pdrag) cancelPlacedDrag();
     else if (layModLive()) modEsc(curDoc());
+    else if (!state.grip && gripDoc() && hotsOf(gripDoc())) { state.hots = null; note('Hot grips cleared'); paintOverlay(); }
     else if (curLay() && multiSel() && !state.grip && !state.setlen && state.tool !== 'measure') { selectMany(groupIdxs(state.sel), state.sel); update(); note('Selection: just the main part'); }
     else if (curLay() && state.mode === 'rotate') { state.mode = 'select'; state.rotCopy = false; update(); note('Rotate done'); }
     else if (state.colourTool) { state.colourTool = null; note('Colour tool ended'); renderEdit(); renderRibbon(); paintOverlay(); }
@@ -8214,7 +8659,7 @@ function editKey(e) {
     else if (state.entityDrag) { state.entityDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.setlen) cancelSetlen();
     else if (state.balDrag) { state.balDrag = null; note('Move cancelled'); paintOverlay(); }
-    else if (state.grip) { gripCancel(); note('Stretch cancelled'); }
+    else if (state.grip) gripEsc();
     else if (state.text.drag) { textDragEnd(true); note('Resize cancelled'); }
     else if (state.txoWait) { state.txoWait = false; note('Text to outlines cancelled'); }
     else if (modLive()) modEsc(d);
@@ -8242,6 +8687,8 @@ function editKey(e) {
   const mod = e.ctrlKey || e.metaKey, k = e.key.toLowerCase();
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
+  if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
+  if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
@@ -9312,7 +9759,7 @@ function renderEdit() {
   ui['set-length'].disabled = !scalable;
   ui['set-length'].classList.toggle('on', !!L);
   for (const [id, fix] of [['unit-up', UF.UNIT_FIXES.up], ['unit-down', UF.UNIT_FIXES.down]]) { ui[id].disabled = !scalable; ui[id].title = UF.unitFixTip(fix, b); }
-  ui.undo.disabled = !historyOf(curDoc()).canUndo; ui.redo.disabled = !historyOf(curDoc()).canRedo;
+  ui.undo.disabled = !state.grip && !historyOf(curDoc()).canUndo; ui.redo.disabled = !historyOf(curDoc()).canRedo;
   const gl = gapsOf(d);
   ui.gapRow.hidden = !d.ed;
   const countOnly = gl && gl.length > Ed.GAP_MARK_CAP;
