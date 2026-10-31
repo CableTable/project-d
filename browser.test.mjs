@@ -10008,10 +10008,33 @@ try {
     await undo(); await noHot();
     assert.equal(await count(), 4, 'Ctrl+Z with no copy cancels the grip edit');
     assert.deepEqual(await labelsNow(), before2, 'and no step was undone');
+    // the ribbon Undo is the run's own too (the last copy); Ctrl+Y mid-run changes nothing; a tool change keeps the copies
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:b'); await typeCmd('150,30'); await noHot();       // a step before the run, so the ribbon Undo is enabled
+    const before3 = await labelsNow();
+    await hotGrip('0:a'); await press(' ', 2);
+    await typeCmd('c'); await typeCmd('90'); await typeCmd('180');
+    await t('undo').click();
+    assert.match(await hist(), /Last copy removed \(1 left\)/);
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'the ribbon Undo took a copy, the run goes on');
+    await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+y');
+    assert.match(await hist(), /Redo: finish the grip first/);
+    assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'Ctrl+Y mid-run: the run goes on');
+    await page.locator('[data-tool=select]').click(); await noHot();
+    assert.equal(await count(), 5, 'a tool change keeps the one copy left');
+    assert.deepEqual((await labelsNow()).slice(0, -1), before3, 'the steps before the run stay');
+    await undo(); await undo();
     // B then a typed @10,0 in Stretch: counted from the base, so the grip moves 10
     await openGrips(); await pick(70, 30, 3); await hotGrip('0:b');
     await typeCmd('b'); await typeCmd('0,0'); await typeCmd('@10,0'); await noHot();
     assert.ok(close(await lineOf(0), [20, 30, 130, 30]), `the grip moved 10 from the base: ${await lineOf(0)}`);
+    await undo();
+    // B then a typed length (pointer right of the base): counted from the base, so the end moves 50 right
+    await openGrips(); await pick(70, 30, 3); await hotGrip('0:b');
+    await typeCmd('b'); await typeCmd('0,30');       // (y = 0 is under the status bar in the test window, so the base is on the line's own height)
+    const pr = await at(100, 30); await page.mouse.move(pr.x, pr.y, { steps: 4 }); await frames();
+    await typeCmd('50'); await noHot();
+    const bl = await lineOf(0);
+    assert.ok(near(bl[0], 20, 1e-6) && near(bl[1], 30, 1e-6) && near(bl[2], 170, 0.6) && near(bl[3], 30, 0.6), `the end moved 50 along the pointer direction from the base: ${bl}`);
     await undo();
     // the (multiple) header in the screenshots, light and dark
     await rotating();
@@ -10033,6 +10056,14 @@ try {
     assert.ok(near(kept.x, here.x, 2) && near(kept.y, here.y, 2), 'the original object stayed');
     await undo(); await frames();
     assert.equal((await labelsNow()).length, n0, 'one Undo takes both copies back');
+    // a tab change mid-run on the layout keeps the copy and marks the layout (not the new tab) unsaved
+    await hotGrip(await gid('b')); await press(' ', 2);
+    await typeCmd('c'); await typeCmd('90');
+    await t('new-layout').click(); await frames();
+    assert.equal(await page.locator('.dtab.on .dot').count(), 0, 'the new layout tab is not marked unsaved');
+    await page.locator('.tabs .dtab', { hasText: 'Layout 1' }).first().click(); await frames();
+    assert.equal(await page.locator('.dtab.on .dot').count(), 1, 'the first layout is marked unsaved');
+    assert.equal((await labelsNow()).length, n0 + 1, 'the copy made before the tab change is kept');
     await closeTabs(/./);
   });
 

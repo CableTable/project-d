@@ -289,7 +289,7 @@ const clampSel = () => { if (state.sel >= placedNow.length) state.sel = placedNo
 /** The grid of the open layout: its step-and-repeat part laid out by the settings, or an empty grid (count 0). */
 const gridNow = () => { const lay = curLay(); return (lay && LD.gridOf(lay)) || stepRepeat({ ...state, partW: 0, partH: 0 }); };
 /** Something in the open layout was changed: it has unsaved changes now. */
-function touch() { const d = curDoc(); if (d && d.lay && !d.dirty) { d.dirty = true; renderTabs(); } }
+function touch(d = curDoc()) { if (d && d.lay && !d.dirty) { d.dirty = true; renderTabs(); } }
 
 // ---- theme ----
 function setTheme(mode) {
@@ -1917,6 +1917,8 @@ function pushHistory(d, snapshot, label) {
   d.hist.push(snapshot, label);
 }
 function undoCurrent(forward = false) {
+  const g = state.grip;
+  if (g) { if (forward) note('Redo: finish the grip first'); else if (g.copy) gripUndoCopy(g); else gripCancel(); return; }       // in a grip run Undo is the run's own: the last copy, else the grip edit
   const tab = curDoc(), hist = historyOf(tab);
   const d = tab?.cmp ? historyDocs(tab).find((x) => x.hist && x.hist === hist[forward ? 'redoHistory' : 'undoHistory']) : editable();
   if (d) {
@@ -5383,14 +5385,14 @@ function layObjCommit(v, next, label) {
   const d = v.vlay;
   pushLay(d, null, '', label);
   LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid());
-  touch(); update();
+  touch(d); update();       // the layout itself: a run ended by a tab change commits after state.doc moved on
 }
 /** A grip edit of layout objects (each [entity of layObjDoc `v`, what it becomes]): the same objects, in one undo step. False (and nothing changed) when nothing is left of one. */
 function layGripCommit(v, pairs, label) {
   const d = v.vlay, snap = laySnap(d.lay);
   for (const [k, [ent, next]] of pairs.entries()) if (!LD.objectReplace(d.lay, v, ent, next, () => 'o' + uid())) { if (k) layRestore(d, snap, d.dirty); return false; }
   pushLay(d, snap, '', label);
-  touch(); update();
+  touch(d); update();
   return true;
 }
 function restoreBg(d, st) {
@@ -8200,7 +8202,7 @@ function gripRefresh(g) {
 }
 /** B: the next pick (or typed point) is the new base; for Stretch the grip still moves, the base only sets where the offset starts. */
 function gripBaseAsk(g) { g.baseAsk = true; note('Specify base point:'); gripRefresh(g); }
-function gripBase(g, q) { g.base = [q[0], q[1]]; g.baseAsk = false; note(`Base point set. ${GM.prompt(GM.MODES[g.mode])}`); gripRefresh(g); }
+function gripBase(g, q) { g.base = [q[0], q[1]]; g.baseSet = true; g.baseAsk = false; note(`Base point set. ${GM.prompt(GM.MODES[g.mode])}`); gripRefresh(g); }
 /** C: from now on each pick leaves a transformed copy and keeps the originals (`** ROTATE (multiple) **`). */
 function gripCopyOn(g) {
   if (g.copy) { note('Copy is on already: Enter or Esc ends'); return; }
@@ -8340,7 +8342,8 @@ function gripTyped(raw) {
   let mm = null;
   if (inp.kind === 'len') {
     const hover = g.to ? [g.to[0] * f, g.to[1] * f] : null;
-    mm = DR.directDistance(refMm, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [refMm[0] + inp.v, refMm[1]] : null);
+    const org = g.baseSet ? g.base.map((v) => v * f) : refMm;       // after B the length counts from the base, as @dx,dy
+    mm = DR.directDistance(org, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [org[0] + inp.v, org[1]] : null);
     if (!mm) { note('Move the pointer the way you want it to go, then type the length'); return; }
   } else mm = DR.typedPoint(inp, g.base.map((v) => v * f));       // @dx,dy counts from the base (the grip itself until B)
   if (!mm || !mm.every(Number.isFinite)) { note('Point coordinates must be finite'); return; }
@@ -8521,7 +8524,7 @@ function editKey(e) {
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
-  if (state.grip && mod && !e.altKey && !e.shiftKey && k === 'z') { e.preventDefault(); if (state.grip.copy) gripUndoCopy(state.grip); else gripCancel(); return; }       // in a grip run Ctrl+Z is the run's own: the last copy, else the grip edit
+  if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
   if (e.key === ' ' && !mod && !e.altKey && !e.shiftKey && !dialog && !activeCmd() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); ui.cmdUI.repeat(); return; }       // Space is Enter: the last command again
