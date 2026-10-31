@@ -451,7 +451,8 @@ function writePreparedDxf(doc, opts) {
         if (l.tc != null) o.p(420, l.tc);
         o.s(6, l.lt || 'CONTINUOUS');
         if (l.plot === false) o.p(290, 0);                                      // "No plot": helper lines must not print or cut
-        o.p(370, l.lw ?? -3);                                                   // no code 390: it pointed at no object, so AUDIT said "PlotstyleName Id Invalid"
+        // AutoCAD 2027 hangs opening a file whose layers have no 390 (runs29/acad155n-answers.md); the AUDIT PlotstyleName note is harmless
+        o.p(370, l.lw ?? -3).s(390, 'F');
       }
     });
     table('STYLE', styles.size, () => {

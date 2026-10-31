@@ -342,13 +342,14 @@ test('a layer marked "No plot" (code 290) keeps it; a layer without the code plo
   assert.equal(once.split(/\r?\n/).filter((l) => l.trim() === '290').length, 1, 'only the No plot layer gets the code');
 });
 
-test('a written LAYER record has no plot style id (code 390): AutoCAD AUDIT calls the dangling one invalid', () => {
+test('a written LAYER record is exactly the 6c2cde6 one, with code 390 (AutoCAD 2027 hangs opening layers without it)', () => {
   const lines = W.writeDxf(D.readDxf(tablesDxf(table('LAYER', [[[0, 'LAYER'], [2, 'CUT'], [70, 0], [62, 1], [6, 'CONTINUOUS']]])))).split(/\r?\n/);
   const pairs = []; for (let i = 0; i + 1 < lines.length; i += 2) pairs.push([lines[i].trim(), lines[i + 1].trim()]);
   const name = pairs.findIndex((p) => p[0] === '2' && p[1] === 'CUT'), at = pairs.slice(0, name).map((p) => p[0] === '0' && p[1] === 'LAYER').lastIndexOf(true);
   assert.ok(at >= 0, 'CUT record found');
   const record = pairs.slice(at + 1, at + 1 + pairs.slice(at + 1).findIndex((p) => p[0] === '0')).map((p) => p[0]);
-  assert.ok(record.includes('370') && !record.includes('390'), record.join(' '));
+  assert.equal(record.join(' '), '5 330 100 100 2 70 62 6 370 390', 'code order');                 // handles (5, 330) vary; the rest is fixed
+  assert.deepEqual(pairs.slice(at + 3, at + 11).map((p) => p.join('=')), ['100=AcDbSymbolTableRecord', '100=AcDbLayerTableRecord', '2=CUT', '70=0', '62=1', '6=CONTINUOUS', '370=-3', '390=F']);
 });
 
 test('a big file writes: 20 000 polylines × 50 points on 300 layers, extents handed in', () => {
