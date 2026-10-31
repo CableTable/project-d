@@ -5,6 +5,7 @@
 const TABLE = [
   ['osnap', 'Edit', 'Open the Snap types tick list', ['os'], ''],
   ['ortho', 'Edit', 'Set Ortho ON or OFF', [], ''],
+  ['attdisp', 'View', 'Set attribute visibility to Normal, ON or OFF', [], ''],
   ['fill', 'Edit', 'Fill a closed outline with the current fill colour', [], 'draw'],
   ['eyedropper', 'Edit', 'Copy line and fill colours from an object to targets', [], 'draw'],
   ['readout', 'Edit', 'Show the colour under the cursor; a click copies its hex', [], ''],

@@ -463,8 +463,8 @@ export function flatten(doc, hidden = new Set()) {
           // the block's attributes (title-block fields): in the drawing's own place, not the block's
           for (const a of e.kids || []) {
             const ae = entity(a), af = firsts(a);
-            if (ae.hidden || (num(af[70]) & 1)) continue;
             const aOwn = layerOf(ae.layer);
+            if (num(H.$ATTMODE, 1) === 0 || ae.hidden || (num(H.$ATTMODE, 1) !== 2 && (num(af[70]) & 1))) continue;
             const acss = ae.tc != null ? rgbCss(ae.tc) : ae.aci === 0 ? css : ae.aci === 256 ? layers[aOwn].css : ACI[Math.abs(ae.aci)] || css;
             let am = ctx.m; if (ae.flip) { mats.push(mmul(mats[ctx.m], FLIP)); am = mats.length - 1; }
             text({ ...base, m: am, L: ctx.L ? [aOwn, ...ctx.L] : [aOwn], css: acss }, af, true, put);

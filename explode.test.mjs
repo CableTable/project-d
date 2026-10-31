@@ -396,6 +396,16 @@ test('TODO 155i1: native DIMENSION without a block builds lines, SOLID arrows an
   }
 });
 
+test('TODO 155i2b: blank native dimension override suppresses text on the fallback path', () => {
+  const doc = newDoc(4);
+  doc.entities = [entity('DIMENSION', [[2, '*Dmissing'], [70, 33], [1, ' '],
+    [13, 0], [23, 0], [14, 100], [24, 0], [10, 100], [20, 20]])];
+  const out = explodeSelection(doc, new Set([0]));
+  assert.equal(out.exploded, 1, JSON.stringify(out.errors));
+  assert.deepEqual(out.entities.map((e) => e.type).sort(), ['LINE', 'LINE', 'LINE', 'SOLID', 'SOLID']);
+  assert.deepEqual(out.blocks, {});
+});
+
 test('TODO 155i1: native block MTEXT keeps resolved formatting and chunks regardless of override; invalid fallback leaves source', () => {
   const doc = newDoc(4);
   addBlock(doc, '*D1', [line(0, 0, 30, 0), entity('MTEXT', [[10, 15], [20, 2], [40, 2], [3, '{\\C1;Width '], [1, '30,0}']])]);

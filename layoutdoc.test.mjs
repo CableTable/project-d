@@ -16,6 +16,29 @@ function test(name, fn) { fn(); n++; console.log('ok', name); }
 const load = (f) => readDxf(decodeDxf(readFileSync('fixtures/' + f)));
 const R = (x) => Math.round(x * 1e6) / 1e6;
 
+test('TODO 155i2b: layout ATTMODE refresh keeps placement, source and undo snapshot; header survives reopen', () => {
+  const raw = newDoc(4), ins = insert('Attributes', 0, 0);
+  addBlock(raw, 'Attributes', [line(0, 0, 100, 0)]);
+  ins.kids = [0, 1].map((hidden) => entity('ATTRIB', [[10, 10], [20, 10 + hidden * 20], [40, 3], [1, hidden ? 'Hidden' : 'Shown'], [70, hidden]]).r);
+  raw.entities = [ins];
+  const lay = LD.newLayout('Attributes'), part = LD.makePart('p', 'Attributes', raw, 1);
+  lay.parts.p = part; lay.placed = [placement1('p', 100, 100)];
+  const placement = structuredClone(lay.placed), source = structuredClone(raw);
+  for (const mode of [2, 0, 1]) {
+    lay.s.attmode = mode; LD.refreshAttributes(lay);
+    assert.equal(lay.parts.p.fl.items.filter((it) => it.k === 't').length, mode === 2 ? 2 : mode);
+    assert.deepEqual(lay.parts.p.box, part.box);
+    assert.deepEqual(lay.placed, placement);
+    const saved = readDxf(writeDxf(LD.layoutRaw(lay)));
+    assert.equal(saved.header.$ATTMODE, String(mode));
+    const reopened = LD.layoutFromRaw(saved);
+    assert.equal(reopened.s.attmode, mode);
+    assert.equal(reopened.parts.p.fl.items.filter((it) => it.k === 't').length, mode === 2 ? 2 : mode);
+  }
+  assert.deepEqual(raw, source);
+  assert.equal(part.fl.items.filter((it) => it.k === 't').length, 1);
+});
+
 test('swatch strip recolours a private part including nested blocks, keeps geometry, source and saved colour', () => {
   const raw = newDoc(4);
   addBlock(raw, 'inner', [line(0, 0, 10, 10, { aci: 5 })]);

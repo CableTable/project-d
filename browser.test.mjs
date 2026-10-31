@@ -16215,6 +16215,99 @@ try {
     }
   });
 
+  await step('TODO 155i2b: ATTDISP Normal, ON and OFF, Enter, Esc and one Undo; Layout and Compare', async () => {
+    await menuItem('View', 'Theme: light');
+    await closeTabs(/./);
+    mkdirSync('shots-155i2', { recursive: true });
+    const raw = newDoc(4), ins = dxfInsert('Attributed', 100, 100);
+    addBlock(raw, 'Attributed', [dxfLine(0, 0, 100, 0)]);
+    ins.kids = [0, 1].map((n) => entity('ATTRIB', [[10, 110], [20, 110 + n * 20], [40, 6], [2, 'TAG' + n],
+      [1, n ? 'Value hidden' : 'Value shown'], [70, n]]).r);
+    addEntities(raw, ins, entity('ATTDEF', [[10, 110], [20, 150], [40, 6], [2, 'LOOSE_TAG'], [70, 1]]));
+    await page.evaluate(() => {
+      window.__attdispTexts = [];
+      window.__attdispFill = CanvasRenderingContext2D.prototype.fillText;
+      window.__attdispClear = CanvasRenderingContext2D.prototype.clearRect;
+      CanvasRenderingContext2D.prototype.clearRect = function (...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__attdispTexts = [];
+        return window.__attdispClear.apply(this, args);
+      };
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__attdispTexts.push(String(text));
+        return window.__attdispFill.call(this, text, ...args);
+      };
+    });
+    const open = async (name, doc) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(doc)) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await frames();
+    };
+    const painted = async (shown, hidden, loose = true) => {
+      await frames();
+      const texts = await page.evaluate(() => window.__attdispTexts);
+      assert.equal(texts.includes('Value shown'), shown, JSON.stringify(texts));
+      assert.equal(texts.includes('Value hidden'), hidden, JSON.stringify(texts));
+      if (loose) assert.ok(texts.includes('LOOSE_TAG'), 'loose ATTDEF always draws');
+    };
+    const setting = async (value) => { await typeCmd('attdisp'); await typeCmd(value); await frames(); };
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    try {
+      await open('attdisp.dxf', raw);
+      await painted(true, false);
+      const before = await histLabels();
+      await typeCmd('attdisp');
+      assert.equal(await prompt(), 'Enter attribute visibility setting [Normal/ON/OFF] <Normal>:');
+      await typeCmd('constructor');
+      assert.equal(await prompt(), 'Enter attribute visibility setting [Normal/ON/OFF] <Normal>:', 'invalid input leaves the setting prompt open');
+      await typeCmd(''); assert.deepEqual(await histLabels(), before, 'Enter keeps without Undo');
+      await typeCmd('attdisp'); await cmdLine().fill('on'); await page.keyboard.press('Escape');
+      await painted(true, false); assert.deepEqual(await histLabels(), before, 'Esc cancels mid-command');
+      await setting('on'); await painted(true, true);
+      assert.equal((await savedDoc()).header.$ATTMODE, '2');
+      assert.equal((await histLabels()).at(-1), 'ATTDISP');
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await typeCmd('attdisp'); await frames();
+        await page.screenshot({ path: `shots-155i2/attdisp-on-${theme}.png` });
+        await page.keyboard.press('Escape');
+      }
+      await menuItem('View', 'Theme: light');
+      await setting('off'); await painted(false, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '0');
+      await setting('normal'); await painted(true, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '1');
+      await undo(); await painted(false, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '0', 'one Undo restores OFF');
+      await setting('on');
+      await click(150, 100); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0'); await page.keyboard.press('Escape');
+      assert.equal(GR.get((await savedDoc()).entities[0].r, 10), 110, 'source remains editable after ATTDISP');
+      await painted(true, true);
+      const lay = newLayout('ATTDISP');
+      lay.parts.b = objectPart('b', 'Attributed', ins, raw.layers, raw.header, raw.blocks);
+      lay.placed = [objectPlacement(lay.parts.b)];
+      await open('attdisp-layout.dxf', layoutRaw(lay));
+      await painted(true, false, false);
+      await setting('on'); await painted(true, true, false);
+      assert.equal((await savedDoc()).header.$ATTMODE, '2');
+      await setting('off'); await painted(false, false, false);
+      await undo(); await painted(true, true, false);
+      await setting('normal'); await painted(true, false, false);
+      await open('attdisp-compare.dxf', raw);
+      await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click();
+      await setting('on'); await painted(true, true);
+      await setting('off'); await painted(false, false);
+      await undo(); await painted(true, true);
+      await setting('normal'); await painted(true, false);
+    } finally {
+      await page.evaluate(() => {
+        CanvasRenderingContext2D.prototype.fillText = window.__attdispFill;
+        CanvasRenderingContext2D.prototype.clearRect = window.__attdispClear;
+        delete window.__attdispFill; delete window.__attdispClear; delete window.__attdispTexts;
+      });
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 155i1: Explode pattern hatches into clipped LINEs, keep the boundary, refuse solid hatches and undo once; Layout parity', async () => {
     await menuItem('View', 'Theme: light');
     await closeTabs(/./);

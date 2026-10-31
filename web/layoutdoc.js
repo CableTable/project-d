@@ -33,6 +33,7 @@ export const DEFAULTS = Object.freeze({
   crop: false, reg: false, gapX: 5, gapY: 5, rotate: '0', align: 'centre',
   fit: true, rows: 1, cols: 1, extraRows: [], extraCols: [], gridPart: null,
   guides: [], guidesShow: true, guidesLock: false,       // guidelines (guides.js): per layout, saved with it
+  attmode: 1,
 });
 export const SETTING_KEYS = Object.keys(DEFAULTS);
 
@@ -41,6 +42,17 @@ export const newSettings = (over = {}) => ({ ...DEFAULTS, extraRows: [], extraCo
 
 /** An empty layout. */
 export const newLayout = (name) => ({ name, s: newSettings(), parts: {}, placed: [] });
+
+const hasAttributes = (raw) => [raw.entities, ...Object.values(raw.blocks).map((b) => b.entities)].some((ents) => ents.some((e) => e.kids?.some((a) => a.type === 'ATTRIB')));
+
+/** Refresh attribute visibility without changing a part's placement or reference box. */
+export function refreshAttributes(lay) {
+  for (const [id, part] of Object.entries(lay.parts)) {
+    if (!part.raw || +(part.raw.header.$ATTMODE ?? 1) === lay.s.attmode) continue;
+    const raw = { ...part.raw, header: { ...part.raw.header, $ATTMODE: String(lay.s.attmode) } };
+    lay.parts[id] = { ...part, raw, fl: hasAttributes(raw) ? flatten(raw) : part.fl };
+  }
+}
 
 // ---------------------------------------------------------------- layout objects
 // A layout object (a line, circle… drawn on the sheet) is held as a part with part.obj = true: one entity, in sheet mm, placed at its
@@ -61,7 +73,7 @@ export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
   if (ent.type === 'DIMENSION' && !blocks[String(ent.r.v[ent.r.c.indexOf(2)] || '').trim()]) {
     try { drawing = { ...raw, entities: explodeDimension(ent, raw) }; } catch { return null; }
   }
-  const fl = flatten(drawing), shown = flatten({ ...drawing, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box is made with the entity's layer on: an off layer keeps its objects (hidden by `off`)
+  const fl = flatten(drawing), shown = flatten({ ...drawing, header: { ...drawing.header, $ATTMODE: '2' }, layers: { ...layers, ...(layers[ent.layer] && { [ent.layer]: { ...layers[ent.layer], off: false, frozen: false } }) } });       // the box includes hidden attributes and off-layer objects so visibility cannot discard them
   const box = shown.boxes && shown.boxes.model;
   if (!box || !(box[2] >= box[0]) || !(box[3] >= box[1])) return null;
   return { id, name, raw, space: 0, factor: 1, box, w: box[2] - box[0], h: box[3] - box[1], fl, off: startHidden(fl), src: '', obj: true };
@@ -314,7 +326,8 @@ export const partBlocks = (blocks) => Object.fromEntries(Object.entries(blocks).
 
 /** A part from a drawing's document: { id, name, raw, space, factor, box, w, h, fl, off (the layers its file has switched off) }, or null when it has no extents. */
 export function makePart(id, name, raw, factor, src = '') {
-  const fl = flatten(raw), p = partFromDrawing(name, raw, fl, factor || unitFactor(fl.units));
+  const fl = flatten(raw), bounds = +(raw.header.$ATTMODE ?? 1) !== 2 && hasAttributes(raw) ? flatten({ ...raw, header: { ...raw.header, $ATTMODE: '2' } }) : fl;
+  const p = partFromDrawing(name, raw, bounds, factor || unitFactor(fl.units));
   return p && { id, ...p, fl, off: startHidden(fl), src };
 }
 
@@ -432,6 +445,7 @@ export function layoutRaw(lay) {
   addEntities(doc, baked);
   for (const [n, b] of Object.entries(dimBlocks)) addBlock(doc, n, b.entities, b.base);
   addBlock(doc, LAYOUT_BLOCK, metaEntities(lay, blockOf, ids, ob));
+  doc.header.$ATTMODE = String(lay.s.attmode);
   return doc;
 }
 
@@ -450,6 +464,7 @@ export function cleanSettings(s = {}) {
     fit: s.fit !== false, rows: Math.max(1, Math.floor(num(s.rows, 1))), cols: Math.max(1, Math.floor(num(s.cols, 1))),
     extraRows: gaps(s.extraRows), extraCols: gaps(s.extraCols), gridPart: typeof s.gridPart === 'string' ? s.gridPart : null,
     guides: cleanGuides(s.guides), guidesShow: s.guidesShow !== false, guidesLock: s.guidesLock === true,
+    attmode: [0, 1, 2].includes(s.attmode) ? s.attmode : 1,
   };
 }
 
@@ -481,6 +496,7 @@ export function layoutFromRaw(raw, name) {
   const m = readMeta(raw);
   if (!m) return null;
   const lay = { name: name || m.name || 'Layout', s: cleanSettings(m.s), parts: {}, placed: [] };
+  lay.s.attmode = [0, 1, 2].includes(+raw.header.$ATTMODE) ? +raw.header.$ATTMODE : 1;
   for (const pm of m.parts) {
     const blk = raw.blocks[pm.block];
     if (!blk || typeof pm.id !== 'string') continue;

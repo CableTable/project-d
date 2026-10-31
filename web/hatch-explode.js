@@ -37,7 +37,7 @@ export function explodeHatch(e) {
   if (get(e.r, 70) === 1 || get(e.r, 450) === 1) throw new Error('Cannot explode HATCH');
   const hatch = hatchPattern(e), segments = [];
   if (!hatch?.fam?.length) throw new Error('Cannot explode HATCH');
-  let count = 0;
+  let count = 0, steps = 0;
   for (const f of hatch.fam) {
     const c = Math.cos(f.a), s = Math.sin(f.a), edges = edgesOf(hatch.ops, f.a);
     const base = -f.bx * s + f.by * c, spacing = -f.ox * s + f.oy * c;
@@ -65,7 +65,11 @@ export function explodeHatch(e) {
         if (!period) { emit(lo, hi, y); continue; }
         for (let t = Math.floor((lo - origin) / period); origin + t * period < hi; t++) {
           let x = origin + t * period;
-          for (const d of f.d) { if (d >= 0) emit(Math.max(lo, x), Math.min(hi, x + (d || 1e-8)), y); x += Math.abs(d); }
+          for (const d of f.d) {
+            if (++steps > 1000000) throw new Error('Hatch too dense to explode (more than 1,000,000 lines)');
+            if (d >= 0) emit(Math.max(lo, x), Math.min(hi, x + (d || 1e-8)), y);
+            x += Math.abs(d);
+          }
         }
       }
     }
