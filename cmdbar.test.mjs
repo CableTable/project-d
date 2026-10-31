@@ -41,6 +41,9 @@ test('every name and alias is lower case, and no command repeats a word on the s
 test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('L').name, 'line');
   assert.equal(CB.resolve(' Offset ').name, 'offset');
+  assert.equal(CB.resolve('QSELECT').name, 'qselect');
+  assert.deepEqual(CB.resolve('QSELECT').alias, []);
+  assert.equal(CB.resolve('QSE'), null);
   assert.equal(CB.resolve('mv').name, 'move');
   assert.equal(CB.resolve('move').where, 'draw');
   assert.equal(CB.resolve('m').name, 'measure');

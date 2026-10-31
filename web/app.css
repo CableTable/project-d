@@ -465,6 +465,17 @@ select.fld { font-family: var(--sans); }
 .pop-dialog .row.lbl { gap: 12px; }
 .attribute-dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
 .attribute-dialog::backdrop { background: rgba(10, 14, 18, .35); }
+.qselect-dialog { width: min(430px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.qselect-dialog::backdrop { background: rgba(10, 14, 18, .35); }
+.qselect-dialog h2 { margin: 0 0 6px; font-size: 16px; }
+.qs-row { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 12px; align-items: start; }
+.qs-row > span { padding-top: 6px; }
+.qs-row .fld { width: 100%; }
+.qselect-dialog select[size] { height: 150px; padding: 4px; }
+.qselect-dialog fieldset { border: 1px solid var(--line); padding: 10px; display: grid; gap: 10px; }
+.qselect-dialog fieldset label, .qs-check { display: flex; gap: 8px; align-items: center; }
+.propbox .proprow.btns { flex-wrap: wrap; }
+.propbox .proprow.btns .btn { flex: 1 1 auto; }
 .attribute-dialog h2 { margin: 0 0 4px; font-size: 16px; }
 .attribute-dialog label { display: flex; flex-direction: column; gap: 5px; }
 .attribute-dialog input { width: 100%; }
