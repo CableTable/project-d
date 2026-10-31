@@ -162,6 +162,17 @@ test('parallel lines: an interior contact keeps the second line on the first lin
   tangent(filletEntities(W.line(6, 5, 20, 5), [7, 5], W.line(0, 0, 10, 0), [9, 0], 1).ents, 2.5);
 });
 
+test('parallel lines: a second line starting at or wholly past the arc end extends its near end, never zero length', () => {
+  const a = [[0, 0], [10, 0]];
+  for (const l2 of [[[10, 5], [20, 5]], [[12, 5], [20, 5]]]) {
+    const f = filletLines(a, [9, 0], l2, [15, 5], 1);
+    assert.deepEqual(f.l1, a); assert.deepEqual(f.l2, [[10, 5], [20, 5]]); close(f.arc.r, 2.5);
+  }
+  const g = filletLines(a, [1, 0], [[-3, 5], [6, 5]], [2, 5], 1);
+  assert.deepEqual(g.l2, [[0, 5], [6, 5]]);
+  for (const l2 of [[[-20, 5], [-12, 5]], [[-20, 5], [0, 5]]]) assert.deepEqual(filletLines(a, [1, 0], l2, [-15, 5], 1).l2, [[-20, 5], [0, 5]]);
+});
+
 test('OCS -Z circle: solve in drawing coordinates and keep the original circle record', () => {
   const line = W.line(-20, 0, 20, 0), circle = W.circle(3, 10, 5), mirrored = W.circle(-3, 10, 5);
   mirrored.r.c.push(210, 220, 230); mirrored.r.v.push('0', '0', '-1');

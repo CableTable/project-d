@@ -120,7 +120,9 @@ export function filletLines(l1, p1, l2, p2, r) {
     if (gap < EPS) return { error: 'The lines are parallel: Fillet needs lines that meet' };
     const far = dot(d2, sub(l1[1 - end], T1)) > 0 ? 1 : 0;
     const c = along(T1, sub(T2, T1), .5), ccw = dot(turn(sub(T1, c)), sub(l1[1 - end], T1)) < 0;
-    return { l1, l2: far === 0 ? [l2[0], T2] : [T2, l2[1]],
+    // nothing of line 2 on the body side of T2: its nearer end moves to T2 and the far end stays (never zero length)
+    const past = (far ? 1 : -1) * dot(sub(l2[far], T2), d2) / n2 <= EPS, keepFar = past ? 1 - far : far;
+    return { l1, l2: keepFar === 0 ? [l2[0], T2] : [T2, l2[1]],
       arc: { c, r: gap / 2, a0: angle(c, ccw ? T1 : T2), a1: angle(c, ccw ? T2 : T1) } };
   }
   const s = ((l2[0][0] - l1[0][0]) * d2[1] - (l2[0][1] - l1[0][1]) * d2[0]) / den, X = along(l1[0], d1, s);
