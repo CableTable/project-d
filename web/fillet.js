@@ -190,7 +190,7 @@ export function filletPolylineShape(e, factor = 1) {
 }
 
 /** P: all straight corners, including an arc between two lines; each accepted corner reserves its tangent lengths. */
-export function filletAllPolyline(e, r) {
+export function filletAllPolyline(e, r, trim = true) {
   if (e?.type !== 'LWPOLYLINE') return { error: 'Select a 2D LWPOLYLINE' };
   if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
   if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Fillet needs a plain 2D polyline in the drawing plane' };
@@ -200,12 +200,13 @@ export function filletAllPolyline(e, r) {
     a: pts[i], b: pts[(i + 1) % pts.length], bulge: get(v, 42) ?? 0, record: v,
   }));
   let count = 0, short = 0, changed = false;
+  const arcs = [];                                   // No trim: the polyline stays as it is and each corner adds a separate ARC (AutoCAD)
   for (let i = 0; i < segs.length; i++) {
     const a = segs[i];
     if (a.bulge) continue;
     const next = (k) => closed ? segs[k % segs.length] : segs[k];
     const between = next(i + 1), b = between?.bulge ? next(i + 2) : between;
-    if (!b || b === a || b.bulge) continue;
+    if (!b || b === a || b.bulge || (!trim && between.bulge)) continue;
     const f = filletLines([a.a, a.b], a.a, [b.a, b.b], b.b, r);
     if (f.error) { if (!/parallel/.test(f.error)) short++; continue; }
     // Kept endpoints retain their references; a new tangent can coincide with an endpoint after an earlier fillet.
@@ -220,7 +221,9 @@ export function filletAllPolyline(e, r) {
     if (between.bulge) between.replaced = true;
     a.corner = bulge;
     count++; changed ||= !!r || !!between.bulge;
+    if (!trim && f.arc) arcs.push(rebuilt({ t: 'arc', ...f.arc }, e));
   }
+  if (!trim) return { ents: [e, ...arcs], count, short };
   if (!changed) return { ents: [e], count, short };
   const out = [];
   for (const seg of segs) {

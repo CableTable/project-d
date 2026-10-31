@@ -198,6 +198,16 @@ test('Polyline option: closed and open corners, both windings, with saved tangen
   }
 });
 
+test('Polyline option in No trim leaves the polyline alone and adds one ARC per corner (AutoCAD)', () => {
+  for (const [closed, corners] of [[true, 4], [false, 2]]) {
+    const e = poly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed }), f = filletAllPolyline(e, 2, false);
+    assert.equal(f.count, corners); assert.equal(f.ents[0], e); assert.equal(f.ents.length, corners + 1);
+    for (const a of f.ents.slice(1)) { assert.equal(a.type, 'ARC'); near(value(a, 40), 2); }
+  }
+  const one = filletAllPolyline(poly([[0, 0], [20, 0], [20, 20]]), 2, false);
+  assert.equal(one.count, 1); assert.equal(one.ents.length, 2);
+});
+
 test('Polyline option skips short corners and prevents adjacent fillets from consuming a shared segment', () => {
   const f = filletAllPolyline(poly([[0, 0], [20, 0], [20, 1], [40, 1], [40, 20]]), 2);
   assert.equal(f.count, 1); assert.equal(f.short, 2);

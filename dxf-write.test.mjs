@@ -342,6 +342,15 @@ test('a layer marked "No plot" (code 290) keeps it; a layer without the code plo
   assert.equal(once.split(/\r?\n/).filter((l) => l.trim() === '290').length, 1, 'only the No plot layer gets the code');
 });
 
+test('a written LAYER record has no plot style id (code 390): AutoCAD AUDIT calls the dangling one invalid', () => {
+  const lines = W.writeDxf(D.readDxf(tablesDxf(table('LAYER', [[[0, 'LAYER'], [2, 'CUT'], [70, 0], [62, 1], [6, 'CONTINUOUS']]])))).split(/\r?\n/);
+  const pairs = []; for (let i = 0; i + 1 < lines.length; i += 2) pairs.push([lines[i].trim(), lines[i + 1].trim()]);
+  const name = pairs.findIndex((p) => p[0] === '2' && p[1] === 'CUT'), at = pairs.slice(0, name).map((p) => p[0] === '0' && p[1] === 'LAYER').lastIndexOf(true);
+  assert.ok(at >= 0, 'CUT record found');
+  const record = pairs.slice(at + 1, at + 1 + pairs.slice(at + 1).findIndex((p) => p[0] === '0')).map((p) => p[0]);
+  assert.ok(record.includes('370') && !record.includes('390'), record.join(' '));
+});
+
 test('a big file writes: 20 000 polylines × 50 points on 300 layers, extents handed in', () => {
   const doc = W.newDoc(4);
   const ents = [];

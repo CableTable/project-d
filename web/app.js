@@ -7051,7 +7051,7 @@ function modUp(d, was, p, shift, crossing) {
       const ent = modEntAt(d, was.p);
       if (!ent) { note('Offset: nothing there. Click a line, arc, circle, ellipse, spline or polyline'); return; }
       if (!MD.canOffset(ent)) { note('Offset takes a line, arc, circle, ellipse, spline or polyline'); return; }
-      m.ent = ent; m.stage = 'side'; m.p = was.p; note(offsetPrompt(m)); paintOverlay();
+      m.ent = m.src = ent; m.sideSig = null; m.stage = 'side'; m.p = was.p; note(offsetPrompt(m)); paintOverlay();
     } else if (m.stage === 'side') offsetDo(d, was.p);
   } else if (m.kind === 'fillet') {
     if (m.askR || m.askTrim) return;
@@ -7434,7 +7434,8 @@ function offsetPrompt(m) {
   if (m.stage === 'erase') return `Erase source object after offsetting? [Yes/No] <${m.eraseSource ? 'Yes' : 'No'}>:`;
   if (m.stage === 'layer') return `Enter layer option for offset objects [Current/Source] <${m.layer}>:`;
   if (m.stage === 'obj') return 'Select object to offset or [Exit/Undo] <Exit>:';
-  return m.through ? 'Specify through point or [Exit/Multiple/Undo] <Exit>:' : 'Specify point on side to offset or [Exit/Multiple/Undo] <Exit>:';
+  const what = m.through ? 'Specify through point' : 'Specify point on side to offset';
+  return m.multiple ? `${what} or [Exit/Undo] <next object>:` : `${what} or [Exit/Multiple/Undo] <Exit>:`;
 }
 function offsetTyped(d, raw, c) {
   const m = state.mod;
@@ -7461,21 +7462,28 @@ function offsetTyped(d, raw, c) {
   try { localStorage.setItem(OFFSET_OPTIONS_SAVED, JSON.stringify({ through: m.through, eraseSource: m.eraseSource, layer: m.layer })); } catch { /* applies for this session */ }
   note(offsetPrompt(m)); paintOverlay(); return true;
 }
+/** What a click offsets: the newest copy, or (Multiple, AutoCAD) the SOURCE when the click is on its other side than the copies so far. */
+function offsetPick(d, p) {
+  const m = state.mod, rs = m.multiple && !m.through && d.raw.entities.includes(m.src) ? MD.offsetEntity(m.src, offDistU(d), p) : null, sig = rs?.ent?.r.v.join();
+  const far = !!sig && !!m.sideSig && sig !== m.sideSig, target = far ? m.src : m.ent;
+  return { target, sig, r: far ? rs : MD.offsetEntity(target, offDistU(d), p) };
+}
 /** Copies share one history entry; the per-copy snapshots let U restore just the last result. */
 function offsetDo(d, p) {
   modSync(d);
   const m = state.mod;
   if (!m.ent || !d.raw.entities.includes(m.ent)) { note(offsetPrompt(m)); return; }
-  const r = MD.offsetEntity(m.ent, offDistU(d), p);
+  const { target, r, sig } = offsetPick(d, p);
   if (r.error) { note(r.error); return; }
-  const tab = d.vlay || d, snap = d.vlay ? laySnap(tab.lay) : snapshotOf(d), index = d.raw.entities.indexOf(m.ent);
+  if (sig) m.sideSig = sig;
+  const tab = d.vlay || d, snap = d.vlay ? laySnap(tab.lay) : snapshotOf(d), index = d.raw.entities.indexOf(target), srcIndex = d.raw.entities.indexOf(m.src);
   if (m.layer === 'Current') {
     const name = curLayerName(tab);
     if (!d.vlay && !d.raw.layers[name]) addLayer(d.raw, name);
     r.ent = PR.withLayer(r.ent, name);
   }
   if (m.multiple && m.eraseSource && m.offsetSource == null) m.offsetSource = index;
-  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== m.ent), r.ent], blocks: d.raw.blocks };
+  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== target), r.ent], blocks: d.raw.blocks };
   view.fitted = false; m.offsetRaw = null;
   if (!m.offsetSteps.length) commit(d, next, 'Offset');
   else if (d.vlay) { LD.objectCommit(tab.lay, d, next.entities, () => 'o' + uid()); touch(); update(); }
@@ -7483,6 +7491,7 @@ function offsetDo(d, p) {
   m.offsetSteps.push({ snap });
   const now = mdoc(tab);
   m.ent = m.multiple ? now.raw.entities.at(-1) : null; m.stage = m.multiple ? 'side' : 'obj';
+  if (m.multiple) m.src = now.raw.entities[srcIndex];
   m.offsetRaw = now.raw.entities; m.offsetRevision = historyOf(tab).revision;
   state.pointLast = p.slice(0, 2);
   note(offsetPrompt(m)); paintOverlay();
@@ -7529,11 +7538,11 @@ function filletUndo(d) {
   undo(d); note('Last fillet undone'); ui.cmdUI.message(state.msg); paintOverlay();
 }
 function filletPolyDo(d, ent) {
-  const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor);
+  const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
   m.stage = 'obj'; m.ent = null;
-  if (r.ents[0] !== ent) filletCommit(d, d.raw.entities.map((e) => e === ent ? r.ents[0] : e));
-  note(`${r.count} lines were filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
+  if (r.ents[0] !== ent || r.ents.length > 1) filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)]);
+  note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
 function filletDo(d, ent, p, sharp) {
@@ -7728,7 +7737,7 @@ function modOvl(d, out, paint) {
     }
   } else if (m.kind === 'offset') {
     if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canOffset(e)) addEnt(e, 'dr-guide'); }
-    else if (m.ent) { addEnt(m.ent, 'dr-guide'); const r = m.p ? MD.offsetEntity(m.ent, offDistU(d), m.p) : null; if (r && r.ent) addEnt(r.ent, 'dr-shape', 'mod-preview'); }
+    else if (m.ent) { const pick = m.p ? offsetPick(d, m.p) : null; addEnt(pick?.target ?? m.ent, 'dr-guide'); if (pick?.r.ent) addEnt(pick.r.ent, 'dr-shape', 'mod-preview'); }
   } else if (m.kind === 'fillet') {
     if (m.ent) addEnt(m.ent, 'dr-guide');
     const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f, m.trim) : null;

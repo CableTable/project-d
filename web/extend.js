@@ -39,7 +39,9 @@ export function curveShape(ent) {
       if (c === 10) cp.push([v, y]); else if (c === 11) fit.push([v, y]); else if (c === 40) knots.push(v); else if (c === 41) w.push(v);
     });
     const pts = nurbs(cp, knots, get(r, 71) ?? 3, w, fit);
-    if (pts.length > 1) sh = { t: 'poly', pts, closed: ((get(r, 70) ?? 0) & 1) === 1 };
+    const closed = ((get(r, 70) ?? 0) & 1) === 1;
+    if (closed && pts === fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts.pop();   // fit points that repeat the first one (AutoCAD's closed form)
+    if (pts.length > 1) sh = { t: 'poly', pts, closed };
   }
   curves.set(ent, sh);
   return sh;

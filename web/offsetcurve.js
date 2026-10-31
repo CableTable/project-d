@@ -198,6 +198,8 @@ export function offsetCurve(ent, d, at) {
   if (cache.key !== key) { cache.key = key; cache.res = trace(); offsetStats.builds++; }
   const { out, error } = cache.res;
   if (error) return { error };
-  return { ent: entity('SPLINE', [[70, sh.closed ? 1 : 0], [71, 3], [72, 0], [73, 0], [74, out.length],
-    ...out.flatMap((p) => [[11, p[0]], [21, p[1]], [31, 0]])], ent) };
+  // AutoCAD ignores flag 70 bit 1 on a fit-only SPLINE (a 0.4 gap), so a closed result repeats its first fit point as the last.
+  const fit = sh.closed ? [...out, out[0]] : out;
+  return { ent: entity('SPLINE', [[70, sh.closed ? 1 : 0], [71, 3], [72, 0], [73, 0], [74, fit.length],
+    ...fit.flatMap((p) => [[11, p[0]], [21, p[1]], [31, 0]])], ent) };
 }

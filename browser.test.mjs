@@ -12283,6 +12283,15 @@ try {
     await end(); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
     assert.equal((await histLabels()).length, beforeEsc.length + 1, 'the run has one history entry');
     await undo(); assert.deepEqual(lineYs(await savedDoc()), [30], 'one Ctrl+Z removes the whole run');
+    // AutoCAD Multiple: the prompt drops Multiple and offers <next object>; a click on the far side of the SOURCE offsets the source.
+    await start(); await typeCmd('10'); await click(70, 30);
+    assert.equal(await prompt(), 'Specify point on side to offset or [Exit/Multiple/Undo] <Exit>:');
+    await typeCmd('m'); assert.equal(await prompt(), 'Specify point on side to offset or [Exit/Undo] <next object>:');
+    await click(70, 45); await click(70, 55);
+    assert.equal(await prompt(), 'Specify point on side to offset or [Exit/Undo] <next object>:');
+    await click(70, 10);
+    assert.deepEqual(lineYs(await savedDoc()), [20, 30, 40, 50], 'a click below the source offsets the source, not the newest copy');
+    await end(); await undo(); assert.deepEqual(lineYs(await savedDoc()), [30]);
     // A completed copy stays independent when its source is subsequently edited.
     await start(); await end(); await click(70, 30); await click(70, 50); await end();
     await click(70, 30); await typeCmd('mv'); await typeCmd('70,30'); await typeCmd('0,5');
@@ -14492,7 +14501,9 @@ try {
     await page.evaluate(() => document.activeElement?.blur()); await t('cmd-bar').waitFor({ state: 'hidden' });
     await shotBoth('155h1-no-trim');
     await typeCmd('p'); await click(60, 20); assert.equal(await message(), '4 lines were filleted');
-    assert.equal(fieldOf((await savedDoc()).entities[0], 90), 8, 'P rebuilds even in No trim');
+    const noTrimP = (await savedDoc()).entities;      // AutoCAD: the polyline stays as it was, 4 separate ARCs are added
+    assert.deepEqual(noTrimP.slice(0, 4), doc.entities); assert.equal(noTrimP.length, 8);
+    assert.deepEqual(noTrimP.slice(4).map((e) => e.type), ['ARC', 'ARC', 'ARC', 'ARC']);
     await typeCmd('u'); assert.deepEqual((await savedDoc()).entities, doc.entities, 'U takes back only the latest fillet');
     await typeCmd('u'); assert.deepEqual((await savedDoc()).entities, before.entities);
     await typeCmd('u'); assert.equal(await message(), 'Nothing to undo in this Fillet');
@@ -14544,7 +14555,7 @@ try {
     await typeCmd('p'); await click(140, 0);
     assert.equal(await message(), '2 lines were filleted. 2 were too short');
     await typeCmd('p'); await click(25, -7.5);
-    assert.equal(await message(), '1 lines were filleted');
+    assert.equal(await message(), '1 line was filleted');
     const slot = GR.lwVertices((await savedDoc()).entities[1].r);
     assert.deepEqual([slot[0], slot.at(-1)].map(({ x, y, b }) => [x, y, b]), [[0, -10, 0], [0, 10, 1]], 'the diverging end keeps its arc and endpoints');
     await page.keyboard.press('Escape'); await closeTabs(/./);

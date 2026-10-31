@@ -23,7 +23,9 @@ test('TODO 155g2: 100 x 40 ellipse offsets stay within 0.01 at 100 true normal p
       const source = ellipse(0, 0, a, 0, b / a, 0, Math.PI * 2, { layer: 'Cut', aci: 3, lt: 'DASHED', lw: 25, ps: true });
       const result = offset(source, 5, side > 0 ? [a + 10, 0] : [0, 0]), P = shape(result);
       assert.equal(get(result.r, 70) & 1, 1);
-      assert.equal(get(result.r, 74), P.segs.length);
+      assert.equal(get(result.r, 74), P.segs.length + 1, 'the written record repeats its first fit point (AutoCAD ignores flag 70 on fit-only splines)');
+      const fitXY = result.r.c.flatMap((c, k) => c === 11 ? [[Number(result.r.v[k]), Number(result.r.v[k + 1])]] : []);
+      assert.deepEqual(fitXY.at(-1), fitXY[0]);
       for (const key of ['layer', 'aci', 'lt', 'lw', 'ps']) assert.equal(result[key], source[key]);
       for (let i = 0; i < 100; i++) {
         const t = (i + 0.37) * Math.PI * 2 / 100, x = a * Math.cos(t), y = b * Math.sin(t);

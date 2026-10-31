@@ -420,8 +420,9 @@ export function flatten(doc, hidden = new Set()) {
             else if (c === 40) knots.push(num(r.v[k]));
             else if (c === 41) w.push(num(r.v[k]));
           }
-          const pts = nurbs(cp, knots, num(f[71], 3), w, fit);
-          if (pts.length > 1) path(lineOps(pts, closedOutline(e)), { spl: 1 });
+          const pts = nurbs(cp, knots, num(f[71], 3), w, fit), closed = closedOutline(e);
+          if (closed && pts === fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts.pop();   // fit points that repeat the first one
+          if (pts.length > 1) path(lineOps(pts, closed), { spl: 1 });
           break;
         }
         case 'TEXT': text(base, f, false, put); break;

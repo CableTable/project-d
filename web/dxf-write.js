@@ -451,7 +451,7 @@ function writePreparedDxf(doc, opts) {
         if (l.tc != null) o.p(420, l.tc);
         o.s(6, l.lt || 'CONTINUOUS');
         if (l.plot === false) o.p(290, 0);                                      // "No plot": helper lines must not print or cut
-        o.p(370, l.lw ?? -3).s(390, 'F');
+        o.p(370, l.lw ?? -3);                                                   // no code 390: it pointed at no object, so AUDIT said "PlotstyleName Id Invalid"
       }
     });
     table('STYLE', styles.size, () => {
