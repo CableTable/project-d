@@ -72,7 +72,7 @@ usage-agent-install.ps1.
    he runs in his AutoCAD (licence allows; he pastes the result), then, if still open, watch it in his installed AutoCAD
    with computer use (Claude desktop app only; from the CLI, ask him to run that step there). Never reverse-engineer
    AutoCAD's binaries (e.g. REA): Autodesk's licence forbids it.
-   From the CLI (works, 2026-10-27, AutoCAD 2027 on his PC when it is open): PowerShell COM
+   From the CLI (works, 2026-10-27, AutoCAD 2027 on his PC). **Not open: Bishop-acad starts it itself** (his OK 2026-10-31): `Start-Process "E:/Program Files/Autodesk/AutoCad/AutoCAD 2027/acad.exe"`, wait until COM answers (up to 3 min); a sign-in or licence prompt -> stop and tell him (never type a password); never close AutoCAD after (his drawings may be unsaved). Then: PowerShell COM
    `[Runtime.InteropServices.Marshal]::GetActiveObject('AutoCAD.Application')` reads system variables; `Documents.Add()` gives a
    scratch drawing (never his open work); WScript.Shell SendKeys types into it; LOGFILEON / LOGFILEOFF writes the command line
    to `%LOCALAPPDATA%AutodeskAutoCAD 2027R26.0enu<drawing>.log`: read the log, not COM busy states (unreliable).
