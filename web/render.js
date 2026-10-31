@@ -180,6 +180,7 @@ function highlight(c, items, mats, T, k, dpr, accent, wireframe) {
 export function drawDimPreview(c, g, T, dpr, accent) {
   c.setTransform(1, 0, 0, 1, 0, 0);
   c.strokeStyle = accent; c.fillStyle = accent; c.lineWidth = 1.4 * dpr; c.setLineDash([]);
+  c.globalAlpha = g.ghost ? 0.5 : 1;                                   // Automatic dimension's hover preview is faint
   const P = (x, y) => mapply(T, x, y);
   c.beginPath();
   for (const l of g.lines) { const a = P(l[0], l[1]), b = P(l[2], l[3]); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); }
@@ -189,15 +190,15 @@ export function drawDimPreview(c, g, T, dpr, accent) {
   }
   c.stroke();
   for (const tri of g.arrows) { c.beginPath(); tri.forEach((q, i) => { const m = P(q[0], q[1]); if (i) c.lineTo(m[0], m[1]); else c.moveTo(m[0], m[1]); }); c.closePath(); c.fill(); }
-  const t = g.text;
-  if (!t) return;                                                     // a leader being drawn has no note yet
-  const k = Math.hypot(T[0], T[1]), at = P(t.x, t.y), px = t.h * k;
-  if (px < 3 * dpr) return;
-  c.save();
-  c.translate(at[0], at[1]); c.rotate(-t.rot * Math.PI / 180);
-  c.font = `${px / CAP}px system-ui, sans-serif`; c.textAlign = 'center'; c.textBaseline = t.va === 2 ? 'middle' : 'alphabetic';
-  c.fillText(t.label, 0, 0);
-  c.restore();
+  const t = g.text, k = t && Math.hypot(T[0], T[1]), at = t && P(t.x, t.y), px = t && t.h * k;
+  if (t && px >= 3 * dpr) {                                           // (a leader being drawn has no note yet)
+    c.save();
+    c.translate(at[0], at[1]); c.rotate(-t.rot * Math.PI / 180);
+    c.font = `${px / CAP}px system-ui, sans-serif`; c.textAlign = 'center'; c.textBaseline = t.va === 2 ? 'middle' : 'alphabetic';
+    c.fillText(t.label, 0, 0);
+    c.restore();
+  }
+  c.globalAlpha = 1;
 }
 
 /** Set length's / Measure's points: a ring and a cross at each, a line between two; the point under the cursor gets the shape of its snap. */

@@ -15,6 +15,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
+import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
@@ -167,6 +168,7 @@ const TOOLS = [
 const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
+  ['auto', 'Automatic', 'DIM', '<path d="M3 15L11 7M3 15l3-1M3 15l1-3M11 7l-3 1M11 7l1 3"/><circle cx="14.5" cy="13.5" r="3.5"/>', 'DIM'],
   ['aligned', 'Aligned', 'D', '<path d="M3 15L13 5M3 15l3-1M3 15l1-3M13 5l-3 1M13 5l1 3"/>', 'DIMALIGNED'],
   ['linear', 'Linear', 'DLI', '<path d="M3 13h14M3 13l3-2M3 13l3 2M17 13l-3-2M17 13l-3 2M3 6v9M17 6v9"/>', 'DIMLINEAR'],
   ['radius', 'Radius', 'DRA', '<circle cx="8" cy="11" r="6"/><path d="M8 11l7-7"/>', 'DIMRADIUS'],
@@ -3815,7 +3817,7 @@ function cmdEnter(raw) {
 
 // what a command of cmdbar.js does when it is not just "pick that tool" (the tool's id is the command's name, but for rectangle)
 const TOOL_OF = { rectangle: 'rect' };
-const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
+const DIM_OF = { dimauto: 'auto', dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
   eattedit: () => {
     if (cmpDoc() && !cmpEdit()) return;
@@ -5621,15 +5623,16 @@ function keepMeasure() {
 }
 /// Dimension: first point, second point, then the callout follows the mouse sideways and a third click places it (AutoCAD's way). Linear is the
 // same with the pointer choosing a horizontal or a vertical line. Radius and diameter: pick a circle or an arc, then place it. Angle: pick two lines, then the arc.
-const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null });
+const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null, ghost: null });
 const dimBusy = (D) => D.pts.length > 0 || !!D.obj || D.lines.length > 0;
-function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.lines = []; D.force = null; D.typed = false; }
+function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.ghost = null; D.lines = []; D.force = null; D.typed = false; }
 /** What the command line asks for next. */
 function dimPrompt() {
   const D = state.dim, type = state.dimType;
   const t = dimTarget();
   if (!t) return 'Dimension: open a drawing tab or a layout first';
   if (!D) return null;
+  if (type === 'auto') return D.obj ? 'Specify dimension line location:' : 'Select a line, arc or circle to dimension:';
   if (type === 'aligned') return ['Dimension: first point (it snaps to ends and centres)', 'Dimension: second point', 'Dimension: move the line up or down and click to place it'][D.pts.length];
   if (type === 'linear') return ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location [Horizontal/Vertical]:'][D.pts.length];
   if (type === 'angle') return ['Select first line:', 'Select second line:', 'Specify dimension arc location:'][D.lines.length];
@@ -5651,6 +5654,7 @@ function dimDraft(at) {
     return { kind: 'linear', params: { a, b, axis, offset: Ed.dimOffsetAt(a, b, at, axis) } };
   }
   if (type === 'angle') { const m = D.lines.length === 2 && at && Ed.angleBetween(D.lines[0], D.lines[1], at); return m ? { kind: 'angle', params: m } : null; }
+  if (type === 'auto') return D.obj && AD.autoDraft(D.obj, at);
   if (!D.obj || !at) return null;
   if (type === 'radius') return { kind: 'radius', params: { c: D.obj.c, r: D.obj.r, p: at } };
   const ends = Ed.diameterEnds(D.obj.c, D.obj.r, at);
@@ -5662,13 +5666,22 @@ function previewDim(d) {
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
   if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset }, d.factor, G.dp);
-  const m = dimDraft(state.dim && (state.dim.pts.length === 2 && typedAt() || state.dim.cursor));
-  return m ? Ed.dimGeom(m.kind, { ...m.params, ...dimNew(d) }, d.factor, state.dp) : null;
+  const D = state.dim, look = dimNew(d), ghost = D && state.dimType === 'auto' && !D.obj && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
+  const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
+  const g = m ? Ed.dimGeom(m.kind, { ...m.params, ...look }, d.factor, state.dp) : null;
+  if (g && ghost) g.ghost = true;
+  return g;
+}
+/** Automatic: the line, polyline segment, arc or circle under p (see autodim.js targetOf), or null. */
+function autoTarget(d, p) {
+  const v = d.lay ? layObjDoc(d) : d;
+  return AD.targetOf(v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))], p);
 }
 function dimHover(d, p, shift) {
   const D = state.dim;
   D.cursor = p; D.shift = shift;
   if (D.pts.length < 2 && (state.dimType === 'aligned' || state.dimType === 'linear')) D.hover = pickPoint(d, p, D.pts, shift, true);
+  if (state.dimType === 'auto' && !D.obj) D.ghost = autoTarget(d, p);
   paintOverlay();
 }
 /** Puts the dimension m ({ kind, params }) in the drawing (one undo step) and starts the next. */
@@ -5691,12 +5704,15 @@ function dimPlace(d, m) {
 function dimensionPoint(d, p, shift = false, typed = false) {
   const D = state.dim, type = state.dimType;
   if (!D || !dimTarget()) return;
-  if (type === 'radius' || type === 'diameter' || type === 'angle') {
+  if (type === 'radius' || type === 'diameter' || type === 'angle' || type === 'auto') {
     if (D.obj || D.lines.length === 2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
     const v = d.lay ? layObjDoc(d) : d;
     if (d.lay && partRefused(v, { kind: 'dimension' }, p)) return;
     const ent = v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))];
-    if (type === 'angle') {
+    if (type === 'auto') {
+      D.obj = AD.targetOf(ent, p);
+      if (!D.obj) { note('Select a line, arc or circle: click on one'); return; }
+    } else if (type === 'angle') {
       const l = Ed.lineOf(ent);
       if (!l) { note('Select a line: click on one'); return; }
       if (D.lines.length && Ed.angleBetween(D.lines[0], l, [0, 0]) == null) { note('Those lines are parallel, there is no angle. Select another line'); return; }
