@@ -120,6 +120,24 @@ test('Explode drops ATTRIB values and releases transformed ATTDEFs on their defi
   assert.deepEqual(flatten({ ...doc, entities: pieces }).items.filter((it) => it.k === 't').map((it) => it.lines[0]), ['TAG', 'ZERO']);
 });
 
+test('Explode keeps the PD_DIM_TEXT holder out of the pieces, also when exploded twice', () => {
+  const holder = entity('ATTDEF', [[10, 0], [20, 0], [40, 1], [1, '<>'], [2, 'PD_DIM_TEXT'], [3, '5'], [70, 3]], { layer: '0' });
+  const doc = blockDoc([insert('Inner', 1, 1, { rot: 30 })], { rot: 90, sx: 2, sy: 3 });
+  addBlock(doc, 'Inner', [line(0, 0, 2, 1), holder]);
+  const first = explodeInsert(doc.entities[0], doc), second = explodeInsert(first.entities[0], { ...doc, ...first });
+  assert.deepEqual(first.entities.map((e) => e.type), ['INSERT']);
+  assert.deepEqual(second.entities.map((e) => e.type), ['LINE']);
+  assert.deepEqual(explodeInsert(insert('Inner', 0, 0, { rot: 90, sx: 2, sy: 3 }), doc).entities.map((e) => e.type), ['LINE']);
+});
+
+test('ATTDEF tag Explode under rotate 180 and mirror X / Y: angle, alignment point and the mirror flag', () => {
+  const tag = () => entity('ATTDEF', [[10, 1], [20, 2], [11, 2], [21, 3], [40, 2], [2, 'TAG'], [1, 'Default'], [72, 1]]);
+  for (const [at, angle, flag, align] of [[{ rot: 180 }, 180, 0, [9, 19]], [{ sx: -1 }, 180, 4, [9, 21]], [{ sy: -1 }, 0, 4, [11, 19]]]) {
+    const doc = blockDoc([tag()], at), tagged = result(doc).entities[0];
+    nearAll(numbers(tagged, [10, 20, 50, 40, 71, 11, 21]), [10, 20, angle, 2, flag, ...align]);
+  }
+});
+
 test('BURST keeps all values as visible TEXT on the insert layer, with TEXT vertical alignment and valid saved subclasses', () => {
   const doc = blockDoc([line(1, 2, 2, 2), entity('ATTDEF', [[10, 1], [20, 2], [40, 2], [2, 'TAG'], [1, 'Default']])], { rot: 90, sx: 2, sy: 3 });
   doc.entities[0].kids = [

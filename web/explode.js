@@ -175,7 +175,7 @@ export function explodeInsert(e, raw, burst = false) {
     for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
       const m = mmul(parent, placement(e, block.base, col, row));
       for (const child of block.entities) {
-        if (values && child.type === 'ATTDEF') continue;
+        if (values && child.type === 'ATTDEF' || child.type === 'ATTDEF' && field(child, 2) === 'PD_DIM_TEXT') continue;   // our dimension's text holder is never a visible tag
         const member = inherit ? inherited(child, e, raw.layers) : child;
         out.push(...transform(child.type === 'ATTDEF' ? { ...member, layer: child.layer } : member, m, depth));
       }
