@@ -358,14 +358,61 @@ test('a layer marked "No plot" (code 290) keeps it; a layer without the code plo
   assert.equal(once.split(/\r?\n/).filter((l) => l.trim() === '290').length, 1, 'only the No plot layer gets the code');
 });
 
-test('a written LAYER record is exactly the 6c2cde6 one, with code 390 (AutoCAD 2027 hangs opening layers without it)', () => {
+test('a written LAYER record keeps its code order, with 390 pointing to the plot style placeholder', () => {
   const lines = W.writeDxf(D.readDxf(tablesDxf(table('LAYER', [[[0, 'LAYER'], [2, 'CUT'], [70, 0], [62, 1], [6, 'CONTINUOUS']]])))).split(/\r?\n/);
   const pairs = []; for (let i = 0; i + 1 < lines.length; i += 2) pairs.push([lines[i].trim(), lines[i + 1].trim()]);
   const name = pairs.findIndex((p) => p[0] === '2' && p[1] === 'CUT'), at = pairs.slice(0, name).map((p) => p[0] === '0' && p[1] === 'LAYER').lastIndexOf(true);
   assert.ok(at >= 0, 'CUT record found');
   const record = pairs.slice(at + 1, at + 1 + pairs.slice(at + 1).findIndex((p) => p[0] === '0')).map((p) => p[0]);
-  assert.equal(record.join(' '), '5 330 100 100 2 70 62 6 370 390', 'code order');                 // handles (5, 330) vary; the rest is fixed
-  assert.deepEqual(pairs.slice(at + 3, at + 11).map((p) => p.join('=')), ['100=AcDbSymbolTableRecord', '100=AcDbLayerTableRecord', '2=CUT', '70=0', '62=1', '6=CONTINUOUS', '370=-3', '390=F']);
+  assert.equal(record.join(' '), '5 330 100 100 2 70 62 6 370 390', 'code order');                 // handles (5, 330, 390) vary; the rest is fixed
+  const placeholder = pairs.findIndex((p) => p[0] === '0' && p[1] === 'ACDBPLACEHOLDER');
+  assert.ok(placeholder >= 0, 'plot style placeholder found');
+  assert.deepEqual(pairs.slice(at + 3, at + 11).map((p) => p.join('=')), ['100=AcDbSymbolTableRecord', '100=AcDbLayerTableRecord', '2=CUT', '70=0', '62=1', '6=CONTINUOUS', '370=-3', '390=' + pairs[placeholder + 1][1]]);
+});
+
+test('TODO 166: every layer names the Normal plot style placeholder; OBJECTS leave the drawing unchanged', () => {
+  const doc = W.newDoc();
+  W.addLayer(doc, 'Walls', { aci: 1, off: true });
+  W.addLayer(doc, 'Locked', { aci: 3 }).flags = 4;
+  for (const [i, layer] of Object.keys(doc.layers).entries()) {
+    W.addEntities(doc, W.line(i * 30, 0, i * 30 + 20, 10, { layer }), W.circle(i * 30 + 10, 20, 5, { layer }));
+  }
+  const text = W.writeDxf(doc);
+  const records = (text) => {
+    const lines = text.trimEnd().split(/\r?\n/), recs = [];
+    for (let i = 0; i + 1 < lines.length; i += 2) {
+      const pair = [+lines[i], lines[i + 1].trim()];
+      if (pair[0] === 0) recs.push([pair]);
+      else recs.at(-1).push(pair);
+    }
+    return recs;
+  };
+  const recs = records(text), get = (r, c) => r.find(([code]) => code === c)?.[1];
+  const root = recs.find((r) => get(r, 0) === 'DICTIONARY' && get(r, 330) === '0');
+  assert.deepEqual(root.filter(([c]) => c === 3).map(([, v]) => v), ['ACAD_GROUP', 'ACAD_PLOTSTYLENAME'], 'root entries sorted');
+  const plotHandle = root[root.findIndex(([c, v]) => c === 3 && v === 'ACAD_PLOTSTYLENAME') + 1];
+  assert.equal(plotHandle[0], 350);
+  const plot = recs.find((r) => get(r, 5) === plotHandle[1]), normal = get(plot, 350);
+  assert.deepEqual(plot, [[0, 'ACDBDICTIONARYWDFLT'], [5, plotHandle[1]], [102, '{ACAD_REACTORS'], [330, get(root, 5)],
+    [102, '}'], [330, get(root, 5)], [100, 'AcDbDictionary'], [281, '1'], [3, 'Normal'], [350, normal],
+    [100, 'AcDbDictionaryWithDefault'], [340, normal]]);
+  const placeholders = recs.filter((r) => get(r, 0) === 'ACDBPLACEHOLDER');
+  assert.deepEqual(placeholders, [[[0, 'ACDBPLACEHOLDER'], [5, normal], [102, '{ACAD_REACTORS'], [330, plotHandle[1]],
+    [102, '}'], [330, plotHandle[1]]]]);
+  const layers = recs.filter((r) => get(r, 0) === 'LAYER');
+  assert.equal(layers.length, 3);
+  for (const layer of layers) assert.equal(get(layer, 390), normal, get(layer, 2) + ' plot style');
+  const handles = recs.flat().filter(([c]) => c === 5 || c === 105).map(([, v]) => parseInt(v, 16));
+  const seed = handles.shift();
+  assert.equal(new Set(handles).size, handles.length, 'unique object handles');
+  assert.equal(seed, Math.max(...handles) + 1, 'HANDSEED is last handle + 1');
+  const back = D.readDxf(text), again = W.writeDxf(back);
+  assert.deepEqual(back, D.readDxf(text.replace(/  0\r\nSECTION\r\n  2\r\nOBJECTS\r\n[\s\S]*?  0\r\nENDSEC\r\n/, '')), 'reader skips OBJECTS');
+  assert.deepEqual(sigs(back.entities), sigs(doc.entities));
+  assert.equal(back.layers.Walls.off, true);
+  assert.equal(back.layers.Locked.flags & 4, 4);
+  assert.deepEqual(records(again).filter((r) => get(r, 0) === 'LAYER'), layers, 'write/read/write keeps every layer record');
+  if (process.env.PD_ACAD166) fs.writeFileSync('E:/Project B/Claude/Project D extras/runs30/acad166-test.dxf', text);
 });
 
 test('a big file writes: 20 000 polylines × 50 points on 300 layers, extents handed in', () => {
