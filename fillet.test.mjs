@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import { filletLines, filletEntities } from './web/fillet.js';
 import { shapeOf } from './web/grips.js';
-import { filletPolylineShape } from './web/fillet.js';
+import { filletPolylineShape, filletAllPolyline } from './web/fillet.js';
 import { pathOf, geo } from './web/modify.js';
 import { readDxf } from './web/drawing.js';
 
@@ -182,6 +182,59 @@ const records = (e) => e.type === 'POLYLINE' ? e.kids : (() => {
 })();
 const widthsOf = (e) => records(e).map((r) => [40, 41].map((c) => r.c.includes(c) ? +r.v[r.c.indexOf(c)] : null));
 const savedPoly = (e) => { const d = W.newDoc(4); W.addEntities(d, e); return readDxf(W.writeDxf(d)).entities[0]; };
+
+test('Polyline option: closed and open corners, both windings, with saved tangent bulges and properties', () => {
+  for (const closed of [false, true]) for (const winding of [1, -1]) {
+    const e = poly([[0, 0], [20, 0], [20, winding * 20], [0, winding * 20]], { closed, widths: true });
+    const before = structuredClone(e), f = filletAllPolyline(e, 2), out = savedPoly(f.ents[0]);
+    assert.equal(f.count, closed ? 4 : 2); assert.equal(f.short, 0);
+    const sh = filletPolylineShape(out), arcs = pathOf(sh).segs.filter((s) => s.bulge);
+    assert.equal(sh.closed, closed); assert.equal(arcs.length, f.count);
+    assert.equal(sh.pts.length, closed ? 8 : 6);
+    for (const s of arcs) { near(s.bulge, winding * Math.tan(Math.PI / 8)); near(geo(s).r, 2); }
+    assert.equal(out.layer, 'Cut'); assert.equal(value(out, 43), 2); assert.equal(value(out, 38), 7);
+    assert.deepEqual(widthsOf(out).filter((_, i) => i % 2 === 0), closed ? [[1, 2], [2, 3], [3, 4], [4, 5]] : [[1, 2], [2, 3], [3, 4]]);
+    assert.deepEqual(e, before);
+  }
+});
+
+test('Polyline option skips short corners and prevents adjacent fillets from consuming a shared segment', () => {
+  const f = filletAllPolyline(poly([[0, 0], [20, 0], [20, 1], [40, 1], [40, 20]]), 2);
+  assert.equal(f.count, 1); assert.equal(f.short, 2);
+  assert.equal(filletPolylineShape(f.ents[0]).pts.filter((p) => p[2]).length, 1);
+  const g = filletAllPolyline(poly([[0, 0], [20, 0], [20, 3], [40, 3]]), 2);
+  assert.equal(g.count, 1); assert.equal(g.short, 1);
+  assert.match(filletAllPolyline(poly([[0, 0], [1, 0]]), -1).error, /0 or more/);
+  assert.match(filletAllPolyline(W.line(0, 0, 10, 0), 1).error, /LWPOLYLINE/);
+});
+
+test('Polyline option replaces arcs between straight segments and radius zero restores sharp corners', () => {
+  for (const closed of [false, true]) {
+    const e = poly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed });
+    const rounded = filletAllPolyline(e, 2).ents[0];
+    const again = filletAllPolyline(savedPoly(rounded), 3);
+    assert.equal(again.count, closed ? 4 : 2); assert.equal(again.short, 0);
+    const sh = filletPolylineShape(savedPoly(again.ents[0]));
+    assert.equal(sh.pts.length, closed ? 8 : 6);
+    for (const s of pathOf(sh).segs.filter((s) => s.bulge)) near(geo(s).r, 3);
+    const sharp = filletAllPolyline(rounded, 0);
+    assert.equal(sharp.count, closed ? 4 : 2); assert.equal(sharp.short, 0);
+    assert.deepEqual(filletPolylineShape(savedPoly(sharp.ents[0])), filletPolylineShape(e));
+    assert.equal(filletAllPolyline(e, 0).ents[0], e, 'already sharp adds no edit');
+  }
+  const untouched = poly([[0, 0, .5], [10, 0, .5], [20, 0]]);
+  assert.equal(filletAllPolyline(untouched, 2).ents[0], untouched, 'arcs without two flanking lines stay');
+});
+
+test('No trim keeps the picked lines or arcs and adds only the fillet arc', () => {
+  const a = W.line(0, 0, 10, 0), b = W.line(10, 0, 10, 10);
+  const f = filletEntities(a, [5, 0], b, [10, 5], 2, false);
+  assert.equal(f.ents[0], a); assert.equal(f.ents[1], b); assert.equal(f.ents[2].type, 'ARC');
+  assert.deepEqual(filletEntities(a, [5, 0], b, [10, 5], 0, false).ents, [a, b]);
+  const arc = W.arc(3, 5, 10, 180, 360), line = W.line(-20, 0, 20, 0);
+  const g = filletEntities(line, [-15, 0], arc, [-6, -3], 2, false);
+  assert.equal(g.ents[0], line); assert.equal(g.ents[1], arc); assert.equal(g.ents[2].type, 'ARC');
+});
 
 test('open polyline: one entity, tangent vertex pair, other bulges, widths, flags and elevation survive Save', () => {
   for (const legacy of [false, true]) for (const reverse of [false, true]) {

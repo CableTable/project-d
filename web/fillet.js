@@ -132,7 +132,7 @@ export function filletLines(l1, p1, l2, p2, r) {
 }
 
 /** LINE / ARC pair → { ents: [first, second, arc?] }; the fillet takes the first entity's properties. */
-export function filletEntities(e1, p1, e2, p2, r) {
+export function filletEntities(e1, p1, e2, p2, r, trim = true) {
   if ([e1, e2].some(isPolyline)) {
     if (e1 !== e2) return { error: 'Pick two adjacent segments of the same polyline; separate objects cannot be filleted to a polyline' };
     return filletPolyline(e1, p1, p2, r);
@@ -148,13 +148,13 @@ export function filletEntities(e1, p1, e2, p2, r) {
     if (f.error) return f;
     const ents = f.shapes.map((s, i) => rebuilt(s, i === 1 ? e2 : e1));
     if (ents.some((e) => { const s = shapeOf(e, 1); return s.t === 'arc' ? !s.r || !norm(s.a1 - s.a0) : dist(s.a, s.b) < EPS; })) return { error: 'The fillet would leave an arc or line too small for drawing precision' };
-    return { ents };
+    return { ents: trim ? ents : [e1, e2, ...ents.slice(2)] };
   }
   const f = filletLines([s1.a, s1.b], p1, [s2.a, s2.b], p2, r);
   if (f.error) return f;
   const ents = [rebuilt({ t: 'line', a: f.l1[0], b: f.l1[1] }, e1), rebuilt({ t: 'line', a: f.l2[0], b: f.l2[1] }, e2)];
   if (f.arc) ents.push(rebuilt({ t: 'arc', ...f.arc }, e1));
-  return { ents };
+  return { ents: trim ? ents : [e1, e2, ...ents.slice(2)] };
 }
 
 const isPolyline = (e) => ['LWPOLYLINE', 'POLYLINE'].includes(e?.type);
@@ -187,6 +187,53 @@ export function filletPolylineShape(e, factor = 1) {
   return { t: 'poly', closed: !!((get(e.r, 70) ?? 0) & 1), pts: vertices.map((v) => [
     (get(v, 10) ?? 0) * factor * flip, (get(v, 20) ?? 0) * factor, (get(v, 42) ?? 0) * flip,
   ]) };
+}
+
+/** P: all straight corners, including an arc between two lines; each accepted corner reserves its tangent lengths. */
+export function filletAllPolyline(e, r) {
+  if (e?.type !== 'LWPOLYLINE') return { error: 'Select a 2D LWPOLYLINE' };
+  if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
+  if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Fillet needs a plain 2D polyline in the drawing plane' };
+  const { header, vertices } = polyRecords(e), closed = !!((get(e.r, 70) ?? 0) & 1);
+  const pts = vertices.map((v) => [get(v, 10) ?? 0, get(v, 20) ?? 0]);
+  const segs = vertices.slice(0, closed ? vertices.length : -1).map((v, i) => ({
+    a: pts[i], b: pts[(i + 1) % pts.length], bulge: get(v, 42) ?? 0, record: v,
+  }));
+  let count = 0, short = 0, changed = false;
+  for (let i = 0; i < segs.length; i++) {
+    const a = segs[i];
+    if (a.bulge) continue;
+    const next = (k) => closed ? segs[k % segs.length] : segs[k];
+    const between = next(i + 1), b = between?.bulge ? next(i + 2) : between;
+    if (!b || b === a || b.bulge) continue;
+    const f = filletLines([a.a, a.b], a.a, [b.a, b.b], b.b, r);
+    if (f.error) { if (!/parallel/.test(f.error)) short++; continue; }
+    const t1 = f.l1[1], t2 = f.l2[0];
+    const sign = cross(sub(a.b, a.a), sub(b.b, b.a)) > 0 ? 1 : -1;
+    const bulge = f.arc ? sign * Math.tan(norm(f.arc.a1 - f.arc.a0) / DEG / 4) : 0;
+    const saved = [a.a, t1, t2, b.b].map((p) => p.map((v) => +fmt(v)));
+    if (dist(saved[0], saved[1]) < EPS || dist(saved[2], saved[3]) < EPS ||
+        (r && (dist(saved[1], saved[2]) < EPS || !+fmt(bulge)))) { short++; continue; }
+    a.b = t1; b.a = t2;
+    if (between.bulge) between.replaced = true;
+    a.corner = bulge;
+    count++; changed ||= !!r || !!between.bulge;
+  }
+  if (!changed) return { ents: [e], count, short };
+  const out = [];
+  for (const seg of segs) {
+    if (seg.replaced) continue;
+    out.push(recordWith(seg.record, [[10, seg.a[0]], [20, seg.a[1]], [42, seg.bulge]]));
+    if (seg.corner) {
+      const v = recordWith(seg.record, [[10, seg.b[0]], [20, seg.b[1]], [42, seg.corner]]);
+      const id = v.c.indexOf(91); if (id >= 0) { v.c.splice(id, 1); v.v.splice(id, 1); }
+      out.push(v);
+    }
+  }
+  if (!closed) out.push(vertices.at(-1));
+  const next = recordWith(header, [[90, out.length]]);
+  for (const v of out) { next.c.push(...v.c); next.v.push(...v.v); }
+  return { ents: [{ ...e, r: next }], count, short };
 }
 
 /** Replace one shared vertex by two tangent vertices; the new arc copies the first picked segment's widths. */
