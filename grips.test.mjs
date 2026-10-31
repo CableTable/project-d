@@ -264,6 +264,7 @@ test('ellipse: centre, four axis ends, arc ends only for an arc', () => {
   const e = ellipse(0, 0, 100, 0, 0.5);
   assert.deepEqual(GR.gripsOf(e).map((g) => g.id), ['c', 'm0', 'm1', 'n0', 'n1']);
   assert.deepEqual(pts(GR.gripsOf(e)).map((p) => p.map((v) => Math.round(v * 1e6) / 1e6)), [[0, 0], [100, 0], [-100, 0], [0, 50], [0, -50]]);
+  assert.equal(GR.gripsOf(reopen(e)).length, 5, 'saved as 6.283185 it is still a full ellipse');
   const a = ellipse(0, 0, 100, 0, 0.5, 0, Math.PI / 2);
   assert.deepEqual(GR.gripsOf(a).map((g) => g.id), ['c', 'm0', 'm1', 'n0', 'n1', 's', 't']);
   nearPt(pts(GR.gripsOf(a)).slice(5)[0], [100, 0]); nearPt(pts(GR.gripsOf(a)).slice(5)[1], [0, 50]);

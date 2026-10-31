@@ -1,6 +1,6 @@
 // grips.js — the grips of a selected shape, pure (no DOM): grips.test.mjs.
 //
-// A selected LINE, ARC, CIRCLE or LWPOLYLINE shows small squares to drag. Everything here works on the entity record (dxf-write.js shape:
+// A selected LINE, ARC, CIRCLE or LWPOLYLINE shows small squares to drag; so do TEXT, MTEXT, INSERT, HATCH (a grip that moves it whole) and ELLIPSE (155e4). Everything here works on the entity record (dxf-write.js shape:
 // { type, layer, …, r: { c: [codes], v: [values] } }) in the drawing's own units, y up; `factor` turns units into mm for what is shown.
 //
 //   gripsOf(ent)                 → [{ id, kind: 'end' | 'mid' | 'centre' | 'quad' | 'vertex' | 'edge', x, y }]
@@ -48,10 +48,11 @@ export function hasGrips(ent) {
 const MOVES = { TEXT: 'text', MTEXT: 'text', INSERT: 'block', HATCH: 'hatch', ELLIPSE: 'ellipse' };
 export const movesWhole = (ent, id) => !!MOVES[ent.type] && (ent.type !== 'ELLIPSE' || id === 'c');
 const TAU = 2 * Math.PI;
+const sweepOK = (s) => { const w = ((s % TAU) + TAU) % TAU; return w > 1e-5 && TAU - w > 1e-5; };       // a real arc, not the full 0 .. 2π (the writer saves 6.283185)
 /** The numbers of an ELLIPSE: centre c, major half-axis m, minor half-axis n (m turned 90° and scaled by the ratio), start / end parameter. */
 function ellipseOf(r) {
   const c = [get(r, 10) ?? 0, get(r, 20) ?? 0], m = [get(r, 11) ?? 0, get(r, 21) ?? 0], ratio = get(r, 40) ?? 1;
-  return { c, m, n: [-m[1] * ratio, m[0] * ratio], ratio, t0: get(r, 41) ?? 0, t1: get(r, 42) ?? TAU, arc: at(r, 41) >= 0 && at(r, 42) >= 0 && (((get(r, 42) - get(r, 41)) % TAU) + TAU) % TAU > 1e-9 };
+  return { c, m, n: [-m[1] * ratio, m[0] * ratio], ratio, t0: get(r, 41) ?? 0, t1: get(r, 42) ?? TAU, arc: at(r, 41) >= 0 && at(r, 42) >= 0 && sweepOK((get(r, 42) - get(r, 41))) };
 }
 /** Centre of a HATCH's extents (boundary points; an arc, circle or ellipse edge counts as its full radius round its centre), or null. shortcut: not the exact arc extents, upgrade if a centre must be exact. */
 function hatchCentre(r) {

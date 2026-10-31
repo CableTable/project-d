@@ -10162,6 +10162,74 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 155e4: grips on text, ellipse, hatch and blocks: a justified text moved by its grip (both points), an ellipse major end dragged, a hatch moved by its centre, a block moved by its insertion grip, Rotate by a text grip via Space, and an ellipse on a layout', async () => {
+    await menuItem('View', 'Theme: light');
+    mkdirSync('shots-155e4', { recursive: true });
+    const doc = newDoc(4), jt = dxfText(30, 120, 8, 'HELLO');
+    jt.r = { ...jt.r, c: [...jt.r.c, 72, 11, 21, 31], v: [...jt.r.v, '1', '50', '124', '0'] };       // centre-justified: the alignment point is a second grip
+    const hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'SOLID'], [70, 1], [71, 0], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 50], [10, 60], [20, 50], [10, 60], [20, 80], [10, 20], [20, 80], [97, 0], [75, 0], [76, 1], [98, 1], [10, 40], [20, 65]]);
+    addBlock(doc, 'B', [dxfLine(0, 0, 30, 0), dxfCircle(15, 0, 5)]);
+    addEntities(doc, dxfLine(20, 30, 120, 30), jt, dxfEllipse(150, 90, 40, 0, 0.5), hatch, dxfInsert('B', 100, 50));
+    const clickGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await frames(); };
+    const hist = () => t('cmd-hist').textContent();
+    const shot = async (name) => { for (const theme of ['light', 'dark']) { await menuItem('View', 'Theme: ' + theme); await frames(); await page.screenshot({ path: `shots-155e4/${name}-${theme}.png` }); } await menuItem('View', 'Theme: light'); };
+    const centreOf = (e) => { const xs = [], ys = []; let seen = false; e.r.c.forEach((c, k) => { if (c === 93) seen = true; if (c === 98) seen = false; if (seen && c === 10) { xs.push(+e.r.v[k]); ys.push(+e.r.v[k + 1]); } }); return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...ys) + Math.max(...ys)) / 2]; };
+    const undo = async () => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    await openGrips(writeDxf(doc), 'e4.dxf');
+    // a line and the text: 3 + 2 grips; the second is the alignment point. Space twice = Rotate about the text grip, 90° turns the text and the line
+    await pick(70, 30, 3); await click(40, 124, { shift: true }); await frames(); await gripWhen(5);
+    await clickGrip('1:i'); await typeCmd(''); await typeCmd('');
+    assert.match(await hist(), /\*\* ROTATE \*\*/);
+    await typeCmd('90');
+    let saved = await savedDoc();
+    assert.ok(near(fieldOf(entOf(saved, 1), 50), 90, 1e-6), 'the text turned 90° about its grip');
+    assert.ok(near(fieldOf(entOf(saved, 1), 10), 30, 1e-6) && near(fieldOf(entOf(saved, 0), 10), 120, 1e-6) && near(fieldOf(entOf(saved, 0), 20), 110, 1e-6), 'the text stays at the grip, the line turned about it');
+    await undo();
+    // Stretch of the alignment grip moves the whole text: the insertion and the alignment point
+    await pick(70, 30, 3); await click(40, 124, { shift: true }); await frames(); await gripWhen(5);
+    await dragGripTo('1:a', 90, 110);
+    saved = await savedDoc();
+    const tx = entOf(saved, 1), dx = fieldOf(tx, 11) - 50, dy = fieldOf(tx, 21) - 124;
+    assert.ok(dx > 30 && near(fieldOf(tx, 10), 30 + dx, 0.05) && near(fieldOf(tx, 20), 120 + dy, 0.05), 'both points moved by the same vector: ' + [dx, dy]);
+    assert.ok(near(fieldOf(tx, 11), 90, 0.6) && near(fieldOf(tx, 21), 110, 0.6), 'the alignment point is where the grip was dropped');
+    await undo();
+    // an ellipse: its major end dragged sets the axis (length and angle), the minor length stays
+    await pick(190, 90, 5);
+    await dragGripTo('2:m0', 210, 110);
+    const el = entOf(await savedDoc(), 2), major = Math.hypot(fieldOf(el, 11), fieldOf(el, 21));
+    assert.ok(near(major, Math.hypot(60, 20), 0.8), 'the major half-axis is centre → pointer: ' + major);
+    assert.ok(near(major * fieldOf(el, 40), 20, 0.05), 'the minor half-axis stays 20');
+    await undo();
+    // the hatch: its centre grip; the boundary moves with it
+    await pick(40, 65, 1);
+    const g0 = await gripBox('3:c');
+    await dragGripTo('3:c', 60, 100, { hold: true }); await frames();
+    await page.screenshot({ path: 'shots-155e4/hatch-drag-light.png' });
+    await page.mouse.up(); await frames();
+    const hc = centreOf(entOf(await savedDoc(), 3));
+    assert.ok(near(hc[0], 60, 0.6) && near(hc[1], 100, 0.6), 'the hatch centre moved to (60, 100): ' + hc);
+    assert.ok(g0.x > 0);
+    await undo();
+    // the block: its insertion grip
+    await pick(115, 50, 1);
+    await dragGripTo('4:i', 140, 50);
+    const ins = entOf(await savedDoc(), 4);
+    assert.ok(near(fieldOf(ins, 10), 140, 0.6) && near(fieldOf(ins, 20), 50, 0.6), 'the block insert moved to (140, 50)');
+    await undo();
+    // the screenshots: ellipse and hatch grips shown
+    await pick(190, 90, 5); await click(40, 65, { shift: true }); await frames(); await gripWhen(6);
+    await shot('ellipse-hatch-grips');
+    // the same on a layout: an ellipse loose on the plate, its major end dragged
+    await freshLayoutWithPlate();
+    await typeCmd('ellipse'); await typeCmd('175,600'); await typeCmd('225,600'); await typeCmd('20');
+    await page.keyboard.press('Escape'); await page.locator('[data-tool=select]').click(); await click(225, 600); await frames(); await gripWhen(5);
+    const gid = (k) => page.locator('[data-testid=grip]').evaluateAll((g, s) => g.map((x) => x.dataset.grip).find((x) => x.endsWith(':' + s)), k);
+    await dragGripTo(await gid('m0'), 275, 600); await frames(); await gripWhen(5);
+    const m0 = await gripBox(await gid('m0')), want = await at(275, 600);
+    assert.ok(near(m0.x, want.x, 3) && near(m0.y, want.y, 3), 'the layout ellipse major end is at the drop point');
+    await closeTabs(/./);
+  });
+
   await step('Grips: off past 200 selected shapes (and on for fewer)', async () => {
     const doc = newDoc(4);
     addEntities(doc, Array.from({ length: 205 }, (_, i) => dxfLine(10 + (i % 41) * 4, 20 + Math.floor(i / 41) * 20, 12 + (i % 41) * 4, 26 + Math.floor(i / 41) * 20)));
