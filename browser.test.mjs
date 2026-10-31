@@ -10180,6 +10180,16 @@ try {
     await clickGrip('0:a');
     await rightClick(70, 45); await menuTexts(); await menuPick('Properties');
     await hotWhen(0); await page.locator('aside.panel').waitFor({ state: 'visible' });
+    // Shift + drag on a rectangle's edge grip is the proportional resize (T22b), not a hot grip; it also drops a hot grip made before
+    const rect = newDoc(4); addEntities(rect, dxfPoly([[20, 20], [120, 20], [120, 80], [20, 80]], { closed: true }), dxfLine(150, 50, 170, 50));
+    await openGrips(writeDxf(rect), 'shift-drag.dxf');
+    await click(70, 20); await gripWhen(8);
+    await shiftGrip('0:e3'); await hotWhen(1);
+    await page.keyboard.down('Shift');
+    await dragGripTo('0:e1', 170, 50);
+    await page.keyboard.up('Shift'); await frames();
+    assert.deepEqual(await sizeNow(), ['150', '90'], 'Shift + drag resized in proportion');
+    await hotWhen(0);
     // the same on a layout object: both ends hot, a typed @20,0 moves the line 20
     await freshLayoutWithPlate();
     await typeCmd('line'); await typeCmd('50,600'); await typeCmd('300,600'); await typeCmd('');

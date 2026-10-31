@@ -8405,14 +8405,9 @@ function gripDown(e) {
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
   const key = hit.e + ':' + hit.id, map = hotsOf(d);
-  if (e.shiftKey) {                                                  // Shift-click: this grip turns hot, or cold again (155e3)
-    const m = map || (state.hots = { sel: d.sel, ents: d.raw.entities, map: new Map() }).map;
-    if (!m.delete(key)) m.set(key, hit);
-    paintOverlay(); return true;
-  }
-  const hots = map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all
-  state.hots = null;
-  state.grip = { hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
+  const hots = !e.shiftKey && map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all
+  if (!e.shiftKey) state.hots = null;                                // Shift: decided on release (gripUp: a click makes it hot, 155e3) or on the first move (a drag keeps proportions)
+  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
   state.msg = null; renderCommand(); renderEdit(); paintOverlay();       // renderEdit: the Undo button is on in a run
   return true;
 }
@@ -8420,6 +8415,7 @@ function gripMove(e) {
   const g = state.grip;
   if (!g || (g.d.vlay || g.d) !== (editable() || curDoc())) return;
   if (!g.moved && !g.hot && Math.hypot(e.clientX - g.px[0], e.clientY - g.px[1]) < 4) return;
+  if (g.tog) { g.tog = null; state.hots = null; }                    // a Shift drag past the threshold is a plain drag with Shift held
   g.moved = true; g.cursor = [e.clientX, e.clientY];
   gripAim(g, gripPick(g, e.clientX, e.clientY, e.shiftKey, true), e.shiftKey);
   paintOverlay();
@@ -8428,6 +8424,12 @@ function gripUp(e) {
   const g = state.grip;
   if (!g || g.hot) return;
   if (g.moved) { gripPut(g, e); return; }
+  if (g.tog) {                                                       // Shift-click without a move: this grip turns hot, or cold again (155e3)
+    const d = g.d, key = g.tog.e + ':' + g.tog.id, m = hotsOf(d) || (state.hots = { sel: d.sel, ents: d.raw.entities, map: new Map() }).map;
+    gripCancel();
+    if (!m.delete(key)) m.set(key, g.tog);
+    paintOverlay(); return;
+  }
   g.hot = true; g.cursor = [e.clientX, e.clientY];                  // a click on the grip: it is hot until the next click puts it down
   ui.cmdUI.message(GM.header('STRETCH', g.copy)); renderCommand(); paintOverlay();
 }
