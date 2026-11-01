@@ -189,6 +189,7 @@ export function build(args, x = io) {
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
+  needHooks(x, dir);
   if (!x.has(dir, sha)) throw new Error(`commit ${sha} not in ${dir}`);
   x.need(dirname(out), 'output folder');
   const inFd = x.open(brief, 'r');
@@ -204,6 +205,12 @@ export function build(args, x = io) {
 // `rook.mjs gate`: rewrite line 2 of runs<N>/queue.txt now and print it.
 export const gate = (x = io) => x.gate.report();
 
+function needHooks(x, dir) {
+  let hooks;
+  try { hooks = x.git(dir, 'config', 'core.hooksPath'); } catch { /* Missing config also refuses the launch. */ }
+  if (hooks !== 'tools/hooks') throw new Error(`hooksPath required: git -C "${dir}" config core.hooksPath tools/hooks`);
+}
+
 export function knight(args, x = io) {
   const { brief, report, branch, sha, log, fix, over } = parseKnight(args);
   x.gate.check(fix, over);
@@ -211,6 +218,7 @@ export function knight(args, x = io) {
   x.need(brief, 'brief file');
   x.need(CODEX, basename(CODEX));
   needClean(x, clone);
+  needHooks(x, clone);
   if (!x.has(clone, sha)) {
     if (!x.has(REPO, sha)) throw new Error(`commit ${sha} not in the repo or the clone`);
     const holder = x.git(REPO, 'branch', '--contains', sha, '--format=%(refname:short)').split('\n')[0];

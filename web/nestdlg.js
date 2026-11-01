@@ -1,7 +1,7 @@
 // nestdlg.js — the Auto-nest dialog (mock-up R10, option B): the parts and how many, the rotations, a preview of the packed sheet
 // that is NOT on the sheet until Apply, Run again with other settings, left-overs (and "next sheet"). The packing itself is nest.js
 // (pure) run by nestrun.js (a worker); this file is the UI. Part names come from files, so they go in as text, via h().
-import { h } from './dom.js';
+import { h, icon } from './dom.js';
 import { startNest } from './nestrun.js';
 import { ROTATIONS, MAX_PIECES, polyAt } from './nest.js';
 
@@ -50,8 +50,8 @@ export function openNest(cfg) {
     const set = (n) => { counts[p.id] = Math.max(0, Math.min(MAX_PIECES, n | 0)); sync(); };
     input.addEventListener('change', () => set(parseInt(input.value, 10) || 0));
     input.addEventListener('focus', () => input.select());
-    const minus = h('button', { class: 'ib', type: 'button', 'aria-label': `One fewer ${p.name}`, 'data-testid': `nest-minus-${i}`, onclick: () => set(counts[p.id] - 1) }, '−');
-    const plus = h('button', { class: 'ib', type: 'button', 'aria-label': `One more ${p.name}`, 'data-testid': `nest-plus-${i}`, onclick: () => set(counts[p.id] + 1) }, '+');
+    const minus = h('button', { class: 'ib', type: 'button', 'aria-label': `One fewer ${p.name}`, 'data-testid': `nest-minus-${i}`, onclick: () => set(counts[p.id] - 1) }, icon('minus', 14));
+    const plus = h('button', { class: 'ib', type: 'button', 'aria-label': `One more ${p.name}`, 'data-testid': `nest-plus-${i}`, onclick: () => set(counts[p.id] + 1) }, icon('plus', 14));
     const row = h('div', { class: 'nrow', 'data-testid': `nest-row-${i}` },
       h('span', { class: 'nth' }, p.thumb ? h('img', { src: p.thumb, alt: '' }) : null),
       h('span', { class: 'ntx' }, h('span', { class: 'nnm', title: p.name }, p.name), h('span', { class: 'lbl mono' }, `${fmt(p.w)} × ${fmt(p.h)}`)),

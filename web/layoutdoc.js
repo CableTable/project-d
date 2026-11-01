@@ -81,13 +81,18 @@ export function objectPart(id, name, ent, layers, header = {}, blocks = {}) {
 /** A new object's placement: its extents' lower-left corner is where the entity already is. */
 export const objectPlacement = (part) => placement1(part.id, part.box[0], part.box[1]);
 /** A placed object as plain entities (its placement baked in), or null when Explode cannot carry that kind (it is then kept as a block). */
-function bakeObject(part, p) {
+function bakeObject(part, p, withBlocks = false) {
   if (isDimPart(part)) return isSettled(part, p) ? [part.raw.entities[0]] : null;       // a dimension is settled (settleDims) before it is baked
   if (part.raw.entities[0].type === 'DIMENSION') return isSettled(part, p) ? [part.raw.entities[0]] : null;
   const e = part.raw.entities[0], mini = newDoc(4), k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * k, sy = (p.mirrorY ? -1 : 1) * k;
   mini.layers = part.raw.layers;
+  if (withBlocks) mini.blocks = { ...part.raw.blocks };       // a block object: its INSERT bakes to one INSERT (the file keeps it as a block: layoutRaw bakes without)
   addBlock(mini, 'O', [e], [part.box[0], part.box[1]]);
-  try { return explodeInsert(insert('O', p.x, p.y, { layer: e.layer, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini).entities; } catch { return null; }
+  const had = Object.keys(mini.blocks).length;
+  try {
+    const r = explodeInsert(insert('O', p.x, p.y, { layer: e.layer, rot: p.rot || 0, ...(sx !== 1 || sy !== 1 ? { sx, sy } : {}) }), mini);
+    return Object.keys(r.blocks).length === had ? r.entities : null;       // a block Explode had to make (a sheared array) is not in the objects' drawing
+  } catch { return null; }
 }
 
 // Trim / Extend / Fillet / Offset on layout objects run the drawing tab's code on objectDoc(): the objects as one little drawing (sheet mm,
@@ -98,23 +103,26 @@ function bakedEntity(part, p) {
   let byKey = bakedCache.get(part);
   if (!byKey) bakedCache.set(part, byKey = new Map());
   const key = bakeKey(p);
-  if (!byKey.has(key)) { const ents = bakeObject(part, p); byKey.set(key, ents && ents.length === 1 && !isDimPart(part) ? { ...ents[0], ps: false } : null); }       // (a dimension is not in the objects' drawing)
+  if (!byKey.has(key)) { const ents = bakeObject(part, p, true); byKey.set(key, ents && ents.length === 1 && !isDimPart(part) ? { ...ents[0], ps: false } : null); }       // (a dimension is not in the objects' drawing)
   return byKey.get(key);
 }
 /** What objectDoc() would be made of, as text: when it is the same, so is the drawing (and the entities in it). `skip(partId)` leaves an object out (hidden). */
-export const objectSig = (lay, skip) => lay.placed.map((p) => { const part = lay.parts[p.partId]; return part && part.obj && !skip(p.partId) ? `${p.partId}|${bakeKey(p)}${p.lock ? 'L' : ''}` : '-'; }).join(';');
+export const objectSig = (lay, skip) => lay.placed.map((p) => { const part = lay.parts[p.partId]; return part && part.obj && !skip(p.partId) ? `${p.partId}|${bakeKey(p)}${p.lock ? 'L' : ''}` : '-'; }).join(';') + '#' + lay.s.attmode;
 /** The layout's objects as a drawing: { raw, fl, off, at (entity → its index in lay.placed), lockedEnts }. An object Explode cannot carry is left out. */
 export function objectDoc(lay, skip = () => false) {
-  const entities = [], at = new Map(), lockedEnts = new Set();
+  const entities = [], at = new Map(), lockedEnts = new Set(), blocks = {};
   lay.placed.forEach((p, i) => {
     const part = lay.parts[p.partId];
     let ent = part && part.obj && !skip(p.partId) ? bakedEntity(part, p) : null;
     if (!ent) return;
+    const used = ent.type === 'INSERT' ? blocksUsed(part.raw.blocks, [ent]) : {};
+    if (Object.entries(used).some(([n, b]) => blocks[n] && JSON.stringify(blocks[n]) !== JSON.stringify(b))) return;       // shortcut: two block objects with different blocks of one name: the later one is left out (as before), rename them if that ever matters
+    Object.assign(blocks, used);
     if (at.has(ent)) ent = { ...ent };            // an exact copy on top of it: an entity of its own
     entities.push(ent); at.set(ent, i);
     if (p.lock) lockedEnts.add(ent);
   });
-  const raw = { header: {}, layers: layersOf(lay), ltypes: {}, blocks: {}, entities }, fl = flatten(raw);
+  const raw = { header: { $ATTMODE: String(lay.s.attmode) }, layers: layersOf(lay), ltypes: {}, blocks, entities }, fl = flatten(raw);
   return { raw, fl, off: startHidden(fl), at, lockedEnts };
 }
 
@@ -147,7 +155,7 @@ export function objectCommit(lay, view, entities, newId) {
   for (const e of entities) {
     if (view.at.has(e)) continue;
     e.ps = false;
-    const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers), pl = part && objectPlacement(part);
+    const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers, {}, e.type === 'INSERT' ? blocksUsed(view.raw.blocks, [e]) : {}), pl = part && objectPlacement(part);
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part;
@@ -210,7 +218,7 @@ export function explodePlaced(lay, idxs, newId, burst = false) {
 export function objectReplace(lay, view, ent, next, newId) {
   const i = view.at.get(ent), old = lay.placed[i], was = lay.parts[old.partId], shared = lay.placed.some((p, k) => k !== i && p.partId === old.partId);
   next.ps = false;
-  const part = objectPart(newId(), shared ? nextName(OBJ_NAMES[next.type] || 'Object', new Set(Object.values(lay.parts).map((p) => p.name))) : was.name, next, layersOf(lay));
+  const part = objectPart(newId(), shared ? nextName(OBJ_NAMES[next.type] || 'Object', new Set(Object.values(lay.parts).map((p) => p.name))) : was.name, next, layersOf(lay), {}, next.type === 'INSERT' ? was.raw.blocks : {});       // a block object keeps its blocks
   if (!part) return false;
   const { sc, ...rest } = old, pl = { ...rest, ...objectPlacement(part) };       // placed at its own extents, so no scale / mirror is left over
   if (!shared) delete lay.parts[old.partId];

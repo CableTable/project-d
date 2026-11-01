@@ -101,7 +101,8 @@ usage-agent-install.ps1.
    days old: `claude plugin marketplace update mattpocock`, then `plugin update mattpocock-skills@mattpocock` with `claude`,
    `claude2.cmd` and `claude3.cmd`; diff the newest plugin `skills/engineering/retro/SKILL.md` against the copy (ignore the
    `description:` and `disable-model-invocation:` lines); changed -> refresh the copy (drop `disable-model-invocation`, keep
-   our description) and commit; append today's date + result to weekly-check.txt.
+   our description) and commit; append today's date + result to weekly-check.txt. Same check (his call, 2026-11-01): a Bishop run of
+   `ponytail:ponytail-debt` (Haiku or Sonnet low, read-only) lists every `shortcut:` comment; Rook turns the ones that matter into TODO rows and names them in one line.
 5. **Tickets sized for one fresh session** (his call 2026-10-20): every M / L TODO item is split into tickets
    (TODO "66a", "66b", …), each a vertical slice that one fresh builder run can finish with its context under
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
@@ -111,8 +112,9 @@ usage-agent-install.ps1.
    (said in the report's first line), so a cut-off run loses nothing.
    Briefs for pure geometry (S29 retro) name the **case grid** (positions before / at / inside / beyond, both orders, both picks; every entity type that shares the code) and ask for ONE table-driven unit test over it.
    Grip tickets (S30 retro: 4 of 5 King fix rounds): the grid also has several hot grips (with a grip of another entity, every hot order), and the preview (`gripAim`) is asserted equal to the commit (`gripCommit`).
+   A brief that asks for every X (every button, every caller) carries the grep Rook ran to find them, with its hit list; the builder's report quotes the same grep (S31 retros: 175 took 2 fix rounds on "+" buttons a hand list missed).
    A wide filter names its known subset-only reds in the brief (now: 'tracking: POLAR also locks a grip', 'review: the gripper label': they need earlier steps' state); the builder skips them.
-   Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it);
+   Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it); paths into runs<N>/ are written `../runs<N>/` (the builder's cwd is its worktree; S31 King retro);
    when an item changes existing behaviour, name the old browser steps that check it (`grep -n` in browser.test.mjs) and say to update
    them in the same commit; tests are `npm.cmd test` and the item's steps by argument (`node browser.test.mjs <port> '<name>'`), never an
    env var and never the full suite.
@@ -180,6 +182,7 @@ cd -
 # A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-s15fix.
 
 # Lookup (Haiku)
+# Reddit: WebFetch, curl, .json (403) and the Chrome extension all fail (S31). Route: a Bishop run opens the link in normal Chrome, PowerShell CopyFromScreen + SendKeys PgDn, reads the shots, reports in lines; Rook never reads the images.
 $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format text < question.txt
 
 # Research: Knight (Codex CLI, ChatGPT Go; set up 2026-10-20 with the non-admin sandbox). Read-only, live web search,
@@ -194,7 +197,7 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
 # Before a Knight build: `git status --porcelain` in the clone must be empty; leftovers -> `git stash -u -m "<run>"`, never a commit.
 # CI-only red: `gh run download <id> -n browser-failure-shard-<N>` into runs<N>/ before the fix brief; local shards match CI's, so suspect Linux / timing, not order.
-# A step red in the full suite but green alone: append "<date> <step> <shard>" to runs<N>/flakes.txt; a 2nd hit becomes a TODO.
+# A step red unsharded or in the full suite but green alone or in shards: Rook appends "<date> <step> <shard|unsharded>" to runs<N>/flakes.txt on reading the report; a 2nd hit becomes a TODO.
 # One call does the clone check, fetch, `switch -c` and launch below (raw commands are the fallback):
 #   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--over]   (log = the report's name with .log; --fix / --over as for build)
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
@@ -266,6 +269,8 @@ Opus run; let running builders finish (a builder cut off mid-work leaves uncommi
 **Queuing runs** (2026-10-19: a queued job waited on its own output file and sat idle for hours):
 - Jobs that must run one after another go in ONE background script, plainly in order (`run A; run B`), never as
   a second script that waits for the first one's file. Write each script fresh, never by `sed` on another script.
+- When a builder frees up (its run ends or its limit resets), in that same turn launch the next TODO item whose files don't
+  overlap the running build (`tools/` tickets are disjoint from `web/`). S31: Knight sat idle ~35 min after his reset.
 - Any wait loop has a time limit and prints what it waits for. Print the script (`head`) before launching it.
 - Within ~2 minutes of a run's planned start, check that its output file exists. A `json` file stays empty until
   the run ends, so a background run uses `--output-format stream-json --verbose` (it grows as it works; the last
@@ -303,7 +308,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   runs `Project D extras/start-rook.ps1`, which reads `Project D extras/rook-next.txt` (line 1 session uuid, 2 name `Rook S<n>`,
   3 resume file): transcript found -> `--resume`, else a fresh `--session-id` told to read the resume file. Each Rook session
   writes its own uuid there at start (a reboot resumes it); at handover it writes a NEW uuid + the next resume file, then
-  either the PC shuts down (next logon starts it) or Rook starts `Rook.lnk` (Windows Terminal; S28 retro: `Start-Process powershell.exe` on the script started no session; untested guess) and checks the new uuid's `.jsonl` appears within 60 s (never start_session).
+  either the PC shuts down (next logon starts it) or Rook starts `Rook.lnk` with `Start-Process (Join-Path ([Environment]::GetFolderPath('Startup')) 'Rook.lnk')` (works, S31b; `Start-Process powershell.exe` on the script starts nothing) and checks the new uuid's `.jsonl` appears within 60 s (never start_session).
   **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min (`timeout_ms` is Monitor's; Bash and PowerShell take `timeout`),
   re-arm on expiry). It prints each finished job and ends with `RUN <id> success|failure`. Never pipe to `jq`: it is not installed
   here, so such a watch stays silent forever (two silent monitors on PR #25); use gh's own `--jq`.
@@ -320,9 +325,9 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   `support/pip-support-prompt.md`). Rook moves `open` tickets into TODO.md at each session start and keeps each ticket's
   Status current (in TODO → building → built → merged → checked in exe); Bishop-support never edits the repo.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
-  `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
+  `node tools/rook.mjs result <run file>` (the reply + tokens). Write the brief with the real base sha already in it (Write tool; never `sed` a brief), then launch with one plain `node tools/rook.mjs build|knight|review ...` call (S31: two `sed -i` + launch chains denied).
   Change a brief or queue.txt with Read + Edit in the same turn (launchers rewrite queue line 2), never `sed -i` or a chain with a launch (denied, S30 retro); git and launches go in their own command.
-- Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head (builders run `npm.cmd test` and their item's steps; reviewers unit only); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
+- Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head, only after every review on the branch says ship (S31b ran it twice) (builders run `npm.cmd test` and their item's steps; reviewers unit only); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
   never reads skill or reference docs it has read before in the session.
 - While runs go, Rook ends its turn and waits for the notice; no status messages in between.
 - The usage page is https://project-d-usage.web.app (Firebase, his Google account only; session 12). The PC agent
@@ -380,6 +385,8 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then commit at once; Rook runs the full suite after them (S28b retro: the ~12 min suite outlives a builder's 10 min command limit, goes to the background and the run ends uncommitted, 3x). Every build branches from the CURRENT session head (items already on it), so two builds never conflict on the cherry-pick (S28b: 156b4 from an old base conflicted with 156c). Briefs say: the worktree is already your working folder, no `cd "<worktree>" &&` prefix (denied 6-11x a run). Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
   While fixing, filter on their own step only (`'TODO <id>'`); widen once, before commit, to whole step-name pieces they grepped, never single words like `Text` (session 26 King retro: 5 unrelated slow steps per run).
+- **Proof before "done"** (his yes 2026-11-01, idea from obra/superpowers' verification-before-completion, not installed): a report claims only what a command run AFTER the last edit showed; each claim (tests green, step passes, FAIL on base, screenshot taken) quotes that run's line. No "should work" / "looks right" without one; anything not run goes under Not checked. Reviewers check the quotes against the commit.
+- **Bug and flake briefs** (his call, 2026-11-01): a Claude builder (King / Bishop) runs the Skill tool for `mattpocock-skills:diagnosing-bugs` first and reproduces the failure before fixing (CI-only: the downloaded artifact, Linux timing, CPU throttling); Knight gets the same loop as a line pointing at that skill's SKILL.md. The report says "reproduced" or "not reproduced: likely cause".
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
   Each finding names its **case grid** (S29 retro: 155h2 and 155e3 each needed an extra round because only the repro was fixed): every input sharing the cause; the fix covers the grid and adds ONE table-driven unit test over it.

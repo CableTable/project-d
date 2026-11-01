@@ -1,5 +1,5 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
-import { h } from './dom.js';
+import { h, icon as domIcon } from './dom.js';       // app.js has its own icon() for the ribbon's markup
 import { attachCrosshair } from './crosshair.js';
 import { pickColour, swatches } from './colourpicker.js';
 import { recentColours, stripGroups } from './swatchstrip.js';
@@ -823,8 +823,8 @@ function buildTabs() {
   });
   return h('div', { class: 'tabsrow' },
     ui.tabs,
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, '+'),
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, '+ New layout'),
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, domIcon('plus', 14)),
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, domIcon('plus', 14), 'New layout'),
     h('div', { class: 'spacer' }),
     h('div', { class: 'rowtools' },
       h('div', { class: 'mode', role: 'group', 'aria-label': 'Mode' }, modeBtns),
@@ -1415,9 +1415,9 @@ function buildCanvas() {
   ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
-      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
+      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
       ui.pct,
-      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, '+'),
+      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
       ui.fitBtn));
   attachCanvasEvents();
   ui.canvas.append(attachCrosshair(ui.canvas));
@@ -1492,7 +1492,7 @@ function buildPanel() {
     ui.guideSec = h('section', { 'data-testid': 'guides-panel' },
       h('h2', { class: 'sec' }, 'Guides'),
       h('label', { class: 'proprow' }, h('span', { class: 'lbl' }, 'x or y'), ui.guidePosition = h('input', { class: 'fld', inputmode: 'decimal', 'aria-label': 'Guide position in mm', 'data-testid': 'guide-position', oninput: (e) => flagInvalid(e.target, false) })),
-      h('div', { class: 'btnrow' }, ...[['y', 'h', '+ Horizontal'], ['x', 'v', '+ Vertical']].map(([axis, id, label]) => h('button', { class: 'btn sm', type: 'button', 'data-testid': 'guide-add-' + id, onclick: () => addTypedGuide(axis, ui.guidePosition) }, label))),
+      h('div', { class: 'btnrow' }, ...[['y', 'h', 'Horizontal'], ['x', 'v', 'Vertical']].map(([axis, id, label]) => h('button', { class: 'btn sm', type: 'button', 'aria-label': '+ ' + label, 'data-testid': 'guide-add-' + id, onclick: () => addTypedGuide(axis, ui.guidePosition) }, domIcon('plus', 12), label))),
       ui.guideList = h('div', { class: 'guidelist', 'data-testid': 'guide-list' }),
       ui.guideEmpty = h('span', { class: 'lbl' }, 'None yet. Drag one out of a ruler, or add one here.'),
       h('span', { class: 'lbl' }, 'Or drag from a ruler. Show, Snap and Lock are on the View tab.')),
@@ -1501,7 +1501,7 @@ function buildPanel() {
     ui.partsSec = h('section', { 'data-testid': 'parts-panel' },
       h('h2', { class: 'sec' }, 'Parts on this layout'),
       ui.partRows = h('div', { class: 'partrows', 'data-testid': 'part-rows' }),
-      h('button', { class: 'btn', type: 'button', 'data-testid': 'add-from-library', onclick: () => showLibrary() }, '+ Add from Parts library')),
+      h('button', { class: 'btn', type: 'button', 'aria-label': '+ Add from Parts library', 'data-testid': 'add-from-library', onclick: () => showLibrary() }, domIcon('plus', 14), 'Add from Parts library')),
     ui.stepSec = h('section', { class: 'stepbox', 'data-testid': 'step-panel' },
       h('h2', { class: 'sec' }, 'Step and repeat'),
       h('label', { class: 'row swrow' }, h('span', null, 'Fit to sheet'), h('span', { class: 'row' }, ui.fitText, ui.fit)),
@@ -1523,7 +1523,7 @@ function buildPanel() {
     buildLibrary(),
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
+        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, domIcon('plus', 12), 'Add')),
       h('div', { class: 'osr lsr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.layerSearch = h('input', { type: 'text', placeholder: 'Search layers…', 'aria-label': 'Search layers', 'data-testid': 'layer-search', autocomplete: 'off', spellcheck: 'false' })),
       ui.layerRows),
     buildObjects());
@@ -3086,15 +3086,15 @@ async function autosaveNow() {
         if (!page.dirty) { await dropCopy(page); continue; }
         // Shared with the kept page so an in-flight copy still belongs to it after switching sheets.
         const r = page.recovery || (page.recovery = { rid: uid() + (n == null ? '' : `-sheet${n}`) });
-        const raw = page.raw, titleBlock = d.titleBlock;
-        if (!page.lay && r.autoEnts === raw.entities && r.autoBlocks === raw.blocks && r.autoLayers === raw.layers && r.autoTitle === titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
+        const raw = page.raw, titleBlock = d.titleBlock, tab = state.docs.indexOf(d);
+        if (!page.lay && r.autoTab === tab && r.autoEnts === raw.entities && r.autoBlocks === raw.blocks && r.autoLayers === raw.layers && r.autoTitle === titleBlock) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
         let dxf;
         try { dxf = writeDxf(rawForSave({ ...page, titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
-        if (page.lay && r.hasCopy && r.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
+        if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf) continue;                    // a layout: the same text and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-          saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
-        r.hasCopy = true; if (page.lay) r.autoDxf = dxf;
+          tab, sheet: n, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
+        r.hasCopy = true; r.autoTab = tab; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw.entities; r.autoBlocks = raw.blocks; r.autoLayers = raw.layers; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
       }

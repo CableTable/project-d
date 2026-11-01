@@ -22,7 +22,8 @@ function recorder(fail = '') {
   const calls = [];
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
-  return { calls, x: { git: rec('git', ''), has: rec('has', true), need: rec('need'), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { check: rec('gateCheck'), record: rec('gateRecord') } } };
+  const git = (...a) => rec('git', a[1] === 'config' ? 'tools/hooks' : '')(...a);
+  return { calls, x: { git, has: rec('has', true), need: rec('need'), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { check: rec('gateCheck'), record: rec('gateRecord') } } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
@@ -205,5 +206,27 @@ test('handover gate: build and knight check it first, record after the launch; a
     const over = recorder();
     run([...args, '--over'], over.x);
     assert.deepEqual(over.calls[0].slice(1), [false, true]);
+  }
+});
+
+test('TODO 169: build and knight require tools/hooks in the target folder before opening files or switching branches', () => {
+  for (const [run, args, folder] of [
+    [build, ['b.txt', 'o.jsonl', 'br', 'abc1234'], 'ProjectD-king'],
+    [build, ['b.txt', 'o.jsonl', 'br', 'abc1234', '--dir', 'king2'], 'ProjectD-king2'],
+    [build, ['b.txt', 'o.jsonl', 'br', 'abc1234', '--as', 'bishop'], 'ProjectD-s15fix'],
+    [knight, ['b.txt', 'k.txt', 'br', 'abc1234'], 'ProjectD-rowan'],
+  ]) {
+    for (const value of ['', 'other/hooks', null]) {
+      const { calls, x } = recorder();
+      const git = x.git;
+      x.git = (...a) => {
+        if (a[1] !== 'config') return git(...a);
+        assert.deepEqual(a, [`${X}/${folder}`, 'config', 'core.hooksPath']);
+        if (value === null) throw new Error('config unset');
+        return value;
+      };
+      assert.throws(() => run(args, x), { message: `hooksPath required: git -C "${X}/${folder}" config core.hooksPath tools/hooks` });
+      assert.equal(calls.some((c) => c[0] === 'open' || isSwitch(c) || c[0] === 'launch' || c[0] === 'gateRecord'), false);
+    }
   }
 });

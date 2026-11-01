@@ -2964,7 +2964,7 @@ try {
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), [], 'an empty drawing has no layers');
     assert.equal(await page.locator('[data-group=parts] [data-i]').count(), 0);
     assert.equal(await t('mode-part').count(), 0, 'no Part | Layout switch');
-    assert.equal(await t('new-layout').textContent(), '+ New layout');
+    assert.equal(await t('new-layout').textContent(), 'New layout');
     assert.equal(await t('apply').isDisabled(), true);
     for (const id of ['sheet-panel', 'step-panel', 'propbar', 'drawing-panel']) assert.equal(await t(id).isVisible(), false, id);
     const body = await page.locator('body').textContent();
@@ -3035,7 +3035,7 @@ try {
       const fits = async () => {
         const m = await p2.evaluate(() => {
           const strip = document.querySelector('.tabs'), row = document.querySelector('.tabsrow');
-          const label = document.createRange(); label.selectNodeContents(document.querySelector('[data-testid=new-layout]'));
+          const label = document.createRange(); label.selectNodeContents(document.querySelector('[data-testid=new-layout]').lastChild);       // the words (the + icon is the first child)
           return {
             pageWidth: document.documentElement.scrollWidth, viewport: innerWidth, pageX: scrollX,
             shellX: document.querySelector('.shell').scrollLeft, rowX: row.scrollLeft,
@@ -7928,6 +7928,71 @@ try {
     await c2.close();
   });
 
+  await step('TODO 176: Recover keeps the tab order', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage();
+      p.on('dialog', (d) => d.accept().catch(() => {}));
+      const q = (id) => panelControl(p, p.getByTestId(id));
+      const names = () => p.locator('.tabs .dtab:not([aria-label]) .tname').allTextContents();
+      const copies = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies());
+      const waitCopies = async (n) => {
+        for (let i = 0; i < 60; i++) { if ((await copies()).length === n) return; await p.waitForTimeout(150); }
+        throw new Error('waiting for ' + n + ' recovery copies, there are ' + (await copies()).length);
+      };
+      await p.goto(URL_ + '?autosave=300');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const expected = ['Drawing 1.dxf', 'Drawing 2.dxf', 'Drawing 3.dxf', 'Drawing 4.dxf'];
+      for (const name of expected) {
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: readFileSync('fixtures/outline.dxf') });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      assert.deepEqual(await names(), expected);
+      let count = 0;
+      for (const name of [expected[0], expected[2], expected[3], expected[1]]) {
+        await p.locator('.tabs .dtab', { hasText: name }).click();
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await q('gap-join').click();
+        await waitCopies(++count);
+      }
+      await p.reload(); await q('recover-dialog').waitFor();
+      await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+      const got = await p.waitForFunction(() => { const n = [...document.querySelectorAll('.tabs .dtab:not([aria-label]) .tname')].map((e) => e.textContent); return n.length === 4 && n; });
+      assert.deepEqual(await got.jsonValue(), expected, 'recovered tabs keep their original order');
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 176: a copy is rewritten when its tab index changes (A B C, close A B, open D E)', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage();
+      p.on('dialog', (d) => d.accept().catch(() => {}));
+      const q = (id) => panelControl(p, p.getByTestId(id));
+      const tabsOf = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies().then((l) => l.map((c) => c.name + ':' + c.tab)));
+      const waitTabs = async (want) => {
+        for (let i = 0; i < 60; i++) { if ((await tabsOf()).join() === want.join()) return; await p.waitForTimeout(150); }
+        throw new Error('waiting for ' + want + ', there are ' + (await tabsOf()));
+      };
+      const edit = async (name) => {
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: readFileSync('fixtures/outline.dxf') });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await q('gap-join').click();
+      };
+      await p.goto(URL_ + '?autosave=300');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      for (const n of ['A.dxf', 'B.dxf', 'C.dxf']) await edit(n);
+      await waitTabs(['A.dxf:0', 'B.dxf:1', 'C.dxf:2']);
+      for (const n of ['A.dxf', 'B.dxf']) await p.locator(`.tabs [aria-label="Close ${n}"]`).click();
+      for (const n of ['D.dxf', 'E.dxf']) await edit(n);
+      await waitTabs(['C.dxf:0', 'D.dxf:1', 'E.dxf:2']);
+      await p.reload(); await q('recover-dialog').waitFor();
+      await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+      const got = await p.waitForFunction(() => { const n = [...document.querySelectorAll('.tabs .dtab:not([aria-label]) .tname')].map((e) => e.textContent); return n.length === 3 && n; });
+      assert.deepEqual(await got.jsonValue(), ['C.dxf', 'D.dxf', 'E.dxf']);
+    } finally { await ctx.close(); }
+  });
+
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
@@ -9480,15 +9545,21 @@ try {
     });
     const turn = async (degrees, shift = false, cancel = false) => {
       assert.equal(await arrows.count(), 4, `rotate mode before ${degrees} degree drag`);
-      const a = await arrow(), pv = await pivotPoint(), angle = degrees * Math.PI / 180;
-      const dx = a.x - pv.x, dy = a.y - pv.y;
+      // One read of both points, taken only once the first arrow is what a press at its midpoint would hit (the overlay may still be redrawing).
+      const { a, pv } = await (await page.waitForFunction(() => {
+        const el = document.querySelector('.ovl [data-rot]'), piv = document.querySelector('.ovl [data-pivot]');
+        if (!el || !piv) return null;
+        const q = el.getPointAtLength(el.getTotalLength() / 2), p = new DOMPoint(q.x, q.y).matrixTransform(el.getScreenCTM()), b = piv.getBoundingClientRect();
+        if (!b.width || !b.height || document.elementFromPoint(p.x, p.y)?.closest('[data-rot]') !== el) return null;
+        return { a: { x: p.x, y: p.y }, pv: { x: b.x + b.width / 2, y: b.y + b.height / 2 } };
+      })).jsonValue();
+      const angle = degrees * Math.PI / 180, dx = a.x - pv.x, dy = a.y - pv.y;
       if (shift) await page.keyboard.down('Shift');
       try {
         await page.mouse.move(a.x, a.y); await page.mouse.down();
         await page.mouse.move(pv.x + dx * Math.cos(angle) + dy * Math.sin(angle), pv.y - dx * Math.sin(angle) + dy * Math.cos(angle), { steps: 6 });
-        await frames();
-        await page.waitForFunction(() => document.querySelectorAll('.ovl .rot-label').length === 1);
-        assert.ok(Math.abs(parseFloat(await page.locator('.ovl .rot-label').textContent()) - (shift ? Math.round(degrees / 15) * 15 : degrees)) < .1);
+        const label = await (await page.waitForFunction(() => { const l = document.querySelectorAll('.ovl .rot-label'); return l.length === 1 && l[0].textContent; })).jsonValue();
+        assert.ok(Math.abs(parseFloat(label) - (shift ? Math.round(degrees / 15) * 15 : degrees)) < .1);
         assert.ok(await accentInk() > 0, 'live selection preview is painted');
         if (cancel) await page.keyboard.press('Escape');
         await page.mouse.up(); await frames();
@@ -10708,14 +10779,87 @@ try {
     await t('picker').setInputFiles({ name: 'g164a-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'g164a-layout.dxf');
     await frames(); await page.locator('[data-tool=select]').click();
-    await page.keyboard.press('Control+a'); await frames(); await gripWhen(4);       // only the MTEXT: a block object is not in the layout objects' drawing (as before), so it has no grips and no attribute grips
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(7);       // the MTEXT's 4 and the block object's 3 (TODO 171: a block object is in the layout objects' drawing now)
     const w = async () => gripBox(await page.locator('[data-testid=grip]').evaluateAll((l) => l.map((x) => x.dataset.grip).find((x) => x.endsWith(':w'))));
     const b = await w();       // a layout object sits at its own place on the sheet: drag by a pixel distance
-    await page.mouse.move(b.x, b.y); await page.mouse.down(); await page.mouse.move(b.x - 40, b.y, { steps: 6 }); await page.mouse.up(); await frames(); await gripWhen(4);
+    await page.mouse.move(b.x, b.y); await page.mouse.down(); await page.mouse.move(b.x - 40, b.y, { steps: 6 }); await page.mouse.up(); await frames(); await gripWhen(7);
     const a = await w();
     assert.ok(near(a.x, b.x - 40, 3), 'the layout MTEXT width grip is where it was dropped');
     const note = Object.values(layoutFromRaw(await savedDoc()).parts).find((p) => p.raw.entities.some((e) => e.type === 'MTEXT')).raw.entities.find((e) => e.type === 'MTEXT');
     assert.ok(fieldOf(note, 41) < 120, 'the object keeps the new width: ' + fieldOf(note, 41));
+    await closeTabs(/./);
+  });
+
+  await step('TODO 171: Layout block object grips: 3 grips; the insertion grip moves the object, an attribute grip moves only that attribute (one Undo each); Esc mid-drag changes nothing; save and reopen keeps the moved attribute', async () => {
+    await menuItem('View', 'Theme: light');
+    const { undo, shot, saved } = g164a;
+    const doc = newDoc(4);
+    addBlock(doc, 'Attributed', [dxfLine(0, 0, 60, 0)]);
+    const ins = dxfInsert('Attributed', 200, 300);
+    ins.kids = [['AAA', 'TAG1', 260, 360], ['BBB', 'TAG2', 260, 240]].map(([v, tag, x, y]) => entity('ATTRIB', [[10, x], [20, y], [40, 5], [2, tag], [1, v], [70, 0]]).r);
+    addEntities(doc, ins);
+    const raw = readDxf(writeDxf(doc)), lay = newLayout('Grips171');
+    lay.parts.b = objectPart('b', 'Attributed block', raw.entities[0], raw.layers, raw.header, raw.blocks);
+    lay.placed = [objectPlacement(lay.parts.b)];
+    const open = async (text, name) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await frames(); await page.locator('[data-tool=select]').click();
+      await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
+    };
+    const pos = async () => ({ i: await gripBox('0:i'), a0: await gripBox('0:a0'), a1: await gripBox('0:a1') });
+    const dragPx = async (id, dx, dy, hold = false) => {
+      const a = await gripBox(id);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx / 2, a.y + dy / 2, { steps: 3 }); await page.mouse.move(a.x + dx, a.y + dy, { steps: 3 });
+      if (!hold) { await page.mouse.up(); await frames(); await gripWhen(3); }
+    };
+    const same = (p, q, what) => { for (const k of ['i', 'a0', 'a1']) assert.ok(near(p[k].x, q[k].x, 2) && near(p[k].y, q[k].y, 2), `${what}: grip ${k} ${JSON.stringify(p[k])} vs ${JSON.stringify(q[k])}`); };
+    const posWhen = async (id, x, y) => (await page.waitForFunction(([g, x, y]) => {       // one read: all three grips, once the dropped one is at its new place
+      const c = (k) => { const el = document.querySelector(`[data-grip="0:${k}"]`); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+      const p = { i: c('i'), a0: c('a0'), a1: c('a1') };
+      return p.i && p.a0 && p.a1 && Math.abs(p[g].x - x) <= 2 && Math.abs(p[g].y - y) <= 2 && p;
+    }, [id, x, y])).jsonValue();
+    const inkBox = (cx, cy) => t('drawing').evaluate((c, [cx, cy]) => {       // the box (client px) of the ink in an 80 x 40 px window at the dropped grip: the preview's, then the committed one's
+      const r = c.getBoundingClientRect(), sx = c.width / r.width, sy = c.height / r.height, w = Math.round(80 * sx), h = Math.round(40 * sy), x0 = Math.round((cx - 10 - r.x) * sx), y0 = Math.round((cy - 25 - r.y) * sy);
+      const d = c.getContext('2d').getImageData(x0, y0, w, h).data; let b = null;
+      for (let i = 4; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) { const x = (i / 4) % w, y = Math.floor(i / 4 / w); b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)] : [x, y, x, y]; }
+      return b && [r.x + (x0 + b[0]) / sx, r.y + (y0 + b[1]) / sy, r.x + (x0 + b[2]) / sx, r.y + (y0 + b[3]) / sy];
+    }, [cx, cy]);
+    const sameInk = (pre, post, what) => { assert.ok(pre, what + ': the preview has ink there'); assert.ok(post && pre.every((v, k) => near(v, post[k], 3)), `${what}: preview ink ${JSON.stringify(pre)} vs committed ${JSON.stringify(post)}`); };
+    await open(writeDxf(layoutRaw(lay)), 'g171-layout.dxf');
+    assert.deepEqual(await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip).sort()), ['0:a0', '0:a1', '0:i'], 'a block object has the insertion grip and one per attribute');
+    const p0 = await pos();
+    await shot('layout-block-grips');
+    // the insertion grip moves the whole object
+    await dragPx('0:i', 40, 30, true);
+    const pre1 = await inkBox(p0.i.x + 40, p0.i.y + 30), pre1a = await inkBox(p0.a0.x + 40, p0.a0.y + 30);
+    await page.mouse.up(); await frames(); await gripWhen(3);
+    const p1 = await posWhen('i', p0.i.x + 40, p0.i.y + 30);
+    sameInk(pre1, await inkBox(p0.i.x + 40, p0.i.y + 30), 'the insertion grip: drawn where it was dropped');
+    sameInk(pre1a, await inkBox(p0.a0.x + 40, p0.a0.y + 30), 'the insertion grip: the attribute is drawn where it was dropped too');
+    for (const k of ['i', 'a0', 'a1']) assert.ok(near(p1[k].x, p0[k].x + 40, 2) && near(p1[k].y, p0[k].y + 30, 2), 'the object moved with its attributes: ' + k);
+    await undo(); await gripWhen(3); same(await pos(), p0, 'one Undo gives the move back');
+    // an attribute grip moves that attribute only; the preview is drawn while dragged and the result is where it was dropped
+    await dragPx('0:a1', 50, -35, true);
+    assert.ok(+(await t('drawing').getAttribute('data-preview') || 0) > 0, 'the attribute is drawn moving');
+    const pre2 = await inkBox(p0.a1.x + 50, p0.a1.y - 35);
+    await page.mouse.up(); await frames(); await gripWhen(3);
+    const p2 = await posWhen('a1', p0.a1.x + 50, p0.a1.y - 35);
+    sameInk(pre2, await inkBox(p0.a1.x + 50, p0.a1.y - 35), 'the attribute grip: drawn where it was dropped');
+    assert.ok(near(p2.a1.x, p0.a1.x + 50, 2) && near(p2.a1.y, p0.a1.y - 35, 2), 'the attribute is where it was dropped');
+    assert.ok(near(p2.i.x, p0.i.x, 2) && near(p2.i.y, p0.i.y, 2) && near(p2.a0.x, p0.a0.x, 2) && near(p2.a0.y, p0.a0.y, 2), 'the block and the other attribute stayed');
+    const text = await saved();
+    await undo(); await gripWhen(3); same(await pos(), p0, 'one Undo gives the attribute back');
+    // Esc mid-drag changes nothing (and leaves nothing to undo)
+    await dragPx('0:a0', -45, 20, true);
+    await page.keyboard.press('Escape'); await page.mouse.up(); await frames();
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
+    same(await pos(), p0, 'Esc mid-drag');
+    // the file keeps the moved attribute
+    await open(text, 'g171-reopen.dxf');
+    same(await pos(), p2, 'after save and reopen');
+    await shot('layout-block-grips-moved');
     await closeTabs(/./);
   });
 
@@ -21439,6 +21583,64 @@ try {
     assert.equal(await nParts(), gridN, 'one Undo puts the grid back');
     assert.equal(dimBlocks(await save()), 1, 'and its dimension');
     assert.equal(readMeta(readDxf(await save())).s.gridPart, part.partId, 'the grid is restored');
+  });
+
+  await step('TODO 175: + and − icons centred', async () => {
+    await nestLayout();
+    await t('ptab-drawing').click();
+    if (!await t('guide-add-h').isVisible()) await t('guides-panel').locator('.section-toggle').first().click();      // the Guides fold starts closed
+    const measure = (inDialog) => page.evaluate((inDialog) => {       // the dialog covers the layout panel: the nest buttons and the others are measured apart
+      const mid = (r, ax) => ax === 'x' ? r.x + r.width / 2 : r.y + r.height / 2;
+      const one = (btn, words) => {
+        const svg = btn.querySelector('svg'), r = btn.getBoundingClientRect();
+        if (!svg || !r.width) return { error: `${svg ? 'hidden' : 'no icon'} (width ${r.width}): ${btn.outerHTML.slice(0, 80)}` };
+        const s = svg.getBoundingClientRect();
+        if (!words) return { dx: mid(s, 'x') - mid(r, 'x'), dy: mid(s, 'y') - mid(r, 'y') };
+        const range = document.createRange(); range.selectNodeContents(btn.lastChild);       // the words are the last child, the icon the first
+        return { dx: 0, dy: mid(s, 'y') - mid(range.getBoundingClientRect(), 'y') };
+      };
+      const q = (sel) => document.querySelector(sel), zoom = (n) => q(`.zoombox [aria-label="${n}"]`);
+      return inDialog ? { 'nest −': one(q('[data-testid=nest-minus-0]')), 'nest +': one(q('[data-testid=nest-plus-0]')) } : {
+        'tab +': one(q('[data-testid=new-tab]')), 'zoom −': one(zoom('Zoom out')), 'zoom +': one(zoom('Zoom in')),
+        '+ New layout': one(q('[data-testid=new-layout]'), true), '+ Add from library': one(q('[data-testid=add-from-library]'), true),
+        '+ Horizontal': one(q('[data-testid=guide-add-h]'), true), '+ Vertical': one(q('[data-testid=guide-add-v]'), true),
+      };
+    }, inDialog);
+    for (const [id, name] of [['add-from-library', '+ Add from Parts library'], ['guide-add-h', '+ Horizontal'], ['guide-add-v', '+ Vertical']]) {
+      assert.equal(await page.getByRole('button', { name, exact: true }).getAttribute('data-testid'), id, `${id} keeps its accessible name "${name}"`);
+    }
+    const check = async (theme, inDialog) => {
+      for (const [name, m] of Object.entries(await measure(inDialog))) {
+        assert.ok(!m.error, `${theme} ${name}: ${m.error}`);
+        assert.ok(Math.abs(m.dy) <= 0.5 && Math.abs(m.dx) <= 0.5, `${theme} ${name}: icon off centre by dx ${m.dx.toFixed(2)}, dy ${m.dy.toFixed(2)} px`);
+      }
+      await page.screenshot({ path: `${shotDir}/s175-${inDialog ? 'nest' : 'layout'}-${theme}.png` });
+    };
+    for (const inDialog of [false, true]) {
+      if (inDialog) await t('nest').click();
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
+        await page.waitForTimeout(150);
+        await check(theme, inDialog);
+      }
+      if (inDialog) await t('nest-cancel').click();
+    }
+    await t('ptab-layers').click();                      // the Layers panel sits on its own docker tab
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
+      await page.waitForTimeout(150);
+      const m = await page.evaluate(() => {
+        const btn = document.querySelector('[data-testid=layer-add]'), svg = btn.querySelector('svg'), range = document.createRange();
+        range.selectNodeContents(btn.lastChild);
+        const s = svg.getBoundingClientRect(), w = range.getBoundingClientRect();
+        return { dy: s.y + s.height / 2 - (w.y + w.height / 2), name: btn.getAttribute('aria-label') };
+      });
+      assert.equal(m.name, 'Add layer', 'layer-add keeps its accessible name');
+      assert.ok(Math.abs(m.dy) <= 0.5, `${theme} + Add layer: icon off centre by dy ${m.dy.toFixed(2)} px`);
+      await page.locator('[data-testid=layer-add]').screenshot({ path: `${shotDir}/s175-layers-${theme}.png` });
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await closeTabs(/./);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

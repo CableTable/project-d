@@ -113,6 +113,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Layout object**: A line, arc, text or other drawing object drawn straight onto a layout sheet, not part of any part, such as a setup line, note or frame. Where: `DECISIONS.md`, Tools on Layouts. Avoid: Loose part (a placed part outside the step and repeat grid).
 
+**Block object**: A Layout object that is a block reference, with its own attributes, such as a title block on the sheet. Where: TODO 171. Avoid: Placed part (a part from the Parts library, even when it is saved as a block).
+
 **Layout tab**: A separate tab holding a sheet, parts and their positions, grippers, gaps, marks and repeat settings, which reopen from its saved DXF. Where: `DECISIONS.md`, Layout page; `TODO.md`, item 20. Avoid: AutoCAD paper-space layout.
 
 **Padlock**: The W / H proportions control: locked scales both sides together; unlocked changes each side independently. It starts locked and applies to selection size or the whole drawing when nothing is selected. Where: Drawing size fields; `web/app.js`. Avoid: Layer Lock.

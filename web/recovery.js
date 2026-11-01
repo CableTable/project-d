@@ -2,16 +2,20 @@
 // the user's files and never over them. Every call can fail (private mode, blocked storage, a full disk): the caller catches and the app
 // carries on without recovery.
 //
-// A record: { id (the tab or PDF sheet's recovery id), name, path, kind ('drawing' | 'layout'), dxf (the text Save would write), t (ms),
+// A record: { id (the tab or PDF sheet's recovery id), name, path, kind ('drawing' | 'layout'), dxf (the text Save would write), t (ms), tab, sheet,
 //             saved, fromFile, fromPdf, acceptedLoss (the tab's Save state, so Save works as before after a recovery) }.
 import { idbStore } from './idbstore.js';
 
 const store = idbStore('project-d-recovery', 'copies', 'the recovery store');
 
-/** Every recovery copy, oldest first. */
+/** Every recovery copy in tab / PDF sheet order; older copies without a position follow by time. */
 export async function loadCopies() {
   const all = await store.all();
-  return all.sort((a, b) => (a.t || 0) - (b.t || 0));
+  return all.sort((a, b) => {
+    const time = (a.t || 0) - (b.t || 0);
+    if (a.tab == null && b.tab == null) return time;
+    return (a.tab ?? Infinity) - (b.tab ?? Infinity) || (a.sheet || 0) - (b.sheet || 0) || time;
+  });
 }
 /** Adds or replaces a copy (done when it is really on disk). */
 export const saveCopy = (rec) => store.put(rec);

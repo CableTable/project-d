@@ -200,7 +200,9 @@ select.fld { font-family: var(--sans); }
 .canvas.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .zoombox { position: absolute; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 4px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
 .zoombox .pct { font-size: 12px; min-width: 40px; text-align: center; }
+.zoombox .tog { display: inline-flex; align-items: center; justify-content: center; }       /* the − / + icons sit centred by geometry */
 .tog { height: 22px; padding: 0 8px; border: 0; border-radius: var(--r); background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }
+.tog:has(> .icon) { display: inline-flex; align-items: center; gap: 4px; }       /* an icon beside words (Layers + Add) centres on the words */
 .tog.on { color: var(--accenttext); background: var(--sel); }
 .snap-control { display: inline-flex; align-items: center; }
 .snap-arrow { padding: 0 4px; }
@@ -532,6 +534,7 @@ select.fld { font-family: var(--sans); }
 /* Arrange, Group and Lock (TODO 36, 37; mock-ups R4a, R4b) */
 .ib { width: 34px; height: 32px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--line); border-radius: var(--r); background: var(--field); color: var(--text); cursor: pointer; padding: 0; flex-shrink: 0; }
 .ib:hover:not(:disabled) { border-color: var(--accent); color: var(--accenttext); }
+.icon { display: inline-flex; }       /* dom.js icon(): no line box around the svg, so it centres on its geometry */
 .ib:disabled { opacity: .45; cursor: default; }
 .row.arrow { gap: 3px; }
 .rowname { width: 58px; flex-shrink: 0; }

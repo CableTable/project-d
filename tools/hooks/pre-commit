@@ -7,3 +7,26 @@ if [ -n "$bad" ]; then
   echo "$bad" >&2
   exit 1
 fi
+
+# The loop only prints; the refusal is decided below in the main shell, not inside the pipe.
+mixed=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR | while IFS= read -r file; do
+  if git diff --cached --numstat -- "$file" | awk '$1 == "-" && $2 == "-" { binary=1 } END { exit !binary }'; then
+    continue
+  fi
+  # BINMODE preserves CR on Windows; the sentinel excludes an unterminated last line.
+  first=$( { git show ":$file"; printf '.'; } | awk -v BINMODE=3 '
+    NR > 1 {
+      if (line ~ /\r$/) crlf=1
+      else if (!lf) lf=NR-1
+    }
+    { line=$0 }
+    END { if (crlf && lf) print lf }
+  ')
+  if [ -n "$first" ]; then
+    echo "commit refused: mixed line endings in $file (first LF-only line $first)"
+  fi
+done)
+if [ -n "$mixed" ]; then
+  echo "$mixed" >&2
+  exit 1
+fi
