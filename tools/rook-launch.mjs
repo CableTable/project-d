@@ -50,24 +50,47 @@ export function parseReview(args) {
 }
 
 export function parseBuild(args) {
-  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over]';
-  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--over': 0 }, usage);
+  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--over': 0, '--big': 0 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   if (!SHA.test(pos[3])) throw new Error(`not a commit id: ${pos[3]}`);
   const as = account(flags, 'king', usage), dir = flags['--dir'] && flags['--dir'][0];
   if (dir && (dir !== 'king2' || as !== 'king')) throw new Error(`${usage}\n--dir king2 is for King (--as king)`);
-  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], over: !!flags['--over'] };
+  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], over: !!flags['--over'], big: !!flags['--big'] };
 }
 
 export function parseKnight(args) {
-  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--over]';
-  const { pos, flags } = parseFlags(args, { '--fix': 0, '--over': 0 }, usage);
+  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--over] [--big]';
+  const { pos, flags } = parseFlags(args, { '--fix': 0, '--over': 0, '--big': 0 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   const [brief, report, branch, sha] = pos;
   if (!report.endsWith('.txt')) throw new Error(`report must end in .txt (the log goes next to it): ${report}`);
   if (!SHA.test(sha)) throw new Error(`not a commit id: ${sha}`);
   const abs = resolve(report);
-  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], over: !!flags['--over'] };
+  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], over: !!flags['--over'], big: !!flags['--big'] };
+}
+
+export function lintBrief(text) {
+  const problems = [];
+  let behaviours = 0;
+  for (const [i, line] of text.split(/\r?\n/).entries()) {
+    const numbered = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
+    for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\s+\S+\s+(['"])(.*?)\1/g)) {
+      for (const piece of filter.split('|')) {
+        if (/^(?:[a-z]|\[[a-z]{2}\])+$/i.test(piece.trim())) problems.push(`line ${i + 1}: one-word browser filter piece '${piece}'`);
+      }
+    }
+    if (/full (browser )?suite/i.test(line) && !/\bRook\b/i.test(line)) problems.push(`line ${i + 1}: builder asked for the full suite`);
+    if (/(^|[\s(`'"])runs\d+\//.test(line)) problems.push(`line ${i + 1}: bare runs<N>/ path; use ../runs<N>/ or an absolute path`);
+  }
+  if (behaviours > 5) problems.unshift(`${behaviours} behaviour lines (maximum 5)`);
+  return problems;
+}
+
+function checkBrief(x, brief, big) {
+  const problems = lintBrief(x.read(brief));
+  if (problems.length && !big) throw new Error(`brief refused:\n${problems.join('\n')}\n--big overrides these problems`);
 }
 
 // WORKFLOW.md's reviewer flags, plus the extras folder (the brief lives there).
@@ -132,6 +155,7 @@ const io = {
   },
   has(dir, sha) { try { execFileSync('git', ['-C', dir, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'pipe' }); return true; } catch { return false; } },
   need(path, what) { if (!existsSync(path)) throw new Error(`${what} not found: ${path}`); },
+  read: (path) => readFileSync(path, 'utf8'),
   open: (path, mode) => openSync(path, mode),
   locked: (dir) => existsSync(lockFile(dir)),
   npmCi(dir) {
@@ -183,10 +207,11 @@ export function review(args, x = io) {
 }
 
 export function build(args, x = io) {
-  const { brief, out, branch, sha, as, dir: second, fix, over } = parseBuild(args);
+  const { brief, out, branch, sha, as, dir: second, fix, over, big } = parseBuild(args);
   x.gate.check(fix, over);
   const dir =second ? folder(as, 'review') : folder(as, 'build'); // king2 is King's review folder: needClean refuses it while a review runs
   x.need(brief, 'brief file');
+  checkBrief(x, brief, big);
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
   needHooks(x, dir);
@@ -212,10 +237,11 @@ function needHooks(x, dir) {
 }
 
 export function knight(args, x = io) {
-  const { brief, report, branch, sha, log, fix, over } = parseKnight(args);
+  const { brief, report, branch, sha, log, fix, over, big } = parseKnight(args);
   x.gate.check(fix, over);
   const clone = `${EXTRAS}/ProjectD-rowan`;
   x.need(brief, 'brief file');
+  checkBrief(x, brief, big);
   x.need(CODEX, basename(CODEX));
   needClean(x, clone);
   needHooks(x, clone);

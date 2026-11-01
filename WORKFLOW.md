@@ -152,7 +152,8 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # --resume only to finish a run that was cut off mid-work (usage limit), then start fresh again.
 
 # One call does the folder check, `switch -c` and launch below (raw commands are the fallback):
-#   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--over]   (default king: claude3 in `../Project D extras/ProjectD-king`; bishop: claude2 in ProjectD-s15fix)
+#   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--over] [--big]   (default king: claude3 in `../Project D extras/ProjectD-king`; bishop: claude2 in ProjectD-s15fix)
+#   Brief lint (build / knight, including --fix): refuses more than 5 numbered non-routine behaviour lines, one-word browser filter pieces, a full-suite request unless the line names Rook, or a bare runs<N>/ path; --big overrides.
 #   <branch> is always new: `king/<id>` for a build, `king/<id>fix` for a fix round (from the build's head); never `claude/session<N>`. The brief's Branch line uses the same two values (S30 retro: 4 briefs patched).
 #   Handover gate (TODO 165): the 3rd NEW-item launch per Rook is refused ("handover due"); --fix marks a fix round (always allowed); --over lets a 3rd item through (his OK only); `node tools/rook.mjs gate` rewrites queue.txt line 2.
 # King's shell rules: .claude/agents/builder.md step 0.
@@ -199,7 +200,7 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # CI-only red: `gh run download <id> -n browser-failure-shard-<N>` into runs<N>/ before the fix brief; local shards match CI's, so suspect Linux / timing, not order.
 # A step red unsharded or in the full suite but green alone or in shards: Rook appends "<date> <step> <shard|unsharded>" to runs<N>/flakes.txt on reading the report; a 2nd hit becomes a TODO.
 # One call does the clone check, fetch, `switch -c` and launch below (raw commands are the fallback):
-#   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--over]   (log = the report's name with .log; --fix / --over as for build)
+#   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--over] [--big]   (log = the report's name with .log; --fix / --over / --big as for build)
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
 # FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
 # `git switch -c <branch> <sha>`. After: Rook pushes.
