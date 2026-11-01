@@ -101,7 +101,8 @@ usage-agent-install.ps1.
    days old: `claude plugin marketplace update mattpocock`, then `plugin update mattpocock-skills@mattpocock` with `claude`,
    `claude2.cmd` and `claude3.cmd`; diff the newest plugin `skills/engineering/retro/SKILL.md` against the copy (ignore the
    `description:` and `disable-model-invocation:` lines); changed -> refresh the copy (drop `disable-model-invocation`, keep
-   our description) and commit; append today's date + result to weekly-check.txt.
+   our description) and commit; append today's date + result to weekly-check.txt. Same check (his call, 2026-11-01): a Bishop run of
+   `ponytail:ponytail-debt` (Haiku or Sonnet low, read-only) lists every `shortcut:` comment; Rook turns the ones that matter into TODO rows and names them in one line.
 5. **Tickets sized for one fresh session** (his call 2026-10-20): every M / L TODO item is split into tickets
    (TODO "66a", "66b", …), each a vertical slice that one fresh builder run can finish with its context under
    **150k tokens** (the "smart zone"). A ticket names what it depends on. A run whose peak context passes 150k
@@ -380,6 +381,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then commit at once; Rook runs the full suite after them (S28b retro: the ~12 min suite outlives a builder's 10 min command limit, goes to the background and the run ends uncommitted, 3x). Every build branches from the CURRENT session head (items already on it), so two builds never conflict on the cherry-pick (S28b: 156b4 from an old base conflicted with 156c). Briefs say: the worktree is already your working folder, no `cd "<worktree>" &&` prefix (denied 6-11x a run). Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
   While fixing, filter on their own step only (`'TODO <id>'`); widen once, before commit, to whole step-name pieces they grepped, never single words like `Text` (session 26 King retro: 5 unrelated slow steps per run).
+- **Bug and flake briefs** (his call, 2026-11-01): a Claude builder (King / Bishop) runs the Skill tool for `mattpocock-skills:diagnosing-bugs` first and reproduces the failure before fixing (CI-only: the downloaded artifact, Linux timing, CPU throttling); Knight gets the same loop as a line pointing at that skill's SKILL.md. The report says "reproduced" or "not reproduced: likely cause".
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
   Each finding names its **case grid** (S29 retro: 155h2 and 155e3 each needed an extra round because only the repro was fixed): every input sharing the cause; the fix covers the grid and adds ONE table-driven unit test over it.
