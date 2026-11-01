@@ -1,0 +1,9 @@
+Build: TODO <item> (<summary>). Branch <branch> from <sha> (already switched for you).
+
+Spec: "<spec path>" (read it first). TODO.md row <item>.
+
+Do:
+<Do list>
+
+Commit "<commit title>".
+Report max <report size> lines: Result (commit id), Tests (quoted lines), Findings, Not checked.

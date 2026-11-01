@@ -1,0 +1,7 @@
+Review: TODO <item> (<summary>), commit <sha> on <branch> (base <base sha>).
+Spec: "<spec path>"; brief: "<brief path>".
+
+Check:
+<Do list>
+
+Report max <report size> lines: Result (ship as is / fix first), Tests (quoted lines), Findings (ranked, file:line, severity), Not checked.

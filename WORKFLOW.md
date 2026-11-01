@@ -131,6 +131,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 
 ## Commands (Git Bash, from the repo folder)
 
+Briefs start from `tools/briefs/<kind>.txt` (build, fix, review).
 Write the brief to a file and pass it on **stdin** (a quoted `-p "$(cat …)"` arrived empty once).
 
 ```bash
