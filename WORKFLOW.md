@@ -112,8 +112,9 @@ usage-agent-install.ps1.
    (said in the report's first line), so a cut-off run loses nothing.
    Briefs for pure geometry (S29 retro) name the **case grid** (positions before / at / inside / beyond, both orders, both picks; every entity type that shares the code) and ask for ONE table-driven unit test over it.
    Grip tickets (S30 retro: 4 of 5 King fix rounds): the grid also has several hot grips (with a grip of another entity, every hot order), and the preview (`gripAim`) is asserted equal to the commit (`gripCommit`).
+   A brief that asks for every X (every button, every caller) carries the grep Rook ran to find them, with its hit list; the builder's report quotes the same grep (S31 retros: 175 took 2 fix rounds on "+" buttons a hand list missed).
    A wide filter names its known subset-only reds in the brief (now: 'tracking: POLAR also locks a grip', 'review: the gripper label': they need earlier steps' state); the builder skips them.
-   Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it);
+   Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it); paths into runs<N>/ are written `../runs<N>/` (the builder's cwd is its worktree; S31 King retro);
    when an item changes existing behaviour, name the old browser steps that check it (`grep -n` in browser.test.mjs) and say to update
    them in the same commit; tests are `npm.cmd test` and the item's steps by argument (`node browser.test.mjs <port> '<name>'`), never an
    env var and never the full suite.
@@ -181,6 +182,7 @@ cd -
 # A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-s15fix.
 
 # Lookup (Haiku)
+# Reddit: WebFetch, curl, .json (403) and the Chrome extension all fail (S31). Route: a Bishop run opens the link in normal Chrome, PowerShell CopyFromScreen + SendKeys PgDn, reads the shots, reports in lines; Rook never reads the images.
 $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format text < question.txt
 
 # Research: Knight (Codex CLI, ChatGPT Go; set up 2026-10-20 with the non-admin sandbox). Read-only, live web search,
@@ -195,7 +197,7 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # `codex sandbox setup --elevated --current-user`); add the Playwright folder so Chromium starts. Never --dangerously-*.
 # Before a Knight build: `git status --porcelain` in the clone must be empty; leftovers -> `git stash -u -m "<run>"`, never a commit.
 # CI-only red: `gh run download <id> -n browser-failure-shard-<N>` into runs<N>/ before the fix brief; local shards match CI's, so suspect Linux / timing, not order.
-# A step red in the full suite but green alone: append "<date> <step> <shard>" to runs<N>/flakes.txt; a 2nd hit becomes a TODO.
+# A step red unsharded or in the full suite but green alone or in shards: Rook appends "<date> <step> <shard|unsharded>" to runs<N>/flakes.txt on reading the report; a 2nd hit becomes a TODO.
 # One call does the clone check, fetch, `switch -c` and launch below (raw commands are the fallback):
 #   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--over]   (log = the report's name with .log; --fix / --over as for build)
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
@@ -267,6 +269,8 @@ Opus run; let running builders finish (a builder cut off mid-work leaves uncommi
 **Queuing runs** (2026-10-19: a queued job waited on its own output file and sat idle for hours):
 - Jobs that must run one after another go in ONE background script, plainly in order (`run A; run B`), never as
   a second script that waits for the first one's file. Write each script fresh, never by `sed` on another script.
+- When a builder frees up (its run ends or its limit resets), in that same turn launch the next TODO item whose files don't
+  overlap the running build (`tools/` tickets are disjoint from `web/`). S31: Knight sat idle ~35 min after his reset.
 - Any wait loop has a time limit and prints what it waits for. Print the script (`head`) before launching it.
 - Within ~2 minutes of a run's planned start, check that its output file exists. A `json` file stays empty until
   the run ends, so a background run uses `--output-format stream-json --verbose` (it grows as it works; the last
@@ -304,7 +308,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   runs `Project D extras/start-rook.ps1`, which reads `Project D extras/rook-next.txt` (line 1 session uuid, 2 name `Rook S<n>`,
   3 resume file): transcript found -> `--resume`, else a fresh `--session-id` told to read the resume file. Each Rook session
   writes its own uuid there at start (a reboot resumes it); at handover it writes a NEW uuid + the next resume file, then
-  either the PC shuts down (next logon starts it) or Rook starts `Rook.lnk` (Windows Terminal; S28 retro: `Start-Process powershell.exe` on the script started no session; untested guess) and checks the new uuid's `.jsonl` appears within 60 s (never start_session).
+  either the PC shuts down (next logon starts it) or Rook starts `Rook.lnk` with `Start-Process (Join-Path ([Environment]::GetFolderPath('Startup')) 'Rook.lnk')` (works, S31b; `Start-Process powershell.exe` on the script starts nothing) and checks the new uuid's `.jsonl` appears within 60 s (never start_session).
   **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min (`timeout_ms` is Monitor's; Bash and PowerShell take `timeout`),
   re-arm on expiry). It prints each finished job and ends with `RUN <id> success|failure`. Never pipe to `jq`: it is not installed
   here, so such a watch stays silent forever (two silent monitors on PR #25); use gh's own `--jq`.
@@ -321,9 +325,9 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   `support/pip-support-prompt.md`). Rook moves `open` tickets into TODO.md at each session start and keeps each ticket's
   Status current (in TODO → building → built → merged → checked in exe); Bishop-support never edits the repo.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
-  `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
+  `node tools/rook.mjs result <run file>` (the reply + tokens). Write the brief with the real base sha already in it (Write tool; never `sed` a brief), then launch with one plain `node tools/rook.mjs build|knight|review ...` call (S31: two `sed -i` + launch chains denied).
   Change a brief or queue.txt with Read + Edit in the same turn (launchers rewrite queue line 2), never `sed -i` or a chain with a launch (denied, S30 retro); git and launches go in their own command.
-- Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head (builders run `npm.cmd test` and their item's steps; reviewers unit only); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
+- Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head, only after every review on the branch says ship (S31b ran it twice) (builders run `npm.cmd test` and their item's steps; reviewers unit only); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
   never reads skill or reference docs it has read before in the session.
 - While runs go, Rook ends its turn and waits for the notice; no status messages in between.
 - The usage page is https://project-d-usage.web.app (Firebase, his Google account only; session 12). The PC agent
