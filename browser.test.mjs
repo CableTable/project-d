@@ -10714,14 +10714,69 @@ try {
     await t('picker').setInputFiles({ name: 'g164a-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'g164a-layout.dxf');
     await frames(); await page.locator('[data-tool=select]').click();
-    await page.keyboard.press('Control+a'); await frames(); await gripWhen(4);       // only the MTEXT: a block object is not in the layout objects' drawing (as before), so it has no grips and no attribute grips
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(7);       // the MTEXT's 4 and the block object's 3 (TODO 171: a block object is in the layout objects' drawing now)
     const w = async () => gripBox(await page.locator('[data-testid=grip]').evaluateAll((l) => l.map((x) => x.dataset.grip).find((x) => x.endsWith(':w'))));
     const b = await w();       // a layout object sits at its own place on the sheet: drag by a pixel distance
-    await page.mouse.move(b.x, b.y); await page.mouse.down(); await page.mouse.move(b.x - 40, b.y, { steps: 6 }); await page.mouse.up(); await frames(); await gripWhen(4);
+    await page.mouse.move(b.x, b.y); await page.mouse.down(); await page.mouse.move(b.x - 40, b.y, { steps: 6 }); await page.mouse.up(); await frames(); await gripWhen(7);
     const a = await w();
     assert.ok(near(a.x, b.x - 40, 3), 'the layout MTEXT width grip is where it was dropped');
     const note = Object.values(layoutFromRaw(await savedDoc()).parts).find((p) => p.raw.entities.some((e) => e.type === 'MTEXT')).raw.entities.find((e) => e.type === 'MTEXT');
     assert.ok(fieldOf(note, 41) < 120, 'the object keeps the new width: ' + fieldOf(note, 41));
+    await closeTabs(/./);
+  });
+
+  await step('TODO 171: Layout block object grips: 3 grips; the insertion grip moves the object, an attribute grip moves only that attribute (one Undo each); Esc mid-drag changes nothing; save and reopen keeps the moved attribute', async () => {
+    await menuItem('View', 'Theme: light');
+    const { undo, shot, saved } = g164a;
+    const doc = newDoc(4);
+    addBlock(doc, 'Attributed', [dxfLine(0, 0, 60, 0)]);
+    const ins = dxfInsert('Attributed', 200, 300);
+    ins.kids = [['AAA', 'TAG1', 260, 360], ['BBB', 'TAG2', 260, 240]].map(([v, tag, x, y]) => entity('ATTRIB', [[10, x], [20, y], [40, 5], [2, tag], [1, v], [70, 0]]).r);
+    addEntities(doc, ins);
+    const raw = readDxf(writeDxf(doc)), lay = newLayout('Grips171');
+    lay.parts.b = objectPart('b', 'Attributed block', raw.entities[0], raw.layers, raw.header, raw.blocks);
+    lay.placed = [objectPlacement(lay.parts.b)];
+    const open = async (text, name) => {
+      await closeTabs(/./);
+      await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(text) });
+      await page.waitForFunction((n) => document.querySelector('.tabs .dtab.on .tname').textContent === n, name);
+      await frames(); await page.locator('[data-tool=select]').click();
+      await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
+    };
+    const pos = async () => ({ i: await gripBox('0:i'), a0: await gripBox('0:a0'), a1: await gripBox('0:a1') });
+    const dragPx = async (id, dx, dy, hold = false) => {
+      const a = await gripBox(id);
+      await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(a.x + dx / 2, a.y + dy / 2, { steps: 3 }); await page.mouse.move(a.x + dx, a.y + dy, { steps: 3 });
+      if (!hold) { await page.mouse.up(); await frames(); await gripWhen(3); }
+    };
+    const same = (p, q, what) => { for (const k of ['i', 'a0', 'a1']) assert.ok(near(p[k].x, q[k].x, 2) && near(p[k].y, q[k].y, 2), `${what}: grip ${k} ${JSON.stringify(p[k])} vs ${JSON.stringify(q[k])}`); };
+    await open(writeDxf(layoutRaw(lay)), 'g171-layout.dxf');
+    assert.deepEqual(await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip).sort()), ['0:a0', '0:a1', '0:i'], 'a block object has the insertion grip and one per attribute');
+    const p0 = await pos();
+    await shot('layout-block-grips');
+    // the insertion grip moves the whole object
+    await dragPx('0:i', 40, 30);
+    const p1 = await pos();
+    for (const k of ['i', 'a0', 'a1']) assert.ok(near(p1[k].x, p0[k].x + 40, 2) && near(p1[k].y, p0[k].y + 30, 2), 'the object moved with its attributes: ' + k);
+    await undo(); await gripWhen(3); same(await pos(), p0, 'one Undo gives the move back');
+    // an attribute grip moves that attribute only; the preview is drawn while dragged and the result is where it was dropped
+    await dragPx('0:a1', 50, -35, true);
+    assert.ok(+(await t('drawing').getAttribute('data-preview') || 0) > 0, 'the attribute is drawn moving');
+    await page.mouse.up(); await frames(); await gripWhen(3);
+    const p2 = await pos();
+    assert.ok(near(p2.a1.x, p0.a1.x + 50, 2) && near(p2.a1.y, p0.a1.y - 35, 2), 'the attribute is where it was dropped');
+    assert.ok(near(p2.i.x, p0.i.x, 2) && near(p2.i.y, p0.i.y, 2) && near(p2.a0.x, p0.a0.x, 2) && near(p2.a0.y, p0.a0.y, 2), 'the block and the other attribute stayed');
+    const text = await saved();
+    await undo(); await gripWhen(3); same(await pos(), p0, 'one Undo gives the attribute back');
+    // Esc mid-drag changes nothing (and leaves nothing to undo)
+    await dragPx('0:a0', -45, 20, true);
+    await page.keyboard.press('Escape'); await page.mouse.up(); await frames();
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(3);
+    same(await pos(), p0, 'Esc mid-drag');
+    // the file keeps the moved attribute
+    await open(text, 'g171-reopen.dxf');
+    same(await pos(), p2, 'after save and reopen');
+    await shot('layout-block-grips-moved');
     await closeTabs(/./);
   });
 

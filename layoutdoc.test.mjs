@@ -6,6 +6,7 @@ import { writeDxf, newDoc, addEntities, addLayer, rect, line, circle, insert, ad
 import { placedMat, placedBox, placement1, buildLayoutDoc } from './web/apply.js';
 import * as LD from './web/layoutdoc.js';
 import * as P from './web/place.js';
+import * as GR from './web/grips.js';
 import * as TX from './web/text.js';
 import { planPdf, readTitleBlock, withTitleBlock } from './web/pdf-export.js';
 import { isDimPart } from './web/layoutdim.js';
@@ -665,6 +666,71 @@ test('Explode twice: nested INSERT objects release their members on the second r
   assert.deepEqual(boxes(back), boxes(lay));
   assert.equal(LD.explodePlaced(lay, lay.placed.map((_, i) => i), newId).done, 2);
   assert.ok(lay.placed.every((p) => lay.parts[p.partId].raw.entities[0].type === 'LINE'));
+});
+
+// ---- TODO 171: a block object (an INSERT on a layout) is in objectDoc, so it gets the Drawings tab's grips
+const attr = (x, y, tag) => ({ type: 'ATTRIB', c: [10, 20, 40, 1, 2], v: [String(x), String(y), '2', 'val ' + tag, tag] });
+const blockObject = (nAttr, name = 'B1', blocks = { B1: { base: [0, 0], xref: false, entities: [circle(0, 0, 5)] } }) => {
+  const ent = { ...insert(name, 10, 100), kids: [attr(17, 100, 'T0'), attr(17, 90, 'T1')].slice(0, nAttr) };
+  return LD.objectPart('b1', 'Block 1', ent, newDoc(4).layers, {}, blocks);
+};
+const gripPts = (ent, mode = 1) => GR.gripsOf(ent, mode).map((g) => [g.id, R(g.x), R(g.y)]);
+const bakedAt = (part, p, x, y) => {       // where the sheet point (x, y) of the object ends up: about the box corner, mirror X, scale, turn, then to p
+  const k = p.sc || 1, sx = (p.mirrorX ? -1 : 1) * k, sy = (p.mirrorY ? -1 : 1) * k, lx = (x - part.box[0]) * sx, ly = (y - part.box[1]) * sy, a = (p.rot || 0) * Math.PI / 180;
+  return [R(p.x + lx * Math.cos(a) - ly * Math.sin(a)), R(p.y + lx * Math.sin(a) + ly * Math.cos(a))];
+};
+
+test('TODO 171: a block object is one INSERT in objectDoc with the insertion grip + one per attribute, for every placement', () => {
+  for (const nAttr of [0, 1, 2]) for (const [label, over] of [['plain', {}], ['rotated 30', { rot: 30 }], ['scaled 2', { sc: 2 }], ['mirrored X', { mirrorX: true }]]) {
+    const lay = LD.newLayout('B'), part = blockObject(nAttr), p = { ...LD.objectPlacement(part), x: 300, y: 200, ...over };
+    lay.parts.b1 = part; lay.placed.push(p);
+    const v = LD.objectDoc(lay), what = `${nAttr} attributes, ${label}`;
+    assert.equal(v.raw.entities.length, 1, what); assert.equal(v.raw.entities[0].type, 'INSERT', what); assert.ok(v.raw.blocks.B1, what);
+    const g = gripPts(v.raw.entities[0], Number(v.raw.header.$ATTMODE));
+    assert.deepEqual(g.map((x) => x[0]), ['i', ...[...Array(nAttr).keys()].map((k) => 'a' + k)], what);
+    const want = [[10, 100], [17, 100], [17, 90]].slice(0, nAttr + 1).map(([x, y]) => bakedAt(part, p, x, y));
+    assert.deepEqual(g.map((x) => [x[1], x[2]]), want, what);
+  }
+});
+
+test('TODO 171: the layout\'s attribute display mode follows into the grips; a nested block, and a locked block object', () => {
+  const lay = LD.newLayout('B'), part = blockObject(2);
+  part.raw.entities[0].kids[1].c.push(70); part.raw.entities[0].kids[1].v.push('1');       // T1 is invisible
+  lay.parts.b1 = part; lay.placed.push(LD.objectPlacement(part));
+  for (const [mode, ids] of [[0, ['i']], [1, ['i', 'a0']], [2, ['i', 'a0', 'a1']]]) {
+    lay.s.attmode = mode;
+    const v = LD.objectDoc(lay);
+    assert.deepEqual(GR.gripsOf(v.raw.entities[0], Number(v.raw.header.$ATTMODE)).map((g) => g.id), ids, 'attmode ' + mode);
+  }
+  assert.notEqual(LD.objectSig(lay, () => false), (lay.s.attmode = 1, LD.objectSig(lay, () => false)), 'the mode is in the signature');
+  const nest = LD.newLayout('N'), outer = LD.objectPart('n1', 'Nest', { ...insert('B2', 0, 0), kids: [] }, newDoc(4).layers, {},
+    { B2: { base: [0, 0], xref: false, entities: [insert('B1', 0, 0)] }, B1: { base: [0, 0], xref: false, entities: [circle(0, 0, 5)] } });
+  nest.parts.n1 = outer; nest.placed.push({ ...LD.objectPlacement(outer), rot: 90 });
+  const nv = LD.objectDoc(nest);
+  assert.equal(nv.raw.entities.length, 1); assert.deepEqual(Object.keys(nv.raw.blocks).sort(), ['B1', 'B2'], 'the nested block comes along');
+  lay.placed[0].lock = true;
+  const lv = LD.objectDoc(lay);
+  assert.ok(lv.lockedEnts.has(lv.raw.entities[0]), 'a locked block object is in lockedEnts (no grips)');
+});
+
+test('TODO 171: a part placed twice, one attribute moved: only that placed object changes, and it survives a save and reopen', () => {
+  const lay = LD.newLayout('B'), part = blockObject(2);
+  lay.parts.b1 = part; lay.placed.push(LD.objectPlacement(part), { ...LD.objectPlacement(part), x: 400, y: 300, rot: 90 });
+  const v = LD.objectDoc(lay), before = v.raw.entities.map((e) => gripPts(e)), other = v.raw.entities[0];
+  const [, x, y] = gripPts(v.raw.entities[1]).find((g) => g[0] === 'a1');
+  const moved = GR.dragGrip(v.raw.entities[1], 'a1', [x + 5, y + 8]).ent;
+  assert.ok(LD.objectReplace(lay, v, v.raw.entities[1], moved, () => 'n1'));
+  assert.equal(lay.placed[0].partId, 'b1', 'the other copy keeps its part'); assert.notEqual(lay.placed[1].partId, 'b1');
+  const check = (l, what) => {
+    const w = LD.objectDoc(l), g = w.raw.entities.map((e) => gripPts(e));
+    assert.deepEqual(g[0], before[0], what + ': the other copy is unchanged'); assert.equal(w.raw.entities.length, 2, what);
+    assert.deepEqual(g[1].map((a) => a[0]), ['i', 'a0', 'a1'], what);
+    assert.deepEqual(g[1][0].slice(1), before[1][0].slice(1), what + ': the insertion point stayed'); assert.deepEqual(g[1][1].slice(1), before[1][1].slice(1), what + ': so did the other attribute');
+    assert.deepEqual(g[1][2].slice(1), [R(x + 5), R(y + 8)], what + ': the attribute is where it was dropped');
+  };
+  check(lay, 'in the layout');
+  check(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay)))), 'after save and reopen');
+  assert.equal(other, LD.objectDoc(lay).raw.entities[0], 'the unchanged copy is the same entity object');
 });
 
 console.log(n + ' tests passed');
