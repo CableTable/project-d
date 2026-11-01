@@ -21537,8 +21537,12 @@ try {
       return inDialog ? { 'nest −': one(q('[data-testid=nest-minus-0]')), 'nest +': one(q('[data-testid=nest-plus-0]')) } : {
         'tab +': one(q('[data-testid=new-tab]')), 'zoom −': one(zoom('Zoom out')), 'zoom +': one(zoom('Zoom in')),
         '+ New layout': one(q('[data-testid=new-layout]'), true), '+ Add from library': one(q('[data-testid=add-from-library]'), true),
+        '+ Horizontal': one(q('[data-testid=guide-add-h]'), true), '+ Vertical': one(q('[data-testid=guide-add-v]'), true),
       };
     }, inDialog);
+    for (const [id, name] of [['add-from-library', '+ Add from Parts library'], ['guide-add-h', '+ Horizontal'], ['guide-add-v', '+ Vertical']]) {
+      assert.equal(await page.getByRole('button', { name, exact: true }).getAttribute('data-testid'), id, `${id} keeps its accessible name "${name}"`);
+    }
     const check = async (theme, inDialog) => {
       for (const [name, m] of Object.entries(await measure(inDialog))) {
         assert.ok(!m.error, `${theme} ${name}: ${m.error}`);
