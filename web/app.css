@@ -202,6 +202,7 @@ select.fld { font-family: var(--sans); }
 .zoombox .pct { font-size: 12px; min-width: 40px; text-align: center; }
 .zoombox .tog { display: inline-flex; align-items: center; justify-content: center; }       /* the − / + icons sit centred by geometry */
 .tog { height: 22px; padding: 0 8px; border: 0; border-radius: var(--r); background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }
+.tog:has(> .icon) { display: inline-flex; align-items: center; gap: 4px; }       /* an icon beside words (Layers + Add) centres on the words */
 .tog.on { color: var(--accenttext); background: var(--sel); }
 .snap-control { display: inline-flex; align-items: center; }
 .snap-arrow { padding: 0 4px; }

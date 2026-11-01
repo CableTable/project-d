@@ -21523,6 +21523,7 @@ try {
   await step('TODO 175: + and − icons centred', async () => {
     await nestLayout();
     await t('ptab-drawing').click();
+    if (!await t('guide-add-h').isVisible()) await t('guides-panel').locator('.section-toggle').first().click();      // the Guides fold starts closed
     const measure = (inDialog) => page.evaluate((inDialog) => {       // the dialog covers the layout panel: the nest buttons and the others are measured apart
       const mid = (r, ax) => ax === 'x' ? r.x + r.width / 2 : r.y + r.height / 2;
       const one = (btn, words) => {
@@ -21558,6 +21559,20 @@ try {
         await check(theme, inDialog);
       }
       if (inDialog) await t('nest-cancel').click();
+    }
+    await t('ptab-layers').click();                      // the Layers panel sits on its own docker tab
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
+      await page.waitForTimeout(150);
+      const m = await page.evaluate(() => {
+        const btn = document.querySelector('[data-testid=layer-add]'), svg = btn.querySelector('svg'), range = document.createRange();
+        range.selectNodeContents(btn.lastChild);
+        const s = svg.getBoundingClientRect(), w = range.getBoundingClientRect();
+        return { dy: s.y + s.height / 2 - (w.y + w.height / 2), name: btn.getAttribute('aria-label') };
+      });
+      assert.equal(m.name, 'Add layer', 'layer-add keeps its accessible name');
+      assert.ok(Math.abs(m.dy) <= 0.5, `${theme} + Add layer: icon off centre by dy ${m.dy.toFixed(2)} px`);
+      await page.locator('[data-testid=layer-add]').screenshot({ path: `${shotDir}/s175-layers-${theme}.png` });
     }
     await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
     await closeTabs(/./);

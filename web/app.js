@@ -1523,7 +1523,7 @@ function buildPanel() {
     buildLibrary(),
     ui.layersSec = h('section', { class: 'layers' },
       h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Layers'),
-        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, '+ Add')),
+        ui.layerAdd = h('button', { class: 'tog', type: 'button', 'aria-label': 'Add layer', 'data-testid': 'layer-add', title: 'Add a layer (Layer1, Layer2…): it becomes the current layer, and you can name it and pick its colour', onclick: addLayerNow }, domIcon('plus', 12), 'Add')),
       h('div', { class: 'osr lsr' }, oIcon('<circle cx="11" cy="11" r="6"/><path d="M16 16l4 4"/>'), ui.layerSearch = h('input', { type: 'text', placeholder: 'Search layers…', 'aria-label': 'Search layers', 'data-testid': 'layer-search', autocomplete: 'off', spellcheck: 'false' })),
       ui.layerRows),
     buildObjects());
