@@ -10844,6 +10844,23 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 164b1: a Stretch with the hatch centre and a line end both hot moves both; 71 -> 0 and the message shows; one Undo brings it back', async () => {
+    const { hotWhen, hist, undo } = g163, { now } = g164b1;
+    await menuItem('View', 'Theme: light');
+    await openGrips(g164b1Doc(true), 'g164b1-multi.dxf');
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(4);
+    const shiftGrip = async (id) => { const a = await gripBox(id); await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { await page.keyboard.up('Shift'); } await frames(); };
+    await shiftGrip('0:c'); await shiftGrip('1:b'); await hotWhen(2);
+    const a = await gripBox('0:c'); await page.mouse.click(a.x, a.y); await frames();
+    assert.match(await hist(), /\*\* STRETCH \*\*/);
+    await typeCmd('@10,0'); await hotWhen(0);
+    assert.match(await prompt(), /Hatch boundary associativity removed\./);       // before savedDoc, which replaces the hint
+    assert.equal(fieldOf(await now(), 71), 0, 'the association is gone');
+    await undo();
+    assert.equal(fieldOf(await now(), 71), 1, 'one Undo brings it back');
+    await closeTabs(/./);
+  });
+
   await step('TODO 164b1: the hatch options on Compare (routes to the source); a save and reopen keeps 52 / 41 / 71 and the lines', async () => {
     const { list, hover, pickItem, hotWhen } = g163, { now } = g164b1;
     await menuItem('View', 'Theme: light');

@@ -8696,7 +8696,7 @@ function gripCommit() {
     commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
     setSel(d, g.sel);
   }
-  const unlinked = !g.nexts && g.ent.type === 'HATCH' && GR.get(g.ent.r, 71) === 1 && GR.get(g.next.r, 71) === 0;       // 164b1: AutoCAD says so when a Stretch ends the association
+  const unlinked = (g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]]).some(([o, n]) => o.type === 'HATCH' && GR.get(o.r, 71) === 1 && GR.get(n.r, 71) === 0);     // 164b1: AutoCAD says so when a Stretch ends the association
   note(`${label}: ${text}${leftNote(g)}. Ctrl+Z takes it back${unlinked ? '. Hatch boundary associativity removed.' : ''}`);
 }
 /** The drawing after a Stretch of several hot grips: the changed objects in place, dimensions following, leaders through their own model. */

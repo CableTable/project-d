@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import * as GR from './web/grips.js';
 import * as DR from './web/draw.js';
+import { moveEntities } from './web/edit.js';
 import { newDoc, addEntities, addBlock, writeDxf, line, circle, arc, lwpoly, ellipse, rect, text, mtext, insert } from './web/dxf-write.js';
 import { readDxf, hatchPattern } from './web/drawing.js';
 
@@ -762,6 +763,12 @@ test('hatch Stretch: an associative hatch (71 = 1) ends up with 71 = 0; one that
   nearPt(pts(GR.gripsOf(m.ent))[0], [60, 30]);
   assert.equal(val(GR.dragGrip(hatchOf(0, 0, 10, 10), 'c', [9, 9]).ent, 71), 0);
   assert.equal(val(patHatch(), 71), 1, 'the original is untouched');
+});
+
+test('hatch translate (a multi-hot Stretch moves it whole) goes the centre-grip Stretch way: 71 -> 0; the Move command keeps 71', () => {
+  const m = GR.translate(patHatch(), 10, 5);
+  assert.equal(val(m, 71), 0); nearPt(pts(GR.gripsOf(m))[0], [GR.gripsOf(patHatch())[0].x + 10, GR.gripsOf(patHatch())[0].y + 5]);
+  assert.equal(val(moveEntities({ entities: [patHatch()], blocks: {} }, new Set([0]), 10, 5).entities[0], 71), 1, 'Move keeps the tie');
 });
 
 test('hatch options: after a save and reopen 52 / 41 / 71 and the pattern lines are kept, and the pattern is drawn from them', () => {

@@ -211,6 +211,7 @@ export function stretchHots(ent, hots) {
 /** The entity moved whole by (dx, dy), drawing units (a leader through its points, the rest the way the Move command does). */
 export function translate(ent, dx, dy) {
   if (ent.type === 'LEADER') return { ...ent, model: { ...ent.model, pts: ent.model.pts.map((p) => [p[0] + dx, p[1] + dy]) } };
+  if (ent.type === 'HATCH') { const c = find(ent, 'c'); return dragGrip(ent, 'c', [c.x + dx, c.y + dy])?.ent || ent; }       // 164b1: the same path as a lone centre-grip Stretch (ends the association)
   return moveEntities({ entities: [ent], blocks: {} }, new Set([0]), dx, dy).entities[0];
 }
 
