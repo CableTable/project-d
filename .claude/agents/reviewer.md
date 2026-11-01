@@ -22,4 +22,5 @@ time a finding; never write to files in the repo. To prove a new test catches th
    A changed transform helper (rotate, mirror, scale): list which of these unit cases it lacks: rotate 90 and 180, mirror X and Y, scale.
    A diff that changes how an input is handled (modifier key, click, drag, right-click) on a target: grep browser.test.mjs for steps using that input on that target (e.g. `shift` + grip) and run them, `node browser.test.mjs <free port> '<names>'`. A red step is a high finding.
    A finding on a pure function (web/fillet.js, geom, grips maths) states its case grid; probe the grid in `node` before writing the finding.
+   Grip work: probe every pair of grip kinds hot at once (vertex, line mid, arc mid, end, closing segment, another entity's grip) in one Stretch, list the orders tried, and check the preview equals the commit.
    A browser step that waits for a value, then reads the same locator again in a separate call, is a finding: return the value from the wait.
