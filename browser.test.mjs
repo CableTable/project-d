@@ -10870,12 +10870,128 @@ try {
     await closeTabs(/./);
   });
 
+  // ---- TODO 164b2: grips on the boundary of a non-associative hatch (71 = 0) ----
+  const g164b2Shots = 'E:/Project B/Claude/Project D extras/runs30/shots-164b2';
+  const g164b2Doc = (edge) => {       // entity 0: an ANSI31-like hatch (71 = 0) over (20,20)-(120,70), horizontal lines 10 apart; edge: the right side an arc edge (centre (120,45), r 25, bulging right) in an edge path; entities 1 / 2: two far lines (the view reaches y = -20 .. 100, and Compare needs an outline)
+    const doc = newDoc(4), path = edge
+      ? [[92, 1], [93, 4], [72, 1], [10, 20], [20, 20], [11, 120], [21, 20], [72, 2], [10, 120], [20, 45], [40, 25], [50, 270], [51, 90], [73, 1], [72, 1], [10, 120], [20, 70], [11, 20], [21, 70], [72, 1], [10, 20], [20, 70], [11, 20], [21, 20]]
+      : [[92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 20], [10, 120], [20, 20], [10, 120], [20, 70], [10, 20], [20, 70]];
+    addEntities(doc, entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'ANSI31'], [70, 0], [71, 0], [91, 1], ...path, [97, 0], [75, 0], [76, 1], [52, 0], [41, 1], [77, 0], [78, 1], [53, 0], [43, 0], [44, 0], [45, 0], [46, 10], [79, 0], [98, 1], [10, 70], [20, 45]]), dxfLine(0, -20, 140, -20), dxfLine(0, 100, 140, 100));
+    return writeDxf(doc);
+  };
+  const g164b2 = {
+    ids: async () => (await page.locator('[data-testid=grip], [data-testid=grip-hot]').evaluateAll((g) => g.map((x) => x.dataset.grip))).sort(),
+    path: async () => { const e = entOf(await savedDoc(), 0), out = []; let on = false; e.r.c.forEach((c, k) => { if (c === 93) on = true; else if (c === 97) on = false; else if (on && c === 10) out.push([+e.r.v[k], +e.r.v[k + 1]]); }); return out.map((p) => p.map((x) => Math.round(x * 100) / 100)); },
+    all: (e, code) => e.r.c.flatMap((c, k) => (c === code ? [+e.r.v[k]] : [])),
+    shot: async (name) => { mkdirSync(g164b2Shots, { recursive: true }); await frames(); await page.screenshot({ path: `${g164b2Shots}/${name}.png` }); },
+  };
+  const g164b2Want = ['c', 'v0_0', 'v0_1', 'v0_2', 'v0_3', 'e0_0', 'e0_1', 'e0_2', 'e0_3'].map((i) => '0:' + i).sort();
+
+  await step('TODO 164b2: a 71 = 0 square hatch shows the centre + 4 vertex + 4 mid grips; dragging a vertex refills the pattern live, one Undo named for the polyline; light and dark', async () => {
+    const { hotWhen, undo, labels } = g163, { ink } = g164b1, { ids, path, shot } = g164b2;
+    await menuItem('View', 'Theme: light');
+    await openGrips(g164b2Doc(), 'g164b2.dxf');
+    await pick(70, 30, 9);
+    assert.deepEqual(await ids(), g164b2Want);
+    for (const theme of ['light', 'dark']) {
+      await page.keyboard.press('Escape'); await menuItem('View', 'Theme: ' + theme); await pick(70, 30, 9);
+      await shot('boundary-grips-' + theme);
+      await dragGripTo('0:v0_1', 120, 5, { hold: true }); await frames();
+      await shot('dragged-vertex-' + theme);
+      await page.mouse.up(); await hotWhen(0); await undo();
+    }
+    await menuItem('View', 'Theme: light'); await pick(70, 30, 9);
+    assert.ok(await ink(95, 8, 118, 12) < 5, 'nothing below the hatch before the drag');
+    await dragGripTo('0:v0_1', 120, 5, { hold: true }); await frames();
+    assert.ok(await ink(95, 8, 118, 12) > 15, 'the pattern refilled while the vertex is dragged: the line at y = 10 now reaches there');
+    await page.mouse.up(); await hotWhen(0); await gripWhen(9);
+    const p = await path();
+    assert.ok(near(p[1][0], 120, 0.5) && near(p[1][1], 5, 0.5) && near(p[0][1], 20, 0.01) && near(p[2][1], 70, 0.01) && near(p[3][1], 70, 0.01), 'only that vertex moved: ' + JSON.stringify(p));
+    assert.equal((await labels()).at(-1), 'Stretch polyline');
+    await undo();
+    assert.deepEqual(await path(), [[20, 20], [120, 20], [120, 70], [20, 70]], 'one Undo');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 164b2: hatch boundary Grip options: vertex Stretch / Insert vertex / Remove vertex, mid Stretch / Insert vertex / Convert to Arc; Insert vertex, Remove vertex (never below 3) and Convert to Arc each one Undo; save and reopen keeps the path', async () => {
+    const { list, hover, pickItem, hotWhen, undo, labels } = g163, { path, all } = g164b2;
+    await openGrips(g164b2Doc(), 'g164b2-opts.dxf');
+    await pick(70, 30, 9);
+    await hover('0:v0_1'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Remove vertex']); await page.keyboard.press('Escape'); await t('ctx-menu').waitFor({ state: 'detached' });
+    await hover('0:e0_0'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Convert to Arc']);
+    await pickItem('Insert vertex'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify new vertex point:');
+    await typeCmd('70,10'); await hotWhen(0); await gripWhen(11);
+    assert.deepEqual(await path(), [[20, 20], [70, 10], [120, 20], [120, 70], [20, 70]]);
+    assert.equal((await labels()).at(-1), 'Insert vertex');
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await undo(); assert.equal((await path()).length, 4, 'one Undo');
+    await pick(70, 30, 9);
+    await hover('0:v0_1'); await list(); await pickItem('Remove vertex'); await hotWhen(0); await gripWhen(7);       // 3 vertices + 3 mids + centre
+    assert.deepEqual(await path(), [[20, 20], [120, 70], [20, 70]]);
+    assert.equal((await labels()).at(-1), 'Remove vertex');
+    await hover('0:v0_0'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex'], 'no Remove vertex at 3 vertices');
+    await page.keyboard.press('Escape');
+    await undo(); assert.equal((await path()).length, 4, 'one Undo');
+    await pick(70, 30, 9);
+    await hover('0:e0_0'); await list(); await pickItem('Convert to Arc'); await hotWhen(1);
+    await typeCmd('70,10'); await hotWhen(0);
+    let e = entOf(await savedDoc(), 0);
+    assert.equal(all(e, 72)[0], 1); assert.ok(all(e, 42).length === 4 && Math.abs(all(e, 42)[0]) > 0.05 && all(e, 42).slice(1).every((b) => b === 0), 'the bottom side has a bulge: ' + all(e, 42));
+    assert.equal((await labels()).at(-1), 'Convert to Arc');
+    await undo();
+    await openGrips(text, 'g164b2-reopen.dxf');
+    await pick(70, 30, 11);
+    assert.deepEqual(await path(), [[20, 20], [70, 10], [120, 20], [120, 70], [20, 70]], 'the saved file keeps the inserted vertex');
+    e = entOf(await savedDoc(), 0); assert.equal(fieldOf(e, 93), 5); assert.equal(fieldOf(e, 71), 0);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 164b2: a hatch edge path of lines and an arc: the arc\'s mid grip at the top of the arc, a vertex drag re-fits the arc (72 = 2, centre, radius, angles, 73), lines stay 72 = 1, 93 stays; an ellipse edge path has the centre only', async () => {
+    const { undo } = g163, { ids, all } = g164b2;
+    await openGrips(g164b2Doc(true), 'g164b2-edge.dxf');
+    await pick(70, 30, 9);
+    assert.deepEqual(await ids(), g164b2Want);
+    const top = await gripBox('0:e0_1'), want = await at(145, 45);
+    assert.ok(near(top.x, want.x, 2) && near(top.y, want.y, 2), 'the arc edge\'s grip is at the top of its arc');
+    await dragGripTo('0:v0_2', 120, 60); await gripWhen(9);
+    let e = entOf(await savedDoc(), 0);
+    assert.deepEqual(all(e, 72), [1, 2, 1, 1]); assert.equal(fieldOf(e, 93), 4);
+    assert.ok(near(fieldOf(e, 40), 20, 0.5), 'the arc re-fitted from (120,20) to (120,60): radius ' + fieldOf(e, 40));
+    assert.ok(near(fieldOf(e, 50), 270, 2) && near(fieldOf(e, 51), 90, 2) && fieldOf(e, 73) === 1, 'angles ' + [fieldOf(e, 50), fieldOf(e, 51), fieldOf(e, 73)]);
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await undo();
+    assert.ok(near(fieldOf(entOf(await savedDoc(), 0), 40), 25, 0.01), 'one Undo');
+    await openGrips(text, 'g164b2-edge-reopen.dxf');
+    await pick(70, 30, 9);
+    e = entOf(await savedDoc(), 0);
+    assert.ok(near(fieldOf(e, 40), 20, 0.5) && all(e, 72).join() === '1,2,1,1', 'the reopened file keeps the arc');
+    // an ellipse edge in the path: no boundary grips, the centre stays
+    const doc = newDoc(4);
+    addEntities(doc, entity('HATCH', [[10, 0], [20, 0], [30, 0], [2, 'SOLID'], [70, 1], [71, 0], [91, 1], [92, 1], [93, 1], [72, 3], [10, 70], [20, 45], [11, 40], [21, 0], [40, 0.5], [50, 0], [51, 360], [73, 1], [97, 0], [75, 0], [76, 1], [98, 1], [10, 70], [20, 45]]), dxfLine(0, -20, 140, -20), dxfLine(0, 100, 140, 100));
+    await openGrips(writeDxf(doc), 'g164b2-ellipse.dxf');
+    await click(70, 45); await frames(); await gripWhen(1);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 164b2: the hatch boundary grips on Compare (routes to the source)', async () => {
+    const { list, hover, pickItem, hotWhen } = g163, { path } = g164b2;
+    await openGrips(g164b2Doc(), 'g164b2-compare.dxf');
+    await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
+    await click(70, 30); await frames(); await gripWhen(9);
+    await hover('0:v0_1'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex', 'Remove vertex']); await pickItem('Remove vertex'); await hotWhen(0);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'g164b2-compare.dxf' }) }).click();
+    assert.deepEqual(await path(), [[20, 20], [120, 70], [20, 70]], 'the source hatch lost the vertex');
+    await closeTabs(/./);
+  });
+
   await step('TODO 155e4: grips on text, ellipse, hatch and blocks: a justified text moved by its grip (both points), an ellipse major end dragged, a hatch moved by its centre, a block moved by its insertion grip, Rotate by a text grip via Space, and an ellipse on a layout', async () => {
     await menuItem('View', 'Theme: light');
     mkdirSync('shots-155e4', { recursive: true });
     const doc = newDoc(4), jt = dxfText(30, 120, 8, 'HELLO');
     jt.r = { ...jt.r, c: [...jt.r.c, 72, 11, 21, 31], v: [...jt.r.v, '1', '50', '124', '0'] };       // centre-justified: the alignment point is a second grip
-    const hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'SOLID'], [70, 1], [71, 0], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 50], [10, 60], [20, 50], [10, 60], [20, 80], [10, 20], [20, 80], [97, 0], [75, 0], [76, 1], [98, 1], [10, 40], [20, 65]]);
+    const hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'SOLID'], [70, 1], [71, 1], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 50], [10, 60], [20, 50], [10, 60], [20, 80], [10, 20], [20, 80], [97, 0], [75, 0], [76, 1], [98, 1], [10, 40], [20, 65]]);       // 71 = 1: the centre grip only (164b2 gives a 71 = 0 hatch boundary grips too)
     addBlock(doc, 'B', [dxfLine(0, 0, 30, 0), dxfCircle(15, 0, 5)]);
     addEntities(doc, dxfLine(20, 30, 120, 30), jt, dxfEllipse(150, 90, 40, 0, 0.5), hatch, dxfInsert('B', 100, 50));
     const clickGrip = async (id) => { const a = await gripBox(id); await page.mouse.click(a.x, a.y); await frames(); };
@@ -10941,7 +11057,7 @@ try {
   await step('TODO 155e4 fixes: grips on one selected text beside its handles, grips with a contrasting outline, Esc mid-drag on a hatch grip, live previews of hot text / hatch grips and on a layout', async () => {
     await menuItem('View', 'Theme: light');
     mkdirSync('shots-155e4', { recursive: true });
-    const doc = newDoc(4), hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'SOLID'], [70, 1], [71, 0], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 50], [10, 60], [20, 50], [10, 60], [20, 80], [10, 20], [20, 80], [97, 0], [75, 0], [76, 1], [98, 1], [10, 40], [20, 65]]);
+    const doc = newDoc(4), hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'SOLID'], [70, 1], [71, 1], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 50], [10, 60], [20, 50], [10, 60], [20, 80], [10, 20], [20, 80], [97, 0], [75, 0], [76, 1], [98, 1], [10, 40], [20, 65]]);       // 71 = 1: the centre grip only (164b2)
     addEntities(doc, dxfText(30, 120, 8, 'HELLO'), hatch);
     const preview = async () => +(await t('drawing').getAttribute('data-preview') || 0);
     const hotWhen = (n) => page.waitForFunction((k) => document.querySelectorAll('[data-testid=grip-hot]').length === k, n);

@@ -247,12 +247,12 @@ test('mtext and a block insert: the insertion grip moves the object; a mirrored 
 
 test('hatch: the grip is the centre of the extents; dragging it moves the boundary and the seed point', () => {
   const h = hatchOf(10, 20, 100, 40);
-  assert.deepEqual(pts(GR.gripsOf(h)), [[60, 40]]);
+  assert.deepEqual(pts(GR.gripsOf(h)).slice(0, 1), [[60, 40]]);       // 164b2: hatchOf has 71 = 0, so its boundary grips follow the centre
   assert.equal(GR.gripsOf(h)[0].kind, 'centre');
   const m = GR.dragGrip(h, 'c', [70, 50]);
   assert.equal(m.label, 'Move hatch');
   assert.deepEqual(hatchPts(m.ent), [[20, 30], [120, 30], [120, 70], [20, 70], [21, 31]]);
-  assert.deepEqual(pts(GR.gripsOf(m.ent)), [[70, 50]]);
+  assert.deepEqual(pts(GR.gripsOf(m.ent)).slice(0, 1), [[70, 50]]);
   assert.deepEqual(GR.gripsOf({ type: 'HATCH', layer: '0', r: { type: 'HATCH', c: [10, 20], v: ['0', '0'] } }), [], 'no boundary, no grip');
 });
 
@@ -779,6 +779,181 @@ test('hatch readout names the option\'s result', () => {
   assert.equal(GR.readoutOf(h, 'c', GR.typedOption(h, 'c', 'Hatch Scale', 2).ent), 'Scale 2.00');
   assert.equal(GR.readoutOf(h, 'c', GR.dragOption(h, 'c', 'Origin Point', [15, 26]).ent), 'Origin X 15.00 · Y 26.00');
   assert.ok(GR.readoutOf(h, 'c', GR.dragGrip(h, 'c', [60, 30]).ent).startsWith('Move ΔX 10.00 ΔY 10.00'));
+});
+
+// ---- 164b2: grips on the boundary of a non-associative hatch (71 = 0)
+const hatchWith = (paths, a71 = 0) => {
+  const g = [[10, 0], [20, 0], [30, 0], [2, 'SOLID'], [70, 1], ...(a71 == null ? [] : [[71, a71]]), [91, paths.length], ...paths.flat(), [97, 0], [75, 0], [76, 1], [98, 1], [10, 1], [20, 1]];
+  return { type: 'HATCH', layer: '0', r: { type: 'HATCH', c: g.map((x) => x[0]), v: g.map((x) => String(x[1])) } };
+};
+const polyPath = (ps, bulges) => [[92, 3], [72, bulges ? 1 : 0], [73, 1], [93, ps.length], ...ps.flatMap((p, i) => [[10, p[0]], [20, p[1]], ...(bulges ? [[42, bulges[i]]] : [])])];
+const edgePath = (edges) => [[92, 1], [93, edges.length], ...edges.flat()];
+const LN = (a, b) => [[72, 1], [10, a[0]], [20, a[1]], [11, b[0]], [21, b[1]]];
+const AR = (c, r, s, e, ccw) => [[72, 2], [10, c[0]], [20, c[1]], [40, r], [50, s], [51, e], [73, ccw]];
+const SQ = [[0, 0], [100, 0], [100, 40], [0, 40]];
+const polyH = (a71 = 0) => hatchWith([polyPath(SQ)], a71);
+/** (0,0) → (100,0), the arc (centre (100,50), r 50, 270° → 90° ccw: bulging right) to (100,100), then back by lines: 4 edges, vertex 1 has bulge 1. */
+const edgeH = () => hatchWith([edgePath([LN([0, 0], [100, 0]), AR([100, 50], 50, 270, 90, 1), LN([100, 100], [0, 100]), LN([0, 100], [0, 0])])]);
+/** The same shape the other way round: (0,0) up, across, the arc clockwise (centre (100,50), 90° → -90°) to (100,0), back along the bottom. */
+const edgeCw = () => hatchWith([edgePath([LN([0, 0], [0, 100]), LN([0, 100], [100, 100]), AR([100, 50], 50, 270, 90, 0), LN([100, 0], [0, 0])])]);
+const ids = (e) => GR.gripsOf(e).map((g) => g.id);
+const codes = (e) => e.r.c.join();
+const edgeTypes = (e) => e.r.c.flatMap((c, k) => (c === 72 ? [+e.r.v[k]] : []));       // group 72: an edge's type (1 line, 2 arc) or a polyline path's has-bulge flag
+/** The drawn boundary of a hatch as the reader sees it: line ends [x, y] and arcs { c, r, cw, end }. */
+const outline = (e) => { const o = hatchPattern(e).ops, out = []; for (let k = 0; k < o.length;) { if (o[k] === 9) { k++; continue; } if (o[k] === 2) { out.push({ c: [o[k + 1], o[k + 2]], r: o[k + 3], cw: o[k + 6] === 1, end: [o[k + 1] + o[k + 3] * Math.cos(o[k + 5]), o[k + 2] + o[k + 3] * Math.sin(o[k + 5])] }); k += 7; } else { const p = [o[k + 1], o[k + 2]], q = out[out.length - 1]; if (!(Array.isArray(q) && q[0] === p[0] && q[1] === p[1])) out.push(p); k += 3; } } return out; };       // an edge path's reader repeats each edge's start point: dropped
+const V4 = ['v0_0', 'v0_1', 'v0_2', 'v0_3'], E4 = ['e0_0', 'e0_1', 'e0_2', 'e0_3'];
+
+test('164b2 hatch grips: 71 = 0 shows a vertex grip and a segment-mid grip per boundary path beside the centre; 71 = 1 or missing only the centre', () => {
+  const g = GR.gripsOf(polyH());
+  assert.deepEqual(g.map((x) => x.id), ['c', ...V4, ...E4]);
+  assert.deepEqual(g.map((x) => x.kind), ['centre', 'vertex', 'vertex', 'vertex', 'vertex', 'edge', 'edge', 'edge', 'edge']);
+  assert.deepEqual(pts(g.slice(1)), [[0, 0], [100, 0], [100, 40], [0, 40], [50, 0], [100, 20], [50, 40], [0, 20]]);
+  assert.ok(g.every((x) => !x.rect), 'a square boundary is no rectangle to resize');
+  assert.deepEqual(ids(polyH(1)), ['c']);
+  assert.deepEqual(ids(hatchWith([polyPath(SQ)], null)), ['c'], 'no group 71: the centre only');
+});
+
+test('164b2 hatch grips: an edge path of lines and arcs maps to vertices; an arc edge\'s mid is the top of the arc; an ellipse edge path has none, its neighbour keeps its own', () => {
+  const g = GR.gripsOf(edgeH());
+  assert.deepEqual(g.map((x) => x.id), ['c', ...V4, ...E4]);
+  assert.deepEqual(pts(g.slice(1, 5)), [[0, 0], [100, 0], [100, 100], [0, 100]]);
+  nearPt(pts(g)[6], [150, 50]);
+  const cw = GR.gripsOf(edgeCw());
+  assert.deepEqual(pts(cw.slice(1, 5)), [[0, 0], [0, 100], [100, 100], [100, 0]]);
+  nearPt(pts(cw)[7], [150, 50]);
+  const ell = edgePath([[[72, 3], [10, 5], [20, 5], [11, 3], [21, 0], [40, 0.5], [50, 0], [51, 360], [73, 1]]]);
+  assert.deepEqual(ids(hatchWith([ell])), ['c'], 'an ellipse edge: the centre only');
+  const two = hatchWith([ell, polyPath(SQ)]);
+  assert.deepEqual(ids(two), ['c', 'v1_0', 'v1_1', 'v1_2', 'v1_3', 'e1_0', 'e1_1', 'e1_2', 'e1_3'], 'ids carry the path, so two paths never clash');
+  assert.deepEqual(ids(hatchWith([polyPath(SQ), edgePath([LN([0, 0], [1, 0]), LN([1, 0], [0, 1]), LN([0, 1], [0, 0])])])).filter((i) => i.startsWith('v1')), ['v1_0', 'v1_1', 'v1_2']);
+  const gap = hatchWith([edgePath([LN([0, 0], [100, 0]), LN([100, 5], [100, 100]), LN([100, 100], [0, 0])])]);
+  assert.deepEqual(ids(gap), ['c'], 'edges that do not join: no grips');
+  assert.deepEqual(ids(hatchWith([edgePath([AR([0, 0], 5, 0, 360, 1)])])), ['c'], 'a circle edge is no segment');
+});
+
+test('164b2 hatch vertex drag: one vertex moves, the pattern boundary follows, the label is the polyline\'s', () => {
+  const r = GR.dragGrip(polyH(), 'v0_1', [120, 10]);
+  assert.equal(r.label, 'Stretch polyline');
+  assert.deepEqual(hatchPts(r.ent).slice(0, 4), [[0, 0], [120, 10], [100, 40], [0, 40]]);
+  assert.deepEqual(outline(r.ent).slice(0, 4), [[0, 0], [120, 10], [100, 40], [0, 40]], 'the drawn boundary (the pattern\'s fill area) is the new one');
+  assert.equal(GR.dragGrip(polyH(), 'v0_1', [100, 0]), null, 'the same point: nothing');
+  const m = GR.dragGrip(polyH(), 'e0_0', [50, -10]);
+  assert.deepEqual(hatchPts(m.ent).slice(0, 2), [[0, -10], [100, -10]], 'a line segment mid moves both ends');
+  assert.equal(codes(m.ent), codes(polyH()), 'no group added or lost');
+  assert.equal(val(m.ent, 71), 0);
+});
+
+test('164b2 hatch edge path: a vertex drag keeps lines as 72 = 1 and re-fits the arc as 72 = 2 with centre / radius / angles / 73; 93 stays', () => {
+  const r = GR.dragGrip(edgeH(), 'v0_2', [100, 90]);
+  const o = outline(r.ent);
+  assert.deepEqual(o.slice(0, 2), [[0, 0], [100, 0]]);
+  const arc = o.find((x) => x.r);
+  assert.equal(arc.cw, false); nearPt(arc.end, [100, 90]); nearPt(arc.c, [100, 45]); near(arc.r, 45);
+  assert.deepEqual(edgeTypes(r.ent), [1, 2, 1, 1]); assert.equal(val(r.ent, 93), 4);
+  const k = r.ent.r.c.indexOf(73); near(+r.ent.r.v[r.ent.r.c.indexOf(50)], 270); near(+r.ent.r.v[r.ent.r.c.indexOf(51)], 90); assert.equal(+r.ent.r.v[k], 1);
+  const cw = outline(GR.dragGrip(edgeCw(), 'v0_3', [100, 10]).ent).find((x) => x.r);
+  assert.equal(cw.cw, true); nearPt(cw.end, [100, 10]); nearPt(cw.c, [100, 55]); near(cw.r, 45);
+  const same = GR.dragGrip(edgeH(), 'v0_0', [0, -5]).ent;       // a line vertex: the arc is written again but is the same arc
+  const arc2 = outline(same).find((x) => x.r);
+  nearPt(arc2.c, [100, 50]); near(arc2.r, 50);
+  assert.deepEqual(edgeTypes(same), [1, 2, 1, 1]);
+});
+
+test('164b2 hatch: the options of a boundary grip are the polyline lists; Remove vertex never leaves fewer than 3', () => {
+  assert.deepEqual(GR.optionsOf(polyH(), 'v0_0'), ['Stretch', 'Insert vertex', 'Remove vertex']);
+  assert.deepEqual(GR.optionsOf(polyH(), 'e0_0'), ['Stretch', 'Insert vertex', 'Convert to Arc']);
+  assert.deepEqual(GR.optionsOf(edgeH(), 'e0_1'), ['Stretch', 'Insert vertex', 'Convert to Line']);
+  assert.deepEqual(GR.optionsOf(polyH(), 'c'), ['Stretch', 'Origin Point', 'Hatch Angle', 'Hatch Scale'], 'the centre list is unchanged');
+  assert.deepEqual(GR.optionsOf(polyH(1), 'v0_0'), [], '71 = 1 has no such grip');
+  const tri = hatchWith([polyPath([[0, 0], [10, 0], [0, 10]])]);
+  assert.deepEqual(GR.optionsOf(tri, 'v0_0'), ['Stretch', 'Insert vertex']);
+  assert.equal(GR.applyOption(tri, 'v0_0', 'Remove vertex'), null);
+  assert.equal(GR.IMMEDIATE.has('Remove vertex'), true);
+});
+
+test('164b2 hatch Insert vertex: a polyline path gets a vertex and 93 counts it; an edge path gets one more edge (the arc halves straight); the boundary is redrawn', () => {
+  const p = GR.dragOption(polyH(), 'e0_0', 'Insert vertex', [50, -10]);
+  assert.equal(p.label, 'Insert vertex'); assert.equal(val(p.ent, 93), 5);
+  assert.deepEqual(hatchPts(p.ent).slice(0, 5), [[0, 0], [50, -10], [100, 0], [100, 40], [0, 40]]);
+  const e = GR.dragOption(edgeH(), 'e0_1', 'Insert vertex', [160, 50]);
+  assert.equal(val(e.ent, 93), 5); assert.deepEqual(edgeTypes(e.ent), [1, 1, 1, 1, 1]);
+  assert.deepEqual(outline(e.ent), [[0, 0], [100, 0], [160, 50], [100, 100], [0, 100], [0, 0]]);
+  assert.equal(GR.dragOption(polyH(), 'v0_1', 'Insert vertex', [100, 0]), null, 'on its own spot: refused');
+  assert.equal(ids(e.ent).length, 11, 'the new path has 5 vertex + 5 mid grips');
+});
+
+test('164b2 hatch Remove vertex: the neighbours join (straight); a 4-vertex path ends with 3; a curved edge path stays valid', () => {
+  const p = GR.applyOption(polyH(), 'v0_1', 'Remove vertex');
+  assert.equal(p.label, 'Remove vertex'); assert.equal(val(p.ent, 93), 3);
+  assert.deepEqual(hatchPts(p.ent).slice(0, 3), [[0, 0], [100, 40], [0, 40]]);
+  assert.equal(GR.applyOption(p.ent, 'v0_0', 'Remove vertex'), null, 'not below 3');
+  const e = GR.applyOption(edgeH(), 'v0_2', 'Remove vertex');
+  assert.equal(val(e.ent, 93), 3);
+  assert.deepEqual(outline(e.ent), [[0, 0], [100, 0], [0, 100], [0, 0]], 'the arc segment before the removed vertex is straight now');
+  assert.equal(GR.readoutOf(polyH(), 'v0_1', p.ent), '3 vertices');
+});
+
+test('164b2 hatch Convert to Arc / Line: a line segment becomes the arc through the point (72 = 2, 73 by side), an arc segment a line', () => {
+  const a = GR.dragOption(edgeH(), 'e0_0', 'Convert to Arc', [50, -20]);
+  assert.equal(a.label, 'Convert to Arc');
+  const o = outline(a.ent).find((x) => x.r);
+  assert.equal(o.cw, false, 'below (0,0) → (100,0) the arc runs counter-clockwise (bulge > 0)');
+  near(Math.hypot(50 - o.c[0], -20 - o.c[1]), o.r); near(Math.hypot(o.c[0], o.c[1]), o.r); near(Math.hypot(100 - o.c[0], o.c[1]), o.r);
+  assert.deepEqual(edgeTypes(a.ent), [2, 2, 1, 1]);
+  const l = GR.applyOption(edgeH(), 'e0_1', 'Convert to Line');
+  assert.deepEqual(outline(l.ent), [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]]);
+  const pa = GR.dragOption(polyH(), 'e0_0', 'Convert to Arc', [50, -20]);
+  assert.equal(val(pa.ent, 72), 1); assert.equal(pa.ent.r.c.filter((c) => c === 42).length, 4, 'a polyline path writes a bulge per vertex once one is curved');
+  assert.equal(GR.dragOption(polyH(), 'e0_0', 'Convert to Arc', [50, 0]), null, 'on the line: no arc');
+});
+
+test('164b2 hatch: several hot boundary grips Stretch together, every vertex once, in any hot order; all of a path\'s vertices (or the centre) hot move the hatch whole', () => {
+  for (const h of [polyH(), edgeH()]) {
+    const all = GR.gripsOf(h);
+    for (const names of [['v0_0', 'e0_0', 'v0_2'], ['v0_1', 'e0_1', 'v0_3'], ['e0_0', 'e0_2'], ['v0_1', 'e0_1']]) {
+      const results = new Set();
+      const perms = (a) => (a.length < 2 ? [a] : a.flatMap((x, i) => perms([...a.slice(0, i), ...a.slice(i + 1)]).map((p) => [x, ...p])));
+      for (const order of perms(names)) {
+        let cur = h;
+        for (const x of GR.stretchHots(h, order.map((i) => all.find((g) => g.id === i)))) { const r = GR.dragGrip(cur, x.id, [x.x + 5, x.y + 7]); if (r) cur = r.ent; }
+        results.add(cur.r.v.map((x) => (Number.isFinite(+x) ? (+x).toFixed(9) : x)).join());       // an arc is written again from its bulge: the same to 9 places
+      }
+      assert.equal(results.size, 1, `${names} gives one result for all ${perms(names).length} orders`);
+    }
+  }
+  const h = polyH(), all = GR.gripsOf(h);
+  let cur = h;
+  for (const x of GR.stretchHots(h, ['v0_0', 'e0_0'].map((i) => all.find((g) => g.id === i)))) cur = GR.dragGrip(cur, x.id, [x.x + 5, x.y + 7]).ent;
+  assert.deepEqual(hatchPts(cur).slice(0, 4), [[5, 7], [105, 7], [100, 40], [0, 40]], 'the vertices of a hot line-segment mid move once');
+  assert.equal(GR.wholeHot(h, new Set(V4)), true); assert.equal(GR.wholeHot(h, new Set(['c'])), true); assert.equal(GR.wholeHot(h, new Set(['v0_0', 'v0_1'])), false);
+  assert.equal(GR.movesWhole(h, 'c'), true); assert.equal(GR.movesWhole(h, 'v0_0'), false); assert.equal(GR.commandOf(h, 'e0_0'), 'STRETCH');
+});
+
+test('164b2 hatch: two boundary paths edit independently; the other path is untouched', () => {
+  const two = hatchWith([polyPath(SQ), polyPath([[200, 0], [300, 0], [300, 40]])]);
+  const r = GR.dragGrip(two, 'v1_2', [310, 50]);
+  assert.deepEqual(hatchPts(r.ent).slice(0, 7), [[0, 0], [100, 0], [100, 40], [0, 40], [200, 0], [300, 0], [310, 50]]);
+  const ins = GR.dragOption(two, 'e0_0', 'Insert vertex', [50, -10]).ent;
+  assert.deepEqual(ids(ins).filter((i) => i.startsWith('v')), ['v0_0', 'v0_1', 'v0_2', 'v0_3', 'v0_4', 'v1_0', 'v1_1', 'v1_2']);
+  assert.equal(val(ins, 91), 2);
+});
+
+test('164b2 hatch: a save and reopen keeps the edited path, and the grips come back the same', () => {
+  const edits = [GR.dragGrip(polyH(), 'v0_1', [120, 10]).ent, GR.dragGrip(edgeH(), 'v0_2', [100, 90]).ent, GR.dragOption(edgeH(), 'e0_0', 'Convert to Arc', [50, -20]).ent, GR.dragOption(edgeCw(), 'e0_0', 'Insert vertex', [-10, 50]).ent];
+  for (const e of edits) {
+    const back = reopen(e);
+    assert.equal(val(back, 71), 0);
+    assert.deepEqual(ids(back), ids(e));
+    pts(GR.gripsOf(e)).forEach((p, i) => nearPt(pts(GR.gripsOf(back))[i], p, 1e-6));
+    assert.equal(outline(back).length, outline(e).length);
+  }
+  const back = reopen(edits[1]);
+  assert.equal(val(back, 93), 4); assert.deepEqual(edgeTypes(back), [1, 2, 1, 1]);
+});
+
+test('164b2 hatch readout of a boundary grip: the vertex position, as a polyline', () => {
+  const h = polyH();
+  assert.equal(GR.readoutOf(h, 'v0_1', GR.dragGrip(h, 'v0_1', [120, 10]).ent), 'X 120.00 · Y 10.00');
 });
 
 console.log(n + ' grips tests passed');

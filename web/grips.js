@@ -9,6 +9,7 @@
 //   optionsOf(ent, id)           → 163a Grip options: ['Stretch', 'Lengthen'] / ['Stretch', 'Radius'] / []; lengthen, setRadius, dragOption, typedOption do them
 //                                  163b polylines: vertex Stretch / Insert vertex / Remove vertex, segment mid Stretch / Insert vertex / Convert to Arc | Line (insertVertex, removeVertex, convertToArc, convertToLine)
 //                                  164b1 a hatch's centre: Stretch / Origin Point / Hatch Angle / Hatch Scale (hatchOrigin, hatchAngle, hatchScale)
+//                                  164b2 a hatch with 71 = 0 also has 'v<path>_<n>' vertex and 'e<path>_<n>' segment-mid grips on each line / arc boundary path, with the polyline lists (hatchPaths, putPath)
 //   refPoint(ent, id)          → the point the rubber band starts from (the fixed end of a line, the centre of a circle, else the grip itself)
 //   shapeOf(ent, factor)         → the shape in mm as draw.js svgPath draws it
 //   (a leader, leader.js, is passed in as { type: 'LEADER', model } and has a grip at each of its points)
@@ -52,7 +53,7 @@ export function hasGrips(ent) {
 }
 /** 155e4: the kinds whose grip moves the whole object (an ellipse only by its centre); the word is for the undo step. */
 const MOVES = { TEXT: 'text', MTEXT: 'text', INSERT: 'block', HATCH: 'hatch', ELLIPSE: 'ellipse' };
-export const movesWhole = (ent, id) => !!MOVES[ent.type] && (ent.type !== 'ELLIPSE' || id === 'c') && !(id[0] === 'a' && ent.type === 'INSERT') && !(ent.type === 'MTEXT' && id !== 'i');       // 164a: an MTEXT's size grips and a block's attribute grips change one part only
+export const movesWhole = (ent, id) => !!MOVES[ent.type] && (ent.type !== 'ELLIPSE' || id === 'c') && !(id[0] === 'a' && ent.type === 'INSERT') && !(ent.type === 'MTEXT' && id !== 'i') && !(ent.type === 'HATCH' && id !== 'c');       // 164a: an MTEXT's size grips and a block's attribute grips change one part only; 164b2: so do a hatch's boundary grips
 /** 164a: is this a kind drawn without an outline (text, hatch, block, ellipse), shown moved or redrawn as a whole while a grip is dragged? */
 export const noOutline = (ent) => !!MOVES[ent.type];
 const TAU = 2 * Math.PI;
@@ -121,7 +122,7 @@ function arcOf(r) {
 /** Four straight, nonzero sides meeting at right angles, in either winding and any rotation. */
 function rectangleVertices(r) {
   const vs = lwVertices(r);
-  if (!((get(r, 70) ?? 0) & 1) || vs.length !== 4 || vs.some((v) => v.b)) return null;
+  if (r.noRect || !((get(r, 70) ?? 0) & 1) || vs.length !== 4 || vs.some((v) => v.b)) return null;
   const sides = vs.map((v, i) => [vs[(i + 1) % 4].x - v.x, vs[(i + 1) % 4].y - v.y]);
   const lengths = sides.map((s) => Math.hypot(...s));
   if (lengths.some((n) => n <= 1e-9)) return null;
@@ -137,7 +138,7 @@ export function gripsOf(ent, attMode = 1) {
   if (ent.type === 'LEADER') return ent.model.pts.map((p, i) => ({ id: 'v' + i, kind: 'vertex', x: p[0], y: p[1] }));
   const r = ent.r;
   if (MOVES[ent.type]) {
-    if (ent.type === 'HATCH') { const c = hatchCentre(r); return [{ id: 'c', kind: 'centre', x: c[0], y: c[1] }]; }
+    if (ent.type === 'HATCH') { const c = hatchCentre(r); return [{ id: 'c', kind: 'centre', x: c[0], y: c[1] }, ...boundaryGrips(r)]; }
     if (ent.type === 'ELLIPSE') {
       const q = ellipseOf(r), at1 = (t) => [q.c[0] + q.m[0] * Math.cos(t) + q.n[0] * Math.sin(t), q.c[1] + q.m[1] * Math.cos(t) + q.n[1] * Math.sin(t)];
       const ends = [['m0', q.m, 1], ['m1', q.m, -1], ['n0', q.n, 1], ['n1', q.n, -1]].map(([id, v, s]) => ({ id, kind: 'quad', x: q.c[0] + s * v[0], y: q.c[1] + s * v[1] }));
@@ -188,6 +189,12 @@ export function wholeHot(ent, ids) {
  * is dropped when one of its ends is hot, so every vertex moves once whatever the hot order (the mid is derived from the vertices).
  */
 export function stretchHots(ent, hots) {
+  if (ent.type === 'HATCH') {       // 164b2: each boundary path's hot grips go through the polyline rule (as a closed polyline), the ids mapped back
+    const by = new Map(), out = hots.filter((x) => !PATH_ID.test(x.id));
+    for (const x of hots) { const m = PATH_ID.exec(x.id); if (m) by.set(+m[2], [...(by.get(+m[2]) || []), { ...x, id: m[1] + m[3] }]); }
+    for (const [p, list] of by) for (const x of stretchHots(virtOf(hatchPaths(ent.r)[p]), list)) out.push({ ...x, id: x.id[0] + p + '_' + x.id.slice(1) });
+    return out;
+  }
   if (ent.type !== 'LWPOLYLINE') return hots;
   const all = new Map(gripsOf(ent).map((x) => [x.id, x])), vs = lwVertices(ent.r), moving = new Set(hots.map((x) => x.id)), out = new Map();
   const endsOf = (x) => { const j = +x.id.slice(1); return ['v' + j, 'v' + ((j + 1) % vs.length)]; };
@@ -290,7 +297,8 @@ export function dragGrip(ent, id, to, shift = false) {
     if (p.some((q, k) => k !== i && dist(q, to) < 1e-9) || dist(p[i], to) < 1e-12) return null;                  // no two points on one another
     return { ent: { ...ent, model: { ...ent.model, pts: p.map((q, k) => (k === i ? [to[0], to[1]] : q)) } }, label: 'Stretch leader' };
   }
-  const r = ent.r, T = ent.type;
+  const r = ent.r, T = ent.type, q = pathGrip(ent, id);
+  if (q) return pathBack(ent, q, dragGrip(q.poly, q.vid, to, shift));       // 164b2: a hatch boundary vertex / mid: the path as a polyline
   if (movesWhole(ent, id)) {
     if (dist([g.x, g.y], to) < 1e-12) return null;
     const moved = moveEntities({ entities: [ent], blocks: {} }, new Set([0]), to[0] - g.x, to[1] - g.y).entities[0];
@@ -360,6 +368,8 @@ export function dragGrip(ent, id, to, shift = false) {
 /** 163a Grip options: what the list on a grip offers (first = Stretch, the plain grip run); [] when the grip has no list (line middle, circle, arc centre ...). */
 export function optionsOf(ent, id) {
   if (isHatch(ent) && id === 'c' && find(ent, id)) return ['Stretch', 'Origin Point', 'Hatch Angle', 'Hatch Scale'];       // 164b1: solid and gradient too
+  const q = pathGrip(ent, id);
+  if (q) return find(ent, id) ? optionsOf(q.poly, q.vid) : [];       // 164b2: a hatch boundary grip offers its polyline's list
   if (!ent || !ent.r || !hasGrips(ent)) return [];
   if ((ent.type === 'LINE' || ent.type === 'ARC') && (id === 'a' || id === 'b')) return ['Stretch', 'Lengthen'];
   if (ent.type === 'LWPOLYLINE' && find(ent, id)) {       // 163b: a vertex Stretch / Insert vertex / Remove vertex; a segment mid Stretch / Insert vertex / Convert to Arc (a line) or Line (an arc)
@@ -450,7 +460,11 @@ export function convertToArc(ent, j, to) {
   return { ent: joinPoly(ent, head, vs), label: 'Convert to Arc' };
 }
 /** An option that applies at once (IMMEDIATE): the grip's own vertex or segment. */
-export const applyOption = (ent, id, name) => (name === 'Remove vertex' ? removeVertex(ent, +id.slice(1)) : name === 'Convert to Line' ? convertToLine(ent, +id.slice(1)) : null);
+export function applyOption(ent, id, name) {
+  const q = pathGrip(ent, id);       // 164b2: a hatch boundary grip works on its path as a polyline
+  return q ? pathBack(ent, q, applyOption(q.poly, q.vid, name)) : applyPlain(ent, id, name);
+}
+const applyPlain = (ent, id, name) => (name === 'Remove vertex' ? removeVertex(ent, +id.slice(1)) : name === 'Convert to Line' ? convertToLine(ent, +id.slice(1)) : null);
 const wrap360 = (t) => ((t % 360) + 360) % 360;
 /**
  * Lengthen: a line's end grip moved along the line's own direction, or an arc's end along the arc. `how`: { to } the pointer ([x, y]), { add } a typed
@@ -537,8 +551,88 @@ export function hatchOrigin(ent, to) {
   if (Math.abs(dx) < 1e-12 && Math.abs(dy) < 1e-12) return null;
   return { ent: mapPattern(ent, (q) => ({ ...q, b: [q.b[0] + dx, q.b[1] + dy] })), label: 'Origin Point' };
 }
+// ---- 164b2 HATCH boundary grips (group 71 = 0): a path of lines / arcs becomes a closed polyline (vertices + bulges), is edited by the 163b functions and written back ----
+const PATH_ID = /^([ve])(\d+)_(\d+)$/;       // 'v2_5' / 'e2_5': vertex / segment mid 5 of boundary path 2 ('c' is the centre)
+const near = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= 1e-6 * Math.max(1, Math.abs(b[0]), Math.abs(b[1]));
+const wrapTau = (t) => ((t % TAU) + TAU) % TAU;
+/**
+ * A HATCH's boundary paths in file order: [{ ok, poly, closed, pts: [{ x, y, b }], from, to }]. pts = the vertices with the bulge of the segment to the next one; ok = made only of
+ * lines and arcs, joined end to start (polyline path, or edge path of line / arc edges); from .. to = the record's groups to rewrite. Arcs follow drawing.js hatch() (cw: angles negated).
+ */
+function hatchPaths(r) {
+  const c = r.c, v = r.v, n = c.length, out = [];
+  let k = c.indexOf(91);
+  if (k < 0) return out;
+  const loops = num(v[k++]);
+  for (let q = 0; q < loops; q++) {
+    while (k < n && c[k] !== 92) k++;
+    if (k >= n) break;
+    const P = { ok: false, poly: !!(num(v[k]) & 2), closed: 1, pts: [], from: ++k, to: k };
+    out.push(P);
+    if (P.poly) {
+      let bulge = false, cnt = 0;
+      while (k < n && c[k] !== 10 && c[k] !== 92) { if (c[k] === 72) bulge = num(v[k]) === 1; else if (c[k] === 73) P.closed = num(v[k]); else if (c[k] === 93) cnt = num(v[k]); k++; }
+      for (let i = 0; i < cnt && c[k] === 10 && c[k + 1] === 20; i++) { P.pts.push({ x: num(v[k]), y: num(v[k + 1]), b: 0 }); k += 2; if (bulge && c[k] === 42) P.pts[i].b = num(v[k++]); }
+      P.to = k; P.ok = cnt >= 2 && P.pts.length === cnt;
+      continue;
+    }
+    while (k < n && c[k] !== 93 && c[k] !== 92) k++;
+    if (c[k] !== 93) continue;
+    const cnt = num(v[k++]);
+    let ok = cnt >= 2, prev = null;
+    for (let i = 0; i < cnt && ok; i++) {
+      const t = c[k] === 72 ? num(v[k++]) : 0, want = t === 1 ? [10, 20, 11, 21] : t === 2 ? [10, 20, 40, 50, 51] : null;       // anything else (ellipse, spline): no grips
+      if (!want || want.some((code, j) => c[k + j] !== code)) { ok = false; break; }
+      const f = want.map((_, j) => num(v[k + j])); k += want.length;
+      let a = [f[0], f[1]], b = [f[2], f[3]], bu = 0;
+      if (t === 2) {
+        const ccw = c[k] === 73 ? num(v[k++]) !== 0 : true, a0 = (ccw ? f[3] : -f[3]) * DEG, a1 = (ccw ? f[4] : -f[4]) * DEG, sweep = ccw ? wrapTau(a1 - a0) : -wrapTau(a0 - a1);
+        if (!sweepOK(sweep)) { ok = false; break; }       // a full circle: not a segment
+        a = [f[0] + f[2] * Math.cos(a0), f[1] + f[2] * Math.sin(a0)]; b = [f[0] + f[2] * Math.cos(a1), f[1] + f[2] * Math.sin(a1)]; bu = Math.tan(sweep / 4);
+      }
+      if (prev && !near(prev, a)) ok = false;
+      prev = b; P.pts.push({ x: a[0], y: a[1], b: bu });
+      if (i === cnt - 1 && !near(b, [P.pts[0].x, P.pts[0].y])) ok = false;
+    }
+    P.ok = ok; P.to = k;
+  }
+  return out;
+}
+/** A path as an LWPOLYLINE record (closed; noRect: a square boundary is not a rectangle to resize). */
+const virtOf = (P) => ({ type: 'LWPOLYLINE', r: { noRect: true, c: [70, 90, ...P.pts.flatMap(() => [10, 20, 42])], v: ['1', String(P.pts.length), ...P.pts.flatMap((p) => [text(p.x), text(p.y), text(p.b)])] } });
+/** The hatch with path P rewritten from the polyline `poly`: a polyline path keeps its kind (bulges only when one is curved); an edge path becomes lines (72 = 1) and arcs (72 = 2 centre, radius, angles, 73 ccw), group 93 counts them. */
+function putPath(ent, P, poly) {
+  const vs = lwVertices(poly.r), n = vs.length, curved = vs.some((x) => Math.abs(x.b) > 1e-12), g = [];
+  if (P.poly) {
+    g.push([72, +curved], [73, P.closed], [93, n]);
+    for (const x of vs) g.push([10, text(x.x)], [20, text(x.y)], ...(curved ? [[42, text(x.b)]] : []));
+  } else {
+    g.push([93, n]);
+    vs.forEach((a, j) => {
+      const b = vs[(j + 1) % n];
+      if (Math.abs(a.b) <= 1e-12) { g.push([72, 1], [10, text(a.x)], [20, text(a.y)], [11, text(b.x)], [21, text(b.y)]); return; }
+      const d = Math.hypot(b.x - a.x, b.y - a.y), off = d / 2 * (1 - a.b * a.b) / (2 * a.b), cx = (a.x + b.x) / 2 - (b.y - a.y) / d * off, cy = (a.y + b.y) / 2 + (b.x - a.x) / d * off;
+      const ccw = a.b > 0, t0 = Math.atan2(a.y - cy, a.x - cx) / DEG, t1 = Math.atan2(b.y - cy, b.x - cx) / DEG;
+      g.push([72, 2], [10, text(cx)], [20, text(cy)], [40, text(Math.hypot(a.x - cx, a.y - cy))], [50, text(wrap360(ccw ? t0 : -t0))], [51, text(wrap360(ccw ? t1 : -t1))], [73, +ccw]);
+    });
+  }
+  const c = ent.r.c.slice(), v = ent.r.v.slice();
+  c.splice(P.from, P.to - P.from, ...g.map((x) => x[0])); v.splice(P.from, P.to - P.from, ...g.map((x) => String(x[1])));
+  return { ...ent, r: { ...ent.r, c, v } };
+}
+/** Boundary grip `id` of a hatch as { P, poly: its path as a polyline, vid: the polyline's grip id }, or null (not a boundary grip, or its path has an ellipse / spline edge). */
+function pathGrip(ent, id) {
+  const m = ent && ent.type === 'HATCH' && PATH_ID.exec(id), P = m && hatchPaths(ent.r)[+m[2]];
+  return P && P.ok ? { P, poly: virtOf(P), vid: m[1] + m[3] } : null;
+}
+/** The result of a polyline edit `res` ({ ent, label } or null) written back into the hatch. */
+const pathBack = (ent, q, res) => res && { ...res, ent: putPath(ent, q.P, res.ent) };
+/** The boundary grips of a non-associative hatch (71 = 0), ids 'v<path>_<n>' / 'e<path>_<n>'; none for 71 = 1 or missing. */
+const boundaryGrips = (r) => (get(r, 71) === 0 ? hatchPaths(r).flatMap((P, p) => (P.ok ? gripsOf(virtOf(P)).map((x) => ({ id: x.id[0] + p + '_' + x.id.slice(1), kind: x.kind, x: x.x, y: x.y })) : [])) : []);
 /** The option `name` with the pointer at `to` (drawing units). */
 export const dragOption = (ent, id, name, to) => {
+  const q = pathGrip(ent, id);
+  if (q) return pathBack(ent, q, dragOption(q.poly, q.vid, name, to));
   if (isHatch(ent)) { const c = find(ent, 'c'); return name === 'Origin Point' ? hatchOrigin(ent, to) : name === 'Hatch Angle' ? hatchAngle(ent, angleOf([c.x, c.y], to)) : hatchScale(ent, dist([c.x, c.y], to)); }
   return name === 'Radius' ? setRadius(ent, dist(arcOf(ent.r).c, to)) : name === 'Insert vertex' ? insertVertex(ent, +id.slice(1), to) : name === 'Convert to Arc' ? convertToArc(ent, +id.slice(1), to) : lengthen(ent, id, { to });
 };
@@ -569,6 +663,8 @@ export function readoutOf(ent, id, next, factor = 1) {
   if (ent.type === 'ARC' && (id === 'a' || id === 'b' || id === 'm')) { const n = shapeOf(next, f); return `R ${n2(n.r)} · ${n2(sweepOf(n.a0, n.a1))}°`; }
   if (ent.type === 'ELLIPSE' && id !== 'c') { const q = ellipseOf(next.r), a = Math.hypot(...q.m) * f; return `Major ${n2(2 * a)} · Minor ${n2(2 * a * q.ratio)} mm`; }
   if (ent.type === 'MTEXT' && id !== 'i') { const b = mtextBox(next.r); return id === 'w' ? `Width ${n2(b.W * f)} mm` : id === 'h' ? `Height ${n2(b.boxH * f)} mm` : `Width ${n2(b.W * f)} · Height ${n2(b.boxH * f)} mm`; }
+  const m = ent.type === 'HATCH' && PATH_ID.exec(id);       // 164b2: a boundary grip reads as its path's polyline does
+  if (m) return readoutOf(virtOf(hatchPaths(ent.r)[+m[2]]), m[1] + m[3], virtOf(hatchPaths(next.r)[+m[2]]), f);
   if (ent.type === 'HATCH') {       // 164b1: an option's result; Stretch (the centre moved) reads as a Move
     const a = get(next.r, 52) ?? 0, s = get(next.r, 41) ?? 1, p = patternOf(next.r)[0], b = p && p.bx >= 0 && p.by >= 0 ? [num(next.r.v[p.bx]), num(next.r.v[p.by])] : null;
     if (a !== (get(ent.r, 52) ?? 0)) return `Angle ${n2(a)}°`;
