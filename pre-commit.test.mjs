@@ -35,6 +35,20 @@ test('TODO 169: pre-commit refuses mixed staged endings, allows uniform endings 
       assert.equal(result.status, refused ? 1 : 0, `${label}: ${result.stdout}${result.stderr}`);
       if (refused) assert.ok(result.stderr.includes(`commit refused: ${refused}`), result.stderr);
     }
+    // A pure rename of a mixed file (committed with --no-verify) is checked under its new path.
+    writeFileSync(join(repo, 'old name.txt'), 'one\r\ntwo\n');
+    assert.equal(git('add', '--', 'old name.txt').status, 0);
+    assert.equal(git('commit', '--no-verify', '-m', 'mixed baseline').status, 0);
+    assert.equal(git('mv', 'old name.txt', 'new name.txt').status, 0);
+    let result = git('commit', '-m', 'rename');
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.ok(result.stderr.includes('mixed line endings in new name.txt (first LF-only line 2)'), result.stderr);
+    // Two mixed files: one refusal that lists both.
+    writeFileSync(join(repo, 'other file.txt'), 'a\r\nb\n');
+    assert.equal(git('add', '--', 'other file.txt').status, 0);
+    result = git('commit', '-m', 'two');
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.ok(result.stderr.includes('in new name.txt') && result.stderr.includes('in other file.txt'), result.stderr);
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }

@@ -8,7 +8,8 @@ if [ -n "$bad" ]; then
   exit 1
 fi
 
-git -c core.quotePath=false diff --cached --name-only --diff-filter=ACM | while IFS= read -r file; do
+# The loop only prints; the refusal is decided below in the main shell, not inside the pipe.
+mixed=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR | while IFS= read -r file; do
   if git diff --cached --numstat -- "$file" | awk '$1 == "-" && $2 == "-" { binary=1 } END { exit !binary }'; then
     continue
   fi
@@ -22,7 +23,10 @@ git -c core.quotePath=false diff --cached --name-only --diff-filter=ACM | while 
     END { if (crlf && lf) print lf }
   ')
   if [ -n "$first" ]; then
-    echo "commit refused: mixed line endings in $file (first LF-only line $first)" >&2
-    exit 1
+    echo "commit refused: mixed line endings in $file (first LF-only line $first)"
   fi
-done
+done)
+if [ -n "$mixed" ]; then
+  echo "$mixed" >&2
+  exit 1
+fi
