@@ -10290,7 +10290,7 @@ try {
     for (const theme of ['light', 'dark']) {
       await page.keyboard.press('Escape'); await menuItem('View', 'Theme: ' + theme);
       await pick(60, 130, 4); await g163.hover('2:m'); await g163.list(); await frames();
-      await page.screenshot({ path: `E:/Project B/Claude/Project D extras/runs30/shots-163a/${name}-${theme}.png` });
+      await page.screenshot({ path: join(shotDir, '163a', `${name}-${theme}.png`) });
     }
     await menuItem('View', 'Theme: light'); await pick(60, 130, 4); await g163.hover('2:m'); await g163.list();
   };
@@ -10298,7 +10298,7 @@ try {
   await step('TODO 163a: hover a line / arc grip 300 ms -> the Grip options list (line end Stretch, Lengthen; arc mid Stretch, Radius; none on a line middle or arc centre); Lengthen typed 10 adds 10, Radius typed 40, Ctrl cycles, Esc closes the list first; one Undo each; light and dark', async () => {
     const { list, hover, pickItem, hotWhen, hist, undo, ent, labels } = g163;
     await menuItem('View', 'Theme: light');
-    mkdirSync('E:/Project B/Claude/Project D extras/runs30/shots-163a', { recursive: true });
+    mkdirSync(join(shotDir, '163a'), { recursive: true });
     await openGrips();
     await pick(70, 30, 3);
     // the list appears after the rest, not at once; exactly Stretch / Lengthen on a line end
@@ -10456,7 +10456,7 @@ try {
   await step('TODO 163b: hover a polyline vertex 300 ms -> exactly Stretch, Insert vertex, Remove vertex; a line segment mid Stretch, Insert vertex, Convert to Arc; an arc segment mid Stretch, Insert vertex, Convert to Line; Remove vertex is not offered on 2 vertices; a rectangle keeps its resizing sides; light and dark', async () => {
     const { list, hover, labels } = g163;
     await menuItem('View', 'Theme: light');
-    mkdirSync('E:/Project B/Claude/Project D extras/runs30/shots-163b', { recursive: true });
+    mkdirSync(join(shotDir, '163b'), { recursive: true });
     await openGrips(g163bDoc(), 'g163b.dxf');
     await pick(35, 30, 7);                                       // 4 vertices + 3 segment mid grips (the arc segment's at the top of its arc)
     const arcMid = await gripBox('0:e2'), want = await at(105, 95);
@@ -10465,7 +10465,7 @@ try {
       await page.keyboard.press('Escape'); await menuItem('View', 'Theme: ' + theme); await pick(35, 30, 7);
       for (const [id, name, items] of [['0:v1', 'vertex', ['Stretch', 'Insert vertex', 'Remove vertex']], ['0:e0', 'line-segment', ['Stretch', 'Insert vertex', 'Convert to Arc']], ['0:e2', 'arc-segment', ['Stretch', 'Insert vertex', 'Convert to Line']]]) {
         await hover(id); assert.deepEqual(await list(), items);
-        await frames(); await page.screenshot({ path: `E:/Project B/Claude/Project D extras/runs30/shots-163b/${name}-${theme}.png` });
+        await frames(); await page.screenshot({ path: join(shotDir, '163b', `${name}-${theme}.png`) });
         await page.keyboard.press('Escape'); await t('ctx-menu').waitFor({ state: 'detached' });
         assert.equal(await gripCount(), 7, 'Esc closed only the list');
       }
@@ -10890,7 +10890,7 @@ try {
   });
 
   // ---- TODO 164b1: the hatch centre grip's Grip options (Stretch / Origin Point / Hatch Angle / Hatch Scale) ----
-  const g164b1Shots = 'E:/Project B/Claude/Project D extras/runs30/shots-164b1';
+  const g164b1Shots = join(shotDir, '164b1');
   const g164b1Doc = (withLine) => {       // entity 0: an associative ANSI31-like hatch over (20,20)-(120,70): horizontal lines 10 apart from the origin (0,0); centre (70,45). withLine: and a line as entity 1 (Compare snapshots need a drawing with a real outline)
     const doc = newDoc(4), hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'ANSI31'], [70, 0], [71, 1], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 20], [10, 120], [20, 20], [10, 120], [20, 70], [10, 20], [20, 70], [97, 0], [75, 0], [76, 1], [52, 0], [41, 1], [77, 0], [78, 1], [53, 0], [43, 0], [44, 0], [45, 0], [46, 10], [79, 0], [98, 1], [10, 70], [20, 45]]);
     addEntities(doc, hatch);
@@ -11032,7 +11032,7 @@ try {
   });
 
   // ---- TODO 164b2: grips on the boundary of a non-associative hatch (71 = 0) ----
-  const g164b2Shots = 'E:/Project B/Claude/Project D extras/runs30/shots-164b2';
+  const g164b2Shots = join(shotDir, '164b2');
   const g164b2Doc = (edge) => {       // entity 0: an ANSI31-like hatch (71 = 0) over (20,20)-(120,70), horizontal lines 10 apart; edge: the right side an arc edge (centre (120,45), r 25, bulging right) in an edge path; entities 1 / 2: two far lines (the view reaches y = -20 .. 100, and Compare needs an outline)
     const doc = newDoc(4), path = edge
       ? [[92, 1], [93, 4], [72, 1], [10, 20], [20, 20], [11, 120], [21, 20], [72, 2], [10, 120], [20, 45], [40, 25], [50, 270], [51, 90], [73, 1], [72, 1], [10, 120], [20, 70], [11, 20], [21, 70], [72, 1], [10, 20], [20, 70], [11, 20], [21, 20]]
