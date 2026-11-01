@@ -2964,7 +2964,7 @@ try {
     assert.deepEqual(await page.locator('.layer .nm').allTextContents(), [], 'an empty drawing has no layers');
     assert.equal(await page.locator('[data-group=parts] [data-i]').count(), 0);
     assert.equal(await t('mode-part').count(), 0, 'no Part | Layout switch');
-    assert.equal(await t('new-layout').textContent(), '+ New layout');
+    assert.equal(await t('new-layout').textContent(), 'New layout');
     assert.equal(await t('apply').isDisabled(), true);
     for (const id of ['sheet-panel', 'step-panel', 'propbar', 'drawing-panel']) assert.equal(await t(id).isVisible(), false, id);
     const body = await page.locator('body').textContent();
@@ -3035,7 +3035,7 @@ try {
       const fits = async () => {
         const m = await p2.evaluate(() => {
           const strip = document.querySelector('.tabs'), row = document.querySelector('.tabsrow');
-          const label = document.createRange(); label.selectNodeContents(document.querySelector('[data-testid=new-layout]'));
+          const label = document.createRange(); label.selectNodeContents(document.querySelector('[data-testid=new-layout]').lastChild);       // the words (the + icon is the first child)
           return {
             pageWidth: document.documentElement.scrollWidth, viewport: innerWidth, pageX: scrollX,
             shellX: document.querySelector('.shell').scrollLeft, rowX: row.scrollLeft,
@@ -10768,10 +10768,11 @@ try {
     await shot('layout-block-grips');
     // the insertion grip moves the whole object
     await dragPx('0:i', 40, 30, true);
-    const pre1 = await inkBox(p0.i.x + 40, p0.i.y + 30);
+    const pre1 = await inkBox(p0.i.x + 40, p0.i.y + 30), pre1a = await inkBox(p0.a0.x + 40, p0.a0.y + 30);
     await page.mouse.up(); await frames(); await gripWhen(3);
     const p1 = await posWhen('i', p0.i.x + 40, p0.i.y + 30);
     sameInk(pre1, await inkBox(p0.i.x + 40, p0.i.y + 30), 'the insertion grip: drawn where it was dropped');
+    sameInk(pre1a, await inkBox(p0.a0.x + 40, p0.a0.y + 30), 'the insertion grip: the attribute is drawn where it was dropped too');
     for (const k of ['i', 'a0', 'a1']) assert.ok(near(p1[k].x, p0[k].x + 40, 2) && near(p1[k].y, p0[k].y + 30, 2), 'the object moved with its attributes: ' + k);
     await undo(); await gripWhen(3); same(await pos(), p0, 'one Undo gives the move back');
     // an attribute grip moves that attribute only; the preview is drawn while dragged and the result is where it was dropped
@@ -21517,6 +21518,45 @@ try {
     assert.equal(await nParts(), gridN, 'one Undo puts the grid back');
     assert.equal(dimBlocks(await save()), 1, 'and its dimension');
     assert.equal(readMeta(readDxf(await save())).s.gridPart, part.partId, 'the grid is restored');
+  });
+
+  await step('TODO 175: + and − icons centred', async () => {
+    await nestLayout();
+    await t('ptab-drawing').click();
+    const measure = (inDialog) => page.evaluate((inDialog) => {       // the dialog covers the layout panel: the nest buttons and the others are measured apart
+      const mid = (r, ax) => ax === 'x' ? r.x + r.width / 2 : r.y + r.height / 2;
+      const one = (btn, words) => {
+        const svg = btn.querySelector('svg'), r = btn.getBoundingClientRect();
+        if (!svg || !r.width) return { error: `${svg ? 'hidden' : 'no icon'} (width ${r.width}): ${btn.outerHTML.slice(0, 80)}` };
+        const s = svg.getBoundingClientRect();
+        if (!words) return { dx: mid(s, 'x') - mid(r, 'x'), dy: mid(s, 'y') - mid(r, 'y') };
+        const range = document.createRange(); range.selectNodeContents(btn.lastChild);       // the words are the last child, the icon the first
+        return { dx: 0, dy: mid(s, 'y') - mid(range.getBoundingClientRect(), 'y') };
+      };
+      const q = (sel) => document.querySelector(sel), zoom = (n) => q(`.zoombox [aria-label="${n}"]`);
+      return inDialog ? { 'nest −': one(q('[data-testid=nest-minus-0]')), 'nest +': one(q('[data-testid=nest-plus-0]')) } : {
+        'tab +': one(q('[data-testid=new-tab]')), 'zoom −': one(zoom('Zoom out')), 'zoom +': one(zoom('Zoom in')),
+        '+ New layout': one(q('[data-testid=new-layout]'), true), '+ Add from library': one(q('[data-testid=add-from-library]'), true),
+      };
+    }, inDialog);
+    const check = async (theme, inDialog) => {
+      for (const [name, m] of Object.entries(await measure(inDialog))) {
+        assert.ok(!m.error, `${theme} ${name}: ${m.error}`);
+        assert.ok(Math.abs(m.dy) <= 0.5 && Math.abs(m.dx) <= 0.5, `${theme} ${name}: icon off centre by dx ${m.dx.toFixed(2)}, dy ${m.dy.toFixed(2)} px`);
+      }
+      await page.screenshot({ path: `${shotDir}/s175-${inDialog ? 'nest' : 'layout'}-${theme}.png` });
+    };
+    for (const inDialog of [false, true]) {
+      if (inDialog) await t('nest').click();
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, theme);
+        await page.waitForTimeout(150);
+        await check(theme, inDialog);
+      }
+      if (inDialog) await t('nest-cancel').click();
+    }
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+    await closeTabs(/./);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

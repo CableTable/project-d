@@ -1,5 +1,5 @@
 // Project D — screen A: the sheet, step and repeat, layers. Layout maths is in layout.js (pure).
-import { h } from './dom.js';
+import { h, icon as domIcon } from './dom.js';       // app.js has its own icon() for the ribbon's markup
 import { attachCrosshair } from './crosshair.js';
 import { pickColour, swatches } from './colourpicker.js';
 import { recentColours, stripGroups } from './swatchstrip.js';
@@ -823,8 +823,8 @@ function buildTabs() {
   });
   return h('div', { class: 'tabsrow' },
     ui.tabs,
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, '+'),
-    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, '+ New layout'),
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New drawing', 'data-testid': 'new-tab', onclick: () => addTab(emptyDoc()) }, domIcon('plus', 14)),
+    h('button', { class: 'dtab', type: 'button', 'aria-label': 'New layout', 'data-testid': 'new-layout', onclick: newLayoutTab }, domIcon('plus', 14), 'New layout'),
     h('div', { class: 'spacer' }),
     h('div', { class: 'rowtools' },
       h('div', { class: 'mode', role: 'group', 'aria-label': 'Mode' }, modeBtns),
@@ -1415,9 +1415,9 @@ function buildCanvas() {
   ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
-      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, '−'),
+      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
       ui.pct,
-      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, '+'),
+      h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
       ui.fitBtn));
   attachCanvasEvents();
   ui.canvas.append(attachCrosshair(ui.canvas));
@@ -1501,7 +1501,7 @@ function buildPanel() {
     ui.partsSec = h('section', { 'data-testid': 'parts-panel' },
       h('h2', { class: 'sec' }, 'Parts on this layout'),
       ui.partRows = h('div', { class: 'partrows', 'data-testid': 'part-rows' }),
-      h('button', { class: 'btn', type: 'button', 'data-testid': 'add-from-library', onclick: () => showLibrary() }, '+ Add from Parts library')),
+      h('button', { class: 'btn', type: 'button', 'data-testid': 'add-from-library', onclick: () => showLibrary() }, domIcon('plus', 14), 'Add from Parts library')),
     ui.stepSec = h('section', { class: 'stepbox', 'data-testid': 'step-panel' },
       h('h2', { class: 'sec' }, 'Step and repeat'),
       h('label', { class: 'row swrow' }, h('span', null, 'Fit to sheet'), h('span', { class: 'row' }, ui.fitText, ui.fit)),
