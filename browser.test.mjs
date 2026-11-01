@@ -9480,13 +9480,19 @@ try {
     });
     const turn = async (degrees, shift = false, cancel = false) => {
       assert.equal(await arrows.count(), 4, `rotate mode before ${degrees} degree drag`);
-      const a = await arrow(), pv = await pivotPoint(), angle = degrees * Math.PI / 180;
-      const dx = a.x - pv.x, dy = a.y - pv.y;
+      // One read of both points, taken only once the first arrow is what a press at its midpoint would hit (the overlay may still be redrawing).
+      const { a, pv } = await (await page.waitForFunction(() => {
+        const el = document.querySelector('.ovl [data-rot]'), piv = document.querySelector('.ovl [data-pivot]');
+        if (!el || !piv) return null;
+        const q = el.getPointAtLength(el.getTotalLength() / 2), p = new DOMPoint(q.x, q.y).matrixTransform(el.getScreenCTM()), b = piv.getBoundingClientRect();
+        if (!b.width || !b.height || document.elementFromPoint(p.x, p.y)?.closest('[data-rot]') !== el) return null;
+        return { a: { x: p.x, y: p.y }, pv: { x: b.x + b.width / 2, y: b.y + b.height / 2 } };
+      })).jsonValue();
+      const angle = degrees * Math.PI / 180, dx = a.x - pv.x, dy = a.y - pv.y;
       if (shift) await page.keyboard.down('Shift');
       try {
         await page.mouse.move(a.x, a.y); await page.mouse.down();
         await page.mouse.move(pv.x + dx * Math.cos(angle) + dy * Math.sin(angle), pv.y - dx * Math.sin(angle) + dy * Math.cos(angle), { steps: 6 });
-        await frames();
         await page.waitForFunction(() => document.querySelectorAll('.ovl .rot-label').length === 1);
         assert.ok(Math.abs(parseFloat(await page.locator('.ovl .rot-label').textContent()) - (shift ? Math.round(degrees / 15) * 15 : degrees)) < .1);
         assert.ok(await accentInk() > 0, 'live selection preview is painted');
