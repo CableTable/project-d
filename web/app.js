@@ -8448,10 +8448,10 @@ function gripAim(g, q, shift = false) {
   const r = g.opt ? GR.dragOption(g.ent, g.id, g.opts[g.opt], to) : GR.dragGrip(g.ent, g.id, to, shift);
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
   // a text, hatch or block has no outline to draw: the canvas shows it moved, as when a selection is dragged (155e4); a layout paints it from its objects' drawing (g.d.fl)
-  const fl = r && GR.movesWhole(g.ent, g.id) && g.d.fl;
+  const fl = r && GR.movesWhole(g.ent, g.id) && !g.opt && g.d.fl;       // a hatch's Grip option (164b1) redraws the pattern instead (below)
   if (fl && !g.items) g.items = fl.items.filter((it) => it.e === g.e);
   g.move = fl ? { items: g.items, preview: { ...fl, items: g.items }, dx: q[0] - g.base[0], dy: q[1] - g.base[1] } : null;
-  if (r && !g.move && (g.ent.type === 'MTEXT' || g.ent.type === 'INSERT')) { const preview = flatten({ ...g.d.raw, entities: [r.ent] }); g.move = { items: preview.items, preview, dx: 0, dy: 0 }; }       // 164a: an MTEXT's width / height or a block's attribute: the changed object drawn as it will be (the text reflows live)
+  if (r && !g.move && (g.ent.type === 'MTEXT' || g.ent.type === 'INSERT' || g.ent.type === 'HATCH')) { const preview = flatten({ ...g.d.raw, entities: [r.ent] }); g.move = { items: preview.items, preview, dx: 0, dy: 0 }; }       // 164a: an MTEXT's width / height or a block's attribute: the changed object drawn as it will be (the text reflows live)
 }
 /** Stretch with several hot grips (155e3): every one moves by the vector base → q; an object with its middle / centre hot moves whole. g.nexts: object index → the changed entity. */
 function gripStretchHots(g, q, shift) {
@@ -8696,7 +8696,8 @@ function gripCommit() {
     commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
     setSel(d, g.sel);
   }
-  note(`${label}: ${text}${leftNote(g)}. Ctrl+Z takes it back`);
+  const unlinked = !g.nexts && g.ent.type === 'HATCH' && GR.get(g.ent.r, 71) === 1 && GR.get(g.next.r, 71) === 0;       // 164b1: AutoCAD says so when a Stretch ends the association
+  note(`${label}: ${text}${leftNote(g)}. Ctrl+Z takes it back${unlinked ? '. Hatch boundary associativity removed.' : ''}`);
 }
 /** The drawing after a Stretch of several hot grips: the changed objects in place, dimensions following, leaders through their own model. */
 function gripHotsRaw(g) {
@@ -8748,15 +8749,16 @@ function gripTyped(raw) {
 /** Typed in an option (163a): Radius the radius, Lengthen on a line the distance ADDED, on an arc the end's new angle in degrees (AutoCAD); mm for the first two. */
 function gripOptionTyped(g, inp) {
   const name = g.opts[g.opt], deg = name === 'Lengthen' && g.ent.type === 'ARC';
-  if (name === 'Insert vertex' || name === 'Convert to Arc') {             // 163b: a point, as the click
+  if (name === 'Insert vertex' || name === 'Convert to Arc' || name === 'Origin Point') {             // 163b: a point, as the click
     const mm = DR.typedPoint(inp, g.base.map((v) => v * g.d.factor));
     if (!mm) { note(`Type the point as x,y or @dx,dy, or click it. ${GR.optionPrompt(g.ent, name)}`); return; }
     gripAim(g, mm.map((v) => v / g.d.factor));
-    if (!g.next) { note(`${name === 'Insert vertex' ? 'That is on a neighbouring vertex' : 'That point is on the segment\'s line, so no arc passes through it'}. ${GR.optionPrompt(g.ent, name)}`); return; }
+    if (!g.next) { note(`${name === 'Insert vertex' ? 'That is on a neighbouring vertex' : name === 'Origin Point' ? 'This hatch has no pattern lines to move, or the origin is there already' : 'That point is on the segment\'s line, so no arc passes through it'}. ${GR.optionPrompt(g.ent, name)}`); return; }
     gripDone(g, false); return;
   }
-  if (inp.kind !== 'len') { note(`Type ${deg ? 'an angle in degrees' : name === 'Radius' ? 'the radius' : 'the length to add'}, or click a point`); return; }
-  const r = GR.typedOption(g.ent, g.id, name, deg ? inp.v : inp.v / g.d.factor);
+  const total = name === 'Hatch Angle' || name === 'Hatch Scale';       // 164b1: a typed hatch angle (degrees) or scale is the new total, not a length
+  if (inp.kind !== 'len') { note(`Type ${deg || name === 'Hatch Angle' ? 'an angle in degrees' : name === 'Hatch Scale' ? 'the new scale' : name === 'Radius' ? 'the radius' : 'the length to add'}, or click a point`); return; }
+  const r = GR.typedOption(g.ent, g.id, name, deg || total ? inp.v : inp.v / g.d.factor);
   if (!r) { note(`That would leave nothing of the shape, or change nothing. ${GR.optionPrompt(g.ent, name)}`); return; }
   g.next = r.ent; g.label = r.label; g.to = g.to || g.base;
   gripDone(g, false);

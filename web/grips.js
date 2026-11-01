@@ -8,7 +8,8 @@
 //   dragGrip(ent, id, to, shift) → { ent: the changed record, label } or null (nothing sensible: the point is the same, three points in a line)
 //   optionsOf(ent, id)           → 163a Grip options: ['Stretch', 'Lengthen'] / ['Stretch', 'Radius'] / []; lengthen, setRadius, dragOption, typedOption do them
 //                                  163b polylines: vertex Stretch / Insert vertex / Remove vertex, segment mid Stretch / Insert vertex / Convert to Arc | Line (insertVertex, removeVertex, convertToArc, convertToLine)
-//   refPoint(ent, id)            → the point the rubber band starts from (the fixed end of a line, the centre of a circle, else the grip itself)
+//                                  164b1 a hatch's centre: Stretch / Origin Point / Hatch Angle / Hatch Scale (hatchOrigin, hatchAngle, hatchScale)
+//   refPoint(ent, id)          → the point the rubber band starts from (the fixed end of a line, the centre of a circle, else the grip itself)
 //   shapeOf(ent, factor)         → the shape in mm as draw.js svgPath draws it
 //   (a leader, leader.js, is passed in as { type: 'LEADER', model } and has a grip at each of its points)
 //   readoutOf(ent, id, next, factor) → "331.06 mm · 25.02°", "Move ΔX 10.00 ΔY 40.00", "R 25.00" …
@@ -292,7 +293,8 @@ export function dragGrip(ent, id, to, shift = false) {
   const r = ent.r, T = ent.type;
   if (movesWhole(ent, id)) {
     if (dist([g.x, g.y], to) < 1e-12) return null;
-    return { ent: moveEntities({ entities: [ent], blocks: {} }, new Set([0]), to[0] - g.x, to[1] - g.y).entities[0], label: 'Move ' + MOVES[T] };
+    const moved = moveEntities({ entities: [ent], blocks: {} }, new Set([0]), to[0] - g.x, to[1] - g.y).entities[0];
+    return { ent: T === 'HATCH' && get(r, 71) === 1 ? withValues(moved, [[at(moved.r, 71), 0]]) : moved, label: 'Move ' + MOVES[T] };       // 164b1: Stretching an associative hatch ends the association
   }
   if (T === 'ELLIPSE') return dragEllipse(ent, id, g, to);
   if (T === 'INSERT') return dragAttribute(ent, id, g, to);
@@ -357,6 +359,7 @@ export function dragGrip(ent, id, to, shift = false) {
 
 /** 163a Grip options: what the list on a grip offers (first = Stretch, the plain grip run); [] when the grip has no list (line middle, circle, arc centre ...). */
 export function optionsOf(ent, id) {
+  if (isHatch(ent) && id === 'c' && find(ent, id)) return ['Stretch', 'Origin Point', 'Hatch Angle', 'Hatch Scale'];       // 164b1: solid and gradient too
   if (!ent || !ent.r || !hasGrips(ent)) return [];
   if ((ent.type === 'LINE' || ent.type === 'ARC') && (id === 'a' || id === 'b')) return ['Stretch', 'Lengthen'];
   if (ent.type === 'LWPOLYLINE' && find(ent, id)) {       // 163b: a vertex Stretch / Insert vertex / Remove vertex; a segment mid Stretch / Insert vertex / Convert to Arc (a line) or Line (an arc)
@@ -375,6 +378,7 @@ export const isRectEdge = (ent, id) => !!find(ent, id)?.rect;
 export const optionPrompt = (ent, name) => ({
   Radius: 'Specify radius:', 'Insert vertex': 'Specify new vertex point:', 'Convert to Arc': 'Specify midpoint of arc segment:',
   'Remove vertex': 'Pick to remove vertex:', 'Convert to Line': 'Pick to convert to line segment:',
+  'Origin Point': 'Specify origin point:', 'Hatch Angle': 'Specify hatch angle:', 'Hatch Scale': 'Specify hatch scale:',
 }[name] || (ent.type === 'ARC' ? 'Specify end point of arc:' : 'Specify end point:'));
 
 // ---- 163b polyline edits: pure, each returns { ent, label } or null (refused, nothing to do) ----
@@ -473,10 +477,73 @@ export function setRadius(ent, rad) {
   if (!optionsOf(ent, 'm').includes('Radius') || !Number.isFinite(rad) || !(rad > 1e-9) || Math.abs(rad - (get(ent.r, 40) ?? 0)) < 1e-12) return null;
   return { ent: withValues(ent, [[at(ent.r, 40), rad]]), label: 'Radius' };
 }
+
+// ---- 164b1 HATCH centre Grip options: the pattern is stored already turned and scaled (53 angle, 43/44 base, 45/46 offset, 49 dashes per line; 52 / 41 the totals) ----
+/** The indices of a HATCH's pattern lines: [{ a, bx, by, ox, oy, d: [dash indices] }] (-1 for a group the line lacks). */
+function patternOf(r) {
+  const out = [], k78 = at(r, 78);
+  if (k78 < 0) return out;
+  for (let k = k78 + 1; k < r.c.length && r.c[k] === 53;) {
+    const q = { a: k++, bx: -1, by: -1, ox: -1, oy: -1, d: [] };
+    for (; k < r.c.length && [43, 44, 45, 46, 79, 49].includes(r.c[k]); k++) { if (r.c[k] === 49) q.d.push(k); else { const f = { 43: 'bx', 44: 'by', 45: 'ox', 46: 'oy' }[r.c[k]]; if (f) q[f] = k; } }
+    out.push(q);
+  }
+  return out;
+}
+/** The record with group `code` (52 or 41) set; a missing one goes in before 77 / 78 / 98 (AutoCAD's order: 76, 52, 41, 77, 78), else at the end. */
+function setHeadGroup(ent, code, value) {
+  const k = at(ent.r, code);
+  if (k >= 0) return withValues(ent, [[k, value]]);
+  const c = ent.r.c.slice(), v = ent.r.v.slice(), at0 = [77, 78, 98].map((x) => c.indexOf(x)).find((x) => x >= 0) ?? c.length;
+  c.splice(at0, 0, code); v.splice(at0, 0, text(value));
+  return { ...ent, r: { ...ent.r, c, v } };
+}
+/** Every pattern line through fn({ a, b: [x, y], o: [x, y], d: [dashes] }) → the same shape; `origin` is the first line's base. Returns the record with the new numbers. */
+function mapPattern(ent, fn) {
+  const r = ent.r, L = patternOf(r), val = (k) => (k >= 0 ? num(r.v[k]) : 0), edits = [];
+  const first = L.length ? [val(L[0].bx), val(L[0].by)] : [0, 0];
+  for (const q of L) {
+    const n = fn({ a: val(q.a), b: [val(q.bx), val(q.by)], o: [val(q.ox), val(q.oy)], d: q.d.map(val) }, first);
+    edits.push([q.a, n.a]);
+    [[q.bx, n.b[0]], [q.by, n.b[1]], [q.ox, n.o[0]], [q.oy, n.o[1]]].forEach(([k, x]) => k >= 0 && edits.push([k, x]));
+    q.d.forEach((k, i) => edits.push([k, n.d[i]]));
+  }
+  return withValues(ent, edits);
+}
+const isHatch = (ent) => !!ent && ent.type === 'HATCH' && !!ent.r && upright(ent.r);
+/** Hatch Angle: the new TOTAL angle (degrees, typed or the direction centre → pointer); every pattern line turns by the change about the pattern origin. Null when unchanged. */
+export function hatchAngle(ent, deg) {
+  if (!isHatch(ent) || !Number.isFinite(deg)) return null;
+  const old = get(ent.r, 52) ?? 0, to = wrap360(deg), t = (to - old) * DEG, c = Math.cos(t), s = Math.sin(t);
+  if (Math.abs(wrap360(to - old + 180) - 180) < 1e-9) return null;
+  const turn = (p) => [p[0] * c - p[1] * s, p[0] * s + p[1] * c];
+  const next = mapPattern(ent, (q, o) => { const b = turn([q.b[0] - o[0], q.b[1] - o[1]]); return { a: q.a + to - old, b: [o[0] + b[0], o[1] + b[1]], o: turn(q.o), d: q.d }; });
+  return { ent: setHeadGroup(next, 52, to), label: 'Hatch Angle' };
+}
+/** Hatch Scale: the new TOTAL scale (typed, or the distance centre → pointer in drawing units); base, offset and dashes of every line scale by new / old about the pattern origin. Refused at 0 or less, or unchanged. */
+export function hatchScale(ent, to) {
+  if (!isHatch(ent) || !Number.isFinite(to) || !(to > 1e-9)) return null;
+  const old = get(ent.r, 41) ?? 1, f = to / (old > 0 ? old : 1);
+  if (Math.abs(to - old) < 1e-12) return null;
+  const next = mapPattern(ent, (q, o) => ({ a: q.a, b: [o[0] + (q.b[0] - o[0]) * f, o[1] + (q.b[1] - o[1]) * f], o: [q.o[0] * f, q.o[1] * f], d: q.d.map((x) => x * f) }));
+  return { ent: setHeadGroup(next, 41, to), label: 'Hatch Scale' };
+}
+/** Origin Point: every line's base moves by (point - the first line's base) so the pattern passes through the point. Null when the hatch has no pattern lines (solid) or the origin is there already. */
+export function hatchOrigin(ent, to) {
+  if (!isHatch(ent) || !to || !to.every(Number.isFinite)) return null;
+  const L = patternOf(ent.r);
+  if (!L.length || L[0].bx < 0 || L[0].by < 0) return null;
+  const dx = to[0] - num(ent.r.v[L[0].bx]), dy = to[1] - num(ent.r.v[L[0].by]);
+  if (Math.abs(dx) < 1e-12 && Math.abs(dy) < 1e-12) return null;
+  return { ent: mapPattern(ent, (q) => ({ ...q, b: [q.b[0] + dx, q.b[1] + dy] })), label: 'Origin Point' };
+}
 /** The option `name` with the pointer at `to` (drawing units). */
-export const dragOption = (ent, id, name, to) => (name === 'Radius' ? setRadius(ent, dist(arcOf(ent.r).c, to)) : name === 'Insert vertex' ? insertVertex(ent, +id.slice(1), to) : name === 'Convert to Arc' ? convertToArc(ent, +id.slice(1), to) : lengthen(ent, id, { to }));
-/** The option `name` with a typed number: Radius the radius, Lengthen on a line the distance added (both drawing units), on an arc the end angle in degrees. */
-export const typedOption = (ent, id, name, v) => (name === 'Radius' ? setRadius(ent, v) : lengthen(ent, id, ent.type === 'ARC' ? { deg: v } : { add: v }));
+export const dragOption = (ent, id, name, to) => {
+  if (isHatch(ent)) { const c = find(ent, 'c'); return name === 'Origin Point' ? hatchOrigin(ent, to) : name === 'Hatch Angle' ? hatchAngle(ent, angleOf([c.x, c.y], to)) : hatchScale(ent, dist([c.x, c.y], to)); }
+  return name === 'Radius' ? setRadius(ent, dist(arcOf(ent.r).c, to)) : name === 'Insert vertex' ? insertVertex(ent, +id.slice(1), to) : name === 'Convert to Arc' ? convertToArc(ent, +id.slice(1), to) : lengthen(ent, id, { to });
+};
+/** The option `name` with a typed number: Radius the radius, Lengthen on a line the distance added (both drawing units), on an arc the end angle in degrees; a hatch's Angle (degrees) and Scale are totals. */
+export const typedOption = (ent, id, name, v) => (name === 'Radius' ? setRadius(ent, v) : name === 'Hatch Angle' ? hatchAngle(ent, v) : name === 'Hatch Scale' ? hatchScale(ent, v) : lengthen(ent, id, ent.type === 'ARC' ? { deg: v } : { add: v }));
 
 /** The shape (mm) of an entity, as draw.js svgPath wants it: { t: 'line' | 'circle' | 'arc' | 'poly', … }; null for other types. */
 export function shapeOf(ent, factor = 1) {
@@ -502,6 +569,12 @@ export function readoutOf(ent, id, next, factor = 1) {
   if (ent.type === 'ARC' && (id === 'a' || id === 'b' || id === 'm')) { const n = shapeOf(next, f); return `R ${n2(n.r)} · ${n2(sweepOf(n.a0, n.a1))}°`; }
   if (ent.type === 'ELLIPSE' && id !== 'c') { const q = ellipseOf(next.r), a = Math.hypot(...q.m) * f; return `Major ${n2(2 * a)} · Minor ${n2(2 * a * q.ratio)} mm`; }
   if (ent.type === 'MTEXT' && id !== 'i') { const b = mtextBox(next.r); return id === 'w' ? `Width ${n2(b.W * f)} mm` : id === 'h' ? `Height ${n2(b.boxH * f)} mm` : `Width ${n2(b.W * f)} · Height ${n2(b.boxH * f)} mm`; }
+  if (ent.type === 'HATCH') {       // 164b1: an option's result; Stretch (the centre moved) reads as a Move
+    const a = get(next.r, 52) ?? 0, s = get(next.r, 41) ?? 1, p = patternOf(next.r)[0], b = p && p.bx >= 0 && p.by >= 0 ? [num(next.r.v[p.bx]), num(next.r.v[p.by])] : null;
+    if (a !== (get(ent.r, 52) ?? 0)) return `Angle ${n2(a)}°`;
+    if (s !== (get(ent.r, 41) ?? 1)) return `Scale ${n2(s)}`;
+    if (Math.hypot(find(next, id).x - g.x, find(next, id).y - g.y) < 1e-12 && b) return `Origin X ${n2(b[0] * f)} · Y ${n2(b[1] * f)}`;
+  }
   if (ent.type === 'LWPOLYLINE' && lwVertices(next.r).length !== lwVertices(ent.r).length) return `${lwVertices(next.r).length} vertices`;       // Insert / Remove vertex
   if (ent.type === 'LWPOLYLINE' || ent.type === 'LEADER') { const n = find(next, id); return `X ${n2(n.x * f)} · Y ${n2(n.y * f)}`; }
   const n = find(next, id);

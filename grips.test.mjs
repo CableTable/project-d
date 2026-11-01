@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as GR from './web/grips.js';
 import * as DR from './web/draw.js';
 import { newDoc, addEntities, addBlock, writeDxf, line, circle, arc, lwpoly, ellipse, rect, text, mtext, insert } from './web/dxf-write.js';
-import { readDxf } from './web/drawing.js';
+import { readDxf, hatchPattern } from './web/drawing.js';
 
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
@@ -670,6 +670,115 @@ test('block attributes: the moved attribute survives a save and reopen', () => {
   const back = readDxf(writeDxf(d)).entities[0];
   assert.deepEqual(back.kids.map((k) => [GR.get(k, 10), GR.get(k, 20)]), [[17, 100], [19, 93]]);
   assert.deepEqual(pts(GR.gripsOf(back)), [[10, 100], [17, 100], [19, 93]]);
+});
+
+// ---- 164b1: the hatch centre grip's Grip options
+/** A pattern hatch (70 = 0) over (0,0)-(100,40), associative (71 = 1), angle 0, scale 1; two pattern lines, the first with the pattern origin (10, 20) and dashes 3 / -1. */
+const patHatch = () => ({ type: 'HATCH', layer: '0', r: { type: 'HATCH',
+  c: [10, 20, 30, 2, 70, 71, 91, 92, 72, 73, 93, 10, 20, 10, 20, 10, 20, 10, 20, 97, 75, 76, 52, 41, 77, 78, 53, 43, 44, 45, 46, 79, 49, 49, 53, 43, 44, 45, 46, 79, 47, 98, 10, 20],
+  v: ['0', '0', '0', 'ANSI31', '0', '1', '1', '3', '0', '1', '4', '0', '0', '100', '0', '100', '40', '0', '40', '0', '0', '1', '0', '1', '0', '2', '0', '10', '20', '0', '4', '2', '3', '-1', '90', '11', '20', '0', '5', '0', '0', '1', '50', '20'] } });
+const lines = (e) => { const out = []; e.r.c.forEach((c, k) => { if (c === 53) out.push({ a: +e.r.v[k], b: [+e.r.v[k + 1], +e.r.v[k + 2]], o: [+e.r.v[k + 3], +e.r.v[k + 4]] }); }); return out; };
+const dashes = (e) => e.r.c.flatMap((c, k) => (c === 49 ? [+e.r.v[k]] : []));
+const OPTS4 = ['Stretch', 'Origin Point', 'Hatch Angle', 'Hatch Scale'];
+
+test('hatch centre: the Grip options list is Stretch / Origin Point / Hatch Angle / Hatch Scale, on solid and pattern alike; no list on other grips', () => {
+  assert.deepEqual(GR.optionsOf(patHatch(), 'c'), OPTS4);
+  assert.deepEqual(GR.optionsOf(hatchOf(0, 0, 10, 10), 'c'), OPTS4, 'solid: the same list');
+  assert.deepEqual(GR.optionsOf(patHatch(), 'x'), []);
+  assert.deepEqual(GR.optionsOf(text(0, 0, 5, 'x'), 'i'), []);
+  assert.equal(GR.optionPrompt(patHatch(), 'Origin Point'), 'Specify origin point:');
+  assert.equal(GR.optionPrompt(patHatch(), 'Hatch Angle'), 'Specify hatch angle:');
+  assert.equal(GR.optionPrompt(patHatch(), 'Hatch Scale'), 'Specify hatch scale:');
+  assert.equal(GR.IMMEDIATE.has('Hatch Angle'), false);
+});
+
+test('hatch angle: a typed number is the new total; every line turns by the change about the pattern origin; 52 is written; the base point of the pattern stays', () => {
+  const r = GR.typedOption(patHatch(), 'c', 'Hatch Angle', 45);
+  assert.equal(r.label, 'Hatch Angle');
+  assert.equal(val(r.ent, 52), 45);
+  const [l1, l2] = lines(r.ent), s = Math.SQRT1_2;
+  near(l1.a, 45); near(l2.a, 135);
+  nearPt(l1.b, [10, 20]); nearPt(l1.o, [-4 * s, 4 * s]);
+  nearPt(l2.b, [10 + s, 20 + s]); nearPt(l2.o, [-5 * s, 5 * s]);
+  assert.deepEqual(dashes(r.ent), [3, -1], 'dashes do not turn');
+  // a second angle is again a total: 45 -> 30 turns by -15
+  const back = GR.typedOption(r.ent, 'c', 'Hatch Angle', 30).ent;
+  near(val(back, 52), 30); near(lines(back)[0].a, 30);
+  assert.equal(GR.typedOption(r.ent, 'c', 'Hatch Angle', 45), null, 'the same total changes nothing');
+  assert.equal(GR.typedOption(r.ent, 'c', 'Hatch Angle', Infinity), null);
+  near(val(GR.typedOption(patHatch(), 'c', 'Hatch Angle', -90).ent, 52), 270);
+});
+
+test('hatch angle: a picked point gives the direction centre grip → point', () => {
+  const h = patHatch(), c = GR.gripsOf(h)[0];
+  assert.deepEqual([c.x, c.y], [50, 20]);
+  const r = GR.dragOption(h, 'c', 'Hatch Angle', [50, 120]);       // straight up = 90°
+  near(val(r.ent, 52), 90); near(lines(r.ent)[0].a, 90);
+  nearPt(lines(r.ent)[0].o, [-4, 0]);
+  assert.equal(GR.dragOption(h, 'c', 'Hatch Angle', [50, 20]), null, 'on the grip itself: no direction');
+});
+
+test('hatch scale: a typed number is the new total; base (about the origin), offset and every dash scale by new / old; 41 is written', () => {
+  const r = GR.typedOption(patHatch(), 'c', 'Hatch Scale', 2);
+  assert.equal(r.label, 'Hatch Scale');
+  assert.equal(val(r.ent, 41), 2);
+  const [l1, l2] = lines(r.ent);
+  nearPt(l1.b, [10, 20]); nearPt(l1.o, [0, 8]); nearPt(l2.b, [12, 20]); near(l2.a, 90);
+  assert.deepEqual(dashes(r.ent), [6, -2]);
+  const again = GR.typedOption(r.ent, 'c', 'Hatch Scale', 1).ent;       // back to the start: 2 -> 1 halves
+  nearPt(lines(again)[0].o, [0, 4]); nearPt(lines(again)[1].b, [11, 20]); assert.deepEqual(dashes(again), [3, -1]);
+  assert.equal(GR.typedOption(patHatch(), 'c', 'Hatch Scale', 0), null, 'scale 0 refused');
+  assert.equal(GR.typedOption(patHatch(), 'c', 'Hatch Scale', -2), null, 'a negative scale refused');
+  assert.equal(GR.typedOption(patHatch(), 'c', 'Hatch Scale', 1), null, 'unchanged');
+});
+
+test('hatch scale: a picked point gives the distance from the centre grip (1 unit = scale 1)', () => {
+  const r = GR.dragOption(patHatch(), 'c', 'Hatch Scale', [50, 23]);       // 3 units above the centre (50, 20)
+  near(val(r.ent, 41), 3); nearPt(lines(r.ent)[0].o, [0, 12]);
+  assert.equal(GR.dragOption(patHatch(), 'c', 'Hatch Scale', [50, 20]), null, 'on the grip: scale 0 refused');
+});
+
+test('hatch origin: every line base shifts by (point - the first line\'s base); angle, scale, offsets and dashes stay', () => {
+  const r = GR.dragOption(patHatch(), 'c', 'Origin Point', [15, 26]);
+  assert.equal(r.label, 'Origin Point');
+  const [l1, l2] = lines(r.ent);
+  nearPt(l1.b, [15, 26]); nearPt(l2.b, [16, 26]); nearPt(l1.o, [0, 4]); assert.equal(val(r.ent, 52), 0); assert.equal(val(r.ent, 41), 1);
+  assert.deepEqual(dashes(r.ent), [3, -1]);
+  assert.equal(GR.dragOption(patHatch(), 'c', 'Origin Point', [10, 20]), null, 'already there');
+  assert.equal(GR.dragOption(hatchOf(0, 0, 10, 10), 'c', 'Origin Point', [1, 1]), null, 'a solid has no pattern lines to move');
+});
+
+test('hatch solid and gradient: Angle and Scale write 52 / 41 in AutoCAD\'s place (before 98), nothing else changes', () => {
+  const h = hatchOf(0, 0, 10, 10), a = GR.typedOption(h, 'c', 'Hatch Angle', 30).ent, s = GR.typedOption(a, 'c', 'Hatch Scale', 2).ent;
+  assert.equal(val(s, 52), 30); assert.equal(val(s, 41), 2);
+  const c = s.r.c, i52 = c.indexOf(52);
+  assert.deepEqual(c.slice(i52, i52 + 3), [52, 41, 98]);
+  assert.deepEqual(hatchPts(s), hatchPts(h));
+});
+
+test('hatch Stretch: an associative hatch (71 = 1) ends up with 71 = 0; one that is not stays 0; the move itself is as before', () => {
+  const m = GR.dragGrip(patHatch(), 'c', [60, 30]);
+  assert.equal(m.label, 'Move hatch'); assert.equal(val(m.ent, 71), 0);
+  nearPt(pts(GR.gripsOf(m.ent))[0], [60, 30]);
+  assert.equal(val(GR.dragGrip(hatchOf(0, 0, 10, 10), 'c', [9, 9]).ent, 71), 0);
+  assert.equal(val(patHatch(), 71), 1, 'the original is untouched');
+});
+
+test('hatch options: after a save and reopen 52 / 41 / 71 and the pattern lines are kept, and the pattern is drawn from them', () => {
+  const h = GR.typedOption(GR.typedOption(patHatch(), 'c', 'Hatch Scale', 2).ent, 'c', 'Hatch Angle', 45).ent;
+  const back = reopen(GR.dragOption(h, 'c', 'Origin Point', [15, 26]).ent);
+  near(val(back, 52), 45); near(val(back, 41), 2); assert.equal(val(back, 71), 1);
+  assert.equal(lines(back).length, 2); nearPt(lines(back)[0].b, [15, 26]);
+  const fam = hatchPattern(back).fam;
+  near(fam[0].a, Math.PI / 4); nearPt([fam[0].bx, fam[0].by], [15, 26]);
+});
+
+test('hatch readout names the option\'s result', () => {
+  const h = patHatch();
+  assert.equal(GR.readoutOf(h, 'c', GR.typedOption(h, 'c', 'Hatch Angle', 45).ent), 'Angle 45.00°');
+  assert.equal(GR.readoutOf(h, 'c', GR.typedOption(h, 'c', 'Hatch Scale', 2).ent), 'Scale 2.00');
+  assert.equal(GR.readoutOf(h, 'c', GR.dragOption(h, 'c', 'Origin Point', [15, 26]).ent), 'Origin X 15.00 · Y 26.00');
+  assert.ok(GR.readoutOf(h, 'c', GR.dragGrip(h, 'c', [60, 30]).ent).startsWith('Move ΔX 10.00 ΔY 10.00'));
 });
 
 console.log(n + ' grips tests passed');

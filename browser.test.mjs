@@ -10745,6 +10745,131 @@ try {
     await closeTabs(/./);
   });
 
+  // ---- TODO 164b1: the hatch centre grip's Grip options (Stretch / Origin Point / Hatch Angle / Hatch Scale) ----
+  const g164b1Shots = 'E:/Project B/Claude/Project D extras/runs30/shots-164b1';
+  const g164b1Doc = (withLine) => {       // entity 0: an associative ANSI31-like hatch over (20,20)-(120,70): horizontal lines 10 apart from the origin (0,0); centre (70,45). withLine: and a line as entity 1 (Compare snapshots need a drawing with a real outline)
+    const doc = newDoc(4), hatch = entity('HATCH', [[10, 0], [20, 0], [30, 0], [210, 0], [220, 0], [230, 1], [2, 'ANSI31'], [70, 0], [71, 1], [91, 1], [92, 3], [72, 0], [73, 1], [93, 4], [10, 20], [20, 20], [10, 120], [20, 20], [10, 120], [20, 70], [10, 20], [20, 70], [97, 0], [75, 0], [76, 1], [52, 0], [41, 1], [77, 0], [78, 1], [53, 0], [43, 0], [44, 0], [45, 0], [46, 10], [79, 0], [98, 1], [10, 70], [20, 45]]);
+    addEntities(doc, hatch);
+    if (withLine) addEntities(doc, dxfLine(20, 20, 120, 20));
+    return writeDxf(doc);
+  };
+  const g164b1 = {
+    now: async () => entOf(await savedDoc(), 0),
+    shotBoth: async (name, again) => { mkdirSync(g164b1Shots, { recursive: true }); for (const theme of ['light', 'dark']) { await page.keyboard.press('Escape'); await menuItem('View', 'Theme: ' + theme); await again(); await frames(); await page.screenshot({ path: `${g164b1Shots}/${name}-${theme}.png` }); } await page.keyboard.press('Escape'); await menuItem('View', 'Theme: light'); },
+    ink: async (x0, y0, x1, y1) => {       // pixels unlike the corner pixel in a drawing mm box
+      const p = await at(x0, y1), q = await at(x1, y0);
+      return t('drawing').evaluate((c, [p, q]) => {
+        const r = c.getBoundingClientRect(), sx = c.width / r.width, sy = c.height / r.height, w = Math.round((q.x - p.x) * sx), h = Math.round((q.y - p.y) * sy);
+        const d = c.getContext('2d').getImageData(Math.round((p.x - r.x) * sx), Math.round((p.y - r.y) * sy), w, h).data;
+        let n = 0; for (let i = 4; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) n++;
+        return n;
+      }, [p, q]);
+    },
+  };
+
+  await step('TODO 164b1: hover the hatch centre grip -> Stretch, Origin Point, Hatch Angle, Hatch Scale; Hatch Angle typed 45 redraws the lines at 45 (52 and every 53 / 45 / 46), one Undo named for the option; Hatch Scale typed 2 (41, 46), 0 refused; Origin Point picked; light and dark', async () => {
+    const { list, hover, pickItem, hotWhen, hist, undo, labels } = g163, { now, shotBoth } = g164b1;
+    await menuItem('View', 'Theme: light');
+    await openGrips(g164b1Doc(), 'g164b1.dxf');
+    await pick(70, 30, 1);
+    await hover('0:c');
+    assert.deepEqual(await list(), ['Stretch', 'Origin Point', 'Hatch Angle', 'Hatch Scale']);
+    await shotBoth('list', async () => { await pick(70, 30, 1); await hover('0:c'); await list(); });
+    await pick(70, 30, 1); await hover('0:c'); await list();
+    // Hatch Angle: typed 45 is the new total; the line turns, its offset (0, 10) turns with it
+    await pickItem('Hatch Angle'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify hatch angle:');
+    assert.match(await hist(), /\*\* HATCH ANGLE \*\*/);
+    await typeCmd('45'); await hotWhen(0);
+    let e = await now();
+    assert.ok(near(fieldOf(e, 52), 45, 1e-6) && near(fieldOf(e, 53), 45, 1e-6), 'angle 45: ' + [fieldOf(e, 52), fieldOf(e, 53)]);
+    assert.ok(near(fieldOf(e, 45), -10 * Math.SQRT1_2, 1e-4) && near(fieldOf(e, 46), 10 * Math.SQRT1_2, 1e-4), 'the offset turned: ' + [fieldOf(e, 45), fieldOf(e, 46)]);
+    assert.equal(fieldOf(e, 71), 1, 'still associative: only Stretch ends that');
+    assert.equal((await labels()).at(-1), 'Hatch Angle');
+    await shotBoth('rotated', async () => { await pick(70, 30, 1); });
+    await undo();
+    e = await now();
+    assert.ok(near(fieldOf(e, 52), 0, 1e-6) && near(fieldOf(e, 46), 10, 1e-6), 'one Undo restores the pattern');
+    // Hatch Scale: typed 2 doubles the spacing; 0 is refused and the run stays
+    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Hatch Scale'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify hatch scale:');
+    await typeCmd('0'); await frames();
+    assert.match(await hist(), /change nothing/); assert.equal(await prompt(), 'Specify hatch scale:');
+    await typeCmd('2'); await hotWhen(0);
+    e = await now();
+    assert.ok(near(fieldOf(e, 41), 2, 1e-6) && near(fieldOf(e, 46), 20, 1e-6), 'scale 2: ' + [fieldOf(e, 41), fieldOf(e, 46)]);
+    assert.equal((await labels()).at(-1), 'Hatch Scale');
+    await undo();
+    assert.ok(near(fieldOf(await now(), 41), 1, 1e-6), 'one Undo');
+    // Origin Point: a picked point becomes the pattern origin
+    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Origin Point'); await hotWhen(1);
+    assert.equal(await prompt(), 'Specify origin point:');
+    const to = await at(45, 36); await page.mouse.move(to.x, to.y); await frames(); await page.mouse.click(to.x, to.y); await hotWhen(0);
+    e = await now();
+    assert.ok(near(fieldOf(e, 43), 45, 1) && near(fieldOf(e, 44), 36, 1), 'the origin is the picked point: ' + [fieldOf(e, 43), fieldOf(e, 44)]);
+    assert.equal((await labels()).at(-1), 'Origin Point');
+    await undo();
+    assert.ok(near(fieldOf(await now(), 43), 0, 1e-6), 'one Undo');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 164b1: Ctrl cycles Stretch -> Origin Point -> Hatch Angle -> Hatch Scale -> Stretch with the prompts; the pattern redraws live while the pointer moves; Stretch ends the association with its message', async () => {
+    const { list, hover, pickItem, hotWhen, hist, undo } = g163, { now, ink } = g164b1;
+    await menuItem('View', 'Theme: light');
+    await openGrips(g164b1Doc(), 'g164b1-ctrl.dxf');
+    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Stretch'); await hotWhen(1);
+    assert.match(await prompt(), /^Specify stretch point/);
+    for (const [p, h] of [['Specify origin point:', /ORIGIN POINT/], ['Specify hatch angle:', /HATCH ANGLE/], ['Specify hatch scale:', /HATCH SCALE/], ['Specify stretch point', /STRETCH/]]) {
+      await page.keyboard.press('Control'); await frames();
+      assert.ok((await prompt()).startsWith(p), p + ' vs ' + await prompt()); assert.match(await hist(), h);
+    }
+    // in Hatch Angle: pointer straight above the centre = 90°, the lines redraw vertical before anything is put down
+    await page.keyboard.press('Control'); await page.keyboard.press('Control'); await frames();
+    assert.equal(await prompt(), 'Specify hatch angle:');
+    assert.ok(await ink(30, 32, 110, 38) < 20, 'horizontal lines only: nothing between them');
+    const up = await at(70, 90); await page.mouse.move(up.x, up.y, { steps: 4 }); await frames();
+    assert.ok(await ink(30, 32, 110, 38) > 20, 'the preview shows the lines turned');
+    await page.mouse.click(up.x, up.y); await hotWhen(0);
+    let e = await now();
+    assert.ok(near(fieldOf(e, 52), 90, 2), 'the picked direction is the total angle: ' + fieldOf(e, 52));
+    await undo();
+    // Stretch of an associative hatch: 71 -> 0 and the message
+    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Stretch'); await hotWhen(1);
+    await typeCmd('@10,0'); await hotWhen(0);
+    assert.match(await prompt(), /Hatch boundary associativity removed\./);       // the message sits in the hint line after the run
+    e = await now();
+    assert.equal(fieldOf(e, 71), 0, 'the association is gone');
+    await undo();
+    assert.equal(fieldOf(await now(), 71), 1, 'one Undo brings it back');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 164b1: the hatch options on Compare (routes to the source); a save and reopen keeps 52 / 41 / 71 and the lines', async () => {
+    const { list, hover, pickItem, hotWhen } = g163, { now } = g164b1;
+    await menuItem('View', 'Theme: light');
+    await openGrips(g164b1Doc(true), 'g164b1-compare.dxf');
+    await page.locator('[data-menu=File]').click(); await page.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+    await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click();
+    await page.keyboard.press('Control+a'); await frames(); await gripWhen(4);       // the hatch centre + the line's three
+    await hover('0:c'); assert.deepEqual(await list(), ['Stretch', 'Origin Point', 'Hatch Angle', 'Hatch Scale']);
+    await pickItem('Hatch Angle'); await hotWhen(1); await typeCmd('45'); await hotWhen(0);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: 'g164b1-compare.dxf' }) }).click();
+    const src = await savedDoc();
+    assert.ok(near(fieldOf(entOf(src, 0), 52), 45, 1e-6), 'the source hatch got the angle');
+    await closeTabs(/./);
+    // (a hatch cannot be a layout object with grips: Explode keeps HATCH members intact, so objectDoc leaves it out; nothing to test on Layouts)
+    // save and reopen: angle, scale, association and the lines
+    await openGrips(g164b1Doc(), 'g164b1-save.dxf');
+    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Hatch Scale'); await hotWhen(1); await typeCmd('2'); await hotWhen(0);
+    await hover('0:c'); await list(); await pickItem('Hatch Angle'); await hotWhen(1); await typeCmd('30'); await hotWhen(0);
+    const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    await openGrips(text, 'g164b1-reopen.dxf');
+    const e = await now();
+    assert.ok(near(fieldOf(e, 52), 30, 1e-6) && near(fieldOf(e, 41), 2, 1e-6) && fieldOf(e, 71) === 1, 'kept: ' + [fieldOf(e, 52), fieldOf(e, 41), fieldOf(e, 71)]);
+    assert.ok(near(fieldOf(e, 53), 30, 1e-6) && near(fieldOf(e, 46), 20 * Math.cos(Math.PI / 6), 1e-4), 'and the pattern line: ' + [fieldOf(e, 53), fieldOf(e, 46)]);
+    await closeTabs(/./);
+  });
+
   await step('TODO 155e4: grips on text, ellipse, hatch and blocks: a justified text moved by its grip (both points), an ellipse major end dragged, a hatch moved by its centre, a block moved by its insertion grip, Rotate by a text grip via Space, and an ellipse on a layout', async () => {
     await menuItem('View', 'Theme: light');
     mkdirSync('shots-155e4', { recursive: true });
