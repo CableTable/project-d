@@ -3086,15 +3086,15 @@ async function autosaveNow() {
         if (!page.dirty) { await dropCopy(page); continue; }
         // Shared with the kept page so an in-flight copy still belongs to it after switching sheets.
         const r = page.recovery || (page.recovery = { rid: uid() + (n == null ? '' : `-sheet${n}`) });
-        const raw = page.raw, titleBlock = d.titleBlock;
-        if (!page.lay && r.autoEnts === raw.entities && r.autoBlocks === raw.blocks && r.autoLayers === raw.layers && r.autoTitle === titleBlock) continue;        // a drawing's state is replaced at every change: same one, same copy
+        const raw = page.raw, titleBlock = d.titleBlock, tab = state.docs.indexOf(d);
+        if (!page.lay && r.autoTab === tab && r.autoEnts === raw.entities && r.autoBlocks === raw.blocks && r.autoLayers === raw.layers && r.autoTitle === titleBlock) continue;        // a drawing's state is replaced at every change: same one, same tab index, same copy
         let dxf;
         try { dxf = writeDxf(rawForSave({ ...page, titleBlock }), { escapeUnicode: true, extents: page.lay || !page.fl ? null : page.fl.boxes.model }); } catch (e) { console.warn('Autosave: could not write', page.name, e); continue; }
-        if (page.lay && r.hasCopy && r.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
+        if (page.lay && r.hasCopy && r.autoTab === tab && r.autoDxf === dxf) continue;                    // a layout: the same text and tab index as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-          tab: state.docs.indexOf(d), sheet: n, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
-        r.hasCopy = true; if (page.lay) r.autoDxf = dxf;
+          tab, sheet: n, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
+        r.hasCopy = true; r.autoTab = tab; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw.entities; r.autoBlocks = raw.blocks; r.autoLayers = raw.layers; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
       }

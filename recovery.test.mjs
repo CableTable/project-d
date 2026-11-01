@@ -44,6 +44,8 @@ try {
     ['PDF sheet order', [{ id: 's3', tab: 0, sheet: 3, t: 1 }, { id: 'next', tab: 1, sheet: null, t: 0 }, { id: 's1', tab: 0, sheet: 1, t: 3 }, { id: 's2', tab: 0, sheet: 2, t: 2 }], ['s1', 's2', 's3', 'next']],
     ['missing tab sorts last by time', [{ id: 'old2', t: 2 }, { id: 'tab', tab: 0, sheet: null, t: 3 }, { id: 'old1', tab: null, sheet: 9, t: 1 }], ['tab', 'old1', 'old2']],
     ['same tab and sheet sort by time', [{ id: 'b', tab: 0, sheet: 1, t: 2 }, { id: 'a', tab: 0, sheet: 1, t: 1 }], ['a', 'b']],
+    ['a stale index (C was 2, now 0) sorts wrong; rewritten it sorts right', [{ id: 'D', tab: 1, t: 4 }, { id: 'C', tab: 2, t: 1 }, { id: 'E', tab: 2, t: 5 }], ['D', 'C', 'E']],
+    ['C rewritten with tab 0', [{ id: 'D', tab: 1, t: 4 }, { id: 'C', tab: 0, t: 6 }, { id: 'E', tab: 2, t: 5 }], ['C', 'D', 'E']],
     ['tie on t keeps input order', [{ id: 'b', tab: 0, sheet: null, t: 1 }, { id: 'a', tab: 0, sheet: null, t: 1 }], ['b', 'a']],
   ]) {
     stored = copies;

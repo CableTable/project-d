@@ -7957,8 +7957,39 @@ try {
       }
       await p.reload(); await q('recover-dialog').waitFor();
       await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
-      await p.waitForFunction(() => document.querySelectorAll('.tabs .dtab:not([aria-label]) .tname').length === 4);
-      assert.deepEqual(await names(), expected, 'recovered tabs keep their original order');
+      const got = await p.waitForFunction(() => { const n = [...document.querySelectorAll('.tabs .dtab:not([aria-label]) .tname')].map((e) => e.textContent); return n.length === 4 && n; });
+      assert.deepEqual(await got.jsonValue(), expected, 'recovered tabs keep their original order');
+    } finally { await ctx.close(); }
+  });
+
+  await step('TODO 176: a copy is rewritten when its tab index changes (A B C, close A B, open D E)', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage();
+      p.on('dialog', (d) => d.accept().catch(() => {}));
+      const q = (id) => panelControl(p, p.getByTestId(id));
+      const tabsOf = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies().then((l) => l.map((c) => c.name + ':' + c.tab)));
+      const waitTabs = async (want) => {
+        for (let i = 0; i < 60; i++) { if ((await tabsOf()).join() === want.join()) return; await p.waitForTimeout(150); }
+        throw new Error('waiting for ' + want + ', there are ' + (await tabsOf()));
+      };
+      const edit = async (name) => {
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: readFileSync('fixtures/outline.dxf') });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await q('gap-join').click();
+      };
+      await p.goto(URL_ + '?autosave=300');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      for (const n of ['A.dxf', 'B.dxf', 'C.dxf']) await edit(n);
+      await waitTabs(['A.dxf:0', 'B.dxf:1', 'C.dxf:2']);
+      for (const n of ['A.dxf', 'B.dxf']) await p.locator(`.tabs [aria-label="Close ${n}"]`).click();
+      for (const n of ['D.dxf', 'E.dxf']) await edit(n);
+      await waitTabs(['C.dxf:0', 'D.dxf:1', 'E.dxf:2']);
+      await p.reload(); await q('recover-dialog').waitFor();
+      await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+      const got = await p.waitForFunction(() => { const n = [...document.querySelectorAll('.tabs .dtab:not([aria-label]) .tname')].map((e) => e.textContent); return n.length === 3 && n; });
+      assert.deepEqual(await got.jsonValue(), ['C.dxf', 'D.dxf', 'E.dxf']);
     } finally { await ctx.close(); }
   });
 
