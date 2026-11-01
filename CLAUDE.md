@@ -14,7 +14,7 @@ Started 2026-10-16. Unrelated to Projects B, P, R and WF in the parent folder, b
 Built so far: sessions 1-31 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
 AutoCAD-style draw / modify / dimension / snap / grip (with Grip options) / Fillet / Offset / Explode / Quick select tools in every tab, ribbon + panel UI in AutoCAD
 colours, CI that builds `ProjectD.exe` and publishes it to Releases on a merge to main (doc-only PR pushes skip the tests and build).
-Repo **CableTable/project-d** (private). **Next:** session 32 on `claude/session32` (172, 180 built): finish 177, then tool tickets 170, 173, 167, 178, 179, 181,
+Repo **CableTable/project-d** (private). **Next:** session 32 on `claude/session32` (172, 180, 173, 170 built): finish 177, then tool tickets 167, 178, 179, 181,
 then TODO.md "Rakshith's list" when he says. Commit each finished item and tick it in TODO.md at once; push once per Rook handover (his call, 2026-10-31).
 
 ## The app
