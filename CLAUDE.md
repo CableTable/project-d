@@ -11,11 +11,11 @@ Started 2026-10-16. Unrelated to Projects B, P, R and WF in the parent folder, b
 
 ## Status
 
-Built so far: sessions 1-29 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
-AutoCAD-style draw / modify / dimension / snap / grip / Fillet / Offset / Explode tools in every tab, ribbon + panel UI in AutoCAD
+Built so far: sessions 1-30 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
+AutoCAD-style draw / modify / dimension / snap / grip (with Grip options) / Fillet / Offset / Explode / Quick select tools in every tab, ribbon + panel UI in AutoCAD
 colours, CI that builds `ProjectD.exe` and publishes it to Releases on a merge to main (doc-only PR pushes skip the tests and build).
-Repo **CableTable/project-d** (private). **Next:** TODO 155i2 (brief `runs29/b-155i2.txt`), 155i3, 155l, 155m2, 166, 162-164, 167-170,
-then TODO.md "Rakshith's list". Commit each finished item and tick it in TODO.md at once; push once per Rook handover (his call, 2026-10-31).
+Repo **CableTable/project-d** (private). **Next:** TODO 171 (Layout block grips), tool tickets 167, 169, 170, 172, 173,
+then TODO.md "Rakshith's list" when he says. Commit each finished item and tick it in TODO.md at once; push once per Rook handover (his call, 2026-10-31).
 
 ## The app
 

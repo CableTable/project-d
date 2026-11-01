@@ -64,6 +64,14 @@ test('TODO 155i1: scan lines through boundary vertices have no doubled or missin
   assert.deepEqual(explodeHatch(e).map(coords), [[25, 12.5, 75, 12.5], [0, 25, 100, 25], [25, 37.5, 75, 37.5]]);
 });
 
+test('TODO 155i2b: tiny dashes and gap-only patterns reach the work cap even without output lines', () => {
+  for (const d of [[1e-12], [1e-9], [-1e-9], [1e-10, -1]]) {
+    const started = performance.now();
+    assert.throws(() => explodeHatch(hatch({ a: 0, spacing: .001, d })), { message: 'Hatch pattern too fine to explode' });
+    assert.ok(performance.now() - started < 2000, 'dash refusal finishes within two seconds');
+  }
+});
+
 test('TODO 155i1: extrusion 0,0,-1 mirrors exploded hatch lines in world coordinates', () => {
   const e = hatch({ hole: true });
   const doc = newDoc(4); doc.entities = [e];

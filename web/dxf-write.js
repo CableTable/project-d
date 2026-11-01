@@ -276,7 +276,7 @@ const ciGet = (o, n) => o && o[Object.keys(o).find((k) => k.toLowerCase() === n.
 const HDR = [ // [name, kind, code]: what the header carries when the document has it
   ['$LTSCALE', 'd', 40], ['$CELTSCALE', 'd', 40], ['$PSLTSCALE', 'i', 70], ['$MEASUREMENT', 'i', 70], ['$LUNITS', 'i', 70], ['$LUPREC', 'i', 70],
   ['$AUNITS', 'i', 70], ['$AUPREC', 'i', 70], ['$ANGBASE', 'd', 50], ['$ANGDIR', 'i', 70], ['$PDMODE', 'i', 70], ['$PDSIZE', 'd', 40],
-  ['$TEXTSIZE', 'd', 40], ['$FILLMODE', 'i', 70], ['$DIMASZ', 'd', 40], ['$DIMSCALE', 'd', 40], ['$DIMTXT', 'd', 40], ['$DIMEXO', 'd', 40],
+  ['$ATTMODE', 'i', 70], ['$TEXTSIZE', 'd', 40], ['$FILLMODE', 'i', 70], ['$DIMASZ', 'd', 40], ['$DIMSCALE', 'd', 40], ['$DIMTXT', 'd', 40], ['$DIMEXO', 'd', 40],
   ['$DIMEXE', 'd', 40], ['$DIMGAP', 'd', 40], ['$DIMDEC', 'i', 70], ['$DIMLUNIT', 'i', 70], ['$DIMTAD', 'i', 70]];
 /** The font file each of the app's text styles points at (Mono is Courier New; other style names keep Arial). */
 const FONT_FILES = { Standard: 'txt', Arial: 'arial.ttf', Mono: 'cour.ttf' };
@@ -406,6 +406,7 @@ function writePreparedDxf(doc, opts) {
     o.s(0, 'ENDSEC'); }
 
   // TABLES
+  const plotStyles = handle(), normalPlotStyle = handle();
   const tabSec = [];
   { const o = out(tabSec);
     o.s(0, 'SECTION').s(2, 'TABLES');
@@ -451,8 +452,8 @@ function writePreparedDxf(doc, opts) {
         if (l.tc != null) o.p(420, l.tc);
         o.s(6, l.lt || 'CONTINUOUS');
         if (l.plot === false) o.p(290, 0);                                      // "No plot": helper lines must not print or cut
-        // AutoCAD 2027 hangs opening a file whose layers have no 390 (runs29/acad155n-answers.md); the AUDIT PlotstyleName note is harmless
-        o.p(370, l.lw ?? -3).s(390, 'F');
+        // AutoCAD needs 390 to resolve to the Normal placeholder in ACAD_PLOTSTYLENAME (TODO 166).
+        o.p(370, l.lw ?? -3).s(390, normalPlotStyle);
       }
     });
     table('STYLE', styles.size, () => {
@@ -477,12 +478,16 @@ function writePreparedDxf(doc, opts) {
     });
     o.s(0, 'ENDSEC'); }
 
-  // OBJECTS: the root dictionary and the group dictionary it names
+  // OBJECTS: the root dictionary, its group and plot style dictionaries, and the Normal placeholder
   const objSec = [];
   { const o = out(objSec), groups = handle();
     o.s(0, 'SECTION').s(2, 'OBJECTS');
-    o.s(0, 'DICTIONARY').p(5, H.ROOT).p(330, 0).s(100, 'AcDbDictionary').p(281, 1).s(3, 'ACAD_GROUP').p(350, groups);
+    o.s(0, 'DICTIONARY').p(5, H.ROOT).p(330, 0).s(100, 'AcDbDictionary').p(281, 1)
+      .s(3, 'ACAD_GROUP').p(350, groups).s(3, 'ACAD_PLOTSTYLENAME').p(350, plotStyles);
     o.s(0, 'DICTIONARY').p(5, groups).p(330, H.ROOT).s(100, 'AcDbDictionary').p(281, 1);
+    o.s(0, 'ACDBDICTIONARYWDFLT').p(5, plotStyles).s(102, '{ACAD_REACTORS').p(330, H.ROOT).s(102, '}').p(330, H.ROOT)
+      .s(100, 'AcDbDictionary').p(281, 1).s(3, 'Normal').p(350, normalPlotStyle).s(100, 'AcDbDictionaryWithDefault').p(340, normalPlotStyle);
+    o.s(0, 'ACDBPLACEHOLDER').p(5, normalPlotStyle).s(102, '{ACAD_REACTORS').p(330, plotStyles).s(102, '}').p(330, plotStyles);
     o.s(0, 'ENDSEC'); }
 
   // HEADER (last: it holds the handle seed and the extents)

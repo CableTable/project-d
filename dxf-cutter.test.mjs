@@ -122,6 +122,14 @@ test('text, fills and dimensions are left out and counted; other things are coun
   assert.equal(r.left, 5); assert.equal(r.other, 1);
 });
 
+test('a loose top-level ATTDEF is counted as left out; one inside a block stays quiet', () => {
+  const d = docOf(W.line(0, 0, 1, 1), W.entity('ATTDEF', [[10, 0], [20, 0], [2, 'T'], [1, 'x']]));
+  W.addBlock(d, 'B', [W.line(0, 0, 1, 0), W.entity('ATTDEF', [[10, 0], [20, 0], [2, 'T'], [1, 'x']])], [0, 0]);
+  W.addEntities(d, [W.insert('B', 5, 5)]);
+  const r = cutterDoc(d, 0.01);
+  assert.equal(r.left, 1); assert.equal(r.other, 0);
+});
+
 test('the copy writes and reads back as LINE, ARC and LWPOLYLINE only', () => {
   const d = docOf(W.circle(0, 0, 3), W.ellipse(0, 0, 9, 0, 0.5), W.line(0, 0, 5, 5), W.text(0, 0, 1, 'x'), W.rect(0, 0, 4, 4));
   const back = D.readDxf(W.writeDxf(cutterDoc(d, 0.01).doc));

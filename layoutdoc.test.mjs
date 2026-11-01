@@ -16,6 +16,50 @@ function test(name, fn) { fn(); n++; console.log('ok', name); }
 const load = (f) => readDxf(decodeDxf(readFileSync('fixtures/' + f)));
 const R = (x) => Math.round(x * 1e6) / 1e6;
 
+test('TODO 155i2b: layout ATTMODE refresh keeps placement, source and undo snapshot; header survives reopen', () => {
+  const raw = newDoc(4), ins = insert('Attributes', 0, 0);
+  addBlock(raw, 'Attributes', [line(0, 0, 100, 0)]);
+  ins.kids = [0, 1].map((hidden) => entity('ATTRIB', [[10, 10], [20, 10 + hidden * 20], [40, 3], [1, hidden ? 'Hidden' : 'Shown'], [70, hidden]]).r);
+  raw.entities = [ins];
+  const lay = LD.newLayout('Attributes'), part = LD.makePart('p', 'Attributes', raw, 1);
+  lay.parts.p = part; lay.placed = [placement1('p', 100, 100)];
+  const placement = structuredClone(lay.placed), source = structuredClone(raw);
+  for (const mode of [2, 0, 1]) {
+    lay.s.attmode = mode; LD.refreshAttributes(lay);
+    assert.equal(lay.parts.p.fl.items.filter((it) => it.k === 't').length, mode === 2 ? 2 : mode);
+    assert.deepEqual(lay.parts.p.box, part.box);
+    assert.deepEqual(lay.placed, placement);
+    const saved = readDxf(writeDxf(LD.layoutRaw(lay)));
+    assert.equal(saved.header.$ATTMODE, String(mode));
+    const reopened = LD.layoutFromRaw(saved);
+    assert.equal(reopened.s.attmode, mode);
+    assert.equal(reopened.parts.p.fl.items.filter((it) => it.k === 't').length, mode === 2 ? 2 : mode);
+  }
+  assert.deepEqual(raw, source);
+  assert.equal(part.fl.items.filter((it) => it.k === 't').length, 1);
+});
+
+test('TODO 155i2b: an invisible attribute outside the block never widens the part box, in any ATTDISP mode', () => {
+  const ins = insert('Box', 0, 0), raw = newDoc(4);
+  addBlock(raw, 'Box', [rect(0, 0, 100, 50)]);
+  ins.kids = [entity('ATTRIB', [[10, -40], [20, -30], [40, 3], [1, 'Hidden'], [70, 1]]).r];
+  raw.entities = [ins];
+  for (const mode of ['0', '1', '2']) {
+    raw.header.$ATTMODE = mode;
+    assert.deepEqual(LD.makePart('p', 'Box', raw, 1).box.map(Math.round), [0, 0, 100, 50]);
+  }
+});
+
+test('TODO 155i2b: an object part (a pasted block) has the same box in ATTDISP Normal, ON and OFF', () => {
+  const ins = insert('Box', 0, 0), raw = newDoc(4);
+  addBlock(raw, 'Box', [rect(0, 0, 100, 50)]);
+  ins.kids = [entity('ATTRIB', [[10, -40], [20, -30], [40, 3], [1, 'Hidden'], [70, 1]]).r];
+  for (const mode of ['0', '1', '2']) {
+    const o = LD.objectPart('o', 'Box', ins, LD.layersOf(LD.newLayout('L')), { $ATTMODE: mode }, raw.blocks);
+    assert.deepEqual(o.box.map(Math.round), [0, 0, 100, 50]);
+  }
+});
+
 test('swatch strip recolours a private part including nested blocks, keeps geometry, source and saved colour', () => {
   const raw = newDoc(4);
   addBlock(raw, 'inner', [line(0, 0, 10, 10, { aci: 5 })]);
@@ -609,17 +653,18 @@ test('Explode: a part whose block is missing is reported and left as it was', ()
   assert.equal(r.done, 0); assert.ok(r.errors.length, 'says why'); assert.deepEqual(lay.placed, before); assert.deepEqual(Object.keys(lay.parts), ['p']);
 });
 
-test('Explode twice: the second finds only objects; two parts with a dimension each save both pieces (equal block names do not clash)', () => {
+test('Explode twice: nested INSERT objects release their members on the second run; equal block names save without clashes', () => {
   const dimPart = (id) => { const raw = newDoc(4); addBlock(raw, '*D1', [line(0, 0, 20, 0), line(0, 0, 0, 3)]); addEntities(raw, line(0, 10, 20, 10), entity('DIMENSION', [[2, '*D1'], [70, 0]])); return LD.makePart(id, id, raw, 1); };
   const lay = LD.newLayout('E'); lay.parts.a = dimPart('a'); lay.parts.b = dimPart('b');
   lay.placed.push(placement1('a', 0, 0), placement1('b', 100, 0));
   let k = 0; const newId = () => 'o' + k++;
   const first = LD.explodePlaced(lay, [0, 1], newId);
   assert.equal(first.done, 2);
-  assert.equal(LD.explodePlaced(lay, lay.placed.map((_, i) => i), newId).done, 0);       // objects are not parts: nothing more to explode
   const back = LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay))));       // both pieces carry a PD_EXPLODE_1 block: saving must keep both, not let one block win
   const boxes = (l) => l.placed.map((p) => [p.x, p.y, R(l.parts[p.partId].w), R(l.parts[p.partId].h)].join()).sort();
   assert.deepEqual(boxes(back), boxes(lay));
+  assert.equal(LD.explodePlaced(lay, lay.placed.map((_, i) => i), newId).done, 2);
+  assert.ok(lay.placed.every((p) => lay.parts[p.partId].raw.entities[0].type === 'LINE'));
 });
 
 console.log(n + ' tests passed');

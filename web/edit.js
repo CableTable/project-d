@@ -1237,7 +1237,7 @@ export function combinedHistory(histories) {
   const steps = histories.filter(Boolean).map((history) => ({ history, ...history.steps() }));
   const entries = (side) => steps.flatMap((x) => x[side].map((e) => ({ ...e, history: x.history }))).sort((a, b) => a.order - b.order);
   const past = entries('past'), future = entries('future');
-  return { canUndo: !!past.length, canRedo: !!future.length, undoHistory: past.at(-1)?.history, redoHistory: future[0]?.history,
+  return { canUndo: !!past.length, canRedo: !!future.length, undoHistory: past.at(-1)?.history, redoHistory: future[0]?.history, order: past.at(-1)?.order,
     labels: () => ({ past: past.map((e) => e.label), future: future.map((e) => e.label) }) };
 }
 
@@ -1389,6 +1389,22 @@ export function lineOf(ent) {
   if (!ent || !ent.r || ent.type !== 'LINE') return null;
   const g = (c) => +fieldOf(ent.r, c), l = [g(10), g(20), g(11), g(21)];
   return Math.hypot(l[2] - l[0], l[3] - l[1]) > 1e-9 && !g(210) && !g(220) && !(g(230) < 0) ? l : null;
+}
+/** lineOf for a LINE, or for a polyline the straight segment nearest p ([x1, y1, x2, y2]); null for a bulged segment, a mirrored polyline or anything else. */
+export function segmentOf(ent, p) {
+  if (!ent || !ent.r) return null;
+  if (ent.type === 'LINE') return lineOf(ent);
+  const vs = (ent.type === 'LWPOLYLINE' || ent.type === 'POLYLINE') && polyVerts(ent);
+  if (!vs || ent.flip || +fieldOf(ent.r, 210) || +fieldOf(ent.r, 220) || +fieldOf(ent.r, 230) < 0) return null;
+  const n = vs.length, closed = (+fieldOf(ent.r, 70) & 1) === 1;
+  let best = null, bd = Infinity;
+  for (let i = 0; i < (closed ? n : n - 1); i++) {
+    const [a, b] = [vs[i], vs[(i + 1) % n]], dx = b[0] - a[0], dy = b[1] - a[1], len2 = dx * dx + dy * dy;
+    if (len2 < 1e-18) continue;
+    const t = clamp(((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2, 0, 1), dd = Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+    if (dd < bd) { bd = dd; best = a[2] ? null : [a[0], a[1], b[0], b[1]]; }
+  }
+  return best;
 }
 
 /** The drawn shape of a dimension of this kind ('aligned', 'linear', 'radius', 'diameter', 'angle') from its params, or null. */

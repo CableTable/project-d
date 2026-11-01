@@ -15,6 +15,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
+import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
@@ -36,7 +37,9 @@ import { cutterDoc } from './dxf-cutter.js';
 import * as DR from './draw.js';
 import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
-import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText } from './dimension-text.js';
+import { openAttributes } from './attributedlg.js';
+import { attributeRows } from './attribute-edit.js';
+import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import * as GM from './gripmode.js';
@@ -48,10 +51,11 @@ import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, refer
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
 import * as PR from './props.js';
+import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
 import { extendEntity, extendRegion, previewEdit, curveShape, isBoundary, extendable } from './extend.js';
 import { placedMat, placedBox, placement1 } from './apply.js';
-import { layoutSnap, layoutCandidates, layoutReference } from './layoutsnap.js';
+import { layoutSnap, layoutCandidates, layoutReference, partIndex, toPart } from './layoutsnap.js';
 import * as LD from './layoutdoc.js';
 import { isDimPart } from './layoutdim.js';
 import { dropPart } from './dropin.js';
@@ -165,6 +169,7 @@ const TOOLS = [
 const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
+  ['auto', 'Automatic', 'DIM', '<path d="M3 15L11 7M3 15l3-1M3 15l1-3M11 7l-3 1M11 7l1 3"/><circle cx="14.5" cy="13.5" r="3.5"/>', 'DIM'],
   ['aligned', 'Aligned', 'D', '<path d="M3 15L13 5M3 15l3-1M3 15l1-3M13 5l-3 1M13 5l1 3"/>', 'DIMALIGNED'],
   ['linear', 'Linear', 'DLI', '<path d="M3 13h14M3 13l3-2M3 13l3 2M17 13l-3-2M17 13l-3 2M3 6v9M17 6v9"/>', 'DIMLINEAR'],
   ['radius', 'Radius', 'DRA', '<circle cx="8" cy="11" r="6"/><path d="M8 11l7-7"/>', 'DIMRADIUS'],
@@ -443,6 +448,7 @@ function buildMenus() {
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
   menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
+  menus.Modify.push(['Burst', burstSelected]);
   menus.Modify.push(['Explode', explodeSelected, 'X']);
   menus.Modify.push(['Break Apart', breakApartSelected, 'Ctrl+K', null, 'Separate a group or block into outlines (Ctrl+K)']);
   // Shaping (TODO 122): the dropdown has no sub-menus, so its items sit together after a separator, each named Shaping: …
@@ -986,6 +992,7 @@ function showDoc() {
   state.sel = 0;                          // a tab opens with its first part selected; an explicit deselection stays empty
   ribbon.context = null;
   state.gapSel = null; gapSig = ''; hideMenu();
+  if (state.eatteditAsk || state.attdispAsk || state.orthoAsk) { state.eatteditAsk = state.attdispAsk = null; state.orthoAsk = false; ui.cmdUI.escape(); } // a tab switch ends a pending command wait like Esc
   state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null;
   state.setlen = null; gripEnd(); trackClear(); if (state.mod && state.modDoc !== (editable() || curDoc())) { state.mod = newMod(state.mod.kind); state.modDoc = editable() || curDoc(); if (curLay()) curDoc().factor = 1; } if (state.draw && state.drawDoc !== (editable() || curLay() && curDoc())) { state.draw = DR.createTool(state.draw.kind, state.drawCfg); state.drawDoc = editable() || curLay() && curDoc(); state.drawHover = null; } state.meas = state.tool === 'measure' ? { pts: [], hover: null } : null; state.dim = state.tool === 'dimension' ? newDim() : null; state.ldr = state.tool === 'leader' ? newLdr() : null; state.bal = state.tool === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null; state.dimDrag = null; hideRubber();
   syncFields(); renderTabs(); applyKind(); update();
@@ -1310,6 +1317,8 @@ function setDimType(type) {
 
 function setTool(id) {
   state.orthoAsk = false;
+  state.attdispAsk = null;
+  state.eatteditAsk = null;
   state.colourTool = null; endReadout();
   if (id === 'measure' && !measureTarget()) { note('Measure: open a drawing, layout or Compare tab first'); return; }
   if (cmpDoc() && (MOD_KINDS.includes(id) || id === 'contour' || DR.KINDS.includes(id) || ['text', 'dimension', 'leader', 'balloon'].includes(id)) && !cmpEdit()) return;
@@ -1338,7 +1347,7 @@ function setTool(id) {
   state.draw = DR.KINDS.includes(id) ? DR.createTool(id, state.drawCfg) : null; state.drawDoc = state.draw ? editable() || curLay() && curDoc() : null; state.drawHover = null;
   state.mod = MOD_KINDS.includes(id) ? newMod(id) : null; state.modDoc = state.mod ? editable() || curDoc() : null;
   if (state.mod) modStart(id);
-  state.dim = id === 'dimension' ? newDim() : null; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
+  state.dim = id === 'dimension' ? newDim() : null; state.dimRun = []; state.dimDrag = null; state.ldr = id === 'leader' ? newLdr() : null; state.bal = id === 'balloon' ? { tip: null, hover: null } : null; state.balDrag = null;
   if (id === 'dimension') state.msg = dimPrompt();
   if (id === 'balloon') state.msg = balPrompt();
   if (id === 'leader') state.msg = ldrPrompt();
@@ -3719,11 +3728,16 @@ function buildCommand() {
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
 function activeCmd() {
+  if (state.eatteditAsk) return { label: 'EATTEDIT', prompt: 'Select a block:', takes: () => false };
+  if (state.attdispAsk) {
+    const d = state.attdispAsk, mode = d.lay ? d.lay.s.attmode : +(d.raw.header.$ATTMODE ?? 1);
+    return { label: 'ATTDISP', prompt: `Enter attribute visibility setting [Normal/ON/OFF] <${['OFF', 'Normal', 'ON'][mode] || 'Normal'}>:`, takes: (c) => ['normal', 'on', 'off'].includes(c) };
+  }
   if (state.orthoAsk) return { label: 'ORTHO', prompt: `Enter mode [ON/OFF] <${state.ortho ? 'ON' : 'OFF'}>:`, takes: (c) => ['on', 'off'].includes(c) };
   const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
-  return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes };
+  return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes, endsOnSpace: dimAutoLive() };
 }
 
 /** The function that takes a picked or typed point for the point tool that is on (Set length, Measure, Dimension, Leader, Balloon, Mirror), or null. */
@@ -3733,6 +3747,17 @@ const pointToolAction = () => state.setlen ? lengthPoint : state.tool === 'measu
 
 /** What was typed at the bar (or sent by a chip or a history line), in the command that is on or as a new command. */
 function cmdEnter(raw) {
+  if (state.eatteditAsk) { renderCommand(); return; }
+  if (state.attdispAsk) {
+    const c = raw.trim().toLowerCase(), mode = { normal: 1, on: 2, off: 0 }[c], d = state.attdispAsk;
+    if (c && !['normal', 'on', 'off'].includes(c)) { note('Enter Normal, ON or OFF'); renderCommand(); return; }
+    state.attdispAsk = null;
+    if (c && mode !== (d.lay ? d.lay.s.attmode : +(d.raw.header.$ATTMODE ?? 1))) {
+      if (d.lay) { pushLay(d, null, '', 'ATTDISP'); d.lay.s.attmode = mode; touch(d); update(); }
+      else commit(d, { ...snapshotOf(d), attmode: String(mode) }, 'ATTDISP');
+    }
+    renderCommand(); return;
+  }
   if (state.orthoAsk) {
     const c = raw.trim().toLowerCase();
     if (!['', 'on', 'off'].includes(c)) { note('Enter ON or OFF'); renderCommand(); return; }
@@ -3745,6 +3770,7 @@ function cmdEnter(raw) {
   if (modLive() && modTyped(editable(), raw)) return;
   if (layModLive() && modTyped(curDoc(), raw)) return;
   if (state.tool === 'text' && (editable() || curLay()) && !textEditing()) { textTyped(raw); return; }
+  if (dimAutoLive() && dimAutoTyped(raw)) return;
   const d = state.tool === 'measure' || layModLive() ? measureTarget() : pointTarget(), pointAction = pointToolAction();
   if (d && pointAction) {
     const f = d.lay ? 1 : d.factor, inp = DR.parseInput(raw);
@@ -3757,6 +3783,7 @@ function cmdEnter(raw) {
   }
   const c = raw.trim().toLowerCase();
   if (state.txoWait) { state.txoWait = false; if (!c) { textToOutlines(); return; } }          // "Select text": Enter runs it, a typed command replaces it
+  if (!c && dimAutoLive()) { dimAutoEnd(); return; }
   if (!c && !(state.lref && state.mode === 'rotate' && curLay() && selectedPlaced())) return;       // Enter at the layout "angle <0>" prompt takes 0
   if (state.mode === 'rotate' && curLay() && selectedPlaced()) {
     const lr = state.lref;
@@ -3793,10 +3820,22 @@ function cmdEnter(raw) {
 
 // what a command of cmdbar.js does when it is not just "pick that tool" (the tool's id is the command's name, but for rectangle)
 const TOOL_OF = { rectangle: 'rect' };
-const DIM_OF = { dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
+const DIM_OF = { dimauto: 'auto', dimlinear: 'linear', dimradius: 'radius', dimdiameter: 'diameter', dimangular: 'angle' };
 const DO = {
+  eattedit: () => {
+    if (cmpDoc() && !cmpEdit()) return;
+    const d = dimTarget();
+    if (!d) { note('EATTEDIT: open a drawing or layout first'); return; }
+    setTool('select'); state.eatteditAsk = d; renderCommand();
+  },
   osnap: () => document.getElementById('snap-types').showPopover(),
   ortho: () => { state.orthoAsk = true; renderCommand(); },
+  attdisp: () => {
+    if (cmpDoc() && !cmpEdit()) return;
+    const d = curLay() ? curDoc() : editable();
+    if (!d) { note('ATTDISP: open a drawing or layout first'); return; }
+    setTool('select'); state.attdispAsk = d; renderCommand();
+  },
   fill: () => startColourTool('fill'), eyedropper: () => startColourTool('eyedropper'), readout: () => toggleReadout(),
   dimension: () => { if (cmpDoc() && !cmpEdit()) return; if (!dimTarget()) { note('Dimensions work on a drawing tab or a layout: open one first'); return; } state.dimType = 'aligned'; paintDimButton(); setTool('dimension'); },       // D is the Aligned dimension
   leader: () => { if (cmpDoc() && !cmpEdit()) return; if (editable()) setTool('leader'); else note('Leaders work on a drawing tab: open a drawing first'); },
@@ -3806,6 +3845,7 @@ const DO = {
   extract: () => extractPart(), apply: () => apply(), nest: () => openNestDialog(), trace: () => traceBitmap(), textoutlines: () => textToOutlines(),
   weld: () => shapeSelection('weld'), shapetrim: () => shapeSelection('trim'), intersect: () => shapeSelection('intersect'),
   explode: () => explodeSelected(),
+  burst: () => burstSelected(),
   breakapart: () => breakApartSelected(),
   simplify: () => shapeSelection('simplify'), frontminus: () => shapeSelection('frontminus'), backminus: () => shapeSelection('backminus'), boundary: () => shapeSelection('boundary'),
   rotate: () => {
@@ -3822,7 +3862,7 @@ const DO = {
   undo: () => undoCurrent(),
   redo: () => undoCurrent(true),
   paste: pasteSelection,
-  history: () => showHistory(), selectall: () => selectAll(), delete: () => (curLay() ? deletePlaced() : deleteSelection()),
+  history: () => showHistory(), selectall: () => selectAll(), qselect: startQuickSelect, delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: fitView, zoomwindow: zoomWindow, zoomselection: zoomSelection, zoomprevious: zoomPrevious, rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
   wireframe: () => toggleWireframe(),
   shortcuts: () => showShortcuts(),
@@ -4432,7 +4472,8 @@ function attachCanvasEvents() {
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
-    if (state.orthoAsk) return;
+    if (state.eatteditAsk && e.button === 0) { attributePick(e, true); e.preventDefault(); return; }
+    if (state.orthoAsk || state.attdispAsk) return;
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
     const rl = e.target.closest && e.target.closest('.ruler'), gh0 = e.target.closest && e.target.closest('[data-guide]');
     if (e.button === 0 && rl && !rl.classList.contains('corner')) { guideDown(e, rl.dataset.axis === 'top' ? 'y' : 'x', null); if (gdrag) { capture(c, e); } return; }
@@ -4513,6 +4554,7 @@ function attachCanvasEvents() {
   });
   c.addEventListener('pointerleave', () => {
     snapCycle = null; snapQuery = null; snapPointer = null; snapRef = null; snapWatch(null);
+    clearTimeout(gripOptTimer);
     if (state.gripHover) { state.gripHover = null; drawOvl(); }
     if ((modLive() || layModLive()) && state.mod.kind === 'trim') { state.mod.client = null; state.mod.p = null; paintOverlay(); }
   });
@@ -4593,6 +4635,8 @@ function attachCanvasEvents() {
 
 // ---- keeping the panels in step with the layout ----
 function renderCommand() {
+  if (state.eatteditAsk) { ui.hist.textContent = 'Command: EATTEDIT'; ui.prompt.textContent = activeCmd().prompt; return; }
+  if (state.attdispAsk) { ui.hist.textContent = 'Command: ATTDISP'; ui.prompt.textContent = activeCmd().prompt; return; }
   if (state.orthoAsk) { ui.hist.textContent = 'Command: ORTHO'; ui.prompt.textContent = activeCmd().prompt; return; }
   const cycling = selectionCycle && state.msg === `${selectionCycle.index + 1} of ${selectionCycle.hits.length} objects here`;
   ui.cmdUI.status(cycling ? state.msg : '');
@@ -4613,9 +4657,9 @@ function renderCommand() {
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
   if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
   if (state.grip && (ed || lay)) {
-    const gg = state.grip, M = GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0 || gg.copy;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
+    const gg = state.grip, M = gg.opt ? gg.opts[gg.opt].toUpperCase() : GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0 || gg.copy;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
     ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M, gg.copy) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
-    ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.id.startsWith('e') && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
+    ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.opt ? GR.optionPrompt(gg.ent, gg.opts[gg.opt]) : GR.isRectEdge(gg.ent, gg.id) && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
     return;
   }
   if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
@@ -4707,6 +4751,7 @@ function layDimsSettle(lay, names) {
 function update(refit = false, dimNames) {
   const lay = curLay();
   if (lay) layDimsSettle(lay, dimNames);
+  if (lay) LD.refreshAttributes(lay);
   layout = gridNow();
   for (let i = 0; i < 3 && pruneGaps(); i++) layout = gridNow();
   placedNow = lay ? LD.placedAll(lay, layout) : [];
@@ -4854,49 +4899,53 @@ function breakApartSelected() {
 }
 
 /** Explode on a layout (156b4): a step-and-repeat grid becomes separate placed parts, a placed part its loose objects, a dimension its lines, arrows and text; one level, one undo step. */
-function explodeOnLayout() {
+function explodeOnLayout(burst = false) {
+  const label = burst ? 'Burst' : 'Explode';
   const all = selItems(), d = curDoc(), isDim = (x) => x.p.src === 'loose' && isDimPart(x.part), dims = all.filter(isDim), items = all.filter((x) => !isDim(x));
-  if (!all.length) { note('Explode: select a placed part or the grid first'); return; }
-  const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, dims.length ? `Explode ${all.length} objects` : grid ? 'Explode the grid' : items.length > 1 ? `Explode ${items.length} parts` : `Explode ${items[0].part.name}`);
+  if (!all.length) { note(`${label}: select a placed part or the grid first`); return; }
+  const grid = items.some((x) => x.p.src === 'grid'), g = startGesture(d, dims.length ? `${label} ${all.length} objects` : grid ? `${label} the grid` : items.length > 1 ? `${label} ${items.length} parts` : `${label} ${items[0].part.name}`);
   const dimPs = dims.filter((x) => !x.p.lock).map((x) => d.lay.placed[x.p.i]);          // by object: the explode of the parts moves the indexes
   const at = grid ? gLooseMany(g, items.map((x) => x.i)) : items.map((x) => x.i);       // in lay.placed, item for item; a grid copy first loosens the whole grid
   const gridPl = items.flatMap((x, k) => (x.p.src === 'grid' ? [d.lay.placed[at[k]]] : []));
   const rest = items.flatMap((x, k) => (x.p.src === 'grid' ? [] : [{ x, i: at[k] }])), skipped = dims.length - dimPs.length + rest.filter((q) => q.x.part.obj && !LD.canExplodeObject(q.x.part) || q.x.p.lock).length;
   gMark(g);
-  const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid()) : { done: 0, pieces: [], errors: [], messages: [] };
+  const r = rest.length ? LD.explodePlaced(d.lay, rest.map((q) => q.i), () => 'o' + uid(), burst) : { done: 0, pieces: [], errors: [], messages: [] };
   const made = r.pieces.map((i) => d.lay.placed[i]), beforeDims = new Set(d.lay.placed);
   const nd = dimPs.length ? LD.explodeDims(d.lay, dimPs.map((p) => d.lay.placed.indexOf(p)), () => 'o' + uid()) : 0;
   made.push(...d.lay.placed.filter((p) => !beforeDims.has(p)));
   const why = (skipped ? `; ${skipped} locked or layout object${skipped === 1 ? '' : 's'} skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '') + (r.messages.length ? '. ' + r.messages.join(' ') : '');
-  if (!grid && !r.done && !nd) { note('Explode: nothing explodable (0 exploded)' + why); return; }
+  if (!grid && !r.done && !nd) { note(label + ': nothing explodable (0 exploded)' + why); return; }
   if (r.done) tidyGroups(d.lay);
   gCommit(g);
   selLooseMany = [...gridPl, ...made].map((p) => d.lay.placed.indexOf(p)); update();
   const ex = [r.done ? `${r.done} part${r.done === 1 ? '' : 's'} exploded → ${r.pieces.length} objects` : '', nd ? `${nd} dimension${nd === 1 ? '' : 's'} exploded into lines, arrows and text` : ''].filter(Boolean).join('; ');
-  if (grid) note(`Explode: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : '. Explode again to break a part into outlines') + why + '. Ctrl+Z puts the grid back');
-  else note('Explode: ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
+  if (grid) note(`${label}: the grid's copies are separate placed parts now` + (ex ? '; ' + ex : `. ${label} again to break a part into outlines`) + why + '. Ctrl+Z puts the grid back');
+  else note(label + ': ' + ex + why + '. Ctrl+Z puts ' + (all.length > 1 ? 'them' : 'the part') + ' back');
 }
 
-function explodeSelected() {
+function explodeSelected() { explodeOrBurst(false); }
+function burstSelected() { explodeOrBurst(true); }
+function explodeOrBurst(burst) {
+  const label = burst ? 'Burst' : 'Explode';
   const lay = curLay() && curDoc();
   if (lay) {                                                         // on a layout: dimensions alone -> lines, arrows and text (156b2c3b); anything else -> placed parts and grids (156b4)
     const items = selItems();
-    if (!items.length || !items.every((x) => x.p.src === 'loose' && isDimPart(x.part))) { explodeOnLayout(); return; }
+    if (!items.length || !items.every((x) => x.p.src === 'loose' && isDimPart(x.part))) { explodeOnLayout(burst); return; }
     const ats = items.map((x) => x.p.i), snap = laySnap(lay.lay);
     const n = LD.explodeDims(lay.lay, ats, () => 'o' + uid());
-    if (!n) { note('Explode: nothing explodable (0 exploded)'); return; }
-    state.sel = -1; pushLay(lay, snap, '', 'Explode'); touch(); update();
-    note(`Explode: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
+    if (!n) { note(label + ': nothing explodable (0 exploded)'); return; }
+    state.sel = -1; pushLay(lay, snap, '', label); touch(); update();
+    note(`${label}: ${n} dimension${n === 1 ? '' : 's'} exploded into lines, arrows and text. Ctrl+Z puts it back`);
     return;
   }
   const d = editable();
-  if (!d) { if (!cmpDoc() || cmpEdit()) note('Explode works on a drawing tab: open a drawing first'); return; }      // in Compare, cmpEdit() says why a library part or hidden drawing cannot
-  const r = explodeSelection(d.raw, d.sel, d.locked);
+  if (!d) { if (!cmpDoc() || cmpEdit()) note(`${label} works on a drawing tab: open a drawing first`); return; }      // in Compare, cmpEdit() says why a library part or hidden drawing cannot
+  const r = explodeSelection(d.raw, d.sel, d.locked, burst);
   const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
-  if (!r.exploded) { note('Explode: nothing explodable (0 exploded)' + skipped); return; }
-  commit(d, { entities: r.entities, blocks: r.blocks }, 'Explode');
+  if (!r.exploded) { note(label + ': nothing explodable (0 exploded)' + skipped); return; }
+  commit(d, { entities: r.entities, blocks: r.blocks }, label);
   setSel(d, r.selected);
-  note(`Explode: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
+  note(`${label}: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
 }
 
 // ---- Shaping (TODO 122): selected closed outlines, one undo step (shaping.js is the maths) ----
@@ -5044,7 +5093,7 @@ const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return
 const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ guides: d.guideState && structuredClone(d.guideState.s.guides), entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -5213,7 +5262,7 @@ function snapObjectCandidates(q, candidates = true) {
   return e < 0 ? null : { object: ed, e, candidates: candidates ? Ed.snapCandidates(ed, e, ...p, tol, types, from) : [] };
 }
 function snapTab(e) {
-  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || !state.snap || !snapPointer || snapPointer.buttons) return;
+  if (e.key !== 'Tab' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.isComposing || state.orthoAsk || state.attdispAsk || state.eatteditAsk || !state.snap || !snapPointer || snapPointer.buttons) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu], :popover-open')) return;
   if (e.target !== document.body && !ui.canvas.contains(e.target) || e.target.closest?.('input, textarea, select, button, a, [contenteditable=true]')) return;
   if (cursorDynamic() && DI.hasTyped(cursorInput())) return;
@@ -5405,12 +5454,14 @@ function restoreBg(d, st) {
 }
 function restore(d, st) {
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
-  if (!d.raw || st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
+  const attributesChanged = d.raw && 'attmode' in st && st.attmode !== d.raw.header.$ATTMODE;
+  if (!d.raw || !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
+  if (attributesChanged) d.raw.header = { ...d.raw.header, $ATTMODE: st.attmode };
   const layerTableChanged = st.layers && st.layers !== d.raw.layers;
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if (st.ltypes) d.raw.ltypes = st.ltypes;
   if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
-  if (!layerTableChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
+  if (!attributesChanged && !layerTableChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
@@ -5576,15 +5627,20 @@ function keepMeasure() {
 }
 /// Dimension: first point, second point, then the callout follows the mouse sideways and a third click places it (AutoCAD's way). Linear is the
 // same with the pointer choosing a horizontal or a vertical line. Radius and diameter: pick a circle or an arc, then place it. Angle: pick two lines, then the arc.
-const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null });
+// Automatic also keeps: text (the override typed with T), as ('radius' | 'diameter' from R / D), askText (the "Enter dimension text" prompt is on), hot (the line hovered as a second line for an angle).
+// state.dimRun: the history length after each dimension of this DIM run, for Undo (a placement rebuilds state.dim, so it cannot live there).
+const newDim = () => ({ pts: [], hover: null, cursor: null, obj: null, lines: [], force: null, ghost: null, text: '', as: null, askText: false, hot: null });
 const dimBusy = (D) => D.pts.length > 0 || !!D.obj || D.lines.length > 0;
-function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.lines = []; D.force = null; D.typed = false; }
+function dimClear(D) { D.pts = []; D.hover = null; D.obj = null; D.ghost = null; D.lines = []; D.force = null; D.typed = false; D.text = ''; D.as = null; D.askText = false; D.hot = null; }
+const dimAutoLive = () => !!state.dim && state.dimType === 'auto';
+function dimAutoEnd() { dimClear(state.dim); setTool('select'); }       // Enter or Space ends Automatic DIM, which otherwise repeats
 /** What the command line asks for next. */
 function dimPrompt() {
   const D = state.dim, type = state.dimType;
   const t = dimTarget();
   if (!t) return 'Dimension: open a drawing tab or a layout first';
   if (!D) return null;
+  if (type === 'auto') return D.askText ? `Enter dimension text <${dimMeasured() || ''}>:` : AD.promptOf(D);
   if (type === 'aligned') return ['Dimension: first point (it snaps to ends and centres)', 'Dimension: second point', 'Dimension: move the line up or down and click to place it'][D.pts.length];
   if (type === 'linear') return ['Specify first extension line origin:', 'Specify second extension line origin:', 'Specify dimension line location [Horizontal/Vertical]:'][D.pts.length];
   if (type === 'angle') return ['Select first line:', 'Select second line:', 'Specify dimension arc location:'][D.lines.length];
@@ -5605,7 +5661,11 @@ function dimDraft(at) {
     const axis = D.force || Ed.linearAxis(a, b, at);
     return { kind: 'linear', params: { a, b, axis, offset: Ed.dimOffsetAt(a, b, at, axis) } };
   }
-  if (type === 'angle') { const m = D.lines.length === 2 && at && Ed.angleBetween(D.lines[0], D.lines[1], at); return m ? { kind: 'angle', params: m } : null; }
+  if (type === 'angle' || D.lines.length === 2) { const m = D.lines.length === 2 && at && Ed.angleBetween(D.lines[0], D.lines[1], at); return m ? { kind: 'angle', params: m } : null; }
+  if (type === 'auto') {       // points mode (two origins, the cursor rule of a line pick), or the picked line / arc / circle
+    if (D.pts.length) return D.pts.length === 2 ? AD.autoDraft({ type: 'line', l: [...D.pts[0].slice(0, 2), ...D.pts[1].slice(0, 2)] }, at) : D.hover && { kind: 'aligned', params: { a: D.pts[0], b: D.hover, offset: 0 } };
+    return D.obj && AD.autoDraft(D.obj, at, D.as);
+  }
   if (!D.obj || !at) return null;
   if (type === 'radius') return { kind: 'radius', params: { c: D.obj.c, r: D.obj.r, p: at } };
   const ends = Ed.diameterEnds(D.obj.c, D.obj.r, at);
@@ -5617,35 +5677,105 @@ function previewDim(d) {
   if (state.ldr) return ldrPreview(d);
   const G = state.dimDrag;
   if (G && G.moved) return Ed.dimGeom(G.kind, { ...G.params, offset: G.offset }, d.factor, G.dp);
-  const m = dimDraft(state.dim && (state.dim.pts.length === 2 && typedAt() || state.dim.cursor));
-  return m ? Ed.dimGeom(m.kind, { ...m.params, ...dimNew(d) }, d.factor, state.dp) : null;
+  const D = state.dim, look = dimNew(d), auto = D && state.dimType === 'auto', ghost = auto && !D.obj && !D.pts.length && D.ghost && D.cursor;       // Automatic, before the pick: a faint ghost of what a click on the hovered object makes
+  const hot = auto && D.hot && D.cursor && !D.lines.length;                                                          // ... and a second line under the pointer: a faint angle to it, the line marked
+  const m = ghost ? AD.autoDraft(D.ghost, AD.ghostAt(D.ghost, D.cursor, 3 * look.textH)) : hot ? { kind: 'angle', params: Ed.angleBetween(D.obj.l, D.hot, D.cursor) } : dimDraft(D && (D.pts.length === 2 && typedAt() || D.cursor));
+  const g = m ? Ed.dimGeom(m.kind, { ...m.params, ...look, override: auto ? D.text : '' }, d.factor, state.dp) : null;
+  if (g && (ghost || hot)) g.ghost = true;
+  if (g && hot) g.hot = D.hot;
+  return g;
+}
+/** Automatic: the line, polyline segment, arc or circle under p (see autodim.js targetOf), or null. */
+function autoTarget(d, p) {
+  const v = d.lay ? layObjDoc(d) : d;
+  return AD.targetOf(v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))], p);
 }
 function dimHover(d, p, shift) {
   const D = state.dim;
   D.cursor = p; D.shift = shift;
-  if (D.pts.length < 2 && (state.dimType === 'aligned' || state.dimType === 'linear')) D.hover = pickPoint(d, p, D.pts, shift, true);
+  if (D.pts.length < 2 && (state.dimType === 'aligned' || state.dimType === 'linear' || state.dimType === 'auto' && D.pts.length === 1)) D.hover = pickPoint(d, p, D.pts, shift, true);
+  if (state.dimType === 'auto') {
+    D.ghost = D.obj || D.pts.length ? null : autoTarget(d, p);
+    D.hot = D.obj && !D.lines.length ? AD.secondLine(D.obj, autoTarget(d, p)) : null;
+  }
   paintOverlay();
+}
+/** Automatic: the measured text of the dimension as it stands at the pointer, for the Text option's default. */
+function dimMeasured() {
+  const d = dimTarget(), D = state.dim, m = d && D && dimDraft(D.cursor), g = m && Ed.dimGeom(m.kind, { ...m.params, ...dimNew(d) }, d.factor, state.dp);
+  return g && g.measured;
 }
 /** Puts the dimension m ({ kind, params }) in the drawing (one undo step) and starts the next. */
 function dimPlace(d, m) {
   if (!m) { note(state.dimType === 'angle' ? 'Dimension: no angle there, try another place' : 'Dimension: nothing to measure there, try another place'); return; }
   const names = d.lay ? LD.dimensionNames(d.lay) : null, taken = names ? names.taken : d.raw.blocks;
-  const dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d) }, d.factor, Ed.freeName(taken, m.kind, m.params.axis), state.dp);
+  const D = state.dim, dim = Ed.buildDim(m.kind, { ...m.params, ...dimNew(d), override: D.text }, d.factor, Ed.freeName(taken, m.kind, m.params.axis), state.dp);
   if (!dim) { note('Dimension: nothing to measure there, try another place'); return; }
-  dimClear(state.dim);
-  if (d.lay) {                                                       // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
+  const suffix = D.text || m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm';       // read before dimClear: a text override is shown as typed
+  dimClear(D);
+  if (d.lay) {                                                    // a layout object holding the dimension's block (settleDims / followDims keep it right when it moves)
     names.taken.add(dim.name.toLowerCase());
     layObjectsAdd(d, 'Dimension', [dim.insert], { [dim.name]: dim.block }, names);
-    note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
+    state.dimRun.push(histTop());
+    note(`Dimension placed: ${dim.label}${suffix}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
   commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
-  note(`Dimension placed: ${dim.label}${m.kind === 'angle' || dim.label.endsWith('"') ? '' : ' mm'}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
+  state.dimRun.push(histTop());
+  note(`Dimension placed: ${dim.label}${suffix}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
   return true;
+}
+const histTop = () => { const h = historyOf(curDoc()); return { tab: curDoc(), order: h ? (h.steps ? h.steps().past.at(-1)?.order : h.order) : undefined }; };
+/** Automatic: a click or typed point, by what DIM waits for (autodim.js stageOf): an object or a first origin, a second origin, a second line for an angle, or the location. */
+function dimAutoPoint(d, p, shift, typed) {
+  const D = state.dim, st = AD.stageOf(D);
+  D.askText = false;                                                 // a click leaves the Text prompt, keeping what was typed before
+  if (st !== 'first' && st !== 'second') {
+    const l2 = st === 'line' && !typed && AD.secondLine(D.obj, autoTarget(d, p));
+    if (!l2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
+    D.lines = [D.obj.l, l2]; D.hot = null;                           // two lines: our Angle dimension, then its location
+  } else if (st === 'second') {
+    const q = typed ? p : pickPoint(d, p, D.pts, shift);
+    if (Math.hypot(q[0] - D.pts[0][0], q[1] - D.pts[0][1]) < 1e-9) { note('Dimension: that is the first point again, pick another'); return; }
+    D.pts.push(q); D.hover = null;
+  } else {
+    const v = d.lay ? layObjDoc(d) : d;
+    if (d.lay && partRefused(v, { kind: 'dimension' }, p)) return;
+    D.obj = typed ? null : AD.targetOf(v.raw.entities[Ed.hitEntity(edIndex(v), p[0], p[1], pickTol(d))], p);
+    D.ghost = null;
+    if (!D.obj) { D.pts = [typed ? p : pickPoint(d, p, [], shift)]; D.hover = null; }      // nothing to dimension there: points mode
+  }
+  state.pointLast = p.slice(0, 2); D.cursor = p; note(dimPrompt()); paintOverlay();
+}
+/** Automatic: a word of the bar (Text, Undo, Diameter, Radius, or the dimension text itself). True when it was one of those. */
+function dimAutoTyped(raw) {
+  const D = state.dim, d = dimTarget();
+  if (!d) return false;
+  if (D.askText) { D.askText = false; D.text = overrideText(raw.trim()); note(dimPrompt()); paintOverlay(); return true; }       // Enter keeps the measured text, <> inside stands for it
+  const o = AD.optionOf(D, raw);
+  if (!o) return false;
+  if (o === 'Text') D.askText = true;
+  else if (o === 'Undo') { dimAutoUndo(); return true; }
+  else D.as = o.toLowerCase();
+  note(dimPrompt()); paintOverlay();
+  return true;
+}
+/** Undo of Automatic DIM: one pick back inside a dimension, at the first prompt the last dimension of this run. */
+function dimAutoUndo() {
+  const D = state.dim, b = AD.back(D);
+  if (b) {
+    Object.assign(D, b, { hover: null, hot: null, askText: false });
+    if (!b.obj && !b.pts.length) { D.text = ''; D.as = null; }       // back at the first prompt: a new dimension starts clean
+    note(dimPrompt()); paintOverlay(); return;
+  }
+  const run = state.dimRun.at(-1), top = histTop();
+  if (run && run.tab === top.tab && run.order === top.order) { state.dimRun.pop(); undoCurrent(); note('Dimension taken back. ' + dimPrompt()); return; }
+  note('Nothing to undo in this DIM. ' + dimPrompt());
 }
 function dimensionPoint(d, p, shift = false, typed = false) {
   const D = state.dim, type = state.dimType;
   if (!D || !dimTarget()) return;
+  if (type === 'auto') { dimAutoPoint(d, p, shift, typed); return; }
   if (type === 'radius' || type === 'diameter' || type === 'angle') {
     if (D.obj || D.lines.length === 2) { if (dimPlace(d, dimDraft(p))) state.pointLast = p.slice(0, 2); return; }
     const v = d.lay ? layObjDoc(d) : d;
@@ -6522,7 +6652,7 @@ function drawOvl(paint = false) {
   if (ui.gripHint) {
     const gh = d && (d.lay ? gd : d), grips = gh && gripOn(gh) ? gripList(gh) : [];
     ui.gripHint.hidden = !grips.length;
-    ui.gripHint.textContent = grips.some((g) => g.kind === 'edge') ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
+    ui.gripHint.textContent = grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
   if (!tip) { t.hidden = true; return; }
@@ -6632,7 +6762,7 @@ function cursorClick(d, p, shift) {
   return true;
 }
 function cursorKey(e) {
-  if (state.orthoAsk) return;
+  if (state.orthoAsk || state.attdispAsk || state.eatteditAsk) return;
   if (!cursorDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
@@ -6877,6 +7007,7 @@ function modEnter(d) {
 /** Words the active modify tool takes itself, so the command bar does not read them as commands (o is mOde, not OFFSET). */
 function modTakes(c) {
   if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
+  if (dimAutoLive() && state.dim.askText) return true;              // Automatic DIM's "Enter dimension text" takes any text
   const m = state.mod;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
   if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
@@ -7968,6 +8099,7 @@ function textToolDown(e) {
 function textDblClick(e) {
   const d = dimTarget();
   if (!d || state.tool !== 'select' || state.setlen || state.text.ed?.dim) return;
+  if (attributePick(e)) { e.preventDefault(); return; }
   if (d.lay) {
     const hit = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
     const p = hit && placedNow[+hit.dataset.i], part = p && d.lay.parts[p.partId];
@@ -7982,6 +8114,56 @@ function textDblClick(e) {
   if (dim) textOpen(d, null, hit, null, { ...dim, raw: d.raw });
   else if (hit >= 0 && TX.decode(d.raw.entities[hit]) && d.raw.entities[hit].layer !== Ed.DIM_LAYER) textOpen(d, null, hit);
   else if (hit >= 0 && ldrPseudo(d, hit)) ldrEdit(d, hit, ldrPseudo(d, hit).model);
+}
+
+/** Pick the top-level entity even on a locked layer, so the editor can explain the refusal. */
+function attributePick(e, command = false) {
+  const d = dimTarget();
+  if (!d || command && state.eatteditAsk !== d || document.querySelector('[data-testid=attribute-dialog]')) return false;
+  let raw = d.raw, hit, part, placed, slot;
+  const point = toDrawing(d, e.clientX, e.clientY);
+  if (d.lay) {
+    const el = document.elementsFromPoint(e.clientX, e.clientY).map((x) => x.closest('[data-i]')).find(Boolean);
+    // Insert SVG hit paths can omit transformed members and attribute text.
+    const slots = el ? [+el.dataset.i] : placedNow.map((_, i) => i).reverse();
+    for (slot of slots) {
+      placed = placedNow[slot]; part = d.lay.parts[placed.partId];
+      if (!part?.raw || state.hidden.parts || partHid(placed)) continue;
+      hit = Ed.hitEntity(partIndex(part), ...toPart(part, placed, ...point), pickTol(d) / ((part.factor || 1) * (placed.sc || 1)));
+      if (hit >= 0) break;
+    }
+    if (!(hit >= 0)) return false;
+    raw = part.raw;
+  } else hit = Ed.hitEntity(edIndex(d), ...point, pickTol(d));
+  const ent = raw.entities[hit];
+  if (!ent || (command ? ent.type !== 'INSERT' : !['INSERT', 'ATTDEF'].includes(ent.type))) return false;
+  const rows = ent.type === 'INSERT' && attributeRows(ent, raw.blocks);
+  if (!command && rows && !rows.length) return false;
+  state.eatteditAsk = null;
+  if (d.lay ? placed.lock : lockedEnt(d, hit)) { note('Object is on a locked layer.'); return true; }
+  if (rows && !rows.length) { note('That block has no editable attributes.'); return true; }
+  pdrag = null; state.drawingRotate = null; state.mode = 'select'; renderCommand();
+  let loose = placed?.src === 'loose' ? placed.i : null;
+  openAttributes(ent, raw.blocks, (next) => {
+    if (d.lay) {
+      const g = startGesture(d, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor');
+      const pl = loose == null ? placementOf(placedNow[slot]) : d.lay.placed[loose], old = d.lay.parts[pl.partId], id = 'o' + uid();
+      const changed = { ...old.raw, entities: old.raw.entities.map((x, i) => i === hit ? next : x) };
+      const shared = d.lay.s.gridPart === old.id || d.lay.placed.some((p, i) => i !== loose && p.partId === old.id);
+      const name = shared ? LD.nextName(old.name, new Set(Object.values(d.lay.parts).map((p) => p.name))) : old.name;
+      const updated = LD.makePart(id, name, changed, old.factor, old.src);
+      if (!updated) throw new Error('The edited object has no extents.');
+      // A wider value can change the reference corner; keep the geometry in place, including after reopening.
+      const origin = mapply(placedMat(old, pl, 0), updated.box[0], updated.box[1]);
+      gMark(g);
+      if (loose == null) loose = gLoose(g, slot);
+      d.lay.parts[id] = { ...old, ...updated };
+      d.lay.placed[loose] = { ...pl, partId: id, x: origin[0], y: -origin[1] };
+      if (!shared) delete d.lay.parts[old.id];
+      gCommit(g); update();
+    } else commit(d, { entities: d.raw.entities.map((x, i) => i === hit ? next : x), blocks: d.raw.blocks }, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor');
+  });
+  return true;
 }
 
 // -- the corner handles of a selected text: a corner drag scales the height
@@ -8221,6 +8403,8 @@ function gripDoc() {
 }
 /** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
 const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textEditing();
+/** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
+const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
@@ -8230,7 +8414,7 @@ function gripList(d) {
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
     if (lp) { for (const g of GR.gripsOf(lp)) list.push({ e, ...g }); continue; }       // a leader: a grip at each point
     if (!ent || ent.layer === Ed.DIM_LAYER || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
-    for (const g of GR.gripsOf(ent)) list.push({ e, ...g });
+    for (const g of GR.gripsOf(ent, attMode(d))) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
   d.gripCache = { sel: d.sel, ents, list: shown };
@@ -8260,30 +8444,38 @@ function gripAim(g, q, shift = false) {
   if (g.baseAsk || g.ref && g.ref.step !== 'new') { g.val = null; g.res = null; g.next = null; return; }       // picking a base point or the reference: nothing to preview yet
   if (g.mode) { g.val = gripRefVal(g, GM.valueAt(GM.MODES[g.mode], g.base, q)); gripModeRun(g); return; }
   if (g.hots) { gripStretchHots(g, q, shift); return; }
-  const r = GR.dragGrip(g.ent, g.id, [g.pos[0] + q[0] - g.base[0], g.pos[1] + q[1] - g.base[1]], shift);       // a Base point sets where the offset starts
+  const to = [g.pos[0] + q[0] - g.base[0], g.pos[1] + q[1] - g.base[1]];       // a Base point sets where the offset starts
+  const r = g.opt ? GR.dragOption(g.ent, g.id, g.opts[g.opt], to) : GR.dragGrip(g.ent, g.id, to, shift);
   g.next = r ? r.ent : null; g.label = r ? r.label : null;
   // a text, hatch or block has no outline to draw: the canvas shows it moved, as when a selection is dragged (155e4); a layout paints it from its objects' drawing (g.d.fl)
-  const fl = r && GR.movesWhole(g.ent, g.id) && g.d.fl;
+  const fl = r && GR.movesWhole(g.ent, g.id) && !g.opt && g.d.fl;       // a hatch's Grip option (164b1) redraws the pattern instead (below)
   if (fl && !g.items) g.items = fl.items.filter((it) => it.e === g.e);
   g.move = fl ? { items: g.items, preview: { ...fl, items: g.items }, dx: q[0] - g.base[0], dy: q[1] - g.base[1] } : null;
+  if (r && !g.move && (g.ent.type === 'MTEXT' || g.ent.type === 'INSERT' || g.ent.type === 'HATCH')) { const preview = flatten({ ...g.d.raw, entities: [r.ent] }); g.move = { items: preview.items, preview, dx: 0, dy: 0 }; }       // 164a: an MTEXT's width / height or a block's attribute: the changed object drawn as it will be (the text reflows live)
 }
 /** Stretch with several hot grips (155e3): every one moves by the vector base → q; an object with its middle / centre hot moves whole. g.nexts: object index → the changed entity. */
 function gripStretchHots(g, q, shift) {
   const v = [q[0] - g.base[0], q[1] - g.base[1]], nexts = new Map();
+  let part = false;                                               // an MTEXT's size grip or a block's attribute is hot: not moved whole (164a)
   g.label = null;
   for (const [e, ent] of g.ents) {
     const mine = g.hots.filter((x) => x.e === e);
     let cur = ent;
     // whole (Grill Q2: all grips hot = the object moves): never grip by grip, the first grip would land on the next one's old spot
     if (GR.wholeHot(ent, new Set(mine.map((x) => x.id)))) { if (v[0] || v[1]) cur = GR.translate(ent, v[0], v[1]); g.label = g.label || 'Move'; }
-    else for (const x of mine) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } }
+    else { for (const x of GR.stretchHots(ent, mine)) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } } if ((ent.type === 'MTEXT' || ent.type === 'INSERT' || ent.type === 'HATCH') && mine.some((x) => !GR.movesWhole(ent, x.id))) part = true; }
     if (cur !== ent) nexts.set(e, cur);
   }
   g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
   // a text, hatch or block moved whole has no outline to draw: the canvas shows it moved by the same vector (as a single grip does)
-  const es = new Set([...nexts].filter(([e, n]) => GR.movesWhole(g.ents.get(e), 'c') && !previewShape(n, 1)).map(([e]) => e)), fl = es.size && g.d.fl;
+  const es = new Set([...nexts].filter(([e, n]) => GR.noOutline(g.ents.get(e)) && !previewShape(n, 1)).map(([e]) => e)), fl = es.size && g.d.fl;
   g.move = fl ? { items: fl.items.filter((it) => es.has(it.e)), es, dx: v[0], dy: v[1] } : null;
   if (g.move) g.move.preview = { ...fl, items: g.move.items };
+  if (g.move && part) {                                           // the changed objects drawn as they will be (nexts already holds the moved ones), as gripAim does for one
+    const list = [...es], preview = flatten({ ...g.d.raw, entities: list.map((e) => nexts.get(e)) });
+    preview.items = preview.items.map((it) => ({ ...it, e: list[it.e] }));
+    g.move = { items: preview.items, preview, es, dx: 0, dy: 0 };
+  }
 }
 /** The hint added to the note when some hot objects would not change in a Stretch (they stay as they were). */
 const leftNote = (g) => (g.nexts && !g.mode && g.left ? (g.left === 1 ? '. 1 object would not change and was left as it was' : `. ${g.left} objects would not change and were left as they were`) : '');
@@ -8310,7 +8502,7 @@ function gripCycle() {
 /** Mode i (Space / Enter cycle it, the right-click menu picks it). */
 function gripModeTo(g, i) {
   if (curLay() && selItems().some((x) => x.p.src !== 'loose' || !x.part.obj || isDimPart(x.part))) { note('Grip Move / Rotate / Scale / Mirror take loose objects only here: use the ribbon command for Parts and dimensions'); return; }       // they act on the loose objects of the selection, not on a Part
-  g.mode = i; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
+  g.mode = i; g.opt = 0; g.move = null; g.res = null; g.err = null; g.next = null; g.val = null; g.to = null; g.ref = null; g.baseAsk = false;
   if (g.cursor) gripAim(g, gripPick(g, g.cursor[0], g.cursor[1], false));
   state.msg = null; ui.cmdUI.message(GM.header(GM.MODES[g.mode])); renderCommand(); paintOverlay();
 }
@@ -8325,7 +8517,10 @@ function gripMenu(e) {
   const M = GM.MODES[state.grip.mode], on = (fn) => () => { if (state.grip) fn(state.grip); };
   popMenu(e.clientX, e.clientY, [
     ['Enter', on(() => gripCycle())],
-    ...GM.MODES.map((m, i) => [GM.nameOf(m), on((g) => gripModeTo(g, i)), state.grip.mode === i ? '✓' : null]),
+    ...(state.grip.opt   // 163a: in an option run the grip's options stand in place of Stretch, the current one ticked
+      ? state.grip.opts.map((name, i) => [name, on((g) => gripOptionTo(g, i)), state.grip.opt === i ? '✓' : null])
+      : [[GM.nameOf(GM.MODES[0]), on((g) => gripModeTo(g, 0)), state.grip.mode === 0 ? '✓' : null]]),
+    ...GM.MODES.slice(1).map((m, i) => [GM.nameOf(m), on((g) => gripModeTo(g, i + 1)), state.grip.mode === i + 1 ? '✓' : null]),
     ['Base Point', on(gripBaseAsk)], ['Copy', on(gripCopyOn)],
     ...(M === 'ROTATE' || M === 'SCALE' ? [['Reference', on(gripRefOn)]] : []),
     ...(state.grip.copy && state.grip.hist.length ? [['Undo', on(gripUndoCopy)]] : []),
@@ -8339,6 +8534,7 @@ function gripBase(g, q) { g.base = [q[0], q[1]]; g.baseSet = true; g.baseAsk = f
 /** C: from now on each pick leaves a transformed copy and keeps the originals (`** ROTATE (multiple) **`). */
 function gripCopyOn(g) {
   if (g.copy) { note('Copy is on already: Enter or Esc ends'); return; }
+  if (g.opt) { note(`${g.opts[g.opt]} makes no copies`); return; }
   g.copy = true; ui.cmdUI.message(GM.header(GM.MODES[g.mode], true)); gripRefresh(g);
 }
 /** R (Rotate / Scale): the commands' Reference prompts; the reference first, typed or two points, then the new angle / length. */
@@ -8354,7 +8550,7 @@ function gripUndoCopy(g) {
   g.acc = g.hist.pop(); note(`Last copy removed (${g.hist.length} left)`); gripRefresh(g);
 }
 /** A pick is final (the value is in g.val / g.next): a Ctrl pick or the Copy option leaves a copy and goes on, else the grip edit ends. */
-function gripDone(g, ctrl) { g.hot = true; if (ctrl || g.copy) gripCopy(g, ctrl); else gripCommit(); }
+function gripDone(g, ctrl) { g.hot = true; if ((ctrl || g.copy) && !g.opt) gripCopy(g, ctrl); else gripCommit(); }       // an option (Lengthen, Radius) makes no copies
 /** A click (or the release of a drag) at the pointer: a base point, a Reference point, or the pick itself (Ctrl = a copy). */
 function gripPut(g, e) {
   const q = gripPick(g, e.clientX, e.clientY, e.shiftKey);
@@ -8400,6 +8596,8 @@ function gripHoverAt(e) {
   const d = gripDoc(), hit = d && gripOn(d) ? gripAt(d, e.clientX, e.clientY) : null, id = hit ? hit.e + ':' + hit.id : null;
   if (id === state.gripHover) return;
   state.gripHover = id; drawOvl();
+  clearTimeout(gripOptTimer);
+  if (hit && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
 }
 /** The hot grips (Shift-click) of d's selection as a Map 'e:id' → grip, or null when there are none or the selection / drawing changed since. */
 function hotsOf(d) {
@@ -8407,6 +8605,7 @@ function hotsOf(d) {
   return H && H.sel === d.sel && H.ents === d.raw.entities && H.map.size ? H.map : null;
 }
 function gripDown(e) {
+  ctrlTap = false;                                                   // Ctrl held for a Ctrl-click is not a tap (163a)
   const d = gripDoc();
   if (!d) return false;
   const g0 = state.grip;
@@ -8414,12 +8613,50 @@ function gripDown(e) {
   if (!gripOn(d)) return false;
   const hit = gripAt(d, e.clientX, e.clientY);
   if (!hit) return false;
+  gripStart(d, hit, e);
+  return true;
+}
+/** A grip run begins on `hit` (a click on it, or an item of its Grip options list: e gives the pointer and Shift). */
+function gripStart(d, hit, e) {
+  clearTimeout(gripOptTimer);
   const key = hit.e + ':' + hit.id, map = hotsOf(d);
   const hots = !e.shiftKey && map && map.size > 1 && map.has(key) ? [...map.values()] : null;       // a click on one of several hot grips: Stretch moves them all
   if (!e.shiftKey) state.hots = null;                                // Shift: decided on release (gripUp: a click makes it hot, 155e3) or on the first move (a drag keeps proportions)
-  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
+  state.grip = { tog: e.shiftKey ? hit : null, hots, skip: hots && new Set(hots.map((x) => x.e)), ents: hots && new Map(hots.map((x) => [x.e, ldrPseudo(d, x.e) || d.raw.entities[x.e]])), nexts: null, d, e: hit.e, id: hit.id, ent: ldrPseudo(d, hit.e) || d.raw.entities[hit.e], next: null, to: null, label: null, hot: false, moved: false, px: [e.clientX, e.clientY], sel: new Set(d.sel), mode: 0, opt: 0, opts: hots || e.shiftKey ? [] : GR.optionsOf(ldrPseudo(d, hit.e) || d.raw.entities[hit.e], hit.id), base: [hit.x, hit.y], pos: [hit.x, hit.y], copy: false, acc: d.raw, hist: [], baseAsk: false, ref: null };
   state.msg = null; renderCommand(); renderEdit(); paintOverlay();       // renderEdit: the Undo button is on in a run
-  return true;
+}
+// ---- 163a Grip options: the list a line / arc grip offers after 300 ms of rest (AutoCAD's multifunctional grips) ----
+let gripOptTimer = 0, ctrlTap = false;
+/** The hovered grip `hit` rests: its list (Stretch / Lengthen, Stretch / Radius) opens beside it and stays until a pick, Esc or a click elsewhere. */
+function gripOptionsOpen(hit) {
+  const d = gripDoc();
+  if (state.grip || ui.ctx || !d || !gripOn(d) || hotsOf(d) || !gripList(d).includes(hit)) return;
+  const opts = GR.optionsOf(ldrPseudo(d, hit.e) || d.raw.entities[hit.e], hit.id);
+  if (!opts.length) return;
+  const [px, py] = sheetPx(d, [hit.x, hit.y]);
+  popMenu(px + 10, py + 10, opts.map((name, i) => [name, () => {
+    if (state.grip || gripDoc() !== d || !gripOn(d) || !gripList(d).includes(hit)) return;
+    gripStart(d, hit, { clientX: px, clientY: py, shiftKey: false });     // Stretch = the plain grip click; the others begin the run in their option
+    gripOptionTo(state.grip, i, [px, py]);
+  }]));
+}
+/** The hot grip's option i (Ctrl cycles them, the list picks one): its header and prompt, the preview follows the pointer. */
+function gripOptionTo(g, i, cursor) {
+  if (i && g.copy) { note(`${g.opts[i]} makes no copies`); return; }       // the run stays in Stretch with its copies
+  if (GR.IMMEDIATE.has(g.opts[i])) {                                       // 163b Remove vertex / Convert to Line: applied the moment it is picked, no point to ask for
+    const r = GR.applyOption(g.ent, g.id, g.opts[i]);
+    if (!r) { note(`${g.opts[i]}: nothing to do here`); return; }
+    g.hot = true; g.opt = i; g.next = r.ent; g.label = r.label; g.to = g.base; ui.cmdUI.message(`** ${g.opts[i].toUpperCase()} **`);
+    gripDone(g, false); return;
+  }
+  g.hot = true; g.cursor = g.cursor || cursor; g.opt = i; state.msg = null;
+  ui.cmdUI.message(g.opt ? `** ${g.opts[i].toUpperCase()} **` : GM.header('STRETCH', g.copy)); gripRefresh(g);
+}
+/** Ctrl tapped in a hot grip run: the grip's next option (Stretch → Lengthen → Stretch; arc middle Stretch ↔ Radius). A Ctrl held for a Ctrl-click is no tap. */
+function gripOptionCycle() {
+  const g = state.grip;
+  const ring = g ? g.opts.map((_, i) => i).filter((i) => !GR.IMMEDIATE.has(g.opts[i])) : [];       // 163b: Ctrl cycles only the options that take a point
+  if (g && g.hot && !g.mode && ring.length > 1 && !g.baseAsk && !g.ref) gripOptionTo(g, ring[(ring.indexOf(g.opt) + 1) % ring.length]);
 }
 function gripMove(e) {
   const g = state.grip;
@@ -8459,7 +8696,8 @@ function gripCommit() {
     commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
     setSel(d, g.sel);
   }
-  note(`${label}: ${text}${leftNote(g)}. Ctrl+Z takes it back`);
+  const unlinked = (g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]]).some(([o, n]) => o.type === 'HATCH' && GR.get(o.r, 71) === 1 && GR.get(n.r, 71) === 0);     // 164b1: AutoCAD says so when a Stretch ends the association
+  note(`${label}: ${text}${leftNote(g)}. Ctrl+Z takes it back${unlinked ? '. Hatch boundary associativity removed.' : ''}`);
 }
 /** The drawing after a Stretch of several hot grips: the changed objects in place, dimensions following, leaders through their own model. */
 function gripHotsRaw(g) {
@@ -8492,18 +8730,37 @@ function gripTyped(raw) {
   }
   if (g.ref && g.ref.step !== 'new') { refTyped(...gripRefCtx(g), raw); return; }
   if (g.mode) { gripModeTyped(g, inp, raw); return; }
-  if (g.id.startsWith('e')) { note('Drag the edge to resize; typing a size is not available yet'); return; }
+  if (g.opt) { gripOptionTyped(g, inp); return; }
+  if (GR.isRectEdge(g.ent, g.id)) { note('Drag the edge to resize; typing a size is not available yet'); return; }
   if (inp.kind === 'bad') { note(`I do not understand "${raw.trim()}". Type x,y, @dx,dy or a length`); return; }
   const refMm = (() => { const r = GR.refPoint(g.ent, g.id); return [r[0] * f, r[1] * f]; })();
   let mm = null;
   if (inp.kind === 'len') {
     const hover = g.to ? [g.to[0] * f, g.to[1] * f] : null;
     const org = g.baseSet || g.hots ? g.base.map((v) => v * f) : refMm;       // after B the length counts from the base, as @dx,dy
-    mm = DR.directDistance(org, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [org[0] + inp.v, org[1]] : null);
+    const ax = GR.axisOf(g.ent, g.id), side = ax && g.to ? Math.sign((g.to[0] - g.pos[0]) * ax[0] + (g.to[1] - g.pos[1]) * ax[1]) || 1 : 1;       // 164a: an MTEXT's width / height grip: the typed distance is added along its axis (taken back when the pointer is on the inner side)
+    mm = ax ? [org[0] + side * inp.v * ax[0], org[1] + side * inp.v * ax[1]] : DR.directDistance(org, hover, inp.v) || (g.ent.type === 'CIRCLE' && g.id.startsWith('q') ? [org[0] + inp.v, org[1]] : null);
     if (!mm) { note('Move the pointer the way you want it to go, then type the length'); return; }
   } else mm = DR.typedPoint(inp, g.base.map((v) => v * f));       // @dx,dy counts from the base (the grip itself until B)
   if (!mm || !mm.every(Number.isFinite)) { note('Point coordinates must be finite'); return; }
   gripAim(g, [mm[0] / f, mm[1] / f]);
+  gripDone(g, false);
+}
+/** Typed in an option (163a): Radius the radius, Lengthen on a line the distance ADDED, on an arc the end's new angle in degrees (AutoCAD); mm for the first two. */
+function gripOptionTyped(g, inp) {
+  const name = g.opts[g.opt], deg = name === 'Lengthen' && g.ent.type === 'ARC';
+  if (name === 'Insert vertex' || name === 'Convert to Arc' || name === 'Origin Point') {             // 163b: a point, as the click
+    const mm = DR.typedPoint(inp, g.base.map((v) => v * g.d.factor));
+    if (!mm) { note(`Type the point as x,y or @dx,dy, or click it. ${GR.optionPrompt(g.ent, name)}`); return; }
+    gripAim(g, mm.map((v) => v / g.d.factor));
+    if (!g.next) { note(`${name === 'Insert vertex' ? 'That is on a neighbouring vertex' : name === 'Origin Point' ? 'This hatch has no pattern lines to move, or the origin is there already' : 'That point is on the segment\'s line, so no arc passes through it'}. ${GR.optionPrompt(g.ent, name)}`); return; }
+    gripDone(g, false); return;
+  }
+  const total = name === 'Hatch Angle' || name === 'Hatch Scale';       // 164b1: a typed hatch angle (degrees) or scale is the new total, not a length
+  if (inp.kind !== 'len') { note(`Type ${deg || name === 'Hatch Angle' ? 'an angle in degrees' : name === 'Hatch Scale' ? 'the new scale' : name === 'Radius' ? 'the radius' : 'the length to add'}, or click a point`); return; }
+  const r = GR.typedOption(g.ent, g.id, name, deg || total ? inp.v : inp.v / g.d.factor);
+  if (!r) { note(`That would leave nothing of the shape, or change nothing. ${GR.optionPrompt(g.ent, name)}`); return; }
+  g.next = r.ent; g.label = r.label; g.to = g.to || g.base;
   gripDone(g, false);
 }
 /** Typed in a grip mode: an angle (Rotate) or factor (Scale) or a point (x,y, @dx,dy, @len<ang), or a length the way the rubber band points (Move, Mirror). */
@@ -8541,15 +8798,17 @@ function gripModeOvl(d, out, grips, g, square) {
     const sh = previewShape(ent, f);
     if (sh) out.push(s('path', { class: 'gr-mode', transform: drawingTransform(d), d: DR.svgPath(sh, state.sheetH), 'data-testid': 'grip-preview' }));
   }
-  for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id));
+  for (const x of gripList(d)) grips.push(square([x.x, x.y], x.e === g.e && x.id === g.id, x.e + ':' + x.id, x.tri));
   return g.res && g.to ? { text: GM.readout(M, g.base, g.val, f), px: g.cursor || sheetPx(d, g.to) } : null;
 }
 /** Grips, and while one is dragged: the original as a dashed ghost, the new shape dashed, the hot grip, and the readout. Returns the readout tip or null. */
 function gripOvl(d, out, k, grips) {
   const g = state.grip;
-  const square = (p, hot, id) => {
-    const [sx, sy] = toSheetPt(d, p), z = GR.gripSide();
-    const sq = s('rect', { class: 'gr' + (hot ? ' hot' : state.gripHover === id ? ' hover' : ''), x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': hot ? 'grip-hot' : 'grip' });
+  const square = (p, hot, id, tri) => {
+    const [sx, sy] = toSheetPt(d, p), z = GR.gripSide(), cls = 'gr' + (hot ? ' hot' : state.gripHover === id ? ' hover' : ''), tid = hot ? 'grip-hot' : 'grip';
+    // 164a: an MTEXT's size grip is a triangle pointing at `tri` degrees (screen angle), the others a square
+    const sq = tri == null ? s('rect', { class: cls, x: -z / 2, y: -z / 2, width: z, height: z, 'data-grip': id, 'data-testid': tid })
+      : s('path', { class: cls, d: `M${z * 0.7} 0L${-z * 0.5} ${-z * 0.6}L${-z * 0.5} ${z * 0.6}Z`, transform: `rotate(${tri})`, 'data-grip': id, 'data-testid': tid });
     // Screen coordinates keep small grips precise even far from the drawing origin.
     return s('g', { transform: `translate(${(sx - view.ox) / k} ${(sy - view.oy) / k})` }, sq,
       hot ? s('path', { class: 'gr-tick', d: 'M0 -14v-8M0 14v8M-14 0h-8M14 0h8' }) : null);
@@ -8570,9 +8829,9 @@ function gripOvl(d, out, k, grips) {
       if (nw) out.push(s('path', { class: 'gr-new', transform: drawingTransform(d), d: DR.svgPath(nw, state.sheetH), 'data-testid': 'grip-preview' }));
     }
     const hotKeys = g.hots && new Set(g.hots.map((x) => x.e + ':' + x.id)), cold = [], hotSq = [];
-    for (const [e, ent] of targets) for (const x of GR.gripsOf((g.nexts ? g.nexts.get(e) : g.next) || ent)) {
+    for (const [e, ent] of targets) for (const x of GR.gripsOf((g.nexts ? g.nexts.get(e) : g.next) || ent, attMode(d))) {
       const key = e + ':' + x.id, hot = hotKeys ? hotKeys.has(key) : x.id === g.id;
-      (hot ? hotSq : cold).push(square([x.x, x.y], hot, hotKeys ? key : x.id));
+      (hot ? hotSq : cold).push(square([x.x, x.y], hot, hotKeys ? key : x.id, x.tri));
     }
     grips.push(...cold, ...hotSq);
     if (g.next && g.to) { return { text: g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor) : GR.readoutOf(g.ent, g.id, g.next, d.factor), px: g.cursor || sheetPx(d, [g.to[0], g.to[1]]) }; }
@@ -8589,7 +8848,7 @@ function gripOvl(d, out, k, grips) {
   }
   const hots = hotsOf(d);
   for (const x of list) {
-    grips.push(square([x.x, x.y], !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id));
+    grips.push(square([x.x, x.y], !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;
@@ -8626,8 +8885,32 @@ function selectAll() {
   }
 }
 
+function startQuickSelect() {
+  if (curLay()) {
+    if (drawLive() && DR.toolBusy(state.draw)) return;
+    const source = layoutSelection();
+    openQuickSelect({ ...source, dp: state.dp, onApply: (indices, append) => {
+      if (sheetSelOn()) selectSheet(false);
+      selectMany(source.apply(indices, append)); update();
+      note(`${indices.length} item(s) selected.`);
+    } });
+    return;
+  }
+  const d = editable();
+  if (!d) { note('Quick Select: open an editable drawing first'); return; }
+  if (drawLive() && DR.toolBusy(state.draw)) return;
+  const hidden = hiddenLayerNames(d);
+  // Layer visibility and locks can change for this session without changing the file's layer table.
+  const layers = Object.fromEntries(Object.entries(layerMap(d)).map(([name, def]) => [name, { ...def, off: hidden.has(name), frozen: false, flags: d.locked?.has(name) ? 4 : 0 }]));
+  openQuickSelect({ entities: d.raw.entities, layers, factor: d.factor, dp: state.dp,
+    scope: edIndex(d).shown.filter((i) => !lockedEnt(d, i)), selection: new Set(d.sel), onApply: (indices, append) => {
+      setSel(d, new Set([...(append ? d.sel : []), ...indices]));
+      note(`${indices.length} item(s) selected.`);
+    } });
+}
+
 function editKey(e) {
-  if (document.querySelector('[data-testid=pdf-dialog]')) return;
+  if (document.querySelector('[data-testid=pdf-dialog], [data-testid=qselect-dialog]')) return;       // a dialog's own handlers take every key, wherever focus is
   const inField = e.target?.closest?.('input, textarea, select');
   if (['F3', 'F7', 'F8', 'F9', 'F12'].includes(e.key) && ((inField && e.target !== ui.cmd) || e.target?.isContentEditable)) return;
   if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
@@ -8639,6 +8922,8 @@ function editKey(e) {
   if (e.key === 'F2' && !e.ctrlKey && !e.altKey && !e.shiftKey) { e.preventDefault(); ui.cmdUI.toggleHistory(); return; }
   const d = editable();
   if (e.key === 'Escape') {
+    if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
+    if (state.attdispAsk) { e.preventDefault(); state.attdispAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.orthoAsk) { e.preventDefault(); state.orthoAsk = false; ui.cmdUI.escape(); renderCommand(); return; }
     if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
     if (ui.preflight && !ui.preflight.hidden && !activeCmd() && !ui.cmdUI.isOpen()) { closePreflight(); e.preventDefault(); return; }
@@ -8666,6 +8951,7 @@ function editKey(e) {
     else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
     else if (state.dimDrag) { state.dimDrag.cancelled = true; state.dimDrag = null; note('Move cancelled'); paintOverlay(); }
+    else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }
     else if (state.dim && dimBusy(state.dim)) { dimClear(state.dim); note('Dimension cancelled. ' + dimPrompt()); paintOverlay(); }
     else if (state.ldr && state.ldr.pts.length) { state.ldr.pts = []; state.ldr.hover = null; note('Leader cancelled. ' + ldrPrompt()); paintOverlay(); }
     else if (state.bal && state.bal.tip) { state.bal.tip = null; note('Balloon cancelled. ' + balPrompt()); paintOverlay(); }
@@ -8688,6 +8974,7 @@ function editKey(e) {
   const dialog = !!document.querySelector('.pop-back, .pdlg-back, dialog[open]'), seed = CB.keyOpensBar(e, { dialog, active: !!activeCmd() });
   if (seed != null) { e.preventDefault(); ui.cmdUI.open(seed); return; }       // a letter or digit typed on the drawing starts the command bar
   if (state.grip && (e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); gripCycle(); return; }       // Space / Enter on a hot grip: the next grip mode
+  if ((e.key === 'Enter' || e.key === ' ') && !mod && !e.altKey && !dialog && dimAutoLive() && !(e.target.closest && e.target.closest('button, a'))) { e.preventDefault(); dimAutoEnd(); return; }       // Automatic dimension repeats until Enter, Space or Esc
   if (state.grip && mod && !e.altKey && (k === 'y' || k === 'z')) { e.preventDefault(); undoCurrent(k === 'y' || e.shiftKey); return; }       // in a grip run Undo / Redo are the run's own (see undoCurrent)
   if (cmpKey(e, mod)) return;
   if (!mod && !e.altKey && drawKey(e, k)) return;
@@ -8966,14 +9253,15 @@ function buildPropsSection() {
     h('p', { class: 'lbl widthnote' }, 'True width on screen · scales with zoom'));
   ui.propGeo = h('div', { class: 'propgeo', 'data-testid': 'prop-geo' });
   ui.propSimilar = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-similar', title: 'Select every shape like the first one selected', onclick: (e) => selectSimilarMenu(e.currentTarget) }, 'Select similar ▾');
+  ui.propQuick = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-qselect', onclick: startQuickSelect }, 'Quick Select');
   ui.propMatch = h('button', { class: 'btn', type: 'button', 'data-testid': 'prop-match', title: 'Copy layer, colour and line type from the first selected shape to the shapes you click', onclick: startMatch },
     icon('<path d="M14 4l6 6-7 7-6-6z"/><path d="M7 11c-2 2-2 6-4 9 4 0 7 0 9-3"/>', { size: 16, join: 'round', cap: 'round' }), ' Match');
   ui.propEmpty = h('div', { class: 'lbl', 'data-testid': 'prop-empty' });
   ui.propCommon = h('div', { class: 'propbody' }, row('Layer', ui.propLayer), row('Colour', ui.propSwatch, ui.propColour), ui.propFillRow, row('Line type', ui.propLt));
-  ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propMatch);
-  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo, ui.propButtons);
+  ui.propButtons = h('div', { class: 'proprow btns' }, ui.propSimilar, ui.propQuick, ui.propMatch);
+  ui.propBody = h('div', { class: 'propbody' }, ui.propCommon, ui.propWidth, ui.propGeo);
   ui.propSec = h('section', { class: 'propbox', hidden: true, 'data-testid': 'props-panel' },
-    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody);
+    h('div', { class: 'layers-head' }, h('h2', { class: 'sec' }, 'Properties'), ui.propChip), ui.propEmpty, ui.propBody, ui.propButtons);
   return ui.propSec;
 }
 
@@ -8983,12 +9271,20 @@ function setSelect(sel, options, current) {
   sel.value = current;
 }
 function renderPropsPanel(d) {
-  const show = !!d;
+  const lay = curLay(), show = !!d || !!lay;
   ui.propSec.hidden = !show;
   if (!show) return;
+  if (lay) {
+    ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
+    ui.propQuick.hidden = false;
+    ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
+    return;
+  }
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
   ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none;
-  ui.propCommon.hidden = none; ui.propGeo.hidden = none; ui.propButtons.hidden = none;
+  ui.propCommon.hidden = none; ui.propGeo.hidden = none;
+  ui.propSimilar.hidden = ui.propMatch.hidden = none;
+  ui.propQuick.hidden = false;
   ui.propEmpty.textContent = d.sel.size ? 'A kept dimension has its own text height, above.' : 'Select something to see its properties.';
   const widths = all.map((e) => PR.widthKey(e, d.factor)), width = widths.length && widths.every((w) => w === widths[0]) ? widths[0] : null;
   ui.propWidthHint.textContent = 'Selection · mm';
@@ -9104,22 +9400,29 @@ function toggleProps() {
 
 // -- Select similar: every shape on the same layer, in the same colour or of the same type as the first one selected
 const hiddenLayerNames = (d) => new Set([...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name));
+const layoutSelection = () => LD.objectSelection(curLay(), placedNow, selIdxs(), (id) => !!state.hidden.parts || partHid({ partId: id }));
 function similarList(d, by) {
+  if (curLay()) {
+    const source = layoutSelection(), first = [...source.selection][0];
+    if (first == null) return null;
+    const ref = source.entities[first], matches = new Set(PR.similar(source.entities, ref, by, source.layers));
+    return { ref, layers: source.layers, list: source.apply(source.scope.filter((i) => matches.has(i))) };
+  }
   const first = [...d.sel].find((e) => d.raw.entities[e] && d.raw.entities[e].layer !== Ed.DIM_LAYER);
   if (first == null) return null;
   const off = new Set([...hiddenLayerNames(d), ...(d.locked || [])]), ents = d.raw.entities;        // a locked layer's shapes are not picked up, as by a click
   return { ref: ents[first], list: PR.similar(ents, ents[first], by, layerMap(d), Ed.DIM_LAYER).filter((i) => !off.has(ents[i].layer)) };
 }
 function selectSimilar(by) {
-  const d = editable(), r = d && similarList(d, by);
+  const d = editable(), r = (curLay() || d) && similarList(d, by);
   if (!r) return;
-  setSel(d, new Set(r.list));
-  const what = by === 'layer' ? 'on layer ' + r.ref.layer : by === 'colour' ? PR.colourLabel(PR.effectiveColour(r.ref, layerMap(d))).toLowerCase() : 'of the type ' + PR.typeName(r.ref).toLowerCase();
+  if (curLay()) { selectMany(r.list); update(); } else setSel(d, new Set(r.list));
+  const what = by === 'layer' ? 'on layer ' + r.ref.layer : by === 'colour' ? PR.colourLabel(PR.effectiveColour(r.ref, r.layers || layerMap(d))).toLowerCase() : 'of the type ' + PR.typeName(r.ref).toLowerCase();
   note(`Selected ${r.list.length} shape${r.list.length === 1 ? '' : 's'} ${by === 'colour' ? 'in colour ' : ''}${what}`);
 }
 function selectSimilarMenu(btn) {
   const d = editable();
-  if (!d) return;
+  if (!d && !curLay()) return;
   const items = [['layer', 'Layer'], ['colour', 'Colour'], ['type', 'Type']].map(([by, text]) => { const r = similarList(d, by); return [`${text} (${r ? r.list.length : 0})`, () => selectSimilar(by), null, !!r && r.list.length > 0]; });
   const b = btn.getBoundingClientRect();
   popMenu(b.left, b.bottom + 2, items);
@@ -10145,8 +10448,10 @@ async function init() {
   document.addEventListener('keydown', (e) => {
     if (document.querySelector('.pop-back, .pdlg-back, dialog[open]')) return;                       // a dialog is open: its keys are its own, the drawing behind it waits
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 's') { e.preventDefault(); save(e.shiftKey); }
+    ctrlTap = e.key === 'Control' && !e.repeat;                       // 163a: a Ctrl tap (down, up, nothing between) cycles a hot grip's options
     editKey(e);
   });
+  document.addEventListener('keyup', (e) => { if (e.key === 'Control' && ctrlTap) { ctrlTap = false; gripOptionCycle(); } });
   document.addEventListener('keydown', snapTab, true);
   document.addEventListener('keydown', cursorKey, true);
   renderWorkArea();

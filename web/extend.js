@@ -82,16 +82,28 @@ export function rayHit(from, end, shapes) {
   // a ray long enough to pass every boundary: the farthest a segment can reach from `end`
   const reach = 1 + Math.max(0, ...segs.map((s) => { const g = geo(s); return dist(end, s.a) + (g.line ? g.len : 2 * g.r); }));
   const u = [(end[0] - from[0]) / len, (end[1] - from[1]) / len], ray = { a: end, b: [end[0] + u[0] * reach, end[1] + u[1] * reach], bulge: 0 };
-  let best = null, bd = Infinity, bs = null;
-  for (const s of segs) for (const h of segInter(ray, s)) {
+  let best = null, bd = Infinity;
+  const min = 1e-9 * (1 + len);
+  for (const s of segs) if (!s.sh.q) for (const h of segInter(ray, s)) {
     const d = dist(end, h.p);
-    if (d > 1e-9 * (1 + len) && d < bd) { bd = d; best = h.p; bs = s; }
+    if (d > min && d < bd) { bd = d; best = h.p; }
   }
-  if (best && bs.sh.q) {
-    const p = snapOnto(bs.sh, best, (P) => u[0] * (P[1] - end[1]) - u[1] * (P[0] - end[0]), bs);
-    if ((p[0] - end[0]) * u[0] + (p[1] - end[1]) * u[1] > 1e-9 * (1 + len)) best = p;          // still ahead of the end
+  for (const sh of shapes) if (sh.q) {                               // an ellipse: the ray solved against the true curve, not its chords
+    const d = ellipseRay(sh.q, end, u, min, sh.closed);
+    if (d != null && d < bd) { bd = d; best = [end[0] + u[0] * d, end[1] + u[1] * d]; }
   }
   return best;
+}
+/** Distance along the ray end + s·u (s > min) to the nearest point on ellipse q (only parameters t0..t1 unless `full`); null when none. */
+function ellipseRay(q, end, u, min, full) {
+  const det = q.m[0] * q.n[1] - q.m[1] * q.n[0];
+  if (!det) return null;
+  const inv = (x, y) => [(x * q.n[1] - y * q.n[0]) / det, (q.m[0] * y - q.m[1] * x) / det];     // into the (cos t, sin t) frame
+  const A = inv(end[0] - q.c[0], end[1] - q.c[1]), B = inv(u[0], u[1]);
+  const a = B[0] * B[0] + B[1] * B[1], b = A[0] * B[0] + A[1] * B[1], c = A[0] * A[0] + A[1] * A[1] - 1, disc = b * b - a * c;
+  if (disc < -1e-12 * (b * b + 1)) return null;                 // misses; a touching ray (disc ~ 0) hits at the touch point
+  const r = Math.sqrt(Math.max(0, disc));
+  return [(-b - r) / a, (-b + r) / a].find((s) => s > min && (full || wrap(Math.atan2(A[1] + s * B[1], A[0] + s * B[0]) - q.t0 + 1e-9) <= q.t1 - q.t0 + 2e-9)) ?? null;      // 1e-9 slack at both ends: a root at t0 minus rounding must not wrap to 2pi
 }
 
 /**

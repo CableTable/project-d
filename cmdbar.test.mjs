@@ -41,6 +41,9 @@ test('every name and alias is lower case, and no command repeats a word on the s
 test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('L').name, 'line');
   assert.equal(CB.resolve(' Offset ').name, 'offset');
+  assert.equal(CB.resolve('QSELECT').name, 'qselect');
+  assert.deepEqual(CB.resolve('QSELECT').alias, []);
+  assert.equal(CB.resolve('QSE'), null);
   assert.equal(CB.resolve('mv').name, 'move');
   assert.equal(CB.resolve('move').where, 'draw');
   assert.equal(CB.resolve('m').name, 'measure');
@@ -65,6 +68,12 @@ test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('a', 'draw').name, 'arc');
   assert.equal(CB.resolve('zzz'), null);
   assert.equal(CB.resolve(''), null);
+});
+
+test('TODO 162b: QSELECT is available on Layouts with no alias', () => {
+  assert.equal(CB.resolve('QSELECT', 'layout').where, '');
+  assert.deepEqual(CB.resolve('QSELECT', 'layout').alias, []);
+  assert.equal(CB.suggest('qsel', 'layout')[0].cmd.name, 'qselect');
 });
 
 test('suggest: an exact alias first, then names that start with the text, with how much is typed', () => {

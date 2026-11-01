@@ -180,7 +180,7 @@ export function cutterDoc(doc, tol) {
           break;
         }
         default:
-          if (LEFT.has(e.type)) count.left++; else if (!QUIET.has(e.type)) count.other++;
+          if (LEFT.has(e.type) || e.type === 'ATTDEF' && depth === 0) count.left++; else if (!QUIET.has(e.type)) count.other++;
       }
     }
   }

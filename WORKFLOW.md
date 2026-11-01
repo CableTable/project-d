@@ -79,7 +79,7 @@ usage-agent-install.ps1.
    Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
    **Bishop-acad (claude2, always; never King) runs these checks, not Rook** (his calls 2026-10-28, to save Rook's usage, and 2026-10-29: Bishop is the tester): Rook writes the questions
    (what to try, which prompts / keys / screenshots), then from `Project D extras/runs<N>`:
-   `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out`.
+   `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Edit Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out`.
    The brief always says: one AutoCAD session at a time; only new scratch drawings (`Documents.Add()`), never his open
    drawings, close scratch ones without saving; wrap SendCommand in Start-Job with a timeout (it blocks while a prompt
    waits; Esc via SendKeys frees it); zoom before picking (off-screen picks are ignored); PrintWindow the AutoCAD window
@@ -110,6 +110,8 @@ usage-agent-install.ps1.
    tickets (session 26 retro: every King build peaked 171k-216k). Count behaviours, not numbered lines: each transform family, output format and follow trigger is one (156b2c1: 5 lines, ~9 behaviours, peak 217k). Builders make a WIP commit of each passing slice
    (said in the report's first line), so a cut-off run loses nothing.
    Briefs for pure geometry (S29 retro) name the **case grid** (positions before / at / inside / beyond, both orders, both picks; every entity type that shares the code) and ask for ONE table-driven unit test over it.
+   Grip tickets (S30 retro: 4 of 5 King fix rounds): the grid also has several hot grips (with a grip of another entity, every hot order), and the preview (`gripAim`) is asserted equal to the commit (`gripCommit`).
+   A wide filter names its known subset-only reds in the brief (now: 'tracking: POLAR also locks a grip', 'review: the gripper label': they need earlier steps' state); the builder skips them.
    Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it);
    when an item changes existing behaviour, name the old browser steps that check it (`grep -n` in browser.test.mjs) and say to update
    them in the same commit; tests are `npm.cmd test` and the item's steps by argument (`node browser.test.mjs <port> '<name>'`), never an
@@ -148,7 +150,8 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # --resume only to finish a run that was cut off mid-work (usage limit), then start fresh again.
 
 # One call does the folder check, `switch -c` and launch below (raw commands are the fallback):
-#   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--over]   (default king: claude3 in ProjectD-king; bishop: claude2 in ProjectD-s15fix)
+#   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--over]   (default king: claude3 in `../Project D extras/ProjectD-king`; bishop: claude2 in ProjectD-s15fix)
+#   <branch> is always new: `king/<id>` for a build, `king/<id>fix` for a fix round (from the build's head); never `claude/session<N>`. The brief's Branch line uses the same two values (S30 retro: 4 briefs patched).
 #   Handover gate (TODO 165): the 3rd NEW-item launch per Rook is refused ("handover due"); --fix marks a fix round (always allowed); --over lets a 3rd item through (his OK only); `node tools/rook.mjs gate` rewrites queue.txt line 2.
 # King's shell rules: .claude/agents/builder.md step 0.
 R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"; unset FORCE_COLOR
@@ -196,7 +199,10 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 #   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--over]   (log = the report's name with .log; --fix / --over as for build)
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
 # FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
-# `git switch -c <branch> <sha>`. Rook's full-suite script checks out by sha too. After: Rook pushes.
+# `git switch -c <branch> <sha>`. After: Rook pushes.
+# Full suite (Rook, on the session branch, Bash run_in_background; ~20 min): L="../Project D extras/runs<N>/suite-<sha>.log"; npm.cmd test > "$L" 2>&1; echo unit=$?; npm.cmd run test:browser >> "$L" 2>&1; echo browser=$?; grep -E "^FAIL|[0-9]+ failed|passed" "$L" | tail -8
+# Retros (rule 4), from runs<N>: for n in retro<N> retro<N>king retro<N>rook; do claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --add-dir "E:/Project B/Claude/Project D" --add-dir "C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D" --add-dir "C:/Users/raksh/.claude/plugins/cache/mattpocock" --allowedTools Read Grep Glob Write "Bash(git log:*)" "Bash(git show:*)" "Bash(wc:*)" --disallowedTools Agent < $n.txt > $n.out 2>&1 & done; wait
+#   Briefs: copy runs<N-1>/retro<N-1>*.txt (header + "=== retro skill ===" + the skill), new transcripts and known events in the header.
 # Builders never start a server or end a process: browser.test.mjs starts and stops its own (taskkill would kill Rook's suites).
 # If package-lock.json changed since its last build, Rook runs `npm.cmd ci` in ProjectD-rowan first (its sandbox cannot
 # install: EPERM on the npm cache; session 12 lost a Knight round to a missing imagetracerjs).
@@ -232,7 +238,7 @@ codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowa
 # writes only in its own folder; never run it in the repo, never with --dangerously-skip-permissions.
 cd ~/agy-research && "/c/Users/raksh/AppData/Local/agy/bin/agy.exe" -p "<question; max N lines; cite URLs>" --output-format json --print-timeout 10m
 # Every Pawn brief says "open https links only, skip http ones, run no commands": one blocked action ends a headless run.
-# A Pawn run holds at most 2 questions; more = parallel runs, one file each (S29 retro). A timeout with an empty
+# A Pawn run holds 1 question and says "read at most 3 pages"; more = parallel runs, one file each (S30 retro: 2-question runs timed out empty 3x). A timeout with an empty
 # response: rerun with --conversation <id> and "answer now from what you read".
 # Big research (many sources) goes to Bishop (Sonnet + WebSearch) instead; Pawn takes quick lookups only.
 # (2026-10-19: two multi-page Pawn runs died on one blocked action each: a shell command, then a URL.)
@@ -276,7 +282,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - **His new rule** (session 27 retro): in the same turn, grep CLAUDE.md, WORKFLOW.md, AGENTS.md, .claude/agents/ and memory/ for the old wording, change every hit, and list the files in the reply.
 - A plan for him stops at this PR's merge; later items are listed under "session <N+1>".
 - **Handover** (his call, 2026-10-29; replaces "fresh Rook after every merge"): Rook hands over at a clean break (no runs
-  going, last item pushed and CI green, queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
+  going, the handover push made; its CI may still run: the resume file names the sha and the next Rook starts ci-watch on it first (his OK 2026-10-31, S29 retro), queue.txt current) once ANY of: 2 TODO items built and reviewed since this Rook
   started (his call 2026-10-31, was 3 from 2026-10-30; review fix bundles and tool tickets don't count), its context
   passes ~150k (auto-compact fires at ~218k: S29, 3 times), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
@@ -298,7 +304,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   3 resume file): transcript found -> `--resume`, else a fresh `--session-id` told to read the resume file. Each Rook session
   writes its own uuid there at start (a reboot resumes it); at handover it writes a NEW uuid + the next resume file, then
   either the PC shuts down (next logon starts it) or Rook starts `Rook.lnk` (Windows Terminal; S28 retro: `Start-Process powershell.exe` on the script started no session; untested guess) and checks the new uuid's `.jsonl` appears within 60 s (never start_session).
-  **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min,
+  **Watching a CI run** (2026-10-27): a Monitor with the command `bash tools/ci-watch.sh <sha>` (one per pushed commit, timeout 30 min (`timeout_ms` is Monitor's; Bash and PowerShell take `timeout`),
   re-arm on expiry). It prints each finished job and ends with `RUN <id> success|failure`. Never pipe to `jq`: it is not installed
   here, so such a watch stays silent forever (two silent monitors on PR #25); use gh's own `--jq`.
   Push again only after the `RUN` line: a `build: success` line is one job, and a new push cancels the running tests (S28).
@@ -315,6 +321,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   Status current (in TODO → building → built → merged → checked in exe); Bishop-support never edits the repo.
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
   `node tools/rook.mjs result <run file>` (the reply + tokens). Write a brief and launch it in the same call.
+  Change a brief or queue.txt with Read + Edit in the same turn (launchers rewrite queue line 2), never `sed -i` or a chain with a launch (denied, S30 retro); git and launches go in their own command.
 - Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head (builders run `npm.cmd test` and their item's steps; reviewers unit only); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
   never reads skill or reference docs it has read before in the session.
 - While runs go, Rook ends its turn and waits for the notice; no status messages in between.
@@ -379,7 +386,8 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Rook writes briefs to `runs<N>/b*.txt` with the Write tool, never a heredoc (one hung Rook in session 25).
 - Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
 - **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in
-  GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit. Review A checks the same list.
+  GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit;
+  each new test prints FAIL on the base under `node tools/base-check.mjs <base-sha> <test-file> ['<step regex>']` and the report quotes it (S30 retro: 162a, 155m2). Review A checks the same list.
   A new mode or command also gets browser checks for Esc mid-command, one Undo, and an edit to its source after it ran
   (session 26 retro: most High / Medium findings were in those paths).
 - **Time limits:** the full browser suite runs in the background with a 25-min limit (it takes ~20 min); any run

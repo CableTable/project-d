@@ -190,7 +190,7 @@ export function buildCmdUI(hooks) {
   input.addEventListener('input', () => { hi = 0; recall = -1; update(); });
   input.addEventListener('keydown', (e) => {
     const act = hooks.active();
-    if (e.key === 'Enter') { e.preventDefault(); go(input.value); }
+    if (e.key === 'Enter' || (e.key === ' ' && !input.value && act?.endsOnSpace)) { e.preventDefault(); go(input.value); }       // Space on an empty bar is Enter where the command ends on it (Automatic DIM)
     else if (e.key === 'Tab') { e.preventDefault(); if (sugg.length) { input.value = hiName(); update(); } }
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
