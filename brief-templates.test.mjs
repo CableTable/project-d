@@ -5,7 +5,7 @@ import { lintBrief } from './tools/rook-launch.mjs';
 
 const dir = new URL('./tools/briefs/', import.meta.url);
 const values = {
-  item: '170', summary: 'brief templates', branch: 'knight/170', sha: '943c3e1',
+  'King|Knight': 'King', item: '170', summary: 'brief templates', branch: 'knight/170', sha: '943c3e1',
   'base sha': '9572997', 'spec path': '../runs32/grill-170.md', 'brief path': '../runs32/b-170.txt',
   source: '../runs32/rev-170.jsonl finding 1', 'preserved behaviour': 'existing brief linting',
   'Do list': '1. Check the brief templates.\n2. `npm.cmd test` passes.\n3. Tick TODO 170 in TODO.md.',
