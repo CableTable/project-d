@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-const outsideRepoPath = /['"`][A-Za-z]:(?=[\\/])[^'"`\r\n]*(?:Project D extras|[\\/]runs\d+[\\/])/i;
+const outsideRepoPath = /['"`](?:[^'"`\r\n]*Project D extras|[A-Za-z]:(?=[\\/])[^'"`\r\n]*[\\/]runs\d+[\\/])/i;
 
 test('drive-path guard refuses outside-repo paths and accepts fake file names', () => {
   const cases = [
@@ -15,6 +15,12 @@ test('drive-path guard refuses outside-repo paths and accepts fake file names', 
     ["window.__paths = ['E:/sheet-one.dxf', null]", false],
     ['`E:/runs30/${name}.png`', true],
     [String.raw`'E:\\elsewhere\\runs30\\x'`, true],
+    ["'../Project D extras/runs30/x'", true],
+    ["'/e/Project B/Claude/Project D extras/runs30/a'", true],
+    ["join(root, 'Claude/Project D extras')", true],
+    [String.raw`'..\\Project D extras\\runs30\\x'`, true],
+    ["'E:/sheet-one.dxf'", false],
+    ["join(shotDir, '163a')", false],
   ];
   for (const [literal, refused] of cases) assert.equal(outsideRepoPath.test(literal), refused, literal);
 });
