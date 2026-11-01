@@ -733,4 +733,22 @@ test('TODO 171: a part placed twice, one attribute moved: only that placed objec
   assert.equal(other, LD.objectDoc(lay).raw.entities[0], 'the unchanged copy is the same entity object');
 });
 
+test('TODO 171 review: a changed INSERT sent through objectCommit stays a placed block object (same blocks, attributes kept); a line gets no blocks', () => {
+  const nested = { B2: { base: [0, 0], xref: false, entities: [insert('B1', 0, 0)] }, B1: { base: [0, 0], xref: false, entities: [circle(0, 0, 5)] } };
+  for (const [what, name, blocks, nAttr] of [['plain block', 'B1', undefined, 0], ['nested block', 'B2', nested, 0], ['with attributes', 'B1', undefined, 2]]) {
+    const lay = LD.newLayout('B'), part = blockObject(nAttr, name, blocks);
+    lay.parts.b1 = part; lay.placed.push(LD.objectPlacement(part));
+    const v = LD.objectDoc(lay), was = v.raw.entities[0], moved = { ...insert(name, 50, 60), kids: structuredClone(was.kids) };
+    LD.objectCommit(lay, v, [moved], () => 'n1');
+    assert.equal(lay.placed.length, 1, what); assert.equal(lay.placed[0].partId, 'n1', what);
+    assert.deepEqual(Object.keys(lay.parts.n1.raw.blocks).sort(), Object.keys(part.raw.blocks).sort(), what + ': same blocks');
+    assert.equal(lay.parts.n1.raw.entities[0].kids.length, nAttr, what + ': attributes kept');
+    assert.ok(LD.objectDoc(lay).raw.entities.length === 1 && LD.objectDoc(lay).raw.entities[0].type === 'INSERT', what + ': still placed as a block object');
+  }
+  const lay = LD.newLayout('L'), o = LD.objectPart('o1', 'Line 1', line(0, 0, 100, 0), LD.layersOf(lay));
+  lay.parts.o1 = o; lay.placed.push(LD.objectPlacement(o));
+  LD.objectCommit(lay, LD.objectDoc(lay), [line(0, 0, 40, 0)], () => 'n1');
+  assert.deepEqual(lay.parts.n1.raw.blocks, {}, 'a line gets no blocks');
+});
+
 console.log(n + ' tests passed');

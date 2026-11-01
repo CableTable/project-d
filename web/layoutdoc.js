@@ -155,7 +155,7 @@ export function objectCommit(lay, view, entities, newId) {
   for (const e of entities) {
     if (view.at.has(e)) continue;
     e.ps = false;
-    const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers), pl = part && objectPlacement(part);
+    const part = objectPart(newId(), one && oneName && !names.has(oneName) ? oneName : nextName(OBJ_NAMES[e.type] || 'Object', names), e, layers, {}, e.type === 'INSERT' ? blocksUsed(view.raw.blocks, [e]) : {}), pl = part && objectPlacement(part);
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part;

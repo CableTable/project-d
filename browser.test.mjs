@@ -9493,8 +9493,8 @@ try {
       try {
         await page.mouse.move(a.x, a.y); await page.mouse.down();
         await page.mouse.move(pv.x + dx * Math.cos(angle) + dy * Math.sin(angle), pv.y - dx * Math.sin(angle) + dy * Math.cos(angle), { steps: 6 });
-        await page.waitForFunction(() => document.querySelectorAll('.ovl .rot-label').length === 1);
-        assert.ok(Math.abs(parseFloat(await page.locator('.ovl .rot-label').textContent()) - (shift ? Math.round(degrees / 15) * 15 : degrees)) < .1);
+        const label = await (await page.waitForFunction(() => { const l = document.querySelectorAll('.ovl .rot-label'); return l.length === 1 && l[0].textContent; })).jsonValue();
+        assert.ok(Math.abs(parseFloat(label) - (shift ? Math.round(degrees / 15) * 15 : degrees)) < .1);
         assert.ok(await accentInk() > 0, 'live selection preview is painted');
         if (cancel) await page.keyboard.press('Escape');
         await page.mouse.up(); await frames();
@@ -10750,20 +10750,37 @@ try {
       if (!hold) { await page.mouse.up(); await frames(); await gripWhen(3); }
     };
     const same = (p, q, what) => { for (const k of ['i', 'a0', 'a1']) assert.ok(near(p[k].x, q[k].x, 2) && near(p[k].y, q[k].y, 2), `${what}: grip ${k} ${JSON.stringify(p[k])} vs ${JSON.stringify(q[k])}`); };
+    const posWhen = async (id, x, y) => (await page.waitForFunction(([g, x, y]) => {       // one read: all three grips, once the dropped one is at its new place
+      const c = (k) => { const el = document.querySelector(`[data-grip="0:${k}"]`); if (!el) return null; const r = el.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; };
+      const p = { i: c('i'), a0: c('a0'), a1: c('a1') };
+      return p.i && p.a0 && p.a1 && Math.abs(p[g].x - x) <= 2 && Math.abs(p[g].y - y) <= 2 && p;
+    }, [id, x, y])).jsonValue();
+    const inkBox = (cx, cy) => t('drawing').evaluate((c, [cx, cy]) => {       // the box (client px) of the ink in an 80 x 40 px window at the dropped grip: the preview's, then the committed one's
+      const r = c.getBoundingClientRect(), sx = c.width / r.width, sy = c.height / r.height, w = Math.round(80 * sx), h = Math.round(40 * sy), x0 = Math.round((cx - 10 - r.x) * sx), y0 = Math.round((cy - 25 - r.y) * sy);
+      const d = c.getContext('2d').getImageData(x0, y0, w, h).data; let b = null;
+      for (let i = 4; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) { const x = (i / 4) % w, y = Math.floor(i / 4 / w); b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)] : [x, y, x, y]; }
+      return b && [r.x + (x0 + b[0]) / sx, r.y + (y0 + b[1]) / sy, r.x + (x0 + b[2]) / sx, r.y + (y0 + b[3]) / sy];
+    }, [cx, cy]);
+    const sameInk = (pre, post, what) => { assert.ok(pre, what + ': the preview has ink there'); assert.ok(post && pre.every((v, k) => near(v, post[k], 3)), `${what}: preview ink ${JSON.stringify(pre)} vs committed ${JSON.stringify(post)}`); };
     await open(writeDxf(layoutRaw(lay)), 'g171-layout.dxf');
     assert.deepEqual(await page.locator('[data-testid=grip]').evaluateAll((g) => g.map((x) => x.dataset.grip).sort()), ['0:a0', '0:a1', '0:i'], 'a block object has the insertion grip and one per attribute');
     const p0 = await pos();
     await shot('layout-block-grips');
     // the insertion grip moves the whole object
-    await dragPx('0:i', 40, 30);
-    const p1 = await pos();
+    await dragPx('0:i', 40, 30, true);
+    const pre1 = await inkBox(p0.i.x + 40, p0.i.y + 30);
+    await page.mouse.up(); await frames(); await gripWhen(3);
+    const p1 = await posWhen('i', p0.i.x + 40, p0.i.y + 30);
+    sameInk(pre1, await inkBox(p0.i.x + 40, p0.i.y + 30), 'the insertion grip: drawn where it was dropped');
     for (const k of ['i', 'a0', 'a1']) assert.ok(near(p1[k].x, p0[k].x + 40, 2) && near(p1[k].y, p0[k].y + 30, 2), 'the object moved with its attributes: ' + k);
     await undo(); await gripWhen(3); same(await pos(), p0, 'one Undo gives the move back');
     // an attribute grip moves that attribute only; the preview is drawn while dragged and the result is where it was dropped
     await dragPx('0:a1', 50, -35, true);
     assert.ok(+(await t('drawing').getAttribute('data-preview') || 0) > 0, 'the attribute is drawn moving');
+    const pre2 = await inkBox(p0.a1.x + 50, p0.a1.y - 35);
     await page.mouse.up(); await frames(); await gripWhen(3);
-    const p2 = await pos();
+    const p2 = await posWhen('a1', p0.a1.x + 50, p0.a1.y - 35);
+    sameInk(pre2, await inkBox(p0.a1.x + 50, p0.a1.y - 35), 'the attribute grip: drawn where it was dropped');
     assert.ok(near(p2.a1.x, p0.a1.x + 50, 2) && near(p2.a1.y, p0.a1.y - 35, 2), 'the attribute is where it was dropped');
     assert.ok(near(p2.i.x, p0.i.x, 2) && near(p2.i.y, p0.i.y, 2) && near(p2.a0.x, p0.a0.x, 2) && near(p2.a0.y, p0.a0.y, 2), 'the block and the other attribute stayed');
     const text = await saved();
