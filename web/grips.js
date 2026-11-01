@@ -16,6 +16,17 @@
 //   readoutOf(ent, id, next, factor) → "331.06 mm · 25.02°", "Move ΔX 10.00 ΔY 40.00", "R 25.00" …
 //   MAX_SELECTED                 → grips are off when more entities than this are selected
 //   capGrips(list)               → the list, or [] when it exceeds MAX_GRIPS handles
+//
+// Where the app drives grips (app.js; grep the name):
+//   gripAt (Drawings): hit-test the nearest grip under the pointer.
+//   gripDown (Drawings): start a grip run, or put down a hot grip.
+//   gripAim (Drawings): update the drag preview at the picked point.
+//   gripOptionCycle (Drawings): Ctrl cycles options that take a point.
+//   gripCommit (Drawings): apply the edit with one Undo step.
+//   cmpDown (Compare): leave source grips to the shared grip handler.
+//   layObjSelDoc (Layouts): map selected objects into the objects' drawing.
+//   layGripCommit (Layouts): replace layout objects with one Undo step.
+//   stretchHots (here): normalize hot grips so each vertex stretches once.
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)
 import { bulgeOf3 } from './contour.js';             // 163b: the bulge of the arc through a pointer
