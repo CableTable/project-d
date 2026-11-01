@@ -3,8 +3,8 @@
 //   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
 //   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>]   launch the reviewer on a commit, detached
-//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over]   launch a Claude build on a new branch in its worktree, detached
-//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--over]   launch a Knight build on a new branch in its clone, detached
+//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big]   launch a Claude build on a new branch in its worktree, detached
+//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]   launch a Knight build on a new branch in its clone, detached
 //     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed), --over = a 3rd item with his OK
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
 import { execSync } from 'node:child_process';
@@ -131,7 +131,7 @@ if (cmd === 'result') {
   try { console.log(gate()); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] | knight <brief> <report.txt> <branch> <sha> [--fix] [--over]');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big] | knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]');
 }
 }
 

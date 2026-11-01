@@ -1,2 +1,4 @@
 *.pdf binary
 tools/hooks/* text eol=lf
+DECISIONS.md merge=union
+HISTORY.md merge=union

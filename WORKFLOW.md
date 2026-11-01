@@ -131,6 +131,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 
 ## Commands (Git Bash, from the repo folder)
 
+Briefs start from `tools/briefs/<kind>.txt` (build, fix, review).
 Write the brief to a file and pass it on **stdin** (a quoted `-p "$(cat …)"` arrived empty once).
 
 ```bash
@@ -152,7 +153,8 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 # --resume only to finish a run that was cut off mid-work (usage limit), then start fresh again.
 
 # One call does the folder check, `switch -c` and launch below (raw commands are the fallback):
-#   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--over]   (default king: claude3 in `../Project D extras/ProjectD-king`; bishop: claude2 in ProjectD-s15fix)
+#   node tools/rook.mjs build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--fix] [--over] [--big]   (default king: claude3 in `../Project D extras/ProjectD-king`; bishop: claude2 in ProjectD-s15fix)
+#   Brief lint (build / knight, including --fix): refuses more than 5 numbered non-routine behaviour lines, one-word browser filter pieces, a full-suite request unless the line names Rook, or a bare runs<N>/ path; --big overrides.
 #   <branch> is always new: `king/<id>` for a build, `king/<id>fix` for a fix round (from the build's head); never `claude/session<N>`. The brief's Branch line uses the same two values (S30 retro: 4 briefs patched).
 #   Handover gate (TODO 165): the 3rd NEW-item launch per Rook is refused ("handover due"); --fix marks a fix round (always allowed); --over lets a 3rd item through (his OK only); `node tools/rook.mjs gate` rewrites queue.txt line 2.
 # King's shell rules: .claude/agents/builder.md step 0.
@@ -199,7 +201,7 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # CI-only red: `gh run download <id> -n browser-failure-shard-<N>` into runs<N>/ before the fix brief; local shards match CI's, so suspect Linux / timing, not order.
 # A step red unsharded or in the full suite but green alone or in shards: Rook appends "<date> <step> <shard|unsharded>" to runs<N>/flakes.txt on reading the report; a 2nd hit becomes a TODO.
 # One call does the clone check, fetch, `switch -c` and launch below (raw commands are the fallback):
-#   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--over]   (log = the report's name with .log; --fix / --over as for build)
+#   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--over] [--big]   (log = the report's name with .log; --fix / --over / --big as for build)
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
 # FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
 # `git switch -c <branch> <sha>`. After: Rook pushes.
@@ -385,13 +387,13 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then commit at once; Rook runs the full suite after them (S28b retro: the ~12 min suite outlives a builder's 10 min command limit, goes to the background and the run ends uncommitted, 3x). Every build branches from the CURRENT session head (items already on it), so two builds never conflict on the cherry-pick (S28b: 156b4 from an old base conflicted with 156c). Briefs say: the worktree is already your working folder, no `cd "<worktree>" &&` prefix (denied 6-11x a run). Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
   While fixing, filter on their own step only (`'TODO <id>'`); widen once, before commit, to whole step-name pieces they grepped, never single words like `Text` (session 26 King retro: 5 unrelated slow steps per run).
-- **Proof before "done"** (his yes 2026-11-01, idea from obra/superpowers' verification-before-completion, not installed): a report claims only what a command run AFTER the last edit showed; each claim (tests green, step passes, FAIL on base, screenshot taken) quotes that run's line. No "should work" / "looks right" without one; anything not run goes under Not checked. Reviewers check the quotes against the commit.
+- **Proof before "done"** (his yes 2026-11-01, idea from obra/superpowers' verification-before-completion, not installed; the rule now lives in `AGENTS.md`, `.claude/agents/builder.md` and `reviewer.md`, so briefs from `tools/briefs/` do not repeat it): a report claims only what a command run AFTER the last edit showed; each claim (tests green, step passes, FAIL on base, screenshot taken) quotes that run's line. No "should work" / "looks right" without one; anything not run goes under Not checked. Reviewers check the quotes against the commit.
 - **Bug and flake briefs** (his call, 2026-11-01): a Claude builder (King / Bishop) runs the Skill tool for `mattpocock-skills:diagnosing-bugs` first and reproduces the failure before fixing (CI-only: the downloaded artifact, Linux timing, CPU throttling); Knight gets the same loop as a line pointing at that skill's SKILL.md. The report says "reproduced" or "not reproduced: likely cause".
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
   Each finding names its **case grid** (S29 retro: 155h2 and 155e3 each needed an extra round because only the repro was fixed): every input sharing the cause; the fix covers the grid and adds ONE table-driven unit test over it.
 - Rook writes briefs to `runs<N>/b*.txt` with the Write tool, never a heredoc (one hung Rook in session 25).
-- Knight-build: "commit on the branch, never push", and the browser test as `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
+- Knight-build: "commit on the branch, never push" and the commit trailer now live in `AGENTS.md`, `.claude/agents/builder.md` and `reviewer.md`; briefs (templates in `tools/briefs/`) no longer repeat them. The browser test is `node browser.test.mjs <port>`. Screenshots go to Bishop-look.
 - **Done when** (session 12 retro, his call 2026-10-21): DECISIONS row for each new decision, TODO ticked, new words in
   GLOSSARY.md, a browser step for a new flow, screenshots light + dark, `npm.cmd test` green, one commit;
   each new test prints FAIL on the base under `node tools/base-check.mjs <base-sha> <test-file> ['<step regex>']` and the report quotes it (S30 retro: 162a, 155m2). Review A checks the same list.

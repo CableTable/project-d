@@ -16,6 +16,25 @@
 //   readoutOf(ent, id, next, factor) → "331.06 mm · 25.02°", "Move ΔX 10.00 ΔY 40.00", "R 25.00" …
 //   MAX_SELECTED                 → grips are off when more entities than this are selected
 //   capGrips(list)               → the list, or [] when it exceeds MAX_GRIPS handles
+//
+// Where the app drives grips (app.js; grep the name):
+//   gripDoc (Drawings, Layouts): the doc grips work on: a drawing tab, or a layout's selected objects as a drawing (layObjSelDoc); else null.
+//   gripOn (Drawings, Layouts): do grips show (Select tool, 1..MAX_SELECTED selected, no text edit); gripDoc() must be that doc.
+//   gripList (Drawings, Layouts): every grip of the selection via gripsOf (a leader via ldrPseudo), cached; skips locked and dimension objects.
+//   gripAt (Drawings, Layouts):hit-test the nearest grip under the pointer.
+//   gripDown (Drawings, Layouts):start a grip run, or put down a hot grip.
+//   gripPick (Drawings, Layouts): the point under the pointer: the snaps (0.01 mm grid when free), then Shift / ORTHO along X or Y from the base.
+//   gripAim (Drawings, Layouts):update the drag preview (dragGrip / dragOption, or gripStretchHots) at the picked point.
+//   gripMove (Drawings, Layouts): after 4 px of drag, aim at the picked point and repaint.
+//   gripUp (Drawings, Layouts): end of a drag puts the grip down (gripPut); a plain click makes it hot; a Shift click toggles it hot.
+//   gripPut (Drawings, Layouts): a click or release at the pointer: a base point, a Reference point, or the pick itself (Ctrl = a copy).
+//   gripOptionCycle (Drawings, Layouts):Ctrl cycles options that take a point.
+//   gripCommit (Drawings, Layouts): apply the edit with one Undo step (a layout through layGripCommit).
+//   cmpDown (Compare): leave source grips to the shared grip handler.
+//   layObjSelDoc (Layouts): map selected objects into the objects' drawing.
+//   layGripCommit (Layouts): replace layout objects with one Undo step.
+//   gripStretchHots (Drawings, Layouts): with several hot grips every one moves by the base → pick vector; the only caller of stretchHots.
+//   stretchHots (here): normalize hot grips so each vertex stretches once.
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)
 import { bulgeOf3 } from './contour.js';             // 163b: the bulge of the arc through a pointer

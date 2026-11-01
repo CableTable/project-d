@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight } from './tools/rook-launch.mjs';
+import { launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -23,10 +23,64 @@ function recorder(fail = '') {
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
   const git = (...a) => rec('git', a[1] === 'config' ? 'tools/hooks' : '')(...a);
-  return { calls, x: { git, has: rec('has', true), need: rec('need'), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { check: rec('gateCheck'), record: rec('gateRecord') } } };
+  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { check: rec('gateCheck'), record: rec('gateRecord') } } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
+
+test('TODO 172: lintBrief refuses oversized behaviours, one-word filters, builder suites and bare runs paths', () => {
+  const behaviours = Array.from({ length: 6 }, (_, i) => `${i + 1}. Change behaviour ${i + 1}`);
+  const routine = ['Screenshots in light and dark', '`npm.cmd test` and browser filter', 'Tick TODO', 'Append a decision', 'Add a DECISIONS row', 'Report results'];
+  for (const [brief, count] of [
+    ['Do:\n1. Change the launcher', 0],
+    [behaviours.join('\n'), 1],
+    [[...behaviours.slice(0, 5), ...routine.map((s, i) => `${i + 6}. ${s}`)].join('\n'), 0],
+    ["node browser.test.mjs <port> 'Layout'", 1],
+    ["node browser.test.mjs <port> '[Ll]ayer'", 1],
+    ["node browser.test.mjs <port> 'TODO 175|nest'", 1],
+    ["node browser.test.mjs <port> 'TODO 175|New layout'", 0],
+    ["node browser.test.mjs <free port> 'TODO 171|Layout'", 1],
+    ["node browser.test.mjs <free port> 'TODO 175|New layout'", 0],
+    ["node browser.test.mjs 4567 'nest'", 1],
+    ['node browser.test.mjs <fresh port> "[Ll]ayer"', 1],
+    ['Tests:`npm.cmd test` and the new steps (never the full suite).', 0],
+    ['then the full browser suite once', 1],
+    ['Rook runs the full suite', 0],
+    ["Don't run the full suite", 0],
+    ['Tests: npm.cmd test, not more. Then the full browser suite once.', 1],
+    ['No mock-up needed; then run the full suite.', 1],
+    ['Do not skip lint; run the full browser suite.', 1],
+    ["browser.test.mjs, don't run Layout: node browser.test.mjs <free port> 'Layout'", 1],
+    ['Spec: runs31/grill-175.md', 1],
+    ['../runs31/grill-175.md', 0],
+    ['E:/Project B/Claude/Project D extras/runs31/x.md', 0],
+    ['node browser.test.mjs <port> "Layout|[Ll]ayer|TODO 175|New layout"', 2],
+  ]) {
+    for (const eol of ['\n', '\r\n']) assert.equal(lintBrief(brief.replaceAll('\n', eol)).length, count, brief);
+  }
+});
+
+test('TODO 172: build and knight refuse every brief problem before changes; --big overrides, including fixes', () => {
+  const brief = 'Spec: runs31/grill-175.md\nnode browser.test.mjs <port> "Layout"\nthen the full browser suite once\n'
+    + Array.from({ length: 6 }, (_, i) => `${i + 1}. Change behaviour ${i + 1}`).join('\n');
+  for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
+    for (const flags of [[], ['--fix'], ['--over']]) {
+      const refused = recorder();
+      refused.x.read = (path) => { assert.equal(path, resolve('b.txt')); return brief; };
+      assert.throws(() => run([...args, ...flags], refused.x), (e) => {
+        for (const problem of lintBrief(brief)) assert.ok(e.message.includes(problem), problem);
+        assert.match(e.message, /--big overrides/);
+        return true;
+      });
+      assert.equal(refused.calls.some((c) => isSwitch(c) || ['open', 'launch', 'gateRecord'].includes(c[0])), false);
+      const big = recorder();
+      big.x.read = () => brief;
+      assert.doesNotThrow(() => run([...args, ...flags, '--big'], big.x));
+      assert.ok(launched(big.calls));
+      assert.deepEqual(big.calls[0], ['gateCheck', flags.includes('--fix'), flags.includes('--over')]);
+    }
+  }
+});
 
 test('review arguments: three positionals, optional --as and --from clone branch, a real commit id, paths absolute', () => {
   assert.deepEqual(parseReview(['abc1234', 'b.txt', 'r.jsonl']), { sha: 'abc1234', brief: resolve('b.txt'), out: resolve('r.jsonl'), as: 'bishop', from: undefined });
@@ -42,7 +96,7 @@ test('review arguments: three positionals, optional --as and --from clone branch
 });
 
 test('build arguments: four positionals, optional --as (default king), a real commit id, paths absolute', () => {
-  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, over: false });
+  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, over: false, big: false });
   const flagged = parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--fix', '--over', '--as', 'king']);
   assert.deepEqual([flagged.fix, flagged.over, flagged.as], [true, true, 'king']);
   assert.equal(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--as', 'bishop']).as, 'bishop');
@@ -52,7 +106,7 @@ test('build arguments: four positionals, optional --as (default king), a real co
 
 test('knight arguments: four positionals, report ends in .txt, log sits next to it, paths absolute', () => {
   assert.deepEqual(parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234']),
-    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, over: false });
+    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, over: false, big: false });
   assert.deepEqual(['--fix', '--over'].map((f) => parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234', f])).map((p) => [p.fix, p.over]), [[true, false], [false, true]]);
   assert.throws(() => parseKnight(['b.txt', 'k.txt', 'knight/x']), /usage: knight/);
   assert.throws(() => parseKnight(['b.txt', 'k.md', 'knight/x', 'abc1234']), /must end in \.txt/);
