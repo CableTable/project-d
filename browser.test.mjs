@@ -7928,6 +7928,40 @@ try {
     await c2.close();
   });
 
+  await step('TODO 176: Recover keeps the tab order', async () => {
+    const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    try {
+      const p = await ctx.newPage();
+      p.on('dialog', (d) => d.accept().catch(() => {}));
+      const q = (id) => panelControl(p, p.getByTestId(id));
+      const names = () => p.locator('.tabs .dtab:not([aria-label]) .tname').allTextContents();
+      const copies = () => p.evaluate(async () => (await import('./recovery.js')).loadCopies());
+      const waitCopies = async (n) => {
+        for (let i = 0; i < 60; i++) { if ((await copies()).length === n) return; await p.waitForTimeout(150); }
+        throw new Error('waiting for ' + n + ' recovery copies, there are ' + (await copies()).length);
+      };
+      await p.goto(URL_ + '?autosave=300');
+      await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const expected = ['Drawing 1.dxf', 'Drawing 2.dxf', 'Drawing 3.dxf', 'Drawing 4.dxf'];
+      for (const name of expected) {
+        await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: readFileSync('fixtures/outline.dxf') });
+        await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+      }
+      assert.deepEqual(await names(), expected);
+      let count = 0;
+      for (const name of [expected[0], expected[2], expected[3], expected[1]]) {
+        await p.locator('.tabs .dtab', { hasText: name }).click();
+        await p.waitForFunction(() => document.querySelector('[data-testid=gap-count]').textContent === '2');
+        await q('gap-join').click();
+        await waitCopies(++count);
+      }
+      await p.reload(); await q('recover-dialog').waitFor();
+      await q('recover-ok').click(); await q('recover-dialog').waitFor({ state: 'detached' });
+      await p.waitForFunction(() => document.querySelectorAll('.tabs .dtab:not([aria-label]) .tname').length === 4);
+      assert.deepEqual(await names(), expected, 'recovered tabs keep their original order');
+    } finally { await ctx.close(); }
+  });
+
   // ---- Next sessions 1: the drawing tools (draw.js): Line, Polyline, Rectangle, Rounded rectangle, Circle, Ellipse, Arc ----
   const fieldOf = (e, code) => +e.r.v[e.r.c.indexOf(code)];
   const savedDoc = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);

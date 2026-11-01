@@ -3093,7 +3093,7 @@ async function autosaveNow() {
         if (page.lay && r.hasCopy && r.autoDxf === dxf) continue;                                          // a layout: the same text as the last copy
         const name = n == null ? page.name : `${d.pdf.name} sheet ${n}`;
         await RC.saveCopy({ id: r.rid, name, path: page.path || null, kind: page.lay ? 'layout' : 'drawing', dxf, t: Date.now(),
-          saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
+          tab: state.docs.indexOf(d), sheet: n, saved: !!page.saved, fromFile: !!d.fromFile, fromPdf: d.fromPdf || null, acceptedLoss: !!page.acceptedLoss });
         r.hasCopy = true; if (page.lay) r.autoDxf = dxf;
         if (!page.lay) { r.autoEnts = raw.entities; r.autoBlocks = raw.blocks; r.autoLayers = raw.layers; r.autoTitle = titleBlock; }
         if (!state.docs.includes(d) || !PS.pageState(d, n)?.dirty || (d.pdf && !PS.sheetNumbers(d.pdf).includes(n))) await dropCopy({ recovery: r }); // closed, saved or deleted while writing
