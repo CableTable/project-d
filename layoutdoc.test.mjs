@@ -718,6 +718,51 @@ test('TODO 182: objectDoc renames clashes, repoints nested INSERTs and preserves
   }
 });
 
+test('TODO 182 review: repeat placements reuse one copy, a grip edit on a renamed block keeps the part\'s own names, a dimension block is renamed with its owner', () => {
+  const block = (entities) => ({ base: [0, 0], xref: false, entities });
+  const nameOf = (e) => e.r.v[e.r.c.indexOf(2)];
+  const setup = (first, second, copies = 1) => {
+    const lay = LD.newLayout('R'), a = blockObject(0, 'X', first), b = blockObject(0, 'X', second);
+    lay.parts = { a, b }; lay.placed = [{ ...LD.objectPlacement(a), partId: 'a' }, ...Array.from({ length: copies }, (_, k) => ({ ...LD.objectPlacement(b), partId: 'b', x: 300 + k * 100 }))];
+    return { lay, a, b, view: LD.objectDoc(lay) };
+  };
+  const plain = (r) => ({ X: block([circle(0, 0, r)]) });
+  // three placements of one clashing part: one copy
+  const three = setup(plain(5), plain(7), 3);
+  assert.deepEqual(three.view.raw.entities.map(nameOf), ['X', 'X_2', 'X_2', 'X_2']);
+  assert.deepEqual(Object.keys(three.view.raw.blocks), ['X', 'X_2']);
+  // a nested clash: the reused copy also needs the nested copy to match
+  const nest = (r) => ({ X: block([insert('Y', 0, 0)]), Y: block([circle(0, 0, r)]) });
+  const deep = setup(nest(5), nest(7), 2);
+  assert.deepEqual(deep.view.raw.entities.map(nameOf), ['X', 'X_2', 'X_2']);
+  assert.deepEqual(Object.keys(deep.view.raw.blocks).sort(), ['X', 'X_2', 'Y', 'Y_2']);
+  // a grip edit on the renamed block object
+  for (const [label, s, own] of [['plain', setup(plain(5), plain(7)), ['X']], ['nested', setup(nest(5), nest(7)), ['X', 'Y']]]) {
+    const { lay, b, view } = s, eb = view.raw.entities[1], widthBefore = b.w, blocksBefore = structuredClone(b.raw.blocks);
+    assert.equal(nameOf(eb), 'X_2', label);
+    const [, x, y] = gripPts(eb).find((g) => g[0] === 'i');
+    assert.ok(LD.objectReplace(lay, view, eb, GR.dragGrip(eb, 'i', [x + 5, y]).ent, () => 'n1'), label);
+    const now = lay.parts[lay.placed[1].partId];
+    assert.notEqual(now, b, label + ': a new part');
+    assert.equal(R(now.w), R(widthBefore), label + ': width kept');
+    assert.deepEqual(Object.keys(now.raw.blocks).sort(), own, label + ': the part keeps its own block names');
+    assert.equal(nameOf(now.raw.entities[0]), 'X', label);
+    assert.deepEqual(now.raw.blocks, blocksBefore, label + ': block contents unchanged');
+    const again = LD.objectDoc(lay);
+    assert.deepEqual(again.raw.entities.map(nameOf), ['X', 'X_2'], label + ': renamed again for the view');
+    assert.equal(R(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay)))).placed.length), 2, label + ': saves');
+  }
+  // a nested DIMENSION block is renamed with its owner
+  const dim = (len) => ({ X: block([entity('DIMENSION', [[2, '*D1'], [70, 0]]), circle(0, 0, 3)]), '*D1': block([line(0, 0, len, 0), line(0, 0, 0, 3)]) });
+  const d = setup(dim(20), dim(30));
+  assert.equal(d.view.raw.entities.length, 2);
+  assert.deepEqual(d.view.raw.entities.map(nameOf), ['X', 'X_2']);
+  assert.equal(nameOf(d.view.raw.blocks.X_2.entities[0]), '*D1_2');
+  assert.deepEqual(d.view.raw.blocks['*D1_2'], dim(30)['*D1']);
+  assert.deepEqual(d.view.raw.blocks['*D1'], dim(20)['*D1']);
+  assert.equal(nameOf(d.b.raw.blocks.X.entities[0]), '*D1', 'the part is unchanged');
+});
+
 test('TODO 171: a block object is one INSERT in objectDoc with the insertion grip + one per attribute, for every placement', () => {
   for (const nAttr of [0, 1, 2]) for (const [label, over] of [['plain', {}], ['rotated 30', { rot: 30 }], ['scaled 2', { sc: 2 }], ['mirrored X', { mirrorX: true }]]) {
     const lay = LD.newLayout('B'), part = blockObject(nAttr), p = { ...LD.objectPlacement(part), x: 300, y: 200, ...over };

@@ -110,31 +110,35 @@ function bakedEntity(part, p) {
 export const objectSig = (lay, skip) => lay.placed.map((p) => { const part = lay.parts[p.partId]; return part && part.obj && !skip(p.partId) ? `${p.partId}|${bakeKey(p)}${p.lock ? 'L' : ''}` : '-'; }).join(';') + '#' + lay.s.attmode;
 /** The layout's objects as a drawing: { raw, fl, off, at (entity → its index in lay.placed), lockedEnts }. An object Explode cannot carry is left out. */
 export function objectDoc(lay, skip = () => false) {
-  const entities = [], at = new Map(), lockedEnts = new Set(), blocks = {};
+  const entities = [], at = new Map(), lockedEnts = new Set(), blocks = {}, back = new Map();       // back: placed index → { name in this drawing → the part's own block name }
   lay.placed.forEach((p, i) => {
     const part = lay.parts[p.partId];
     let ent = part && part.obj && !skip(p.partId) ? bakedEntity(part, p) : null;
     if (!ent) return;
     const used = ent.type === 'INSERT' ? blocksUsed(part.raw.blocks, [ent]) : {};
-    // No map back: Trim / Extend / Fillet / Offset never make a new INSERT.
+    // A grip edit maps the names back (objectReplace, through `back`): the part keeps its own block names.
     const taken = new Map([...Object.keys(used), ...Object.keys(blocks)].map((n) => [n.toLowerCase(), n]));
     const names = new Map(Object.keys(used).map((n) => [n, taken.get(n.toLowerCase())]));
-    const repoint = (e) => {
-      if (e.type !== 'INSERT') return e;
-      const k = e.r.c.indexOf(2), name = names.get(String(e.r.v[k] || '').trim());
-      return name && name !== e.r.v[k] ? { ...e, r: { ...e.r, v: e.r.v.map((v, i) => i === k ? name : v) } } : e;
-    };
+    const repoint = (e) => retarget(e, names), same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
     let changed;
     do {
       changed = false;
       for (const [n, b] of Object.entries(used)) {
-        const old = blocks[names.get(n)];
-        if (!old || JSON.stringify(old) === JSON.stringify({ ...b, entities: b.entities.map(repoint) })) continue;
-        let name, suffix = 2;
-        do { name = `${n}_${suffix++}`; } while (taken.has(name.toLowerCase()));
-        names.set(n, name); taken.set(name.toLowerCase(), name); changed = true;
+        const cur = names.get(n), want = { ...b, entities: b.entities.map(repoint) }, low = n.toLowerCase();
+        if (same(blocks[cur], want)) continue;
+        const hit = Object.keys(blocks).find((k) => (k.toLowerCase() === low || (k.toLowerCase().startsWith(low + '_') && /^\d+$/.test(k.slice(low.length + 1)))) && same(blocks[k], want));       // a copy made for this block before: reuse it
+        if (hit) {
+          if (!blocks[cur] && cur !== n) taken.delete(cur.toLowerCase());
+          names.set(n, hit); changed = true;
+        } else if (blocks[cur]) {
+          let name, suffix = 2;
+          do { name = `${n}_${suffix++}`; } while (taken.has(name.toLowerCase()));
+          names.set(n, name); taken.set(name.toLowerCase(), name); changed = true;
+        }
       }
     } while (changed);
+    const inverse = new Map([...names].filter(([n, m]) => n !== m).map(([n, m]) => [m, n]));
+    if (inverse.size) back.set(i, inverse);
     for (const [n, b] of Object.entries(used)) {
       const name = names.get(n), ents = b.entities.map(repoint);
       blocks[name] ??= name === n && ents.every((e, k) => e === b.entities[k]) ? b : { ...b, entities: ents };
@@ -145,7 +149,7 @@ export function objectDoc(lay, skip = () => false) {
     if (p.lock) lockedEnts.add(ent);
   });
   const raw = { header: { $ATTMODE: String(lay.s.attmode) }, layers: layersOf(lay), ltypes: {}, blocks, entities }, fl = flatten(raw);
-  return { raw, fl, off: startHidden(fl), at, lockedEnts };
+  return { raw, fl, off: startHidden(fl), at, lockedEnts, back };
 }
 
 /** Quick Select / Select similar: Layout objects only, with indices mapped back to placedAll() (parts survive Append). */
@@ -240,12 +244,15 @@ export function explodePlaced(lay, idxs, newId, burst = false) {
 export function objectReplace(lay, view, ent, next, newId) {
   const i = view.at.get(ent), old = lay.placed[i], was = lay.parts[old.partId], shared = lay.placed.some((p, k) => k !== i && p.partId === old.partId);
   next.ps = false;
-  const part = objectPart(newId(), shared ? nextName(OBJ_NAMES[next.type] || 'Object', new Set(Object.values(lay.parts).map((p) => p.name))) : was.name, next, layersOf(lay), {}, next.type === 'INSERT' ? was.raw.blocks : {});       // a block object keeps its blocks
+  const back = view.back?.get(i), blocks = {};       // a block object keeps its blocks, from the view, under the part's own names
+  if (next.type === 'INSERT') for (const [n, b] of Object.entries(blocksUsed(view.raw.blocks, [next]))) blocks[back?.get(n) ?? n] = back ? { ...b, entities: b.entities.map((e) => retarget(e, back)) } : b;
+  const kept = retarget(next, back || new Map());
+  const part = objectPart(newId(), shared ? nextName(OBJ_NAMES[next.type] || 'Object', new Set(Object.values(lay.parts).map((p) => p.name))) : was.name, kept, layersOf(lay), {}, blocks);
   if (!part) return false;
   const { sc, ...rest } = old, pl = { ...rest, ...objectPlacement(part) };       // placed at its own extents, so no scale / mirror is left over
   if (!shared) delete lay.parts[old.partId];
   lay.parts[part.id] = part; lay.placed[i] = pl;
-  bakedCache.set(part, new Map([[bakeKey(pl), next]]));
+  bakedCache.set(part, new Map([[bakeKey(pl), kept]]));
   return true;
 }
 
@@ -514,7 +521,14 @@ export function cleanSettings(s = {}) {
   };
 }
 
-const refs = (ents) => ents.filter((e) => (e.type === 'INSERT' || e.type === 'DIMENSION' || e.type === 'ACAD_TABLE') && e.r).map((e) => String(e.r.v[e.r.c.indexOf(2)] || '').trim());
+const isRef = (e) => (e.type === 'INSERT' || e.type === 'DIMENSION' || e.type === 'ACAD_TABLE') && e.r;
+const refs = (ents) => ents.filter(isRef).map((e) => String(e.r.v[e.r.c.indexOf(2)] || '').trim());
+/** The entity pointing to the block `names` (old name → new name) gives, a copy; the same entity when nothing changes. */
+const retarget = (e, names) => {
+  if (!isRef(e)) return e;
+  const k = e.r.c.indexOf(2), name = names.get(String(e.r.v[k] || '').trim());
+  return name && name !== e.r.v[k] ? { ...e, r: { ...e.r, v: e.r.v.map((v, i) => i === k ? name : v) } } : e;
+};
 /** The blocks a list of entities uses, and the blocks those use, as { name: block }. */
 export function blocksUsed(blocks, ents) {
   const out = {}, todo = refs(ents);
