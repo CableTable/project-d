@@ -127,6 +127,7 @@ test('the four account x role command lines: flags, cwd, launcher', () => {
     assert.equal(cwd, `${X}/${dir}`);
     assert.deepEqual([inFd, outFd], [`fd:${resolve('b.txt')}`, `fd:${resolve('o.jsonl')}`]);
     if (role === 'build') assert.equal('FORCE_COLOR' in env, false);
+    if (role === 'build') assert.equal(env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, as === 'king' ? '1' : process.env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS);
   }
   assert.equal(commandLine('claude2.cmd', reviewerArgs(X)), REVIEWER);
   assert.equal(commandLine('claude2.cmd', buildArgs(X)), BUILDER);

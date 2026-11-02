@@ -221,6 +221,7 @@ export function build(args, x = io) {
   x.git(dir, 'switch', '-c', branch, sha);
   const env = { ...process.env };
   delete env.FORCE_COLOR;
+  if (as === 'king') env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '1'; // a long foreground call must not move to the background
   x.launch(claude(as), buildArgs(), dir, inFd, x.open(out, 'w'), env, out);
   console.log(`build ${branch} @ ${sha} (${as}) -> ${out}`);
   const line = x.gate.record({ fix, over, brief, branch });
