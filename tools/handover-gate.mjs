@@ -60,6 +60,7 @@ export function gateOps(env) {
     const line = queueLine(g.name, ticked, itemsOf(g.state).length);
     const q = `${g.dir}/queue.txt`;
     env.write(q, setLine2(env.read(q) || '', line));
+    console.log(`queue: ${q}`);
     return line;
   }
   return {

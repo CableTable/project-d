@@ -90,7 +90,7 @@ export function lintBrief(text) {
 
 function checkBrief(x, brief, big) {
   const problems = lintBrief(x.read(brief));
-  if (problems.length && !big) throw new Error(`brief refused:\n${problems.join('\n')}\n--big overrides these problems`);
+  if (problems.length && !big) throw new Error(`brief refused:\n${problems.join('\n')}\n--big overrides these problems; fix with Read + Edit (sed -i is denied)`);
 }
 
 // WORKFLOW.md's reviewer flags, plus the extras folder (the brief lives there).

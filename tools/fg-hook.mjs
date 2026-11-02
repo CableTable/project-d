@@ -1,4 +1,4 @@
-// PreToolUse hook (.claude/settings.json, matcher Bash|Monitor): King (3rd account) runs everything in the foreground.
+// PreToolUse hook (.claude/settings.json, matcher Bash|PowerShell|Monitor): King (3rd account) runs everything in the foreground.
 // Exit 2 refuses the call and feeds stderr back to the agent; anything else lets it through.
 import { readFileSync } from 'node:fs';
 

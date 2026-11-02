@@ -1,4 +1,4 @@
-<King|Knight> fix: TODO <item> (<summary>; source: <source>). Branch <branch> from <sha> (already switched for you).
+<King|Knight> fix: TODO <item> (<summary>; source: ../<source>). Branch <branch> from <sha> (already switched for you).
 
 Spec: "<spec path>" (read it first). Keep <preserved behaviour> working.
 
