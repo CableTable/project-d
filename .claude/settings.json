@@ -34,6 +34,7 @@
       "Bash(gh run view:*)",
       "Bash(gh run list:*)",
 	  "Bash(gh run download:*)",
+	  "Bash(gh run watch:*)",
       "Bash(ls:*)",
       "Bash(cat:*)",
       "Bash(head:*)",
