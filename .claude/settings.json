@@ -50,7 +50,8 @@
       "PowerShell(git push:*)",
       "PowerShell(npm.cmd:*)",
       "PowerShell(npx:*)",
-      "PowerShell(node:*)"
+      "PowerShell(node:*)",
+      "PowerShell(Get-ChildItem:*)"
     ],
   
     "deny": [
