@@ -71,7 +71,10 @@ export function parseKnight(args) {
 }
 
 // TODO 167c: a brief whose line 1 opens like a fix round counts as one without `--fix`.
-export const isFixBrief = (text) => /^(King fix|Knight fix|Fix round)/.test(text);
+export const isFixBrief = (text) => /^﻿?(King fix|Knight fix|Fix round)\b/.test(text);
+
+// Ticking several TODOs: ids right after `Tick`, joined by , and & / + (other numbers on the line are prose).
+const tickIds = (line) => line.match(/^\s*(?:\d+\.\s+)?`?Tick\s+(?:TODO\s+)?(\d+[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d+[a-z]*\d*)+)/i)?.[1].match(/\d+[a-z]*\d*/g) ?? [];
 
 export function lintBrief(text) {
   const problems = [];
@@ -80,7 +83,7 @@ export function lintBrief(text) {
     const numbered = line.match(/^\s*\d+\.\s+(.*)$/);
     if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
     if (/^\s*(\d+\.\s+)?Also\b/i.test(line)) problems.push(`line ${i + 1}: line starts with Also (scope creep: make it a numbered item or drop it)`);
-    if (/^\s*(\d+\.\s+)?`?Tick\b/i.test(line) && new Set(line.match(/\b\d{2,3}[a-z]?\d?\b/g)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
+    if (new Set(tickIds(line)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
     for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\b[^'"]*\s(['"])(.*?)\1/g)) {
       for (const piece of filter.split('|')) {
         if (/^(?:[a-z]|\[[a-z]{2}\])+$/i.test(piece.trim())) problems.push(`line ${i + 1}: one-word browser filter piece '${piece}'`);

@@ -265,7 +265,8 @@ test('handover gate: build and knight check it first, record after the launch; a
 
 test('TODO 167c: a brief whose line 1 starts King fix / Knight fix / Fix round counts as a fix round without --fix; --tool passes the gate and is recorded', () => {
   assert.deepEqual(['King fix: TODO 1', 'Knight fix: TODO 1', 'Fix round: x', 'Fix round 2: x'].map(isFixBrief), [true, true, true, true]);
-  assert.deepEqual(['Build: TODO 1', 'Review: x', '\nKing fix: second line'].map(isFixBrief), [false, false, false]);
+  assert.deepEqual(['Build: TODO 1', 'Review: x', '\nKing fix: second line', 'King fixes the thing', 'Fix rounds: x'].map(isFixBrief), [false, false, false, false, false]);
+  assert.equal(isFixBrief('﻿King fix: TODO 1'), true);
   for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
     for (const [first, flags, kind] of [['King fix: TODO 1', [], 'fix'], ['Fix round 2: TODO 1', [], 'fix'], ['Build: TODO 1', [], 'item'], ['Build: TODO 1', ['--tool'], 'tool'], ['Build: TODO 1', ['--fix'], 'fix']]) {
       const { calls, x } = recorder();
@@ -281,6 +282,9 @@ test('TODO 167c: lintBrief refuses a line starting Also and a Tick line naming t
   for (const [brief, count] of [
     ['1. Do it\nAlso add unit cases', 1], ['2. Also add unit cases', 1], ['  also, one more', 1], ['Do the thing; also this', 0], ['Always fix', 0],
     ['Tick 171 and 174', 1], ['5. Tick TODO 171 and 174 in TODO.md', 1], ['Tick 167c in TODO.md', 0], ['`Tick TODO 170 in TODO.md`', 0], ['6. Tick 155m2 and 167c', 1], ['Tick 171, 171', 0],
+    ['6. Tick TODO 174 in TODO.md with one line on the cause. Append to the 156a row in DECISIONS.md only if the app changed.', 0],
+    ['3. Tick TODO 173 in TODO.md with one line (say the --shots part is already covered by AGENTS.md and TODO 180).', 0],
+    ['3. Tick 167d in TODO.md; the launch refusal is past 150k Rook context.', 0], ['Tick 171/174', 1], ['Tick 171 & TODO 174', 1],
   ]) assert.equal(lintBrief(brief).length, count, brief);
 });
 
