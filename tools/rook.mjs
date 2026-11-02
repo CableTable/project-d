@@ -7,8 +7,9 @@
 //   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]   launch a Knight build on a new branch in its clone, detached
 //     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed), --over = a 3rd item with his OK
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`); polls every 20 s
+//   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
-import { execSync, spawn } from 'node:child_process';
+import { execSync, execFileSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -17,7 +18,7 @@ import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
-import { review, build, knight, gate, runningNote } from './rook-launch.mjs';
+import { review, build, knight, gate, runningNote, EXTRAS } from './rook-launch.mjs';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -46,22 +47,36 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
   }
 }
 
+// Git Bash, not WSL's bash.exe that PowerShell may find first: `git --exec-path` is <Git>/mingw64/libexec/git-core, three levels below <Git>.
+export function gitBash(exec = execFileSync, exists = existsSync) {
+  try {
+    const bash = join(exec('git', ['--exec-path'], { encoding: 'utf8' }).trim(), '..', '..', '..', 'bin', 'bash.exe');
+    if (exists(bash)) return bash;
+  } catch { /* no git on the PATH: fall back */ }
+  return 'bash';
+}
+
+// Runs ci-watch.sh for <sha>: forwards its stderr, prints `CI <RUN line>` and exits 0 at the RUN line; a non-zero end exits 1.
+export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBash()) {
+  const tools = dirname(fileURLToPath(import.meta.url));
+  const ci = spawnFn(bash, [join(tools, 'ci-watch.sh'), sha], { cwd: join(tools, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
+  process.on('exit', () => ci.kill()); // a killed wait must not leave the watcher holding the pipes
+  ci.stderr.on('data', (d) => process.stderr.write(d));
+  let buf = '';
+  ci.stdout.on('data', (d) => {
+    const lines = (buf += d).split(/\r?\n/);
+    buf = lines.pop();
+    const run = lines.find((l) => l.startsWith('RUN '));
+    if (run) { console.log(`CI ${run}`); exit(0); }
+  });
+  ci.on('close', (c) => { if (c) { console.error(`ci-watch.sh ended with exit ${c}`); exit(1); } });
+}
+
 // `wait <run file>... [--ci <sha>]`: checks now and every 20 s; prints `DONE <file>` for the first finished run or `CI <RUN line>` and exits 0 (TODO 167a).
 function wait(args) {
   const i = args.indexOf('--ci'), files = i < 0 ? args : args.slice(0, i), sha = i < 0 ? '' : args[i + 1];
   if ((!files.length && !sha) || (i >= 0 && (!sha || args.length > i + 2))) { console.error('usage: node tools/rook.mjs wait <run file>... [--ci <sha>]'); process.exit(1); }
-  const tools = dirname(fileURLToPath(import.meta.url));
-  if (sha) {
-    const ci = spawn('bash', [join(tools, 'ci-watch.sh'), sha], { cwd: join(tools, '..'), stdio: ['ignore', 'pipe', 'inherit'] });
-    let buf = '';
-    ci.stdout.on('data', (d) => {
-      const lines = (buf += d).split(/\r?\n/);
-      buf = lines.pop();
-      const run = lines.find((l) => l.startsWith('RUN '));
-      if (run) { console.log(`CI ${run}`); process.exit(0); }
-    });
-    ci.on('close', (c) => { if (c) { console.error(`ci-watch.sh ended with exit ${c}`); process.exit(1); } });
-  }
+  if (sha) watchCi(sha);
   const check = () => {
     const texts = Object.fromEntries(files.map((f) => [f, existsSync(f) ? readFileSync(f, 'utf8') : null]));
     const done = firstDone(texts);
@@ -69,6 +84,35 @@ function wait(args) {
   };
   check();
   setInterval(check, 20_000);
+}
+
+// The merge checks (TODO 167b): '' when the merge may go ahead, else the one-line refusal. retro = the retro file's text or null.
+export function mergeRefusal({ n, pr, sha, head, retro, noRetro, ci }) {
+  if (!noRetro && !(retro || '').trim()) return `refused: runs${n}/retro${n}.out is missing or empty (run the retro, or pass --no-retro)`;
+  if (head !== sha) return `refused: ${sha} is not the head of PR #${pr} (head is ${head})`;
+  if (ci !== 'success') return `refused: CI for ${sha} is ${ci || 'not found'}, not success`;
+  return '';
+}
+
+// `merge <n> <sha> [--no-retro]`: checks, merges, confirms; returns the `MERGED` line or throws the refusal.
+export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf8', cwd: join(dirname(fileURLToPath(import.meta.url)), '..') }).trim(), extras = EXTRAS) {
+  const noRetro = args.includes('--no-retro'), [pr, short, ...rest] = args.filter((a) => a !== '--no-retro');
+  if (!/^\d+$/.test(pr || '') || !short || rest.length) throw new Error('usage: node tools/rook.mjs merge <n> <sha> [--no-retro]');
+  const sha = run('git', ['rev-parse', '--verify', `${short}^{commit}`]);
+  const info = JSON.parse(run('gh', ['pr', 'view', pr, '--json', 'headRefOid,headRefName']));
+  const n = /^claude\/session(\d+)$/.exec(info.headRefName)?.[1];
+  if (!n) throw new Error(`refused: PR #${pr} branch ${info.headRefName} is not claude/session<N>`);
+  const retroFile = `${extras}/runs${n}/retro${n}.out`;
+  const [r] = JSON.parse(run('gh', ['run', 'list', '--commit', sha, '--workflow', 'ci.yml', '--limit', '1', '--json', 'status,conclusion']));
+  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro: existsSync(retroFile) ? readFileSync(retroFile, 'utf8') : null, noRetro, ci: r && (r.status === 'completed' ? r.conclusion : r.status) });
+  if (msg) throw new Error(msg);
+  run('gh', ['pr', 'merge', pr, '--merge', '--match-head-commit', sha]);
+  if (JSON.parse(run('gh', ['pr', 'view', pr, '--json', 'state'])).state !== 'MERGED') throw new Error(`PR #${pr} is not MERGED after gh pr merge`);
+  if (noRetro) {
+    mkdirSync(`${extras}/runs${+n + 1}`, { recursive: true });
+    appendFileSync(`${extras}/runs${+n + 1}/resume-rook.txt`, `retro${n} due first (merged without it)\n`);
+  }
+  return `MERGED #${pr} ${sha}`;
 }
 
 function main() {
@@ -155,11 +199,14 @@ if (cmd === 'result') {
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'wait') {
   wait(process.argv.slice(3));
+} else if (cmd === 'merge') {
+  try { console.log(merge(process.argv.slice(3))); }
+  catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'gate') {
   try { console.log(gate()); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big] | knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big] | knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]');
 }
 }
 

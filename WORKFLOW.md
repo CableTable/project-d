@@ -313,9 +313,8 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - Read WORKFLOW.md by section (`grep -n "^## "` first); answer "what's left" from TODO.md's top-level open items only (`| head -30`).
 
 - **Session end (his call, 2026-10-20).** Rook decides when a session is big enough to end, launches the **retro** on Bishop first (never inline) (rule 4: Bishop, the `retro` skill; Rook applies its recommended suggestions and names them in one line; he can overrule), and once CI is green for the
-  head commit asks his OK to merge. On his yes, and only once `runs<N>/retro<N>.out` exists and is not empty (session 25 retro): `gh pr merge <n> --merge --match-head-commit $(git rev-parse <sha>)` (the full sha), check it merged
-  (ccd_pr get_status, or the PR's GitHub merge notice), press "Update now" on the usage page if he wants it fresh, then hand over to the next Rook session
-  (the template below filled in as `runs<N+1>/resume-rook.txt`: branch, next items, open questions) instead of handing him a prompt.
+  head commit asks his OK to merge. On his yes, and only once `runs<N>/retro<N>.out` exists and is not empty (session 25 retro): `node tools/rook.mjs merge <n> <sha>` (full sha, refuses on a missing / empty retro file unless `--no-retro`, a sha that is not the PR head, or CI not green; checks it merged and prints `MERGED #<n> <sha>`; `--no-retro` appends "retro<N> due first" to the next resume file), press "Update now" on the usage page if he wants it fresh, then hand over to the next Rook session
+  (the template below filled in as `runs<N+1>/resume-rook.txt`: branch, next items, open questions; keep any lines already in that file) instead of handing him a prompt.
   **Rook at logon** (his call, 2026-10-29): the Startup shortcut "Rook.lnk" (Windows Terminal tab, like "Bishop support.lnk")
   runs `Project D extras/start-rook.ps1`, which reads `Project D extras/rook-next.txt` (line 1 session uuid, 2 name `Rook S<n>`,
   3 resume file): transcript found -> `--resume`, else a fresh `--session-id` told to read the resume file. Each Rook session
