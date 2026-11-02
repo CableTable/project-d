@@ -116,8 +116,30 @@ export function objectDoc(lay, skip = () => false) {
     let ent = part && part.obj && !skip(p.partId) ? bakedEntity(part, p) : null;
     if (!ent) return;
     const used = ent.type === 'INSERT' ? blocksUsed(part.raw.blocks, [ent]) : {};
-    if (Object.entries(used).some(([n, b]) => blocks[n] && JSON.stringify(blocks[n]) !== JSON.stringify(b))) return;       // shortcut: two block objects with different blocks of one name: the later one is left out (as before), rename them if that ever matters
-    Object.assign(blocks, used);
+    // No map back: Trim / Extend / Fillet / Offset never make a new INSERT.
+    const taken = new Map([...Object.keys(used), ...Object.keys(blocks)].map((n) => [n.toLowerCase(), n]));
+    const names = new Map(Object.keys(used).map((n) => [n, taken.get(n.toLowerCase())]));
+    const repoint = (e) => {
+      if (e.type !== 'INSERT') return e;
+      const k = e.r.c.indexOf(2), name = names.get(String(e.r.v[k] || '').trim());
+      return name && name !== e.r.v[k] ? { ...e, r: { ...e.r, v: e.r.v.map((v, i) => i === k ? name : v) } } : e;
+    };
+    let changed;
+    do {
+      changed = false;
+      for (const [n, b] of Object.entries(used)) {
+        const old = blocks[names.get(n)];
+        if (!old || JSON.stringify(old) === JSON.stringify({ ...b, entities: b.entities.map(repoint) })) continue;
+        let name, suffix = 2;
+        do { name = `${n}_${suffix++}`; } while (taken.has(name.toLowerCase()));
+        names.set(n, name); taken.set(name.toLowerCase(), name); changed = true;
+      }
+    } while (changed);
+    for (const [n, b] of Object.entries(used)) {
+      const name = names.get(n), ents = b.entities.map(repoint);
+      blocks[name] ??= name === n && ents.every((e, k) => e === b.entities[k]) ? b : { ...b, entities: ents };
+    }
+    ent = repoint(ent);
     if (at.has(ent)) ent = { ...ent };            // an exact copy on top of it: an entity of its own
     entities.push(ent); at.set(ent, i);
     if (p.lock) lockedEnts.add(ent);
