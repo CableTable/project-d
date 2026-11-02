@@ -7,9 +7,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const TOOLS = dirname(fileURLToPath(import.meta.url));
 
-// Chain the review? base = the sha the build branched from, tip = the branch's sha now, code = the build's exit code.
+// Chain the review? base = the sha the build branched from, tip = the branch's sha now (or a function that reads it: not called after a non-zero exit), code = the build's exit code.
 export function reviewChain({ base, tip, code }) {
   if (code !== 0) return { why: `the build ended in error (exit ${code})` };
+  if (typeof tip === 'function') tip = tip();
   if (!tip) return { why: 'the branch has no tip' };
   if (tip.startsWith(base.toLowerCase())) return { why: 'no commit on the branch (tip equals the base)' }; // base may be a short sha
   return { chain: true };
@@ -19,6 +20,7 @@ export function reviewChain({ base, tip, code }) {
 export function setRunLine(text, line, key) {
   const eol = text.includes('\r\n') ? '\r\n' : '\n', lines = text.split(/\r?\n/);
   if (lines.at(-1) === '') lines.pop();
+  while (lines.length < 2) lines.push(''); // a run line never takes line 1 or 2
   const i = lines.findIndex((l, j) => j >= 2 && l.includes(` -> ${key}: `));
   if (i < 0) lines.push(line); else lines[i] = line;
   return lines.join(eol) + eol;
@@ -31,8 +33,10 @@ export function finish(job, code, x) {
   if (!r) return;
   let why;
   try {
-    const tip = x.git(r.dir, 'rev-parse', r.branch), d = reviewChain({ base: r.base, tip, code });
-    if (d.chain) { x.review(['review', tip, r.brief, r.out, ...(r.from ? ['--from', r.from, r.branch] : [])]); return; }
+    let tip;
+    const d = reviewChain({ base: r.base, tip: () => (tip = x.git(r.dir, 'rev-parse', r.branch)), code });
+    // --over: the launcher's 150k context gate must not refuse a review of a build that already ran
+    if (d.chain) { x.review(['review', tip, r.brief, r.out, ...(r.from ? ['--from', r.from, r.branch] : []), '--over']); return; }
     why = d.why;
   } catch (e) { why = `review not launched: ${e.message}`; }
   x.write(r.out, `NO REVIEW: ${why}\n`);

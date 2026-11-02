@@ -33,6 +33,9 @@ test('wait: a .jsonl is done at its result line, a .txt when non-empty; unfinish
   assert.equal(firstDone({ 'a.jsonl': '{"type":"user","message":"the \\"type\\":\\"result\\" text"}\n' }), null);
   assert.equal(firstDone({}), null);
   assert.equal(firstDone({ 'a.jsonl': running, 'r.jsonl': 'NO REVIEW: no commit on the branch\n' }), 'r.jsonl'); // TODO 167d
+  assert.equal(firstDone({ 's.log': 'npm output\nok 5 - SUITE unit=0 is text, not the end\n' }), null); // TODO 167e: a suite log is done at its SUITE last line
+  assert.equal(firstDone({ 's.log': 'SUITE unit=0 browser=\n' + 'more output\n' }), null);
+  assert.equal(firstDone({ 'a.jsonl': running, 's.log': 'tests\r\nSUITE unit=0 browser=1\r\n' }), 's.log');
 });
 
 test('wait (CLI): exits 0 printing DONE <file> for a finished run; a bad --ci is a usage error', () => {

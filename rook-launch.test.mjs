@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief } from './tools/rook-launch.mjs';
+import { acad, acadArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -23,7 +23,7 @@ function recorder(fail = '') {
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
   const git = (...a) => rec('git', a[1] === 'config' ? 'tools/hooks' : '')(...a);
-  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), truncate: rec('truncate'), queue: { open: rec('queueOpen', { queue: 'q.txt', key: 'k', text: 'kind id -> k:' }), set: rec('queueSet') }, gate: { context: rec('gateContext'), check: rec('gateCheck'), record: rec('gateRecord') } } };
+  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), truncate: rec('truncate'), queue: { open: rec('queueOpen', { queue: 'q.txt', key: 'k', text: 'kind id -> k:' }), set: rec('queueSet') }, gate: { context: rec('gateContext'), check: rec('gateCheck'), record: rec('gateRecord'), queueFile: () => `${X}/runs33/queue.txt` } } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
@@ -400,4 +400,98 @@ test('TODO 167d: launchRun gives the RUN script the end script and the job JSON 
 
 test('TODO 167d lows: a Tick line with a one-digit number after a joiner is prose; 2+ digit ids still count', () => {
   for (const [brief, count] of [['Tick 170, 1 line on the cause', 0], ['6. Tick TODO 170, 1 line on the cause', 0], ['Tick 170, 171', 1], ['Tick 170 and 171, 1 line', 1]]) assert.equal(lintBrief(brief).length, count, brief);
+});
+
+test('TODO 167e: suite refuses a sha that is not HEAD; otherwise launches the suite script in this checkout with the log, a lock and a queue line', (t) => {
+  t.mock.method(console, 'log', () => {});
+  const r = recorder();
+  r.x.git = (...a) => { r.calls.push(['git', ...a]); return 'abc1234' + 'f'.repeat(33); };
+  assert.throws(() => suite(['def5678'], r.x), /refused: def5678 is not HEAD \(abc1234\)/);
+  assert.throws(() => suite([], r.x), /usage/);
+  assert.throws(() => suite(['zz'], r.x), /not a commit id/);
+  assert.equal(launched(r.calls), undefined);
+  suite(['ABC1234'], r.x);
+  const l = launched(r.calls);
+  assert.match(l[1], /node(\.exe)?$/i);
+  assert.match(l[2][0], /rook-suite\.mjs$/);
+  assert.equal(l[4], 'ignore'); // no stdin
+  assert.equal(l[5], `fd:${X}/runs33/suite-ABC1234.log`);
+  assert.equal(l[7], `${X}/runs33/suite-ABC1234.log`);
+  assert.equal(l[9], undefined); // the folder's own lock
+  assert.deepEqual(r.calls.find((c) => c[0] === 'queueOpen').slice(1), ['suite', 'ABC1234', `${X}/runs33/suite-ABC1234.log`]);
+  assert.equal(r.calls.find((c) => c[0] === 'queueSet')[2], 'running');
+  const busy = recorder();
+  busy.x.git = () => 'abc1234';
+  busy.x.locked = () => true;
+  assert.throws(() => suite(['abc1234'], busy.x), /in use/);
+});
+
+test('TODO 167e: retro launches the three runs from runs<N> as WORKFLOW line 215; a missing .txt launches none', (t) => {
+  t.mock.method(console, 'log', () => {});
+  assert.deepEqual(retroArgs('E', 'H'), ['-p', '--model', 'claude-opus-5-5', '--effort', 'medium', '--permission-mode', 'dontAsk', '--max-budget-usd', '6', '--output-format', 'text',
+    '--add-dir', 'E', '--add-dir', 'E:/Project B/Claude/Project D', '--add-dir', 'H/.claude/projects/E--Project-B-Claude-Project-D', '--add-dir', 'H/.claude/plugins/cache/mattpocock',
+    '--allowedTools', 'Read', 'Grep', 'Glob', 'Write', 'Bash(git log:*)', 'Bash(git show:*)', 'Bash(wc:*)', '--disallowedTools', 'Agent']);
+  const r = recorder();
+  retro([], r.x);
+  const ls = r.calls.filter((c) => c[0] === 'launch');
+  assert.deepEqual(ls.map((l) => l[7]), ['retro33', 'retro33king', 'retro33rook'].map((n) => `${X}/runs33/${n}.out`));
+  assert.deepEqual(ls.map((l) => l[9]), ['retro33', 'retro33king', 'retro33rook'].map((n) => `${X}/runs33/.run-lock-${n}`));
+  assert.ok(ls.every((l) => l[3] === `${X}/runs33` && /claude2\.cmd$/.test(l[1])));
+  assert.deepEqual(r.calls.filter((c) => c[0] === 'open' && c[2] === 'r').map((c) => c[1]), ['retro33', 'retro33king', 'retro33rook'].map((n) => `${X}/runs33/${n}.txt`));
+  const missing = recorder();
+  missing.x.need = (path) => { if (path.endsWith('retro33rook.txt')) throw new Error('retro brief not found'); };
+  assert.throws(() => retro([], missing.x), /retro brief not found/);
+  assert.equal(launched(missing.calls), undefined);
+  assert.throws(() => retro(['x'], r.x), /usage/);
+  const busy = recorder();
+  busy.x.locked = (dir, lock) => lock.endsWith('retro33king');
+  assert.throws(() => retro([], busy.x), /retro33king is in use/);
+});
+
+test('TODO 167e: acad runs Bishop on runs<N>/acad<item>.txt as WORKFLOW line 87; a missing .txt or a bad item launches nothing', (t) => {
+  t.mock.method(console, 'log', () => {});
+  assert.deepEqual(acadArgs('E'), ['-p', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--permission-mode', 'dontAsk', '--max-budget-usd', '4', '--output-format', 'text', '--add-dir', 'E',
+    '--allowedTools', 'PowerShell', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'WebFetch(domain:help.autodesk.com)', '--disallowedTools', 'Agent']);
+  assert.match(commandLine('c', acadArgs('E')), /"WebFetch\(domain:help\.autodesk\.com\)"/);
+  const r = recorder();
+  acad(['170'], r.x);
+  const l = launched(r.calls);
+  assert.equal(l[3], `${X}/runs33`);
+  assert.equal(l[4], `fd:${X}/runs33/acad170.txt`);
+  assert.equal(l[7], `${X}/runs33/acad170.out`);
+  assert.deepEqual(r.calls.find((c) => c[0] === 'queueOpen').slice(1), ['acad', '170', `${X}/runs33/acad170.out`]);
+  const missing = recorder();
+  missing.x.need = (path) => { if (path.endsWith('acad170.txt')) throw new Error('acad brief not found'); };
+  assert.throws(() => acad(['170'], missing.x), /acad brief not found/);
+  for (const bad of [[], ['a', 'b'], ['../x']]) assert.throws(() => acad(bad, r.x), /usage/);
+  assert.equal(r.calls.filter((c) => c[0] === 'launch').length, 1);
+});
+
+test('TODO 167e: pawn adds the house sentence, runs in ~/agy-research with a json out file, one question only', (t) => {
+  t.mock.method(console, 'log', () => {});
+  assert.deepEqual(pawnArgs('What is X; max 5 lines'), ['-p', 'What is X; max 5 lines Open https links only, skip http ones, run no commands; read at most 3 pages; cite URLs.', '--output-format', 'json', '--print-timeout', '10m']);
+  assert.throws(() => pawnArgs('a\nb'), /one line/);
+  assert.throws(() => commandLine('x', pawnArgs('say "hi"')), /double quote/);
+  const r = recorder();
+  pawn(['out.json', 'What is X?'], r.x);
+  const l = launched(r.calls);
+  assert.match(l[1], /agy\.exe$/);
+  assert.match(l[3], /agy-research$/);
+  assert.equal(l[4], 'ignore');
+  assert.equal(l[7], resolve('out.json'));
+  assert.deepEqual(r.calls.find((c) => c[0] === 'queueOpen').slice(1), ['pawn', 'agy', resolve('out.json')]);
+  for (const bad of [[], ['out.json'], ['out.txt', 'q'], ['out.json', 'q', 'extra'], ['out.json', 'a\nb']]) assert.throws(() => pawn(bad, r.x), /usage|one line/);
+  assert.equal(r.calls.filter((c) => c[0] === 'launch').length, 1);
+});
+
+test('TODO 167e lows: a missing queue.txt gives no queue line; launchRun with its own lock writes and removes that one', () => {
+  assert.equal(queueLineOf('q.txt', 'build', 'br', '/a/o.jsonl', () => false), null);
+  assert.deepEqual(queueLineOf('q.txt', 'build', 'br', '/a/o.jsonl', () => true), { queue: 'q.txt', key: 'o.jsonl', text: 'build br -> o.jsonl:' });
+  const dir = mkdtempSync(join(tmpdir(), 'rook-lock-')), lock = join(dir, '.run-lock-x'), seen = [];
+  launchRun('x.cmd', ['ok'], dir, 0, 1, {}, 'o', (bin, argv) => { seen.push(argv); return fakeSpawn().child; }, undefined, null, lock);
+  assert.equal(seen[0][3], lock);
+  assert.ok(existsSync(lock) && !existsSync(join(dir, '.run-lock')));
+  launchFailed(dir, new Error('x'), () => {}, lock);
+  assert.equal(existsSync(lock), false);
+  rmSync(dir, { recursive: true });
 });

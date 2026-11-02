@@ -84,7 +84,7 @@ usage-agent-install.ps1.
    Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
    **Bishop-acad (claude2, always; never King) runs these checks, not Rook** (his calls 2026-10-28, to save Rook's usage, and 2026-10-29: Bishop is the tester): Rook writes the questions
    (what to try, which prompts / keys / screenshots), then from `Project D extras/runs<N>`:
-   `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Edit Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out`.
+   `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Edit Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out` (or `node tools/rook.mjs acad <item>`: detached, from `runs<N>`, one queue line).
    The brief always says: one AutoCAD session at a time; only new scratch drawings (`Documents.Add()`), never his open
    drawings, close scratch ones without saving; wrap SendCommand in Start-Job with a timeout (it blocks while a prompt
    waits; Esc via SendKeys frees it); zoom before picking (off-screen picks are ignored); PrintWindow the AutoCAD window
@@ -211,8 +211,8 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
 # FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
 # `git switch -c <branch> <sha>`. After: Rook pushes.
-# Full suite (Rook, on the session branch, Bash run_in_background; ~20 min): L="../Project D extras/runs<N>/suite-<sha>.log"; npm.cmd test > "$L" 2>&1; echo unit=$?; npm.cmd run test:browser >> "$L" 2>&1; echo browser=$?; grep -E "^FAIL|[0-9]+ failed|passed" "$L" | tail -8
-# Retros (rule 4), from runs<N>: for n in retro<N> retro<N>king retro<N>rook; do claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --add-dir "E:/Project B/Claude/Project D" --add-dir "C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D" --add-dir "C:/Users/raksh/.claude/plugins/cache/mattpocock" --allowedTools Read Grep Glob Write "Bash(git log:*)" "Bash(git show:*)" "Bash(wc:*)" --disallowedTools Agent < $n.txt > $n.out 2>&1 & done; wait
+# Full suite (Rook, on the session branch, Bash run_in_background; ~20 min) = `node tools/rook.mjs suite <sha>` (detached, <sha> must be HEAD, log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`, `wait` the .log); by hand: L="../Project D extras/runs<N>/suite-<sha>.log"; npm.cmd test > "$L" 2>&1; echo unit=$?; npm.cmd run test:browser >> "$L" 2>&1; echo browser=$?; grep -E "^FAIL|[0-9]+ failed|passed" "$L" | tail -8
+# Retros (rule 4) = `node tools/rook.mjs retro` (the three runs detached, none starts when a .txt is missing); by hand, from runs<N>: for n in retro<N> retro<N>king retro<N>rook; do claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --add-dir "E:/Project B/Claude/Project D" --add-dir "C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D" --add-dir "C:/Users/raksh/.claude/plugins/cache/mattpocock" --allowedTools Read Grep Glob Write "Bash(git log:*)" "Bash(git show:*)" "Bash(wc:*)" --disallowedTools Agent < $n.txt > $n.out 2>&1 & done; wait
 #   Briefs: copy runs<N-1>/retro<N-1>*.txt (header + "=== retro skill ===" + the skill), new transcripts and known events in the header.
 # Builders never start a server or end a process: browser.test.mjs starts and stops its own (taskkill would kill Rook's suites).
 # If package-lock.json changed since its last build, Rook runs `npm.cmd ci` in ProjectD-rowan first (its sandbox cannot
@@ -247,6 +247,7 @@ codex.cmd exec -p builder -C "E:/Project B/Claude/Project D extras/ProjectD-rowa
 
 # Quick lookup: Pawn (Antigravity CLI). Reads https pages only (his settings.json allow rule), no shell,
 # writes only in its own folder; never run it in the repo, never with --dangerously-skip-permissions.
+# `node tools/rook.mjs pawn <out.json> "<question; max N lines>"` runs it detached from ~/agy-research and adds "Open https links only, skip http ones, run no commands; read at most 3 pages; cite URLs." itself. By hand:
 cd ~/agy-research && "/c/Users/raksh/AppData/Local/agy/bin/agy.exe" -p "<question; max N lines; cite URLs>" --output-format json --print-timeout 10m
 # Every Pawn brief says "open https links only, skip http ones, run no commands": one blocked action ends a headless run.
 # A Pawn run holds 1 question and says "read at most 3 pages"; more = parallel runs, one file each (S30 retro: 2-question runs timed out empty 3x). A timeout with an empty

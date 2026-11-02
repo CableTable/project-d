@@ -15,9 +15,17 @@ function rows(text) {
 }
 
 // Leaf rows ticked in `after` that were not ticked (or did not exist) in `before`; a parent ticked because its children are does not count.
-export function countTicked(before, after) {
+// skip = TODO ids whose tick is not a new item (TODO 167e: a --tool or fix launch, see skipIds).
+export function countTicked(before, after, skip = new Set()) {
   const was = new Set(rows(before).filter((r) => r.ticked).map((r) => r.key));
-  return rows(after).filter((r) => r.leaf && r.ticked && !was.has(r.key)).length;
+  return rows(after).filter((r) => r.leaf && r.ticked && !was.has(r.key) && !skip.has(r.key.split('#')[0])).length;
+}
+
+// TODO 167e: a launch's TODO id is its branch's last part without a `fix` ending (king/167cfix, king/167c-fix -> 167c); ids of tool / fix launches that no item launch also has.
+export function skipIds(state) {
+  const id = (l) => (l.branch || '').split('/').pop().replace(/-?fix\d*$/, '');
+  const items = new Set(itemsOf(state).map(id));
+  return new Set(state.launches.filter((l) => l.kind !== 'item').map(id).filter((i) => i && !items.has(i)));
 }
 
 // TODO 167a: context of the LAST main-chain assistant message (a compact lowers it, so not the peak) = input + cache read + cache write; null when there is none.
@@ -73,7 +81,7 @@ export function gateOps(env) {
     return { name, dir, file, head, state };
   }
   function show(g) {
-    const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`));
+    const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`), skipIds(g.state));
     const line = queueLine(g.name, ticked, itemsOf(g.state).length, toolsOf(g.state).length);
     const q = `${g.dir}/queue.txt`;
     env.write(q, setLine2(env.read(q) || '', line));

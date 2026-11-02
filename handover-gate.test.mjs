@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contextOf, countTicked, gateOps, nextState, queueLine, setLine2 } from './tools/handover-gate.mjs';
+import { contextOf, countTicked, gateOps, nextState, queueLine, setLine2, skipIds } from './tools/handover-gate.mjs';
 
 const BEFORE = [
   '- [ ] 162. **Quick Select**',
@@ -30,6 +30,18 @@ test('ticked counter: leaf rows that turned ticked or arrived ticked; a ticked p
   assert.equal(countTicked(AFTER, AFTER), 0);
   assert.equal(countTicked(BEFORE, BEFORE), 0);
   assert.equal(countTicked('', '1. ✅ a\n- [x] 2. b\n3. ❌ c'), 2); // a won't-do row is not a tick
+});
+
+test('TODO 167e: ticks of tool and fix launches are not counted, unless an item launch has the same id', () => {
+  const launches = [{ kind: 'item', branch: 'king/162' }, { kind: 'tool', branch: 'king/164' }, { kind: 'fix', branch: 'king/162fix' }, { kind: 'fix', branch: 'king/163-fix' }, { kind: 'tool', branch: 'k/tool' }];
+  const skip = skipIds({ launches });
+  assert.deepEqual([...skip].sort(), ['163', '164', 'tool']);
+  assert.equal(countTicked(BEFORE, AFTER, skip), 4); // 162 stays (its fix does not hide the item), 164 is a tool ticket
+  assert.equal(countTicked(BEFORE, AFTER, skipIds({ launches: [{ kind: 'tool', branch: 'king/155f' }] })), 4);
+  const g = world();
+  g.files['/x/runs30/rook-gate.json'] = JSON.stringify({ uuid: 'uuid-1', startSha: 'head0', launches: [{ kind: 'tool', branch: 'king/162' }] });
+  const env = { ...g.env, git: (...a) => (a.join(' ') === 'show claude/session30:TODO.md' ? AFTER : g.env.git(...a)) };
+  assert.match(gateOps(env).report(), /: 4 ticked, 0 launched/); // 5 ticks, 162 was a tool ticket
 });
 
 test('state: the same Rook keeps its launches, a new uuid starts empty at the current head', () => {
