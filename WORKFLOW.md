@@ -30,6 +30,11 @@ briefs, reading short reports and merging.
    `canvas.json` (a Round title note + a sticky with pros / cons / open questions per board) and publishes
    to the **"Project D Mockups"** canvas: https://claude.ai/artifact/QgsKW8CrQbt4rURJeY9sSD.
    Mock-ups are never committed. He picks an option; the lead answers open questions with a recommendation.
+2b. **Fresh read** (TODO 179): before an M / L item's brief, and before any item whose grill answer rests on an invariant
+   ("X never Y"), a Bishop run with no memory of the grill reads only `runs<N>/grill-<item>.md`, the TODO row and the code
+   files the grill names, and writes `runs<N>/fresh-<item>.out` (max 8 lines: gaps, contradictions, missing cases; per
+   invariant the code line that keeps it, or "not found"). Rook folds each line into the brief or reopens that grill Q. From runs<N>:
+   `claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 2 --output-format text --add-dir "E:/Project B/Claude/Project D" --allowedTools Read Grep Glob --disallowedTools Agent "Fresh read of TODO <item>: read grill-<item>.md, TODO.md row <item> and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing." > fresh-<item>.out 2>&1`
 3. **Build:** a fresh builder session with a brief (spec = the chosen artboard, decisions for DECISIONS.md,
    tests, screenshots light + dark, tick TODO.md, commit (never push), don't stage `mockups/`). Keep its `session_id`.
 4. **Review:** a Bishop-review session on the build's commits (ranked findings, "ship as is" / "fix first").
