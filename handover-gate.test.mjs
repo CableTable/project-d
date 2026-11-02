@@ -161,3 +161,12 @@ test('gate: without rook-next.txt or a runs<N> line it stops with a message', ()
   delete w.files['/x/rook-next.txt'];
   assert.throws(() => w.gate.check(false, false), /rook-next\.txt not found/);
 });
+
+test('TODO 167d: queueFile is the queue.txt of the runs<N> that rook-next.txt line 3 names; none = a message', () => {
+  const w = world();
+  assert.equal(w.gate.queueFile(), '/x/runs30/queue.txt');
+  w.files['/x/rook-next.txt'] = 'uuid-1\nRook S30\n';
+  assert.throws(() => w.gate.queueFile(), /line 3 does not name runs<N>/);
+  delete w.files['/x/rook-next.txt'];
+  assert.throws(() => w.gate.queueFile(), /line 3 does not name runs<N>/);
+});

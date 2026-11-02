@@ -90,6 +90,12 @@ export function gateOps(env) {
   }
   return {
     context,
+    // TODO 167d: this Rook's runs<N>/queue.txt (rook-next.txt line 3 names runs<N>/resume-rook.txt).
+    queueFile() {
+      const n = /runs(\d+)/.exec((env.read(`${env.extras}/rook-next.txt`) || '').split(/\r?\n/)[2] || '')?.[1];
+      if (!n) throw new Error('rook-next.txt line 3 does not name runs<N>/resume-rook.txt');
+      return `${env.extras}/runs${n}/queue.txt`;
+    },
     // Throws when the launch is a new item over the limit and --over is not given.
     check(fix, over, tool) {
       context(over);

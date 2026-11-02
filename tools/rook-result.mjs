@@ -1,8 +1,8 @@
 // TODO 167a, `rook.mjs wait`: has a run ended? `texts` = { file: text | null (not there yet) }; returns the first finished file or null.
-// A Claude run (.jsonl) is done at its `result` line (a half-written last line is skipped); a Knight report (.txt) when it is not empty.
+// A Claude run (.jsonl) is done at its `result` line (a half-written last line is skipped) or a `NO REVIEW: <why>` line (TODO 167d, a review that was not chained); a Knight report (.txt) when it is not empty.
 export function firstDone(texts) {
   const done = (file, text) => text != null && (file.endsWith('.jsonl')
-    ? text.split(/\r?\n/).some((l) => { try { return JSON.parse(l).type === 'result'; } catch { return false; } })
+    ? text.startsWith('NO REVIEW:') || text.split(/\r?\n/).some((l) => { try { return JSON.parse(l).type === 'result'; } catch { return false; } })
     : text.trim() !== '');
   return Object.keys(texts).find((f) => done(f, texts[f])) ?? null;
 }

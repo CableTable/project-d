@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateOps } from './handover-gate.mjs';
+import { setRunLine } from './rook-end.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXTRAS = 'E:/Project B/Claude/Project D extras';
@@ -46,35 +47,38 @@ export function parseReview(args) {
   if (pos.length !== 3) throw new Error(usage);
   if (!SHA.test(pos[0])) throw new Error(`not a commit id: ${pos[0]}`);
   const from = flags['--from'];
-  return { sha: pos[0], brief: resolve(pos[1]), out: resolve(pos[2]), as: account(flags, 'bishop', usage), over: !!flags['--over'], from: from &&{ clone: resolve(from[0]), branch: from[1] } };
+  return { sha: pos[0], brief: resolve(pos[1]), out: resolve(pos[2]), as: account(flags, 'bishop', usage), auto: !flags['--as'], over: !!flags['--over'], from: from &&{ clone: resolve(from[0]), branch: from[1] } };
 }
 
+const reviewOf = (v) => v && { brief: resolve(v[0]), out: resolve(v[1]) };
+
 export function parseBuild(args) {
-  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big]';
-  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--tool': 0, '--over': 0, '--big': 0 }, usage);
+  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   if (!SHA.test(pos[3])) throw new Error(`not a commit id: ${pos[3]}`);
   const as = account(flags, 'king', usage), dir = flags['--dir'] && flags['--dir'][0];
   if (dir && (dir !== 'king2' || as !== 'king')) throw new Error(`${usage}\n--dir king2 is for King (--as king)`);
-  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'] };
+  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
 }
 
 export function parseKnight(args) {
-  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--tool] [--over] [--big]';
-  const { pos, flags } = parseFlags(args, { '--fix': 0, '--tool': 0, '--over': 0, '--big': 0 }, usage);
+  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
+  const { pos, flags } = parseFlags(args, { '--fix': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   const [brief, report, branch, sha] = pos;
   if (!report.endsWith('.txt')) throw new Error(`report must end in .txt (the log goes next to it): ${report}`);
   if (!SHA.test(sha)) throw new Error(`not a commit id: ${sha}`);
   const abs = resolve(report);
-  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'] };
+  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
 }
 
 // TODO 167c: a brief whose line 1 opens like a fix round counts as one without `--fix`.
 export const isFixBrief = (text) => /^﻿?(King fix|Knight fix|Fix round)\b/.test(text);
 
 // Ticking several TODOs: ids right after `Tick`, joined by , and & / + (other numbers on the line are prose).
-const tickIds = (line) => line.match(/^\s*(?:\d+\.\s+)?`?Tick\s+(?:TODO\s+)?(\d+[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d+[a-z]*\d*)+)/i)?.[1].match(/\d+[a-z]*\d*/g) ?? [];
+// Ids have 2+ digits, so `Tick 170, 1 line on the cause` is prose.
+const tickIds = (line) => line.match(/^\s*(?:\d+\.\s+)?`?Tick\s+(?:TODO\s+)?(\d{2,}[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d{2,}[a-z]*\d*)+)/i)?.[1].match(/\d{2,}[a-z]*\d*/g) ?? [];
 
 export function lintBrief(text) {
   const problems = [];
@@ -129,10 +133,12 @@ export function commandLine(bin, args) {
 
 // A detached cmd.exe loses its redirected output on Windows (tested 2026-10-29), so a detached node holds the handles
 // and runs the .cmd under them. The command returns at once and the run goes on. stdin = brief, stdout and stderr = the out file.
-// When the run ends it deletes the folder's lock (argv[2]).
+// When the run ends it deletes the folder's lock (argv[2]), then (TODO 167d) runs tools/rook-end.mjs (argv[3]) with the job JSON (argv[4]) and the exit code.
 const RUN = 'const rm = () => { try { require("fs").unlinkSync(process.argv[2]); } catch {} };'
-  + 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => { rm(); process.exit(c); });';
+  + 'const end = (c) => { if (process.argv[3]) try { require("child_process").execFileSync(process.execPath, [process.argv[3], process.argv[4], String(c)], { stdio: "ignore", windowsHide: true }); } catch {} };'
+  + 'require("child_process").spawn(process.argv[1], { shell: true, stdio: "inherit", windowsHide: true }).on("exit", (c) => { rm(); end(c); process.exit(c); });';
 const lockFile = (dir) => `${dir}/.run-lock`;
+const END = join(REPO, 'tools', 'rook-end.mjs');
 
 // A run that never started must not leave its folder locked.
 export function launchFailed(cwd, e, exit = process.exit) {
@@ -142,11 +148,11 @@ export function launchFailed(cwd, e, exit = process.exit) {
 }
 
 // The command line is built first (it throws on a bad argument), the lock is written last; a throw from the spawn or its 'error' event takes the lock off again.
-export function launchRun(bin, args, cwd, inFd, outFd, env, outPath = '', spawnFn = spawn, fail = launchFailed) {
+export function launchRun(bin, args, cwd, inFd, outFd, env, outPath = '', spawnFn = spawn, fail = launchFailed, after = null) {
   const line = commandLine(bin, args);
   writeFileSync(lockFile(cwd), `${new Date().toISOString()}\n${outPath}`); // `rook.mjs result` reads the out file's name back
   try {
-    const child = spawnFn(process.execPath, ['-e', RUN, line, lockFile(cwd)], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
+    const child = spawnFn(process.execPath, ['-e', RUN, line, lockFile(cwd), ...(after ? [END, JSON.stringify(after)] : [])], { cwd, env, detached: true, windowsHide: true, stdio: [inFd, outFd, outFd] });
     child.on('error', (e) => fail(cwd, e));
     child.unref();
   } catch (e) {
@@ -170,7 +176,20 @@ const io = {
     try { execSync('npm.cmd ci --silent', { cwd: dir, stdio: 'pipe' }); }
     catch (e) { throw new Error(`npm ci failed in ${dir}: ${String(e.stderr || e.message).trim()}`); }
   },
-  launch: (bin, args, cwd, inFd, outFd, env = process.env, outPath) => launchRun(bin, args, cwd, inFd, outFd, env, outPath),
+  launch: (bin, args, cwd, inFd, outFd, env = process.env, outPath, after) => launchRun(bin, args, cwd, inFd, outFd, env, outPath, spawn, launchFailed, after),
+  truncate(path) { if (existsSync(path)) writeFileSync(path, ''); }, // a reused out file must not wake `wait` before the run ends
+  // TODO 167d: this launch's line in queue.txt; `open` never throws (a note, not the launch) and returns null when there is no queue.txt
+  queue: {
+    open(kind, id, out) {
+      try { const key = basename(out); return { queue: io.gate.queueFile(), key, text: `${kind} ${id} -> ${key}:` }; }
+      catch (e) { console.error(`queue line not written: ${e.message}`); return null; }
+    },
+    set(q, state) {
+      if (!q) return;
+      try { writeFileSync(q.queue, setRunLine(existsSync(q.queue) ? readFileSync(q.queue, 'utf8') : '', `${q.text} ${state}`, q.key)); }
+      catch (e) { console.error(`queue line not written: ${e.message}`); }
+    },
+  },
 };
 // The handover gate (tools/handover-gate.mjs) reads the Rook's files in the extras folder and the session branch in this repo.
 io.gate = gateOps({ extras: EXTRAS, claudeDir: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), read: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null), write: writeFileSync, git: (...a) => io.git(REPO, ...a) });
@@ -197,9 +216,15 @@ function needClean(x, dir) {
   if (dirty.length) throw new Error(`${dir} has tracked changes (git stash -u -m "<run>" first): ${dirty.join(' | ')}`);
 }
 
+// What the RUN script hands to tools/rook-end.mjs when the run ends: its queue line (q) and the review to chain; null when there is neither.
+const afterOf = (q, review) => (q || review ? { ...q, review } : null);
+
 export function review(args, x = io) {
-  const { sha, brief, out, as, from, over } = parseReview(args);
+  const parsed = parseReview(args), { sha, brief, out, from, over } = parsed;
+  let as = parsed.as;
   x.gate.context(over);
+  // TODO 167d: no --as = Bishop, or King when Bishop's reviewer folder is locked (both locked: needClean refuses King's below)
+  if (parsed.auto && x.locked(folder('bishop', 'review'))) { as = 'king'; console.log('review: Bishop busy, King'); }
   const wt = folder(as, 'review');
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);
@@ -211,14 +236,17 @@ export function review(args, x = io) {
   const inFd = x.open(brief, 'r');
   x.git(wt, 'switch', '--detach', sha);
   x.npmCi(wt);
-  x.launch(claude(as), reviewerArgs(), wt, inFd, x.open(out, 'w'), undefined, out);
+  const q = x.queue.open('review', sha, out);
+  x.launch(claude(as), reviewerArgs(), wt, inFd, x.open(out, 'w'), undefined, out, afterOf(q));
+  x.queue.set(q, 'running');
   console.log(`review ${sha} (${as}) -> ${out}`);
 }
 
 export function build(args, x = io) {
-  const { brief, out, branch, sha, as, dir: second, fix: fixFlag, tool, over, big } = parseBuild(args);
+  const { brief, out, branch, sha, as, dir: second, fix: fixFlag, tool, over, big, review: chain } = parseBuild(args);
   const dir =second ? folder(as, 'review') : folder(as, 'build'); // king2 is King's review folder: needClean refuses it while a review runs
   x.need(brief, 'brief file');
+  if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   x.gate.check(fix, over, tool);
   checkBrief(text, big);
@@ -232,7 +260,10 @@ export function build(args, x = io) {
   const env = { ...process.env };
   delete env.FORCE_COLOR;
   if (as === 'king') env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS = '1'; // a long foreground call must not move to the background
-  x.launch(claude(as), buildArgs(), dir, inFd, x.open(out, 'w'), env, out);
+  if (chain) x.truncate(chain.out);
+  const q = x.queue.open('build', branch, out);
+  x.launch(claude(as), buildArgs(), dir, inFd, x.open(out, 'w'), env, out, afterOf(q, chain && { ...chain, dir, branch, base: sha }));
+  x.queue.set(q, 'running');
   console.log(`build ${branch} @ ${sha} (${as}) -> ${out}`);
   const line = x.gate.record({ fix, over, tool, brief, branch });
   if (line) console.log(line);
@@ -248,9 +279,10 @@ function needHooks(x, dir) {
 }
 
 export function knight(args, x = io) {
-  const { brief, report, branch, sha, log, fix: fixFlag, tool, over, big } = parseKnight(args);
+  const { brief, report, branch, sha, log, fix: fixFlag, tool, over, big, review: chain } = parseKnight(args);
   const clone = `${EXTRAS}/ProjectD-rowan`;
   x.need(brief, 'brief file');
+  if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   x.gate.check(fix, over, tool);
   checkBrief(text, big);
@@ -267,7 +299,11 @@ export function knight(args, x = io) {
   x.need(dirname(log), 'output folder');
   const inFd = x.open(brief, 'r');
   x.git(clone, 'switch', '-c', branch, sha);
-  x.launch(CODEX, knightArgs(report, clone), clone, inFd, x.open(log, 'w'), undefined, report);
+  x.truncate(report);
+  if (chain) x.truncate(chain.out);
+  const q = x.queue.open('knight', branch, report);
+  x.launch(CODEX, knightArgs(report, clone), clone, inFd, x.open(log, 'w'), undefined, report, afterOf(q, chain && { ...chain, dir: clone, branch, base: sha, from: clone }));
+  x.queue.set(q, 'running');
   console.log(`knight ${branch} @ ${sha} -> ${report}`);
   const line = x.gate.record({ fix, over, tool, brief, branch });
   if (line) console.log(line);

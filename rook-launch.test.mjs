@@ -23,7 +23,7 @@ function recorder(fail = '') {
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
   const git = (...a) => rec('git', a[1] === 'config' ? 'tools/hooks' : '')(...a);
-  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { context: rec('gateContext'), check: rec('gateCheck'), record: rec('gateRecord') } } };
+  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), truncate: rec('truncate'), queue: { open: rec('queueOpen', { queue: 'q.txt', key: 'k', text: 'kind id -> k:' }), set: rec('queueSet') }, gate: { context: rec('gateContext'), check: rec('gateCheck'), record: rec('gateRecord') } } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
@@ -83,7 +83,7 @@ test('TODO 172: build and knight refuse every brief problem before changes; --bi
 });
 
 test('review arguments: three positionals, optional --as and --from clone branch, a real commit id, paths absolute', () => {
-  assert.deepEqual(parseReview(['abc1234', 'b.txt', 'r.jsonl']), { sha: 'abc1234', brief: resolve('b.txt'), out: resolve('r.jsonl'), as: 'bishop', over: false, from: undefined });
+  assert.deepEqual(parseReview(['abc1234', 'b.txt', 'r.jsonl']), { sha: 'abc1234', brief: resolve('b.txt'), out: resolve('r.jsonl'), as: 'bishop', auto: true, over: false, from: undefined });
   const r = parseReview(['abc1234', 'b.txt', 'r.jsonl', '--from', 'clone', 'king/x', '--as', 'king', '--over']);
   assert.deepEqual([r.as, r.from, r.over], ['king', { clone: resolve('clone'), branch: 'king/x' }, true]);
   assert.throws(() => parseReview(['abc1234', 'b.txt']), /usage: review/);
@@ -96,7 +96,7 @@ test('review arguments: three positionals, optional --as and --from clone branch
 });
 
 test('build arguments: four positionals, optional --as (default king), a real commit id, paths absolute', () => {
-  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, tool: false, over: false, big: false });
+  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, tool: false, over: false, big: false, review: undefined });
   const flagged = parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--fix', '--over', '--as', 'king']);
   assert.deepEqual([flagged.fix, flagged.over, flagged.as], [true, true, 'king']);
   assert.equal(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--as', 'bishop']).as, 'bishop');
@@ -106,7 +106,7 @@ test('build arguments: four positionals, optional --as (default king), a real co
 
 test('knight arguments: four positionals, report ends in .txt, log sits next to it, paths absolute', () => {
   assert.deepEqual(parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234']),
-    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, tool: false, over: false, big: false });
+    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, tool: false, over: false, big: false, review: undefined });
   assert.deepEqual(['--fix', '--over'].map((f) => parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234', f])).map((p) => [p.fix, p.over]), [[true, false], [false, true]]);
   assert.throws(() => parseKnight(['b.txt', 'k.txt', 'knight/x']), /usage: knight/);
   assert.throws(() => parseKnight(['b.txt', 'k.md', 'knight/x', 'abc1234']), /must end in \.txt/);
@@ -137,7 +137,7 @@ test('review plan: checks, files opened, detach, npm ci in the review folder, th
   const { calls, x } = recorder();
   review(['abc1234', 'b.txt', 'o.jsonl'], x);
   const names = calls.map((c) => c[0] + (c[0] === 'git' ? ` ${c[2]}` : ''));
-  assert.deepEqual(names.slice(-5), ['open', 'git switch', 'npmCi', 'open', 'launch']);
+  assert.deepEqual(names.slice(-7), ['open', 'git switch', 'npmCi', 'queueOpen', 'open', 'launch', 'queueSet']);
   assert.equal(calls.find((c) => c[0] === 'npmCi')[1], `${X}/ProjectD-s15fix`);
   assert.ok(calls.some((c) => c[0] === 'need' && c[1] === `${X}/ProjectD-s15fix/.claude/agents/reviewer.md`));
   const bad = recorder('npmCi');
@@ -317,4 +317,87 @@ test('TODO 169: build and knight require tools/hooks in the target folder before
       assert.equal(calls.some((c) => c[0] === 'open' || isSwitch(c) || c[0] === 'launch' || c[0] === 'gateRecord'), false);
     }
   }
+});
+
+test('TODO 167d: --review is parsed for build and knight (two paths, absolute); a missing value is the usage', () => {
+  const b = parseBuild(['b.txt', 'o.jsonl', 'br', 'abc1234', '--review', 'rb.txt', 'r.jsonl']);
+  assert.deepEqual(b.review, { brief: resolve('rb.txt'), out: resolve('r.jsonl') });
+  assert.deepEqual(parseKnight(['b.txt', 'k.txt', 'br', 'abc1234', '--review', 'rb.txt', 'r.jsonl']).review, { brief: resolve('rb.txt'), out: resolve('r.jsonl') });
+  assert.throws(() => parseBuild(['b.txt', 'o.jsonl', 'br', 'abc1234', '--review', 'rb.txt']), /usage: build.*--review/);
+  assert.throws(() => parseKnight(['b.txt', 'k.txt', 'br', 'abc1234', '--review']), /usage: knight.*--review/);
+});
+
+test('TODO 167d: build and knight hand the review job and the queue line to the RUN script; without --review only the queue line', () => {
+  const rb = resolve('rb.txt'), ro = resolve('r.jsonl');
+  const b = recorder();
+  build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--review', 'rb.txt', 'r.jsonl'], b.x);
+  assert.deepEqual(launched(b.calls)[8], { queue: 'q.txt', key: 'k', text: 'kind id -> k:', review: { brief: rb, out: ro, dir: `${X}/ProjectD-king`, branch: 'br', base: 'abc1234' } });
+  assert.deepEqual(b.calls.filter((c) => c[0] === 'truncate'), [['truncate', ro]]);
+  const k = recorder();
+  knight(['b.txt', 'k.txt', 'br', 'abc1234', '--review', 'rb.txt', 'r.jsonl'], k.x);
+  assert.deepEqual(launched(k.calls)[8].review, { brief: rb, out: ro, dir: `${X}/ProjectD-rowan`, branch: 'br', base: 'abc1234', from: `${X}/ProjectD-rowan` });
+  const plain = recorder();
+  build(['b.txt', 'o.jsonl', 'br', 'abc1234'], plain.x);
+  assert.equal(launched(plain.calls)[8].review, undefined);
+  const none = recorder();
+  none.x.queue.open = () => null;
+  build(['b.txt', 'o.jsonl', 'br', 'abc1234'], none.x);
+  assert.equal(launched(none.calls)[8], null); // no queue.txt and no review: nothing for the RUN script to do
+  const missing = recorder();
+  missing.x.need = (path) => { if (path === rb) throw new Error('review brief file not found'); };
+  assert.throws(() => build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--review', 'rb.txt', 'r.jsonl'], missing.x), /review brief file/);
+  assert.equal(missing.calls.some((c) => c[0] === 'open' || isSwitch(c) || c[0] === 'launch'), false);
+});
+
+test('TODO 167d: the queue line is written after the launch as running, with the kind, branch or sha and the out file', () => {
+  for (const [run, args, kind, id, out] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234'], 'build', 'br', 'o.jsonl'], [knight, ['b.txt', 'k.txt', 'br', 'abc1234'], 'knight', 'br', 'k.txt'], [review, ['abc1234', 'b.txt', 'o.jsonl'], 'review', 'abc1234', 'o.jsonl']]) {
+    const { calls, x } = recorder();
+    run(args, x);
+    const names = calls.map((c) => c[0]);
+    assert.deepEqual(calls.find((c) => c[0] === 'queueOpen').slice(1), [kind, id, resolve(out)]);
+    assert.ok(names.indexOf('queueOpen') < names.indexOf('launch') && names.indexOf('launch') < names.indexOf('queueSet'), kind);
+    assert.equal(calls.find((c) => c[0] === 'queueSet')[2], 'running');
+  }
+});
+
+test('TODO 167d: a knight launch empties an existing report file before the run', () => {
+  const { calls, x } = recorder();
+  knight(['b.txt', 'k.txt', 'br', 'abc1234'], x);
+  const at = (f) => calls.findIndex(f);
+  assert.deepEqual(calls[at((c) => c[0] === 'truncate')], ['truncate', resolve('k.txt')]);
+  assert.ok(at((c) => c[0] === 'truncate') < at((c) => c[0] === 'launch'));
+});
+
+test('TODO 167d: review without --as uses King when Bishop\'s reviewer folder is locked, and says so; --as is never overridden; both locked is refused', (t) => {
+  const log = t.mock.method(console, 'log', () => {});
+  const free = recorder();
+  review(['abc1234', 'b.txt', 'o.jsonl'], free.x);
+  assert.equal(launched(free.calls)[3], `${X}/ProjectD-s15fix`);
+  const busy = recorder();
+  busy.x.locked = (dir) => dir.endsWith('ProjectD-s15fix');
+  review(['abc1234', 'b.txt', 'o.jsonl'], busy.x);
+  assert.equal(launched(busy.calls)[3], `${X}/ProjectD-king2`);
+  assert.match(launched(busy.calls)[1], /claude3\.cmd$/);
+  assert.ok(log.mock.calls.some((c) => c.arguments[0] === 'review: Bishop busy, King'));
+  const explicit = recorder();
+  explicit.x.locked = (dir) => dir.endsWith('ProjectD-s15fix');
+  assert.throws(() => review(['abc1234', 'b.txt', 'o.jsonl', '--as', 'bishop'], explicit.x), /in use.*\.run-lock/);
+  const both = recorder();
+  both.x.locked = () => true;
+  assert.throws(() => review(['abc1234', 'b.txt', 'o.jsonl'], both.x), /ProjectD-king2 is in use/);
+});
+
+test('TODO 167d: launchRun gives the RUN script the end script and the job JSON only when there is a job', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'rook-lock-')), seen = [];
+  const spawn = (bin, argv) => { seen.push(argv); return fakeSpawn().child; };
+  launchRun('x.cmd', ['ok'], dir, 0, 1, {}, 'o.jsonl', spawn);
+  launchRun('x.cmd', ['ok'], dir, 0, 1, {}, 'o.jsonl', spawn, undefined, { queue: 'q.txt' });
+  assert.equal(seen[0].length, 4);
+  assert.match(seen[1][4], /rook-end\.mjs$/);
+  assert.deepEqual(JSON.parse(seen[1][5]), { queue: 'q.txt' });
+  rmSync(dir, { recursive: true });
+});
+
+test('TODO 167d lows: a Tick line with a one-digit number after a joiner is prose; 2+ digit ids still count', () => {
+  for (const [brief, count] of [['Tick 170, 1 line on the cause', 0], ['6. Tick TODO 170, 1 line on the cause', 0], ['Tick 170, 171', 1], ['Tick 170 and 171, 1 line', 1]]) assert.equal(lintBrief(brief).length, count, brief);
 });

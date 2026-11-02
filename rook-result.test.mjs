@@ -32,6 +32,7 @@ test('wait: a .jsonl is done at its result line, a .txt when non-empty; unfinish
   assert.equal(firstDone({ 'a.jsonl': ended + '\r\n' }), 'a.jsonl');
   assert.equal(firstDone({ 'a.jsonl': '{"type":"user","message":"the \\"type\\":\\"result\\" text"}\n' }), null);
   assert.equal(firstDone({}), null);
+  assert.equal(firstDone({ 'a.jsonl': running, 'r.jsonl': 'NO REVIEW: no commit on the branch\n' }), 'r.jsonl'); // TODO 167d
 });
 
 test('wait (CLI): exits 0 printing DONE <file> for a finished run; a bad --ci is a usage error', () => {
