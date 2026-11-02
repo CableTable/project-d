@@ -446,6 +446,10 @@ test('TODO 167e: retro launches the three runs from runs<N> as WORKFLOW line 215
   const busy = recorder();
   busy.x.locked = (dir, lock) => lock.endsWith('retro33king');
   assert.throws(() => retro([], busy.x), /retro33king is in use/);
+  const lastBusy = recorder();
+  lastBusy.x.locked = (dir, lock) => lock.endsWith('retro33rook');
+  assert.throws(() => retro([], lastBusy.x), /retro33rook is in use/);
+  assert.equal(launched(lastBusy.calls), undefined); // a later run locked: the earlier ones never start
 });
 
 test('TODO 167e: acad runs Bishop on runs<N>/acad<item>.txt as WORKFLOW line 87; a missing .txt or a bad item launches nothing', (t) => {
@@ -471,7 +475,8 @@ test('TODO 167e: pawn adds the house sentence, runs in ~/agy-research with a jso
   t.mock.method(console, 'log', () => {});
   assert.deepEqual(pawnArgs('What is X; max 5 lines'), ['-p', 'What is X; max 5 lines Open https links only, skip http ones, run no commands; read at most 3 pages; cite URLs.', '--output-format', 'json', '--print-timeout', '10m']);
   assert.throws(() => pawnArgs('a\nb'), /one line/);
-  assert.throws(() => commandLine('x', pawnArgs('say "hi"')), /double quote/);
+  assert.throws(() => pawnArgs('say "hi"'), /single quotes/);
+  assert.throws(() => pawnArgs('is %PATH% set'), /single quotes/);
   const r = recorder();
   pawn(['out.json', 'What is X?'], r.x);
   const l = launched(r.calls);
@@ -480,8 +485,15 @@ test('TODO 167e: pawn adds the house sentence, runs in ~/agy-research with a jso
   assert.equal(l[4], 'ignore');
   assert.equal(l[7], resolve('out.json'));
   assert.deepEqual(r.calls.find((c) => c[0] === 'queueOpen').slice(1), ['pawn', 'agy', resolve('out.json')]);
-  for (const bad of [[], ['out.json'], ['out.txt', 'q'], ['out.json', 'q', 'extra'], ['out.json', 'a\nb']]) assert.throws(() => pawn(bad, r.x), /usage|one line/);
+  for (const bad of [[], ['out.json'], ['out.txt', 'q'], ['out.json', 'q', 'extra'], ['out.json', 'a\nb'], ['out.json', '100%'], ['out.json', 'say "hi"']]) assert.throws(() => pawn(bad, r.x), /usage|one line|single quotes/);
   assert.equal(r.calls.filter((c) => c[0] === 'launch').length, 1);
+  assert.equal(r.calls.filter((c) => c[0] === 'open').length, 1); // refused questions opened no file
+  // each out file has its own lock: a second pawn with another out file starts, the same out file is refused
+  const two = recorder();
+  two.x.locked = (cwd, lock) => lock.endsWith('.run-lock-a.json');
+  pawn(['b.json', 'Q2?'], two.x);
+  assert.match(launched(two.calls)[9], /agy-research[\\/]\.run-lock-b\.json$/);
+  assert.throws(() => pawn(['a.json', 'Q1?'], two.x), /in use/);
 });
 
 test('TODO 167e lows: a missing queue.txt gives no queue line; launchRun with its own lock writes and removes that one', () => {

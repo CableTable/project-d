@@ -325,6 +325,7 @@ export const acadArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-
 // WORKFLOW.md lines 248-250: one question, the house sentence added here; a newline would end the cmd.exe line.
 export const pawnArgs = (question) => {
   if (/[\r\n]/.test(question)) throw new Error('pawn: the question must be one line');
+  if (/[%"]/.test(question)) throw new Error('pawn: the question may not hold % or " (cmd.exe expands %NAME% inside quotes); use single quotes / spell it out');
   return ['-p', `${question} Open https links only, skip http ones, run no commands; read at most 3 pages; cite URLs.`, '--output-format', 'json', '--print-timeout', '10m'];
 };
 const AGY = join(homedir(), 'AppData', 'Local', 'agy', 'bin', 'agy.exe');
@@ -356,6 +357,7 @@ export function retro(args, x = io) {
   const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1], names = [`retro${n}`, `retro${n}king`, `retro${n}rook`];
   for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');
   x.need(claude('bishop'), ACCOUNTS.bishop.bin);
+  for (const name of names) if (x.locked(dir, `${dir}/.run-lock-${name}`)) throw new Error(`${name} is in use by a running launch (${dir}/.run-lock-${name}); if that run is dead, delete the lock file`);
   for (const name of names) plainRun(x, { kind: 'retro', id: name, bin: claude('bishop'), args: retroArgs(), cwd: dir, inPath: `${dir}/${name}.txt`, out: `${dir}/${name}.out`, lock: `${dir}/.run-lock-${name}` });
 }
 
@@ -377,5 +379,5 @@ export function pawn(args, x = io) {
   x.need(AGY, 'agy.exe');
   x.need(AGY_DIR, 'folder');
   x.need(dirname(resolve(out)), 'output folder');
-  plainRun(x, { kind: 'pawn', id: 'agy', bin: AGY, args: cmdArgs, cwd: AGY_DIR, out: resolve(out) });
+  plainRun(x, { kind: 'pawn', id: 'agy', bin: AGY, args: cmdArgs, cwd: AGY_DIR, out: resolve(out), lock: `${AGY_DIR}/.run-lock-${basename(out)}` }); // one lock per out file: parallel Pawn runs
 }
