@@ -110,10 +110,16 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha}`));
     assert.ok(!existsSync(join(extras, 'runs34')), 'no resume note when the retro exists');
     assert.throws(() => merge(['5', 'cc'], gh({ state: 'OPEN' }), extras), /not MERGED/);
+    merge(['5', 'cc', '--no-retro'], gh(), extras);
+    assert.ok(!existsSync(join(extras, 'runs34')), 'TODO 167c: --no-retro with a non-empty retro writes no "due first" line');
     rmSync(join(extras, 'runs33'), { recursive: true });
     assert.equal(merge(['5', 'cc', '--no-retro'], gh(), extras), `MERGED #5 ${sha}`);
     merge(['5', 'cc', '--no-retro'], gh(), extras);
     assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8'), 'retro33 due first (merged without it)\nretro33 due first (merged without it)\n');
+    mkdirSync(join(extras, 'runs33'));
+    writeFileSync(join(extras, 'runs33', 'retro33.out'), ' \n');
+    merge(['5', 'cc', '--no-retro'], gh(), extras);
+    assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8').split('\n').length, 4, 'an empty retro file still gets the line');
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 

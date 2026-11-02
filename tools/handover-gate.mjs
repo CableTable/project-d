@@ -1,6 +1,6 @@
 // The launcher's handover gate (TODO 165): at most LIMIT new-item launches per Rook, so the pipeline drains to a clean break.
 // A rule in WORKFLOW.md did not hold (Rook S29 built 9 items), so `rook.mjs build` / `knight` count and refuse.
-// State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
+// State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind: item | fix | tool, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
 export const LIMIT = 2;
 const ROW = /^(\s*)(?:- \[([ x])\] )?(\d+[a-z]*\d*)\.\s*(✅)?/; // "- [x] 160." / "    155a. ✅" / "1. ✅"; ids repeat in old lists, so rows are keyed id#occurrence
 
@@ -39,8 +39,11 @@ export const itemsOf =(state) => state.launches.filter((l) => l.kind === 'item')
 // The stored state, or a fresh one when a different Rook (uuid) is running now.
 export const nextState = (old, uuid, startSha) => (old && old.uuid === uuid ? old : { uuid, startSha, launches: [] });
 
-export const queueLine = (name, ticked, items) =>
-  `items since start (${name}): ${ticked} ticked, ${items} launched / ${LIMIT}${items >= LIMIT || ticked >= LIMIT ? ' -> HANDOVER DUE' : ''}`;
+export const toolsOf = (state) => state.launches.filter((l) => l.kind === 'tool');
+
+// TODO 167c: tool tickets (`--tool`) pass the gate and are not counted as items; the line names them when there are any.
+export const queueLine = (name, ticked, items, tools = 0) =>
+  `items since start (${name}): ${ticked} ticked, ${items} launched / ${LIMIT}${tools ? `, ${tools} tool` : ''}${items >= LIMIT || ticked >= LIMIT ? ' -> HANDOVER DUE' : ''}`;
 
 // Line 2 of queue.txt: replaces an earlier "items since start" line, else is inserted (the other lines stay as they are).
 export function setLine2(text, line) {
@@ -71,7 +74,7 @@ export function gateOps(env) {
   }
   function show(g) {
     const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`));
-    const line = queueLine(g.name, ticked, itemsOf(g.state).length);
+    const line = queueLine(g.name, ticked, itemsOf(g.state).length, toolsOf(g.state).length);
     const q = `${g.dir}/queue.txt`;
     env.write(q, setLine2(env.read(q) || '', line));
     console.log(`queue: ${q}`);
@@ -88,18 +91,18 @@ export function gateOps(env) {
   return {
     context,
     // Throws when the launch is a new item over the limit and --over is not given.
-    check(fix, over) {
+    check(fix, over, tool) {
       context(over);
-      if (fix || over) return;
+      if (fix || over || tool) return;
       const g = load();
       if (itemsOf(g.state).length >= LIMIT) throw new Error(refusal(g.name, g.state));
     },
     // After a launch started: never throws (a bad state file must not look like a failed launch, or Rook launches twice); it warns instead.
-    record({ fix, over, brief, branch }) {
+    record({ fix, over, tool, brief, branch }) {
       let g;
       try {
         g = load();
-        g.state.launches.push({ kind: fix ? 'fix' : 'item', brief, branch, at: new Date().toISOString(), ...(over && !fix ? { over: true } : {}) });
+        g.state.launches.push({ kind: fix ? 'fix' : tool ? 'tool' : 'item', brief, branch, at: new Date().toISOString(), ...(over && !fix && !tool ? { over: true } : {}) });
         env.write(g.file, JSON.stringify(g.state, null, 2) + '\n');
       } catch (e) { return void console.error(`launch not counted: ${e.message}`); }
       try { return show(g); } catch (e) { console.error(`queue line not updated: ${e.message}`); }

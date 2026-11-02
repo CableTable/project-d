@@ -62,6 +62,18 @@ function world(uuid = 'uuid-1') {
 }
 const state = (w) => JSON.parse(w.files['/x/runs30/rook-gate.json']);
 
+test('TODO 167c: a tool ticket passes the gate at the limit, is recorded as kind tool and is not an item; the line adds ", <k> tool"', () => {
+  assert.equal(queueLine('Rook S30', 0, 1, 1), 'items since start (Rook S30): 0 ticked, 1 launched / 2, 1 tool');
+  assert.equal(queueLine('Rook S30', 0, 2, 2), 'items since start (Rook S30): 0 ticked, 2 launched / 2, 2 tool -> HANDOVER DUE');
+  const w = world();
+  for (const b of ['k/1', 'k/2']) { w.gate.check(false, false); w.gate.record({ fix: false, over: false, brief: 'b.txt', branch: b }); }
+  w.gate.check(false, false, true); // at the limit, still passes
+  const line = w.gate.record({ fix: false, over: false, tool: true, brief: 'b.txt', branch: 'k/tool' });
+  assert.deepEqual(state(w).launches.map((l) => [l.kind, l.over]), [['item', undefined], ['item', undefined], ['tool', undefined]]);
+  assert.equal(line, 'items since start (Rook S30): 0 ticked, 2 launched / 2, 1 tool -> HANDOVER DUE');
+  assert.throws(() => w.gate.check(false, false), /handover due: 2 new items launched/);
+});
+
 test('gate: 2 item launches pass, the 3rd is refused; fix rounds never count; --over passes and is logged', () => {
   const w = world();
   const rec = (o = {}) => w.gate.record({ fix: false, over: false, brief: 'b.txt', ...o });

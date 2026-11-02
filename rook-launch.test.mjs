@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief } from './tools/rook-launch.mjs';
+import { launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -77,7 +77,7 @@ test('TODO 172: build and knight refuse every brief problem before changes; --bi
       big.x.read = () => brief;
       assert.doesNotThrow(() => run([...args, ...flags, '--big'], big.x));
       assert.ok(launched(big.calls));
-      assert.deepEqual(big.calls[0], ['gateCheck', flags.includes('--fix'), flags.includes('--over')]);
+      assert.deepEqual(big.calls.find((c) => c[0] === 'gateCheck'), ['gateCheck', flags.includes('--fix'), flags.includes('--over'), false]);
     }
   }
 });
@@ -96,7 +96,7 @@ test('review arguments: three positionals, optional --as and --from clone branch
 });
 
 test('build arguments: four positionals, optional --as (default king), a real commit id, paths absolute', () => {
-  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, over: false, big: false });
+  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, tool: false, over: false, big: false });
   const flagged = parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--fix', '--over', '--as', 'king']);
   assert.deepEqual([flagged.fix, flagged.over, flagged.as], [true, true, 'king']);
   assert.equal(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--as', 'bishop']).as, 'bishop');
@@ -106,7 +106,7 @@ test('build arguments: four positionals, optional --as (default king), a real co
 
 test('knight arguments: four positionals, report ends in .txt, log sits next to it, paths absolute', () => {
   assert.deepEqual(parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234']),
-    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, over: false, big: false });
+    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, tool: false, over: false, big: false });
   assert.deepEqual(['--fix', '--over'].map((f) => parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234', f])).map((p) => [p.fix, p.over]), [[true, false], [false, true]]);
   assert.throws(() => parseKnight(['b.txt', 'k.txt', 'knight/x']), /usage: knight/);
   assert.throws(() => parseKnight(['b.txt', 'k.md', 'knight/x', 'abc1234']), /must end in \.txt/);
@@ -251,17 +251,37 @@ test('handover gate: build and knight check it first, record after the launch; a
     const { calls, x } = recorder();
     run([...args, '--fix'], x);
     const at = (name) => calls.findIndex((c) => c[0] === name);
-    assert.equal(at('gateCheck'), 0, run.name);
-    assert.deepEqual(calls[0].slice(1), [true, false]);
+    assert.deepEqual(calls[at('gateCheck')].slice(1), [true, false, false]);
     assert.ok(at('launch') < at('gateRecord'), run.name);
-    assert.deepEqual(calls[at('gateRecord')][1], { fix: true, over: false, brief: resolve(args[0]), branch: 'br' });
+    assert.deepEqual(calls[at('gateRecord')][1], { fix: true, over: false, tool: false, brief: resolve(args[0]), branch: 'br' });
     const refused = recorder('gateCheck');
     assert.throws(() => run(args, refused.x), /gateCheck failed/);
-    assert.deepEqual(refused.calls.map((c) => c[0]), ['gateCheck'], run.name);
+    assert.deepEqual(refused.calls.map((c) => c[0]), ['need', 'read', 'gateCheck'], run.name); // nothing changes before the gate says yes
     const over = recorder();
     run([...args, '--over'], over.x);
-    assert.deepEqual(over.calls[0].slice(1), [false, true]);
+    assert.deepEqual(over.calls.find((c) => c[0] === 'gateCheck').slice(1), [false, true, false]);
   }
+});
+
+test('TODO 167c: a brief whose line 1 starts King fix / Knight fix / Fix round counts as a fix round without --fix; --tool passes the gate and is recorded', () => {
+  assert.deepEqual(['King fix: TODO 1', 'Knight fix: TODO 1', 'Fix round: x', 'Fix round 2: x'].map(isFixBrief), [true, true, true, true]);
+  assert.deepEqual(['Build: TODO 1', 'Review: x', '\nKing fix: second line'].map(isFixBrief), [false, false, false]);
+  for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
+    for (const [first, flags, kind] of [['King fix: TODO 1', [], 'fix'], ['Fix round 2: TODO 1', [], 'fix'], ['Build: TODO 1', [], 'item'], ['Build: TODO 1', ['--tool'], 'tool'], ['Build: TODO 1', ['--fix'], 'fix']]) {
+      const { calls, x } = recorder();
+      x.read = () => `${first}\nrest\n`;
+      run([...args, ...flags], x);
+      const [, fix, , tool] = calls.find((c) => c[0] === 'gateCheck'), rec = calls.find((c) => c[0] === 'gateRecord')[1];
+      assert.deepEqual([fix, tool, rec.fix, rec.tool], [kind === 'fix', kind === 'tool', kind === 'fix', kind === 'tool'], `${run.name} ${first} ${flags}`);
+    }
+  }
+});
+
+test('TODO 167c: lintBrief refuses a line starting Also and a Tick line naming two TODO ids', () => {
+  for (const [brief, count] of [
+    ['1. Do it\nAlso add unit cases', 1], ['2. Also add unit cases', 1], ['  also, one more', 1], ['Do the thing; also this', 0], ['Always fix', 0],
+    ['Tick 171 and 174', 1], ['5. Tick TODO 171 and 174 in TODO.md', 1], ['Tick 167c in TODO.md', 0], ['`Tick TODO 170 in TODO.md`', 0], ['6. Tick 155m2 and 167c', 1], ['Tick 171, 171', 0],
+  ]) assert.equal(lintBrief(brief).length, count, brief);
 });
 
 test('TODO 167a: review checks the context gate first (nothing launches when refused); --over is passed on', () => {

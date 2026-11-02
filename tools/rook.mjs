@@ -3,9 +3,10 @@
 //   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
 //   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over]   launch the reviewer on a commit, detached
-//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big]   launch a Claude build on a new branch in its worktree, detached
-//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]   launch a Knight build on a new branch in its clone, detached
-//     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed), --over = a 3rd item with his OK
+//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big]   launch a Claude build on a new branch in its worktree, detached
+//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big]   launch a Knight build on a new branch in its clone, detached
+//     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed; a brief whose line 1 starts `King fix`, `Knight fix` or `Fix round` counts as one without it),
+//     --tool = a tool ticket (passes the gate, not counted as an item; the gate line adds `, <k> tool`), --over = a 3rd item with his OK
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
@@ -104,11 +105,12 @@ export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: '
   if (!n) throw new Error(`refused: PR #${pr} branch ${info.headRefName} is not claude/session<N>`);
   const retroFile = `${extras}/runs${n}/retro${n}.out`;
   const [r] = JSON.parse(run('gh', ['run', 'list', '--commit', sha, '--workflow', 'ci.yml', '--limit', '1', '--json', 'status,conclusion']));
-  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro: existsSync(retroFile) ? readFileSync(retroFile, 'utf8') : null, noRetro, ci: r && (r.status === 'completed' ? r.conclusion : r.status) });
+  const retro = existsSync(retroFile) ? readFileSync(retroFile, 'utf8') : null;
+  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro, noRetro, ci: r && (r.status === 'completed' ? r.conclusion : r.status) });
   if (msg) throw new Error(msg);
   run('gh', ['pr', 'merge', pr, '--merge', '--match-head-commit', sha]);
   if (JSON.parse(run('gh', ['pr', 'view', pr, '--json', 'state'])).state !== 'MERGED') throw new Error(`PR #${pr} is not MERGED after gh pr merge`);
-  if (noRetro) {
+  if (noRetro && !(retro || '').trim()) {
     mkdirSync(`${extras}/runs${+n + 1}`, { recursive: true });
     appendFileSync(`${extras}/runs${+n + 1}/resume-rook.txt`, `retro${n} due first (merged without it)\n`);
   }
@@ -206,7 +208,7 @@ if (cmd === 'result') {
   try { console.log(gate()); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big] | knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] | knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big]');
 }
 }
 
