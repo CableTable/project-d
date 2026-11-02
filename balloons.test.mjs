@@ -118,6 +118,19 @@ test('CSV: a header, quotes doubled, commas and line breaks quoted, = and @ made
   assert.equal(B.csv([]).charCodeAt(0), 78);
 });
 
+test('TODO 183: CSV guards formula starts and keeps plain numbers', () => {
+  const cases = [
+    ['+0.018', '+0.018'], ['+0.05', '+0.05'], ['-0.1', '-0.1'],
+    ['+.5', '+.5'], ['-0', '-0'], ['2', '2'],
+    ['=1+1', "'=1+1"], ['@x', "'@x"], ['+A1', "'+A1"],
+    ['-1+1', "'-1+1"], ['-', "'-"], ['\t=1', "'\t=1"], ['\r=1', "\"'\r=1\""],
+  ];
+  for (const [value, expected] of cases) {
+    assert.equal(B.csv([{ n: 1, dim: value, tp: '', tm: '', sheet: 1, note: '' }]),
+      `No.,Dimension,Tol +,Tol -,Sheet,Note\r\n1,${expected},,,1,\r\n`, JSON.stringify(value));
+  }
+});
+
 test('nearestText: the text under (or right next to) the point, the nearest of two, turned text, nothing far away', () => {
   const t1 = { x: 0, y: 0, h: 3.5, lines: ['120.0 ±0.1'], angle: 0, ha: 0 }, t2 = { x: 0, y: 20, h: 3.5, lines: ['Ø25'], angle: 0, ha: 0 };
   assert.equal(B.nearestText([t1, t2], [10, 1], 2).str, '120.0 ±0.1');
