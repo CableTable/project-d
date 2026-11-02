@@ -11,7 +11,6 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 - Don't stage `mockups/` or `shots/`.
 - Commit messages end with a blank line and `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 - Proof before done (WORKFLOW): each claim in the report quotes the line of a command run AFTER your last edit; anything not run goes under Not checked.
-- Full suite in a Knight clone: set `SHOTS_DIR=shots-k<item>-suite` first (the old `shots/` refuses writes there, EPERM; 156b2c2a lost a round to it, 2026-10-29).
 - Text from a file (layer, block, text names) reaches the DOM only through `textContent` / `h()`, never `innerHTML`.
 - Logic that can be pure lives in its own module with a `*.test.mjs` next to the others (`tools/unit.mjs` runs them).
 - Nothing may need admin rights. No new npm dependency unless the brief says so.
@@ -24,9 +23,9 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 ## Tests (both must pass before you commit)
 - `npm.cmd test` (eslint + unit tests)
 - Brief paths `runs<N>/...` are under `E:/Project B/Claude/Project D extras/`. Search with `git grep -n` (`rg` is not installed).
-- A fix round runs only the brief's filter, not the full suite (Rook runs it; S29 retro: fix rounds took 18-19 min).
-- While working: your new / changed steps, `node browser.test.mjs <port> '<step names>'`. Once before committing a new item: the full
-  suite, `node tools/browser-parallel.mjs <port>` (`npm.cmd run test:browser` exits 1 on npm's notice inside the sandbox).
+- A build or fix round runs only what the brief names, never the full suite (Rook runs it; S29 retro: fix rounds took 18-19 min; S32: 172 lost 18 min to it).
+- While working and before committing: your new / changed steps, `node browser.test.mjs <port> '<step names>'`.
+- Stopping on a question or a red you can't settle: commit as `WIP TODO <id>: <why>` (hooks on, never `--no-verify`) and say so in the report's first line; the fix round starts from that sha.
 - A failing step you didn't touch (filtered or full): rerun it alone on the base; if it fails there too, note it as a
   filter artifact or old failure and go on.
 - `browser.test.mjs` starts and stops its own server: start no other, end no process (no taskkill / Stop-Process).
