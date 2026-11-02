@@ -2,19 +2,20 @@
 //   node tools/rook.mjs usage           one line per agent (+ week forecast); refreshes mockups/_design/usage/limits.csv, history.csv
 //   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
 //   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
-//   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>]   launch the reviewer on a commit, detached
+//   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over]   launch the reviewer on a commit, detached
 //   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big]   launch a Claude build on a new branch in its worktree, detached
 //   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]   launch a Knight build on a new branch in its clone, detached
 //     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed), --over = a 3rd item with his OK
+//   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`); polls every 20 s
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
-import { peakContext } from './rook-result.mjs';
+import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 import { review, build, knight, gate, runningNote } from './rook-launch.mjs';
 
@@ -43,6 +44,31 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
         : `${who} usage probe failed, exit ${Number.isInteger(e.status) ? e.status : 'unknown'}`);
     }
   }
+}
+
+// `wait <run file>... [--ci <sha>]`: checks now and every 20 s; prints `DONE <file>` for the first finished run or `CI <RUN line>` and exits 0 (TODO 167a).
+function wait(args) {
+  const i = args.indexOf('--ci'), files = i < 0 ? args : args.slice(0, i), sha = i < 0 ? '' : args[i + 1];
+  if ((!files.length && !sha) || (i >= 0 && (!sha || args.length > i + 2))) { console.error('usage: node tools/rook.mjs wait <run file>... [--ci <sha>]'); process.exit(1); }
+  const tools = dirname(fileURLToPath(import.meta.url));
+  if (sha) {
+    const ci = spawn('bash', [join(tools, 'ci-watch.sh'), sha], { cwd: join(tools, '..'), stdio: ['ignore', 'pipe', 'inherit'] });
+    let buf = '';
+    ci.stdout.on('data', (d) => {
+      const lines = (buf += d).split(/\r?\n/);
+      buf = lines.pop();
+      const run = lines.find((l) => l.startsWith('RUN '));
+      if (run) { console.log(`CI ${run}`); process.exit(0); }
+    });
+    ci.on('close', (c) => { if (c) { console.error(`ci-watch.sh ended with exit ${c}`); process.exit(1); } });
+  }
+  const check = () => {
+    const texts = Object.fromEntries(files.map((f) => [f, existsSync(f) ? readFileSync(f, 'utf8') : null]));
+    const done = firstDone(texts);
+    if (done) { console.log(`DONE ${done}`); process.exit(0); }
+  };
+  check();
+  setInterval(check, 20_000);
 }
 
 function main() {
@@ -127,11 +153,13 @@ if (cmd === 'result') {
 } else if (cmd === 'review' || cmd === 'build' || cmd === 'knight') {
   try { ({ review, build, knight })[cmd](process.argv.slice(3)); }
   catch (e) { console.error(e.message); process.exit(1); }
+} else if (cmd === 'wait') {
+  wait(process.argv.slice(3));
 } else if (cmd === 'gate') {
   try { console.log(gate()); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big] | knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--over] [--big] | knight <brief> <report.txt> <branch> <sha> [--fix] [--over] [--big]');
 }
 }
 

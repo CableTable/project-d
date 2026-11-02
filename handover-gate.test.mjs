@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { countTicked, gateOps, nextState, queueLine, setLine2 } from './tools/handover-gate.mjs';
+import { contextOf, countTicked, gateOps, nextState, queueLine, setLine2 } from './tools/handover-gate.mjs';
 
 const BEFORE = [
   '- [ ] 162. **Quick Select**',
@@ -49,11 +49,15 @@ test('queue line: counts, the limit and HANDOVER DUE; line 2 is replaced or inse
   assert.equal(setLine2('', 'L'), '\nL');
 });
 
+// One assistant line of a Rook transcript with `n` tokens of context (split over the three usage fields).
+const turn = (n, extra = {}) => JSON.stringify({ type: 'assistant', ...extra, message: { usage: { input_tokens: 10, cache_read_input_tokens: n - 10 - 5, cache_creation_input_tokens: 5, output_tokens: 99 } } }) + '\n';
+
 // A fake extras folder, repo and TODO.md history for the gate.
 function world(uuid = 'uuid-1') {
   const files = { '/x/rook-next.txt': `${uuid}\nRook S30\n/x/runs30/resume-rook.txt\n`, '/x/runs30/queue.txt': 'title\nPUSHED a\n' };
   const git = (...a) => ({ 'rev-parse claude/session30': 'head0', 'show head0:TODO.md': BEFORE, 'show claude/session30:TODO.md': BEFORE })[a.join(' ')] ?? (() => { throw new Error(`git ${a.join(' ')}`); })();
-  const env = { extras: '/x', read: (p) => files[p] ?? null, write: (p, t) => { files[p] = t; }, git };
+  files[`/c/${uuid}.jsonl`] = turn(40_000);
+  const env = { extras: '/x', claudeDir: '/c', read: (p) => files[p] ?? null, write: (p, t) => { files[p] = t; }, git };
   return { files, env, gate: gateOps(env) };
 }
 const state = (w) => JSON.parse(w.files['/x/runs30/rook-gate.json']);
@@ -107,6 +111,35 @@ test('gate: a corrupt state file is named; record never throws, so a --fix launc
 
 test('ticked counter: a row ticked then unticked counts 0', () => {
   assert.equal(countTicked('- [x] 1. a', '- [ ] 1. a'), 0);
+});
+
+test('context: the last main-chain message counts, not the peak; sub-agent, zero and half-written lines are skipped', () => {
+  assert.equal(contextOf(turn(200_000) + turn(60_000)), 60_000);
+  assert.equal(contextOf(turn(60_000) + turn(900_000, { isSidechain: true }) + turn(900_000, { parent_tool_use_id: 't' }) + turn(0) + '{"type":"assis'), 60_000);
+  assert.equal(contextOf('{"type":"user"}\n'), null);
+});
+
+test('context gate: over 150k refuses every launch (--fix too), --over passes, a missing transcript allows with one warning line', () => {
+  const w = world(), log = console.log, seen = [];
+  console.log = (m) => seen.push(m);
+  try {
+    w.gate.check(false, false);
+    w.gate.context(false);
+    assert.deepEqual(seen, []); // 40k: quiet
+    w.files['/c/uuid-1.jsonl'] = turn(300_000) + turn(151_000);
+    for (const fix of [false, true]) assert.throws(() => w.gate.check(fix, false), /^Error: HANDOVER: context 151k /);
+    assert.throws(() => w.gate.context(false), /^Error: HANDOVER: context 151k /);
+    w.gate.check(false, true); // --over passes
+    w.gate.context(true);
+    w.files['/c/uuid-1.jsonl'] = turn(300_000) + turn(150_000); // exactly 150k is not over
+    w.gate.check(true, false);
+    w.files['/c/uuid-1.jsonl'] = turn(300_000) + turn(20_000); // a compact lowered it
+    w.gate.check(false, false);
+    delete w.files['/c/uuid-1.jsonl'];
+    w.gate.check(true, false);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0], /context not checked: no transcript/);
+  } finally { console.log = log; }
 });
 
 test('gate: without rook-next.txt or a runs<N> line it stops with a message', () => {

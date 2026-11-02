@@ -20,7 +20,21 @@ export function countTicked(before, after) {
   return rows(after).filter((r) => r.leaf && r.ticked && !was.has(r.key)).length;
 }
 
-export const itemsOf = (state) => state.launches.filter((l) => l.kind === 'item');
+// TODO 167a: context of the LAST main-chain assistant message (a compact lowers it, so not the peak) = input + cache read + cache write; null when there is none.
+export const CONTEXT_LIMIT = 150_000;
+export function contextOf(text) {
+  let last = null;
+  for (const line of text.split(/\r?\n/)) {
+    let e;
+    try { e = JSON.parse(line); } catch { continue; } // a run in progress has a half-written last line
+    const u = e.type === 'assistant' && !e.isSidechain && !e.parent_tool_use_id && e.message?.usage;
+    const n = u && (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+    if (n) last = n; // a synthetic message has all zeros: skip it
+  }
+  return last;
+}
+
+export const itemsOf =(state) => state.launches.filter((l) => l.kind === 'item');
 
 // The stored state, or a fresh one when a different Rook (uuid) is running now.
 export const nextState = (old, uuid, startSha) => (old && old.uuid === uuid ? old : { uuid, startSha, launches: [] });
@@ -63,9 +77,19 @@ export function gateOps(env) {
     console.log(`queue: ${q}`);
     return line;
   }
+  // Throws `HANDOVER: context <N>k ...` when this Rook's transcript is over CONTEXT_LIMIT (every launch, --fix too); --over passes; no transcript: warns and allows.
+  function context(over) {
+    if (over) return;
+    const uuid = (env.read(`${env.extras}/rook-next.txt`) || '').split(/\r?\n/)[0].trim();
+    const text = uuid && env.read(`${env.claudeDir}/${uuid}.jsonl`), n = text && contextOf(text);
+    if (!n) return void console.log(`context not checked: no transcript for this Rook in ${env.claudeDir}`);
+    if (n > CONTEXT_LIMIT) throw new Error(`HANDOVER: context ${Math.round(n / 1e3)}k (over ${CONTEXT_LIMIT / 1e3}k). Hand over (WORKFLOW.md Handover), or pass --over with his OK.`);
+  }
   return {
+    context,
     // Throws when the launch is a new item over the limit and --over is not given.
     check(fix, over) {
+      context(over);
       if (fix || over) return;
       const g = load();
       if (itemsOf(g.state).length >= LIMIT) throw new Error(refusal(g.name, g.state));

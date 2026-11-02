@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { peakContext } from './tools/rook-result.mjs';
+import { firstDone, peakContext } from './tools/rook-result.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -19,6 +19,26 @@ test('peak context takes the largest assistant input plus cache read and write, 
   ]), 161_000);
   assert.equal(peakContext([assistant({ input_tokens: 1234 })]), 1234);
   assert.equal(peakContext([assistant({ input_tokens: 10 }), { ...assistant({ input_tokens: 99_999 }), parent_tool_use_id: 'toolu_1' }]), 10, 'sub-agent turns are skipped');
+});
+
+test('wait: a .jsonl is done at its result line, a .txt when non-empty; unfinished, missing and half-written files are not; the first listed finished file wins', () => {
+  const running = '{"type":"assistant"}\n{"type":"res', ended = '{"type":"assistant"}\n{"type":"result","result":"x"}\n';
+  assert.equal(firstDone({ 'a.jsonl': running, 'b.txt': '', 'c.txt': null }), null);
+  assert.equal(firstDone({ 'a.jsonl': running, 'b.txt': ' \n' }), null);
+  assert.equal(firstDone({ 'a.jsonl': running, 'b.txt': 'Knight report\n', 'c.jsonl': ended }), 'b.txt');
+  assert.equal(firstDone({ 'a.jsonl': ended + '\r\n' }), 'a.jsonl');
+  assert.equal(firstDone({ 'a.jsonl': '{"type":"user","message":"the \\"type\\":\\"result\\" text"}\n' }), null);
+  assert.equal(firstDone({}), null);
+});
+
+test('wait (CLI): exits 0 printing DONE <file> for a finished run; a bad --ci is a usage error', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'projectd-wait-'));
+  try {
+    const report = join(dir, 'k.txt');
+    writeFileSync(report, 'Knight report\n');
+    assert.equal(execFileSync(process.execPath, ['tools/rook.mjs', 'wait', join(dir, 'missing.jsonl'), report], { encoding: 'utf8' }).trim(), `DONE ${report}`);
+    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'wait', report, '--ci'], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && /usage: node tools\/rook\.mjs wait/.test(e.stderr));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
 test('result skips a half-written last line: no result yet for an unfinished run, the result once it is there', () => {

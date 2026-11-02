@@ -41,12 +41,12 @@ function account(flags, def, usage) {
 
 // Paths are resolved against the caller's folder: the run's cwd is a worktree or clone, where a relative path would land.
 export function parseReview(args) {
-  const usage = 'usage: review <sha> <brief file> <out jsonl> [--as bishop|king] [--from <clone folder> <branch>]';
-  const { pos, flags } = parseFlags(args, { '--as': 1, '--from': 2 }, usage);
+  const usage = 'usage: review <sha> <brief file> <out jsonl> [--as bishop|king] [--from <clone folder> <branch>] [--over]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--from': 2, '--over': 0 }, usage);
   if (pos.length !== 3) throw new Error(usage);
   if (!SHA.test(pos[0])) throw new Error(`not a commit id: ${pos[0]}`);
   const from = flags['--from'];
-  return { sha: pos[0], brief: resolve(pos[1]), out: resolve(pos[2]), as: account(flags, 'bishop', usage), from: from && { clone: resolve(from[0]), branch: from[1] } };
+  return { sha: pos[0], brief: resolve(pos[1]), out: resolve(pos[2]), as: account(flags, 'bishop', usage), over: !!flags['--over'], from: from &&{ clone: resolve(from[0]), branch: from[1] } };
 }
 
 export function parseBuild(args) {
@@ -165,7 +165,7 @@ const io = {
   launch: (bin, args, cwd, inFd, outFd, env = process.env, outPath) => launchRun(bin, args, cwd, inFd, outFd, env, outPath),
 };
 // The handover gate (tools/handover-gate.mjs) reads the Rook's files in the extras folder and the session branch in this repo.
-io.gate = gateOps({ extras: EXTRAS, read: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null), write: writeFileSync, git: (...a) => io.git(REPO, ...a) });
+io.gate = gateOps({ extras: EXTRAS, claudeDir: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), read: (p) => (existsSync(p) ? readFileSync(p, 'utf8') : null), write: writeFileSync, git: (...a) => io.git(REPO, ...a) });
 
 const claude = (as) => join(homedir(), '.local', 'bin', ACCOUNTS[as].bin);
 const folder = (as, role) => `${EXTRAS}/${ACCOUNTS[as][role]}`;
@@ -190,7 +190,8 @@ function needClean(x, dir) {
 }
 
 export function review(args, x = io) {
-  const { sha, brief, out, as, from } = parseReview(args);
+  const { sha, brief, out, as, from, over } = parseReview(args);
+  x.gate.context(over);
   const wt = folder(as, 'review');
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);

@@ -138,6 +138,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 
 Briefs start from `tools/briefs/<kind>.txt` (build, fix, review).
 Write the brief to a file and pass it on **stdin** (a quoted `-p "$(cat …)"` arrived empty once).
+`node tools/rook.mjs wait <run file>... [--ci <sha>]` (as a Monitor command) prints `DONE <file>` when the first run ends, or `CI RUN <id> <conclusion>`; every launch (build / knight / review, `--fix` too) is refused with `HANDOVER: context <N>k` once this Rook's context passes 150k (`--over` passes).
 
 ```bash
 C2=/c/Users/raksh/.local/bin/claude2.cmd

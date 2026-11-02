@@ -23,7 +23,7 @@ function recorder(fail = '') {
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
   const git = (...a) => rec('git', a[1] === 'config' ? 'tools/hooks' : '')(...a);
-  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { check: rec('gateCheck'), record: rec('gateRecord') } } };
+  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), gate: { context: rec('gateContext'), check: rec('gateCheck'), record: rec('gateRecord') } } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
@@ -83,9 +83,9 @@ test('TODO 172: build and knight refuse every brief problem before changes; --bi
 });
 
 test('review arguments: three positionals, optional --as and --from clone branch, a real commit id, paths absolute', () => {
-  assert.deepEqual(parseReview(['abc1234', 'b.txt', 'r.jsonl']), { sha: 'abc1234', brief: resolve('b.txt'), out: resolve('r.jsonl'), as: 'bishop', from: undefined });
-  const r = parseReview(['abc1234', 'b.txt', 'r.jsonl', '--from', 'clone', 'king/x', '--as', 'king']);
-  assert.deepEqual([r.as, r.from], ['king', { clone: resolve('clone'), branch: 'king/x' }]);
+  assert.deepEqual(parseReview(['abc1234', 'b.txt', 'r.jsonl']), { sha: 'abc1234', brief: resolve('b.txt'), out: resolve('r.jsonl'), as: 'bishop', over: false, from: undefined });
+  const r = parseReview(['abc1234', 'b.txt', 'r.jsonl', '--from', 'clone', 'king/x', '--as', 'king', '--over']);
+  assert.deepEqual([r.as, r.from, r.over], ['king', { clone: resolve('clone'), branch: 'king/x' }, true]);
   assert.throws(() => parseReview(['abc1234', 'b.txt']), /usage: review/);
   assert.throws(() => parseReview(['abc1234', 'b.txt', 'r.jsonl', '--from', 'C:/clone']), /usage: review/);
   assert.throws(() => parseReview(['abc1234', 'b.txt', 'r.jsonl', '--as']), /usage: review/);
@@ -262,6 +262,15 @@ test('handover gate: build and knight check it first, record after the launch; a
     run([...args, '--over'], over.x);
     assert.deepEqual(over.calls[0].slice(1), [false, true]);
   }
+});
+
+test('TODO 167a: review checks the context gate first (nothing launches when refused); --over is passed on', () => {
+  const refused = recorder('gateContext');
+  assert.throws(() => review(['abc1234', 'b.txt', 'o.jsonl'], refused.x), /gateContext failed/);
+  assert.deepEqual(refused.calls.map((c) => c[0]), ['gateContext']);
+  const over = recorder();
+  review(['abc1234', 'b.txt', 'o.jsonl', '--over'], over.x);
+  assert.deepEqual(over.calls[0], ['gateContext', true]);
 });
 
 test('TODO 169: build and knight require tools/hooks in the target folder before opening files or switching branches', () => {
