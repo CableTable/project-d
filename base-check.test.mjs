@@ -90,6 +90,28 @@ test('TODO 193a: base-check prints LOAD ERROR (not FAIL) when the copied test ca
   }
 });
 
+test('TODO 193a: base-check prints HUNG (not FAIL) when the test never ends, and removes the worktree', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'base-check-hung-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', `core.hooksPath=${join(repo, '.git/hooks')}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'node_modules'));
+    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    writeFileSync(join(repo, 'tmp-hang.test.mjs'), "import { test } from 'node:test';\ntest('x', () => new Promise(() => setInterval(() => {}, 1000)));\n");
+    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' } });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /^HUNG on base after 2 s/m);
+    assert.doesNotMatch(r.stdout, /FAIL/);
+    assert.equal(git('worktree', 'list').trim().split('\n').length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 // A child that starts a grandchild (as node --test does) and prints its pid; `alive` is true while that pid exists.
 const spawner = "const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' }); console.log(c.pid); setTimeout(() => {}, 60000);";
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };

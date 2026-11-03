@@ -7,6 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
+import { printRookContext } from './tools/rook-launch.mjs';
 import { watchCi, nextRook, startArgs, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
@@ -299,6 +300,13 @@ test('TODO 193a: result ends its token line with the report line count (blank li
     const lines = execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }).split(/\r?\n/);
     assert.match(lines.find((l) => l.startsWith('tokens ')), /· denials 0 · report 3 lines$/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('TODO 193a: result prints the Rook context line when the gate has one, and nothing when it has none', () => {
+  const seen = [];
+  printRookContext({ gate: { contextLine: () => 'Rook context 106k (handover at 150k)' } }, (l) => seen.push(l));
+  printRookContext({ gate: { contextLine: () => '' } }, (l) => seen.push(l));
+  assert.deepEqual(seen, ['Rook context 106k (handover at 150k)']);
 });
 
 test('result prints peak context and warns strictly above 150k; Codex logs skip it', () => {

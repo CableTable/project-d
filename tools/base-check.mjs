@@ -25,11 +25,12 @@ export function parseArgs(args) {
   return { sha, file, step };
 }
 
-const LIMIT_MS = 120000;
+const LIMIT_MS = Number(process.env.BASE_CHECK_LIMIT_MS) || 120000; // the env value is for the HUNG test only
 const LOAD_ERROR = /does not provide an export named|Cannot find module/;
 
 // Runs the command, resolves { status, out, timedOut }. `capture` pipes the output (and echoes it); `limitMs` kills the whole process tree.
-// The child dies with this process (a normal exit or SIGTERM): no orphan node.exe. shortcut: Windows never delivers an external SIGTERM, so a hard kill of this process can still orphan it.
+// The child dies with this process on a normal exit (the 'exit' listener below); after a real kill on Windows no node child was left either (TODO 193a fix run).
+// shortcut: a hard kill of this process (Windows runs no handler) leaves the scratch worktree in `git worktree list`; remove it by hand (git worktree remove --force), upgrade only if kills become common.
 export function runCapped(bin, argv, { cwd, env, capture = false, limitMs = Infinity }) {
   return new Promise((done) => {
     const child = spawn(bin, argv, { cwd, env, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
@@ -56,7 +57,7 @@ async function check(args) {
     rmSync(dirname(wt), { recursive: true, force: true });
     try { git('worktree', 'prune'); } catch { /* best effort */ }
   };
-  process.once('exit', cleanup); // SIGTERM ends in process.exit: the worktree goes too
+  process.once('exit', cleanup); // runs on a normal end, an error or process.exit(143); NOT on a Windows kill (no signal handler runs): the worktree stays then
   try {
     git('worktree', 'add', '--detach', wt, sha);
     added = true;
@@ -79,7 +80,7 @@ async function check(args) {
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   process.on('SIGINT', () => {});
-  process.on('SIGTERM', () => process.exit(143));
+  process.on('SIGTERM', () => process.exit(143)); // POSIX only: Windows terminates without calling it
   try {
     const ok = await check(process.argv.slice(2));
     console.log(ok ? 'PASS' : 'FAIL');
