@@ -5,6 +5,12 @@ const field = (e, c) => e?.r.v[e.r.c.indexOf(c)] || '';
 const unesc = (s) => String(s).replace(/\\U\+([0-9a-f]{4})/gi, (_, h) => String.fromCharCode(parseInt(h, 16)));
 export const overrideText = (text = '') => !text.trim() || text === '<>' ? '' : text;
 export const dimensionText = (measured, override) => overrideText(override) ? override.replaceAll('<>', measured) : measured;
+/** Only the exact kept-Measure template follows its points; hand-edited overrides stay literal. */
+export function measureOverride(a, b, factor, dp, override = '<>  (ΔX 0, ΔY 0)') {
+  if (!a || !b || !/^<>  \(ΔX -?\d+(?:\.\d+)?, ΔY -?\d+(?:\.\d+)?\)(?![\s\S])/.test(override)) return override;
+  const fixed = (v) => v.toFixed(dp).replace(/^-0(\.0*)?$/, '0$1');
+  return `<>  (ΔX ${fixed((b[0] - a[0]) * factor)}, ΔY ${fixed((b[1] - a[1]) * factor)})`;
+}
 export const textRecord = (ents) => ents.find((e) => e.type === 'ATTDEF' && field(e, 2) === 'PD_DIM_TEXT');
 export const measuredText = (ents) => unesc(field(textRecord(ents) || ents.find((e) => e.type === 'TEXT'), textRecord(ents) ? 3 : 1));
 export const readOverride = (ents) => { const e = textRecord(ents); return e ? unesc(field(e, 1)) : ''; };

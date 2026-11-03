@@ -39,7 +39,7 @@ import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
 import { openAttributes } from './attributedlg.js';
 import { attributeRows } from './attribute-edit.js';
-import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText } from './dimension-text.js';
+import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText, measureOverride } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import * as GM from './gripmode.js';
@@ -5675,7 +5675,8 @@ function measurePoint(d, p, shift = false, typed = false) {
 function keepMeasure() {
   const d = editable(), M = state.meas;
   if (!d || !M || M.pts.length !== 2) return;
-  const dim = Ed.makeDimension(M.pts[0], M.pts[1], d.factor, d.raw.blocks, state.dp, dimNew(d));
+  const override = measureOverride(M.pts[0], M.pts[1], d.factor, state.dp);
+  const dim = Ed.makeDimension(M.pts[0], M.pts[1], d.factor, d.raw.blocks, state.dp, { ...dimNew(d), override });
   if (!dim) return;
   if (!commit(d, Ed.addDimension(d.raw, dim), 'Add dimension')) return;
   note(`Dimension kept: ${dim.label} mm, on the layer ${Ed.DIM_LAYER}. Select it to delete it`);

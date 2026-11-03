@@ -5386,6 +5386,56 @@ try {
     await page.locator('[data-tool=step]').click();
   });
 
+  await step('TODO 194: measure keep shows dx dy', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const save = async () => {
+      const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      return readDxf(readFileSync(await dl.path(), 'latin1'));
+    };
+    const label = (doc) => flatten(doc).items.find((i) => i.k === 't').lines.join(' ');
+    const command = async (text) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    try {
+      await p.goto(URL_ + '?autosave=86400000');
+      const raw = newDoc(4); addEntities(raw, dxfLine(50, 50, 290, 80));
+      await q('picker').setInputFiles({ name: 'measure-194.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'measure-194.dxf');
+      await q('decimals').selectOption('2');
+      await command('measure'); await command('50,50'); await p.keyboard.press('Escape');
+      assert.equal((await save()).entities.length, 1, 'Esc mid-measure adds nothing');
+      await command('measure'); await command('50,50'); await command('290,80'); await p.keyboard.press('Enter');
+      assert.equal(label(await save()), '241.87  (ΔX 240.00, ΔY 30.00)');
+      await p.keyboard.press('Control+z');
+      assert.equal((await save()).entities.length, 1, 'one Undo removes Keep');
+      await p.keyboard.press('Control+y');
+      await q('decimals').selectOption('3');
+      let doc = await save();
+      assert.equal(label(doc), '241.868  (ΔX 240.000, ΔY 30.000)');
+      assert.equal(readOverride(doc.blocks.PD_DIM_1.entities), '<>  (ΔX 240.000, ΔY 30.000)');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await p.mouse.move(1000, 700);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        await p.waitForTimeout(150);
+        const path = `${shotDir}/measure-keep-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0, 'kept callout screenshot exists');
+      }
+      await p.keyboard.press('Control+a');
+      const grip = p.locator('[data-testid=grip][data-grip="0:b"]');
+      await grip.waitFor(); const box = await grip.boundingBox();
+      await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await command('350,10');
+      doc = await save();
+      assert.equal(label(doc), '302.655  (ΔX 300.000, ΔY -40.000)', 'source grip refreshes signed deltas');
+    } finally { await context.close(); }
+  });
+
   await step('dimension: Keep (button or Enter) makes the measure a dimension on a Dimensions layer: one pickable thing, undoable, saved, re-labelled when the drawing is scaled', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
@@ -5397,7 +5447,7 @@ try {
     await t('meas-keep').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 16');
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Dimensions'));
-    assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06 mm/);
+    assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06  \(ΔX 30\.00, ΔY 20\.00\) mm/);
     assert.equal(await t('meas-keep').isVisible(), false);
     // Enter keeps a second one
     await click(10, 0); await click(90, 0);
@@ -5420,23 +5470,23 @@ try {
     assert.ok(doc.layers.Dimensions && doc.blocks.PD_DIM_1 && doc.blocks.PD_DIM_2);
     assert.deepEqual(doc.entities.filter((e) => e.type === 'INSERT' && e.layer === 'Dimensions').length, 2);
     const labels = (d) => Object.values(d.blocks).flatMap((b) => b.entities).filter((e) => e.type === 'TEXT').map((e) => e.r.v[e.r.c.indexOf(1)]).sort();
-    assert.deepEqual(labels(doc), ['36.06', '80.00']);
+    assert.deepEqual(labels(doc), ['36.06  (ΔX 30.00, ΔY 20.00)', '80.00  (ΔX 80.00, ΔY 0.00)']);
     await t('dw').fill('272'); await t('dw').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=dw]').value === '272');
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160.00', '72.11'], 'linked values are rebuilt from scaled geometry, without doubling a rounded label');
+    assert.deepEqual(labels(readDxf(dl.text)), ['160.00  (ΔX 160.00, ΔY 0.00)', '72.11  (ΔX 60.00, ΔY 40.00)'], 'linked values are rebuilt from scaled geometry, without doubling a rounded label');
     // the status bar's decimal places re-label every kept dimension; Ctrl+Z undoes it
     assert.equal(await t('decimals').inputValue(), '2');
     await t('decimals').selectOption('1');
     assert.match(await t('cmd-prompt').textContent(), /Dimensions: 1 decimal place \(re-labelled in 1 drawing/);
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160.0', '72.1']);
+    assert.deepEqual(labels(readDxf(dl.text)), ['160.0  (ΔX 160.0, ΔY 0.0)', '72.1  (ΔX 60.0, ΔY 40.0)']);
     await t('decimals').selectOption('0');
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160', '72']);
+    assert.deepEqual(labels(readDxf(dl.text)), ['160  (ΔX 160, ΔY 0)', '72  (ΔX 60, ΔY 40)']);
     await page.keyboard.press('Control+z');
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160.0', '72.1'], 'undone');
+    assert.deepEqual(labels(readDxf(dl.text)), ['160.0  (ΔX 160.0, ΔY 0.0)', '72.1  (ΔX 60.0, ΔY 40.0)'], 'undone');
     await t('decimals').selectOption('2');
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-decimals')), '2');
     await page.locator('.tabs .dtab.on .x').click();
@@ -5560,7 +5610,7 @@ try {
     let tx = pdfText(dl);
     assert.equal(boxes(tx).length, 1);
     assert.ok(Math.abs(boxes(tx)[0][0] - w) < 0.2 && Math.abs(boxes(tx)[0][1] - h2) < 0.2, 'the page is the part: ' + boxes(tx)[0]);
-    assert.match(tx, /\(80\.00\) Tj/, 'the dimension\'s number');
+    assert.match(tx, /\(80\.00  .*X 80\.00, .*Y 0\.00.*\) Tj/, 'the dimension\'s number and deltas');
     assert.ok(!/\/Image|\/XObject/.test(tx), 'no background picture');
   });
 

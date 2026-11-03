@@ -19,7 +19,7 @@ import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
-import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord } from './dimension-text.js';
+import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord, measureOverride } from './dimension-text.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -998,10 +998,12 @@ export function relabelDims(raw, factor, dp) {
   const blocks = { ...raw.blocks };
   let changed = false;
   for (const [nm, b] of Object.entries(raw.blocks)) {
-    const m = readDim(nm, b), g = m && dimGeom(m.kind, m.params, factor || 1, dp);
+    const m = readDim(nm, b);
+    if (m) m.params.override = measureOverride(m.params.a, m.params.b, factor || 1, dp, m.params.override || '');
+    const g = m && dimGeom(m.kind, m.params, factor || 1, dp);
     if (!g) continue;
     const ents = b.entities.map((e) => {
-      if (e === textRecord(b.entities)) { if (measuredText(b.entities) !== g.measured) changed = true; return overrideRecord(readOverride(b.entities), g.measured); }
+      if (e === textRecord(b.entities)) { if (measuredText(b.entities) !== g.measured || readOverride(b.entities) !== m.params.override) changed = true; return overrideRecord(m.params.override, g.measured); }
       if (e.type !== 'TEXT') return e;
       const k = e.r.c.indexOf(1);
       if (k < 0 || unesc(e.r.v[k]) === g.label) return e;
@@ -1426,6 +1428,7 @@ export function dimBlock(g, name) {
   return { name, block: { base: [0, 0], xref: false, entities: ents }, insert: insert(name, 0, 0, { layer: DIM_LAYER }), mm: g.mm, label: g.label };
 }
 export const buildDim = (kind, params, factor, name, dp = 2) => {
+  params = { ...params, override: measureOverride(params.a, params.b, factor || 1, dp, params.override || '') };
   const g = dimGeom(kind, params, factor, dp), built = g && dimBlock(g, name);
   if (built && overrideText(params.override)) built.block.entities.push(overrideRecord(params.override, g.measured));
   // Keep the axis in-session too when rebuilding an old untagged Linear block.
