@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { countTicked, gateOps, nextState, queueLine, setLine2 } from './tools/handover-gate.mjs';
+import { briefIds, contextOf, countTicked, gateOps, nextState, queueLine, setLine2, skipIds, tickIds } from './tools/handover-gate.mjs';
 
 const BEFORE = [
   '- [ ] 162. **Quick Select**',
@@ -32,6 +32,87 @@ test('ticked counter: leaf rows that turned ticked or arrived ticked; a ticked p
   assert.equal(countTicked('', '1. ✅ a\n- [x] 2. b\n3. ❌ c'), 2); // a won't-do row is not a tick
 });
 
+test('TODO 167e: ticks of tool and fix launches are not counted, unless an item launch has the same id', () => {
+  const launches = [{ kind: 'item', ids: ['162'], branch: 'king/162' }, { kind: 'tool', ids: ['164'], branch: 'king/164' }, { kind: 'fix', ids: ['162'], branch: 'king/162fix' }, { kind: 'fix', ids: ['163'], branch: 'king/163-fix' }, { kind: 'tool', ids: [], branch: 'k/tool' }];
+  const skip = skipIds({ launches });
+  assert.deepEqual([...skip].sort(), ['163', '164']);
+  assert.equal(countTicked(BEFORE, AFTER, skip), 4); // 162 stays (its fix does not hide the item), 164 is a tool ticket
+  assert.equal(countTicked(BEFORE, AFTER, skipIds({ launches: [{ kind: 'tool', ids: ['155f'], branch: 'king/155f' }] })), 4);
+  const g = world();
+  g.files['/x/runs30/rook-gate.json'] = JSON.stringify({ uuid: 'uuid-1', startSha: 'head0', launches: [{ kind: 'tool', ids: ['162'], branch: 'king/162' }] });
+  const env = { ...g.env, git: (...a) => (a.join(' ') === 'show claude/session30:TODO.md' ? AFTER : g.env.git(...a)) };
+  assert.match(gateOps(env).report(), /: 4 ticked, 0 launched/); // 5 ticks, 162 was a tool ticket
+});
+
+test('TODO 185a: tick ids exclude single-digit prose; launch ids come from the brief header and Tick lines', () => {
+  assert.deepEqual(tickIds('Tick 170, 1 line'), ['170']);
+  assert.deepEqual(tickIds('Tick 1, 1 line'), []);
+  assert.deepEqual(tickIds('6. Tick TODO 170 and 171, 1 line'), ['170', '171']);
+  assert.deepEqual(briefIds('Build: TODO 167b (tools).\r\nTick 167b, 167c and TODO 170, 1 line'), ['167b', '167c', '170']);
+  for (const role of ['King fix', 'Knight fix', 'Fix round']) assert.deepEqual(briefIds(`${role}: TODO 167c (fix).`), ['167c']);
+  assert.deepEqual(briefIds('Build: TODO 167C.\nTick 167c'), ['167c']);
+  assert.deepEqual(briefIds('No ids in this brief.'), []);
+});
+
+test('TODO 185b: every header TODO id is read, including fix rounds and joined ids', () => {
+  for (const [header, ids] of [
+    ['Fix round 2: TODO 155m2', ['155m2']],
+    ['King fix: full-suite red after TODO 155l1', ['155l1']],
+    ['Fix round: TODO 174 + 171', ['174', '171']],
+    ['Build: TODO 185B and TODO 185a; after TODO 174', ['185b', '185a', '174']],
+  ]) {
+    for (const eol of ['\n', '\r\n']) {
+      assert.deepEqual(briefIds(`${header}${eol}Spec: TODO 999`), ids, header);
+      const launches = [{ kind: 'fix', ids: briefIds(header) }];
+      const before = ids.map((id) => `- [ ] ${id}. item`).join(eol);
+      assert.equal(countTicked(before, before.replaceAll('[ ]', '[x]'), skipIds({ launches })), 0, header);
+    }
+  }
+});
+
+test('TODO 185b: a tool sub-id ticking its parent row does not count as an item', () => {
+  const w = world();
+  const before = '- [ ] 185. Tool lows sweep\n';
+  const after = '- [x] 185. Tool lows sweep\n';
+  w.env.git = (...a) => ({ 'rev-parse claude/session30': 'head0', 'show head0:TODO.md': before, 'show claude/session30:TODO.md': after })[a.join(' ')];
+  w.files['b.txt'] = 'Build: TODO 185b (tools).\nTick 185 (185a and 185b both done) when this is green.';
+  const gate = gateOps(w.env);
+  assert.equal(gate.record({ tool: true, brief: 'b.txt', branch: 'knight/185b' }), 'items since start (Rook S30): 0 ticked, 0 launched / 2, 1 tool');
+  assert.deepEqual(state(w).launches[0].ids, ['185b', '185']);
+  assert.match(gate.report(), /: 0 ticked, 0 launched/);
+});
+
+test('TODO 185a: recorded tool/fix flags skip ticks regardless of branch name, and ids survive brief reuse', () => {
+  const w = world();
+  const before = '- [ ] 167b. tool\n- [ ] 167c. fix\n- [ ] 170. item\n';
+  const after = before.replaceAll('[ ]', '[x]');
+  w.env.git = (...a) => ({ 'rev-parse claude/session30': 'head0', 'show head0:TODO.md': before, 'show claude/session30:TODO.md': after })[a.join(' ')];
+  const gate = gateOps(w.env);
+  for (const [branch, flags, brief] of [
+    ['king/s33-tools', { tool: true }, 'Build: TODO 167b (tools).\nTick 167b, 1 line'],
+    ['king/167c-fix-2', { fix: true }, 'King fix: TODO 167c (second fix).'],
+    ['knight/drawing', {}, 'Build: TODO 170 (drawing).'],
+  ]) {
+    w.files['b.txt'] = brief;
+    gate.record({ ...flags, brief: 'b.txt', branch });
+  }
+  assert.deepEqual(state(w).launches.map((l) => [l.kind, l.ids]), [['tool', ['167b']], ['fix', ['167c']], ['item', ['170']]]);
+  w.files['b.txt'] = 'Build: TODO 999 (reused).';
+  assert.equal(gate.report(), 'items since start (Rook S30): 1 ticked, 1 launched / 2, 1 tool');
+});
+
+test('TODO 185a: older launch records use saved briefs and recorded flags, never branch ids', () => {
+  const w = world();
+  w.files['tool.txt'] = 'Build: TODO 162 (tool).\nTick 162, 164';
+  w.files['fix.txt'] = 'King fix: TODO 155f (fix).';
+  const launches = [{ kind: 'tool', brief: 'tool.txt', branch: 'king/s33-tools' }, { kind: 'fix', brief: 'fix.txt', branch: 'king/167c-fix-2' }];
+  w.files['/x/runs30/rook-gate.json'] = JSON.stringify({ uuid: 'uuid-1', startSha: 'head0', launches });
+  const git = w.env.git;
+  w.env.git = (...a) => a.join(' ') === 'show claude/session30:TODO.md' ? AFTER : git(...a);
+  assert.match(gateOps(w.env).report(), /: 2 ticked, 0 launched/);
+  assert.deepEqual([...skipIds({ launches: [{ kind: 'tool', branch: 'king/162', brief: 'missing.txt' }] }, w.env.read)], []);
+});
+
 test('state: the same Rook keeps its launches, a new uuid starts empty at the current head', () => {
   const old = { uuid: 'a', startSha: 's1', launches: [{ kind: 'item' }] };
   assert.equal(nextState(old, 'a', 's2'), old);
@@ -49,14 +130,30 @@ test('queue line: counts, the limit and HANDOVER DUE; line 2 is replaced or inse
   assert.equal(setLine2('', 'L'), '\nL');
 });
 
+// One assistant line of a Rook transcript with `n` tokens of context (split over the three usage fields).
+const turn = (n, extra = {}) => JSON.stringify({ type: 'assistant', ...extra, message: { usage: { input_tokens: 10, cache_read_input_tokens: n - 10 - 5, cache_creation_input_tokens: 5, output_tokens: 99 } } }) + '\n';
+
 // A fake extras folder, repo and TODO.md history for the gate.
 function world(uuid = 'uuid-1') {
   const files = { '/x/rook-next.txt': `${uuid}\nRook S30\n/x/runs30/resume-rook.txt\n`, '/x/runs30/queue.txt': 'title\nPUSHED a\n' };
   const git = (...a) => ({ 'rev-parse claude/session30': 'head0', 'show head0:TODO.md': BEFORE, 'show claude/session30:TODO.md': BEFORE })[a.join(' ')] ?? (() => { throw new Error(`git ${a.join(' ')}`); })();
-  const env = { extras: '/x', read: (p) => files[p] ?? null, write: (p, t) => { files[p] = t; }, git };
+  files[`/c/${uuid}.jsonl`] = turn(40_000);
+  const env = { extras: '/x', claudeDir: '/c', read: (p) => files[p] ?? null, write: (p, t) => { files[p] = t; }, git };
   return { files, env, gate: gateOps(env) };
 }
 const state = (w) => JSON.parse(w.files['/x/runs30/rook-gate.json']);
+
+test('TODO 167c: a tool ticket passes the gate at the limit, is recorded as kind tool and is not an item; the line adds ", <k> tool"', () => {
+  assert.equal(queueLine('Rook S30', 0, 1, 1), 'items since start (Rook S30): 0 ticked, 1 launched / 2, 1 tool');
+  assert.equal(queueLine('Rook S30', 0, 2, 2), 'items since start (Rook S30): 0 ticked, 2 launched / 2, 2 tool -> HANDOVER DUE');
+  const w = world();
+  for (const b of ['k/1', 'k/2']) { w.gate.check(false, false); w.gate.record({ fix: false, over: false, brief: 'b.txt', branch: b }); }
+  w.gate.check(false, false, true); // at the limit, still passes
+  const line = w.gate.record({ fix: false, over: false, tool: true, brief: 'b.txt', branch: 'k/tool' });
+  assert.deepEqual(state(w).launches.map((l) => [l.kind, l.over]), [['item', undefined], ['item', undefined], ['tool', undefined]]);
+  assert.equal(line, 'items since start (Rook S30): 0 ticked, 2 launched / 2, 1 tool -> HANDOVER DUE');
+  assert.throws(() => w.gate.check(false, false), /handover due: 2 new items launched/);
+});
 
 test('gate: 2 item launches pass, the 3rd is refused; fix rounds never count; --over passes and is logged', () => {
   const w = world();
@@ -109,10 +206,48 @@ test('ticked counter: a row ticked then unticked counts 0', () => {
   assert.equal(countTicked('- [x] 1. a', '- [ ] 1. a'), 0);
 });
 
+test('context: the last main-chain message counts, not the peak; sub-agent, zero and half-written lines are skipped', () => {
+  assert.equal(contextOf(turn(200_000) + turn(60_000)), 60_000);
+  assert.equal(contextOf(turn(60_000) + turn(900_000, { isSidechain: true }) + turn(900_000, { parent_tool_use_id: 't' }) + turn(0) + '{"type":"assis'), 60_000);
+  assert.equal(contextOf('{"type":"user"}\n'), null);
+});
+
+test('context gate: over 150k refuses every launch (--fix too), --over passes, a missing transcript allows with one warning line', () => {
+  const w = world(), log = console.log, seen = [];
+  console.log = (m) => seen.push(m);
+  try {
+    w.gate.check(false, false);
+    w.gate.context(false);
+    assert.deepEqual(seen, []); // 40k: quiet
+    w.files['/c/uuid-1.jsonl'] = turn(300_000) + turn(151_000);
+    for (const fix of [false, true]) assert.throws(() => w.gate.check(fix, false), /^Error: HANDOVER: context 151k /);
+    assert.throws(() => w.gate.context(false), /^Error: HANDOVER: context 151k /);
+    w.gate.check(false, true); // --over passes
+    w.gate.context(true);
+    w.files['/c/uuid-1.jsonl'] = turn(300_000) + turn(150_000); // exactly 150k is not over
+    w.gate.check(true, false);
+    w.files['/c/uuid-1.jsonl'] = turn(300_000) + turn(20_000); // a compact lowered it
+    w.gate.check(false, false);
+    delete w.files['/c/uuid-1.jsonl'];
+    w.gate.check(true, false);
+    assert.equal(seen.length, 1);
+    assert.match(seen[0], /context not checked: no transcript/);
+  } finally { console.log = log; }
+});
+
 test('gate: without rook-next.txt or a runs<N> line it stops with a message', () => {
   const w = world();
   w.files['/x/rook-next.txt'] = 'uuid-1\nRook S30\n';
   assert.throws(() => w.gate.check(false, false), /must have the Rook uuid/);
   delete w.files['/x/rook-next.txt'];
   assert.throws(() => w.gate.check(false, false), /rook-next\.txt not found/);
+});
+
+test('TODO 167d: queueFile is the queue.txt of the runs<N> that rook-next.txt line 3 names; none = a message', () => {
+  const w = world();
+  assert.equal(w.gate.queueFile(), '/x/runs30/queue.txt');
+  w.files['/x/rook-next.txt'] = 'uuid-1\nRook S30\n';
+  assert.throws(() => w.gate.queueFile(), /line 3 does not name runs<N>/);
+  delete w.files['/x/rook-next.txt'];
+  assert.throws(() => w.gate.queueFile(), /line 3 does not name runs<N>/);
 });

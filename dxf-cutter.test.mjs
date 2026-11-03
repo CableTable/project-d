@@ -140,3 +140,20 @@ test('the copy writes and reads back as LINE, ARC and LWPOLYLINE only', () => {
 test('the tolerance must be a number above 0', () => {
   for (const bad of [0, -1, NaN, Infinity, undefined]) assert.throws(() => cutterDoc(docOf(), bad), RangeError);
 });
+
+test('TODO 184: a block holding 8 inserts of itself ends in a DrawingError, fast', () => {
+  const d = W.newDoc(); W.addBlock(d, 'A', Array.from({ length: 8 }, () => W.insert('A', 0, 0)));
+  d.entities = [W.insert('A', 0, 0)];
+  const t0 = Date.now();
+  assert.throws(() => cutterDoc(d, 0.01), D.DrawingError);
+  assert.ok(Date.now() - t0 < 15000);
+});
+
+test('TODO 184: INSERT arrays nested 4 deep ending in an empty block end in a DrawingError, fast', () => {
+  const d = W.newDoc(); W.addBlock(d, 'E', []);
+  for (const [n, to] of [['A1', 'E'], ['A2', 'A1'], ['A3', 'A2'], ['A4', 'A3']]) W.addBlock(d, n, [W.insert(to, 0, 0, { cols: 100, rows: 100, dx: 1, dy: 1 })]);
+  d.entities = [W.insert('A4', 0, 0, { cols: 100, rows: 100, dx: 1, dy: 1 })];
+  const t0 = Date.now();
+  assert.throws(() => cutterDoc(d, 0.01), D.DrawingError);
+  assert.ok(Date.now() - t0 < 15000);
+});

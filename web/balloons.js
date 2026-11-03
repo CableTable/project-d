@@ -115,8 +115,8 @@ export function decode(text) {
 
 // ---- the table as CSV (also what Excel is given) ----
 const HEAD = ['No.', 'Dimension', 'Tol +', 'Tol -', 'Sheet', 'Note'];
-// a cell that starts with = or @ would be a formula in Excel: it gets a ' in front
-const cell = (v) => { let s = String(v); if (/^[=@]/.test(s)) s = "'" + s; return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+// Prefix ' before =, @, +, -, tab or CR to prevent Excel formulas, except plain signed or unsigned numbers.
+const cell = (v) => { let s = String(v); if (/^[=@+\-\t\r]/.test(s) && !/^[+-]?(\d+(\.\d*)?|\.\d+)$/.test(s)) s = "'" + s; return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
 /** CSV text for these rows. bom: a UTF-8 byte order mark, so Excel reads Ø and ± right. */
 export function csv(list, { bom = false } = {}) {
   const lines = [HEAD, ...list.map((it) => [it.n, it.dim, it.tp, it.tm, it.sheet, it.note])].map((r) => r.map(cell).join(','));

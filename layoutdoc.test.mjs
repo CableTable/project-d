@@ -680,6 +680,89 @@ const bakedAt = (part, p, x, y) => {       // where the sheet point (x, y) of th
   return [R(p.x + lx * Math.cos(a) - ly * Math.sin(a)), R(p.y + lx * Math.sin(a) + ly * Math.cos(a))];
 };
 
+test('TODO 182: objectDoc renames clashes, repoints nested INSERTs and preserves shared blocks, sources and placed indices', () => {
+  const block = (entities) => ({ base: [0, 0], xref: false, entities });
+  const plain = (r) => ({ X: block([circle(0, 0, r)]) });
+  const nested = (r, outer = 1) => ({ X: block([insert('Y', 0, 0), circle(0, 0, outer)]), Y: block([circle(0, 0, r)]) });
+  const occupied = { X: block([insert('x_2', 0, 0)]), x_2: block([circle(0, 0, 5)]) };
+  const nameOf = (e) => e.r.v[e.r.c.indexOf(2)];
+  for (const [label, first, second, name, inner] of [
+    ['plain clash', plain(5), plain(7), 'X_2'],
+    ['nested clash', nested(5), nested(7, 2), 'X_2', 'Y_2'],
+    ['identical parent with nested clash', nested(5), nested(7), 'X_2', 'Y_2'],
+    ['identical shared', nested(5), nested(5), 'X', 'Y'],
+    ['first free ignores case', occupied, plain(7), 'X_3'],
+    ['incoming suffix reserved', plain(5), { X: block([insert('X_2', 0, 0)]), X_2: block([circle(0, 0, 7)]) }, 'X_3', 'X_2'],
+  ]) {
+    const lay = LD.newLayout(label), a = blockObject(0, 'X', first), b = blockObject(0, 'X', second);
+    lay.parts = { a, b }; lay.placed = [{ partId: 'missing' }, { ...LD.objectPlacement(a), partId: 'a' }, { ...LD.objectPlacement(b), partId: 'b', lock: true }];
+    const rawBefore = structuredClone([a.raw, b.raw]);
+    const cached = LD.objectDoc({ ...lay, placed: [lay.placed[2]] }).raw.entities[0], cachedBefore = structuredClone(cached);
+    const view = LD.objectDoc(lay), [ea, eb] = view.raw.entities;
+    assert.equal(view.raw.entities.length, 2, label);
+    assert.deepEqual(view.raw.entities.map(nameOf), ['X', name], label);
+    assert.deepEqual(view.raw.entities.map((e) => view.at.get(e)), [1, 2], label + ': placed indices');
+    assert.ok(view.lockedEnts.has(eb) && !view.lockedEnts.has(ea), label + ': locked entity');
+    assert.deepEqual(view.raw.blocks.X, first.X, label + ': first block preserved');
+    if (inner) {
+      assert.equal(nameOf(view.raw.blocks[name].entities[0]), inner, label + ': nested reference');
+      assert.deepEqual(view.raw.blocks[inner], second[inner === 'Y_2' ? 'Y' : inner], label + ': nested definition');
+    }
+    if (name === 'X') {
+      assert.equal(view.raw.blocks.X, first.X, label + ': identical block shared');
+      assert.deepEqual(Object.keys(view.raw.blocks).sort(), ['X', 'Y'], label);
+    }
+    assert.deepEqual([a.raw, b.raw], rawBefore, label + ': parts unchanged');
+    assert.deepEqual(cached, cachedBefore, label + ': baked entity unchanged');
+    assert.equal(LD.objectDoc({ ...lay, placed: [lay.placed[2]] }).raw.entities[0], cached, label + ': baked cache preserved');
+  }
+});
+
+test('TODO 182 review: repeat placements reuse one copy, a grip edit on a renamed block keeps the part\'s own names, a dimension block is renamed with its owner', () => {
+  const block = (entities) => ({ base: [0, 0], xref: false, entities });
+  const nameOf = (e) => e.r.v[e.r.c.indexOf(2)];
+  const setup = (first, second, copies = 1) => {
+    const lay = LD.newLayout('R'), a = blockObject(0, 'X', first), b = blockObject(0, 'X', second);
+    lay.parts = { a, b }; lay.placed = [{ ...LD.objectPlacement(a), partId: 'a' }, ...Array.from({ length: copies }, (_, k) => ({ ...LD.objectPlacement(b), partId: 'b', x: 300 + k * 100 }))];
+    return { lay, a, b, view: LD.objectDoc(lay) };
+  };
+  const plain = (r) => ({ X: block([circle(0, 0, r)]) });
+  // three placements of one clashing part: one copy
+  const three = setup(plain(5), plain(7), 3);
+  assert.deepEqual(three.view.raw.entities.map(nameOf), ['X', 'X_2', 'X_2', 'X_2']);
+  assert.deepEqual(Object.keys(three.view.raw.blocks), ['X', 'X_2']);
+  // a nested clash: the reused copy also needs the nested copy to match
+  const nest = (r) => ({ X: block([insert('Y', 0, 0)]), Y: block([circle(0, 0, r)]) });
+  const deep = setup(nest(5), nest(7), 2);
+  assert.deepEqual(deep.view.raw.entities.map(nameOf), ['X', 'X_2', 'X_2']);
+  assert.deepEqual(Object.keys(deep.view.raw.blocks).sort(), ['X', 'X_2', 'Y', 'Y_2']);
+  // a grip edit on the renamed block object
+  for (const [label, s, own] of [['plain', setup(plain(5), plain(7)), ['X']], ['nested', setup(nest(5), nest(7)), ['X', 'Y']]]) {
+    const { lay, b, view } = s, eb = view.raw.entities[1], widthBefore = b.w, blocksBefore = structuredClone(b.raw.blocks);
+    assert.equal(nameOf(eb), 'X_2', label);
+    const [, x, y] = gripPts(eb).find((g) => g[0] === 'i');
+    assert.ok(LD.objectReplace(lay, view, eb, GR.dragGrip(eb, 'i', [x + 5, y]).ent, () => 'n1'), label);
+    const now = lay.parts[lay.placed[1].partId];
+    assert.notEqual(now, b, label + ': a new part');
+    assert.equal(R(now.w), R(widthBefore), label + ': width kept');
+    assert.deepEqual(Object.keys(now.raw.blocks).sort(), own, label + ': the part keeps its own block names');
+    assert.equal(nameOf(now.raw.entities[0]), 'X', label);
+    assert.deepEqual(now.raw.blocks, blocksBefore, label + ': block contents unchanged');
+    const again = LD.objectDoc(lay);
+    assert.deepEqual(again.raw.entities.map(nameOf), ['X', 'X_2'], label + ': renamed again for the view');
+    assert.equal(R(LD.layoutFromRaw(readDxf(writeDxf(LD.layoutRaw(lay)))).placed.length), 2, label + ': saves');
+  }
+  // a nested DIMENSION block is renamed with its owner
+  const dim = (len) => ({ X: block([entity('DIMENSION', [[2, '*D1'], [70, 0]]), circle(0, 0, 3)]), '*D1': block([line(0, 0, len, 0), line(0, 0, 0, 3)]) });
+  const d = setup(dim(20), dim(30));
+  assert.equal(d.view.raw.entities.length, 2);
+  assert.deepEqual(d.view.raw.entities.map(nameOf), ['X', 'X_2']);
+  assert.equal(nameOf(d.view.raw.blocks.X_2.entities[0]), '*D1_2');
+  assert.deepEqual(d.view.raw.blocks['*D1_2'], dim(30)['*D1']);
+  assert.deepEqual(d.view.raw.blocks['*D1'], dim(20)['*D1']);
+  assert.equal(nameOf(d.b.raw.blocks.X.entities[0]), '*D1', 'the part is unchanged');
+});
+
 test('TODO 171: a block object is one INSERT in objectDoc with the insertion grip + one per attribute, for every placement', () => {
   for (const nAttr of [0, 1, 2]) for (const [label, over] of [['plain', {}], ['rotated 30', { rot: 30 }], ['scaled 2', { sc: 2 }], ['mirrored X', { mirrorX: true }]]) {
     const lay = LD.newLayout('B'), part = blockObject(nAttr), p = { ...LD.objectPlacement(part), x: 300, y: 200, ...over };

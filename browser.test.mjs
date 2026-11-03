@@ -13,7 +13,7 @@ import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
-import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement } from './web/layoutdoc.js';
+import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
@@ -1032,6 +1032,84 @@ try {
         await p.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, theme);
         await p.screenshot({ path: `${shotDir}/todo152c-status-1024-${theme}.png` });
       }
+    } finally { await context.close(); }
+  });
+  await step('TODO 184: nested blocks file shows the error', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage();
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const g = (...pairs) => pairs.map(([c, v]) => c + '\n' + v).join('\n'), dim = g([0, 'DIMENSION'], [8, '0'], [2, 'A']);
+      const text = [g([0, 'SECTION'], [2, 'BLOCKS']), g([0, 'BLOCK'], [8, '0'], [2, 'A'], [70, 0], [10, 0], [20, 0]), ...Array(8).fill(dim), g([0, 'ENDBLK'], [8, '0']), g([0, 'ENDSEC']),
+        g([0, 'SECTION'], [2, 'ENTITIES']), dim, g([0, 'ENDSEC']), g([0, 'EOF'])].join('\n') + '\n';
+      const tabs = await p.locator('.dtab').count();
+      await p.getByTestId('picker').setInputFiles({ name: 'nested-184.dxf', mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      const shown = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 30000 })).jsonValue();
+      assert.match(shown, /nested-184\.dxf: Too many nested blocks to draw this file/);
+      assert.equal(await p.locator('.dtab').count(), tabs, 'the file did not open');
+      await p.getByTestId('picker').setInputFiles('fixtures/outline.dxf');           // the app still responds: a second file opens in a tab
+      await p.getByTestId('drawing-panel').waitFor({ state: 'visible' });
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'outline.dxf');
+      await p.screenshot({ path: `${shotDir}/todo184-after-error-light.png` });
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+      await p.screenshot({ path: `${shotDir}/todo184-after-error-dark.png` });
+    } finally { await context.close(); }
+  });
+  await step('TODO 184: paste past the limit', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage();
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const g = (...pairs) => pairs.map(([c, v]) => c + '\n' + v).join('\n'), dim = g([0, 'DIMENSION'], [8, '0'], [2, 'A']);
+      // 2 dimensions in the block naming itself cost 2047 visits each: 2441 of them and 3273 lines sit just under the 5 million budget (one line more does not), a pasted copy of the lines does not
+      const line = g([0, 'LINE'], [8, '0'], [10, 0], [20, 0], [11, 1], [21, 1]);
+      const text = [g([0, 'SECTION'], [2, 'BLOCKS']), g([0, 'BLOCK'], [8, '0'], [2, 'A'], [70, 0], [10, 0], [20, 0]), dim, dim, g([0, 'ENDBLK'], [8, '0']), g([0, 'ENDSEC']),
+        g([0, 'SECTION'], [2, 'ENTITIES']), ...Array(2441).fill(dim), ...Array(3273).fill(line), g([0, 'ENDSEC']), g([0, 'EOF'])].join('\n') + '\n';
+      await p.getByTestId('picker').setInputFiles({ name: 'paste-184.dxf', mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction(() => /^Opened paste-184/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 }).catch(async (e) => { throw new Error('prompt: ' + await p.getByTestId('cmd-prompt').textContent(), { cause: e }); });
+      const prompt = () => p.getByTestId('cmd-prompt').textContent(), count = () => p.getByTestId('count').textContent();
+      const before = await count();
+      await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
+      await p.waitForFunction(() => /^Copied/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      await p.keyboard.press('Delete'); await p.waitForFunction(() => /^Deleted/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });       // a Redo step is waiting
+      await p.keyboard.press('Control+v');
+      const shown = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 60000 })).jsonValue();
+      assert.match(shown, /Too many nested blocks to draw this file/);
+      assert.doesNotMatch(shown, /^Pasted/);
+      assert.equal(await count(), before, 'the drawing is unchanged');
+      await p.keyboard.press('Control+y'); await p.waitForFunction(() => /^Redone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });       // Redo survived the failed paste
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z');
+      assert.equal(await prompt(), 'Nothing to undo', 'no undo step was added');
+      await p.keyboard.press('Control+a');                                        // Mirror: a copy of the dimensions is past the limit too
+      for (const word of ['mirror', '0,0', '10,0']) {
+        const input = p.getByTestId('cmd-input');
+        if (!(await input.isVisible())) { await p.getByTestId('cmd-echo').click(); await input.waitFor({ state: 'visible' }); }
+        await input.fill(word); await input.press('Enter');
+      }
+      await p.getByTestId('mirror-no').click();
+      const mirrored = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 60000 }).catch(async (e) => { throw new Error('prompt: ' + await prompt(), { cause: e }); })).jsonValue();
+      assert.doesNotMatch(mirrored, /^Mirrored/);
+      assert.equal(await count(), before, 'Mirror left the drawing as it was');
+      await p.keyboard.press('Control+z');
+      assert.equal(await prompt(), 'Nothing to undo', 'Mirror added no undo step');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');   // Line: one more segment is past the limit (3273 lines is the most that fits)
+      await p.keyboard.press('Delete'); await p.waitForFunction(() => /^Deleted/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      for (const word of ['line', '0,0', '10,0']) {
+        const input = p.getByTestId('cmd-input');
+        if (!(await input.isVisible())) { await p.getByTestId('cmd-echo').click(); await input.waitFor({ state: 'visible' }); }
+        await input.fill(word); await input.press('Enter');
+      }
+      const lined = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 60000 }).catch(async (e) => { throw new Error('prompt: ' + await prompt(), { cause: e }); })).jsonValue();
+      assert.doesNotMatch(lined, /made on layer/);
+      assert.equal(await p.getByTestId('tool-chip').textContent(), 'Tool: Select', 'the refused segment ended the Line command');
+      assert.equal(await count(), before, 'Line left the drawing as it was');
+      await p.keyboard.press('Control+y'); await p.waitForFunction(() => /^Redone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });       // Redo survived
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z');
+      assert.equal(await prompt(), 'Nothing to undo', 'Line added no undo step');
     } finally { await context.close(); }
   });
   await step('TODO 152b: Properties and ribbon show custom colour swatch and hex, keeping the picker option', async () => {
@@ -10863,6 +10941,60 @@ try {
     await closeTabs(/./);
   });
 
+  const block186 = () => {
+    const doc = newDoc(4);
+    addBlock(doc, 'Attributed', [dxfLine(0, 0, 60, 0)]);
+    const ins = dxfInsert('Attributed', 200, 300);
+    ins.kids = [['AAA', 'TAG1', 260, 360], ['BBB', 'TAG2', 260, 240]].map(([v, tag, x, y]) => entity('ATTRIB', [[10, x], [20, y], [40, 5], [2, tag], [1, v], [70, 0]]).r);
+    addEntities(doc, ins);
+    const raw = readDxf(writeDxf(doc)), lay = newLayout('Block186');
+    lay.parts.b = objectPart('b', 'Attributed block', raw.entities[0], raw.layers, raw.header, raw.blocks);
+    lay.placed = [objectPlacement(lay.parts.b)];
+    return { raw, lay };
+  };
+
+  await step('TODO 186: several hot grips on one Layout block object', async () => {
+    await menuItem('View', 'Theme: light');
+    const { raw, lay } = block186(), ids = ['i', 'a0', 'a1'];
+    const positions = async () => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await gripBox('0:' + id)])));
+    const same = (a, b, what) => { for (const id of ids) assert.ok(near(a[id].x, b[id].x, 2) && near(a[id].y, b[id].y, 2), `${what}: ${id}`); };
+    const ink = (p) => t('drawing').evaluate((c, p) => {
+      const r = c.getBoundingClientRect(), sx = c.width / r.width, sy = c.height / r.height;
+      const w = Math.round(80 * sx), h = Math.round(40 * sy), d = c.getContext('2d').getImageData(Math.round((p.x - 10 - r.x) * sx), Math.round((p.y - 25 - r.y) * sy), w, h).data;
+      let b = null;
+      for (let i = 4; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) { const x = (i / 4) % w, y = Math.floor(i / 4 / w); b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)] : [x, y, x, y]; }
+      return b;
+    }, p);
+    // TODO 171 delegates to Drawings; check the same block there and on a Layout, in both hot orders.
+    for (const [kind, text] of [['Drawing', writeDxf(raw)], ['Layout', writeDxf(layoutRaw(lay))]]) {
+      await openGrips(text, `block186-${kind}.dxf`);
+      await page.keyboard.press('Control+a'); await gripWhen(3);
+      const before = await positions();
+      for (const hot of [['a0', 'a1'], ['a1', 'a0'], ['i', 'a0', 'a1'], ['a1', 'a0', 'i']]) {
+        for (const id of hot) { const p = await gripBox('0:' + id); await page.keyboard.down('Shift'); try { await page.mouse.click(p.x, p.y); } finally { await page.keyboard.up('Shift'); } await frames(); }
+        assert.equal(await page.locator('[data-testid=grip-hot]').count(), hot.length);
+        const expected = Object.fromEntries(ids.map((id) => [id, { x: before[id].x + (hot.includes(id) ? 40 : 0), y: before[id].y + (hot.includes(id) ? 30 : 0) }]));
+        const drag = async () => { const p = await gripBox('0:' + hot[0]); await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 40, p.y + 30, { steps: 6 }); await frames(); };
+        await drag();
+        assert.ok(+(await t('drawing').getAttribute('data-preview') || 0) > 0, kind + ': preview while dragging');
+        const preview = await Promise.all(['a0', 'a1'].map((id) => ink(expected[id])));
+        await page.mouse.up(); await frames(); await gripWhen(3);
+        same(await positions(), expected, `${kind} ${hot}: both attributes move once; insertion moves only when hot`);
+        await page.keyboard.press('Escape'); await frames();       // deselect: the selection box is not the text
+        for (const [i, id] of ['a0', 'a1'].entries()) { const post = await ink(expected[id]); assert.ok(preview[i] && post && preview[i].every((v, k) => near(v, post[k], 3)), `${kind} ${hot}: ${id} preview ${JSON.stringify(preview[i])} vs commit ${JSON.stringify(post)}`); }
+        await page.keyboard.press('Control+a'); await gripWhen(3);
+        await g164a.undo(); await page.keyboard.press('Control+a'); await gripWhen(3);       // Undo clears the selection after the deselect above
+        same(await positions(), before, kind + ': one Undo restores every hot grip');
+        // Reheat and cancel the same drag without committing.
+        for (const id of hot) { const p = await gripBox('0:' + id); await page.keyboard.down('Shift'); try { await page.mouse.click(p.x, p.y); } finally { await page.keyboard.up('Shift'); } await frames(); }
+        await drag(); await page.keyboard.press('Escape'); await page.mouse.up(); await frames();
+        await page.keyboard.press('Control+a'); await gripWhen(3);
+        same(await positions(), before, kind + ': Esc mid-drag leaves the block unchanged');
+      }
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 164a: hot MTEXT width grip + hot attribute grip: the preview shows the MTEXT reflowed in place (not moved whole), the commit agrees', async () => {
     await menuItem('View', 'Theme: light');
     await openGrips(g164aDoc(), 'g164a-hots.dxf');
@@ -11524,6 +11656,244 @@ try {
     await t('prop-similar').click(); await page.getByRole('menuitem', { name: 'Layer (2)', exact: true }).click();
     assert.deepEqual(await picked162b(2), [100, 275]);
     assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  const raw188 = newDoc(4);
+  addEntities(raw188, dxfLine(100, 100, 250, 100));
+  const lay188 = newLayout('Undo188');
+  lay188.parts.line = objectPart('line', 'Line', raw188.entities[0], raw188.layers);
+  lay188.placed = [objectPlacement(lay188.parts.line)];
+  /** One line in a Drawing, a Compare or a Layout tab, picked with its grips and the Properties panel open. */
+  const open188 = async (kind) => {
+    await openGrips(writeDxf(kind === 'Layout' ? layoutRaw(lay188) : raw188), `undo188-${kind}.dxf`);
+    if (kind === 'Compare') { await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click(); }
+    await page.keyboard.press('Escape'); await frames();
+    await click(175, 100); await frames(); await gripWhen(3); await propsOnNow();
+  };
+
+  await step('TODO 188 Properties look', async () => {
+    const shots = 'shots-188'; mkdirSync(shots, { recursive: true });
+    const look = async () => {
+      const fields = await page.locator('[data-prop]:disabled').evaluateAll((els) => els.map((el) => {
+        const s = getComputedStyle(el);
+        return { key: el.dataset.prop, colour: s.color, opacity: s.opacity, background: s.backgroundColor };
+      }));
+      const placeholder = await t('prop-width-custom').evaluate((el) => {
+        const s = getComputedStyle(el, '::placeholder'); return { colour: s.color, opacity: s.opacity };
+      });
+      return { fields, placeholder };
+    };
+    const drawingLooks = {};
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await open188(kind);
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        const actual = await look();
+        if (kind === 'Drawing') drawingLooks[theme] = actual;
+        else assert.deepEqual(actual, drawingLooks[theme], kind + ': matches Drawings Properties in ' + theme);
+        assert.equal(actual.fields.length, 5, 'Angle, Start and End remain read only');
+        assert.ok(actual.fields.every((f) => f.colour === actual.placeholder.colour && f.opacity === '1'));
+        assert.equal(actual.placeholder.opacity, '1', 'ByLayer uses the readable field text opacity');
+        assert.equal(await t('prop-width-custom').getAttribute('placeholder'), 'ByLayer');
+        await t('props-panel').screenshot({ path: `${shots}/properties-${kind.toLowerCase()}-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      console.log(`188 ${kind} Properties: light + dark match Drawings; screenshots saved in ${shots}/`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 188 Undo keeps grips', async () => {
+    await menuItem('View', 'Theme: light');
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await open188(kind);
+      if (kind === 'Compare') {       // Compare's own guide history has no drawing selection to snapshot
+        await page.keyboard.press('Escape'); await gripWhen(0);
+        await t('guide-position').fill('25'); await t('guide-add-v').click();
+        assert.equal(await t('guide-pos').count(), 1);
+        await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+        await t('guide-pos').waitFor({ state: 'detached' });
+        await click(175, 100); await gripWhen(3);
+      }
+      const endpoint = () => page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id.endsWith(':b')));
+      const settled = async () => { await gripWhen(3); await page.waitForFunction(() => !document.querySelector('[data-testid=grip-hot]')); return gripBox(await endpoint()); };       // the end grip once all three show and none is hot
+      const before = await settled();
+      await dragGripTo(await endpoint(), 220, 130);
+      const moved = await settled();
+      assert.ok(Math.hypot(moved.x - before.x, moved.y - before.y) > 5, kind + ': grip edit moves the endpoint');
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.keyboard.press('Control+z');
+      const back = await settled();
+      assert.ok(near(back.x, before.x, 2) && near(back.y, before.y, 2), kind + ': Undo restores geometry and keeps grips');
+      await page.keyboard.press('Control+y');
+      const forward = await settled();
+      assert.ok(near(forward.x, moved.x, 2) && near(forward.y, moved.y, 2), kind + ': Redo keeps grips');
+      await dragGripTo(await endpoint(), 200, 120); await settled();
+      await page.keyboard.press('Control+z');
+      const again = await settled();
+      assert.ok(near(again.x, moved.x, 2), kind + ': another grip edit needs no re-pick: ' + JSON.stringify({ again, moved, history: await histLabels() }));
+      await page.keyboard.press('Escape'); await gripWhen(0);
+      // Undo of a paste removes its selected objects: no dangling selection or grips; the grip edit before it still gives its grips back.
+      await page.keyboard.press('Control+a'); await gripWhen(3);
+      await page.keyboard.press('Control+c'); await page.keyboard.press('Escape'); await gripWhen(0);
+      await page.keyboard.press('Control+v'); await gripWhen(3);
+      await page.keyboard.press('Control+z'); await gripWhen(0);
+      await page.keyboard.press('Control+z'); await gripWhen(3);
+      console.log(`188 ${kind}: Undo / Redo keep grips; removed objects leave selection; Esc clears grips`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 188 layer list follows rename', async () => {
+    const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+    p.on('pageerror', (e) => errs.push(String(e)));
+    // Layout has no rename/recolour control yet: exercise its in-place layers-table changes directly.
+    await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.layers188 = (rename) => {
+        const d = curDoc(), table = LD.layersOf(d.lay);
+        if (rename) {
+          table.Renamed = table.A; delete table.A;
+          for (const [id, part] of Object.entries(d.lay.parts)) if (part.obj) d.lay.parts[id] = LD.objectPart(id, part.name, { ...part.raw.entities[0], layer: 'Renamed' }, table, part.raw.header, part.raw.blocks);
+        } else table.Renamed = { ...table.Renamed, aci: 3, tc: null };
+        update();
+      };` }));
+    try {
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      const lay = newLayout('Layers188'); lay.layers = newDoc(4).layers; addLayer(lay, 'A', { aci: 1 });
+      lay.parts.line = objectPart('line', 'Line', dxfLine(100, 100, 250, 100, { layer: 'A' }), lay.layers);
+      lay.placed = [objectPlacement(lay.parts.line)];
+      await q('picker').setInputFiles({ name: 'layers188.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'layers188.dxf');
+      await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a');
+      await q('prop-layer').waitFor({ state: 'visible' });
+      assert.equal(await q('prop-layer').inputValue(), 'A');
+      await p.evaluate(() => window.layers188(true));
+      assert.deepEqual(await q('prop-layer').locator('option').allTextContents(), ['0', 'Renamed']);
+      assert.equal(await q('prop-layer').inputValue(), 'Renamed');
+      const swatch = () => q('prop-swatch').evaluate((el) => getComputedStyle(el).backgroundColor);
+      const red = await swatch(); await p.evaluate(() => window.layers188(false));
+      assert.notEqual(await swatch(), red, 'ByLayer Properties colour follows the recoloured table');
+      assert.deepEqual(errs, []);
+      console.log('188 Layout layer list: in-place rename and recolour refresh Properties');
+    } finally { await p.close(); }
+  });
+
+  await step('TODO 187: Layout object Properties', async () => {
+    await closeTabs(/./);
+    const { lay } = block186(), partRaw = newDoc(4);
+    lay.layers = newDoc(4).layers;
+    addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 });
+    addLayer(partRaw, 'A', { aci: 1 });
+    addEntities(partRaw, roundRect(0, 0, 100, 60, 0, { layer: 'A' }));
+    lay.parts.part = makePart('part', 'Placed part', partRaw, 1);
+    lay.placed.push({ partId: 'part', x: 650, y: 350, rot: 0 });
+    for (const [id, y] of [['source', 100], ['target', 180]]) {
+      lay.parts[id] = objectPart(id, id, dxfLine(100, y, 250, y, { layer: 'A' }), lay.layers);
+      lay.placed.push(objectPlacement(lay.parts[id]));
+    }
+    lay.parts.circle = objectPart('circle', 'Circle', dxfCircle(450, 450, 25, { layer: 'B' }), lay.layers);
+    lay.placed.push(objectPlacement(lay.parts.circle));
+    await t('picker').setInputFiles({ name: 'layout-properties.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'layout-properties.dxf');
+    await frames(); await page.locator('[data-tool=select]').click(); await propsOnNow();
+    const noFields = async () => {
+      for (const id of ['prop-chip', 'prop-layer', 'prop-colour', 'prop-geo', 'prop-match', 'prop-empty']) assert.equal(await t(id).isVisible(), false, id);
+      assert.equal(await t('prop-qselect').isVisible(), true);
+    };
+    await page.keyboard.press('Escape'); await frames();
+    await noFields();
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true }); await frames();
+    await noFields();
+    const read = async () => {
+      const current = layoutFromRaw(await savedDoc());
+      const ents = objectDoc(current).raw.entities;
+      assert.deepEqual(flatten(current.parts.part.raw).items, flatten(lay.parts.part.raw).items, 'the placed part source stays unchanged');
+      return ents;
+    };
+    const source = (ents) => ents.find((e) => e.type === 'LINE' && fieldOf(e, 20) === 100);
+    const target = (ents) => ents.find((e) => e.type === 'LINE' && fieldOf(e, 20) === 180);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    // A mixed selection's fields and chip act on its Layout objects only.
+    await click(175, 100, { shift: true }); await frames();
+    assert.equal(await t('prop-chip').textContent(), 'Line');
+    assert.equal(await propVal('length'), '150.00');
+    await t('prop-colour').selectOption('aci:5');
+    await t('prop-layer').selectOption('B'); await frames();
+    assert.equal(await t('prop-colour').inputValue(), 'aci:5');
+    assert.equal(await t('prop-layer').inputValue(), 'B');
+    let ent = source(await read()); assert.equal(ent.aci, 5); assert.equal(ent.layer, 'B');
+    assert.deepEqual(await histLabels(), ['Start', 'Colour → Blue', 'Layer → B']);
+    await undo();
+    ent = source(await read()); assert.equal(ent.aci, 5); assert.equal(ent.layer, 'A', 'one Undo restores the layer only');
+    await undo();
+    ent = source(await read()); assert.equal(ent.aci ?? 256, 256); assert.equal(ent.layer, 'A', 'the next Undo restores the colour');
+    await page.keyboard.press('Escape'); await click(175, 100); await frames();
+    await page.locator('[data-prop=length]').fill('200'); await page.locator('[data-prop=length]').press('Enter'); await frames();
+    assert.equal(fieldOf(source(await read()), 11), 300, 'geometry writes to the Layout object');
+    await undo();
+    await page.keyboard.press('Escape'); await click(175, 100); await click(175, 180, { shift: true }); await frames();
+    assert.equal(await t('prop-chip').textContent(), 'Line × 2');
+    await t('prop-lt').selectOption('DASHED');
+    const lines = (await read()).filter((e) => e.type === 'LINE');
+    assert.equal(lines.length, 2); assert.ok(lines.every((e) => e.lt === 'DASHED'));
+    await undo();
+    // Block objects use the same common fields, keeping their block and attributes.
+    await page.keyboard.press('Escape');
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true }); await frames();
+    assert.equal(await t('prop-chip').textContent(), 'Block');
+    const beforeBlock = (await read()).find((e) => e.type === 'INSERT');
+    await t('prop-colour').selectOption('aci:3'); await t('prop-layer').selectOption('B');
+    const afterBlock = (await read()).find((e) => e.type === 'INSERT');
+    assert.equal(afterBlock.aci, 3); assert.equal(afterBlock.layer, 'B'); assert.deepEqual(afterBlock.kids, beforeBlock.kids);
+    await undo(); await undo();
+    assert.deepEqual((await read()).find((e) => e.type === 'INSERT'), beforeBlock);
+    // Match ignores placed parts, ends with Esc, and reads a later source edit.
+    await page.keyboard.press('Escape'); await click(175, 100); await frames();
+    await t('prop-colour').selectOption('aci:5'); await t('prop-layer').selectOption('B');
+    await t('prop-match').click(); assert.match(await prompt(), /Select destination object/);
+    await click(700, 350); await frames();
+    assert.equal(target(await read()).layer, 'A');
+    await page.keyboard.press('Escape');
+    assert.doesNotMatch(await prompt(), /Select destination object/);
+    await t('prop-match').click(); await click(175, 180); await frames();
+    ent = target(await read()); assert.equal(ent.aci, 5); assert.equal(ent.layer, 'B');
+    await page.keyboard.press('Escape'); await undo();
+    assert.equal(target(await read()).layer, 'A', 'one Undo restores Match');
+    await page.keyboard.press('Escape'); await click(175, 100); await frames();
+    await t('prop-colour').selectOption('aci:3');
+    await t('prop-match').click(); await click(175, 180); await page.keyboard.press('Escape');
+    assert.equal(target(await read()).aci, 3, 'Match reads the edited source');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await frames();
+    await click(175, 100); await frames();
+    assert.equal(await t('prop-chip').isVisible(), true);
+    assert.equal(await t('prop-chip').textContent(), 'Line');
+    // A layer added (or undone) while a Layout object is selected shows in the layer list at once.
+    const layerNames = () => t('prop-layer').locator('option').allTextContents();
+    assert.ok(!(await layerNames()).includes('Layer1'));
+    await t('layer-add').click(); await page.evaluate(() => document.activeElement.blur()); await frames();
+    assert.ok((await layerNames()).includes('Layer1'), 'the added layer is listed');
+    await undo();
+    assert.ok(!(await layerNames()).includes('Layer1'), 'the undone layer is gone');
+    // A locked Layout object keeps its colour and length.
+    await t('bar-lock').click(); await frames();
+    const before = source(await read()), histBefore = await histLabels();
+    await t('prop-colour').selectOption('aci:1'); await frames();
+    await page.locator('[data-prop=length]').fill('90'); await page.locator('[data-prop=length]').press('Enter'); await frames();
+    assert.equal(await prompt(), 'Locked: Unlock to move it');
+    ent = source(await read()); assert.equal(ent.aci, before.aci); assert.equal(fieldOf(ent, 11), fieldOf(before, 11));
+    assert.deepEqual(await histLabels(), histBefore, 'a locked object adds no Undo step');
+    assert.equal(await t('prop-colour').inputValue(), 'aci:3', 'the field goes back to the real colour');
+    await t('bar-lock').click(); await frames();
+    assert.deepEqual(errors, []);
+    console.log('TODO 187 behavior: fields, mixed selection, block, geometry, Match, source isolation, layer list, lock and Undo passed');
+    const shots = 'shots-187'; mkdirSync(shots, { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await t('props-panel').screenshot({ path: `${shots}/layout-properties-${theme}.png` });
+    }
+    console.log('TODO 187 screenshots: light + dark Layout object Properties saved in shots-187/');
+    await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
   await step('Properties: View / Ctrl+1 toggle the whole docker; the Properties tab asks for a selection', async () => {

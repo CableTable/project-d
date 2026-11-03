@@ -6,7 +6,8 @@ run=""
 if [ "$1" = "--run" ] && [ "$#" = 2 ] && [ -n "$2" ]; then
   run=$2
 elif [ "$#" = 1 ] && [ -n "$1" ] && [ "$1" != "--run" ]; then
-  sha=$(git rev-parse "$1" 2>/dev/null || echo "$1")   # gh matches only the full sha
+  git fetch -q origin
+  sha=$(git rev-parse --verify -q "$1^{commit}") || { echo "unknown sha $1"; exit 2; }   # gh matches only the full sha
 else
   echo "usage: ci-watch.sh <sha> | --run <id>"; exit 2
 fi
@@ -17,7 +18,7 @@ while :; do
   if [ -z "$id" ]; then
     fails=$((fails + 1)); [ "$fails" = 20 ] && echo "no CI run found for $sha after 15 min"
   else
-    cur=$(gh run view "$id" --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success") | "\(.name): \(.conclusion)"' 2>/dev/null | sort)
+    cur=$(gh run view "$id" --json jobs --jq '.jobs[] | select(.status == "completed" and .conclusion != "success" and .conclusion != "skipped") | "\(.name): \(.conclusion)"' 2>/dev/null | sort)
     [ -n "$cur" ] && comm -13 <(printf '%s\n' "$prev") <(printf '%s\n' "$cur") | grep .
     prev=$cur
     st=$(gh run view "$id" --json status,conclusion --jq '.status + " " + .conclusion' 2>/dev/null)

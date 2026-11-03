@@ -21,6 +21,7 @@ export class DrawingError extends Error {}
 
 const TAU = Math.PI * 2, DEG = Math.PI / 180;
 const MAX_ITEMS = 400000, MAX_MATS = 400000;
+export const MAX_VISITS = 5000000;        // entities walked per draw, block expansions included: a block holding k copies of itself costs k^10
 export const UNITS = { 1: 'in', 2: 'ft', 3: 'mi', 4: 'mm', 5: 'cm', 6: 'm', 7: 'km', 8: 'µin', 9: 'mil', 10: 'yd', 14: 'dm' };
 
 // ---------------------------------------------------------------- the file's text
@@ -335,7 +336,7 @@ export function flatten(doc, hidden = new Set()) {
     return layers.length - 1;
   };
   const mats = [IDENT], items = [], insertions = [], left = {}, vports = [];
-  let truncated = false;
+  let truncated = false, visits = 0;
   const skip = (type) => { left[type] = (left[type] || 0) + 1; };
 
   const dashOf = (name, lts) => {
@@ -354,6 +355,7 @@ export function flatten(doc, hidden = new Set()) {
     for (let ei = 0; ei < ents.length; ei++) {
       const e = ents[ei];
       if (truncated) return;
+      if (++visits > MAX_VISITS) throw new DrawingError('Too many nested blocks to draw this file');
       if (e.hidden) continue;
       const top = depth === 0 ? ei : ctx.ei;                  // the top-level entity this comes from (a block's contents: its INSERT)
       const own = e.layer === '0' && ctx.layer != null ? ctx.layer : layerOf(e.layer);

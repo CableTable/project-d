@@ -1,8 +1,17 @@
 // The launcher's handover gate (TODO 165): at most LIMIT new-item launches per Rook, so the pipeline drains to a clean break.
 // A rule in WORKFLOW.md did not hold (Rook S29 built 9 items), so `rook.mjs build` / `knight` count and refuse.
-// State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
+// State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind: item | fix | tool, ids, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
 export const LIMIT = 2;
 const ROW = /^(\s*)(?:- \[([ x])\] )?(\d+[a-z]*\d*)\.\s*(✅)?/; // "- [x] 160." / "    155a. ✅" / "1. ✅"; ids repeat in old lists, so rows are keyed id#occurrence
+
+// Ids right after Tick, joined by , and & / +; a single-digit prose count is not an id.
+export const tickIds = (line) => line.match(/^\s*(?:\d+\.\s+)?`?Tick\s+(?:TODO\s+)?(\d{2,}[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d{2,}[a-z]*\d*)*)/i)?.[1].match(/\d{2,}[a-z]*\d*/g) ?? [];
+
+export function briefIds(text) {
+  const lines = text.split(/\r?\n/);
+  const ids = [...lines[0].matchAll(/\bTODO\s+(\d{2,}[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d{2,}[a-z]*\d*)*)/gi)].flatMap((m) => m[1].match(/\d{2,}[a-z]*\d*/gi));
+  return [...new Set([...ids, ...lines.flatMap(tickIds)].map((s) => s.toLowerCase()))];
+}
 
 // shortcut: id#occurrence miscounts when a same-number open row is inserted above a ticked one; it only feeds the queue line (never a launch), upgrade if the line misleads.
 function rows(text) {
@@ -15,18 +24,43 @@ function rows(text) {
 }
 
 // Leaf rows ticked in `after` that were not ticked (or did not exist) in `before`; a parent ticked because its children are does not count.
-export function countTicked(before, after) {
+// skip = TODO ids whose tick is not a new item (TODO 167e: a --tool or fix launch, see skipIds).
+export function countTicked(before, after, skip = new Set()) {
   const was = new Set(rows(before).filter((r) => r.ticked).map((r) => r.key));
-  return rows(after).filter((r) => r.leaf && r.ticked && !was.has(r.key)).length;
+  return rows(after).filter((r) => r.leaf && r.ticked && !was.has(r.key) && !skip.has(r.key.split('#')[0])).length;
 }
 
-export const itemsOf = (state) => state.launches.filter((l) => l.kind === 'item');
+// The recorded launch kind decides which ticks to skip; older records get their ids from the saved brief.
+export function skipIds(state, read = () => '') {
+  const ids = (l) => l.ids ?? briefIds((l.brief && read(l.brief)) || '');
+  const items = new Set(itemsOf(state).flatMap(ids));
+  return new Set(state.launches.filter((l) => l.kind !== 'item').flatMap(ids).filter((i) => !items.has(i)));
+}
+
+// TODO 167a: context of the LAST main-chain assistant message (a compact lowers it, so not the peak) = input + cache read + cache write; null when there is none.
+export const CONTEXT_LIMIT = 150_000;
+export function contextOf(text) {
+  let last = null;
+  for (const line of text.split(/\r?\n/)) {
+    let e;
+    try { e = JSON.parse(line); } catch { continue; } // a run in progress has a half-written last line
+    const u = e.type === 'assistant' && !e.isSidechain && !e.parent_tool_use_id && e.message?.usage;
+    const n = u && (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+    if (n) last = n; // a synthetic message has all zeros: skip it
+  }
+  return last;
+}
+
+export const itemsOf =(state) => state.launches.filter((l) => l.kind === 'item');
 
 // The stored state, or a fresh one when a different Rook (uuid) is running now.
 export const nextState = (old, uuid, startSha) => (old && old.uuid === uuid ? old : { uuid, startSha, launches: [] });
 
-export const queueLine = (name, ticked, items) =>
-  `items since start (${name}): ${ticked} ticked, ${items} launched / ${LIMIT}${items >= LIMIT || ticked >= LIMIT ? ' -> HANDOVER DUE' : ''}`;
+export const toolsOf = (state) => state.launches.filter((l) => l.kind === 'tool');
+
+// TODO 167c: tool tickets (`--tool`) pass the gate and are not counted as items; the line names them when there are any.
+export const queueLine = (name, ticked, items, tools = 0) =>
+  `items since start (${name}): ${ticked} ticked, ${items} launched / ${LIMIT}${tools ? `, ${tools} tool` : ''}${items >= LIMIT || ticked >= LIMIT ? ' -> HANDOVER DUE' : ''}`;
 
 // Line 2 of queue.txt: replaces an earlier "items since start" line, else is inserted (the other lines stay as they are).
 export function setLine2(text, line) {
@@ -56,25 +90,42 @@ export function gateOps(env) {
     return { name, dir, file, head, state };
   }
   function show(g) {
-    const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`));
-    const line = queueLine(g.name, ticked, itemsOf(g.state).length);
+    const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`), skipIds(g.state, env.read));
+    const line = queueLine(g.name, ticked, itemsOf(g.state).length, toolsOf(g.state).length);
     const q = `${g.dir}/queue.txt`;
     env.write(q, setLine2(env.read(q) || '', line));
+    console.log(`queue: ${q}`);
     return line;
   }
+  // Throws `HANDOVER: context <N>k ...` when this Rook's transcript is over CONTEXT_LIMIT (every launch, --fix too); --over passes; no transcript: warns and allows.
+  function context(over) {
+    if (over) return;
+    const uuid = (env.read(`${env.extras}/rook-next.txt`) || '').split(/\r?\n/)[0].trim();
+    const text = uuid && env.read(`${env.claudeDir}/${uuid}.jsonl`), n = text && contextOf(text);
+    if (!n) return void console.log(`context not checked: no transcript for this Rook in ${env.claudeDir}`);
+    if (n > CONTEXT_LIMIT) throw new Error(`HANDOVER: context ${Math.round(n / 1e3)}k (over ${CONTEXT_LIMIT / 1e3}k). Hand over (WORKFLOW.md Handover), or pass --over with his OK.`);
+  }
   return {
+    context,
+    // TODO 167d: this Rook's runs<N>/queue.txt (rook-next.txt line 3 names runs<N>/resume-rook.txt).
+    queueFile() {
+      const n = /runs(\d+)/.exec((env.read(`${env.extras}/rook-next.txt`) || '').split(/\r?\n/)[2] || '')?.[1];
+      if (!n) throw new Error('rook-next.txt line 3 does not name runs<N>/resume-rook.txt');
+      return `${env.extras}/runs${n}/queue.txt`;
+    },
     // Throws when the launch is a new item over the limit and --over is not given.
-    check(fix, over) {
-      if (fix || over) return;
+    check(fix, over, tool) {
+      context(over);
+      if (fix || over || tool) return;
       const g = load();
       if (itemsOf(g.state).length >= LIMIT) throw new Error(refusal(g.name, g.state));
     },
     // After a launch started: never throws (a bad state file must not look like a failed launch, or Rook launches twice); it warns instead.
-    record({ fix, over, brief, branch }) {
+    record({ fix, over, tool, brief, branch }) {
       let g;
       try {
         g = load();
-        g.state.launches.push({ kind: fix ? 'fix' : 'item', brief, branch, at: new Date().toISOString(), ...(over && !fix ? { over: true } : {}) });
+        g.state.launches.push({ kind: fix ? 'fix' : tool ? 'tool' : 'item', ids: briefIds(env.read(brief) || ''), brief, branch, at: new Date().toISOString(), ...(over && !fix && !tool ? { over: true } : {}) });
         env.write(g.file, JSON.stringify(g.state, null, 2) + '\n');
       } catch (e) { return void console.error(`launch not counted: ${e.message}`); }
       try { return show(g); } catch (e) { console.error(`queue line not updated: ${e.message}`); }

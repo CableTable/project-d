@@ -28,7 +28,7 @@ import * as PS from './pdf-sheets.js';
 import { paintDrawing, drawMarks, drawContour, drawDimPreview, ink, FONT_FAMILY } from './render.js';
 import { overlayBox } from './preview.js';
 import { snapPlace, snapUsable, heavy } from './perf.js';
-import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex, arcSweep } from './drawing.js';
+import { flatten, unionBox, CAP, ACI, mapply, mmul, pickIndex, arcSweep, DrawingError } from './drawing.js';
 import { writeDxf, writeDxfWithReport, saveReportNote, unwritable, addLayer, newDoc, lwpoly } from './dxf-write.js';
 import * as SH from './shaping.js';
 import { explodeSelection } from './explode.js';
@@ -1051,7 +1051,7 @@ async function openBytes(name, buf, path = null) {
   const r = await readDrawing(buf instanceof ArrayBuffer ? buf : buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
   if (!r.ok) { note(name + ': ' + (r.sorry || 'could not read this drawing' + (r.error ? ' (' + r.error + ')' : ''))); return; }
   const fl = r.result;
-  if (!fl.items.length) { note(name + ': this drawing is empty'); return; }
+  if (!fl.items.length) { note(name + (fl.truncated ? ': too big to show all of it, so nothing is drawn' : ': this drawing is empty')); return; }
   const subs = fontSubstitutions(r.doc.styles, fl.items);
   const fontNote = subs.length ? 'Fonts: ' + subs.map(({ asked, shown }) => `${asked} → ${shown}`).join(', ') : '';
   const lay = LD.layoutFromRaw(r.doc, name);
@@ -1059,7 +1059,7 @@ async function openBytes(name, buf, path = null) {
   const doc = { name, path, openPath: path, guideFile: G.fileKey(path, name), dirty: false, ...tabFields(r.doc, fl) };       // openPath: the file itself, which Save never writes over
   addTab(doc);
   note(`Opened ${name}: ${doc.entities} entities` + (doc.conv ? ', ' + doc.conv : '') +
-    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : ''));
+    (fitsSheet(doc.box, state.sheetW, state.sheetH) ? '' : ' (larger than the sheet)') + (fontNote ? '. ' + fontNote : '') + (fl.truncated ? '. Too big to show all of it' : ''));
   ui.fontNote.textContent = fontNote;
   ui.fontNote.hidden = !fontNote;
   await balLoad(doc, path, name);
@@ -1895,7 +1895,7 @@ function layRestore(d, st, dirty = true) {
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
-  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (!sameSet) picksArr = [];
+  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (!sameSet) { picksArr = []; state.sel = -1; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
   d.dirty = dirty; renderTabs(); update(sized && view.fitted);
 }
@@ -1956,14 +1956,15 @@ function showHistory() {
         const current = historyOf(d), target = historyDocs(d).find((x) => x.hist && x.hist === current[forward ? 'redoHistory' : 'undoHistory']);
         if (!target || target !== d && !cmpEdit()) break;
         const st = target.hist[forward ? 'redo' : 'undo'](snapshotOf(target));
-        if (st) restore(target, st);
+        if (st && restore(target, st) === false) { target.hist[forward ? 'undo' : 'redo'](st); break; }       // the step goes back where it was
       }
       return;
     }
     const lay = !!d.lay, cur = lay ? laySnap(d.lay) : snapshotOf(d);
     const st = r < now ? hist.undoMany(now - r, cur) : hist.redoMany(r - now, cur);
     if (!st) return;
-    if (lay) layRestore(d, st); else restore(d, st);
+    if (lay) layRestore(d, st);
+    else if (restore(d, st) === false) { hist[r < now ? 'redoMany' : 'undoMany'](Math.abs(r - now), st); return; }       // the steps go back where they were
     note(r < now ? `Went back ${now - r} step${now - r === 1 ? '' : 's'}, to ${rows[r] === 'Start' ? 'the start' : 'after ' + rows[r]}` : `Went forward ${r - now} step${r - now === 1 ? '' : 's'}, to after ${rows[r]}`);
   };
   const list = h('div', { class: 'histlist', 'data-testid': 'hist-list' }, rows.map((text, r) => {
@@ -2883,7 +2884,7 @@ function dropLibInDrawing(rec, clientX, clientY) {
   try {
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = dropPart(part, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d) }, toDrawing(d, clientX, clientY));
-    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Add ${rec.name}`);
+    if (!commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Add ${rec.name}`)) return;       // too nested: commit showed why
     if (r.made.length) d.newLayer = r.made[0];
     setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
     renderLayers();
@@ -3238,7 +3239,8 @@ function exportCutter() {
   if (document.querySelector('.cutdlg')) return;
   const raw = d.lay ? LD.layoutRaw(d.lay) : d.raw;
   const factor = d.lay ? 1 : d.factor;
-  let made = { tol: 0.01, res: cutterDoc(raw, 0.01 / factor) };        // the count of what is left out does not depend on the tolerance
+  let made;
+  try { made = { tol: 0.01, res: cutterDoc(raw, 0.01 / factor) }; } catch (err) { note(err.message); return; }       // the count of what is left out does not depend on the tolerance
   const want = baseName(dxfName(d.openPath ? d.openPath.split(/[\\/]/).pop() : d.name)) + '-cutter.dxf';
   const { left, other } = made.res;
   const leftText = left ? `${left} text / fill ${left === 1 ? 'object' : 'objects'} left out` : 'No text or fills to leave out';
@@ -3339,7 +3341,7 @@ function addLayerNow() {
     pushLay(d, null, '', 'Add layer ' + name);
     d.lay.layers = { ...LD.layersOf(d.lay) }; addLayer(d.lay, name, { aci: 7 });
     d.curLayer = name; d.dirty = true; d.layerQuery = '';
-    renderLayers(); renderTabs(); renderCommand();
+    renderLayers(); renderTabs(); renderCommand(); renderEdit();
     note(`Added ${name}: it is the current layer. New shapes go on it. Ctrl+Z takes it away`);
     return;
   }
@@ -3379,7 +3381,7 @@ function addedSwatch(d, l) {
       if (!rgb) return;
       const next = PR.withColour(def, rgbKey(rgb));
       const keep = new Set(d.sel);
-      commit(d, { ...snapshotOf(d), layers: { ...d.raw.layers, [l.name]: next } }, 'Layer colour → ' + l.name);
+      if (!commit(d, { ...snapshotOf(d), layers: { ...d.raw.layers, [l.name]: next } }, 'Layer colour → ' + l.name)) return;
       setSel(d, keep);
       usedColour(rgbKey(rgb));
     } });
@@ -3666,7 +3668,7 @@ async function renameLayerNow(d, name) {
   const to = await askName({ title: 'Rename layer', label: 'Name', value: name, ok: 'Rename', validate: (v) => Ed.layerNameProblem(v, allLayerNames(d), name) });
   if (!to || to === name) return;
   const wasOff = d.off.has(d.fl.layers.findIndex((l) => l.name === name)), hid = hidIdx(d), lk = d.locked;
-  commit(d, OB.renameLayer(d.raw, name, to), `Rename layer ${name} → ${to}`);
+  if (!commit(d, OB.renameLayer(d.raw, name, to), `Rename layer ${name} → ${to}`)) return;
   const i = d.fl.layers.findIndex((l) => l.name === to);
   if (wasOff && i >= 0) d.off.add(i);                                      // restore() keeps hidden layers by name: this one has a new name
   d.hid = new Set([...(hid || [])].map((k) => d.raw.entities[k])); d.hidC = null;       // the renamed entities are new objects, at the same numbers
@@ -3754,7 +3756,7 @@ function cmdEnter(raw) {
     state.attdispAsk = null;
     if (c && mode !== (d.lay ? d.lay.s.attmode : +(d.raw.header.$ATTMODE ?? 1))) {
       if (d.lay) { pushLay(d, null, '', 'ATTDISP'); d.lay.s.attmode = mode; touch(d); update(); }
-      else commit(d, { ...snapshotOf(d), attmode: String(mode) }, 'ATTDISP');
+      else if (!commit(d, { ...snapshotOf(d), attmode: String(mode) }, 'ATTDISP')) { renderCommand(); return; }
     }
     renderCommand(); return;
   }
@@ -3965,13 +3967,15 @@ function setDecimals(n) {
   state.dp = Math.max(0, Math.min(4, Math.round(+n) || 0));
   ui.dp.value = String(state.dp);
   try { localStorage.setItem('pd-decimals', String(state.dp)); } catch { /* storage may be blocked */ }
-  let k = 0;
+  let k = 0, refused = false;
   for (const d of state.docs) {
     if (!d.raw || !d.hist || !d.fl) continue;
     const next = Ed.relabelDims(d.raw, d.factor, state.dp);
-    if (next) { commit(d, next, 'Dimension decimals'); k++; }
+    if (!next) continue;
+    if (commit(d, next, 'Dimension decimals')) k++; else refused = true;
   }
   update();
+  if (refused) return;                                                       // too nested: commit showed why
   note(`Dimensions: ${state.dp} decimal place${state.dp === 1 ? '' : 's'}` + (k ? ` (re-labelled in ${k} drawing${k === 1 ? '' : 's'}; Ctrl+Z undoes)` : ''));
 }
 
@@ -4487,6 +4491,7 @@ function attachCanvasEvents() {
       capture(c, e);
       c.classList.add('panning');
     } else if (e.button === 0 && state.tool !== 'pan') {
+      if (state.match && curLay()) { const d = propDoc(); matchClick(d, toDrawing(d, e.clientX, e.clientY)); return; }
       if (state.colourTool && editable() === state.colourTool.d) { colourToolClick(editable(), toDrawing(editable(), e.clientX, e.clientY)); return; }
       const gh = e.target.closest && e.target.closest('[data-gap]');
       if (sheetDown(e)) { capture(c, e); return; }
@@ -4591,7 +4596,8 @@ function attachCanvasEvents() {
           if (ready && g.items && (g.dx || g.dy) && g.raw === d.raw.entities) {
             const next = (g.copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, g.sel, g.dx, g.dy);
             const sel = g.copy ? new Set(next.entities.slice(g.raw.length).map((_, i) => g.raw.length + i)) : g.sel;
-            commit(d, g.copy ? next : followDimensions(d.raw, next, d.factor), g.copy ? 'Copy selection' : 'Move selection'); setSel(d, sel);
+            if (commit(d, g.copy ? next : followDimensions(d.raw, next, d.factor), g.copy ? 'Copy selection' : 'Move selection')) setSel(d, sel);
+            else { paintOverlay(); return; }
             note(g.copy ? 'Selection copied. Ctrl+Z removes the copy' : 'Selection moved. Ctrl+Z takes it back');
           }
           paintOverlay();
@@ -4655,7 +4661,7 @@ function renderCommand() {
   if (readout) { ui.hist.textContent = 'Command: READOUT' + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Hover for the colour, click copies its hex (Esc ends):'; return; }
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
-  if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
+  if (state.match && state.match.d.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(state.match.d.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
   if (state.grip && (ed || lay)) {
     const gg = state.grip, M = gg.opt ? gg.opts[gg.opt].toUpperCase() : GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0 || gg.copy;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
     ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M, gg.copy) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
@@ -4836,7 +4842,7 @@ function applyTrace(d, polys, name) {
   const doc = { layers: { ...d.raw.layers } };
   if (!had) addLayer(doc, layer, { aci: 1 });
   const ents = TR.traceEntities(polys, { x: d.bg.x, y: d.bg.y, factor: d.factor, layer });
-  commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: doc.layers }, `Trace bitmap × ${ents.length}`);
+  if (!commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: doc.layers }, `Trace bitmap × ${ents.length}`)) return;
   if (!had) d.newLayer = layer;
   renderLayers();
   note(`Trace: ${ents.length} closed outline${ents.length === 1 ? '' : 's'} on the layer ${layer}, at the picture's place and size. Ctrl+Z takes them away`);
@@ -4871,7 +4877,7 @@ async function textToOutlines() {
   const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
   view.fitted = false;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
-  commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`);
+  if (!commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`)) return;
   if (lay) selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : [])));      // the new letters; commit's update() has made placedNow
   else { d.txoSel = new Set(r.ents.map((_, i) => at + i)); setSel(d, d.txoSel); }    // keep the new letters readable; a fresh selection enables their grips
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
@@ -4943,7 +4949,7 @@ function explodeOrBurst(burst) {
   const r = explodeSelection(d.raw, d.sel, d.locked, burst);
   const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
   if (!r.exploded) { note(label + ': nothing explodable (0 exploded)' + skipped); return; }
-  commit(d, { entities: r.entities, blocks: r.blocks }, label);
+  if (!commit(d, { entities: r.entities, blocks: r.blocks }, label)) return;
   setSel(d, r.selected);
   note(`${label}: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
 }
@@ -4975,7 +4981,7 @@ function shapeSelection(op) {
     return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps });
   }), at = kept.entities.length;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
-  commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name);
+  if (!commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name)) return;
   if (lay) { selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : []))); update(); }      // the new objects; commit's update() has made placedNow
   else setSel(d, new Set(made.map((_, i) => at + i)));
   note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' && !keep ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : keep ? '. The originals stay. Ctrl+Z removes the result' : '. Ctrl+Z puts the originals back'));
@@ -5149,7 +5155,7 @@ async function pasteSelection() {
     }
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
-    commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`);
+    if (!commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`)) return;       // too nested: commit showed why
     if (r.made.length) d.newLayer = r.made[0];
     setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
     renderLayers();
@@ -5327,7 +5333,8 @@ function drawingRotateUp(e) {
     try {
       const next = rotateEntities(r.d.raw, g.sel, r.pivot, g.angle);
       view.fitted = false;
-      commit(r.d, followDimensions(r.d.raw, next, r.d.factor), 'Rotate'); setSel(r.d, g.sel);
+      if (!commit(r.d, followDimensions(r.d.raw, next, r.d.factor), 'Rotate')) { paintOverlay(); return; }
+      setSel(r.d, g.sel);
       r.box = OB.boxOf(r.d.fl, [...g.sel]); state.drawingRotate = r;
       note('Selection rotated. Ctrl+Z takes it back');
     } catch (err) { note(err.message); }
@@ -5379,7 +5386,8 @@ function nudgeDrawing(d, dir, big) {
   try {
     const next = Ed.moveEntities(d.raw, sel, dx / d.factor, dy / d.factor);
     view.fitted = false;
-    commit(d, followDimensions(d.raw, next, d.factor), 'Nudge'); setSel(d, sel);
+    if (!commit(d, followDimensions(d.raw, next, d.factor), 'Nudge')) return;
+    setSel(d, sel);
     note(`Selection moved ${fmt(Math.hypot(dx, dy))} mm ${dir}. Ctrl+Z takes it back`);
   } catch (err) { note(err.message); }
 }
@@ -5428,10 +5436,27 @@ function showRubber(drag, e) {
 }
 function hideRubber() { if (ui.rubber) ui.rubber.hidden = true; }
 
-/** A new state for the tab: kept for undo; the drawing is drawn again from it. */
-function commit(d, next, label) {
-  if (d.vlay) { layObjCommit(d, next, label); return; }
-  pushHistory(d, snapshotOf(d), label); d.newLayer = null; restore(d, next);
+/** The layer table with layer `name` in it (made if new, in a copy): it goes into a commit's `layers`, so a refused commit leaves no layer behind. */
+function layersWith(raw, name, o) {
+  if (raw.layers[name]) return raw.layers;
+  const doc = { layers: { ...raw.layers } };
+  addLayer(doc, name, o);
+  return doc.layers;
+}
+/** A new state for the tab: kept for undo; the drawing is drawn again from it. False (nothing changed, no undo step, the message shown) when it is too nested to draw. */
+function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
+  if (d.vlay) { layObjCommit(d, next, label); return true; }
+  let fl;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
+  const raw = d.raw;
+  if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
+    try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
+      if (!(e instanceof DrawingError)) throw e;
+      note(e.message); return false;
+    }
+  }
+  pushHistory(d, keepSel ? { ...snapshotOf(d), sel: [...keepSel], grip: true } : snapshotOf(d), label); d.newLayer = null;
+  restore(d, next, fl);
+  return true;
 }
 /** A drawing-tab command on a layout's objects (layObjDoc) is done: the layout takes the objects it left, in one undo step. */
 function layObjCommit(v, next, label) {
@@ -5452,7 +5477,9 @@ function restoreBg(d, st) {
   if (st.mm != null && d.bg) d.bg.mm = st.mm;
   if (st.pos && d.bg) [d.bg.x, d.bg.y] = st.pos;
 }
-function restore(d, st) {
+/** Puts the tab in the state `st`. False (and the tab as it was, everything) when the drawing is too nested to draw again. */
+function restore(d, st, drawn) {
+  const before = snapshotOf(d), header = d.raw?.header;
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
   const attributesChanged = d.raw && 'attmode' in st && st.attmode !== d.raw.header.$ATTMODE;
   if (!d.raw || !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
@@ -5466,14 +5493,22 @@ function restore(d, st) {
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
+  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
+  let fl;
+  try { fl = drawn || flatten(d.raw, d.hid); } catch (e) {
+    if (!(e instanceof DrawingError)) throw e;
+    Object.assign(d.raw, { header, entities: before.entities, blocks: before.blocks, layers: before.layers, ltypes: before.ltypes });       // the drawing stays as it was
+    d.balloons = before.bl;
+    if (before.guides) { guideTarget(d).s.guides = before.guides; rememberGuides(d); }
+    note(e.message); return false;
+  }
   restoreBg(d, st);
-  const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name), fl = flatten(d.raw, d.hid);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
   Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
   if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
-  if (st.sel) setSel(d, new Set(st.sel));
+  if (st.sel) setSel(d, new Set(st.sel.filter((i) => i < st.entities.length)));       // an object the step removed leaves the selection
 }
 /** Does the selection hold anything but kept dimensions? (Keep only and Extract part need geometry.) */
 const selHasPart = (d) => [...d.sel].some((e) => d.raw.entities[e].layer !== Ed.DIM_LAYER);
@@ -5482,7 +5517,7 @@ function keepSelection() {
   if (!d || !d.sel.size) return;
   if (!selHasPart(d)) { note('Keep only: a kept dimension is not part of a part. Delete it, or select the outline'); return; }
   const kept = d.sel.size, gone = d.raw.entities.length - kept;
-  commit(d, Ed.keepOnly(d.raw, d.sel), `Keep only ${kept}`);
+  if (!commit(d, Ed.keepOnly(d.raw, d.sel), `Keep only ${kept}`)) return;
   note(`Kept ${kept}, removed ${gone}. Ctrl+Z brings them back`);
 }
 function deleteSelection() {
@@ -5491,7 +5526,7 @@ function deleteSelection() {
   const d = editable();
   if (!d || !d.sel.size) return;
   const n = d.sel.size;
-  commit(d, Ed.removeEntities(d.raw, d.sel), `Delete ${n}`);
+  if (!commit(d, Ed.removeEntities(d.raw, d.sel), `Delete ${n}`)) return;
   note(`Deleted ${n}. Ctrl+Z brings them back`);
 }
 /** A Line with only its first point has nothing made to undo: Ctrl+Z drops the point. */
@@ -5499,20 +5534,30 @@ function dropLinePoint(d) {
   if (!d || !state.draw || state.drawDoc !== d || DR.toolUndoSeg(state.draw) !== 'point') return false;
   state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return true;
 }
+/** d.hist.undo / redo: a step made by a grip edit (`grip`) hands back the opposite step with the selection too; every other step as before. */
+function stepHist(d, dir) {
+  const cur = { ...snapshotOf(d), sel: [...(d.sel || [])] }, st = d.hist[dir](cur);
+  if (st?.grip) cur.grip = true; else delete cur.sel;
+  return st;
+}
 function undo(d) {
   if (d.vlay) { undoLay(); return; }
   if (dropLinePoint(d)) return;
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
-  const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; }
-  restore(d, st);
+  const st = stepHist(d, 'undo'); if (!st) { note('Nothing to undo'); return; }
+  if (restore(d, st) === false) { d.hist.redo(st); return; }       // the step goes back on the undo list
   if (m?.raw) {
     if (copied && m.raw === raw && [...m.sel].every((i) => raw[i] === st.entities[i])) m.raw = d.raw.entities;
     else { setTool('select'); note('Undone. Copy ended: drawing or source objects changed; start Copy again'); return; }
   }
   note('Undone'); if (state.draw) { renderCommand(); paintOverlay(); }
 }
-function redo(d) { const st = d.hist.redo(snapshotOf(d)); if (!st) { note('Nothing to redo'); return; } restore(d, st); note('Redone'); }
+function redo(d) {
+  const st = stepHist(d, 'redo'); if (!st) { note('Nothing to redo'); return; }
+  if (restore(d, st) === false) { d.hist.undo(st); return; }       // the step goes back on the redo list
+  note('Redone');
+}
 
 /** Scales the whole drawing by s about the bottom-left of its extents, so it stays where it is on the sheet. */
 function scaleDrawing(d, s, label = 'Scale') {
@@ -5529,7 +5574,7 @@ function scaleDrawing(d, s, label = 'Scale') {
   const b = drawBox(d.fl), pb = partBox(d);
   if (!b || !pb) return;
   const r = Ed.scaleAbout(d.raw, s, pb[0] / d.factor, pb[1] / d.factor, spaceOf(d.fl));       // about the part's own bottom-left, not a dimension's
-  commit(d, followDimensions(d.raw, r, d.factor), `${label} ×${s.toFixed(3)}`);
+  if (!commit(d, followDimensions(d.raw, r, d.factor), `${label} ×${s.toFixed(3)}`)) return;
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', '), nb = partBox(d);
   note(`Scaled ×${+s.toPrecision(6)}: now ${fmtSize(nb[2] - nb[0])} × ${fmtSize(nb[3] - nb[1])} mm` + (left ? ` (not scaled: ${left})` : ''));
 }
@@ -5548,7 +5593,7 @@ function unitFix(fix) {
     return;
   }
   const r = Ed.scaleAbout(d.raw, fix.s, 0, 0, spaceOf(d.fl));
-  commit(d, followDimensions(d.raw, r, d.factor), `Unit fix ${fix.text}`);
+  if (!commit(d, followDimensions(d.raw, r, d.factor), `Unit fix ${fix.text}`)) return;
   const left = Object.entries(r.skipped).map(([t, n]) => t + ' ' + n).join(', ');
   note(UF.unitFixLine(fix, was, UF.unitFixSize(partBox(d), 1)) + (left ? ` (not scaled: ${left})` : ''));
 }
@@ -5586,7 +5631,7 @@ function sizeTyped(input, axis) {
   try {
     const r = Ed.resizeAbout(d.raw, sx, sy, b[0] / d.factor, b[1] / d.factor, spaceOf(d.fl), selection);
     if (Object.keys(r.skipped).length) { note('Cannot resize this selection: some objects do not support scaling'); renderEdit(); return; }
-    commit(d, followDimensions(d.raw, r, d.factor), 'Resize ' + (selection ? 'selection' : 'drawing'));
+    if (!commit(d, followDimensions(d.raw, r, d.factor), 'Resize ' + (selection ? 'selection' : 'drawing'))) { renderEdit(); return; }
     if (selection) setSel(d, selection);
     note('Resized ' + (selection ? 'selection' : 'drawing') + ' about its bottom-left. Ctrl+Z undoes this size change');
   } catch (error) { note(error.message); renderEdit(); }
@@ -5622,7 +5667,7 @@ function keepMeasure() {
   if (!d || !M || M.pts.length !== 2) return;
   const dim = Ed.makeDimension(M.pts[0], M.pts[1], d.factor, d.raw.blocks, state.dp, dimNew(d));
   if (!dim) return;
-  commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');
+  if (!commit(d, Ed.addDimension(d.raw, dim), 'Add dimension')) return;
   note(`Dimension kept: ${dim.label} mm, on the layer ${Ed.DIM_LAYER}. Select it to delete it`);
 }
 /// Dimension: first point, second point, then the callout follows the mouse sideways and a third click places it (AutoCAD's way). Linear is the
@@ -5720,7 +5765,7 @@ function dimPlace(d, m) {
     note(`Dimension placed: ${dim.label}${suffix}, on the layer ${Ed.DIM_LAYER}. Ctrl+Z takes it back`);
     return true;
   }
-  commit(d, Ed.addDimension(d.raw, dim), 'Add dimension');                                // (showDoc inside starts the next one)
+  if (!commit(d, Ed.addDimension(d.raw, dim), 'Add dimension')) return;                  // (showDoc inside starts the next one)
   state.dimRun.push(histTop());
   note(`Dimension placed: ${dim.label}${suffix}, on the layer ${Ed.DIM_LAYER}. Select it to move it or resize its text`);
   return true;
@@ -5822,7 +5867,7 @@ function dimDragTo(d, g, p) {
 function dimDragEnd(d, g) {
   state.dimDrag = null;
   if (g.cancelled || Math.abs(g.offset - g.params.offset) * d.factor < 0.001) { paintOverlay(); return; }
-  commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, { ...g.params, offset: g.offset }, d.factor, g.name, g.dp)), 'Move dimension');
+  if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(g.kind, { ...g.params, offset: g.offset }, d.factor, g.name, g.dp)), 'Move dimension')) { paintOverlay(); return; }
   setSel(d, new Set([g.e]));
   note(`Dimension moved: its line is ${fmtSize(Math.abs(g.offset) * d.factor)} mm from the points. Ctrl+Z undoes it`);
 }
@@ -5835,7 +5880,7 @@ function dimHeightTyped() {
   if (!(mm > 0) || !Number.isFinite(mm) || mm > 1e4) { note('Type the text height in mm: a number above 0'); renderEdit(); return; }
   const textH = mm / d.factor;
   if (Math.abs(textH - sd.params.textH) < 1e-9 * textH) { renderEdit(); return; }
-  commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(sd.kind, DM.withHeight(sd.params, textH), d.factor, sd.name, sd.dp)), 'Dimension text height');
+  if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(sd.kind, DM.withHeight(sd.params, textH), d.factor, sd.name, sd.dp)), 'Dimension text height')) { renderEdit(); return; }
   setSel(d, new Set([sd.e]));
   note(`Dimension text height ${fmtSize(mm)} mm. Ctrl+Z undoes it`);
 }
@@ -5845,7 +5890,7 @@ function dimHeightReset() {
   if (!sd) return;
   const p = DM.withHeight(sd.params, dimNew(d).textH), textH = p.textH;
   if (sd.params.textH != null && Math.abs(textH - sd.params.textH) < 1e-9 * textH) { note(`Dimension text height is already the style's, ${fmtSize(textH * d.factor)} mm`); return; }
-  commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(sd.kind, p, d.factor, sd.name, sd.dp)), 'Dimension text height');
+  if (!commit(d, Ed.replaceDimension(d.raw, Ed.buildDim(sd.kind, p, d.factor, sd.name, sd.dp)), 'Dimension text height')) return;
   setSel(d, new Set([sd.e]));
   note(`Dimension text height back to the style's, ${fmtSize(textH * d.factor)} mm. Ctrl+Z undoes it`);
 }
@@ -5857,7 +5902,7 @@ const saveDimStyles = () => { try { localStorage.setItem(DS_SAVED, JSON.stringif
 const curDimStyle = () => state.dimStyles.presets[state.dimStyles.cur];
 const fix2 = (v) => Number(v).toFixed(2);
 
-/** The selected dimensions rebuilt in the current style (one undo step); how many. */
+/** The selected dimensions rebuilt in the current style (one undo step); how many, or null when commit refused. */
 function applyDimStyleToSelected() {
   const d = editable();
   if (!d) return 0;
@@ -5868,7 +5913,7 @@ function applyDimStyleToSelected() {
     if (nd) { blocks[o.name] = nd.block; k++; }
     else if (lo) { const nl = LR.replace(d.raw, lo.name, { ...lo.model, textH: look.textH, arrow: look.arrow }); if (nl) { blocks[lo.name] = nl.blocks[lo.name]; k++; } }       // a leader takes the text height and the arrow size
   }
-  if (k) { const sel = new Set(d.sel); commit(d, { entities: d.raw.entities, blocks }, 'Dimension style'); setSel(d, sel); }
+  if (k) { const sel = new Set(d.sel); if (!commit(d, { entities: d.raw.entities, blocks }, 'Dimension style')) return null; setSel(d, sel); }
   return k;
 }
 /** The dialog's live preview: a 60 mm dimension under a 60 × 15 mm plate drawn in the style, on a 260 × 150 box (3.33 px per mm). */
@@ -5918,6 +5963,7 @@ function showDimStyle() {
     if (r.error) { err.textContent = r.error; return; }
     S.presets[name] = r.style; S.cur = name; saveDimStyles(); finish();
     const d = editable(), keep = d && new Set(d.sel), k = applyDimStyleToSelected();
+    if (k === null) return;                                                    // too nested: commit showed why
     if (r.style.dp !== state.dp) { setDecimals(r.style.dp); if (keep && keep.size) setSel(d, keep); }       // (Decimals re-labels every dimension, and clears the selection)
     note(`Dimension style ${name}` + (k ? `: ${k} selected dimension${k === 1 ? '' : 's'} restyled. Ctrl+Z takes it back` : '. New dimensions use it'));
   };
@@ -6409,7 +6455,7 @@ function ldrAdd(d, m) {
   if (!b) return;
   const idx = d.raw.entities.length;
   view.fitted = false;
-  commit(d, Ed.addDimension(d.raw, b), 'Add leader');
+  if (!commit(d, Ed.addDimension(d.raw, b), 'Add leader')) return;
   setSel(d, new Set([idx]));
   note(`Leader placed on the layer ${Ed.DIM_LAYER}: ${m.lines.join(' / ')}. Ctrl+Z takes it back`);
 }
@@ -6418,7 +6464,7 @@ function ldrReplace(d, e, m, label) {
   const o = LR.ofEntity(d.raw, e), next = o && LR.replace(d.raw, o.name, m);
   if (!next) return false;
   view.fitted = false;
-  commit(d, next, label);
+  if (!commit(d, next, label)) return false;
   setSel(d, new Set([e]));
   return true;
 }
@@ -6585,10 +6631,9 @@ function drawCommit(d, kind, shapes) {
   const layer = curLayerName(d);
   const attrs = currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour);
   if (d.lay) { view.fitted = false; layDrawCommit(d, kind, shapes, attrs); return; }
-  if (!d.raw.layers[layer]) addLayer(d.raw, layer);
   const ents = shapes.map((sh) => DR.toEntity(sh, attrs, d.factor));
   view.fitted = false;                                              // the view stays where it is while he draws
-  commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks }, DR.LABELS[kind]);
+  if (!commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: layersWith(d.raw, layer) }, DR.LABELS[kind])) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
   note(`${DR.LABELS[kind]} made on layer ${layer}` + (shapes.length > 1 ? ` (${shapes.length} lines)` : '') + '. Ctrl+Z takes it back');
 }
 /** The command line while a drawing tool is on: typed points, lengths and words. Returns true when it took the text. */
@@ -6798,10 +6843,10 @@ const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];     
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
 function layObjDoc(d) {
-  const skip = (id) => !!state.hidden.parts || partHid({ partId: id }), sig = LD.objectSig(d.lay, skip), c = objViews.get(d);
-  if (c && c.sig === sig) return c.v;
+  const skip = (id) => !!state.hidden.parts || partHid({ partId: id }), sig = LD.objectSig(d.lay, skip), layers = LD.layersOf(d.lay), layerSig = JSON.stringify(layers), c = objViews.get(d);
+  if (c && c.sig === sig && c.layers === layers && c.layerSig === layerSig) return c.v;
   const v = { ...LD.objectDoc(d.lay, skip), vlay: d, name: d.name, factor: 1, sel: new Set(), hid: null, locked: null, ed: null, hist: { labels: () => layHist(d).labels() } };
-  objViews.set(d, { sig, v });
+  objViews.set(d, { sig, layers, layerSig, v });
   return v;
 }
 /** layObjDoc(d) with the layout's selected objects as its selection (`sel` is kept while they stay the same, so the grips are kept too). */
@@ -7329,7 +7374,7 @@ function arrayDo(d) {
   try {
     const next = polar ? AR.arrayPolar(d.raw, m.sel, m.center, m.base, m.cfg) : AR.arrayRect(d.raw, m.sel, m.cfg, d.factor), sel = m.sel;
     view.fitted = false;
-    commit(d, next, 'Array');
+    if (!commit(d, next, 'Array')) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
     setTool('select'); setSel(d, sel);
     note(`Array added ${added} ${added === 1 ? 'copy' : 'copies'}. Ctrl+Z takes them all back`);
   } catch (err) { note(err.message); }
@@ -7411,7 +7456,7 @@ function transformDo(d, value) {
     const next = (scaling ? scaleEntities : rotateEntities)(d.raw, m.sel, m.p1, value, m.copy);
     const sel = m.copy ? new Set(next.entities.map((_, i) => i).slice(d.raw.entities.length)) : m.sel;
     view.fitted = false;
-    commit(d, m.copy ? next : followDimensions(d.raw, next, d.factor), label);
+    if (!commit(d, m.copy ? next : followDimensions(d.raw, next, d.factor), label)) { const msg = state.msg; setTool('select'); note(msg); return; }
     setTool('select'); setSel(d, sel);
     note(`Selection ${scaling ? 'scaled' : 'rotated'}${m.copy ? ' as a copy' : ''}. Ctrl+Z takes it back`);
   } catch (err) { note(err.message); }
@@ -7432,7 +7477,7 @@ function moveTo(d, q) {
   try {
     const next = (copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, m.sel, dx, dy);
     view.fitted = false;
-    if (copy || dx || dy) commit(d, copy ? next : followDimensions(d.raw, next, d.factor), label);
+    if ((copy || dx || dy) && !commit(d, copy ? next : followDimensions(d.raw, next, d.factor), label)) { const msg = state.msg; setTool('select'); note(msg); return; }
     state.pointLast = q.slice(0, 2);
     const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
     if (again) { m.raw = d.raw.entities; m.placed = true; } else setTool('select');
@@ -7608,17 +7653,20 @@ function offsetDo(d, p) {
   if (r.error) { note(r.error); return; }
   if (sig) m.sideSig = sig;
   const tab = d.vlay || d, snap = d.vlay ? laySnap(tab.lay) : snapshotOf(d), index = d.raw.entities.indexOf(target), srcIndex = d.raw.entities.indexOf(m.src);
+  let layers = d.raw.layers;
   if (m.layer === 'Current') {
     const name = curLayerName(tab);
-    if (!d.vlay && !d.raw.layers[name]) addLayer(d.raw, name);
+    if (!d.vlay) layers = layersWith(d.raw, name);
     r.ent = PR.withLayer(r.ent, name);
   }
   if (m.multiple && m.eraseSource && m.offsetSource == null) m.offsetSource = index;
-  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== target), r.ent], blocks: d.raw.blocks };
+  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== target), r.ent], blocks: d.raw.blocks, layers };
   view.fitted = false; m.offsetRaw = null;
-  if (!m.offsetSteps.length) commit(d, next, 'Offset');
+  let done = true;
+  if (!m.offsetSteps.length) done = commit(d, next, 'Offset');
   else if (d.vlay) { LD.objectCommit(tab.lay, d, next.entities, () => 'o' + uid()); touch(); update(); }
-  else restore(d, next);
+  else done = restore(d, next) !== false;
+  if (!done) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
   m.offsetSteps.push({ snap });
   const now = mdoc(tab);
   m.ent = m.multiple ? now.raw.entities.at(-1) : null; m.stage = m.multiple ? 'side' : 'obj';
@@ -7659,8 +7707,9 @@ function filletCommit(d, entities) {
   const m = state.mod, hist = historyOf(d.vlay || d), n = hist.labels().past.length;
   m.base = Math.min(m.base, n);
   view.fitted = false;
-  commit(d, { entities, blocks: d.raw.blocks }, 'Fillet');
+  if (!commit(d, { entities, blocks: d.raw.blocks }, 'Fillet')) return false;
   m.base -= n + 1 - hist.labels().past.length;
+  return true;
 }
 function filletUndo(d) {
   const m = state.mod, past = historyOf(d.vlay || d).labels().past;
@@ -7672,7 +7721,7 @@ function filletPolyDo(d, ent) {
   const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
   m.stage = 'obj'; m.ent = null;
-  if (r.ents[0] !== ent || r.ents.length > 1) filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)]);
+  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)])) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
   note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
@@ -7687,8 +7736,9 @@ function filletDo(d, ent, p, sharp) {
     note('Already a sharp corner. Pick the next first line, arc, circle or polyline segment, or Esc ends'); paintOverlay(); return;
   }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
-  filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
+  const ok = filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
   m.stage = 'obj'; m.ent = null;
+  if (!ok) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
   const radius = r.ents[2]?.type === 'ARC' ? GR.get(r.ents[2].r, 40) * d.factor : sharp ? 0 : state.filR;
   note(`${radius > 0 ? `Filleted, radius ${mmText(radius)} mm` : 'Corner made'}. Pick the next first line, arc, circle or polyline segment, or Esc ends. Ctrl+Z takes it back`);
 }
@@ -7705,8 +7755,9 @@ function trimMode(quick) {
 function trimCommit(d, next, label) {
   const m = state.mod, n = d.hist.labels().past.length;
   m.base = Math.min(m.base, n);                                 // a Ctrl+Z below the start leaves nothing of this command to undo
-  commit(d, next, label);
+  if (!commit(d, next, label)) { const msg = state.msg; setTool('select'); note(msg); return false; }       // too nested: commit showed why; the command ends
   m.base -= n + 1 - d.hist.labels().past.length;
+  return true;
 }
 const trimUndoable = (d, m) => { const past = d.hist.labels().past; return past.length > m.base && ['Trim', 'Extend'].includes(past.at(-1)); };
 function trimUndo(d) {
@@ -7731,7 +7782,7 @@ function trimRegionDo(d, hit, what, shift = state.mod.shift) {
     if (m.edges.includes(ent)) { for (const q of c.ents) m.was.set(q, ent); m.edges = m.edges.flatMap((e) => (e === ent ? c.ents : [e])); }
   }
   view.fitted = false;
-  trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim');
+  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim')) return false;
   note(`${what} ${ext ? 'extended' : 'trimmed'} ${r.changed.length} object${r.changed.length === 1 ? '' : 's'}.` + (r.skipped ? (ext ? ` ${r.skipped} left alone (no boundary ahead).` : ` ${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone.`) : '') + ' Ctrl+Z takes it back');
   return true;
 }
@@ -7789,7 +7840,7 @@ function trimEraseRun(d) {
   const m = state.mod, gone = new Set(m.erase);
   m.erase = null;
   if (gone.size) {
-    trimCommit(d, { entities: d.raw.entities.filter((e) => !gone.has(e)), blocks: d.raw.blocks }, 'Trim');
+    if (!trimCommit(d, { entities: d.raw.entities.filter((e) => !gone.has(e)), blocks: d.raw.blocks }, 'Trim')) return;
     note(`Erased ${gone.size} object${gone.size === 1 ? '' : 's'}. Click the part to cut away. Ctrl+Z takes it back`);
   } else note('Nothing picked to erase');
   renderCommand(); paintOverlay();
@@ -7814,7 +7865,7 @@ function trimDo(d, idx, p) {
   view.fitted = false;
   // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
   if (m.edges.includes(ent)) { for (const p of r.ents) m.was.set(p, ent); m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e])); }
-  trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim');
+  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim')) return;
   renderCommand();
   note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
 }
@@ -7824,7 +7875,7 @@ function extendDo(d, idx, p) {
   if (r.error) { note(r.error); return; }
   view.fitted = false;
   if (m.edges.includes(ent)) { m.was.set(r.ent, ent); m.edges = m.edges.map((e) => (e === ent ? r.ent : e)); }
-  trimCommit(d, { entities: d.raw.entities.map((e, i) => (i === idx ? r.ent : e)), blocks: d.raw.blocks }, 'Extend');
+  if (!trimCommit(d, { entities: d.raw.entities.map((e, i) => (i === idx ? r.ent : e)), blocks: d.raw.blocks }, 'Extend')) return;
   note('Extended. Click another line end, or Esc ends. Ctrl+Z takes it back');
 }
 /** Mirror: the second point is picked, now Yes (the sources go) or No (they stay). One undo step. */
@@ -7842,7 +7893,7 @@ function modAnswer(d, erase) {
   // Include the copies so cleanup keeps shared blocks that they still use.
   const next = { entities: [...d.raw.entities, ...made], blocks }, out = erase ? Ed.removeEntities(next, new Set(done)) : next, first = out.entities.length - made.length;
   view.fitted = false;
-  commit(d, out, 'Mirror');
+  if (!commit(d, out, 'Mirror')) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
   setTool('select'); setSel(d, new Set(made.map((_, i) => first + i)));
   note(`Mirrored ${made.length}${erase ? ', the sources erased' : ''}` + (skipped.length ? `; ${skipped.length} left out (${[...new Set(skipped)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }
@@ -7970,7 +8021,6 @@ function textPick(d, cx, cy) {
 /** Puts a text into the drawing (one undo step "Text") and selects it. */
 function textAdd(d, m) {
   const layer = curLayerName(d);
-  if (!d.lay && !d.raw.layers[layer]) addLayer(d.raw, layer);
   const ent = TX.encode(m, currentColour === 'bylayer' ? { layer } : PR.withColour({ layer }, currentColour));
   if (d.lay) {                                                       // a layout object on the current layer
     view.fitted = false; layObjectsAdd(d, 'Text', [ent]);
@@ -7979,7 +8029,7 @@ function textAdd(d, m) {
   }
   const idx = d.raw.entities.length;
   view.fitted = false;
-  commit(d, { entities: [...d.raw.entities, ent], blocks: d.raw.blocks }, 'Text');
+  if (!commit(d, { entities: [...d.raw.entities, ent], blocks: d.raw.blocks, layers: layersWith(d.raw, layer) }, 'Text')) return;
   setSel(d, new Set([idx]));
   note(`${TX.kindOf(m)} placed on layer ${layer}` + (m.lines.length > 1 ? ` (${m.lines.length} lines)` : '') + '. Ctrl+Z takes it back');
 }
@@ -7987,8 +8037,9 @@ function textAdd(d, m) {
 function textReplace(d, e, m, label) {
   const old = d.raw.entities[e], ent = TX.encode(m, { layer: old.layer, lt: old.lt, aci: old.aci, tc: old.tc, lw: old.lw, lts: old.lts, hidden: old.hidden, ps: old.ps });
   view.fitted = false;
-  commit(d, { entities: d.raw.entities.map((x, i) => (i === e ? ent : x)), blocks: d.raw.blocks }, label);
+  if (!commit(d, { entities: d.raw.entities.map((x, i) => (i === e ? ent : x)), blocks: d.raw.blocks }, label)) return false;
   setSel(d, new Set([e]));
+  return true;
 }
 
 // -- the editor over the canvas: a box you type in, in the text's own font and size
@@ -8060,7 +8111,7 @@ function textCommit() {
       const snap = laySnap(d.lay);
       if (!LD.replaceDim(d.lay, dim.placed, dim.raw.entities[ed.e], { ...dim.raw.blocks, [dim.name]: built.block }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((p) => p.name)))) return;
       pushLay(d, snap, '', 'Dimension text'); touch(); update();
-    } else { commit(d, Ed.replaceDimension(d.raw, built), 'Dimension text'); setSel(d, new Set([ed.e])); }
+    } else { if (!commit(d, Ed.replaceDimension(d.raw, built), 'Dimension text')) return; setSel(d, new Set([ed.e])); }
     note('Dimension text changed. Ctrl+Z takes it back');
     return;
   }
@@ -8074,7 +8125,7 @@ function textCommit() {
   if (!lines) { renderCommand(); renderEdit(); paintOverlay(); if (ed.e == null) note('Text: nothing typed, so nothing was made'); return; }
   if (ed.e != null) {
     if (JSON.stringify(lines) === JSON.stringify(ed.orig.lines)) { renderCommand(); renderEdit(); paintOverlay(); return; }
-    textReplace(d, ed.e, { ...ed.m, lines }, 'Edit text');
+    if (!textReplace(d, ed.e, { ...ed.m, lines }, 'Edit text')) return;
     note(`${TX.kindOf({ ...ed.m, lines })} changed. Ctrl+Z takes it back`);
   } else textAdd(d, { ...ed.m, lines });
 }
@@ -8161,7 +8212,7 @@ function attributePick(e, command = false) {
       d.lay.placed[loose] = { ...pl, partId: id, x: origin[0], y: -origin[1] };
       if (!shared) delete d.lay.parts[old.id];
       gCommit(g); update();
-    } else commit(d, { entities: d.raw.entities.map((x, i) => i === hit ? next : x), blocks: d.raw.blocks }, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor');
+    } else if (!commit(d, { entities: d.raw.entities.map((x, i) => i === hit ? next : x), blocks: d.raw.blocks }, ent.type === 'ATTDEF' ? 'Edit Attribute Definition' : 'Attribute editor')) return;       // too nested: commit showed why
   });
   return true;
 }
@@ -8190,7 +8241,7 @@ function textDragEnd(cancel) {
   state.text.drag = null;
   if (!g || cancel || !g.next || Math.abs(g.next.h - g.m.h) < 1e-9) { paintOverlay(); return; }
   const f = g.d.factor;
-  textReplace(g.d, g.e, { ...g.m, ...g.next }, 'Text height');
+  if (!textReplace(g.d, g.e, { ...g.m, ...g.next }, 'Text height')) return;
   note(`Height ${fmt(g.m.h * f)} → ${fmt(g.next.h * f)}. Ctrl+Z takes it back`);
 }
 
@@ -8285,7 +8336,7 @@ function textProp(patch) {
     if (m.font) { next.font = m.font; next.styleName = m.font; }
     if (m.ha != null) next.ha = m.ha;
     if (m.bold != null) next.bold = m.bold;
-    if (JSON.stringify(next) !== JSON.stringify(ts.m)) { textReplace(d, ts.e, next, label); note(`${label.replace('Text ', '')} changed on the selected text. Ctrl+Z takes it back`); }
+    if (JSON.stringify(next) !== JSON.stringify(ts.m)) { if (textReplace(d, ts.e, next, label)) note(`${label.replace('Text ', '')} changed on the selected text. Ctrl+Z takes it back`); }
   } else if (textEditing()) {
     const ed = state.text.ed;
     if (m.h != null) ed.m.h = m.h / ed.d.factor;
@@ -8578,9 +8629,10 @@ function gripExit() {
   if (!n) { const name = GM.nameOf(GM.MODES[g.mode]); gripCancel(); note(`${name} cancelled`); return; }
   state.grip = null; trackClear();
   view.fitted = false;
-  commit(d, g.acc, label);
-  if (!d.vlay) setSel(d, g.sel);
+  const done = commit(d, g.acc, label);
+  if (done && !d.vlay) setSel(d, g.sel);
   renderCommand(); paintOverlay();
+  if (!done) return;       // too nested: commit showed why, the copies are dropped
   note(`${label}: ${n} cop${n === 1 ? 'y' : 'ies'} made. Ctrl+Z takes them all back`);
 }
 /** A tab or tool change drops the grip; a run that has copies puts them into the drawing first. */
@@ -8693,7 +8745,7 @@ function gripCommit() {
   view.fitted = false;
   if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
-    commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label);
+    if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label, g.sel)) { paintOverlay(); return; }       // too nested: commit showed why
     setSel(d, g.sel);
   }
   const unlinked = (g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]]).some(([o, n]) => o.type === 'HATCH' && GR.get(o.r, 71) === 1 && GR.get(n.r, 71) === 0);     // 164b1: AutoCAD says so when a Stretch ends the association
@@ -8785,7 +8837,7 @@ function gripModeCommit(g) {
   if (moveLocked(d, g.sel)) { paintOverlay(); return; }
   view.fitted = false;
   if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
-  else { commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label); setSel(d, g.sel); }
+  else { if (!commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label)) { paintOverlay(); return; } setSel(d, g.sel); }
   const left = g.res.skipped || [];
   note(`${label}: ${GM.readout(M, g.base, g.val, d.factor)}` + (left.length ? `; ${left.length} left out (${[...new Set(left)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }
@@ -9189,6 +9241,7 @@ function drawSheetSel() {
 // Layer, colour and line type of what is selected, its geometry (length, radius, centre, text height …), Select similar and Match properties.
 // A value the selected shapes do not share shows "*varies*"; typing into it sets it on all of them. One undo step per change.
 const VARIES = '*varies*';
+const propDoc = () => curLay() ? layObjSelDoc(curDoc()) : editable();
 /** [index, entity] of the selection without kept dimensions (a dimension has its own text-height field). */
 function propEnts(d, all = false) {
   const out = [];
@@ -9208,7 +9261,7 @@ function colourCss(key) {
 }
 const layerMap = (d) => d.raw.layers || {};
 async function pickPropColour() {
-  const d = editable(), ent = d && propEnts(d)[0]?.[1];
+  const d = propDoc(), ent = d && propEnts(d)[0]?.[1];
   const mixed = !!ent && new Set(propEnts(d).map((x) => PR.colourKey(x[1]))).size > 1;
   const key = ent ? PR.effectiveColour(ent, layerMap(d)) : currentColour === 'bylayer' && d ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : currentColour;
   const rgb = await pickColour(keyRgb(key), mixed);
@@ -9224,10 +9277,10 @@ function buildPropsSection() {
   ui.propLt = h('select', { class: 'fld', 'aria-label': 'Line type', 'data-testid': 'prop-lt' });
   ui.propSwatch = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Pick colour', 'data-testid': 'prop-swatch', onclick: pickPropColour });
   ui.propFill = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Fill colour', 'data-testid': 'prop-fill', onclick: async () => {
-    const d = editable(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
+    const d = propDoc(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
     if (!ents?.length) return;
     const rgb = await pickColour(keyRgb(ents[0].fill || currentFill), !ents[0].fill || ents.some((e) => e.fill !== ents[0].fill));
-    if (rgb && editable() === d) applyFill(rgbKey(rgb));
+    if (rgb && propDoc() === d) applyFill(rgbKey(rgb));
   } });
   ui.propFillLabel = h('span', { class: 'lbl' });
   ui.propFillRow = row('Fill', ui.propFill, ui.propFillLabel);
@@ -9274,7 +9327,8 @@ function renderPropsPanel(d) {
   const lay = curLay(), show = !!d || !!lay;
   ui.propSec.hidden = !show;
   if (!show) return;
-  if (lay) {
+  if (lay) d = propDoc();
+  if (lay && !d.sel.size) {
     ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
     ui.propQuick.hidden = false;
     ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
@@ -9333,19 +9387,22 @@ function renderPropsPanel(d) {
   }
 }
 
+const propLocked = (d) => !!d.vlay && selItems().some((x) => x.p.src === 'loose' && x.part.obj && x.p.lock);
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
 function propCommit(d, label, fn, all = false) {
+  if (propLocked(d)) { note(LOCKED); renderEdit(); return 0; }      // as the strip colour: a locked Layout object is not changed
   const pe = propEnts(d, all), repl = new Map();
   for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
   if (!repl.size) return 0;
-  const keep = new Set(d.sel);
   view.fitted = false;
-  commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks }, label);
+  if (d.vlay) return layGripCommit(d, [...repl].map(([i, next]) => [d.raw.entities[i], next]), label) ? repl.size : 0;
+  const keep = new Set(d.sel);
+  if (!commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks }, label)) return 0;
   setSel(d, keep);
   return repl.size;
 }
 function propWidthSet(value) {
-  const d = editable();
+  const d = propDoc();
   if (!d) return;
   const all = propEnts(d, true);
   if (!all.length) return;
@@ -9361,7 +9418,7 @@ function propWidthSet(value) {
   renderEdit();
 }
 function propSet(what, value) {
-  const d = editable();
+  const d = propDoc();
   if (what === 'colour' && validColourKey(value)) {
     if (!d?.sel.size) { currentColour = value; usedColour(value); renderRibbon(); return; }
     const keys = new Set(propEnts(d).map(([, ent]) => PR.effectiveColour(PR.withColour(ent, value), layerMap(d))));
@@ -9376,7 +9433,7 @@ function propSet(what, value) {
 }
 const FIELD_LABELS = { length: 'Length', radius: 'Radius', diameter: 'Diameter', centreX: 'Centre X', centreY: 'Centre Y', textH: 'Text height', textAngle: 'Angle' };
 function propFieldSet(key, textValue) {
-  const d = editable();
+  const d = propDoc();
   if (!d) return;
   const v = PL.parseMm(textValue), label = FIELD_LABELS[key] || key;
   if (v == null) { note(`${label}: type a number`); renderEdit(); return; }
@@ -9385,7 +9442,7 @@ function propFieldSet(key, textValue) {
   if (cur && cur.value != null && Math.abs(cur.value - v) < 5e-3) { renderEdit(); return; }       // the shown number again: nothing to do
   let failed = 0;
   const n = propCommit(d, `${label} → ${fmt(v)}`, (ent) => { const r = PR.setField(ent, key, v, d.factor); if (!r) failed++; return r; });
-  if (!n) note(key === 'length' && ents.some((e) => e.type === 'ARC') ? `${label}: an arc cannot be longer than its full circle` : `${label}: that cannot be set`);
+  if (!n) { if (!propLocked(d)) note(key === 'length' && ents.some((e) => e.type === 'ARC') ? `${label}: an arc cannot be longer than its full circle` : `${label}: that cannot be set`); }
   else note(`${label} ${fmt(v)}` + (key === 'length' && ents[0].type === 'ARC' ? ' (the radius stays; the sweep changes)' : '') + (failed ? `; ${failed} could not change` : '') + '. Ctrl+Z takes it back');
   renderEdit();
 }
@@ -9433,8 +9490,11 @@ function fillTargets(d, targets, key) {
   const eligible = targets.filter((i) => FI.closedOutline(d.raw.entities[i]) && !lockedEnt(d, i));
   const changed = new Set(eligible.filter((i) => (d.raw.entities[i].fill || null) !== key));
   if (changed.size) {
-    commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill');
-    setSel(d, keep);
+    const ok = d.vlay
+      ? layGripCommit(d, [...changed].map((i) => [d.raw.entities[i], { ...d.raw.entities[i], fill: key }]), key ? 'Fill colour' : 'No fill')
+      : commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill');
+    if (!ok) { renderEdit(); renderRibbon(); return; }       // refused (too nested): the commit showed why
+    if (!d.vlay) setSel(d, keep);
     if (key) usedColour(key);
   }
   renderEdit(); renderRibbon();
@@ -9442,7 +9502,7 @@ function fillTargets(d, targets, key) {
 }
 function applyFill(key) {
   if (key) currentFill = key;                          // only an actual fill (fillTargets, the Fill tool) joins the recents
-  const d = editable();
+  const d = propDoc();
   if (d?.sel.size) fillTargets(d, [...d.sel], key);
   else note(key ? 'Current fill colour: ' + PR.colourLabel(key) : 'Select closed outlines to remove their fills');
 }
@@ -9477,7 +9537,7 @@ function colourToolClick(d, p) {
   if (hit < 0 || d.raw.entities[hit].layer === Ed.DIM_LAYER) { note('Eyedropper: click an object; Esc ends'); return; }
   if (!tool.source) { tool.source = PR.withColour(d.raw.entities[hit], PR.effectiveColour(d.raw.entities[hit], layerMap(d))); note('Eyedropper: click targets one by one; Esc ends'); return; }
   const next = FI.copyColours(tool.source, d.raw.entities[hit], layerMap(d));
-  if (!FI.coloursEqual(next, d.raw.entities[hit])) commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours');
+  if (!FI.coloursEqual(next, d.raw.entities[hit]) && !commit(d, { entities: d.raw.entities.map((e, k) => k === hit ? next : e), blocks: d.raw.blocks }, 'Eyedropper colours')) return;
   usedColour(PR.colourKey(next)); if (next.fill) usedColour(next.fill);
   renderEdit(); note('Eyedropper: colours copied; click the next target or Esc');
 }
@@ -9561,7 +9621,7 @@ function readoutCopy() {
 function matchWords(ent) { return `${PR.typeName(ent)} (${ent.layer}, ${PR.colourLabel(PR.colourKey(ent))}, ${PR.ltLabel(PR.ltKey(ent))})`; }
 function startMatch() {
   state.colourTool = null;
-  const d = editable();
+  const d = propDoc();
   if (!d) return;
   const src = [...d.sel].find((e) => d.raw.entities[e] && d.raw.entities[e].layer !== Ed.DIM_LAYER);
   if (src == null) { note('Match properties: select the shape to copy from first'); return; }
@@ -9586,8 +9646,11 @@ function matchClick(d, p) {
   if (hit === m.src || !PR.matchChanges(srcEnt, dst)) { note('Match properties: that shape already has them'); return; }
   const keep = new Set(d.sel);
   view.fitted = false;
-  commit(d, { entities: d.raw.entities.map((x, i) => (i === hit ? PR.matchProps(srcEnt, x) : x)), blocks: d.raw.blocks }, 'Match properties');
-  setSel(d, keep);
+  const ok = d.vlay
+    ? layGripCommit(d, [[dst, PR.matchProps(srcEnt, dst)]], 'Match properties')
+    : commit(d, { entities: d.raw.entities.map((x, i) => (i === hit ? PR.matchProps(srcEnt, x) : x)), blocks: d.raw.blocks }, 'Match properties');
+  if (!ok) return;
+  if (!d.vlay) setSel(d, keep);
   note(`Matched ${PR.typeName(dst).toLowerCase()} to ${matchWords(srcEnt)}. Ctrl+Z takes it back; click the next or Esc`);
   usedColour(PR.effectiveColour(srcEnt, layerMap(d)));
 }
@@ -9809,12 +9872,11 @@ function applyContour() {
   const cc = contourCompute(d), cfg = state.contourCfg;
   if (cc.kind !== 'ok' || !cc.res.made) { note('Contour: nothing to apply. Pick a closed outline first'); return; }
   const res = cc.res, ents = [];
-  if (!d.raw.layers[CONTOUR_LAYER]) addLayer(d.raw, CONTOUR_LAYER, { aci: 3 });
-  if (cfg.lt !== 'BYLAYER' && !d.raw.ltypes[cfg.lt]) d.raw.ltypes[cfg.lt] = { pattern: contourStyle().dash.map((x, i) => (i % 2 ? -x : x) / d.factor), contour: true };
+  const ltypes = cfg.lt !== 'BYLAYER' && !d.raw.ltypes[cfg.lt] ? { ...d.raw.ltypes, [cfg.lt]: { pattern: contourStyle().dash.map((x, i) => (i % 2 ? -x : x) / d.factor), contour: true } } : d.raw.ltypes;
   for (const st of res.steps) for (const l of st) ents.push(...CT.toEntities(l, CONTOUR_LAYER));
   for (let i = 0; i < ents.length; i++) ents[i] = PR.withLineType(PR.withColour(ents[i], cfg.colour), cfg.lt);
   const keep = new Set(d.sel);
-  commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks }, `Contour ${cfg.dir} ${fmtSize(cfg.dist)} mm × ${res.made}`);
+  if (!commit(d, { entities: [...d.raw.entities, ...ents], blocks: d.raw.blocks, layers: layersWith(d.raw, CONTOUR_LAYER, { aci: 3 }), ltypes }, `Contour ${cfg.dir} ${fmtSize(cfg.dist)} mm × ${res.made}`)) return;
   d.newLayer = CONTOUR_LAYER;
   setSel(d, keep);
   renderLayers();
@@ -9913,11 +9975,13 @@ function gapTolTyped() {
   paintOverlay(); renderEdit();
 }
 function joinTinyGaps(whole = false) {
-  const d = editable(), ed = d && (whole === true ? CL.checkIndex(d.raw) : edIndex(d));
+  const d = editable();
+  let ed = null;
+  try { ed = d && (whole === true ? CL.checkIndex(d.raw) : edIndex(d)); } catch (e) { if (!(e instanceof DrawingError)) throw e; note(e.message); return; }
   if (!ed) return;
   const method = state.gapMethod, r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e), method);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
-  commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps');
+  if (!commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps')) return;
   edIndex(d); renderEdit();
   const left = gapsOf(d) || [];
   // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
@@ -9933,7 +9997,7 @@ function removeDuplicates() {
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
   d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
   if (!r.count) { renderEdit(); note(ui.duplicateRemove.disabled ? ui.duplicateReason.textContent : 'No removable duplicates / overlaps (locked layers are kept)'); return; }
-  commit(d, r, 'Remove duplicates / overlaps');
+  if (!commit(d, r, 'Remove duplicates / overlaps')) return;
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
 
@@ -9955,7 +10019,8 @@ function closePreflight() {
 function recheckPreflight(check) {
   const d = editable();
   if (!d || !ui.preflight || ui.preflight.hidden) return;
-  const fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check });
+  let fresh;
+  try { fresh = CL.preflight(d.raw, { factor: d.factor, tolerance: state.gapMm, check }); } catch (e) { if (!(e instanceof DrawingError)) throw e; note('Preflight: ' + e.message); if (!check) { ui.preflight.hidden = true; d.preflightOpen = false; } return null; }       // the first walk failed: no strip, no walk again on every render
   const rows = check ? ui.preflightRows.map((r) => fresh.find((f) => f.id === r.id) || r) : fresh;
   ui.preflightRows = rows;
   if (!check) { ui.preflightDoc = d; ui.preflightSource = d.raw.entities; }
@@ -9964,6 +10029,7 @@ function recheckPreflight(check) {
   const button = (label, id, fn, disabled = false) => h('button', { class: 'btn sm', type: 'button', 'data-testid': id, disabled, onclick: fn }, label);
   const select = (id) => {
     const fresh = recheckPreflight(id);
+    if (!fresh) return;
     setTool('select');
     const offenders = fresh.offenders.filter((i) => !lockedEnt(d, i));
     setSel(d, new Set(offenders));
@@ -9973,9 +10039,10 @@ function recheckPreflight(check) {
     if (id === 'duplicates') removeDuplicates();
     else if (id === 'gaps') joinTinyGaps(true);
     else {
-      const [wide] = CL.preflight(d.raw, { factor: d.factor, check: 'wide' });
+      let wide;
+      try { [wide] = CL.preflight(d.raw, { factor: d.factor, check: 'wide' }); } catch (e) { if (!(e instanceof DrawingError)) throw e; note('Preflight: ' + e.message); return; }
       const offenders = new Set(wide.offenders.filter((i) => !lockedEnt(d, i)));
-      if (offenders.size) commit(d, CL.hairline(d.raw, offenders, d.locked), 'Preflight Hairline');
+      if (offenders.size && !commit(d, CL.hairline(d.raw, offenders, d.locked), 'Preflight Hairline')) return;
     }
     recheckPreflight(id);
   };
@@ -10011,9 +10078,10 @@ function renderEdit() {
   ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = (!!cmpDoc() || !on) && !lib; ui.outSec.hidden = !!cmpDoc() || !on || lib;
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
   if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
-  if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
+  if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();
+  if (state.match && (state.match.d !== propDoc() || !state.match.d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
-  if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }
+  if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(state.match.d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }
   const tb = textBarOn(d);
   ui.selbar.hidden = !on || tb;                             // always there on a drawing tab (or the text bar in its place), so the drawing does not jump when something is picked
   ui.textbar.hidden = !tb; if (tb) renderTextBar();

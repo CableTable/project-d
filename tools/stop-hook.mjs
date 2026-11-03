@@ -9,8 +9,8 @@ if (input.stop_hook_active) process.exit(0);                          // already
 if (!/account[23]/i.test(process.env.CLAUDE_CONFIG_DIR || '')) process.exit(0); // Rook (main account) is never blocked
 
 const git = (c) => { try { return execSync(c, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return 'x'; } };
-// uncommitted, or committed but not pushed (no upstream counts as changed)
-const changed = git('git status --porcelain -- web tools package.json') || git('git log @{u}..HEAD --name-only --format= -- web tools package.json');
+// uncommitted, or committed but on no remote branch (King branches have no upstream, so `@{u}` would fail and count every stop as changed)
+const changed = git('git status --porcelain -- web tools package.json') || git('git log HEAD --not --remotes --name-only --format= -- web tools package.json');
 if (!changed) process.exit(0);                                         // reviewers and lookups edit nothing
 
 try {
