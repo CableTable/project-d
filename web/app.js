@@ -1889,13 +1889,13 @@ function pushLay(d, snap, key = '', label) {
   lastPush = { key, t: now, d };
 }
 function layRestore(d, st, dirty = true) {
-  const sameSet = d.lay.placed.length === st.placed.length && d.lay.s.gridPart === st.gridPart && st.placed.every((p, i) => JSON.stringify(p) === JSON.stringify(d.lay.placed[i]));      // the picks are list positions: kept only when every placed entry is unchanged
+  const before = JSON.stringify(LD.placedAll(d.lay));      // the picks are placedAll positions (grid copies first): kept only when that whole list is unchanged
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
-  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (!sameSet) { picksArr = []; state.sel = -1; }
+  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
   d.dirty = dirty; renderTabs(); update(sized && view.fitted);
 }

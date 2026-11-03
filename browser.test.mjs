@@ -11599,8 +11599,11 @@ try {
     await page.locator('[data-tool=select]').click(); await propsOnNow();
   };
   const picked162b = async (n) => {
-    await page.waitForFunction((k) => document.querySelectorAll('[data-group=tools] .sel-box').length === k, n);
-    return page.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => Math.min(...el.getAttribute('points').split(' ').map((p) => Number(p.split(',')[0])))).sort((a, b) => a - b));
+    const handle = await page.waitForFunction((k) => {
+      const boxes = [...document.querySelectorAll('[data-group=tools] .sel-box')];
+      return boxes.length === k && boxes.map((el) => Math.min(...el.getAttribute('points').split(' ').map((p) => Number(p.split(',')[0])))).sort((a, b) => a - b);
+    }, n);
+    return handle.jsonValue();
   };
   await step('TODO 162b: Layouts Properties button and typed QSELECT, Layer scope, mixed Append / replace, Cancel / Esc, source edit and Undo; light and dark', async () => {
     await openLayout162b();
@@ -11842,6 +11845,33 @@ try {
     await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(0).click();
     await t('hist-dialog').waitFor({ state: 'detached' }); await frames();
     assert.deepEqual(await picked162b(0), [], 'Start has other placed parts: nothing stays selected, never the part at the same list position');
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 193d1 Layout history clears a pick when the grid copy count changed (Rows 1 to 2)', async () => {
+    for (const how of ['jump to Start', 'Ctrl+Z']) {
+      await closeTabs(/./);
+      const lay = newLayout('Grid pick'), small = newDoc(4);
+      addEntities(small, roundRect(0, 0, 20, 20, 0));
+      lay.parts.grid = makePart('grid', 'Grid part', small, 1);
+      Object.assign(lay.s, { sheetW: 760, sheetH: 430, gridPart: 'grid', rows: 1, cols: 1, fit: false, gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+      for (const [id, x, y] of [['a', 100, 100], ['c', 400, 250]]) {                 // two loose parts: A, then C
+        const doc = newDoc(4); addEntities(doc, roundRect(0, 0, 40, 40, 0));
+        lay.parts[id] = makePart(id, id, doc, 1); lay.placed.push({ partId: id, x, y, rot: 0 });
+      }
+      await t('picker').setInputFiles({ name: 'grid-pick.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'grid-pick.dxf');
+      await page.locator('[data-tool=select]').click(); await propsOnNow();
+      const rows = panelControl(page, page.locator('[data-key=rows]'));
+      await rows.fill('2'); await rows.press('Tab'); await frames();
+      await page.keyboard.press('Escape'); await click(120, 120); assert.deepEqual(await picked162b(1), [100], 'part A picked with the two-row grid');
+      if (how === 'Ctrl+Z') { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); }
+      else { await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(0).click(); await t('hist-dialog').waitFor({ state: 'detached' }); }
+      await frames();
+      assert.equal(await rows.inputValue(), '1', how + ': Rows are back to 1');
+      const xs = await page.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => Math.min(...el.getAttribute('points').split(' ').map((p) => Number(p.split(',')[0])))));
+      assert.ok(xs.every((x) => x === 100), how + ': A or nothing is selected, never part C: ' + JSON.stringify(xs));
+    }
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
