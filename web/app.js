@@ -4367,6 +4367,8 @@ function paintOverlay(gesture = false) {
 
 function paintEditable(c, d, base, marks) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
+  const dragSnap = state.entityDrag?.d === d && state.entityDrag.to;
+  if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
   const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
     bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
@@ -4515,7 +4517,9 @@ function attachCanvasEvents() {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
         if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p))) {
-          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p, copy: e.ctrlKey || e.metaKey };
+          const sel = new Set(d.sel), ed = edIndex(d);
+          const grab = Ed.snapPick(ed, ...drag.p, pickTol(d), state.snap, new Set(ed.shown.filter((i) => !sel.has(i))), state.snapTypes);
+          drag.move = state.entityDrag = { d, sel, raw: d.raw.entities, from: grab ? [grab.x, grab.y] : drag.p, copy: e.ctrlKey || e.metaKey };
         }
         capture(c, e);
       }
@@ -5363,11 +5367,13 @@ function drawingRotateOverlay(out) {
 function moveSelectionTo(g, e) {
   if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }
   if (moveLocked(g.d, g.sel)) { state.entityDrag = null; paintOverlay(); return false; }
-  const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
-  g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
-  g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
+  const p = snapPoint(g.d, toDrawing(g.d, e.clientX, e.clientY), g.sel, [], g.from);
+  const q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
+  g.to = q;
+  g.dx = p[2] ? q[0] - g.from[0] : Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
+  g.dy = p[2] ? q[1] - g.from[1] : Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
   const gs = guideTarget().s;
-  const box = state.snap && ribbon.guideSnap && gs.guidesShow && gs.guides.length && OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
+  const box = !p[2] && state.snap && ribbon.guideSnap && gs.guidesShow && gs.guides.length && OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
   if (box) {
     const hit = snapGuideBox(box.map((v, i) => (v + (i % 2 ? g.dy : g.dx)) * f), { skipX: straight && g.dx === 0, skipY: straight && g.dy === 0 });
     g.dx += hit.dx / f; g.dy += hit.dy / f;

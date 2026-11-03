@@ -8632,6 +8632,8 @@ try {
   });
   await step('TODO 135: Ctrl+drag copies a drawing selection, leaves originals, Undo removes copies, Ctrl-click toggles', async () => {
     await closeTabs(/./);
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed') === 'true';
+    if (snapOn) await t('tog-snap').click(); // These distances test free dragging; snapped pickup has its own flow.
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
     await t('picker').setInputFiles({ name: 'ctrl-drag.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
@@ -8679,9 +8681,12 @@ try {
     await row.click({ modifiers: ['Control'] }); await waitSel('1 selected');
     await t('ptab-drawing').click();
     await closeTabs(/ctrl-drag/);
+    if (snapOn) await t('tog-snap').click();
   });
   await step('TODO 135b / 66a2: Ctrl+Shift-drag copies straight on either axis; Shift-drag moves selected objects straight', async () => {
     await closeTabs(/./);
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed') === 'true';
+    if (snapOn) await t('tog-snap').click();
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
     await t('picker').setInputFiles({ name: 'straight-copy.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
@@ -8734,6 +8739,7 @@ try {
     await page.mouse.up(); await page.keyboard.up('Shift');
     assert.deepEqual((await savedDoc()).entities, before.entities);
     await closeTabs(/straight-copy/);
+    if (snapOn) await t('tog-snap').click();
   });
   await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
     await closeTabs(/./);
@@ -9588,6 +9594,90 @@ try {
   const undoGrips = async (n) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await gripWhen(n); };       // (not from inside the command line, where Ctrl+Z is the field's own)
   const entOf = (doc, i) => doc.entities[i];
   const near = (a, b, e) => Math.abs(a - b) < e;
+  await step('TODO 195: drag selection snaps to endpoint', async () => {
+    const raw = newDoc(4), a = [20.1234, 20.4321], b = [100.9876, 60.8765];
+    // A block's line endpoint is away from its insertion grip, so pickup exercises body drag, not Stretch.
+    addBlock(raw, 'DragLine', [dxfLine(...a, a[0] + 40, a[1])]);
+    addEntities(raw, dxfInsert('DragLine', 0, 0), dxfLine(...b, b[0], b[1] + 40));
+    await openGrips(writeDxf(raw), 'drag-snap.dxf');
+    const before = await savedDoc(), snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
+    const theme = await page.locator('html').getAttribute('data-theme') || 'light';
+    const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
+    const select = async () => { await click(a[0] + 12, a[1]); await waitSel('1 selected'); };
+    const begin = async (x = a[0], y = a[1]) => {
+      await select(); const p = await at(x, y);
+      await page.evaluate(() => { window.__drag195 = []; });
+      await page.mouse.move(p.x + 1, p.y + .5); await page.mouse.down();
+    };
+    const land = async (x = b[0], y = b[1]) => { const p = await at(x, y); await page.mouse.move(p.x + 2, p.y + 1, { steps: 6 }); await frames(); return p; };
+    const xy = (doc) => [10, 20].map((code) => fieldOf(doc.entities[0], code));
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the whole drag'); };
+    await page.evaluate(() => {
+      window.__drag195Fill = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__drag195.push(text);
+        return window.__drag195Fill.call(this, text, ...args);
+      };
+      window.__drag195 = [];
+    });
+    try {
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      for (const colour of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + colour);
+        await begin(); const target = await land();
+        assert.ok(await page.evaluate(() => window.__drag195.includes('end')), 'drawMarks paints the endpoint name during body drag');
+        assert.ok(await t('drawing').evaluate((c, p) => {
+          const r = c.getBoundingClientRect(), k = c.width / r.width, x = Math.round((p.x - r.x) * k), y = Math.round((p.y - r.y) * k), radius = Math.ceil(9 * k);
+          const pixels = c.getContext('2d').getImageData(x - radius, y - radius, radius * 2, radius * 2).data;
+          return pixels.some((v, i) => i % 4 === 0 && Math.abs(v - 2) < 6 && Math.abs(pixels[i + 1] - 157) < 6 && Math.abs(pixels[i + 2] - 3) < 6 && pixels[i + 3] > 200);
+        }, target), 'the green snap marker is visible during the drag');
+        await page.screenshot({ path: `shots-195/drag-snap-${colour}.png` });
+        await page.mouse.up();
+        const moved = await savedDoc(), offset = xy(moved);
+        for (let i = 0; i < 2; i++) assert.ok(Math.abs(a[i] + offset[i] - b[i]) < 1e-9, 'the dragged end lands exactly on the other line end without rounding');
+        assert.deepEqual(moved.entities[1], before.entities[1], 'the target line stays put');
+        assert.deepEqual(moved.blocks.DragLine, before.blocks.DragLine, 'body drag preserves the line length');
+        await undo();
+      }
+      await begin(); await land(a[0] + 40, a[1]);
+      assert.equal(await page.evaluate(() => window.__drag195.includes('end')), false, 'landing skips the selected block');
+      await page.keyboard.press('Escape'); await page.mouse.up();
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'Esc cancels the drag');
+      for (const mode of ['shift', 'ortho', 'off']) {
+        await setChip('tog-snap', mode !== 'off'); await setChip('tog-ortho', mode === 'ortho');
+        await begin();
+        if (mode === 'shift') await page.keyboard.down('Shift');
+        await land(); await page.mouse.up(); await page.keyboard.up('Shift');
+        const offset = xy(await savedDoc());
+        if (mode === 'off') {
+          assert.equal(await page.evaluate(() => window.__drag195.includes('end')), false, 'SNAP off paints no object snap');
+          assert.ok(Math.abs(a[0] + offset[0] - b[0]) > .05, 'SNAP off uses the pressed point and free landing');
+        } else {
+          assert.ok(Math.abs(a[0] + offset[0] - b[0]) < 1e-9, mode + ' snaps X exactly');
+          assert.equal(offset[1], 0, mode + ' keeps Y straight as Move does');
+        }
+        await undo();
+      }
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      await begin(); await land(); await page.mouse.up();
+      await page.keyboard.press('ArrowRight');
+      assert.ok(xy(await savedDoc())[0] > b[0] - a[0], 'the source remains editable after the snapped drag');
+      // Ordinary LINE body pickup outside its grips also uses Nearest.
+      await openGrips(writeDxf(addEntities(newDoc(4), dxfLine(20, 20, 60, 20), dxfLine(100, 60, 140, 60))), 'drag-line.dxf');
+      await click(30, 20); await waitSel('1 selected');
+      const start = await at(30, 20), target = await at(100, 60);
+      await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(target.x + 2, target.y + 1, { steps: 6 }); await page.mouse.up();
+      const line = (await savedDoc()).entities[0];
+      assert.ok(Math.abs(fieldOf(line, 20) - 60) < 1e-9, 'ordinary body pickup snaps to nearest and landing snaps exactly to the target Y');
+      assert.ok(Math.abs(fieldOf(line, 11) - fieldOf(line, 10) - 40) < 1e-9, 'ordinary body drag preserves the line length');
+      console.log('195: exact endpoint landing, marker/name, selected-object skip, SNAP off, Shift/ORTHO, Esc, Undo, later edit; light/dark shots-195');
+    } finally {
+      await page.mouse.up(); await page.keyboard.up('Shift');
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__drag195Fill; delete window.__drag195Fill; delete window.__drag195; });
+      await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
+      await menuItem('View', 'Theme: ' + theme); await closeTabs(/drag-(snap|line)/);
+    }
+  });
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
     await openGrips();
     await click(70, 30); await gripWhen(3);
