@@ -1226,6 +1226,7 @@ export function createHistory(limit = 100) {
     get canUndo() { return undo.length > 0; },
     get canRedo() { return redo.length > 0; },
     get revision() { return revision; },
+    get currentStep() { return undo.at(-1)?.s; },
     clearRedo() { if (redo.length) { revision++; redo = []; } },
     clear() { revision++; undo = []; redo = []; }
   };
