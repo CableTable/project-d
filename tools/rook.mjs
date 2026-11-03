@@ -15,6 +15,7 @@
 //   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
+//   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
 //   node tools/rook.mjs next   start Rook.lnk (the uuid in rook-next.txt line 1) and wait up to 60 s for its transcript; prints `NEXT ROOK <uuid> started|already running|not started after 60 s`
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
 import { execSync, execFileSync, spawn } from 'node:child_process';
@@ -154,6 +155,26 @@ export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: '
   return `MERGED #${pr} ${sha}`;
 }
 
+// `merge --due` (TODO 191, the 05:00 IST task): inside his OK window (extras/merge-ok-until.txt, an IST date), merges the one open claude/session<N> PR; logs each run to extras/merge-due.log. Throws the refusal.
+export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf8', cwd: join(dirname(fileURLToPath(import.meta.url)), '..') }).trim(), extras = EXTRAS, now = Date.now()) {
+  const ist = new Date(now + 19800e3).toISOString(); // shifted so the UTC fields read as IST
+  let line;
+  try {
+    let until = '';
+    try { until = readFileSync(`${extras}/merge-ok-until.txt`, 'utf8').trim(); } catch { /* refused below */ }
+    if (!/^\d{4}-\d\d-\d\d$/.test(until)) throw new Error('refused: merge-ok-until.txt is missing or unreadable: ask him');
+    if (ist.slice(0, 10) > until) throw new Error(`refused: merge OK expired ${until}: ask him`);
+    const prs = JSON.parse(run('gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName,headRefOid'])).filter((p) => /^claude\/session\d+$/.test(p.headRefName));
+    if (prs.length > 1) throw new Error(`refused: ${prs.length} open claude/session PRs (${prs.map((p) => '#' + p.number).join(', ')})`);
+    line = prs.length ? merge([String(prs[0].number), prs[0].headRefOid], run, extras) : 'NOTHING DUE';
+  } catch (e) {
+    appendFileSync(`${extras}/merge-due.log`, `${ist.slice(0, 16).replace('T', ' ')} ${e.message}\n`);
+    throw e;
+  }
+  appendFileSync(`${extras}/merge-due.log`, `${ist.slice(0, 16).replace('T', ' ')} ${line}\n`);
+  return line;
+}
+
 function main() {
 if (cmd === 'result') {
   const running = runningNote(arg);
@@ -241,7 +262,7 @@ if (cmd === 'result') {
 } else if (cmd === 'wait') {
   wait(process.argv.slice(3));
 } else if (cmd === 'merge') {
-  try { console.log(merge(process.argv.slice(3))); }
+  try { console.log(process.argv[3] === '--due' ? mergeDue() : merge(process.argv.slice(3))); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'gate') {
   try { console.log(gate()); }

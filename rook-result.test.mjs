@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
-import { watchCi, nextRook, gitBash, mergeRefusal, merge } from './tools/rook.mjs';
+import { watchCi, nextRook, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -192,6 +192,47 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     writeFileSync(join(extras, 'runs33', 'retro33.out'), ' \n');
     merge(['5', 'cc', '--no-retro'], gh(), extras);
     assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8').split('\n').length, 4, 'an empty retro file still gets the line');
+  } finally { rmSync(extras, { recursive: true, force: true }); }
+});
+
+test('TODO 191: merge --due merges the one open session PR inside the OK window, logs every run, refuses otherwise', () => {
+  const extras = mkdtempSync(join(tmpdir(), 'projectd-due-'));
+  try {
+    const sha = 'e'.repeat(40), cmds = [];
+    const pr = (number, headRefName) => ({ number, headRefName, headRefOid: sha });
+    const gh = (prs) => (cmd, a) => {
+      cmds.push([cmd, ...a].join(' '));
+      if (cmd === 'git') return sha;
+      if (a[0] === 'pr' && a[1] === 'list') return JSON.stringify(prs);
+      if (a[0] === 'pr' && a[1] === 'view' && a[4] === 'headRefOid,headRefName') return JSON.stringify({ headRefOid: sha, headRefName: 'claude/session35' });
+      if (a[0] === 'run') return JSON.stringify([{ status: 'completed', conclusion: 'success' }]);
+      if (a[1] === 'view') return JSON.stringify({ state: 'MERGED' });
+      return '';
+    };
+    const at = (iso) => Date.parse(iso + '+05:30'), log = () => readFileSync(join(extras, 'merge-due.log'), 'utf8').trim().split('\n');
+    const T = at('2026-11-08T05:00:00');
+    assert.throws(() => mergeDue(gh([]), extras, T), /merge-ok-until\.txt is missing/);
+    writeFileSync(join(extras, 'merge-ok-until.txt'), 'soon\n');
+    assert.throws(() => mergeDue(gh([]), extras, T), /missing or unreadable/);
+    writeFileSync(join(extras, 'merge-ok-until.txt'), '2026-11-08\n');
+    assert.equal(mergeDue(gh([]), extras, T), 'NOTHING DUE');
+    assert.equal(mergeDue(gh([pr(7, 'king/191')]), extras, T), 'NOTHING DUE', 'a non-session branch is not due');
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35'), pr(6, 'claude/session36')]), extras, T), /refused: 2 open/);
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, T), /retro35\.out is missing/);
+    assert.ok(!cmds.some((c) => c.includes('pr merge')));
+    mkdirSync(join(extras, 'runs35'));
+    writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    assert.equal(mergeDue(gh([pr(5, 'claude/session35'), pr(7, 'king/191')]), extras, T), `MERGED #5 ${sha}`);
+    assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha}`));
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T05:00:00')), /merge OK expired 2026-11-08: ask him/);
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T00:00:00')), /expired/);
+    assert.equal(mergeDue(gh([]), extras, at('2026-11-08T23:59:00')), 'NOTHING DUE');
+    const l = log();
+    assert.equal(l.length, 10);
+    assert.equal(l[0], '2026-11-08 05:00 refused: merge-ok-until.txt is missing or unreadable: ask him');
+    assert.equal(l[2], '2026-11-08 05:00 NOTHING DUE');
+    assert.equal(l[6], `2026-11-08 05:00 MERGED #5 ${sha}`);
+    assert.equal(l[7], '2026-11-09 05:00 refused: merge OK expired 2026-11-08: ask him');
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 
