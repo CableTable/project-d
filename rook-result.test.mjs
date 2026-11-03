@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
-import { watchCi, nextRook, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
+import { watchCi, nextRook, startArgs, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -143,6 +143,15 @@ test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; alr
   const never = await run(null);
   assert.deepEqual([never.code, never.line, never.started.length, never.slept.length], [1, `NEXT ROOK ${U} not started after 60 s`, 1, 30]);
   await assert.rejects(run(0, 'Rook S35\n'), /not a uuid/);
+});
+
+test('TODO 192: next spawns powershell Start-Process on the .lnk (spaces and a quote ok) without detached; a failed start names its reason', async () => {
+  const lnk = "C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook's.lnk";
+  assert.deepEqual(startArgs(lnk), ['powershell.exe', ['-NoProfile', '-Command', "Start-Process 'C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook''s.lnk'"], { stdio: 'ignore' }]);
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8';
+  let t = 0;
+  const r = await nextRook({ read: () => U, exists: () => false, start: () => {}, sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P', why: () => 'powershell.exe exit 1' });
+  assert.equal(r.line, `NEXT ROOK ${U} not started after 60 s (powershell.exe exit 1)`);
 });
 
 test('merge: refuses without a non-empty retro file unless --no-retro, a non-head sha, or CI not success; otherwise merges', () => {

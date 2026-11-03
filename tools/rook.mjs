@@ -97,7 +97,11 @@ export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBas
 
 // `next`: starts Rook.lnk (the next Rook, uuid = rook-next.txt line 1) and waits up to 60 s for its transcript; returns { line, code }.
 // All effects are injected so the test starts nothing.
-export async function nextRook({ read, exists, start, sleep, now, projects, own }) {
+// Not `detached`: a detached powershell has no console and its Start-Process of a .lnk silently starts nothing (TODO 192).
+export const startArgs = (lnk) => ['powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk.replace(/'/g, "''")}'`], { stdio: 'ignore' }];
+
+// `why` (optional) returns the spawn's error / exit code, appended to the "not started" line.
+export async function nextRook({ read, exists, start, sleep, now, projects, own, why = () => '' }) {
   const uuid = read().split(/\r?\n/)[0].trim();
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(uuid)) throw new Error('rook-next.txt line 1 is not a uuid');
   if (uuid === own) throw new Error('rook-next.txt names this session: write the handover first');
@@ -108,7 +112,7 @@ export async function nextRook({ read, exists, start, sleep, now, projects, own 
     await sleep(2000);
     if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} started` };
   }
-  return { code: 1, line: `NEXT ROOK ${uuid} not started after 60 s` };
+  return { code: 1, line: `NEXT ROOK ${uuid} not started after 60 s${why() ? ` (${why()})` : ''}` };
 }
 
 // `wait <run file>... [--ci <sha>]`: checks now and every 20 s; prints `DONE <file>` for the first finished run or `CI <RUN line>` and exits 0 (TODO 167a).
@@ -270,9 +274,14 @@ if (cmd === 'result') {
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'next') {
   const lnk = join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'Rook.lnk');
+  let failure = '';
   nextRook({
     read: () => readFileSync(`${EXTRAS}/rook-next.txt`, 'utf8'), exists: existsSync, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    start: () => spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk}'`], { detached: true, stdio: 'ignore' }).unref(),
+    start: () => {
+      const [bin, args, opts] = startArgs(lnk);
+      spawn(bin, args, opts).on('error', (e) => { failure = `spawn error: ${e.message}`; }).on('exit', (c) => { if (c) failure = `${bin} exit ${c}`; }).unref();
+    },
+    why: () => failure,
     projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
