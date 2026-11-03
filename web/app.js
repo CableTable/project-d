@@ -6681,7 +6681,7 @@ function drawOvl(paint = false) {
   if (d && drawLive()) {
     const T = state.draw, dynamic = cursorDynamic() && T.hover ? cursorPoint() : null;
     const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
-    for (const g of pv.guides) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
+    for (const g of pv.guides) if (!(dynamic && T.kind === 'circle')) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', transform: drawingTransform(d), d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
     if (pv.at && (pv.readout || state.trk.res || dynamic)) {
       tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: T.hover[0], y: T.hover[1] };
@@ -6690,6 +6690,9 @@ function drawOvl(paint = false) {
         tip.dynamic = dynamic; tip.single = DI.isSingle(DI.inputMode(T)) ? DI.inputMode(T) : null;
         tip.tracking = state.trk.res?.text;
         if (T.pts.length && (['line', 'polyline'].includes(T.kind) || ['arc', 'ellipse'].includes(T.kind) && T.pts.length === 1) && cursorInput().mode === 'polar') tip.segment = [T.pts.at(-1), pv.at];
+        if (T.pts.length && ['rect', 'rrect', 'circle'].includes(T.kind) && ['size', 'radius'].includes(cursorInput().mode)) {
+          tip.segment = [T.pts[0], pv.at]; tip.placementKind = T.kind;
+        }
       }
     }
   }
@@ -6764,15 +6767,16 @@ function drawOvl(paint = false) {
     const screen = (p) => [(p[0] + (item?.offset[0] || 0) - view.ox) * view.scale, (H - p[1] - (item?.offset[1] || 0) - view.oy) * view.scale];
     const labels = ['length', 'angle'].map((key) => ui.cursorFields[key].parentElement);
     labels.forEach((el) => el.classList.add('on-drawing'));
-    placement = DR.dynamicInputPlacement(...tip.segment.map(screen), r, { length: [labels[0].offsetWidth, labels[0].offsetHeight], angle: [labels[1].offsetWidth, labels[1].offsetHeight] });
-    if (!placement) labels.forEach((el) => el.classList.remove('on-drawing'));
-    else {
-      t.classList.toggle('segment-only', !!tip.only && !tip.tracking);
+    placement = DR.dynamicInputPlacement(...tip.segment.map(screen), r, { length: [labels[0].offsetWidth, labels[0].offsetHeight], angle: [labels[1].offsetWidth, labels[1].offsetHeight] }, tip.placementKind);
+    labels.forEach((el, i) => el.classList.toggle('on-drawing', !!placement?.[i ? 'angle' : 'length']));
+    if (placement) {
+      t.classList.toggle('segment-only', (!!tip.only || tip.single === 'radius') && !tip.tracking);
       const path = ([a, b]) => `M${a.join(' ')}L${b.join(' ')}`, arc = placement.arc;
       const guides = s('g', { class: 'dynamic-guide', transform: `translate(${view.ox} ${view.oy}) scale(${1 / view.scale})`, 'data-testid': 'dynamic-guides' },
-        s('path', { d: path(placement.line), 'data-testid': 'dynamic-length-guide' }),
+        ...(placement.line ? [s('path', { d: path(placement.line), 'data-testid': 'dynamic-length-guide' })] : []),
+        ...(placement.heightLine ? [s('path', { d: path(placement.heightLine), 'data-testid': 'dynamic-height-guide' })] : []),
         ...placement.extensions.map((line) => s('path', { d: path(line) })));
-      if (!tip.only) guides.append(s('path', { d: `${path([arc.c, [arc.c[0] + arc.radius, arc.c[1]]])}M${arc.c[0] + arc.radius} ${arc.c[1]}A${arc.radius} ${arc.radius} 0 ${arc.angle > Math.PI ? 1 : 0} 0 ${arc.end.join(' ')}`, 'data-testid': 'dynamic-angle-guide' }));
+      if (arc && !tip.only) guides.append(s('path', { d: `${path([arc.c, [arc.c[0] + arc.radius, arc.c[1]]])}M${arc.c[0] + arc.radius} ${arc.c[1]}A${arc.radius} ${arc.radius} 0 ${arc.angle > Math.PI ? 1 : 0} 0 ${arc.end.join(' ')}`, 'data-testid': 'dynamic-angle-guide' }));
       ui.ovl.append(guides);
     }
   }
@@ -6780,6 +6784,7 @@ function drawOvl(paint = false) {
   const top = tip.fields && py + t.offsetHeight > r.h - 4 ? py - 32 - t.offsetHeight : py;
   t.style.left = Math.max(4, Math.min(left, r.w - t.offsetWidth - 4)) + 'px'; t.style.top = Math.max(4, Math.min(top, r.h - t.offsetHeight - 4)) + 'px';
   if (placement) for (const key of ['length', 'angle']) {
+    if (!placement[key]) continue;
     const label = ui.cursorFields[key].parentElement;
     label.style.left = placement[key][0] - label.offsetWidth / 2 - t.offsetLeft - t.clientLeft + 'px';
     label.style.top = placement[key][1] - label.offsetHeight / 2 - t.offsetTop - t.clientTop + 'px';

@@ -21522,6 +21522,74 @@ try {
     await closeTabs(/./);
   });
 
+  await step('TODO 155t2: Width / Height and Radius boxes sit on their guides', async () => {
+    await open70([dxfLine(-100, -100, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await t('decimals').selectOption('2');
+    const start = await at(0, 0), end = { x: start.x - 180, y: start.y - 120 };
+    const centre = (id) => t(id).evaluate((el) => { const b = el.parentElement.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+    const onDrawing = (id) => t(id).evaluate((el) => el.parentElement.classList.contains('on-drawing'));
+    const check = async (id, guide, expected) => {
+      const actual = await centre(id);
+      assert.ok(Math.hypot(...actual.map((v, i) => v - expected[i])) < 3, `${id} sits outside its rectangle edge or at its radius midpoint`);
+      assert.equal(await onDrawing(id), true);
+      const middle = await t(guide).evaluate((el) => {
+        const p = el.getPointAtLength(el.getTotalLength() / 2), m = el.getScreenCTM();
+        return [m.a * p.x + m.c * p.y + m.e, m.b * p.x + m.d * p.y + m.f];
+      });
+      assert.ok(Math.hypot(...actual.map((v, i) => v - middle[i])) < 3, 'box centre follows its guide midpoint');
+      const box = await t(id).evaluate((el) => el.parentElement.getBoundingClientRect().toJSON()), cv = await t('canvas').boundingBox();
+      assert.ok(box.x >= cv.x + 3 && box.y >= cv.y + 3 && box.right <= cv.x + cv.width - 3 && box.bottom <= cv.y + cv.height - 3, 'whole box stays inside canvas');
+    };
+    const checkRectangle = async () => {
+      assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Width');
+      assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Height');
+      await check('cursor-length', 'dynamic-length-guide', [(start.x + end.x) / 2, end.y - 24]);
+      await check('cursor-angle', 'dynamic-height-guide', [end.x - 24, (start.y + end.y) / 2]);
+      assert.equal(await t('dynamic-angle-guide').count(), 0);
+    };
+    const show = async (kind) => {
+      await page.locator(`[data-tool=${kind}]`).click();
+      if (kind === 'rrect') await typeCmd('3');
+      await typeCmd('0,0'); await page.mouse.move(end.x, end.y); await frames();
+      if (kind !== 'circle') await checkRectangle();
+      else {
+        assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Radius');
+        await check('cursor-length', 'dynamic-length-guide', [(start.x + end.x) / 2, (start.y + end.y) / 2]);
+        assert.equal(await t('cursor-angle').isVisible(), false);
+        assert.equal(await t('dynamic-angle-guide').count(), 0);
+      }
+    };
+    const hide = async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); };
+    const checkOff = async () => {
+      await page.keyboard.press('F12'); await frames();
+      assert.equal(await t('dynamic-guides').count(), 0, 'F12 off hides dimension guides');
+      for (const id of ['cursor-length', 'cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, 'F12 off hides all cursor fields');
+      await page.keyboard.press('F12'); await frames();
+    };
+    for (const kind of ['rect', 'circle']) await shotBoth('155t2-' + kind, () => show(kind), hide);
+    for (const kind of ['rect', 'rrect', 'circle']) {
+      await show(kind); await checkOff();
+      if (kind === 'circle') {
+        await typeCmd('d'); await frames();
+        assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Diameter');
+        await check('cursor-length', 'dynamic-length-guide', [(start.x + end.x) / 2, (start.y + end.y) / 2]);
+      } else {
+        await page.mouse.move(start.x - 20, end.y); await frames();
+        assert.equal(await onDrawing('cursor-length'), false, 'short Width returns to cursor tag');
+        assert.equal(await onDrawing('cursor-angle'), true, 'long Height stays on its guide');
+      }
+      await page.mouse.move(start.x - 20, start.y - 20); await frames();
+      assert.equal(await t('dynamic-guides').count(), 0, 'short dimensions hide guides');
+      assert.equal(await onDrawing('cursor-length'), false, 'short dimension returns to cursor tag');
+      if (kind !== 'circle') assert.equal(await onDrawing('cursor-angle'), false);
+      await hide(); assert.equal(await t('dynamic-guides').count(), 0, 'Esc removes guides');
+    }
+    await closeTabs(/./);
+    for (const kind of ['rect', 'circle']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-155t2-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
+  });
+
   await step("TODO 155t1: Length and Angle boxes sit on the segment's guides", async () => {
     await open70([dxfLine(-100, -100, 200, 200)]);
     if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();

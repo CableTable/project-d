@@ -45,15 +45,32 @@ export function dynamicInput(a, b, dp) {
   };
 }
 
-/** Screen pixels, Y down: the segment's dimension line and anticlockwise angle arc. */
-export function dynamicInputPlacement(a, b, { w, h }, boxes) {
+/** Screen pixels, Y down: dimension guides and the centres of their cursor fields. */
+export function dynamicInputPlacement(a, b, { w, h }, boxes, kind = 'segment') {
   const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
   if (len < 40) return null;
-  const normal = [dy / len, -dx / len], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const clamp = (p, size) => p.map((v, i) => Math.max(4 + size[i] / 2, Math.min(v, [w, h][i] - 4 - size[i] / 2)));
+  if (kind === 'circle') return { length: clamp(mid, boxes.length), line: [a, b], extensions: [] };
+  if (kind === 'rect' || kind === 'rrect') {
+    const top = Math.min(a[1], b[1]), side = dx < 0 ? -1 : 1, x = b[0] + side * 24;
+    const line = Math.abs(dx) >= 40 ? [[a[0], top - 24], [b[0], top - 24]] : null;
+    const heightLine = Math.abs(dy) >= 40 ? [[x, a[1]], [x, b[1]]] : null;
+    if (!line && !heightLine) return null;
+    return {
+      length: line && clamp([mid[0], top - 24], boxes.length),
+      angle: heightLine && clamp([x, mid[1]], boxes.angle),
+      line, heightLine,
+      extensions: [
+        ...(line ? [a[0], b[0]].map((x) => [[x, top], [x, top - 30]]) : []),
+        ...(heightLine ? [a[1], b[1]].map((y) => [[b[0], y], [x + side * 6, y]]) : []),
+      ],
+    };
+  }
+  const normal = [dy / len, -dx / len];
   const inside = (p, size) => p[0] - size[0] / 2 >= 4 && p[0] + size[0] / 2 <= w - 4 && p[1] - size[1] / 2 >= 4 && p[1] + size[1] / 2 <= h - 4;
   const offset = (p, n) => [p[0] + normal[0] * n, p[1] + normal[1] * n];
   const side = [a, b].every((p) => inside(offset(p, 24), [0, 0])) && inside(offset(mid, 24), boxes.length) ? 1 : -1;
-  const clamp = (p, size) => p.map((v, i) => Math.max(4 + size[i] / 2, Math.min(v, [w, h][i] - 4 - size[i] / 2)));
   const radius = Math.max(30, Math.min(120, len * .4)), angle = angleOf([0, 0], [dx, -dy]) / DEG;
   return {
     length: clamp(offset(mid, 24 * side), boxes.length),

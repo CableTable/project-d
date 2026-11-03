@@ -35,6 +35,46 @@ test('dynamicInputPlacement: both sides, edge flip, radius and box clamps, short
   assert.equal(place([200, 300], [200, 300]), null);
 });
 
+test('dynamicInputPlacement: Rectangle and Rounded rectangle Width / Height in all four quadrants', () => {
+  const canvas = { w: 800, h: 600 }, boxes = { length: [120, 30], angle: [110, 30] };
+  for (const kind of ['rect', 'rrect']) {
+    const place = (a, b) => DR.dynamicInputPlacement(a, b, canvas, boxes, kind);
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      const a = [400, 300], b = [400 + sx * 200, 300 + sy * 100], top = Math.min(a[1], b[1]);
+      const p = place(a, b);
+      nearPt(p.length, [400 + sx * 100, top - 24]);
+      nearPt(p.angle, [b[0] + sx * 24, 300 + sy * 50]);
+      assert.deepEqual(p.line, [[a[0], top - 24], [b[0], top - 24]]);
+      assert.deepEqual(p.heightLine, [[b[0] + sx * 24, a[1]], [b[0] + sx * 24, b[1]]]);
+      assert.equal(p.extensions.length, 4); assert.equal(p.arc, undefined);
+    }
+    nearPt(place([400, 300], [0, 0]).length, [200, 19]);
+    nearPt(place([400, 300], [0, 0]).angle, [59, 150]);
+    nearPt(place([400, 300], [800, 600]).angle, [741, 450]);
+    assert.equal(place([400, 300], [420, 320]), null);
+    assert.equal(place([400, 300], [439.99, 339.99]), null);
+    assert.equal(place([400, 300], [400, 300]), null);
+    assert.equal(place([400, 300], [420, 400]).length, null);
+    assert.equal(place([400, 300], [500, 320]).angle, null);
+    assert.ok(place([400, 300], [440, 340]).length);
+    assert.ok(place([400, 300], [440, 340]).angle);
+  }
+});
+
+test('dynamicInputPlacement: Circle Radius / Diameter midpoint, clamps and short radii', () => {
+  const place = (a, b) => DR.dynamicInputPlacement(a, b, { w: 800, h: 600 }, { length: [120, 30] }, 'circle');
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+    const a = [400, 300], b = [400 + sx * 200, 300 + sy * 100], p = place(a, b);
+    nearPt(p.length, [400 + sx * 100, 300 + sy * 50]);
+    assert.deepEqual(p.line, [a, b]); assert.deepEqual(p.extensions, []);
+    assert.equal(p.angle, undefined); assert.equal(p.arc, undefined);
+  }
+  nearPt(place([0, 0], [40, 0]).length, [64, 19]);
+  nearPt(place([800, 600], [760, 600]).length, [736, 581]);
+  assert.equal(place([400, 300], [439.99, 300]), null);
+  assert.equal(place([400, 300], [400, 300]), null);
+});
+
 test('parseInput: x,y, @dx,dy, polar, a length, words, Enter', () => {
   assert.deepEqual(DR.parseInput('10,20'), { kind: 'xy', rel: false, abs: false, x: 10, y: 20 });
   assert.deepEqual(DR.parseInput(' 10 , -20.5 '), { kind: 'xy', rel: false, abs: false, x: 10, y: -20.5 });
