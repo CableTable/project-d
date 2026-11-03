@@ -63,6 +63,9 @@ test('TODO 172: lintBrief refuses oversized behaviours, one-word filters, builde
 test('TODO 185b: lint checks filters after apostrophes and accepts directly negated suite requests', () => {
   for (const [brief, problems] of [
     ["browser.test.mjs, don't skip: 'Layout'", ["line 1: one-word browser filter piece 'Layout'"]],
+    ["1. browser.test.mjs:2160 (step `TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab`) expects the Dimension flyout ['Aligned','Linear','Radius','Diameter','Angle']; 155l1 added 'Automatic' first on purpose (grill-155l.md Q1). Fix: expect 'Automatic' first. Then grep browser.test.mjs for any other list of the five dimension names (flyout / ribbon / menu) a filtered run would miss, and fix those the same way.", []],
+    ["node browser.test.mjs <port> 'Layout'", ["line 1: one-word browser filter piece 'Layout'"]],
+    ["node browser.test.mjs <port> 'TODO 175|New layout'", []],
     ["Don't ever run the full suite", []],
     ['Don’t run the full suite', []],
     ['Don’t ever run the full browser suite', []],
