@@ -5,5 +5,7 @@ Spec: "<spec path>" (read it first). TODO.md row <item>.
 Do:
 <Do list>
 
+Old steps (grep -n each changed UI string in browser.test.mjs; their names, or none): . Run them too.
+
 Commit "<commit title>".
 Report max <report size> lines: Result (commit id), Tests (quoted lines), Findings, Not checked.

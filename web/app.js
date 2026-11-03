@@ -1904,7 +1904,7 @@ function undoLay() {
 
   if (!d?.lay) { if (d?.hist) undo(d); return; }
   if (dropLinePoint(d)) return;
-  const st = layHist(d).undo(laySnap(d.lay));
+  const st = stepHist(d, 'undo');
   if (!st) { note('Nothing to undo'); return; }
   layRestore(d, st); note('Undone');
   if (state.draw) { renderCommand(); paintOverlay(); }
@@ -1912,7 +1912,7 @@ function undoLay() {
 function redoLay() {
   const d = curDoc();
   if (!d?.lay) { if (d?.hist) redo(d); return; }
-  const st = layHist(d).redo(laySnap(d.lay));
+  const st = stepHist(d, 'redo');
   if (!st) { note('Nothing to redo'); return; }
   layRestore(d, st); note('Redone');
 }
@@ -1950,21 +1950,27 @@ function showHistory() {
   const go = (r) => {
     finish();
     if (r === now) return;
-    if (d.cmp) {
-      const forward = r > now;
-      for (let i = 0; i < Math.abs(r - now); i++) {
-        const current = historyOf(d), target = historyDocs(d).find((x) => x.hist && x.hist === current[forward ? 'redoHistory' : 'undoHistory']);
-        if (!target || target !== d && !cmpEdit()) break;
-        const st = target.hist[forward ? 'redo' : 'undo'](snapshotOf(target));
-        if (st && restore(target, st) === false) { target.hist[forward ? 'undo' : 'redo'](st); break; }       // the step goes back where it was
-      }
-      return;
+    const forward = r > now, dir = forward ? 'redo' : 'undo';
+    if (d.cmp) for (let i = 0; i < Math.abs(r - now); i++) {
+      const current = historyOf(d), target = historyDocs(d).find((x) => x.hist && x.hist === current[forward ? 'redoHistory' : 'undoHistory']);
+      if (!target || target !== d && !cmpEdit()) return;
+      const st = stepHist(target, dir);
+      if (!st) return;
+      if (restore(target, st) === false) { target.hist[forward ? 'undo' : 'redo'](st); return; }       // the refused step goes back where it was
+    } else {
+      let st = d.lay ? laySnap(d.lay) : snapshotOf(d);
+      for (let i = 0; i < Math.abs(r - now); i++) st = stepHist(d, dir, st);
+      if (!st) return;
+      if (d.lay) layRestore(d, st);
+      else if (restore(d, st) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
     }
-    const lay = !!d.lay, cur = lay ? laySnap(d.lay) : snapshotOf(d);
-    const st = r < now ? hist.undoMany(now - r, cur) : hist.redoMany(r - now, cur);
-    if (!st) return;
-    if (lay) layRestore(d, st);
-    else if (restore(d, st) === false) { hist[r < now ? 'redoMany' : 'undoMany'](Math.abs(r - now), st); return; }       // the steps go back where they were
+    const current = historyOf(d), step = (d.cmp ? current.undoHistory : current)?.currentStep;
+    if (d.lay) {
+      selectMany(step?.grip ? placedNow.map((p, i) => p.src === 'loose' && step.lsel.includes(p.i) ? i : -1).filter((i) => i >= 0) : []); update();
+    } else {
+      const target = d.cmp ? cmpSourceTab(cmpSelected(d.cmp)) : d;
+      if (target) setSel(target, new Set(step?.grip ? step.sel.filter((i) => i < target.raw.entities.length) : []));
+    }
     note(r < now ? `Went back ${now - r} step${now - r === 1 ? '' : 's'}, to ${rows[r] === 'Start' ? 'the start' : 'after ' + rows[r]}` : `Went forward ${r - now} step${r - now === 1 ? '' : 's'}, to after ${rows[r]}`);
   };
   const list = h('div', { class: 'histlist', 'data-testid': 'hist-list' }, rows.map((text, r) => {
@@ -5445,7 +5451,7 @@ function layersWith(raw, name, o) {
 }
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. False (nothing changed, no undo step, the message shown) when it is too nested to draw. */
 function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
-  if (d.vlay) { layObjCommit(d, next, label); return true; }
+  if (d.vlay) { layObjCommit(d, next, label, keepSel); return true; }
   let fl;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
   const raw = d.raw;
   if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
@@ -5459,15 +5465,16 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
   return true;
 }
 /** A drawing-tab command on a layout's objects (layObjDoc) is done: the layout takes the objects it left, in one undo step. */
-function layObjCommit(v, next, label) {
+function layObjCommit(v, next, label, keepSel) {
   const d = v.vlay;
-  pushLay(d, null, '', label);
+  pushLay(d, keepSel ? { ...laySnap(d.lay), grip: true } : null, '', label);
   LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid());
   touch(d); update();       // the layout itself: a run ended by a tab change commits after state.doc moved on
 }
 /** A grip edit of layout objects (each [entity of layObjDoc `v`, what it becomes]): the same objects, in one undo step. False (and nothing changed) when nothing is left of one. */
-function layGripCommit(v, pairs, label) {
+function layGripCommit(v, pairs, label, keepSel) {
   const d = v.vlay, snap = laySnap(d.lay);
+  if (keepSel) snap.grip = true;
   for (const [k, [ent, next]] of pairs.entries()) if (!LD.objectReplace(d.lay, v, ent, next, () => 'o' + uid())) { if (k) layRestore(d, snap, d.dirty); return false; }
   pushLay(d, snap, '', label);
   touch(d); update();
@@ -5535,9 +5542,10 @@ function dropLinePoint(d) {
   state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return true;
 }
 /** d.hist.undo / redo: a step made by a grip edit (`grip`) hands back the opposite step with the selection too; every other step as before. */
-function stepHist(d, dir) {
-  const cur = { ...snapshotOf(d), sel: [...(d.sel || [])] }, st = d.hist[dir](cur);
-  if (st?.grip) cur.grip = true; else delete cur.sel;
+function stepHist(d, dir, snapshot = d.lay ? laySnap(d.lay) : snapshotOf(d)) {
+  const cur = { ...snapshot, ...(!d.lay && { sel: [...(d.sel || [])] }) }, st = (d.lay ? layHist(d) : d.hist)[dir](cur);
+  if (st?.grip) { cur.grip = true; if (d.lay) cur.lsel = st.lsel; else cur.sel = st.sel; }
+  else { delete cur.grip; if (!d.lay) delete cur.sel; }
   return st;
 }
 function undo(d) {
@@ -8629,7 +8637,7 @@ function gripExit() {
   if (!n) { const name = GM.nameOf(GM.MODES[g.mode]); gripCancel(); note(`${name} cancelled`); return; }
   state.grip = null; trackClear();
   view.fitted = false;
-  const done = commit(d, g.acc, label);
+  const done = commit(d, g.acc, label, g.sel);
   if (done && !d.vlay) setSel(d, g.sel);
   renderCommand(); paintOverlay();
   if (!done) return;       // too nested: commit showed why, the copies are dropped
@@ -8743,7 +8751,7 @@ function gripCommit() {
   if (!g.next) { note(g.to ? 'That would not change the shape (or leaves nothing of it), so it stays as it was' : 'Stretch cancelled'); renderCommand(); paintOverlay(); return; }
   const d = g.d, label = g.nexts ? 'Stretch grips' : g.label, text = g.nexts ? GM.readout('MOVE', g.base, g.to, d.factor) : GR.readoutOf(g.ent, g.id, g.next, d.factor);
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
     if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label, g.sel)) { paintOverlay(); return; }       // too nested: commit showed why
     setSel(d, g.sel);
@@ -8836,8 +8844,8 @@ function gripModeCommit(g) {
   if (!g.res) { note(g.err || (g.to ? 'That would not change anything, so it stays as it was' : `${label} cancelled`)); renderCommand(); paintOverlay(); return; }
   if (moveLocked(d, g.sel)) { paintOverlay(); return; }
   view.fitted = false;
-  if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
-  else { if (!commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label)) { paintOverlay(); return; } setSel(d, g.sel); }
+  if (d.vlay) { if (!layGripCommit(d, [...g.sel].map((i) => [d.raw.entities[i], g.res.entities[i]]), label, g.sel)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
+  else { if (!commit(d, M === 'MIRROR' ? g.res : followDimensions(d.raw, g.res, d.factor), label, g.sel)) { paintOverlay(); return; } setSel(d, g.sel); }
   const left = g.res.skipped || [];
   note(`${label}: ${GM.readout(M, g.base, g.val, d.factor)}` + (left.length ? `; ${left.length} left out (${[...new Set(left)].join('; ')})` : '') + '. Ctrl+Z takes it back');
 }

@@ -8,10 +8,13 @@ const source = readFileSync(new URL('./tools/stop-hook.mjs', import.meta.url), '
 const STATUS = 'git status --porcelain -- web tools package.json';
 const LOG = 'git log HEAD --not --remotes --name-only --format= -- web tools package.json';
 
-function run({ input = '{}', dir = 'C:/Users/raksh/.claude-account3', status = '', log = '', red } = {}) {
+function run({ input = '{}', dir = 'C:/Users/raksh/.claude-account3', status = '', log = '', red, rook = () => '' } = {}) {
   const calls = [], stopped = {}, result = { code: 0, stderr: '', calls };
   try {
     runInNewContext(source, {
+      rookStop(i, deps) { assert.equal(typeof deps.read, 'function'); assert.equal(typeof deps.exists, 'function'); assert.equal(typeof deps.git, 'function'); return rook(i); },
+      execFileSync() { throw new Error('unused'); },
+      existsSync() { return false; },
       readFileSync(fd, encoding) { assert.equal(fd, 0); assert.equal(encoding, 'utf8'); return input; },
       execSync(command, options) {
         calls.push([command, { ...options, ...(Array.isArray(options.stdio) ? { stdio: [...options.stdio] } : {}) }]);
@@ -57,6 +60,15 @@ test('TODO 185b: stop-hook checks uncommitted or unpushed changes on both builde
     assert.deepEqual(r.calls.map(([command]) => command), commands);
     assert.deepEqual(r.calls.at(-1)[1], { stdio: 'pipe', encoding: 'utf8' });
   }
+});
+
+test('TODO 190a: stop-hook runs the Rook checks on the main account only: their text blocks with exit 2, never reaching npm or git', () => {
+  for (const dir of ['C:/Users/raksh/.claude', '']) {
+    const r = run({ dir, rook: (i) => `Handover written for ${i.session_id}`, input: '{"session_id":"s1"}' });
+    assert.deepEqual([r.code, r.stderr, r.calls], [2, 'Handover written for s1\n', []]);
+  }
+  for (const dir of ['account2', 'account3']) assert.equal(run({ dir, rook: () => 'must not run' }).code, 0);
+  assert.equal(run({ dir: '', input: '{"stop_hook_active":true}', rook: () => 'must not run' }).code, 0);
 });
 
 test('TODO 185b: stop-hook blocks red npm with exit 2 and only the last 40 output lines', () => {

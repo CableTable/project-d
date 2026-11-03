@@ -11,11 +11,10 @@ Started 2026-10-16. Unrelated to Projects B, P, R and WF in the parent folder, b
 
 ## Status
 
-Built so far: sessions 1-31 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
+Built so far: sessions 1-34 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
 AutoCAD-style draw / modify / dimension / snap / grip (with Grip options) / Fillet / Offset / Explode / Quick select tools in every tab, ribbon + panel UI in AutoCAD
 colours, CI that builds `ProjectD.exe` and publishes it to Releases on a merge to main (doc-only PR pushes skip the tests and build).
-Repo **CableTable/project-d** (private). **Next:** session 32 on `claude/session32` (172, 180, 173, 170 built): finish 177, then tool tickets 167, 178, 179, 181,
-then TODO.md "Rakshith's list" when he says. Commit each finished item and tick it in TODO.md at once; push once per Rook handover (his call, 2026-10-31).
+Repo **CableTable/project-d** (private). **Next:** `TODO.md` and the current `runs<N>/resume-rook*.txt`. Commit each finished item and tick it in TODO.md at once; push once per Rook handover (his call, 2026-10-31).
 
 ## The app
 
@@ -80,6 +79,7 @@ rows), and add a row for a new one. Where it and `Project-D-scope.md` disagree, 
 - **Nothing ships unverified**: unit tests, the browser test (a new flow gets its steps in it),
   the exe build, and a UI change looked at (screenshots, light and dark).
 - Never put a password or key in a file.
+- Rook edits briefs, `queue.txt` and `TODO.md` with Write / Read + Edit, never `sed -i` or a heredoc; git and launches go in their own command (S33 retro: denied in 4 of 6 Rooks).
 - **No admin, ever** (see The app).
 - Logic that can be pure (the DXF reader and writer, geometry, snaps, Measure, PDF scaling)
   is pure and has its own tests.

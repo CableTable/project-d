@@ -74,7 +74,8 @@ test('cached usage shares live summaries, avoids processes and writes, and falls
       process.env.CLAUDE_CONFIG_DIR = 'account2-test';
       child.execSync = (command, { env }) => {
         assert.equal(env.CLAUDE_CONFIG_DIR, /claude[23]\.cmd/.test(command) ? 'account2-test' : undefined);
-        assert.ok(env.PATH === process.env.PATH);
+        const k = Object.keys(env).find((x) => x.toUpperCase() === 'PATH');
+        assert.ok(k && env[k] === process.env.PATH);
         assert.equal(process.env.CLAUDE_CONFIG_DIR, 'account2-test');
         calls++; return JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: {
         five_hour: { utilization: 0.2, resetsAt: ${Date.parse(reset5h) / 1000} },

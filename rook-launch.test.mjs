@@ -12,10 +12,10 @@ const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effo
   + '"Bash(git switch:*)" "Bash(git stash:*)" "Bash(git restore:*)" "Bash(git pull:*)" --output-format stream-json --verbose';
 const BUILDER = 'claude2.cmd -p --agent builder --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 '
   + `--add-dir "E:/Project B/Claude/Project D/.git" --add-dir "${X}" `
-  + '--disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" Agent "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" '
+  + '--disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" Agent "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" "Bash(node -e:*)" '
   + '--allowedTools "Bash(echo:*)" "Bash(tee:*)" "Bash(npx.cmd:*)" "Bash(npm.cmd:*)" "PowerShell(Select-String:*)" "PowerShell(Select-Object:*)" '
   + '"PowerShell(Write-Output:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git fetch:*)" "Bash(git checkout:*)" "Bash(git switch:*)" '
-  + '"Bash(git cherry-pick:*)" "Bash(git rebase:*)" "Bash(git apply:*)" "Bash(git check-ignore:*)" --output-format stream-json --verbose';
+  + '"Bash(git cherry-pick:*)" "Bash(git rebase:*)" "Bash(git apply:*)" "Bash(git check-ignore:*)" "Bash(git merge --squash:*)" "Bash(git grep:*)" --output-format stream-json --verbose';
 
 // A recorder in place of git / npm / files / the launch: `calls` is the plan in order; `fail` names a call that throws.
 function recorder(fail = '') {
@@ -27,6 +27,131 @@ function recorder(fail = '') {
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
+
+test('TODO 190b: every-caller lint uses the six Q7 corpus lines verbatim, including numbered-item continuations', () => {
+  const corpus = [
+    ["1. Add `minus: '<path d=\"M5 12h14\"/>'` beside `plus` in web/dom.js and use `icon('plus' | 'minus', <size>)` for the glyph in all 7 buttons:", 1],
+    ['   Case grid: every button whose visible text starts with a typed "+" or "−" in web/*.js: grep for it and list any other you find in the report (fix only these two plus any exact same kind).', 1],
+    ['2. Every caller of commit that adds objects (Mirror ~7865, ~7434, ~7458, ~4596, Copy, Array, and any other grep finds) does `if (!commit(...)) return` and ends or keeps its command cleanly, with no success note.', 1],
+    ['King fix: TODO 184 fix round 4 (every commit caller checks its result, guarded by a test). Branch king/184fix4 from ba4c858 (already switched for you).', 0],
+    ['Commit "TODO 184 fix 4: every commit caller stops on false; guard test".', 0],
+    ['Spec: "../runs33/grill-187.md" and "../runs33/grill-184.md" (read both). Keep 184\'s rule (every commit caller stops when commit returns false; commit-callers.test.mjs) and 187\'s Layout object path (layGripCommit when d.vlay, propLocked) working.', 0],
+  ];
+  for (const eol of ['\n', '\r\n']) {
+    for (const [line, count] of corpus) {
+      const brief = line.startsWith('   ') ? `2. Fix the guide buttons${eol}${line}` : line;
+      assert.equal(lintBrief(brief).length, count, line);
+    }
+    for (const [line, count] of [
+      ['1. Check every caller with grep -n "commit" web/app.js', 0],
+      ['1. Check all sites with `grep "commit" web/app.js`', 0],
+      ['1. List every button changed', 1],
+      [`1. Fix the launcher${eol}Spec: every caller stays working`, 0],
+    ]) assert.equal(lintBrief(line).length, count, line);
+  }
+});
+
+test('TODO 190b: build briefs require an Old steps line; fix briefs do not', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const brief = ['Build: TODO 190b', 'Do:', '1. Fix the launcher'].join(eol);
+    assert.deepEqual(lintBrief(brief), ['build brief needs an Old steps line']);
+    assert.deepEqual(lintBrief(`${brief}${eol}Old steps: none (no UI change)`), []);
+    assert.deepEqual(lintBrief(brief.replace('Build:', 'Knight fix:')), []);
+    assert.deepEqual(lintBrief(`${brief}${eol}Mention Old steps here`), ['build brief needs an Old steps line']);
+  }
+});
+
+test('TODO 190b fix: the Old steps rule also sees a BOM-first build brief (BOM / none x Build / fix / review)', () => {
+  const need = ['build brief needs an Old steps line'];
+  for (const [bom, first, expected] of [['', 'Build: TODO 1', need], ['﻿', 'Build: TODO 1', need], ['', 'Knight fix: TODO 1', []], ['﻿', 'King fix: TODO 1', []], ['', 'Review: TODO 1', []], ['﻿', 'Review: TODO 1', []]]) {
+    assert.deepEqual(lintBrief(`${bom}${first}\n1. Fix the launcher`), expected, JSON.stringify([bom, first]));
+  }
+});
+
+test('TODO 190b fix: the usage gate skips a row whose resets time is past, and is skipped when Bishop is locked and no --as was given', (t) => {
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'log', () => {});
+  const csv = (resets) => `agent,window,used_pct,resets\nPip,5h,90,${resets}\n`;
+  const future = new Date(Date.now() + 36e5).toISOString();
+  for (const [resets, flags, locked, refused] of [['2020-01-01T00:00:00+05:30', [], false, false], [future, [], false, true], ['', [], false, true], [future, ['--as', 'bishop'], true, true], [future, [], true, false]]) {
+    const r = recorder();
+    r.x.read = () => csv(resets);
+    r.x.locked = (dir) => locked && dir.endsWith('ProjectD-s15fix'); // only Bishop's folder is locked
+    const run = () => review(['abc1234', 'b.txt', 'o.jsonl', ...flags], r.x);
+    if (refused) assert.throws(run, /Bishop 5h 90%/, JSON.stringify([resets, flags, locked]));
+    else { run(); assert.ok(launched(r.calls)); }
+  }
+});
+
+test('TODO 190b: knight refuses runs-folder screenshots before changes, even with overrides', () => {
+  for (const flags of [[], ['--big'], ['--over'], ['--fix']]) {
+    const r = recorder();
+    r.x.read = () => 'Screenshots: ../runs35/shots190b/';
+    assert.throws(() => knight(['b.txt', 'k.txt', 'br', 'abc1234', ...flags], r.x), /shots go in shots-<id>\/ in the clone root/);
+    assert.equal(r.calls.some((c) => ['git', 'open', 'truncate', 'launch'].includes(c[0])), false);
+  }
+  const r = recorder();
+  r.x.read = () => 'Screenshots: shots-190b/';
+  knight(['b.txt', 'k.txt', 'br', 'abc1234'], r.x);
+  assert.ok(launched(r.calls));
+});
+
+test('TODO 190b: needClean quits cherry-pick after a clean status, tolerates no operation, never quits when dirty', (t) => {
+  t.mock.method(console, 'error', () => {});
+  for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']], [review, ['abc1234', 'b.txt', 'o.jsonl']]]) {
+    for (const noPick of [false, true]) {
+      const r = recorder(), git = r.x.git;
+      r.x.git = (...a) => {
+        const result = git(...a);
+        if (a[1] === 'cherry-pick' && noPick) throw new Error('no cherry-pick in progress');
+        return a[1] === 'status' ? '?? tmp-untracked.mjs' : result;
+      };
+      run(args, r.x);
+      const at = r.calls.findIndex((c) => c[0] === 'git' && c[2] === 'status');
+      assert.deepEqual(r.calls[at + 1], ['git', r.calls[at][1], 'cherry-pick', '--quit']);
+      assert.ok(launched(r.calls));
+    }
+    const dirty = recorder(), git = dirty.x.git;
+    dirty.x.git = (...a) => a[1] === 'status' ? ' M tracked.mjs' : git(...a);
+    assert.throws(() => run(args, dirty.x), /tracked changes/);
+    assert.equal(dirty.calls.some((c) => c[0] === 'git' && c[2] === 'cherry-pick'), false);
+    assert.equal(launched(dirty.calls), undefined);
+  }
+});
+
+test('TODO 190b: review gates Bishop above 85 percent; King, over and unavailable cache pass', (t) => {
+  const warnings = t.mock.method(console, 'error', () => {});
+  const csv = (agent, percent) => `agent,window,used_pct\nKing,5h,99\n${agent},week,100\n${agent},5h,${percent}\n`;
+  for (const agent of ['Pip', 'Bishop']) {
+    for (const [percent, flags] of [[86, []], [85, []], [86, ['--as', 'bishop']], [85, ['--as', 'bishop']]]) {
+      const r = recorder(), reads = [];
+      r.x.read = (path) => { reads.push(path); return csv(agent, percent); };
+      const run = () => review(['abc1234', 'b.txt', 'o.jsonl', ...flags], r.x);
+      if (percent > 85) {
+        assert.throws(run, /Bishop 5h 86%: use --as king, or --over/);
+        assert.equal(r.calls.some((c) => isSwitch(c) || ['open', 'npmCi', 'launch'].includes(c[0])), false);
+      } else {
+        run();
+        assert.ok(launched(r.calls));
+      }
+      assert.deepEqual(reads, [resolve('mockups/_design/usage/limits.csv')]);
+    }
+  }
+  for (const flags of [['--as', 'king'], ['--over']]) {
+    const r = recorder(), reads = [];
+    r.x.read = (path) => { reads.push(path); return csv('Pip', 99); };
+    review(['abc1234', 'b.txt', 'o.jsonl', ...flags], r.x);
+    assert.ok(launched(r.calls));
+    assert.deepEqual(reads, []);
+  }
+  for (const reading of [new Error('ENOENT'), new Error('EACCES'), '', 'invalid csv', csv('Pip', 'invalid'), csv('Pip', 'Infinity'), csv('Pip', '')]) {
+    const r = recorder(), before = warnings.mock.calls.length;
+    r.x.read = () => { if (reading instanceof Error) throw reading; return reading; };
+    review(['abc1234', 'b.txt', 'o.jsonl'], r.x);
+    assert.ok(launched(r.calls));
+    assert.match(warnings.mock.calls[before].arguments[0], /Bishop usage cache unavailable.*allowing review/);
+  }
+});
 
 test('TODO 172: lintBrief refuses oversized behaviours, one-word filters, builder suites and bare runs paths', () => {
   const behaviours = Array.from({ length: 6 }, (_, i) => `${i + 1}. Change behaviour ${i + 1}`);
@@ -287,7 +412,7 @@ test('TODO 167c: a brief whose line 1 starts King fix / Knight fix / Fix round c
   for (const [run, args] of [[build, ['b.txt', 'o.jsonl', 'br', 'abc1234']], [knight, ['b.txt', 'k.txt', 'br', 'abc1234']]]) {
     for (const [first, flags, kind] of [['King fix: TODO 1', [], 'fix'], ['Fix round 2: TODO 1', [], 'fix'], ['Build: TODO 1', [], 'item'], ['Build: TODO 1', ['--tool'], 'tool'], ['Build: TODO 1', ['--fix'], 'fix']]) {
       const { calls, x } = recorder();
-      x.read = () => `${first}\nrest\n`;
+      x.read = () => `${first}\nrest\nOld steps: none\n`;
       run([...args, ...flags], x);
       const [, fix, , tool] = calls.find((c) => c[0] === 'gateCheck'), rec = calls.find((c) => c[0] === 'gateRecord')[1];
       assert.deepEqual([fix, tool, rec.fix, rec.tool], [kind === 'fix', kind === 'tool', kind === 'fix', kind === 'tool'], `${run.name} ${first} ${flags}`);

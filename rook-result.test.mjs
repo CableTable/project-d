@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
-import { watchCi, gitBash, mergeRefusal, merge } from './tools/rook.mjs';
+import { watchCi, nextRook, startArgs, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -70,13 +70,88 @@ test('wait --ci: spawns the watcher with piped stderr, forwards it, prints CI <R
   assert.match(calls[0][1][0], /ci-watch\.sh$/);
   assert.deepEqual([calls[0][1][1], calls[0][2]], ['abc', ['ignore', 'pipe', 'pipe']]);
   assert.deepEqual(seen, ['gh: boom\n']);
-  assert.deepEqual(out, ['CI RUN 77 failure']);
+  assert.deepEqual(out, ['CI RUN 77 failure', 'CI RUN none ci-watch.sh exit 3']);
   assert.deepEqual(codes, [0, 1]);
   assert.deepEqual(err, ['ci-watch.sh ended with exit 3']);
   const gitExec = (path) => () => path;
   assert.equal(gitBash(gitExec('C:\\Git\\mingw64\\libexec\\git-core\n'), () => true), join('C:\\Git\\mingw64\\libexec\\git-core', '..', '..', '..', 'bin', 'bash.exe'));
   assert.equal(gitBash(gitExec('/x'), () => false), 'bash');
   assert.equal(gitBash(() => { throw new Error('no git'); }, () => true), 'bash');
+});
+
+test('TODO 190a: wait --ci prints exactly one CI RUN line on every path (run, no run found, unknown sha, exit code, clean end, spawn error)', () => {
+  const paths = [
+    ['RUN line', (c) => { c.stdout.write('RUN 5 success\n'); c.emit('close', 0); }, 'CI RUN 5 success', 0],
+    ['RUN line without newline at close', (c) => { c.stdout.write('RUN 6 failure'); c.emit('close', 0); }, 'CI RUN 6 failure', 0],
+    ['no run after 15 min', (c) => { c.stdout.write('no CI run found for abc after 15 min\n'); c.emit('close', 0); }, 'CI RUN none no CI run found for abc after 15 min', 1],
+    ['unknown sha', (c) => { c.stdout.write('unknown sha abc\n'); c.emit('close', 2); }, 'CI RUN none unknown sha abc', 1],
+    ['usage exit', (c) => c.emit('close', 2), 'CI RUN none ci-watch.sh exit 2', 1],
+    ['clean end, no RUN', (c) => c.emit('close', 0), 'CI RUN none ci-watch.sh ended without a RUN line', 1],
+    ['spawn error', (c) => { c.emit('error', new Error('ENOENT bash')); c.emit('close', null); }, 'CI RUN none watcher not started: ENOENT bash', 1],
+  ];
+  const log = console.log, error = console.error;
+  try {
+    for (const [name, drive, line, code] of paths) {
+      const c = new EventEmitter(), out = [], codes = [];
+      c.stdout = new PassThrough(); c.stderr = new PassThrough(); c.kill = () => {};
+      console.log = (s) => out.push(s); console.error = () => {};
+      watchCi('abc', () => c, (x) => codes.push(x), 'bash');
+      drive(c);
+      assert.deepEqual([out, codes], [[line], [code]], name);
+    }
+  } finally { console.log = log; console.error = error; }
+});
+
+test('TODO 190a fix: wait with run files prints CI RUN none and keeps waiting (no exit); --ci alone exits 1; a RUN line still exits 0', () => {
+  const log = console.log, error = console.error;
+  try {
+    for (const [keep, line, expectCodes] of [[true, 'no CI run found for abc after 15 min', []], [false, 'no CI run found for abc after 15 min', [1]], [true, 'RUN 5 success', [0]]]) {
+      const c = new EventEmitter(), out = [], codes = [];
+      c.stdout = new PassThrough(); c.stderr = new PassThrough(); c.kill = () => {};
+      console.log = (s) => out.push(s); console.error = () => {};
+      watchCi('abc', () => c, (x) => codes.push(x), 'bash', keep);
+      c.stdout.write(`${line}\n`);
+      c.emit('close', 0);
+      assert.deepEqual(codes, expectCodes, `${keep} ${line}`);
+      assert.deepEqual(out, [line.startsWith('RUN') ? `CI ${line}` : `CI RUN none ${line}`]);
+    }
+  } finally { console.log = log; console.error = error; }
+});
+
+test('TODO 190a fix: next refuses when rook-next.txt names this session, before starting anything', async () => {
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8', started = [];
+  let t = 0; // sleep advances the clock so a missing refusal ends in "not started", not a hang
+  const deps = { read: () => `${U}\r\n`, exists: () => false, start: () => started.push(1), sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P' };
+  await assert.rejects(nextRook({ ...deps, own: U }), /rook-next\.txt names this session: write the handover first/);
+  assert.deepEqual(started, []);
+  assert.equal((await nextRook({ ...deps, exists: () => true, own: 'other' })).code, 0);
+});
+
+test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; already there starts nothing; 60 s without it is exit 1', async () => {
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8';
+  let t = 0;
+  const run = (appears, text = `${U}\r\nRook S35\r\n`) => {
+    const started = [], slept = [];
+    const deps = { read: () => text, exists: () => appears !== null && t >= appears, start: () => started.push(t), sleep: async (ms) => { slept.push(ms); t += ms; }, now: () => t, projects: 'P' };
+    return nextRook(deps).then((r) => ({ ...r, started, slept }));
+  };
+  t = 100; // the transcript is already there
+  assert.deepEqual(await run(0), { code: 0, line: `NEXT ROOK ${U} already running`, started: [], slept: [] });
+  t = 0; // appears 5 s after the start
+  assert.deepEqual(await run(5000), { code: 0, line: `NEXT ROOK ${U} started`, started: [0], slept: [2000, 2000, 2000] });
+  t = 0; // never
+  const never = await run(null);
+  assert.deepEqual([never.code, never.line, never.started.length, never.slept.length], [1, `NEXT ROOK ${U} not started after 60 s`, 1, 30]);
+  await assert.rejects(run(0, 'Rook S35\n'), /not a uuid/);
+});
+
+test('TODO 192: next spawns powershell Start-Process on the .lnk (spaces and a quote ok) without detached; a failed start names its reason', async () => {
+  const lnk = "C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook's.lnk";
+  assert.deepEqual(startArgs(lnk), ['powershell.exe', ['-NoProfile', '-Command', "Start-Process 'C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook''s.lnk'"], { stdio: 'ignore' }]);
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8';
+  let t = 0;
+  const r = await nextRook({ read: () => U, exists: () => false, start: () => {}, sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P', why: () => 'powershell.exe exit 1' });
+  assert.equal(r.line, `NEXT ROOK ${U} not started after 60 s (powershell.exe exit 1)`);
 });
 
 test('merge: refuses without a non-empty retro file unless --no-retro, a non-head sha, or CI not success; otherwise merges', () => {
@@ -126,6 +201,79 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     writeFileSync(join(extras, 'runs33', 'retro33.out'), ' \n');
     merge(['5', 'cc', '--no-retro'], gh(), extras);
     assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8').split('\n').length, 4, 'an empty retro file still gets the line');
+  } finally { rmSync(extras, { recursive: true, force: true }); }
+});
+
+test('TODO 191: merge --due merges the one open session PR inside the OK window, logs every run, refuses otherwise', () => {
+  const extras = mkdtempSync(join(tmpdir(), 'projectd-due-'));
+  try {
+    const sha = 'e'.repeat(40), cmds = [];
+    const pr = (number, headRefName) => ({ number, headRefName, headRefOid: sha });
+    const gh = (prs) => (cmd, a) => {
+      cmds.push([cmd, ...a].join(' '));
+      if (cmd === 'git') return sha;
+      if (a[0] === 'pr' && a[1] === 'list') return JSON.stringify(prs);
+      if (a[0] === 'pr' && a[1] === 'view' && a[4] === 'headRefOid,headRefName') return JSON.stringify({ headRefOid: sha, headRefName: 'claude/session35' });
+      if (a[0] === 'run') return JSON.stringify([{ status: 'completed', conclusion: 'success' }]);
+      if (a[1] === 'view') return JSON.stringify({ state: 'MERGED' });
+      return '';
+    };
+    const at = (iso) => Date.parse(iso + '+05:30'), log = () => readFileSync(join(extras, 'merge-due.log'), 'utf8').trim().split('\n');
+    const T = at('2026-11-08T05:00:00');
+    assert.throws(() => mergeDue(gh([]), extras, T), /merge-ok-until\.txt is missing/);
+    writeFileSync(join(extras, 'merge-ok-until.txt'), 'soon\n');
+    assert.throws(() => mergeDue(gh([]), extras, T), /missing or unreadable/);
+    writeFileSync(join(extras, 'merge-ok-until.txt'), '2026-11-08\n');
+    assert.equal(mergeDue(gh([]), extras, T), 'NOTHING DUE');
+    assert.equal(mergeDue(gh([pr(7, 'king/191')]), extras, T), 'NOTHING DUE', 'a non-session branch is not due');
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35'), pr(6, 'claude/session36')]), extras, T), /refused: 2 open/);
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, T), /retro35\.out is missing/);
+    assert.ok(!cmds.some((c) => c.includes('pr merge')));
+    mkdirSync(join(extras, 'runs35'));
+    writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    assert.equal(mergeDue(gh([pr(5, 'claude/session35'), pr(7, 'king/191')]), extras, T), `MERGED #5 ${sha}`);
+    assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha}`));
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T05:00:00')), /merge OK expired 2026-11-08: ask him/);
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T00:00:00')), /expired/);
+    assert.equal(mergeDue(gh([]), extras, at('2026-11-08T23:59:00')), 'NOTHING DUE');
+    const l = log();
+    assert.equal(l.length, 10);
+    assert.equal(l[0], '2026-11-08 05:00 refused: merge-ok-until.txt is missing or unreadable: ask him');
+    assert.equal(l[2], '2026-11-08 05:00 NOTHING DUE');
+    assert.equal(l[6], `2026-11-08 05:00 MERGED #5 ${sha}`);
+    assert.equal(l[7], '2026-11-09 05:00 refused: merge OK expired 2026-11-08: ask him');
+  } finally { rmSync(extras, { recursive: true, force: true }); }
+});
+
+test('TODO 191 fix: merge --due refuses red / missing CI, logs a throwing run on one IST line, and rejects impossible or BOM-prefixed dates', () => {
+  const extras = mkdtempSync(join(tmpdir(), 'projectd-due-'));
+  try {
+    const sha = 'e'.repeat(40), T = Date.parse('2026-11-08T05:00:00+05:30');
+    const gh = (ci, boom) => (cmd, a) => {
+      if (boom && a[0] === 'pr' && a[1] === 'list') throw new Error('Command failed: gh pr list\nHTTP 502\n  bad gateway\n');
+      if (cmd === 'git') return sha;
+      if (a[0] === 'pr' && a[1] === 'list') return JSON.stringify([{ number: 5, headRefName: 'claude/session35', headRefOid: sha }]);
+      if (a[0] === 'pr' && a[1] === 'view') return JSON.stringify({ headRefOid: sha, headRefName: 'claude/session35', state: 'MERGED' });
+      if (a[0] === 'run') return JSON.stringify(ci);
+      return '';
+    };
+    const log = () => readFileSync(join(extras, 'merge-due.log'), 'utf8').trim().split('\n');
+    mkdirSync(join(extras, 'runs35'));
+    writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    writeFileSync(join(extras, 'merge-ok-until.txt'), '2026-11-08\n');
+    assert.throws(() => mergeDue(gh([{ status: 'completed', conclusion: 'failure' }]), extras, T), /CI for .* is failure, not success/);
+    assert.throws(() => mergeDue(gh([]), extras, T), /CI for .* is not found, not success/);
+    assert.throws(() => mergeDue(gh([], true), extras, T), /HTTP 502/);
+    assert.equal(log().length, 3);
+    assert.match(log()[0], /^2026-11-08 05:00 refused: CI for e+ is failure, not success$/);
+    assert.match(log()[1], /^2026-11-08 05:00 refused: CI for e+ is not found, not success$/);
+    assert.equal(log()[2], '2026-11-08 05:00 Command failed: gh pr list HTTP 502 bad gateway');
+    for (const bad of ['2026-99-99', '2026-02-30', '2026-13-01']) {
+      writeFileSync(join(extras, 'merge-ok-until.txt'), bad + '\n');
+      assert.throws(() => mergeDue(gh([]), extras, T), /missing or unreadable/, bad);
+    }
+    writeFileSync(join(extras, 'merge-ok-until.txt'), '﻿2026-11-08\r\n');
+    assert.equal(mergeDue(gh([{ status: 'completed', conclusion: 'success' }]), extras, T), `MERGED #5 ${sha}`, 'a BOM and CRLF in the date file are fine');
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 

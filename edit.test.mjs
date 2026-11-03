@@ -583,6 +583,19 @@ test('history: undo and redo hand back the state to restore; a new change drops 
   h.clear(); assert.equal(h.canUndo, false);
 });
 
+test('TODO 189: current history step follows jumps, redo, branching and clear', () => {
+  const h = E.createHistory(), grip = { grip: true, sel: [1] }, plain = {};
+  assert.equal(h.currentStep, undefined);
+  h.push(grip, 'Move'); h.push(plain, 'Properties');
+  assert.equal(h.currentStep, plain);
+  h.undo(plain); assert.equal(h.currentStep, grip);
+  h.redo(plain); assert.equal(h.currentStep, plain);
+  h.undoMany(2, plain); assert.equal(h.currentStep, undefined);
+  h.redoMany(2, grip); assert.equal(h.currentStep, plain);
+  h.undo(plain); h.push(plain, 'New'); assert.equal(h.currentStep, plain);
+  h.clear(); assert.equal(h.currentStep, undefined);
+});
+
 test('TODO 156c1 fixes: combined histories undo newest edits and redo in the same order', () => {
   const drawing = E.createHistory(), compare = E.createHistory(), combined = () => E.combinedHistory([compare, drawing]);
   drawing.push('drawing before', 'Draw'); compare.push('guide before', 'Add guide'); drawing.push('drawing after', 'Move'); compare.push('guide after', 'Move guide');

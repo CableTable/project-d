@@ -9523,7 +9523,7 @@ try {
     if (!opts.hold) await page.mouse.up();
   };
   const pick = async (x, y, n) => { await page.keyboard.press('Escape'); await click(x, y); await frames(); await gripWhen(n); };       // select the one shape at x, y (n grips)
-  const undoAndPick = async (x, y, n) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await pick(x, y, n); };       // (not from inside the command line, where Ctrl+Z is the field's own)
+  const undoGrips = async (n) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await gripWhen(n); };       // (not from inside the command line, where Ctrl+Z is the field's own)
   const entOf = (doc, i) => doc.entities[i];
   const near = (a, b, e) => Math.abs(a - b) < e;
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
@@ -9777,7 +9777,7 @@ try {
     assert.ok(near(fieldOf(e, 11) - fieldOf(e, 10), 100, 1e-6), 'moved whole: still 100 long');
     assert.ok(near(fieldOf(e, 10), 40, 0.6) && near(fieldOf(e, 20), 60, 0.6), 'by about (20, 30)');
     assert.equal((await histLabels()).at(-1), 'Move line');
-    await undoAndPick(70, 30, 3);
+    await undoGrips(3);
     await t('tog-ortho').click();
     await dragGripTo('0:m', 110, 40);
     e = entOf(await savedDoc(), 0);
@@ -9818,14 +9818,14 @@ try {
     assert.ok(near(g[0].x, 90, 1e-5) && near(g[0].y, 100, 1e-5) && near(g[2].x, 30, 1e-5) && near(g[2].y, 100, 1e-5), 'the ends stay where they were');
     assert.ok(near(g[1].x, 60, 0.3) && near(g[1].y, 150, 0.3), 'its middle is where it was dragged');
     assert.equal((await histLabels()).at(-1), 'Arc bulge');
-    await undoAndPick(60, 130, 4);
+    await undoGrips(4);
     await dragGripTo('2:b', 20, 90);                           // the end (30,100) moved: it still passes through the old middle
     doc = await savedDoc(); g = GR.gripsOf(entOf(doc, 2));
     assert.ok(g.some((x) => near(x.x, 90, 1e-5) && near(x.y, 100, 1e-5)), 'the other end stays');
     const old = entOf(doc, 2), c2 = [fieldOf(old, 10), fieldOf(old, 20)], R = fieldOf(old, 40);
     assert.ok(near(Math.hypot(60 - c2[0], 130 - c2[1]), R, 1e-5), 'the old middle is still on the arc');
     assert.equal((await histLabels()).at(-1), 'Stretch arc');
-    await undoAndPick(60, 130, 4);
+    await undoGrips(4);
     await dragGripTo('2:c', 80, 90);
     doc = await savedDoc();
     assert.ok(near(fieldOf(entOf(doc, 2), 10), 80, 0.6) && fieldOf(entOf(doc, 2), 40) === 30, `moved, same size: ${fieldOf(entOf(doc, 2), 10)}, ${fieldOf(entOf(doc, 2), 20)}, r ${fieldOf(entOf(doc, 2), 40)}`);
@@ -9859,19 +9859,19 @@ try {
     assert.ok(near(fieldOf(e, 11), 130, 0.6) && near(fieldOf(e, 21), 70, 0.6));
     assert.equal((await histLabels()).at(-1), 'Stretch line');
     // typed coordinates on a hot grip: absolute, relative to where the grip was, and a length the way the rubber band points
-    await undoAndPick(70, 30, 3);
+    await undoGrips(3);
     await page.mouse.click(a.x, a.y);
     await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
     await typeCmd('150,60');
     e = entOf(await savedDoc(), 0);
     assert.deepEqual([10, 20, 11, 21].map((k) => fieldOf(e, k)), [20, 30, 150, 60], 'x,y');
-    await undoAndPick(70, 30, 3);
+    await undoGrips(3);
     await page.mouse.click(a.x, a.y);
     await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-hot]').length === 1);
     await typeCmd('@10,25');
     e = entOf(await savedDoc(), 0);
     assert.deepEqual([11, 21].map((k) => fieldOf(e, k)), [130, 55], '@dx,dy from where the grip was');
-    await undoAndPick(70, 30, 3);
+    await undoGrips(3);
     await page.mouse.click(a.x, a.y);
     const up = await at(20, 90); await page.mouse.move(up.x, up.y);          // the pointer straight above the other end (20, 30)
     await page.waitForFunction(() => document.querySelectorAll('[data-testid=grip-preview]').length === 1);
@@ -9880,7 +9880,7 @@ try {
     e = entOf(await savedDoc(), 0);
     assert.ok(near(Math.hypot(fieldOf(e, 11) - 20, fieldOf(e, 21) - 30), 40, 1e-6), 'a length: 40 long, the way the pointer points');
     // a typed point while dragging with the button held
-    await undoAndPick(70, 30, 3);
+    await undoGrips(3);
     await dragGripTo('0:b', 130, 80, { hold: true });
     await page.keyboard.type('90,70');
     await page.keyboard.press('Enter');
@@ -9944,14 +9944,14 @@ try {
     await undo();
     assert.deepEqual(await lineOf(), [20, 30, 120, 30], 'one Ctrl+Z puts it back');
     // Scale: a click (factor = distance from the base in drawing units), then a typed 2
-    await pick(70, 30, 3);
+    await gripWhen(3);
     await hotGrip('0:a');
     await press(' ', 3); await mode('SCALE');
     const s0 = await at(23, 30); await page.mouse.move(s0.x, s0.y); await frames(); await page.mouse.click(s0.x, s0.y); await noHot();
     let sc = await lineOf();
     assert.ok(sc[2] > 250 && sc[2] < 350 && near(sc[0], 20, 1e-6), `scaled by about 3 about the grip: ${sc}`);
     assert.equal((await labelsNow()).at(-1), 'Scale');
-    await undoAndPick(70, 30, 3);
+    await undoGrips(3);
     await hotGrip('0:a'); await press(' ', 3);
     for (const bad of ['0', '-2']) {
       await typeCmd(bad);
@@ -9968,7 +9968,7 @@ try {
     assert.deepEqual(await lineOf(), [20, 30, 220, 30]);
     await undo();
     // Mirror: the line base → picked point; the original goes
-    await pick(70, 30, 3);
+    await gripWhen(3);
     await hotGrip('0:a');
     await press(' ', 4); await mode('MIRROR');
     await typeCmd('20,100'); await noHot();
@@ -9991,7 +9991,7 @@ try {
     assert.equal((await labelsNow()).at(-1), 'Move');
     await undo();
     assert.deepEqual([await lineOf(0), await lineOf(1)], [[20, 30, 120, 30], [20, 60, 120, 60]], 'one Ctrl+Z took both back');
-    await click(70, 30); await click(70, 60, { shift: true }); await gripWhen(6);
+    await gripWhen(6);
     await hotGrip('0:a'); await press(' ', 2); await typeCmd('90');
     const first = await lineOf(0), second = await lineOf(1);
     assert.ok(near(first[0], 20, 1e-6) && near(first[1], 30, 1e-6) && near(first[2], 20, 1e-6) && near(first[3], 130, 1e-6), `the first turned: ${first}`);
@@ -10402,7 +10402,7 @@ try {
     await undo();
     assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 120, 30], 'one Undo');
     // Stretch from the list = the plain grip click; Ctrl taps cycle Stretch <-> Lengthen; a click puts the end where the pointer's shadow falls on the line
-    await pick(70, 30, 3);
+    await gripWhen(3);
     await hover('0:b'); await list(); await pickItem('Stretch'); await hotWhen(1);
     assert.equal(await prompt(), 'Specify stretch point or [Base point/Copy/Undo/eXit]:');
     await page.keyboard.press('Control'); await frames();
@@ -10416,14 +10416,14 @@ try {
     assert.equal((await labels()).at(-1), 'Lengthen');
     await undo();
     // a Lengthen to a length of 0 is refused (asks again); a negative number shortens
-    await pick(70, 30, 3);
+    await gripWhen(3);
     await hover('0:b'); await list(); await pickItem('Lengthen'); await hotWhen(1);
     await typeCmd('-100'); assert.equal(await page.locator('[data-testid=grip-hot]').count(), 1, 'a length of 0 asks again');
     await typeCmd('-20'); await hotWhen(0);
     assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 100, 30], 'a negative number shortens');
     await undo();
     // Esc in a run cancels it, nothing changed
-    await pick(70, 30, 3);
+    await gripWhen(3);
     await hover('0:a'); await list(); await pickItem('Lengthen'); await hotWhen(1);
     await page.keyboard.press('Escape'); await hotWhen(0);
     assert.deepEqual((await ent(0)).slice(0, 4), [20, 30, 120, 30], 'Esc changed nothing');
@@ -10447,7 +10447,7 @@ try {
     let a = await ent(2);
     assert.ok(near(a[5], 0, 1e-6) && near(a[6], 120, 1e-6) && near(a[4], 30, 1e-6), `the end angle is now 120: ${a}`);
     await undo();
-    await pick(60, 130, 4);
+    await gripWhen(4);
     await hover('2:m'); assert.deepEqual(await list(), ['Stretch', 'Radius']);
     await shotBoth163('list');
     await pickItem('Radius'); await hotWhen(1);
@@ -10458,7 +10458,7 @@ try {
     assert.equal((await labels()).at(-1), 'Radius');
     await undo();
     assert.equal((await ent(2))[4], 30, 'one Undo');
-    await pick(60, 130, 4);
+    await gripWhen(4);
     await hover('2:c'); await page.waitForTimeout(600);
     assert.equal(await page.locator('[data-testid=ctx-menu]').count(), 0, 'the arc centre has no list');
     // Ctrl in a hot arc-middle run: Stretch <-> Radius
@@ -10577,7 +10577,7 @@ try {
     assert.equal((await labels()).at(-1), 'Insert vertex');
     await undo(); assert.equal((await g163bVerts(0)).length, 4, 'one Undo');
     // Esc in the run changes nothing
-    await pick(35, 30, 7);
+    await gripWhen(7);
     await hover('0:e0'); await list(); await pickItem('Insert vertex'); await hotWhen(1);
     await page.keyboard.press('Escape'); await hotWhen(0);
     assert.equal((await g163bVerts(0)).length, 4, 'Esc changed nothing');
@@ -10589,7 +10589,7 @@ try {
     assert.deepEqual((await g163bVerts(0)).slice(0, 3), [[20, 30, 0], [50, 45, 0], [80, 30, 0]], 'into the segment');
     await undo();
     // Remove vertex: at once from the list, no run, one Undo
-    await pick(35, 30, 7);
+    await gripWhen(7);
     await hover('0:v1'); await list(); await pickItem('Remove vertex'); await hotWhen(0); await gripWhen(5);
     assert.deepEqual(await g163bVerts(0), [[20, 30, 0], [80, 70, -1], [130, 70, 0]], 'the arc segment is kept');
     assert.equal((await labels()).at(-1), 'Remove vertex');
@@ -10613,12 +10613,12 @@ try {
     assert.equal((await labels()).at(-1), 'Convert to Arc');
     await undo(); assert.equal((await g163bVerts(0))[0][2], 0, 'one Undo');
     // Convert to Line at once
-    await pick(35, 30, 7);
+    await gripWhen(7);
     await hover('0:e2'); await list(); await pickItem('Convert to Line'); await hotWhen(0);
     assert.deepEqual((await g163bVerts(0))[2], [80, 70, 0]); assert.equal((await labels()).at(-1), 'Convert to Line');
     await undo(); assert.deepEqual((await g163bVerts(0))[2], [80, 70, -1], 'one Undo');
     // Stretch on the arc segment: the ends stay, the arc passes through the pointer
-    await pick(35, 30, 7);
+    await gripWhen(7);
     await hover('0:e2'); await list(); await pickItem('Stretch'); await hotWhen(1);
     await typeCmd('105,120'); await hotWhen(0);
     const v = await g163bVerts(0);
@@ -10627,7 +10627,7 @@ try {
     assert.equal((await labels()).at(-1), 'Arc bulge');
     await undo();
     // Stretch on a line segment moves both its ends
-    await pick(35, 30, 7);
+    await gripWhen(7);
     await hover('0:e0'); await list(); await pickItem('Stretch'); await hotWhen(1);
     await typeCmd('@0,10'); await hotWhen(0);
     assert.deepEqual((await g163bVerts(0)).slice(0, 3), [[20, 40, 0], [80, 40, 0], [80, 70, -1]], 'both ends moved up 10');
@@ -10644,8 +10644,9 @@ try {
     const { hover, list, pickItem, hotWhen, undo } = g163;
     const shiftGrip = async (id) => { const a = await gripBox(id); await page.keyboard.down('Shift'); try { await page.mouse.click(a.x, a.y); } finally { await page.keyboard.up('Shift'); } await frames(); };
     await openGrips(g163bDoc(), 'g163b.dxf');
+    await pick(35, 30, 7);
     for (const [first, second] of [['0:v1', '0:e0'], ['0:e0', '0:v1']]) {
-      await pick(35, 30, 7);
+      await gripWhen(7);
       await shiftGrip(first); await shiftGrip(second); await hotWhen(2);
       const a = await gripBox('0:v1'); await page.mouse.click(a.x, a.y); await frames();
       await typeCmd('@0,10'); await hotWhen(0);
@@ -10654,7 +10655,7 @@ try {
       assert.deepEqual((await g163bVerts(0)).slice(0, 2), [[20, 30, 0], [80, 30, 0]], 'one Undo');
     }
     // Esc with the ghost arc showing changes nothing
-    await pick(35, 30, 7);
+    await gripWhen(7);
     await hover('0:e0'); await list(); await pickItem('Convert to Arc'); await hotWhen(1);
     const to = await at(50, 50); await page.mouse.move(to.x, to.y); await frames();
     assert.ok(await page.locator('[data-testid=grip-preview]').count() >= 1, 'the ghost arc shows');
@@ -10754,7 +10755,7 @@ try {
     await undo();
     assert.equal(fieldOf(entOf(await savedDoc(), 0), 41), 120, 'one Undo gives the width back');
     // typed: 25 on the width grip, pointer on its outer side = 25 more
-    await pick(30, 96, 4);
+    await gripWhen(4);
     const a = await gripBox('0:w');
     await page.mouse.click(a.x, a.y); await frames();
     await page.mouse.move(a.x + 40, a.y, { steps: 3 }); await frames();
@@ -10762,18 +10763,18 @@ try {
     assert.ok(near(fieldOf(entOf(await savedDoc(), 0), 41), 145, 1e-6), 'a typed 25 is the distance moved: 120 + 25');
     await undo();
     // never narrower than two text heights (5 mm high -> 10)
-    await pick(30, 96, 4);
+    await gripWhen(4);
     await dragGripTo('0:w', 21, 100);
     assert.ok(near(fieldOf(entOf(await savedDoc(), 0), 41), 10, 1e-6), 'the width stops at two heights');
     await undo();
     // the height grip: group 46 = the box height, the width stays
-    await pick(30, 96, 4);
+    await gripWhen(4);
     await dragGripTo('0:h', 20, 60);
     mt = entOf(await savedDoc(), 0);
     assert.ok(near(fieldOf(mt, 46), 40, 0.6) && fieldOf(mt, 41) === 120, 'height 40, width 120: ' + [fieldOf(mt, 46), fieldOf(mt, 41)]);
     await undo();
     // the grip modes still work from an MTEXT grip: Enter twice = Rotate about the width grip
-    await pick(30, 96, 4);
+    await gripWhen(4);
     const b = await gripBox('0:w');
     await page.mouse.click(b.x, b.y); await frames(); await typeCmd(''); await typeCmd('');
     assert.match(await t('cmd-hist').textContent(), /\*\* ROTATE \*\*/);
@@ -10809,7 +10810,7 @@ try {
     ins = entOf(await savedDoc(), 1);
     assert.deepEqual(kid(ins, 0), [30, 50], 'one Undo puts the attribute back');
     // Rotate from an attribute grip: the whole block turns about it
-    await pick(70, 40, 3);
+    await gripWhen(3);
     const c = await gripBox('1:a0');
     await page.mouse.click(c.x, c.y); await frames(); await typeCmd(''); await typeCmd('');
     assert.match(await t('cmd-hist').textContent(), /\*\* ROTATE \*\*/);
@@ -10983,7 +10984,7 @@ try {
         await page.keyboard.press('Escape'); await frames();       // deselect: the selection box is not the text
         for (const [i, id] of ['a0', 'a1'].entries()) { const post = await ink(expected[id]); assert.ok(preview[i] && post && preview[i].every((v, k) => near(v, post[k], 3)), `${kind} ${hot}: ${id} preview ${JSON.stringify(preview[i])} vs commit ${JSON.stringify(post)}`); }
         await page.keyboard.press('Control+a'); await gripWhen(3);
-        await g164a.undo(); await page.keyboard.press('Control+a'); await gripWhen(3);       // Undo clears the selection after the deselect above
+        await g164a.undo(); await gripWhen(3);
         same(await positions(), before, kind + ': one Undo restores every hot grip');
         // Reheat and cancel the same drag without committing.
         for (const id of hot) { const p = await gripBox('0:' + id); await page.keyboard.down('Shift'); try { await page.mouse.click(p.x, p.y); } finally { await page.keyboard.up('Shift'); } await frames(); }
@@ -11067,7 +11068,7 @@ try {
     e = await now();
     assert.ok(near(fieldOf(e, 52), 0, 1e-6) && near(fieldOf(e, 46), 10, 1e-6), 'one Undo restores the pattern');
     // Hatch Scale: typed 2 doubles the spacing; 0 is refused and the run stays
-    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Hatch Scale'); await hotWhen(1);
+    await gripWhen(1); await hover('0:c'); await list(); await pickItem('Hatch Scale'); await hotWhen(1);
     assert.equal(await prompt(), 'Specify hatch scale:');
     await typeCmd('0'); await frames();
     assert.match(await hist(), /change nothing/); assert.equal(await prompt(), 'Specify hatch scale:');
@@ -11078,7 +11079,7 @@ try {
     await undo();
     assert.ok(near(fieldOf(await now(), 41), 1, 1e-6), 'one Undo');
     // Origin Point: a picked point becomes the pattern origin
-    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Origin Point'); await hotWhen(1);
+    await gripWhen(1); await hover('0:c'); await list(); await pickItem('Origin Point'); await hotWhen(1);
     assert.equal(await prompt(), 'Specify origin point:');
     const to = await at(45, 36); await page.mouse.move(to.x, to.y); await frames(); await page.mouse.click(to.x, to.y); await hotWhen(0);
     e = await now();
@@ -11110,7 +11111,7 @@ try {
     assert.ok(near(fieldOf(e, 52), 90, 2), 'the picked direction is the total angle: ' + fieldOf(e, 52));
     await undo();
     // Stretch of an associative hatch: 71 -> 0 and the message
-    await pick(70, 30, 1); await hover('0:c'); await list(); await pickItem('Stretch'); await hotWhen(1);
+    await gripWhen(1); await hover('0:c'); await list(); await pickItem('Stretch'); await hotWhen(1);
     await typeCmd('@10,0'); await hotWhen(0);
     assert.match(await prompt(), /Hatch boundary associativity removed\./);       // the message sits in the hint line after the run
     e = await now();
@@ -11193,7 +11194,7 @@ try {
       await shot('dragged-vertex-' + theme);
       await page.mouse.up(); await hotWhen(0); await undo();
     }
-    await menuItem('View', 'Theme: light'); await pick(70, 30, 9);
+    await menuItem('View', 'Theme: light'); await gripWhen(9);
     assert.ok(await ink(95, 8, 118, 12) < 5, 'nothing below the hatch before the drag');
     await dragGripTo('0:v0_1', 120, 5, { hold: true }); await frames();
     assert.ok(await ink(95, 8, 118, 12) > 15, 'the pattern refilled while the vertex is dragged: the line at y = 10 now reaches there');
@@ -11219,14 +11220,14 @@ try {
     assert.equal((await labels()).at(-1), 'Insert vertex');
     const text = (await downloaded(() => page.keyboard.press('Control+s'))).text;
     await undo(); assert.equal((await path()).length, 4, 'one Undo');
-    await pick(70, 30, 9);
+    await gripWhen(9);
     await hover('0:v0_1'); await list(); await pickItem('Remove vertex'); await hotWhen(0); await gripWhen(7);       // 3 vertices + 3 mids + centre
     assert.deepEqual(await path(), [[20, 20], [120, 70], [20, 70]]);
     assert.equal((await labels()).at(-1), 'Remove vertex');
     await hover('0:v0_0'); assert.deepEqual(await list(), ['Stretch', 'Insert vertex'], 'no Remove vertex at 3 vertices');
     await page.keyboard.press('Escape');
     await undo(); assert.equal((await path()).length, 4, 'one Undo');
-    await pick(70, 30, 9);
+    await gripWhen(9);
     await hover('0:e0_0'); await list(); await pickItem('Convert to Arc'); await hotWhen(1);
     await typeCmd('70,10'); await hotWhen(0);
     let e = entOf(await savedDoc(), 0);
@@ -11303,7 +11304,7 @@ try {
     assert.ok(near(fieldOf(entOf(saved, 1), 10), 30, 1e-6) && near(fieldOf(entOf(saved, 0), 10), 120, 1e-6) && near(fieldOf(entOf(saved, 0), 20), 110, 1e-6), 'the text stays at the grip, the line turned about it');
     await undo();
     // Stretch of the alignment grip moves the whole text: the insertion and the alignment point
-    await pick(70, 30, 3); await click(40, 124, { shift: true }); await frames(); await gripWhen(5);
+    await gripWhen(5);
     await dragGripTo('1:a', 90, 110);
     saved = await savedDoc();
     const tx = entOf(saved, 1), dx = fieldOf(tx, 11) - 50, dy = fieldOf(tx, 21) - 124;
@@ -11365,7 +11366,7 @@ try {
     await dragGripTo('0:i', 70, 100);
     let tx = entOf(await savedDoc(), 0);
     assert.ok(near(fieldOf(tx, 10), 70, 0.6) && near(fieldOf(tx, 20), 100, 0.6), 'the insertion grip moved the text');
-    await undo(); await pick(32, 123, 1);
+    await undo(); await gripWhen(1);
     const hb = await handleBox(2);
     await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2); await page.mouse.down();
     await page.mouse.move(hb.x + hb.width / 2 + 40, hb.y + hb.height / 2 - 40, { steps: 4 }); await page.mouse.up(); await frames();
@@ -11692,7 +11693,7 @@ try {
         if (kind === 'Drawing') drawingLooks[theme] = actual;
         else assert.deepEqual(actual, drawingLooks[theme], kind + ': matches Drawings Properties in ' + theme);
         assert.equal(actual.fields.length, 5, 'Angle, Start and End remain read only');
-        assert.ok(actual.fields.every((f) => f.colour === actual.placeholder.colour && f.opacity === '1'));
+        assert.ok(actual.fields.every((f) => f.colour === actual.fields[0].colour && f.opacity === '1'));
         assert.equal(actual.placeholder.opacity, '1', 'ByLayer uses the readable field text opacity');
         assert.equal(await t('prop-width-custom').getAttribute('placeholder'), 'ByLayer');
         await t('props-panel').screenshot({ path: `${shots}/properties-${kind.toLowerCase()}-${theme}.png` });
@@ -11740,6 +11741,104 @@ try {
       await page.keyboard.press('Control+z'); await gripWhen(0);
       await page.keyboard.press('Control+z'); await gripWhen(3);
       console.log(`188 ${kind}: Undo / Redo keep grips; removed objects leave selection; Esc clears grips`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 189 Undo keeps grips every mode', async () => {
+    await menuItem('View', 'Theme: light');
+    const endpoint = async () => {
+      await page.waitForFunction(() => !document.querySelector('[data-testid=grip-hot]') && document.querySelector('[data-testid=grip][data-grip$=":a"]'));
+      return page.locator('[data-testid=grip][data-grip$=":a"]').getAttribute('data-grip');
+    };
+    const hot = async (mode) => {
+      const p = await gripBox(await endpoint()); await page.mouse.click(p.x, p.y);
+      for (let i = 0; i < mode; i++) await page.keyboard.press(' ');
+    };
+    const key = async (k) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(k); await frames(); };
+    const geometry = async (kind) => {
+      if (kind === 'Compare') await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^undo188-Compare/ }) }).click();
+      const raw = await savedDoc();
+      if (kind === 'Compare') { await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await frames(); }
+      return (kind === 'Layout' ? objectDoc(layoutFromRaw(raw)).raw : raw).entities;
+    };
+    const jump = async (row) => {
+      await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(row).click();
+      await t('hist-dialog').waitFor({ state: 'detached' }); await frames();
+    };
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await open188(kind);
+      const original = await geometry(kind);
+      for (const [mode, name, value] of [[0, 'Stretch', '80,120'], [1, 'Move', '120,120'], [2, 'Rotate', '30'], [3, 'Scale', '1.2'], [4, 'Mirror', '100,200']]) {
+        for (const copy of [false, true]) {
+          await hot(mode);
+          if (copy) await typeCmd('c');
+          await typeCmd(value);
+          if (copy) await key('Escape');
+          await gripWhen(3);
+          const edited = await geometry(kind);
+          assert.notDeepEqual(edited, original, `${kind} ${name} Copy=${copy}: edit applied`);
+          await key('Escape'); await gripWhen(0);
+          await key('Control+z'); await gripWhen(3);
+          assert.deepEqual(await geometry(kind), original, `${kind} ${name} Copy=${copy}: one Undo, grips restored after deselect`);
+          await key('Control+y'); await gripWhen(3);
+          assert.deepEqual(await geometry(kind), edited, `${kind} ${name} Copy=${copy}: Redo restores edit and grips`);
+          await key('Control+z'); await gripWhen(3);
+        }
+      }
+      // Different objects either side of a regular edit: the target step supplies the selection, in either direction.
+      await hot(1); await typeCmd('120,120'); await gripWhen(3);
+      await key('Escape'); await typeCmd('line'); await typeCmd('100,140'); await typeCmd('160,140'); await typeCmd(''); await key('Escape');
+      await click(130, 140); await gripWhen(3);
+      await hot(2); await typeCmd('30'); await gripWhen(3);
+      const rotated = await gripBox(await endpoint());
+      await hot(1); await typeCmd('@10,10'); await gripWhen(3);
+      await jump(1); await gripWhen(3);
+      const moved = await gripBox(await endpoint()), want = await at(120, 120);
+      assert.ok(near(moved.x, want.x, 2) && near(moved.y, want.y, 2), kind + ': history jump selects the Move step’s first line');
+      await jump(2); await gripWhen(0);
+      await jump(3); await gripWhen(3);
+      const selected = await gripBox(await endpoint());
+      assert.ok(near(selected.x, rotated.x, 2) && near(selected.y, rotated.y, 2), kind + ': forward history jump selects the Rotate step’s second line');
+      await key('Delete');
+      await jump(3); await gripWhen(3);
+      await jump(4); await gripWhen(0);
+      console.log(`189 ${kind}: all five grip modes with / without Copy retain grips through Undo / Redo; history selects the target grip edit and clears for regular edits`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 189 read-only look', async () => {
+    const shots = 'shots-189'; mkdirSync(shots, { recursive: true });
+    const looks = {}, ratios = {};
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await open188(kind);
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        const look = await t('prop-geo').evaluate((el) => {
+          const style = (el, pseudo) => {
+            const s = getComputedStyle(el, pseudo);
+            const ctx = document.createElement('canvas').getContext('2d');
+            const rgb = (colour) => { ctx.fillStyle = colour; ctx.fillRect(0, 0, 1, 1); return '#' + [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3).map((v) => v.toString(16).padStart(2, '0')).join(''); };
+            return { colour: rgb(s.color), background: rgb(s.backgroundColor), opacity: s.opacity, weight: s.fontWeight };
+          };
+          const input = document.querySelector('[data-testid=prop-width-custom]');
+          return { fields: [...el.querySelectorAll(':disabled')].map((f) => ({ key: f.dataset.prop, ...style(f) })), length: style(el.querySelector('[data-prop=length]')), placeholder: style(input, '::placeholder'), field: style(input), muted: getComputedStyle(el).getPropertyValue('--muted').trim(), app: getComputedStyle(el).getPropertyValue('--app').trim() };
+        });
+        if (kind === 'Drawing') looks[theme] = look; else assert.deepEqual(look, looks[theme], kind + ': same Properties look');
+        assert.deepEqual(look.fields.map((f) => f.key), ['angle', 'startX', 'startY', 'endX', 'endY']);
+        for (const f of look.fields) {
+          assert.equal(f.colour, look.muted); assert.equal(f.background, look.app); assert.equal(f.opacity, '1');
+          assert.notEqual(f.colour, look.length.colour); assert.notEqual(f.background, look.length.background);
+        }
+        assert.ok(+look.length.weight >= 600, 'Length stays bold');
+        ratios[theme] = contrastRatio(look.placeholder.colour, look.field.background);
+        assert.equal(look.placeholder.opacity, '1');
+        await t('props-panel').screenshot({ path: `${shots}/properties-${kind.toLowerCase()}-${theme}.png` });
+      }
+      assert.ok(ratios.dark >= ratios.light - .1, 'dark ByLayer placeholder reaches light contrast: ' + JSON.stringify(ratios));
+      await menuItem('View', 'Theme: light');
+      console.log(`189 ${kind} Properties: read-only fields dim in both themes; Length bold; ByLayer contrast light=${ratios.light.toFixed(2)} dark=${ratios.dark.toFixed(2)}; screenshots saved in ${shots}/`);
     }
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
@@ -20706,19 +20805,19 @@ try {
       await page.screenshot({ path: shotDir + '/t22b-edge-' + theme + '.png' });
     }
     await menuItem('View', 'Theme: light');
-    await undoAndPick(70, 20, 8); await size(100, 60);
+    await undoGrips(8); await size(100, 60);
     await gripWhen(8);
     await t('tog-snap').click();
     await dragGripTo('0:e1', 149.8, 50.2); await frames();
     const freeW = Number(await t('sel-w').inputValue());
     assert.ok(Math.abs(freeW - 129.8) < .8 && freeW !== 130, 'SNAP off leaves the pick on the free grid, within one screen pixel');
     await size(freeW, 60);
-    await undoAndPick(70, 20, 8); await size(100, 60);
+    await undoGrips(8); await size(100, 60);
     await t('tog-snap').click();
     await page.keyboard.down('Shift');
     await dragGripTo('0:e1', 170, 50);
     await page.keyboard.up('Shift'); await frames(); await size(150, 90);
-    await undoAndPick(70, 20, 8); await size(100, 60);
+    await undoGrips(8); await size(100, 60);
     await closeTabs(/./);
   });
 
