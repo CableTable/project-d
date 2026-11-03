@@ -11658,6 +11658,123 @@ try {
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
+  await step('TODO 187: Layout object Properties', async () => {
+    await closeTabs(/./);
+    const { lay } = block186(), partRaw = newDoc(4);
+    lay.layers = newDoc(4).layers;
+    addLayer(lay, 'A', { aci: 1 }); addLayer(lay, 'B', { aci: 5 });
+    addLayer(partRaw, 'A', { aci: 1 });
+    addEntities(partRaw, roundRect(0, 0, 100, 60, 0, { layer: 'A' }));
+    lay.parts.part = makePart('part', 'Placed part', partRaw, 1);
+    lay.placed.push({ partId: 'part', x: 650, y: 350, rot: 0 });
+    for (const [id, y] of [['source', 100], ['target', 180]]) {
+      lay.parts[id] = objectPart(id, id, dxfLine(100, y, 250, y, { layer: 'A' }), lay.layers);
+      lay.placed.push(objectPlacement(lay.parts[id]));
+    }
+    lay.parts.circle = objectPart('circle', 'Circle', dxfCircle(450, 450, 25, { layer: 'B' }), lay.layers);
+    lay.placed.push(objectPlacement(lay.parts.circle));
+    await t('picker').setInputFiles({ name: 'layout-properties.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'layout-properties.dxf');
+    await frames(); await page.locator('[data-tool=select]').click(); await propsOnNow();
+    const noFields = async () => {
+      for (const id of ['prop-chip', 'prop-layer', 'prop-colour', 'prop-geo', 'prop-match', 'prop-empty']) assert.equal(await t(id).isVisible(), false, id);
+      assert.equal(await t('prop-qselect').isVisible(), true);
+    };
+    await page.keyboard.press('Escape'); await frames();
+    await noFields();
+    await page.locator('[data-group=parts] .part-hit:not(.ob)').first().click({ force: true }); await frames();
+    await noFields();
+    const read = async () => {
+      const current = layoutFromRaw(await savedDoc());
+      const ents = objectDoc(current).raw.entities;
+      assert.deepEqual(flatten(current.parts.part.raw).items, flatten(lay.parts.part.raw).items, 'the placed part source stays unchanged');
+      return ents;
+    };
+    const source = (ents) => ents.find((e) => e.type === 'LINE' && fieldOf(e, 20) === 100);
+    const target = (ents) => ents.find((e) => e.type === 'LINE' && fieldOf(e, 20) === 180);
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    // A mixed selection's fields and chip act on its Layout objects only.
+    await click(175, 100, { shift: true }); await frames();
+    assert.equal(await t('prop-chip').textContent(), 'Line');
+    assert.equal(await propVal('length'), '150.00');
+    await t('prop-colour').selectOption('aci:5');
+    await t('prop-layer').selectOption('B'); await frames();
+    assert.equal(await t('prop-colour').inputValue(), 'aci:5');
+    assert.equal(await t('prop-layer').inputValue(), 'B');
+    let ent = source(await read()); assert.equal(ent.aci, 5); assert.equal(ent.layer, 'B');
+    assert.deepEqual(await histLabels(), ['Start', 'Colour → Blue', 'Layer → B']);
+    await undo();
+    ent = source(await read()); assert.equal(ent.aci, 5); assert.equal(ent.layer, 'A', 'one Undo restores the layer only');
+    await undo();
+    ent = source(await read()); assert.equal(ent.aci ?? 256, 256); assert.equal(ent.layer, 'A', 'the next Undo restores the colour');
+    await page.keyboard.press('Escape'); await click(175, 100); await frames();
+    await page.locator('[data-prop=length]').fill('200'); await page.locator('[data-prop=length]').press('Enter'); await frames();
+    assert.equal(fieldOf(source(await read()), 11), 300, 'geometry writes to the Layout object');
+    await undo();
+    await page.keyboard.press('Escape'); await click(175, 100); await click(175, 180, { shift: true }); await frames();
+    assert.equal(await t('prop-chip').textContent(), 'Line × 2');
+    await t('prop-lt').selectOption('DASHED');
+    const lines = (await read()).filter((e) => e.type === 'LINE');
+    assert.equal(lines.length, 2); assert.ok(lines.every((e) => e.lt === 'DASHED'));
+    await undo();
+    // Block objects use the same common fields, keeping their block and attributes.
+    await page.keyboard.press('Escape');
+    await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true }); await frames();
+    assert.equal(await t('prop-chip').textContent(), 'Block');
+    const beforeBlock = (await read()).find((e) => e.type === 'INSERT');
+    await t('prop-colour').selectOption('aci:3'); await t('prop-layer').selectOption('B');
+    const afterBlock = (await read()).find((e) => e.type === 'INSERT');
+    assert.equal(afterBlock.aci, 3); assert.equal(afterBlock.layer, 'B'); assert.deepEqual(afterBlock.kids, beforeBlock.kids);
+    await undo(); await undo();
+    assert.deepEqual((await read()).find((e) => e.type === 'INSERT'), beforeBlock);
+    // Match ignores placed parts, ends with Esc, and reads a later source edit.
+    await page.keyboard.press('Escape'); await click(175, 100); await frames();
+    await t('prop-colour').selectOption('aci:5'); await t('prop-layer').selectOption('B');
+    await t('prop-match').click(); assert.match(await prompt(), /Select destination object/);
+    await click(700, 350); await frames();
+    assert.equal(target(await read()).layer, 'A');
+    await page.keyboard.press('Escape');
+    assert.doesNotMatch(await prompt(), /Select destination object/);
+    await t('prop-match').click(); await click(175, 180); await frames();
+    ent = target(await read()); assert.equal(ent.aci, 5); assert.equal(ent.layer, 'B');
+    await page.keyboard.press('Escape'); await undo();
+    assert.equal(target(await read()).layer, 'A', 'one Undo restores Match');
+    await page.keyboard.press('Escape'); await click(175, 100); await frames();
+    await t('prop-colour').selectOption('aci:3');
+    await t('prop-match').click(); await click(175, 180); await page.keyboard.press('Escape');
+    assert.equal(target(await read()).aci, 3, 'Match reads the edited source');
+    await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await frames();
+    await click(175, 100); await frames();
+    assert.equal(await t('prop-chip').isVisible(), true);
+    assert.equal(await t('prop-chip').textContent(), 'Line');
+    // A layer added (or undone) while a Layout object is selected shows in the layer list at once.
+    const layerNames = () => t('prop-layer').locator('option').allTextContents();
+    assert.ok(!(await layerNames()).includes('Layer1'));
+    await t('layer-add').click(); await page.evaluate(() => document.activeElement.blur()); await frames();
+    assert.ok((await layerNames()).includes('Layer1'), 'the added layer is listed');
+    await undo();
+    assert.ok(!(await layerNames()).includes('Layer1'), 'the undone layer is gone');
+    // A locked Layout object keeps its colour and length.
+    await t('bar-lock').click(); await frames();
+    const before = source(await read()), histBefore = await histLabels();
+    await t('prop-colour').selectOption('aci:1'); await frames();
+    await page.locator('[data-prop=length]').fill('90'); await page.locator('[data-prop=length]').press('Enter'); await frames();
+    assert.equal(await prompt(), 'Locked: Unlock to move it');
+    ent = source(await read()); assert.equal(ent.aci, before.aci); assert.equal(fieldOf(ent, 11), fieldOf(before, 11));
+    assert.deepEqual(await histLabels(), histBefore, 'a locked object adds no Undo step');
+    assert.equal(await t('prop-colour').inputValue(), 'aci:3', 'the field goes back to the real colour');
+    await t('bar-lock').click(); await frames();
+    assert.deepEqual(errors, []);
+    console.log('TODO 187 behavior: fields, mixed selection, block, geometry, Match, source isolation, layer list, lock and Undo passed');
+    const shots = 'shots-187'; mkdirSync(shots, { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await t('props-panel').screenshot({ path: `${shots}/layout-properties-${theme}.png` });
+    }
+    console.log('TODO 187 screenshots: light + dark Layout object Properties saved in shots-187/');
+    await menuItem('View', 'Theme: light'); assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
   await step('Properties: View / Ctrl+1 toggle the whole docker; the Properties tab asks for a selection', async () => {
     await propsOpen(); await propsOnNow();
     assert.equal(await t('prop-empty').isVisible(), true);

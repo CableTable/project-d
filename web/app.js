@@ -3341,7 +3341,7 @@ function addLayerNow() {
     pushLay(d, null, '', 'Add layer ' + name);
     d.lay.layers = { ...LD.layersOf(d.lay) }; addLayer(d.lay, name, { aci: 7 });
     d.curLayer = name; d.dirty = true; d.layerQuery = '';
-    renderLayers(); renderTabs(); renderCommand();
+    renderLayers(); renderTabs(); renderCommand(); renderEdit();
     note(`Added ${name}: it is the current layer. New shapes go on it. Ctrl+Z takes it away`);
     return;
   }
@@ -4491,6 +4491,7 @@ function attachCanvasEvents() {
       capture(c, e);
       c.classList.add('panning');
     } else if (e.button === 0 && state.tool !== 'pan') {
+      if (state.match && curLay()) { const d = propDoc(); matchClick(d, toDrawing(d, e.clientX, e.clientY)); return; }
       if (state.colourTool && editable() === state.colourTool.d) { colourToolClick(editable(), toDrawing(editable(), e.clientX, e.clientY)); return; }
       const gh = e.target.closest && e.target.closest('[data-gap]');
       if (sheetDown(e)) { capture(c, e); return; }
@@ -4660,7 +4661,7 @@ function renderCommand() {
   if (readout) { ui.hist.textContent = 'Command: READOUT' + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Hover for the colour, click copies its hex (Esc ends):'; return; }
   if (lay && state.sheetDrag && (state.sheetDrag.moved || state.sheetDrag.hot)) { const sg = state.sheetDrag; ui.hist.textContent = `Command: STRETCH   Sheet W ${sg.newW} × H ${sg.newH} mm (whole mm)`; ui.prompt.textContent = state.msg ? state.msg : 'Specify the new edge (click, Esc cancels):'; return; }
   if (lay && sheetSelOn()) { ui.hist.textContent = `Command: SELECT   Sheet ${state.sheetW} × ${state.sheetH} mm selected. Drag a side handle to resize, Esc deselects`; ui.prompt.textContent = state.msg ? state.msg : 'Drag a side handle, or type Width and Height in the Sheet section:'; return; }
-  if (state.match && ed && ed.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(ed.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
+  if (state.match && state.match.d.raw.entities[state.match.src]) { ui.hist.textContent = 'Command: MATCHPROP   Source: ' + matchWords(state.match.d.raw.entities[state.match.src]) + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = 'Select destination object (Esc ends):'; return; }
   if (state.grip && (ed || lay)) {
     const gg = state.grip, M = gg.opt ? gg.opts[gg.opt].toUpperCase() : GM.MODES[gg.mode], acad = gg.hot || gg.mode > 0 || gg.copy;       // a hot grip or a cycled mode shows AutoCAD's header and prompt (155e1)
     ui.hist.textContent = `Command: ${acad ? M : GR.commandOf(gg.ent, gg.id)}   ${acad ? GM.header(M, gg.copy) + '   ' : ''}${gg.hot ? 'Hot grip: click the new place' : 'Dragging a grip'}` + (state.msg ? '   ' + state.msg : '');
@@ -6836,10 +6837,10 @@ const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];     
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
 function layObjDoc(d) {
-  const skip = (id) => !!state.hidden.parts || partHid({ partId: id }), sig = LD.objectSig(d.lay, skip), c = objViews.get(d);
-  if (c && c.sig === sig) return c.v;
+  const skip = (id) => !!state.hidden.parts || partHid({ partId: id }), sig = LD.objectSig(d.lay, skip), layers = LD.layersOf(d.lay), c = objViews.get(d);
+  if (c && c.sig === sig && c.layers === layers) return c.v;      // a new / undone layer is a new table, so the Properties layer list follows
   const v = { ...LD.objectDoc(d.lay, skip), vlay: d, name: d.name, factor: 1, sel: new Set(), hid: null, locked: null, ed: null, hist: { labels: () => layHist(d).labels() } };
-  objViews.set(d, { sig, v });
+  objViews.set(d, { sig, layers, v });
   return v;
 }
 /** layObjDoc(d) with the layout's selected objects as its selection (`sel` is kept while they stay the same, so the grips are kept too). */
@@ -9234,6 +9235,7 @@ function drawSheetSel() {
 // Layer, colour and line type of what is selected, its geometry (length, radius, centre, text height …), Select similar and Match properties.
 // A value the selected shapes do not share shows "*varies*"; typing into it sets it on all of them. One undo step per change.
 const VARIES = '*varies*';
+const propDoc = () => curLay() ? layObjSelDoc(curDoc()) : editable();
 /** [index, entity] of the selection without kept dimensions (a dimension has its own text-height field). */
 function propEnts(d, all = false) {
   const out = [];
@@ -9253,7 +9255,7 @@ function colourCss(key) {
 }
 const layerMap = (d) => d.raw.layers || {};
 async function pickPropColour() {
-  const d = editable(), ent = d && propEnts(d)[0]?.[1];
+  const d = propDoc(), ent = d && propEnts(d)[0]?.[1];
   const mixed = !!ent && new Set(propEnts(d).map((x) => PR.colourKey(x[1]))).size > 1;
   const key = ent ? PR.effectiveColour(ent, layerMap(d)) : currentColour === 'bylayer' && d ? PR.effectiveColour({ layer: curLayerName(d) }, layerMap(d)) : currentColour;
   const rgb = await pickColour(keyRgb(key), mixed);
@@ -9269,10 +9271,10 @@ function buildPropsSection() {
   ui.propLt = h('select', { class: 'fld', 'aria-label': 'Line type', 'data-testid': 'prop-lt' });
   ui.propSwatch = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Pick colour', 'data-testid': 'prop-swatch', onclick: pickPropColour });
   ui.propFill = h('button', { class: 'cswatch', type: 'button', 'aria-label': 'Fill colour', 'data-testid': 'prop-fill', onclick: async () => {
-    const d = editable(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
+    const d = propDoc(), ents = d && propEnts(d).map((x) => x[1]).filter(FI.closedOutline);
     if (!ents?.length) return;
     const rgb = await pickColour(keyRgb(ents[0].fill || currentFill), !ents[0].fill || ents.some((e) => e.fill !== ents[0].fill));
-    if (rgb && editable() === d) applyFill(rgbKey(rgb));
+    if (rgb && propDoc() === d) applyFill(rgbKey(rgb));
   } });
   ui.propFillLabel = h('span', { class: 'lbl' });
   ui.propFillRow = row('Fill', ui.propFill, ui.propFillLabel);
@@ -9319,7 +9321,8 @@ function renderPropsPanel(d) {
   const lay = curLay(), show = !!d || !!lay;
   ui.propSec.hidden = !show;
   if (!show) return;
-  if (lay) {
+  if (lay) d = propDoc();
+  if (lay && !d.sel.size) {
     ui.propEmpty.hidden = ui.propBody.hidden = ui.propChip.hidden = ui.propMatch.hidden = true;
     ui.propQuick.hidden = false;
     ui.propSimilar.hidden = !selItems().some((x) => x.p.src === 'loose' && x.part.obj);
@@ -9378,19 +9381,22 @@ function renderPropsPanel(d) {
   }
 }
 
+const propLocked = (d) => !!d.vlay && selItems().some((x) => x.p.src === 'loose' && x.part.obj && x.p.lock);
 /** Applies fn to every entity in the selection (not kept dimensions) as one undo step; fn returns the changed entity or null (left as it was). */
 function propCommit(d, label, fn, all = false) {
+  if (propLocked(d)) { note(LOCKED); renderEdit(); return 0; }      // as the strip colour: a locked Layout object is not changed
   const pe = propEnts(d, all), repl = new Map();
   for (const [i, ent] of pe) { const n = fn(ent); if (n && n !== ent) repl.set(i, n); }
   if (!repl.size) return 0;
-  const keep = new Set(d.sel);
   view.fitted = false;
+  if (d.vlay) return layGripCommit(d, [...repl].map(([i, next]) => [d.raw.entities[i], next]), label) ? repl.size : 0;
+  const keep = new Set(d.sel);
   if (!commit(d, { entities: d.raw.entities.map((x, i) => repl.get(i) || x), blocks: d.raw.blocks }, label)) return 0;
   setSel(d, keep);
   return repl.size;
 }
 function propWidthSet(value) {
-  const d = editable();
+  const d = propDoc();
   if (!d) return;
   const all = propEnts(d, true);
   if (!all.length) return;
@@ -9406,7 +9412,7 @@ function propWidthSet(value) {
   renderEdit();
 }
 function propSet(what, value) {
-  const d = editable();
+  const d = propDoc();
   if (what === 'colour' && validColourKey(value)) {
     if (!d?.sel.size) { currentColour = value; usedColour(value); renderRibbon(); return; }
     const keys = new Set(propEnts(d).map(([, ent]) => PR.effectiveColour(PR.withColour(ent, value), layerMap(d))));
@@ -9421,7 +9427,7 @@ function propSet(what, value) {
 }
 const FIELD_LABELS = { length: 'Length', radius: 'Radius', diameter: 'Diameter', centreX: 'Centre X', centreY: 'Centre Y', textH: 'Text height', textAngle: 'Angle' };
 function propFieldSet(key, textValue) {
-  const d = editable();
+  const d = propDoc();
   if (!d) return;
   const v = PL.parseMm(textValue), label = FIELD_LABELS[key] || key;
   if (v == null) { note(`${label}: type a number`); renderEdit(); return; }
@@ -9430,7 +9436,7 @@ function propFieldSet(key, textValue) {
   if (cur && cur.value != null && Math.abs(cur.value - v) < 5e-3) { renderEdit(); return; }       // the shown number again: nothing to do
   let failed = 0;
   const n = propCommit(d, `${label} → ${fmt(v)}`, (ent) => { const r = PR.setField(ent, key, v, d.factor); if (!r) failed++; return r; });
-  if (!n) note(key === 'length' && ents.some((e) => e.type === 'ARC') ? `${label}: an arc cannot be longer than its full circle` : `${label}: that cannot be set`);
+  if (!n) { if (!propLocked(d)) note(key === 'length' && ents.some((e) => e.type === 'ARC') ? `${label}: an arc cannot be longer than its full circle` : `${label}: that cannot be set`); }
   else note(`${label} ${fmt(v)}` + (key === 'length' && ents[0].type === 'ARC' ? ' (the radius stays; the sweep changes)' : '') + (failed ? `; ${failed} could not change` : '') + '. Ctrl+Z takes it back');
   renderEdit();
 }
@@ -9478,8 +9484,11 @@ function fillTargets(d, targets, key) {
   const eligible = targets.filter((i) => FI.closedOutline(d.raw.entities[i]) && !lockedEnt(d, i));
   const changed = new Set(eligible.filter((i) => (d.raw.entities[i].fill || null) !== key));
   if (changed.size) {
-    if (!commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill')) { renderEdit(); renderRibbon(); return; }       // too nested: commit showed why
-    setSel(d, keep);
+    const ok = d.vlay
+      ? layGripCommit(d, [...changed].map((i) => [d.raw.entities[i], { ...d.raw.entities[i], fill: key }]), key ? 'Fill colour' : 'No fill')
+      : commit(d, { entities: d.raw.entities.map((e, i) => changed.has(i) ? { ...e, fill: key } : e), blocks: d.raw.blocks }, key ? 'Fill colour' : 'No fill');
+    if (!ok) { renderEdit(); renderRibbon(); return; }       // refused (too nested): the commit showed why
+    if (!d.vlay) setSel(d, keep);
     if (key) usedColour(key);
   }
   renderEdit(); renderRibbon();
@@ -9487,7 +9496,7 @@ function fillTargets(d, targets, key) {
 }
 function applyFill(key) {
   if (key) currentFill = key;                          // only an actual fill (fillTargets, the Fill tool) joins the recents
-  const d = editable();
+  const d = propDoc();
   if (d?.sel.size) fillTargets(d, [...d.sel], key);
   else note(key ? 'Current fill colour: ' + PR.colourLabel(key) : 'Select closed outlines to remove their fills');
 }
@@ -9606,7 +9615,7 @@ function readoutCopy() {
 function matchWords(ent) { return `${PR.typeName(ent)} (${ent.layer}, ${PR.colourLabel(PR.colourKey(ent))}, ${PR.ltLabel(PR.ltKey(ent))})`; }
 function startMatch() {
   state.colourTool = null;
-  const d = editable();
+  const d = propDoc();
   if (!d) return;
   const src = [...d.sel].find((e) => d.raw.entities[e] && d.raw.entities[e].layer !== Ed.DIM_LAYER);
   if (src == null) { note('Match properties: select the shape to copy from first'); return; }
@@ -9631,8 +9640,11 @@ function matchClick(d, p) {
   if (hit === m.src || !PR.matchChanges(srcEnt, dst)) { note('Match properties: that shape already has them'); return; }
   const keep = new Set(d.sel);
   view.fitted = false;
-  if (!commit(d, { entities: d.raw.entities.map((x, i) => (i === hit ? PR.matchProps(srcEnt, x) : x)), blocks: d.raw.blocks }, 'Match properties')) return;
-  setSel(d, keep);
+  const ok = d.vlay
+    ? layGripCommit(d, [[dst, PR.matchProps(srcEnt, dst)]], 'Match properties')
+    : commit(d, { entities: d.raw.entities.map((x, i) => (i === hit ? PR.matchProps(srcEnt, x) : x)), blocks: d.raw.blocks }, 'Match properties');
+  if (!ok) return;
+  if (!d.vlay) setSel(d, keep);
   note(`Matched ${PR.typeName(dst).toLowerCase()} to ${matchWords(srcEnt)}. Ctrl+Z takes it back; click the next or Esc`);
   usedColour(PR.effectiveColour(srcEnt, layerMap(d)));
 }
@@ -10060,9 +10072,10 @@ function renderEdit() {
   ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = (!!cmpDoc() || !on) && !lib; ui.outSec.hidden = !!cmpDoc() || !on || lib;
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
   if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
-  if (state.match && (!on || state.match.d !== d || !d.raw.entities[state.match.src])) state.match = null;
+  if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();
+  if (state.match && (state.match.d !== propDoc() || !state.match.d.raw.entities[state.match.src])) state.match = null;
   renderPropsPanel(on ? d : null);
-  if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }
+  if (ui.matchHint) { ui.matchHint.hidden = !state.match; if (state.match) ui.matchHint.textContent = 'Match properties · source: ' + matchWords(state.match.d.raw.entities[state.match.src]) + ' · click what should change · Esc ends'; }
   const tb = textBarOn(d);
   ui.selbar.hidden = !on || tb;                             // always there on a drawing tab (or the text bar in its place), so the drawing does not jump when something is picked
   ui.textbar.hidden = !tb; if (tb) renderTextBar();

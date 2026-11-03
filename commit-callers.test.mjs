@@ -4,10 +4,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 
-/** The `file:line` of every commit( call whose result is dropped. */
+/** The `file:line` of every commit( or layGripCommit( call (its Layout twin) whose result is dropped. */
 export function bareCommits(src, file) {
   const out = [];
-  for (const m of src.matchAll(/\bcommit\(/g)) {
+  for (const m of src.matchAll(/\b(?:commit|layGripCommit)\(/g)) {
     const before = src.slice(0, m.index).replace(/\s+$/, '');
     if (/function$/.test(before)) continue;       // the definition
     if (before === '' || /(?:[;{})]|\belse)$/.test(before)) out.push(`${file}:${src.slice(0, m.index).split('\n').length}`);
@@ -24,5 +24,7 @@ test('the guard sees a bare call and lets the checked ones pass', () => {
   assert.deepEqual(bareCommits('a();\n  commit(d, x);', 'f'), ['f:2']);
   assert.deepEqual(bareCommits('if (x) commit(d, x);', 'f'), ['f:1']);
   assert.deepEqual(bareCommits('if (a) y(); else commit(d, x);', 'f'), ['f:1']);
+  assert.deepEqual(bareCommits('a();\n  layGripCommit(d, x);', 'f'), ['f:2']);
+  assert.deepEqual(bareCommits('if (!layGripCommit(d, x)) return;\nconst ok = d.v ? layGripCommit(d, y) : commit(d, z);\nfunction layGripCommit(v) {}', 'f'), []);
   assert.deepEqual(bareCommits('if (!commit(d, x)) return;\nconst ok = commit(d, y);\nreturn commit(d, z);\nfunction commit(d, n) {}', 'f'), []);
 });
