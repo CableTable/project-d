@@ -7,6 +7,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
+import { parseCsv } from './usage-agent.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXTRAS = 'E:/Project B/Claude/Project D extras';
@@ -79,8 +80,12 @@ export const isFixBrief = (text) => /^﻿?(King fix|Knight fix|Fix round)\b/.tes
 export function lintBrief(text) {
   const problems = [];
   let behaviours = 0;
+  let inItem = false;
   for (const [i, line] of text.split(/\r?\n/).entries()) {
     const numbered = line.match(/^\s*\d+\.\s+(.*)$/);
+    if (/^\s*\d+\./.test(line)) inItem = true;
+    else if (line.trim() && !/^\s+/.test(line)) inItem = false;
+    if (inItem && /\b(every|all) \w*\s*(caller|button|site)s?\b/i.test(line) && !/\bgrep -n\b|`grep\b/.test(line)) problems.push(`line ${i + 1}: every-caller instruction needs a grep command (grep -n or \`grep)`);
     if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
     if (/^\s*(\d+\.\s+)?Also\b/i.test(line)) problems.push(`line ${i + 1}: line starts with Also (scope creep: make it a numbered item or drop it)`);
     if (new Set(tickIds(line)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
@@ -93,6 +98,7 @@ export function lintBrief(text) {
     if (/(^|[\s(`'"])runs\d+\//.test(line)) problems.push(`line ${i + 1}: bare runs<N>/ path; use ../runs<N>/ or an absolute path`);
   }
   if (behaviours > 5) problems.unshift(`${behaviours} behaviour lines (maximum 5)`);
+  if (/^Build:/.test(text) && !/^Old steps\b/m.test(text)) problems.push('build brief needs an Old steps line');
   return problems;
 }
 
@@ -110,9 +116,9 @@ export const reviewerArgs = (extras = EXTRAS) => ['-p', '--agent', 'reviewer', '
 // WORKFLOW.md's King-build flags (the same for either account): the repo's git folder and the extras folder (the brief lives there).
 export const buildArgs = (extras = EXTRAS, gitDir = MAIN_GIT) => ['-p', '--agent', 'builder', '--strict-mcp-config', '--model', 'claude-sonnet-5-5', '--effort', 'high',
   '--permission-mode', 'acceptEdits', '--max-budget-usd', '8', '--add-dir', gitDir, '--add-dir', extras,
-  '--disallowedTools', 'Bash(gh pr merge:*)', 'PowerShell(gh pr merge:*)', 'Agent', 'Bash(git push:*)', 'Bash(taskkill:*)', 'PowerShell(Stop-Process:*)',
+  '--disallowedTools', 'Bash(gh pr merge:*)', 'PowerShell(gh pr merge:*)', 'Agent', 'Bash(git push:*)', 'Bash(taskkill:*)', 'PowerShell(Stop-Process:*)', 'Bash(node -e:*)',
   '--allowedTools', 'Bash(echo:*)', 'Bash(tee:*)', 'Bash(npx.cmd:*)', 'Bash(npm.cmd:*)', 'PowerShell(Select-String:*)', 'PowerShell(Select-Object:*)',
-  'PowerShell(Write-Output:*)', ...['add', 'commit', 'fetch', 'checkout', 'switch', 'cherry-pick', 'rebase', 'apply', 'check-ignore'].map((g) => `Bash(git ${g}:*)`),
+  'PowerShell(Write-Output:*)', ...['add', 'commit', 'fetch', 'checkout', 'switch', 'cherry-pick', 'rebase', 'apply', 'check-ignore', 'merge --squash', 'grep'].map((g) => `Bash(git ${g}:*)`),
   '--output-format', 'stream-json', '--verbose'];
 
 // WORKFLOW.md's Knight-build flags: its clone, the clone's git folder and the Playwright folder.
@@ -213,6 +219,7 @@ function needClean(x, dir) {
   if (x.locked(dir)) throw new Error(`${dir} is in use by a running launch (${lockFile(dir)}); if that run is dead, delete the lock file`);
   const dirty = x.git(dir, 'status', '--porcelain').split('\n').filter((l) => l && !l.startsWith('??'));
   if (dirty.length) throw new Error(`${dir} has tracked changes (git stash -u -m "<run>" first): ${dirty.join(' | ')}`);
+  try { x.git(dir, 'cherry-pick', '--quit'); } catch { /* No cherry-pick in progress is fine. */ }
 }
 
 // What the RUN script hands to tools/rook-end.mjs when the run ends: its queue line (q) and the review to chain; null when there is neither.
@@ -222,6 +229,16 @@ export function review(args, x = io) {
   const parsed = parseReview(args), { sha, brief, out, from, over } = parsed;
   let as = parsed.as;
   x.gate.context(over);
+  if (as === 'bishop' && !over) {
+    let h5;
+    try {
+      const row = parseCsv(x.read(join(REPO, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => ['Pip', 'Bishop'].includes(r.agent) && r.window === '5h');
+      const used = Number(row?.used_pct);
+      if (!row?.used_pct?.trim() || !Number.isFinite(used)) throw new Error('missing or invalid Bishop 5h reading');
+      h5 = used;
+    } catch (e) { console.error(`review: Bishop usage cache unavailable (${e.message}); allowing review`); }
+    if (h5 > 85) throw new Error(`Bishop 5h ${h5}%: use --as king, or --over`);
+  }
   // TODO 167d: no --as = Bishop, or King when Bishop's reviewer folder is locked (both locked: needClean refuses King's below)
   if (parsed.auto && x.locked(folder('bishop', 'review'))) { as = 'king'; console.log('review: Bishop busy, King'); }
   const wt = folder(as, 'review');
@@ -283,6 +300,7 @@ export function knight(args, x = io) {
   x.need(brief, 'brief file');
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
+  if (/\.\.\/runs\d+\/shots/.test(text)) throw new Error('shots go in shots-<id>/ in the clone root');
   x.gate.check(fix, over, tool);
   checkBrief(text, big);
   x.need(CODEX, basename(CODEX));

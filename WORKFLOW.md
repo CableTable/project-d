@@ -169,11 +169,11 @@ $C2 -p --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --m
 R="E:/Project B/Claude/Project D extras/runs<N>"; cd "E:/Project B/Claude/Project D extras/ProjectD-king"; unset FORCE_COLOR
 /c/Users/raksh/.local/bin/claude3.cmd -p --agent builder --strict-mcp-config --model claude-sonnet-5-5 --effort high --permission-mode acceptEdits --max-budget-usd 8 \
   --add-dir "E:/Project B/Claude/Project D/.git" --add-dir "E:/Project B/Claude/Project D extras" \
-  --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" \
+  --disallowedTools "Bash(gh pr merge:*)" "PowerShell(gh pr merge:*)" "Agent" "Bash(git push:*)" "Bash(taskkill:*)" "PowerShell(Stop-Process:*)" "Bash(node -e:*)" \
   --allowedTools "Bash(echo:*)" "Bash(tee:*)" "Bash(npx.cmd:*)" "Bash(npm.cmd:*)" "PowerShell(Select-String:*)" \
     "PowerShell(Select-Object:*)" "PowerShell(Write-Output:*)" "Bash(git add:*)" "Bash(git commit:*)" "Bash(git fetch:*)" \
     "Bash(git checkout:*)" "Bash(git switch:*)" "Bash(git cherry-pick:*)" "Bash(git rebase:*)" "Bash(git apply:*)" \
-    "Bash(git check-ignore:*)" \
+    "Bash(git check-ignore:*)" "Bash(git merge --squash:*)" "Bash(git grep:*)" \
   --output-format stream-json --verbose < "$R/b<item>.txt" > "$R/king-<item>.jsonl" 2>&1
 # The force-push and reset denies in .claude/settings.json stay.
 
