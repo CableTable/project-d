@@ -11748,8 +11748,7 @@ try {
   await step('TODO 189 Undo keeps grips every mode', async () => {
     await menuItem('View', 'Theme: light');
     const endpoint = async () => {
-      await page.waitForFunction(() => !document.querySelector('[data-testid=grip-hot]') && document.querySelector('[data-testid=grip][data-grip$=":a"]'));
-      return page.locator('[data-testid=grip][data-grip$=":a"]').getAttribute('data-grip');
+      return (await page.waitForFunction(() => !document.querySelector('[data-testid=grip-hot]') && document.querySelector('[data-testid=grip][data-grip$=":a"]')?.dataset.grip)).jsonValue();
     };
     const hot = async (mode) => {
       const p = await gripBox(await endpoint()); await page.mouse.click(p.x, p.y);
@@ -11796,20 +11795,65 @@ try {
       await jump(1); await gripWhen(3);
       const moved = await gripBox(await endpoint()), want = await at(120, 120);
       assert.ok(near(moved.x, want.x, 2) && near(moved.y, want.y, 2), kind + ': history jump selects the Move step’s first line');
-      await jump(2); await gripWhen(0);
+      await jump(2); await gripWhen(3);
       await jump(3); await gripWhen(3);
       const selected = await gripBox(await endpoint());
       assert.ok(near(selected.x, rotated.x, 2) && near(selected.y, rotated.y, 2), kind + ': forward history jump selects the Rotate step’s second line');
       await key('Delete');
       await jump(3); await gripWhen(3);
-      await jump(4); await gripWhen(0);
-      console.log(`189 ${kind}: all five grip modes with / without Copy retain grips through Undo / Redo; history selects the target grip edit and clears for regular edits`);
+      await jump(4); await gripWhen(kind === 'Layout' ? 3 : 0);
+      await jump(1); await gripWhen(3);
+      await jump(0); await gripWhen(3);
+      const start = await gripBox(await endpoint()), origin = await at(100, 100);
+      assert.ok(near(start.x, origin.x, 2) && near(start.y, origin.y, 2), kind + ': Start keeps the restored original line selected');
+      console.log(`189 ${kind}: all five grip modes with / without Copy retain grips through Undo / Redo; history selects the target grip edit and keeps restored selection for plain steps and Start`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 193d1 Layout history keeps objects and placed parts selected at plain steps and Start', async () => {
+    await openLayout162b();
+    await click(175, 100); await click(700, 380, { shift: true });
+    assert.deepEqual(await picked162b(2), [100, 650]);
+    for (const position of ['25', '50']) {
+      await t('guide-position').fill(position); await t('guide-add-v').click();
+    }
+    assert.deepEqual(await histLabels(), ['Start', 'Add guide', 'Add guide']);
+    for (const row of [1, 0, 2]) {
+      await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(row).click();
+      await t('hist-dialog').waitFor({ state: 'detached' });
+      assert.deepEqual(await picked162b(2), [100, 650], 'history keeps the Layout object and placed part selected');
+      assert.equal(await t('guide-pos').count(), row);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 193d1 pick another shape after grip Undo in every tab', async () => {
+    const raw = newDoc(4), lay = newLayout('Pick after Undo');
+    addEntities(raw, dxfLine(100, 100, 250, 100), dxfCircle(350, 100, 30));
+    for (const [i, e] of raw.entities.entries()) {
+      const part = objectPart('pick' + i, 'Shape ' + i, e, raw.layers);
+      lay.parts[part.id] = part; lay.placed.push(objectPlacement(part));
+    }
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await openGrips(writeDxf(kind === 'Layout' ? layoutRaw(lay) : raw), `pick193d1-${kind}.dxf`);
+      if (kind === 'Compare') { await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click(); }
+      await page.keyboard.press('Escape'); await frames();
+      await click(175, 100); await gripWhen(3);
+      const id = await (await page.waitForFunction(() => document.querySelector('[data-testid=grip][data-grip$=":a"]')?.dataset.grip)).jsonValue();
+      await dragGripTo(id, 80, 120); await gripWhen(3);
+      await undoGrips(3);
+      await click(350, 130); await gripWhen(5); await propsOnNow();
+      assert.equal(await t('prop-chip').textContent(), 'Circle', kind + ': a different shape is picked right after grip Undo');
+      await click(175, 100); await gripWhen(3);
+      assert.equal(await t('prop-chip').textContent(), 'Line', kind + ': restored line can still be picked');
+      console.log(`193d1 ${kind}: hit-test picks another shape and the restored line after grip Undo`);
     }
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
   await step('TODO 189 read-only look', async () => {
-    const shots = 'shots-189'; mkdirSync(shots, { recursive: true });
+    const shots = 'shots-193d1'; mkdirSync(shots, { recursive: true });
     const looks = {}, ratios = {};
     for (const kind of ['Drawing', 'Compare', 'Layout']) {
       await open188(kind);
@@ -11828,17 +11872,20 @@ try {
         if (kind === 'Drawing') looks[theme] = look; else assert.deepEqual(look, looks[theme], kind + ': same Properties look');
         assert.deepEqual(look.fields.map((f) => f.key), ['angle', 'startX', 'startY', 'endX', 'endY']);
         for (const f of look.fields) {
-          assert.equal(f.colour, look.muted); assert.equal(f.background, look.app); assert.equal(f.opacity, '1');
+          assert.equal(f.colour, look.fields[0].colour); assert.equal(f.background, look.app); assert.equal(f.opacity, '1');
+          assert.ok(contrastRatio(f.colour, f.background) >= 4.5, 'read-only text reaches 4.5:1');
           assert.notEqual(f.colour, look.length.colour); assert.notEqual(f.background, look.length.background);
         }
         assert.ok(+look.length.weight >= 600, 'Length stays bold');
         ratios[theme] = contrastRatio(look.placeholder.colour, look.field.background);
+        assert.ok(ratios[theme] >= 4.5, 'ByLayer placeholder reaches 4.5:1');
+        assert.notEqual(look.placeholder.colour, look.field.colour, 'ByLayer differs from typed text');
         assert.equal(look.placeholder.opacity, '1');
         await t('props-panel').screenshot({ path: `${shots}/properties-${kind.toLowerCase()}-${theme}.png` });
       }
-      assert.ok(ratios.dark >= ratios.light - .1, 'dark ByLayer placeholder reaches light contrast: ' + JSON.stringify(ratios));
       await menuItem('View', 'Theme: light');
-      console.log(`189 ${kind} Properties: read-only fields dim in both themes; Length bold; ByLayer contrast light=${ratios.light.toFixed(2)} dark=${ratios.dark.toFixed(2)}; screenshots saved in ${shots}/`);
+      const light = looks.light.fields[0];
+      console.log(`193d1 ${kind} Properties: light read-only contrast ${contrastRatio('#62625f', '#d9d9d9').toFixed(2)} -> ${contrastRatio(light.colour, light.background).toFixed(2)}; Length bold; distinct ByLayer contrast light=${ratios.light.toFixed(2)} dark=${ratios.dark.toFixed(2)}; screenshots saved in ${shots}/`);
     }
     assert.deepEqual(errors, []); await closeTabs(/./);
   });

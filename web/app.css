@@ -729,9 +729,9 @@ input.cursor-field[aria-invalid='true'] { border-color: #dc2626; outline: 1px so
 .colour-status { min-height: 16px; }
 button.cswatch, button.ribbon-swatch { padding: 0; cursor: pointer; }
 @media (max-width: 620px) { .colour-body { flex-direction: column; } .colour-values { width: 100%; } }
-.propbox .fld:disabled { color: var(--muted); background: var(--app); opacity: 1; }
+.propbox .fld:disabled { color: light-dark(var(--mutedink), var(--muted)); background: var(--app); opacity: 1; }
 .propgeo [data-prop='length'] { font-weight: 600; }
-.propbox .fld::placeholder { color: light-dark(var(--muted), var(--text)); opacity: 1; }
+.propbox .fld::placeholder { color: light-dark(var(--muted), #d3d7de); opacity: 1; }
 .widthbox { margin-top: 4px; border-top: 1px solid var(--line); padding-top: 10px; }
 .widthhead { justify-content: space-between; }
 .widthbox .proprow > .lbl:last-child { width: auto; }
