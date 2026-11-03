@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { contextOf, countTicked, gateOps, nextState, queueLine, setLine2, skipIds } from './tools/handover-gate.mjs';
+import { briefIds, contextOf, countTicked, gateOps, nextState, queueLine, setLine2, skipIds, tickIds } from './tools/handover-gate.mjs';
 
 const BEFORE = [
   '- [ ] 162. **Quick Select**',
@@ -33,15 +33,56 @@ test('ticked counter: leaf rows that turned ticked or arrived ticked; a ticked p
 });
 
 test('TODO 167e: ticks of tool and fix launches are not counted, unless an item launch has the same id', () => {
-  const launches = [{ kind: 'item', branch: 'king/162' }, { kind: 'tool', branch: 'king/164' }, { kind: 'fix', branch: 'king/162fix' }, { kind: 'fix', branch: 'king/163-fix' }, { kind: 'tool', branch: 'k/tool' }];
+  const launches = [{ kind: 'item', ids: ['162'], branch: 'king/162' }, { kind: 'tool', ids: ['164'], branch: 'king/164' }, { kind: 'fix', ids: ['162'], branch: 'king/162fix' }, { kind: 'fix', ids: ['163'], branch: 'king/163-fix' }, { kind: 'tool', ids: [], branch: 'k/tool' }];
   const skip = skipIds({ launches });
-  assert.deepEqual([...skip].sort(), ['163', '164', 'tool']);
+  assert.deepEqual([...skip].sort(), ['163', '164']);
   assert.equal(countTicked(BEFORE, AFTER, skip), 4); // 162 stays (its fix does not hide the item), 164 is a tool ticket
-  assert.equal(countTicked(BEFORE, AFTER, skipIds({ launches: [{ kind: 'tool', branch: 'king/155f' }] })), 4);
+  assert.equal(countTicked(BEFORE, AFTER, skipIds({ launches: [{ kind: 'tool', ids: ['155f'], branch: 'king/155f' }] })), 4);
   const g = world();
-  g.files['/x/runs30/rook-gate.json'] = JSON.stringify({ uuid: 'uuid-1', startSha: 'head0', launches: [{ kind: 'tool', branch: 'king/162' }] });
+  g.files['/x/runs30/rook-gate.json'] = JSON.stringify({ uuid: 'uuid-1', startSha: 'head0', launches: [{ kind: 'tool', ids: ['162'], branch: 'king/162' }] });
   const env = { ...g.env, git: (...a) => (a.join(' ') === 'show claude/session30:TODO.md' ? AFTER : g.env.git(...a)) };
   assert.match(gateOps(env).report(), /: 4 ticked, 0 launched/); // 5 ticks, 162 was a tool ticket
+});
+
+test('TODO 185a: tick ids exclude single-digit prose; launch ids come from the brief header and Tick lines', () => {
+  assert.deepEqual(tickIds('Tick 170, 1 line'), ['170']);
+  assert.deepEqual(tickIds('Tick 1, 1 line'), []);
+  assert.deepEqual(tickIds('6. Tick TODO 170 and 171, 1 line'), ['170', '171']);
+  assert.deepEqual(briefIds('Build: TODO 167b (tools).\r\nTick 167b, 167c and TODO 170, 1 line'), ['167b', '167c', '170']);
+  for (const role of ['King fix', 'Knight fix', 'Fix round']) assert.deepEqual(briefIds(`${role}: TODO 167c (fix).`), ['167c']);
+  assert.deepEqual(briefIds('Build: TODO 167C.\nTick 167c'), ['167c']);
+  assert.deepEqual(briefIds('No ids in this brief.'), []);
+});
+
+test('TODO 185a: recorded tool/fix flags skip ticks regardless of branch name, and ids survive brief reuse', () => {
+  const w = world();
+  const before = '- [ ] 167b. tool\n- [ ] 167c. fix\n- [ ] 170. item\n';
+  const after = before.replaceAll('[ ]', '[x]');
+  w.env.git = (...a) => ({ 'rev-parse claude/session30': 'head0', 'show head0:TODO.md': before, 'show claude/session30:TODO.md': after })[a.join(' ')];
+  const gate = gateOps(w.env);
+  for (const [branch, flags, brief] of [
+    ['king/s33-tools', { tool: true }, 'Build: TODO 167b (tools).\nTick 167b, 1 line'],
+    ['king/167c-fix-2', { fix: true }, 'King fix: TODO 167c (second fix).'],
+    ['knight/drawing', {}, 'Build: TODO 170 (drawing).'],
+  ]) {
+    w.files['b.txt'] = brief;
+    gate.record({ ...flags, brief: 'b.txt', branch });
+  }
+  assert.deepEqual(state(w).launches.map((l) => [l.kind, l.ids]), [['tool', ['167b']], ['fix', ['167c']], ['item', ['170']]]);
+  w.files['b.txt'] = 'Build: TODO 999 (reused).';
+  assert.equal(gate.report(), 'items since start (Rook S30): 1 ticked, 1 launched / 2, 1 tool');
+});
+
+test('TODO 185a: older launch records use saved briefs and recorded flags, never branch ids', () => {
+  const w = world();
+  w.files['tool.txt'] = 'Build: TODO 162 (tool).\nTick 162, 164';
+  w.files['fix.txt'] = 'King fix: TODO 155f (fix).';
+  const launches = [{ kind: 'tool', brief: 'tool.txt', branch: 'king/s33-tools' }, { kind: 'fix', brief: 'fix.txt', branch: 'king/167c-fix-2' }];
+  w.files['/x/runs30/rook-gate.json'] = JSON.stringify({ uuid: 'uuid-1', startSha: 'head0', launches });
+  const git = w.env.git;
+  w.env.git = (...a) => a.join(' ') === 'show claude/session30:TODO.md' ? AFTER : git(...a);
+  assert.match(gateOps(w.env).report(), /: 2 ticked, 0 launched/);
+  assert.deepEqual([...skipIds({ launches: [{ kind: 'tool', branch: 'king/162', brief: 'missing.txt' }] }, w.env.read)], []);
 });
 
 test('state: the same Rook keeps its launches, a new uuid starts empty at the current head', () => {

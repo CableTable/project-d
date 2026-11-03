@@ -5,7 +5,7 @@ import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'n
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { gateOps } from './handover-gate.mjs';
+import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -75,10 +75,6 @@ export function parseKnight(args) {
 
 // TODO 167c: a brief whose line 1 opens like a fix round counts as one without `--fix`.
 export const isFixBrief = (text) => /^﻿?(King fix|Knight fix|Fix round)\b/.test(text);
-
-// Ticking several TODOs: ids right after `Tick`, joined by , and & / + (other numbers on the line are prose).
-// Ids have 2+ digits, so `Tick 170, 1 line on the cause` is prose.
-const tickIds = (line) => line.match(/^\s*(?:\d+\.\s+)?`?Tick\s+(?:TODO\s+)?(\d{2,}[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d{2,}[a-z]*\d*)+)/i)?.[1].match(/\d{2,}[a-z]*\d*/g) ?? [];
 
 export function lintBrief(text) {
   const problems = [];
@@ -181,7 +177,7 @@ const io = {
   },
   launch: (bin, args, cwd, inFd, outFd, env = process.env, outPath, after, lock) => launchRun(bin, args, cwd, inFd, outFd, env, outPath, spawn, launchFailed, after, lock),
   truncate(path) { if (existsSync(path)) writeFileSync(path, ''); }, // a reused out file must not wake `wait` before the run ends
-  // TODO 167d: this launch's line in queue.txt; `open` never throws (a note, not the launch) and returns null when there is no queue.txt (TODO 167e: it now does)
+  // This launch's line in queue.txt; `open` never throws and returns null when queue.txt is missing.
   queue: {
     open(kind, id, out) {
       try { return queueLineOf(io.gate.queueFile(), kind, id, out); }

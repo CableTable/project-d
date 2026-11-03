@@ -1,8 +1,16 @@
 // The launcher's handover gate (TODO 165): at most LIMIT new-item launches per Rook, so the pipeline drains to a clean break.
 // A rule in WORKFLOW.md did not hold (Rook S29 built 9 items), so `rook.mjs build` / `knight` count and refuse.
-// State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind: item | fix | tool, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
+// State: runs<N>/rook-gate.json { uuid, startSha, launches: [{ kind: item | fix | tool, ids, brief, branch, at, over? }] }; one Rook = one uuid (rook-next.txt line 1).
 export const LIMIT = 2;
 const ROW = /^(\s*)(?:- \[([ x])\] )?(\d+[a-z]*\d*)\.\s*(✅)?/; // "- [x] 160." / "    155a. ✅" / "1. ✅"; ids repeat in old lists, so rows are keyed id#occurrence
+
+// Ids right after Tick, joined by , and & / +; a single-digit prose count is not an id.
+export const tickIds = (line) => line.match(/^\s*(?:\d+\.\s+)?`?Tick\s+(?:TODO\s+)?(\d{2,}[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d{2,}[a-z]*\d*)*)/i)?.[1].match(/\d{2,}[a-z]*\d*/g) ?? [];
+
+export function briefIds(text) {
+  const id = /^\uFEFF?(?:Build|King fix|Knight fix|Fix round):?\s+TODO\s+(\d{2,}[a-z]*\d*)\b/i.exec(text)?.[1];
+  return [...new Set([...(id ? [id] : []), ...text.split(/\r?\n/).flatMap(tickIds)].map((s) => s.toLowerCase()))];
+}
 
 // shortcut: id#occurrence miscounts when a same-number open row is inserted above a ticked one; it only feeds the queue line (never a launch), upgrade if the line misleads.
 function rows(text) {
@@ -21,11 +29,11 @@ export function countTicked(before, after, skip = new Set()) {
   return rows(after).filter((r) => r.leaf && r.ticked && !was.has(r.key) && !skip.has(r.key.split('#')[0])).length;
 }
 
-// TODO 167e: a launch's TODO id is its branch's last part without a `fix` ending (king/167cfix, king/167c-fix -> 167c); ids of tool / fix launches that no item launch also has.
-export function skipIds(state) {
-  const id = (l) => (l.branch || '').split('/').pop().replace(/-?fix\d*$/, '');
-  const items = new Set(itemsOf(state).map(id));
-  return new Set(state.launches.filter((l) => l.kind !== 'item').map(id).filter((i) => i && !items.has(i)));
+// The recorded launch kind decides which ticks to skip; older records get their ids from the saved brief.
+export function skipIds(state, read = () => '') {
+  const ids = (l) => l.ids ?? briefIds((l.brief && read(l.brief)) || '');
+  const items = new Set(itemsOf(state).flatMap(ids));
+  return new Set(state.launches.filter((l) => l.kind !== 'item').flatMap(ids).filter((i) => !items.has(i)));
 }
 
 // TODO 167a: context of the LAST main-chain assistant message (a compact lowers it, so not the peak) = input + cache read + cache write; null when there is none.
@@ -81,7 +89,7 @@ export function gateOps(env) {
     return { name, dir, file, head, state };
   }
   function show(g) {
-    const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`), skipIds(g.state));
+    const ticked = countTicked(env.git('show', `${g.state.startSha}:TODO.md`), env.git('show', `${g.head}:TODO.md`), skipIds(g.state, env.read));
     const line = queueLine(g.name, ticked, itemsOf(g.state).length, toolsOf(g.state).length);
     const q = `${g.dir}/queue.txt`;
     env.write(q, setLine2(env.read(q) || '', line));
@@ -116,7 +124,7 @@ export function gateOps(env) {
       let g;
       try {
         g = load();
-        g.state.launches.push({ kind: fix ? 'fix' : tool ? 'tool' : 'item', brief, branch, at: new Date().toISOString(), ...(over && !fix && !tool ? { over: true } : {}) });
+        g.state.launches.push({ kind: fix ? 'fix' : tool ? 'tool' : 'item', ids: briefIds(env.read(brief) || ''), brief, branch, at: new Date().toISOString(), ...(over && !fix && !tool ? { over: true } : {}) });
         env.write(g.file, JSON.stringify(g.state, null, 2) + '\n');
       } catch (e) { return void console.error(`launch not counted: ${e.message}`); }
       try { return show(g); } catch (e) { console.error(`queue line not updated: ${e.message}`); }
