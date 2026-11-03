@@ -1889,7 +1889,7 @@ function pushLay(d, snap, key = '', label) {
   lastPush = { key, t: now, d };
 }
 function layRestore(d, st, dirty = true) {
-  const sameSet = d.lay.placed.length === st.placed.length && d.lay.s.gridPart === st.gridPart;      // a move, align or flag change: the same parts are still selected
+  const sameSet = d.lay.placed.length === st.placed.length && d.lay.s.gridPart === st.gridPart && st.placed.every((p, i) => JSON.stringify(p) === JSON.stringify(d.lay.placed[i]));      // the picks are list positions: kept only when every placed entry is unchanged
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }

@@ -11830,6 +11830,21 @@ try {
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
+  await step('TODO 193d1 Layout history clears the selection when the placed parts changed', async () => {
+    await openLayout162b();
+    await page.keyboard.press('Escape'); await picked162b(0);                   // nothing selected at Start
+    await t('guide-position').fill('25'); await t('guide-add-v').click();
+    await click(175, 100); assert.deepEqual(await picked162b(1), [100]);        // part A
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Delete'); await frames();
+    await click(175, 400); assert.deepEqual(await picked162b(1), [100]);        // part D: copied and pasted, so the list is as long as at Start again
+    await page.keyboard.press('Control+c'); await page.keyboard.press('Control+v'); await frames();
+    await click(325, 200); assert.deepEqual(await picked162b(1), [275]);        // part C
+    await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(0).click();
+    await t('hist-dialog').waitFor({ state: 'detached' }); await frames();
+    assert.deepEqual(await picked162b(0), [], 'Start has other placed parts: nothing stays selected, never the part at the same list position');
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
   await step('TODO 193d1 pick another shape after grip Undo in every tab', async () => {
     const raw = newDoc(4), lay = newLayout('Pick after Undo');
     addEntities(raw, dxfLine(100, 100, 250, 100), dxfCircle(350, 100, 30));
