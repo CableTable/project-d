@@ -1951,7 +1951,7 @@ function showHistory() {
     finish();
     if (r === now) return;
     const forward = r > now, dir = forward ? 'redo' : 'undo';
-    const target = d.cmp ? cmpSourceTab(cmpSelected(d.cmp)) : d, selection = [...(target?.sel || [])];
+    const target = d.cmp ? cmpSourceTab(cmpSelected(d.cmp)) : d;
     if (d.cmp) for (let i = 0; i < Math.abs(r - now); i++) {
       const current = historyOf(d), target = historyDocs(d).find((x) => x.hist && x.hist === current[forward ? 'redoHistory' : 'undoHistory']);
       if (!target || target !== d && !cmpEdit()) return;
@@ -1972,7 +1972,7 @@ function showHistory() {
       } else {
         if (target) setSel(target, new Set(step.sel.filter((i) => i < target.raw.entities.length)));
       }
-    } else if (!d.lay && target) setSel(target, new Set(selection.filter((i) => i < target.raw.entities.length)));
+    } else if (!d.lay && target) setSel(target, new Set());       // Drawings and Compare: a plain step or Start clears (TODO 189); object indexes are not stable ids
     note(r < now ? `Went back ${now - r} step${now - r === 1 ? '' : 's'}, to ${rows[r] === 'Start' ? 'the start' : 'after ' + rows[r]}` : `Went forward ${r - now} step${r - now === 1 ? '' : 's'}, to after ${rows[r]}`);
   };
   const list = h('div', { class: 'histlist', 'data-testid': 'hist-list' }, rows.map((text, r) => {

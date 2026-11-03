@@ -11795,7 +11795,7 @@ try {
       await jump(1); await gripWhen(3);
       const moved = await gripBox(await endpoint()), want = await at(120, 120);
       assert.ok(near(moved.x, want.x, 2) && near(moved.y, want.y, 2), kind + ': history jump selects the Move step’s first line');
-      await jump(2); await gripWhen(3);
+      await jump(2); await gripWhen(kind === 'Layout' ? 3 : 0);
       await jump(3); await gripWhen(3);
       const selected = await gripBox(await endpoint());
       assert.ok(near(selected.x, rotated.x, 2) && near(selected.y, rotated.y, 2), kind + ': forward history jump selects the Rotate step’s second line');
@@ -11803,10 +11803,12 @@ try {
       await jump(3); await gripWhen(3);
       await jump(4); await gripWhen(kind === 'Layout' ? 3 : 0);
       await jump(1); await gripWhen(3);
-      await jump(0); await gripWhen(3);
-      const start = await gripBox(await endpoint()), origin = await at(100, 100);
-      assert.ok(near(start.x, origin.x, 2) && near(start.y, origin.y, 2), kind + ': Start keeps the restored original line selected');
-      console.log(`189 ${kind}: all five grip modes with / without Copy retain grips through Undo / Redo; history selects the target grip edit and keeps restored selection for plain steps and Start`);
+      await jump(0); await gripWhen(kind === 'Layout' ? 3 : 0);
+      if (kind === 'Layout') {
+        const start = await gripBox(await endpoint()), origin = await at(100, 100);
+        assert.ok(near(start.x, origin.x, 2) && near(start.y, origin.y, 2), kind + ': Start keeps the restored original line selected');
+      }
+      console.log(`189 ${kind}: all five grip modes with / without Copy retain grips through Undo / Redo; history selects the target grip edit; plain steps and Start ${kind === 'Layout' ? 'keep the restored selection' : 'clear it'}`);
     }
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
