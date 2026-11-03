@@ -7,7 +7,7 @@
 //   Blocks (INSERT) are exploded first. A circle becomes two arcs. An ellipse or spline, and any arc that a stretched block makes
 //   elliptical, becomes a polyline whose vertices are at most `tol` (drawing units, > 0) from the true curve. Polyline widths are dropped.
 
-import { mmul, mapply, nurbsAt, nurbsOk } from './drawing.js';
+import { mmul, mapply, nurbsAt, nurbsOk, MAX_VISITS, DrawingError } from './drawing.js';
 import { line, arc, lwpoly } from './dxf-write.js';
 
 const TAU = Math.PI * 2, DEG = Math.PI / 180, FLIP = [-1, 0, 0, 1, 0, 0], MAX_DEPTH = 14;
@@ -53,6 +53,7 @@ const mirrored = (m) => m[0] * m[3] - m[1] * m[2] < 0;
 export function cutterDoc(doc, tol) {
   if (!(tol > 0) || !Number.isFinite(tol)) throw new RangeError('The curve tolerance must be a number above 0');
   const out = [], count = { left: 0, other: 0 };
+  let visits = 0;
 
   /** An open or closed polyline of world points. */
   const poly = (pts, closed, o) => { if (pts.length >= 2) out.push(lwpoly(pts, { ...o, closed })); };
@@ -99,6 +100,7 @@ export function cutterDoc(doc, tol) {
 
   function walk(ents, M, ctx, depth) {
     for (const e of ents || []) {
+      if (++visits > MAX_VISITS) throw new DrawingError('Too many nested blocks to draw this file');
       if (e.fill) count.left++;
       if (e.hidden) continue;
       const byBlock = e.aci === 0 && ctx.aci != null;
@@ -170,6 +172,7 @@ export function cutterDoc(doc, tol) {
           const cols = Math.min(Math.max(num(f[70], 1), 1), 100), rows = Math.min(Math.max(num(f[71], 1), 1), 100);
           const c = Math.cos(rot), s = Math.sin(rot), inner = { layer: o.layer, aci: o.aci, tc: o.tc, ps: o.ps };
           for (let row = 0; row < rows; row++) for (let col = 0; col < cols; col++) {
+            if (++visits > MAX_VISITS) throw new DrawingError('Too many nested blocks to draw this file');   // an empty block still costs a cell
             let mm = mmul(m, [1, 0, 0, 1, at[0], at[1]]);
             mm = mmul(mm, [c, s, -s, c, 0, 0]);
             mm = mmul(mm, [1, 0, 0, 1, col * num(f[44]), row * num(f[45])]);

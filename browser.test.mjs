@@ -1034,6 +1034,84 @@ try {
       }
     } finally { await context.close(); }
   });
+  await step('TODO 184: nested blocks file shows the error', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage();
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const g = (...pairs) => pairs.map(([c, v]) => c + '\n' + v).join('\n'), dim = g([0, 'DIMENSION'], [8, '0'], [2, 'A']);
+      const text = [g([0, 'SECTION'], [2, 'BLOCKS']), g([0, 'BLOCK'], [8, '0'], [2, 'A'], [70, 0], [10, 0], [20, 0]), ...Array(8).fill(dim), g([0, 'ENDBLK'], [8, '0']), g([0, 'ENDSEC']),
+        g([0, 'SECTION'], [2, 'ENTITIES']), dim, g([0, 'ENDSEC']), g([0, 'EOF'])].join('\n') + '\n';
+      const tabs = await p.locator('.dtab').count();
+      await p.getByTestId('picker').setInputFiles({ name: 'nested-184.dxf', mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      const shown = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 30000 })).jsonValue();
+      assert.match(shown, /nested-184\.dxf: Too many nested blocks to draw this file/);
+      assert.equal(await p.locator('.dtab').count(), tabs, 'the file did not open');
+      await p.getByTestId('picker').setInputFiles('fixtures/outline.dxf');           // the app still responds: a second file opens in a tab
+      await p.getByTestId('drawing-panel').waitFor({ state: 'visible' });
+      assert.equal(await p.locator('.tabs .dtab.on .tname').textContent(), 'outline.dxf');
+      await p.screenshot({ path: `${shotDir}/todo184-after-error-light.png` });
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
+      await p.screenshot({ path: `${shotDir}/todo184-after-error-dark.png` });
+    } finally { await context.close(); }
+  });
+  await step('TODO 184: paste past the limit', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    try {
+      const p = await context.newPage();
+      await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+      const g = (...pairs) => pairs.map(([c, v]) => c + '\n' + v).join('\n'), dim = g([0, 'DIMENSION'], [8, '0'], [2, 'A']);
+      // 2 dimensions in the block naming itself cost 2047 visits each: 2441 of them and 3273 lines sit just under the 5 million budget (one line more does not), a pasted copy of the lines does not
+      const line = g([0, 'LINE'], [8, '0'], [10, 0], [20, 0], [11, 1], [21, 1]);
+      const text = [g([0, 'SECTION'], [2, 'BLOCKS']), g([0, 'BLOCK'], [8, '0'], [2, 'A'], [70, 0], [10, 0], [20, 0]), dim, dim, g([0, 'ENDBLK'], [8, '0']), g([0, 'ENDSEC']),
+        g([0, 'SECTION'], [2, 'ENTITIES']), ...Array(2441).fill(dim), ...Array(3273).fill(line), g([0, 'ENDSEC']), g([0, 'EOF'])].join('\n') + '\n';
+      await p.getByTestId('picker').setInputFiles({ name: 'paste-184.dxf', mimeType: 'application/dxf', buffer: Buffer.from(text) });
+      await p.waitForFunction(() => /^Opened paste-184/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 }).catch(async (e) => { throw new Error('prompt: ' + await p.getByTestId('cmd-prompt').textContent(), { cause: e }); });
+      const prompt = () => p.getByTestId('cmd-prompt').textContent(), count = () => p.getByTestId('count').textContent();
+      const before = await count();
+      await p.keyboard.press('Control+a'); await p.keyboard.press('Control+c');
+      await p.waitForFunction(() => /^Copied/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      await p.keyboard.press('Delete'); await p.waitForFunction(() => /^Deleted/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });       // a Redo step is waiting
+      await p.keyboard.press('Control+v');
+      const shown = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 60000 })).jsonValue();
+      assert.match(shown, /Too many nested blocks to draw this file/);
+      assert.doesNotMatch(shown, /^Pasted/);
+      assert.equal(await count(), before, 'the drawing is unchanged');
+      await p.keyboard.press('Control+y'); await p.waitForFunction(() => /^Redone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });       // Redo survived the failed paste
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z');
+      assert.equal(await prompt(), 'Nothing to undo', 'no undo step was added');
+      await p.keyboard.press('Control+a');                                        // Mirror: a copy of the dimensions is past the limit too
+      for (const word of ['mirror', '0,0', '10,0']) {
+        const input = p.getByTestId('cmd-input');
+        if (!(await input.isVisible())) { await p.getByTestId('cmd-echo').click(); await input.waitFor({ state: 'visible' }); }
+        await input.fill(word); await input.press('Enter');
+      }
+      await p.getByTestId('mirror-no').click();
+      const mirrored = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 60000 }).catch(async (e) => { throw new Error('prompt: ' + await prompt(), { cause: e }); })).jsonValue();
+      assert.doesNotMatch(mirrored, /^Mirrored/);
+      assert.equal(await count(), before, 'Mirror left the drawing as it was');
+      await p.keyboard.press('Control+z');
+      assert.equal(await prompt(), 'Nothing to undo', 'Mirror added no undo step');
+      await p.locator('.coords').click(); await p.keyboard.press('Control+a');   // Line: one more segment is past the limit (3273 lines is the most that fits)
+      await p.keyboard.press('Delete'); await p.waitForFunction(() => /^Deleted/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      for (const word of ['line', '0,0', '10,0']) {
+        const input = p.getByTestId('cmd-input');
+        if (!(await input.isVisible())) { await p.getByTestId('cmd-echo').click(); await input.waitFor({ state: 'visible' }); }
+        await input.fill(word); await input.press('Enter');
+      }
+      const lined = await (await p.waitForFunction(() => { const t = document.querySelector('[data-testid=cmd-prompt]').textContent; return /Too many nested blocks/.test(t) && t; }, null, { timeout: 60000 }).catch(async (e) => { throw new Error('prompt: ' + await prompt(), { cause: e }); })).jsonValue();
+      assert.doesNotMatch(lined, /made on layer/);
+      assert.equal(await p.getByTestId('tool-chip').textContent(), 'Tool: Select', 'the refused segment ended the Line command');
+      assert.equal(await count(), before, 'Line left the drawing as it was');
+      await p.keyboard.press('Control+y'); await p.waitForFunction(() => /^Redone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });       // Redo survived
+      await p.keyboard.press('Control+z'); await p.waitForFunction(() => /^Undone/.test(document.querySelector('[data-testid=cmd-prompt]').textContent), null, { timeout: 60000 });
+      await p.keyboard.press('Control+z');
+      assert.equal(await prompt(), 'Nothing to undo', 'Line added no undo step');
+    } finally { await context.close(); }
+  });
   await step('TODO 152b: Properties and ribbon show custom colour swatch and hex, keeping the picker option', async () => {
     const context = await browser.newContext({ viewport: { width: 1800, height: 1000 } });
     try {

@@ -87,6 +87,12 @@ function inherited(e, parent, layers) {
 export function explodeInsert(e, raw, burst = false) {
   if (e.type !== 'INSERT') return null;
   const blocks = { ...raw.blocks };
+  let made = 0;
+  function freshName() {       // every fan-out (a stretched INSERT or a DIMENSION inside a block) makes one: 5000 of them is a file built to hang, and the name search below is quadratic
+    if (++made > 5000) throw new Error('nested block limit reached');
+    let n = 1; while (blocks['PD_EXPLODE_' + n]) n++;
+    return 'PD_EXPLODE_' + n;
+  }
   function transform(e, m, depth = 0) {
     if (depth > 10) throw new Error('nested block limit reached');
     if (val(e, 210) || val(e, 220)) throw new Error('tilted members stay intact');
@@ -96,9 +102,9 @@ export function explodeInsert(e, raw, burst = false) {
     if (e.type === 'DIMENSION') {                       // its block is in sheet coordinates: carried as one INSERT of a copy of that block under a plain name (no longer a dimension; a *D name would reopen as a part)
       const block = blocks[field(e, 2)];
       if (!block || block.xref) throw new Error('missing block or external reference');
-      let n = 1; while (blocks['PD_EXPLODE_' + n]) n++;
-      blocks['PD_EXPLODE_' + n] = block;
-      return transform(insert('PD_EXPLODE_' + n, block.base?.[0] || 0, block.base?.[1] || 0, e), m, depth);
+      const copy = freshName();
+      blocks[copy] = block;
+      return transform(insert(copy, block.base?.[0] || 0, block.base?.[1] || 0, e), m, depth);
     }
     if (e.type === 'INSERT') {
       const name = field(e, 2), block = blocks[name];
@@ -111,8 +117,7 @@ export function explodeInsert(e, raw, burst = false) {
         return [made];
       }
       // A rotated inner INSERT under a stretch can shear: bake its basis into a private definition, keeping one INSERT.
-      let n = 1; while (blocks['PD_EXPLODE_' + n]) n++;
-      const madeName = 'PD_EXPLODE_' + n;
+      const madeName = freshName();
       blocks[madeName] = { base: [0, 0], xref: false, entities: [] };
       const local = m.slice(); local[4] -= at[0]; local[5] -= at[1];
       blocks[madeName].entities = members(e, local, depth + 1, false);

@@ -471,3 +471,11 @@ test('TODO 155i1: layout native dimension without a graphics block also has exte
   assert.equal(lay.placed.length, 6);
   assert.equal(textOf(lay.placed.map((p) => lay.parts[p.partId].raw.entities[0]).find((e) => e.type === 'MTEXT')), 'Width 100.00');
 });
+
+test('TODO 184: a chain of stretched blocks, 8 inserts a level, stops at the made-block cap, fast', () => {
+  const d = newDoc();     // a chain A0 > A1 > ... > A9, 8 inserts a level (8^9 leaves); 7 deg a level never turns square again
+  for (let k = 0; k < 10; k++) addBlock(d, 'A' + k, k < 9 ? Array.from({ length: 8 }, () => insert('A' + (k + 1), 0, 0, { rot: 7 })) : [line(0, 0, 1, 1)]);
+  const t0 = Date.now();
+  assert.throws(() => explodeInsert(insert('A0', 0, 0, { sx: 2, sy: 1 }), d), /nested block limit/);
+  assert.ok(Date.now() - t0 < 15000);
+});

@@ -256,3 +256,10 @@ test('an ellipse snaps to its centre and its 4 quadrant points; a partial one on
   const part = pts(ell(Math.PI / 2 + 0.1));
   assert.ok(part.includes('quadrant 10,25') && !part.includes('quadrant 0,20') && !part.includes('quadrant 10,15'), part.join(' | '));
 });
+
+test('TODO 184: a block of 8 DIMENSIONs that name itself ends in a DrawingError, fast', () => {
+  const dim = g([0, 'DIMENSION'], [8, '0'], [2, 'A']), blocks = g([0, 'BLOCK'], [8, '0'], [2, 'A'], [70, 0], [10, 0], [20, 0]) + '\n' + Array(8).fill(dim).join('\n') + '\n' + g([0, 'ENDBLK'], [8, '0']);       // nothing drawn, so the item limit never stops it
+  const t0 = Date.now();
+  assert.throws(() => lay(dxf([dim], { blocks })), (e) => e instanceof D.DrawingError && /Too many nested blocks/.test(e.message));
+  assert.ok(Date.now() - t0 < 15000, 'took ' + (Date.now() - t0) + ' ms');
+});
