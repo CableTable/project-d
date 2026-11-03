@@ -129,6 +129,18 @@ test('TODO 190a fix: next refuses when rook-next.txt names this session, before 
   assert.equal((await nextRook({ ...deps, exists: () => true, own: 'other' })).code, 0);
 });
 
+test('TODO 193b fix: next refuses, before starting anything, when the resume file on rook-next.txt line 3 lacks the merge-due.log line', async () => {
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8', started = [];
+  let t = 0;
+  const deps = { read: () => `${U}\r\nRook S36\r\nR.txt\r\n`, exists: () => false, start: () => started.push(1), sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P' };
+  for (const text of ['branch x\n', null]) {
+    await assert.rejects(nextRook({ ...deps, readFile: () => { if (text === null) throw new Error('ENOENT'); return text; } }), /refused: R\.txt is missing or has no line .*merge-due\.log first/);
+  }
+  assert.deepEqual(started, []);
+  const ok = await nextRook({ ...deps, exists: () => true, readFile: () => 'read the last line of ../Project D extras/merge-due.log first\n' });
+  assert.equal(ok.code, 0);
+});
+
 test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; already there starts nothing; 60 s without it is exit 1', async () => {
   const U = '81b99077-20db-45ec-9515-c01615c70fa8';
   let t = 0;
@@ -207,6 +219,10 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     writeFileSync(join(extras, 'runs33', 'retro33.out'), ' \n');
     merge(['5', 'cc', '--no-retro'], gh(), extras);
     assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8').split('\n').length, 4, 'an empty retro file still gets the line');
+    rmSync(join(extras, 'runs34'), { recursive: true });
+    writeFileSync(join(extras, 'runs33', 'retro33.out'), 'Suggestions\n'); // TODO 193b fix: retro.out present, no .applied
+    merge(['5', 'cc', '--no-retro'], gh(), extras);
+    assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8'), 'retro33 edits not applied (merged without retro33.applied)\n');
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 

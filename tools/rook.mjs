@@ -101,10 +101,16 @@ export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBas
 export const startArgs = (lnk) => ['powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk.replace(/'/g, "''")}'`], { stdio: 'ignore' }];
 
 // `why` (optional) returns the spawn's error / exit code, appended to the "not started" line.
-export async function nextRook({ read, exists, start, sleep, now, projects, own, why = () => '' }) {
-  const uuid = read().split(/\r?\n/)[0].trim();
+// The resume file named on rook-next.txt line 3 must have a line mentioning merge-due.log (TODO 193b); shortcut: no line 3 = no check.
+export async function nextRook({ read, exists, start, sleep, now, projects, own, why = () => '', readFile = (p) => readFileSync(p, 'utf8') }) {
+  const [uuid, , resume = ''] = read().split(/\r?\n/).map((l) => l.trim());
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(uuid)) throw new Error('rook-next.txt line 1 is not a uuid');
   if (uuid === own) throw new Error('rook-next.txt names this session: write the handover first');
+  if (resume) {
+    let text = '';
+    try { text = readFile(resume); } catch { /* reported below */ }
+    if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} is missing or has no line "read the last line of ../Project D extras/merge-due.log first"`);
+  }
   const seen = () => exists(`${projects}/${uuid}.jsonl`);
   if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} already running` };
   start();
@@ -149,13 +155,15 @@ export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: '
   const retroFile = `${extras}/runs${n}/retro${n}.out`;
   const [r] = JSON.parse(run('gh', ['run', 'list', '--commit', sha, '--workflow', 'ci.yml', '--limit', '1', '--json', 'status,conclusion']));
   const retro = existsSync(retroFile) ? readFileSync(retroFile, 'utf8') : null;
-  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro, applied: existsSync(`${extras}/runs${n}/retro${n}.applied`), noRetro, ci: r &&(r.status === 'completed' ? r.conclusion : r.status) });
+  const applied = existsSync(`${extras}/runs${n}/retro${n}.applied`);
+  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro, applied, noRetro, ci: r &&(r.status === 'completed' ? r.conclusion : r.status) });
   if (msg) throw new Error(msg);
   run('gh', ['pr', 'merge', pr, '--merge', '--match-head-commit', sha]);
   if (JSON.parse(run('gh', ['pr', 'view', pr, '--json', 'state'])).state !== 'MERGED') throw new Error(`PR #${pr} is not MERGED after gh pr merge`);
-  if (noRetro && !(retro || '').trim()) {
+  const noOut = !(retro || '').trim();
+  if (noRetro && (noOut || !applied)) {
     mkdirSync(`${extras}/runs${+n + 1}`, { recursive: true });
-    appendFileSync(`${extras}/runs${+n + 1}/resume-rook.txt`, `retro${n} due first (merged without it)\n`);
+    appendFileSync(`${extras}/runs${+n + 1}/resume-rook.txt`, noOut ? `retro${n} due first (merged without it)\n` : `retro${n} edits not applied (merged without retro${n}.applied)\n`);
   }
   return `MERGED #${pr} ${sha}`;
 }
