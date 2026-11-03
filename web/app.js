@@ -39,7 +39,7 @@ import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
 import { openAttributes } from './attributedlg.js';
 import { attributeRows } from './attribute-edit.js';
-import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText, measureOverride } from './dimension-text.js';
+import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText, measureOverride, readOverride } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import * as GM from './gripmode.js';
@@ -5451,11 +5451,18 @@ function layersWith(raw, name, o) {
   addLayer(doc, name, o);
   return doc.layers;
 }
+/** `next` with every kept Measure callout's ΔX / ΔY read again from where it now is (Scale, Rotate, Mirror, Move, Stretch, grips all end in commit). */
+function settleMeasures(d, next) {
+  if (!d.raw || !next.entities || !next.blocks) return next;
+  const fixed = Ed.relabelDims({ ...d.raw, ...next }, d.factor, 0, true);
+  return fixed ? { ...next, ...fixed } : next;
+}
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. False (nothing changed, no undo step, the message shown) when it is too nested to draw. */
 function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
   if (d.vlay) { layObjCommit(d, next, label, keepSel); return true; }
   let fl;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
   const raw = d.raw;
+  next = settleMeasures(d, next);
   if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
     try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
       if (!(e instanceof DrawingError)) throw e;
@@ -5679,7 +5686,7 @@ function keepMeasure() {
   const dim = Ed.makeDimension(M.pts[0], M.pts[1], d.factor, d.raw.blocks, state.dp, { ...dimNew(d), override });
   if (!dim) return;
   if (!commit(d, Ed.addDimension(d.raw, dim), 'Add dimension')) return;
-  note(`Dimension kept: ${dim.label} mm, on the layer ${Ed.DIM_LAYER}. Select it to delete it`);
+  note(`Dimension kept: ${measuredText(dim.block.entities)} mm${override.slice(2)}, on the layer ${Ed.DIM_LAYER}. Select it to delete it`);
 }
 /// Dimension: first point, second point, then the callout follows the mouse sideways and a third click places it (AutoCAD's way). Linear is the
 // same with the pointer choosing a horizontal or a vertical line. Radius and diameter: pick a circle or an arc, then place it. Angle: pick two lines, then the arc.
@@ -8122,7 +8129,11 @@ function textCommit() {
       const snap = laySnap(d.lay);
       if (!LD.replaceDim(d.lay, dim.placed, dim.raw.entities[ed.e], { ...dim.raw.blocks, [dim.name]: built.block }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((p) => p.name)))) return;
       pushLay(d, snap, '', 'Dimension text'); touch(); update();
-    } else { if (!commit(d, Ed.replaceDimension(d.raw, built), 'Dimension text')) return; setSel(d, new Set([ed.e])); }
+    } else {
+      const next = settleMeasures(d, Ed.replaceDimension(d.raw, built));
+      if (readOverride(next.blocks[dim.name].entities) === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); note('Dimension text unchanged: a kept Measure callout follows its points'); return; }       // typed text that still matches is rewritten back: no step, no "changed"
+      if (!commit(d, next, 'Dimension text')) return; setSel(d, new Set([ed.e]));
+    }
     note('Dimension text changed. Ctrl+Z takes it back');
     return;
   }

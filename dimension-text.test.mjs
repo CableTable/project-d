@@ -10,7 +10,7 @@ import { scaleEntities } from './web/scale.js';
 import { rotateEntities } from './web/rotate.js';
 import { mirrorEntity } from './web/modify.js';
 import * as LD from './web/layoutdoc.js';
-import { isDimPart } from './web/layoutdim.js';
+import { isDimPart, bakeBlock } from './web/layoutdim.js';
 
 const params = { a: [10, 20], b: [110, 20], offset: 15, textH: 2, arrow: 1, gap: .5 };
 const drawing = (override) => {
@@ -47,6 +47,44 @@ test('kept Measure override survives DXF, relabels from points and follows sourc
   assert.equal(E.dimOfEntity(reopen(raw), 1).params.override, '<>  (ΔX -30.0000, ΔY -40.0000)');
   const dim = E.dimOfEntity(raw, 1), built = E.buildDim(dim.kind, { ...dim.params, b: [13, 24] }, 1, dim.name, dim.dp);
   assert.equal(built.label, '5.0000  (ΔX 3.0000, ΔY 4.0000)');
+});
+
+test('kept Measure callout reads its world points after Scale, Rotate and Mirror (the app settles every commit this way)', () => {
+  const slanted = () => {
+    const raw = W.newDoc(4);
+    W.addEntities(raw, W.line(10, 20, 40, 60));
+    Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { a: [10, 20], b: [40, 60], offset: 0, textH: 2, override: measureOverride([10, 20], [40, 60], 1, 2) }, 1, 'PD_DIM_1', 2)));
+    return reopen(raw);
+  };
+  const settle = (raw, next) => { const all = { ...raw, ...next }; return { ...all, ...E.relabelDims(all, 1, 0, true) }; };
+  const both = new Set([0, 1]);
+  assert.equal(label(slanted()), '50.00  (ΔX 30.00, ΔY 40.00)');
+  for (const [deg, text] of [[90, '50.00  (ΔX -40.00, ΔY 30.00)'], [180, '50.00  (ΔX -30.00, ΔY -40.00)']]) {
+    const raw = slanted(), next = rotateEntities(raw, both, [0, 0], deg);
+    assert.equal(label(settle(raw, next)), text, `rotate ${deg}`);
+    assert.equal(E.dimOfEntity(reopen(settle(raw, next)), 1).params.override, text.replace(/^50\.00/, '<>'), `rotate ${deg} survives the file`);
+  }
+  for (const [name, p2, text] of [['mirror X axis', [1, 0], '50.00  (ΔX 30.00, ΔY -40.00)'], ['mirror Y axis', [0, 1], '50.00  (ΔX -30.00, ΔY 40.00)']]) {
+    const raw = slanted(); let blocks = raw.blocks;
+    const entities = raw.entities.map((e) => { const r = mirrorEntity(e, [0, 0], p2, blocks); blocks = r.blocks || blocks; return r.ent; });
+    assert.equal(label(settle(raw, { entities, blocks })), text, name);
+  }
+  const raw = slanted();
+  assert.equal(label(settle(raw, scaleEntities(raw, both, [0, 0], 2))), '100.00  (ΔX 60.00, ΔY 80.00)', 'scale 2');
+  const moved = E.moveEntities(raw, both, 7, -3);
+  assert.equal(label(settle(raw, moved)), '50.00  (ΔX 30.00, ΔY 40.00)', 'move keeps the deltas');
+  const typed = E.relabelDims({ ...raw, blocks: { ...raw.blocks, PD_DIM_1: E.buildDim('aligned', { ...E.dimOfEntity(raw, 1).params, override: '<>  (ΔX 5, ΔY 30.00)' }, 1, 'PD_DIM_1', 2).block } }, 1, 0, true);
+  assert.equal(label({ ...raw, ...typed }), '50.00  (ΔX 30.00, ΔY 40.00)', 'a typed delta that still matches the pattern is read back from the points');
+  assert.equal(E.relabelDims({ ...raw, ...E.replaceDimension(raw, E.buildDim('aligned', { ...E.dimOfEntity(raw, 1).params, override: 'Width <>' }, 1, 'PD_DIM_1', 2)) }, 1, 0, true), null, 'any other text is left alone');
+});
+
+test('layout part Scale re-measures a kept Measure callout from the baked points', () => {
+  const part = { box: [0, 0, 100, 100], obj: true, raw: { entities: [W.insert('PD_DIM_1', 0, 0, {})], blocks: {} } };
+  const block = E.buildDim('aligned', { a: [10, 20], b: [40, 60], offset: 0, textH: 2, override: measureOverride([10, 20], [40, 60], 1, 2) }, 1, 'PD_DIM_1', 2).block;
+  part.raw.blocks.PD_DIM_1 = block;
+  const lbl = (b) => { const r = b.entities.find((e) => e.type === 'TEXT').r; return r.v[r.c.indexOf(1)]; };
+  assert.equal(lbl(bakeBlock(block, part, { x: 0, y: 0, sc: 2 })), '100.00  (ΔX 60.00, ΔY 80.00)');
+  assert.equal(lbl(bakeBlock(block, part, { x: 0, y: 0, rot: 90 })), '50.00  (ΔX -40.00, ΔY 30.00)');
 });
 
 test('dimension override: empty and <> reset; every embedded <> substitutes the measured label', () => {

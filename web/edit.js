@@ -13,13 +13,13 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
-import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord, measureOverride } from './dimension-text.js';
+import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord, measureOverride, isMeasureOverride } from './dimension-text.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -994,12 +994,19 @@ export function relabel(ents, s) {
  * Every kept dimension re-labelled with dp decimals, from its own geometry (drawing units × factor), so no rounding
  * piles up. → { entities, blocks } (as commit takes), or null when nothing changes.
  */
-export function relabelDims(raw, factor, dp) {
-  const blocks = { ...raw.blocks };
+export function relabelDims(raw, factor, dp, kept = false) {       // kept: only kept Measure callouts, at their own decimals (what an edit leaves stale)
+  const blocks = { ...raw.blocks }, inserts = new Map();
   let changed = false;
+  raw.entities.forEach((e, i) => { if (e.type === 'INSERT' && !inserts.has(fieldOf(e.r, 2))) inserts.set(fieldOf(e.r, 2), i); });
   for (const [nm, b] of Object.entries(raw.blocks)) {
-    const m = readDim(nm, b);
-    if (m) m.params.override = measureOverride(m.params.a, m.params.b, factor || 1, dp, m.params.override || '');
+    const m = readDim(nm, b), ov = m && m.params.override || '';
+    if (kept && !isMeasureOverride(ov)) continue;
+    if (kept) dp = placesOf(measuredText(b.entities));
+    if (m && isMeasureOverride(ov)) {       // the deltas of the callout as drawn: the INSERT's transform applied to the block's points
+      const at = inserts.get(nm), fl = at != null && flatten({ ...raw, entities: [{ ...raw.entities[at], hidden: false }] }), mat = fl && fl.items.length && fl.mats[fl.items[0].m];
+      const w = (p) => mat ? mapply(mat, ...p) : p;
+      m.params.override = measureOverride(w(m.params.a), w(m.params.b), factor || 1, dp, ov);
+    }
     const g = m && dimGeom(m.kind, m.params, factor || 1, dp);
     if (!g) continue;
     const ents = b.entities.map((e) => {

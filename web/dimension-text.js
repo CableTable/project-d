@@ -6,8 +6,9 @@ const unesc = (s) => String(s).replace(/\\U\+([0-9a-f]{4})/gi, (_, h) => String.
 export const overrideText = (text = '') => !text.trim() || text === '<>' ? '' : text;
 export const dimensionText = (measured, override) => overrideText(override) ? override.replaceAll('<>', measured) : measured;
 /** Only the exact kept-Measure template follows its points; hand-edited overrides stay literal. */
+export const isMeasureOverride = (s) => /^<>  \(ΔX -?\d+(?:\.\d+)?, ΔY -?\d+(?:\.\d+)?\)(?![\s\S])/.test(s);
 export function measureOverride(a, b, factor, dp, override = '<>  (ΔX 0, ΔY 0)') {
-  if (!a || !b || !/^<>  \(ΔX -?\d+(?:\.\d+)?, ΔY -?\d+(?:\.\d+)?\)(?![\s\S])/.test(override)) return override;
+  if (!a || !b || !isMeasureOverride(override)) return override;
   const fixed = (v) => v.toFixed(dp).replace(/^-0(\.0*)?$/, '0$1');
   return `<>  (ΔX ${fixed((b[0] - a[0]) * factor)}, ΔY ${fixed((b[1] - a[1]) * factor)})`;
 }

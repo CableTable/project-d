@@ -5433,6 +5433,10 @@ try {
       await command('350,10');
       doc = await save();
       assert.equal(label(doc), '302.655  (ΔX 300.000, ΔY -40.000)', 'source grip refreshes signed deltas');
+      await p.keyboard.press('Control+a'); await command('ro'); await command('0,0'); await command('90');
+      assert.equal(label(await save()), '302.655  (ΔX 40.000, ΔY 300.000)', 'Rotate turns the deltas');
+      await p.keyboard.press('Control+a'); await command('sc'); await command('0,0'); await command('2');
+      assert.equal(label(await save()), '605.310  (ΔX 80.000, ΔY 600.000)', 'Scale doubles the deltas');
     } finally { await context.close(); }
   });
 
@@ -5447,7 +5451,7 @@ try {
     await t('meas-keep').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 16');
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Dimensions'));
-    assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06  \(ΔX 30\.00, ΔY 20\.00\) mm/);
+    assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06 mm  \(ΔX 30\.00, ΔY 20\.00\)/);
     assert.equal(await t('meas-keep').isVisible(), false);
     // Enter keeps a second one
     await click(10, 0); await click(90, 0);

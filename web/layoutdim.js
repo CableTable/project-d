@@ -5,7 +5,7 @@
 // bakeDim() then puts that placement into the block's own points (a rotate turns the text, a scale re-labels it, a mirror keeps it
 // readable), which is what the file and every other command see: a settled dimension is always at the identity placement.
 import { mapply } from './drawing.js';
-import { DIM_BLOCK, relabel, freeName } from './edit.js';
+import { DIM_BLOCK, relabel, relabelDims, freeName } from './edit.js';
 
 const DEG = Math.PI / 180;
 const field = (r, c) => { const k = r.c.indexOf(c); return k < 0 ? NaN : +r.v[k]; };
@@ -57,6 +57,8 @@ export function bakeBlock(block, part, p) {
     return { ...e, r: { ...e.r, c, v } };
   });
   if (k !== 1) ents = relabel(ents, k);
+  const name = dimName(part), kept = relabelDims({ entities: [], blocks: { [name]: { ...block, entities: ents } } }, 1, 0, true);       // a kept Measure callout: ΔX / ΔY from the points as baked
+  if (kept) ents = kept.blocks[name].entities;
   return { ...block, base: [0, 0], entities: ents };
 }
 
