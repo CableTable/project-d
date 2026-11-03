@@ -11658,6 +11658,127 @@ try {
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
+  const raw188 = newDoc(4);
+  addEntities(raw188, dxfLine(100, 100, 250, 100));
+  const lay188 = newLayout('Undo188');
+  lay188.parts.line = objectPart('line', 'Line', raw188.entities[0], raw188.layers);
+  lay188.placed = [objectPlacement(lay188.parts.line)];
+  /** One line in a Drawing, a Compare or a Layout tab, picked with its grips and the Properties panel open. */
+  const open188 = async (kind) => {
+    await openGrips(writeDxf(kind === 'Layout' ? layoutRaw(lay188) : raw188), `undo188-${kind}.dxf`);
+    if (kind === 'Compare') { await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click(); }
+    await page.keyboard.press('Escape'); await frames();
+    await click(175, 100); await frames(); await gripWhen(3); await propsOnNow();
+  };
+
+  await step('TODO 188 Properties look', async () => {
+    const shots = 'shots-188'; mkdirSync(shots, { recursive: true });
+    const look = async () => {
+      const fields = await page.locator('[data-prop]:disabled').evaluateAll((els) => els.map((el) => {
+        const s = getComputedStyle(el);
+        return { key: el.dataset.prop, colour: s.color, opacity: s.opacity, background: s.backgroundColor };
+      }));
+      const placeholder = await t('prop-width-custom').evaluate((el) => {
+        const s = getComputedStyle(el, '::placeholder'); return { colour: s.color, opacity: s.opacity };
+      });
+      return { fields, placeholder };
+    };
+    const drawingLooks = {};
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await open188(kind);
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        const actual = await look();
+        if (kind === 'Drawing') drawingLooks[theme] = actual;
+        else assert.deepEqual(actual, drawingLooks[theme], kind + ': matches Drawings Properties in ' + theme);
+        assert.equal(actual.fields.length, 5, 'Angle, Start and End remain read only');
+        assert.ok(actual.fields.every((f) => f.colour === actual.placeholder.colour && f.opacity === '1'));
+        assert.equal(actual.placeholder.opacity, '1', 'ByLayer uses the readable field text opacity');
+        assert.equal(await t('prop-width-custom').getAttribute('placeholder'), 'ByLayer');
+        await t('props-panel').screenshot({ path: `${shots}/properties-${kind.toLowerCase()}-${theme}.png` });
+      }
+      await menuItem('View', 'Theme: light');
+      console.log(`188 ${kind} Properties: light + dark match Drawings; screenshots saved in ${shots}/`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 188 Undo keeps grips', async () => {
+    await menuItem('View', 'Theme: light');
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await open188(kind);
+      if (kind === 'Compare') {       // Compare's own guide history has no drawing selection to snapshot
+        await page.keyboard.press('Escape'); await gripWhen(0);
+        await t('guide-position').fill('25'); await t('guide-add-v').click();
+        assert.equal(await t('guide-pos').count(), 1);
+        await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+        await t('guide-pos').waitFor({ state: 'detached' });
+        await click(175, 100); await gripWhen(3);
+      }
+      const endpoint = () => page.locator('[data-testid=grip]').evaluateAll((gs) => gs.map((g) => g.dataset.grip).find((id) => id.endsWith(':b')));
+      const settled = async () => { await gripWhen(3); await page.waitForFunction(() => !document.querySelector('[data-testid=grip-hot]')); return gripBox(await endpoint()); };       // the end grip once all three show and none is hot
+      const before = await settled();
+      await dragGripTo(await endpoint(), 220, 130);
+      const moved = await settled();
+      assert.ok(Math.hypot(moved.x - before.x, moved.y - before.y) > 5, kind + ': grip edit moves the endpoint');
+      await page.evaluate(() => document.activeElement?.blur());
+      await page.keyboard.press('Control+z');
+      const back = await settled();
+      assert.ok(near(back.x, before.x, 2) && near(back.y, before.y, 2), kind + ': Undo restores geometry and keeps grips');
+      await page.keyboard.press('Control+y');
+      const forward = await settled();
+      assert.ok(near(forward.x, moved.x, 2) && near(forward.y, moved.y, 2), kind + ': Redo keeps grips');
+      await dragGripTo(await endpoint(), 200, 120); await settled();
+      await page.keyboard.press('Control+z');
+      const again = await settled();
+      assert.ok(near(again.x, moved.x, 2), kind + ': another grip edit needs no re-pick: ' + JSON.stringify({ again, moved, history: await histLabels() }));
+      await page.keyboard.press('Escape'); await gripWhen(0);
+      // Undo of a paste removes its selected objects: no dangling selection or grips; the grip edit before it still gives its grips back.
+      await page.keyboard.press('Control+a'); await gripWhen(3);
+      await page.keyboard.press('Control+c'); await page.keyboard.press('Escape'); await gripWhen(0);
+      await page.keyboard.press('Control+v'); await gripWhen(3);
+      await page.keyboard.press('Control+z'); await gripWhen(0);
+      await page.keyboard.press('Control+z'); await gripWhen(3);
+      console.log(`188 ${kind}: Undo / Redo keep grips; removed objects leave selection; Esc clears grips`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 188 layer list follows rename', async () => {
+    const p = await ctx.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+    p.on('pageerror', (e) => errs.push(String(e)));
+    // Layout has no rename/recolour control yet: exercise its in-place layers-table changes directly.
+    await p.route('**/app.js', (route) => route.fulfill({ contentType: 'text/javascript', body: readFileSync('web/app.js', 'utf8') + `
+      window.layers188 = (rename) => {
+        const d = curDoc(), table = LD.layersOf(d.lay);
+        if (rename) {
+          table.Renamed = table.A; delete table.A;
+          for (const [id, part] of Object.entries(d.lay.parts)) if (part.obj) d.lay.parts[id] = LD.objectPart(id, part.name, { ...part.raw.entities[0], layer: 'Renamed' }, table, part.raw.header, part.raw.blocks);
+        } else table.Renamed = { ...table.Renamed, aci: 3, tc: null };
+        update();
+      };` }));
+    try {
+      await p.goto(URL_ + '?autosave=86400000'); await q('count').waitFor({ state: 'attached' });
+      await p.evaluate(() => { document.documentElement.dataset.theme = 'light'; });
+      const lay = newLayout('Layers188'); lay.layers = newDoc(4).layers; addLayer(lay, 'A', { aci: 1 });
+      lay.parts.line = objectPart('line', 'Line', dxfLine(100, 100, 250, 100, { layer: 'A' }), lay.layers);
+      lay.placed = [objectPlacement(lay.parts.line)];
+      await q('picker').setInputFiles({ name: 'layers188.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'layers188.dxf');
+      await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a');
+      await q('prop-layer').waitFor({ state: 'visible' });
+      assert.equal(await q('prop-layer').inputValue(), 'A');
+      await p.evaluate(() => window.layers188(true));
+      assert.deepEqual(await q('prop-layer').locator('option').allTextContents(), ['0', 'Renamed']);
+      assert.equal(await q('prop-layer').inputValue(), 'Renamed');
+      const swatch = () => q('prop-swatch').evaluate((el) => getComputedStyle(el).backgroundColor);
+      const red = await swatch(); await p.evaluate(() => window.layers188(false));
+      assert.notEqual(await swatch(), red, 'ByLayer Properties colour follows the recoloured table');
+      assert.deepEqual(errs, []);
+      console.log('188 Layout layer list: in-place rename and recolour refresh Properties');
+    } finally { await p.close(); }
+  });
+
   await step('TODO 187: Layout object Properties', async () => {
     await closeTabs(/./);
     const { lay } = block186(), partRaw = newDoc(4);

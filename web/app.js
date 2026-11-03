@@ -1895,7 +1895,7 @@ function layRestore(d, st, dirty = true) {
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
-  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (!sameSet) picksArr = [];
+  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (!sameSet) { picksArr = []; state.sel = -1; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
   d.dirty = dirty; renderTabs(); update(sized && view.fitted);
 }
@@ -5444,7 +5444,7 @@ function layersWith(raw, name, o) {
   return doc.layers;
 }
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. False (nothing changed, no undo step, the message shown) when it is too nested to draw. */
-function commit(d, next, label) {
+function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
   if (d.vlay) { layObjCommit(d, next, label); return true; }
   let fl;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
   const raw = d.raw;
@@ -5454,7 +5454,7 @@ function commit(d, next, label) {
       note(e.message); return false;
     }
   }
-  pushHistory(d, snapshotOf(d), label); d.newLayer = null;
+  pushHistory(d, keepSel ? { ...snapshotOf(d), sel: [...keepSel], grip: true } : snapshotOf(d), label); d.newLayer = null;
   restore(d, next, fl);
   return true;
 }
@@ -5508,7 +5508,7 @@ function restore(d, st, drawn) {
   if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
-  if (st.sel) setSel(d, new Set(st.sel));
+  if (st.sel) setSel(d, new Set(st.sel.filter((i) => i < st.entities.length)));       // an object the step removed leaves the selection
 }
 /** Does the selection hold anything but kept dimensions? (Keep only and Extract part need geometry.) */
 const selHasPart = (d) => [...d.sel].some((e) => d.raw.entities[e].layer !== Ed.DIM_LAYER);
@@ -5534,12 +5534,18 @@ function dropLinePoint(d) {
   if (!d || !state.draw || state.drawDoc !== d || DR.toolUndoSeg(state.draw) !== 'point') return false;
   state.msg = null; note('First point dropped'); renderCommand(); paintOverlay(); return true;
 }
+/** d.hist.undo / redo: a step made by a grip edit (`grip`) hands back the opposite step with the selection too; every other step as before. */
+function stepHist(d, dir) {
+  const cur = { ...snapshotOf(d), sel: [...(d.sel || [])] }, st = d.hist[dir](cur);
+  if (st?.grip) cur.grip = true; else delete cur.sel;
+  return st;
+}
 function undo(d) {
   if (d.vlay) { undoLay(); return; }
   if (dropLinePoint(d)) return;
   const m = state.modDoc === d && state.mod?.kind === 'copy' ? state.mod : null;
   const copied = m && d.hist.labels().past.at(-1) === 'Copy', raw = d.raw?.entities;
-  const st = d.hist.undo(snapshotOf(d)); if (!st) { note('Nothing to undo'); return; }
+  const st = stepHist(d, 'undo'); if (!st) { note('Nothing to undo'); return; }
   if (restore(d, st) === false) { d.hist.redo(st); return; }       // the step goes back on the undo list
   if (m?.raw) {
     if (copied && m.raw === raw && [...m.sel].every((i) => raw[i] === st.entities[i])) m.raw = d.raw.entities;
@@ -5548,7 +5554,7 @@ function undo(d) {
   note('Undone'); if (state.draw) { renderCommand(); paintOverlay(); }
 }
 function redo(d) {
-  const st = d.hist.redo(snapshotOf(d)); if (!st) { note('Nothing to redo'); return; }
+  const st = stepHist(d, 'redo'); if (!st) { note('Nothing to redo'); return; }
   if (restore(d, st) === false) { d.hist.undo(st); return; }       // the step goes back on the redo list
   note('Redone');
 }
@@ -6837,10 +6843,10 @@ const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];     
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
 function layObjDoc(d) {
-  const skip = (id) => !!state.hidden.parts || partHid({ partId: id }), sig = LD.objectSig(d.lay, skip), layers = LD.layersOf(d.lay), c = objViews.get(d);
-  if (c && c.sig === sig && c.layers === layers) return c.v;      // a new / undone layer is a new table, so the Properties layer list follows
+  const skip = (id) => !!state.hidden.parts || partHid({ partId: id }), sig = LD.objectSig(d.lay, skip), layers = LD.layersOf(d.lay), layerSig = JSON.stringify(layers), c = objViews.get(d);
+  if (c && c.sig === sig && c.layers === layers && c.layerSig === layerSig) return c.v;
   const v = { ...LD.objectDoc(d.lay, skip), vlay: d, name: d.name, factor: 1, sel: new Set(), hid: null, locked: null, ed: null, hist: { labels: () => layHist(d).labels() } };
-  objViews.set(d, { sig, layers, v });
+  objViews.set(d, { sig, layers, layerSig, v });
   return v;
 }
 /** layObjDoc(d) with the layout's selected objects as its selection (`sel` is kept while they stay the same, so the grips are kept too). */
@@ -8739,7 +8745,7 @@ function gripCommit() {
   view.fitted = false;
   if (d.vlay) { if (!layGripCommit(d, g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]], label)) { note('That would leave nothing of the shape, so it stays as it was'); paintOverlay(); return; } paintOverlay(); }
   else {
-    if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label)) { paintOverlay(); return; }       // too nested: commit showed why
+    if (!commit(d, g.nexts ? gripHotsRaw(g) : g.next.type === 'LEADER' ? LR.replace(d.raw, g.next.name, g.next.model) : followDimensions(d.raw, { entities: d.raw.entities.map((x, i) => (i === g.e ? g.next : x)), blocks: d.raw.blocks }, d.factor), label, g.sel)) { paintOverlay(); return; }       // too nested: commit showed why
     setSel(d, g.sel);
   }
   const unlinked = (g.nexts ? [...g.nexts].map(([i, n]) => [g.ents.get(i), n]) : [[g.ent, g.next]]).some(([o, n]) => o.type === 'HATCH' && GR.get(o.r, 71) === 1 && GR.get(n.r, 71) === 0);     // 164b1: AutoCAD says so when a Stretch ends the association
