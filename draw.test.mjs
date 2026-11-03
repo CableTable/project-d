@@ -10,6 +10,31 @@ function test(name, fn) { fn(); n++; console.log('ok', name); }
 const near = (a, b, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
 const nearPt = (a, b, e = 1e-6) => { near(a[0], b[0], e); near(a[1], b[1], e); };
 
+test('dynamicInputPlacement: both sides, edge flip, radius and box clamps, short segments', () => {
+  const canvas = { w: 800, h: 600 }, boxes = { length: [120, 30], angle: [110, 30] };
+  const place = (a, b) => DR.dynamicInputPlacement(a, b, canvas, boxes);
+  let p = place([200, 300], [400, 300]);
+  nearPt(p.length, [300, 276]); nearPt(p.angle, [280, 300]); near(p.arc.radius, 80);
+  assert.deepEqual(p.line, [[200, 276], [400, 276]]);
+  assert.deepEqual(p.extensions, [[[200, 300], [200, 270]], [[400, 300], [400, 270]]]);
+  p = place([400, 300], [200, 300]);
+  nearPt(p.length, [300, 324]); nearPt(p.angle, [400, 220]); near(p.arc.angle, Math.PI);
+  for (const sign of [-1, 1]) {
+    p = place([250, 300], [350, 300 + sign * 100]);
+    nearPt(p.length, [300 + sign * 24 / Math.SQRT2, 300 + sign * 50 - 24 / Math.SQRT2]);
+    near(DR.dist(p.arc.c, p.angle), p.arc.radius);
+    near(p.arc.angle, (sign < 0 ? 45 : 315) / 180 * Math.PI);
+  }
+  p = place([200, 20], [400, 20]); nearPt(p.length, [300, 44]);
+  assert.deepEqual(p.line, [[200, 44], [400, 44]], 'off-canvas left normal flips');
+  near(place([200, 300], [240, 300]).arc.radius, 30);
+  near(place([200, 300], [700, 300]).arc.radius, 120);
+  p = place([0, 0], [100, 0]); nearPt(p.length, [64, 24]); nearPt(p.angle, [59, 19]);
+  assert.equal(place([200, 300], [220, 300]), null);
+  assert.equal(place([200, 300], [239.99, 300]), null);
+  assert.equal(place([200, 300], [200, 300]), null);
+});
+
 test('parseInput: x,y, @dx,dy, polar, a length, words, Enter', () => {
   assert.deepEqual(DR.parseInput('10,20'), { kind: 'xy', rel: false, abs: false, x: 10, y: 20 });
   assert.deepEqual(DR.parseInput(' 10 , -20.5 '), { kind: 'xy', rel: false, abs: false, x: 10, y: -20.5 });

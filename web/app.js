@@ -6689,6 +6689,7 @@ function drawOvl(paint = false) {
         tip.fields = DR.dynamicInput(T.pts.at(-1) || [0, 0], pv.at, state.dp);
         tip.dynamic = dynamic; tip.single = DI.isSingle(DI.inputMode(T)) ? DI.inputMode(T) : null;
         tip.tracking = state.trk.res?.text;
+        if (T.pts.length && (['line', 'polyline'].includes(T.kind) || ['arc', 'ellipse'].includes(T.kind) && T.pts.length === 1) && cursorInput().mode === 'polar') tip.segment = [T.pts.at(-1), pv.at];
       }
     }
   }
@@ -6696,6 +6697,7 @@ function drawOvl(paint = false) {
   if (CT?.hover && (DI.inputMode(CT) !== null || DI.readOnlyLength(CT))) {
     const only = DI.readOnlyLength(CT), dynamic = only ? null : cursorPoint(), typed = dynamic?.point && DI.hasTyped(cursorInput());
     tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, single: DI.isSingle(DI.inputMode(CT)) ? DI.inputMode(CT) : null, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
+    if (only) tip.segment = [CT.pts[0], CT.hover];
   }
   if (d && !d.lay && modLive()) modOvl(d, out, paint);
   else if (d && d.lay && layModLive() && OBJ_MODS.includes(state.mod.kind)) modOvl(layObjDoc(d), out, paint);
@@ -6724,6 +6726,11 @@ function drawOvl(paint = false) {
     ui.gripHint.textContent = grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
+  for (const key of ['length', 'angle']) {
+    const label = ui.cursorFields[key].parentElement;
+    label.classList.remove('on-drawing'); label.style.left = ''; label.style.top = '';
+  }
+  t.classList.remove('segment-only');
   if (!tip) { t.hidden = true; return; }
   const r = canvasSize(), px = (tip.x - view.ox) * view.scale + 16, py = (H - tip.y - view.oy) * view.scale + 16;
   t.classList.toggle('dynamic-input', !!tip.fields);
@@ -6752,9 +6759,31 @@ function drawOvl(paint = false) {
     }
   } else t.textContent = tip.text;
   t.hidden = false;
+  let placement = null;
+  if (tip.segment) {
+    const screen = (p) => [(p[0] + (item?.offset[0] || 0) - view.ox) * view.scale, (H - p[1] - (item?.offset[1] || 0) - view.oy) * view.scale];
+    const labels = ['length', 'angle'].map((key) => ui.cursorFields[key].parentElement);
+    labels.forEach((el) => el.classList.add('on-drawing'));
+    placement = DR.dynamicInputPlacement(...tip.segment.map(screen), r, { length: [labels[0].offsetWidth, labels[0].offsetHeight], angle: [labels[1].offsetWidth, labels[1].offsetHeight] });
+    if (!placement) labels.forEach((el) => el.classList.remove('on-drawing'));
+    else {
+      t.classList.toggle('segment-only', !!tip.only && !tip.tracking);
+      const path = ([a, b]) => `M${a.join(' ')}L${b.join(' ')}`, arc = placement.arc;
+      const guides = s('g', { class: 'dynamic-guide', transform: `translate(${view.ox} ${view.oy}) scale(${1 / view.scale})`, 'data-testid': 'dynamic-guides' },
+        s('path', { d: path(placement.line), 'data-testid': 'dynamic-length-guide' }),
+        ...placement.extensions.map((line) => s('path', { d: path(line) })));
+      if (!tip.only) guides.append(s('path', { d: `${path([arc.c, [arc.c[0] + arc.radius, arc.c[1]]])}M${arc.c[0] + arc.radius} ${arc.c[1]}A${arc.radius} ${arc.radius} 0 ${arc.angle > Math.PI ? 1 : 0} 0 ${arc.end.join(' ')}`, 'data-testid': 'dynamic-angle-guide' }));
+      ui.ovl.append(guides);
+    }
+  }
   const left = tip.fields && px + t.offsetWidth > r.w - 4 ? px - 32 - t.offsetWidth : px;
   const top = tip.fields && py + t.offsetHeight > r.h - 4 ? py - 32 - t.offsetHeight : py;
   t.style.left = Math.max(4, Math.min(left, r.w - t.offsetWidth - 4)) + 'px'; t.style.top = Math.max(4, Math.min(top, r.h - t.offsetHeight - 4)) + 'px';
+  if (placement) for (const key of ['length', 'angle']) {
+    const label = ui.cursorFields[key].parentElement;
+    label.style.left = placement[key][0] - label.offsetWidth / 2 - t.offsetLeft - t.clientLeft + 'px';
+    label.style.top = placement[key][1] - label.offsetHeight / 2 - t.offsetTop - t.clientTop + 'px';
+  }
 }
 
 /** Keys while a drawing tool is on or a letter starts one. Returns true when it took the key. */

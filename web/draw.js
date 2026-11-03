@@ -45,6 +45,25 @@ export function dynamicInput(a, b, dp) {
   };
 }
 
+/** Screen pixels, Y down: the segment's dimension line and anticlockwise angle arc. */
+export function dynamicInputPlacement(a, b, { w, h }, boxes) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], len = Math.hypot(dx, dy);
+  if (len < 40) return null;
+  const normal = [dy / len, -dx / len], mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+  const inside = (p, size) => p[0] - size[0] / 2 >= 4 && p[0] + size[0] / 2 <= w - 4 && p[1] - size[1] / 2 >= 4 && p[1] + size[1] / 2 <= h - 4;
+  const offset = (p, n) => [p[0] + normal[0] * n, p[1] + normal[1] * n];
+  const side = [a, b].every((p) => inside(offset(p, 24), [0, 0])) && inside(offset(mid, 24), boxes.length) ? 1 : -1;
+  const clamp = (p, size) => p.map((v, i) => Math.max(4 + size[i] / 2, Math.min(v, [w, h][i] - 4 - size[i] / 2)));
+  const radius = Math.max(30, Math.min(120, len * .4)), angle = angleOf([0, 0], [dx, -dy]) / DEG;
+  return {
+    length: clamp(offset(mid, 24 * side), boxes.length),
+    angle: clamp([a[0] + radius * Math.cos(angle / 2), a[1] - radius * Math.sin(angle / 2)], boxes.angle),
+    line: [offset(a, 24 * side), offset(b, 24 * side)],
+    extensions: [[a, offset(a, 30 * side)], [b, offset(b, 30 * side)]],
+    arc: { c: a, radius, angle, end: [a[0] + dx / len * radius, a[1] + dy / len * radius] },
+  };
+}
+
 // ---------------------------------------------------------------- typed input
 
 const NUM = '[-+]?(?:\\d+\\.?\\d*|\\.\\d+)';

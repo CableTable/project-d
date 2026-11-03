@@ -21522,6 +21522,54 @@ try {
     await closeTabs(/./);
   });
 
+  await step("TODO 155t1: Length and Angle boxes sit on the segment's guides", async () => {
+    await open70([dxfLine(-100, -100, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await t('decimals').selectOption('2');
+    const start = await at(0, 0), end = { x: start.x + 180, y: start.y - 120 };
+    const centre = (id) => t(id).evaluate((el) => { const b = el.parentElement.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+    const check = async (only = false) => {
+      const length = await centre('cursor-length');
+      const middle = await t('dynamic-length-guide').evaluate((el) => {
+        const p = el.getPointAtLength(el.getTotalLength() / 2), m = el.getScreenCTM();
+        return [m.a * p.x + m.c * p.y + m.e, m.b * p.x + m.d * p.y + m.f];
+      });
+      assert.ok(Math.hypot(...length.map((v, i) => v - middle[i])) < 30, 'Length box centre follows the dimension line middle');
+      assert.equal(await t('cursor-length').evaluate((el) => el.parentElement.classList.contains('on-drawing')), true);
+      if (!only) {
+        const angle = await centre('cursor-angle'), radius = Math.hypot(end.x - start.x, end.y - start.y) * .4;
+        const half = Math.atan2(start.y - end.y, end.x - start.x) / 2;
+        assert.ok(Math.hypot(angle[0] - start.x - radius * Math.cos(half), angle[1] - start.y + radius * Math.sin(half)) < 3, 'Angle box sits halfway along the arc');
+        assert.equal(await t('dynamic-angle-guide').isVisible(), true);
+      }
+      for (const id of ['cursor-length', ...(only ? [] : ['cursor-angle'])]) {
+        const box = await t(id).evaluate((el) => el.parentElement.getBoundingClientRect().toJSON()), cv = await t('canvas').boundingBox();
+        assert.ok(box.x >= cv.x + 3 && box.y >= cv.y + 3 && box.right <= cv.x + cv.width - 3 && box.bottom <= cv.y + cv.height - 3, 'whole box stays inside canvas');
+      }
+    };
+    const show = async (kind) => {
+      await page.locator(`[data-tool=${kind}]`).click(); await typeCmd('0,0');
+      await page.mouse.move(end.x, end.y); await frames(); await check(kind === 'measure');
+    };
+    for (const kind of ['line', 'arc']) await shotBoth('155t1-' + kind, () => show(kind), async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
+    for (const kind of ['polyline', 'ellipse', 'measure']) {
+      await show(kind); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    }
+    await show('line');
+    await page.mouse.move(start.x + 20, start.y); await frames();
+    assert.equal(await t('dynamic-guides').count(), 0, 'short segment hides guides');
+    for (const id of ['cursor-length', 'cursor-angle']) assert.equal(await t(id).evaluate((el) => el.parentElement.classList.contains('on-drawing')), false, '20 px segment returns fields to cursor tag');
+    await page.mouse.move(end.x, end.y); await frames(); await check();
+    await page.keyboard.type('10,20'); await frames();
+    assert.equal(await t('dynamic-guides').count(), 0, 'comma entry keeps coordinate fields in the tag');
+    await page.keyboard.press('Escape'); await page.keyboard.press('F12'); await frames();
+    assert.equal(await t('dynamic-guides').count(), 0);
+    assert.equal(await t('cursor-length').count(), 0); assert.equal(await t('cursor-angle').count(), 0);
+    await page.keyboard.press('F12'); await page.keyboard.press('Escape'); await closeTabs(/./);
+    for (const kind of ['line', 'arc']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-155t1-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
+  });
+
   await step('TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges', async () => {
     await closeTabs(/./);
     assert.equal(await chipOn('tog-dyn'), true, 'Dynamic input defaults on');
