@@ -157,8 +157,10 @@ test('TODO 192: next spawns powershell Start-Process on the .lnk (spaces and a q
 });
 
 test('merge: refuses without a non-empty retro file unless --no-retro, a non-head sha, or CI not success; otherwise merges', () => {
-  const ok = { n: 33, pr: 5, sha: 'a'.repeat(40), head: 'a'.repeat(40), retro: 'retro text', noRetro: false, ci: 'success' };
+  const ok = { n: 33, pr: 5, sha: 'a'.repeat(40), head: 'a'.repeat(40), retro: 'retro text', applied: true, noRetro: false, ci: 'success' };
   assert.equal(mergeRefusal(ok), '');
+  assert.match(mergeRefusal({ ...ok, applied: false }), /^refused: runs33\/retro33\.applied is missing/); // TODO 193b
+  assert.equal(mergeRefusal({ ...ok, applied: false, noRetro: true }), '');
   assert.match(mergeRefusal({ ...ok, retro: null }), /^refused: runs33\/retro33\.out is missing or empty/);
   assert.match(mergeRefusal({ ...ok, retro: ' \r\n' }), /missing or empty/);
   assert.equal(mergeRefusal({ ...ok, retro: null, noRetro: true }), '');
@@ -184,6 +186,8 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     writeFileSync(join(extras, 'runs33', 'retro33.out'), '');
     assert.throws(() => merge(['5', 'cc'], gh(), extras), /missing or empty/);
     writeFileSync(join(extras, 'runs33', 'retro33.out'), 'Suggestions\n');
+    assert.throws(() => merge(['5', 'cc'], gh(), extras), /retro33\.applied is missing/);
+    writeFileSync(join(extras, 'runs33', 'retro33.applied'), '2026-11-03 applied R1-R3\n');
     assert.throws(() => merge(['5', 'cc'], gh({ head: 'd'.repeat(40) }), extras), /not the head/);
     assert.throws(() => merge(['5', 'cc'], gh({ ci: [{ status: 'completed', conclusion: 'failure' }] }), extras), /is failure/);
     assert.throws(() => merge(['5', 'cc'], gh({ ci: [] }), extras), /not found/);
@@ -233,17 +237,19 @@ test('TODO 191: merge --due merges the one open session PR inside the OK window,
     assert.ok(!cmds.some((c) => c.includes('pr merge')));
     mkdirSync(join(extras, 'runs35'));
     writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, T), /retro35\.applied is missing/);
+    writeFileSync(join(extras, 'runs35', 'retro35.applied'), '2026-11-03 applied all\n');
     assert.equal(mergeDue(gh([pr(5, 'claude/session35'), pr(7, 'king/191')]), extras, T), `MERGED #5 ${sha}`);
     assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha}`));
     assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T05:00:00')), /merge OK expired 2026-11-08: ask him/);
     assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T00:00:00')), /expired/);
     assert.equal(mergeDue(gh([]), extras, at('2026-11-08T23:59:00')), 'NOTHING DUE');
     const l = log();
-    assert.equal(l.length, 10);
+    assert.equal(l.length, 11);
     assert.equal(l[0], '2026-11-08 05:00 refused: merge-ok-until.txt is missing or unreadable: ask him');
     assert.equal(l[2], '2026-11-08 05:00 NOTHING DUE');
-    assert.equal(l[6], `2026-11-08 05:00 MERGED #5 ${sha}`);
-    assert.equal(l[7], '2026-11-09 05:00 refused: merge OK expired 2026-11-08: ask him');
+    assert.equal(l[7], `2026-11-08 05:00 MERGED #5 ${sha}`);
+    assert.equal(l[8], '2026-11-09 05:00 refused: merge OK expired 2026-11-08: ask him');
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 
@@ -262,6 +268,7 @@ test('TODO 191 fix: merge --due refuses red / missing CI, logs a throwing run on
     const log = () => readFileSync(join(extras, 'merge-due.log'), 'utf8').trim().split('\n');
     mkdirSync(join(extras, 'runs35'));
     writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    writeFileSync(join(extras, 'runs35', 'retro35.applied'), 'done\n');
     writeFileSync(join(extras, 'merge-ok-until.txt'), '2026-11-08\n');
     assert.throws(() => mergeDue(gh([{ status: 'completed', conclusion: 'failure' }]), extras, T), /CI for .* is failure, not success/);
     assert.throws(() => mergeDue(gh([]), extras, T), /CI for .* is not found, not success/);

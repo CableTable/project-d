@@ -14,7 +14,7 @@
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
 //   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
-//   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
+//   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty and runs<N>/retro<N>.applied exists (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
 //   node tools/rook.mjs next   start Rook.lnk (the uuid in rook-next.txt line 1) and wait up to 60 s for its transcript; prints `NEXT ROOK <uuid> started|already running|not started after 60 s`
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
@@ -130,8 +130,9 @@ function wait(args) {
 }
 
 // The merge checks (TODO 167b): '' when the merge may go ahead, else the one-line refusal. retro = the retro file's text or null.
-export function mergeRefusal({ n, pr, sha, head, retro, noRetro, ci }) {
+export function mergeRefusal({ n, pr, sha, head, retro, applied, noRetro, ci }) {
   if (!noRetro && !(retro || '').trim()) return `refused: runs${n}/retro${n}.out is missing or empty (run the retro, or pass --no-retro)`;
+  if (!noRetro && !applied) return `refused: runs${n}/retro${n}.applied is missing (apply the retro suggestions, then write it, or pass --no-retro)`; // TODO 193b
   if (head !== sha) return `refused: ${sha} is not the head of PR #${pr} (head is ${head})`;
   if (ci !== 'success') return `refused: CI for ${sha} is ${ci || 'not found'}, not success`;
   return '';
@@ -148,7 +149,7 @@ export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: '
   const retroFile = `${extras}/runs${n}/retro${n}.out`;
   const [r] = JSON.parse(run('gh', ['run', 'list', '--commit', sha, '--workflow', 'ci.yml', '--limit', '1', '--json', 'status,conclusion']));
   const retro = existsSync(retroFile) ? readFileSync(retroFile, 'utf8') : null;
-  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro, noRetro, ci: r && (r.status === 'completed' ? r.conclusion : r.status) });
+  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro, applied: existsSync(`${extras}/runs${n}/retro${n}.applied`), noRetro, ci: r &&(r.status === 'completed' ? r.conclusion : r.status) });
   if (msg) throw new Error(msg);
   run('gh', ['pr', 'merge', pr, '--merge', '--match-head-commit', sha]);
   if (JSON.parse(run('gh', ['pr', 'view', pr, '--json', 'state'])).state !== 'MERGED') throw new Error(`PR #${pr} is not MERGED after gh pr merge`);
