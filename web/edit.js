@@ -999,10 +999,10 @@ export function relabelDims(raw, factor, dp, kept = false) {       // kept: only
   let changed = false;
   raw.entities.forEach((e, i) => { if (e.type === 'INSERT' && !inserts.has(fieldOf(e.r, 2))) inserts.set(fieldOf(e.r, 2), i); });
   for (const [nm, b] of Object.entries(raw.blocks)) {
-    const m = readDim(nm, b), ov = m && m.params.override || '';
-    if (kept && !isMeasureOverride(ov)) continue;
+    const m = readDim(nm, b), ov = m && m.params.override || '', callout = m && (m.kind === 'aligned' || m.kind === 'linear') && isMeasureOverride(ov);       // radius / diameter / angle have no points a, b: their text stays
+    if (kept && !callout) continue;
     if (kept) dp = placesOf(measuredText(b.entities));
-    if (m && isMeasureOverride(ov)) {       // the deltas of the callout as drawn: the INSERT's transform applied to the block's points
+    if (callout) {       // the deltas of the callout as drawn: the INSERT's transform applied to the block's points
       const at = inserts.get(nm), fl = at != null && flatten({ ...raw, entities: [{ ...raw.entities[at], hidden: false }] }), mat = fl && fl.items.length && fl.mats[fl.items[0].m];
       const w = (p) => mat ? mapply(mat, ...p) : p;
       m.params.override = measureOverride(w(m.params.a), w(m.params.b), factor || 1, dp, ov);

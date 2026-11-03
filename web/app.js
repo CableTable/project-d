@@ -8126,6 +8126,8 @@ function textCommit() {
     if (override === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); return; }
     const built = Ed.buildDim(dim.kind, { ...dim.params, override }, d.factor || 1, dim.name, dim.dp);
     if (d.lay) {
+      const kept = Ed.relabelDims({ entities: [], blocks: { [dim.name]: built.block } }, d.factor || 1, 0, true);       // as the drawing path: matching text settles back to what it was
+      if (kept && readOverride(kept.blocks[dim.name].entities) === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); note('Dimension text unchanged: a kept Measure callout follows its points'); return; }
       const snap = laySnap(d.lay);
       if (!LD.replaceDim(d.lay, dim.placed, dim.raw.entities[ed.e], { ...dim.raw.blocks, [dim.name]: built.block }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((p) => p.name)))) return;
       pushLay(d, snap, '', 'Dimension text'); touch(); update();

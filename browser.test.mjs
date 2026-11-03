@@ -5417,6 +5417,14 @@ try {
       assert.equal(label(doc), '241.868  (ΔX 240.000, ΔY 30.000)');
       assert.equal(readOverride(doc.blocks.PD_DIM_1.entities), '<>  (ΔX 240.000, ΔY 30.000)');
       await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await p.locator('[data-tool=select]').click();                       // typing the pattern back into the text editor: settled to what it was, said so, no history step
+      const tx = flatten(doc).items.find((i) => i.k === 't');
+      const at = await p.evaluate(([x, y]) => { const s = document.querySelector('rect.sheet'), b = s.getBoundingClientRect(), k = b.width / +s.getAttribute('width'); return { x: b.x + x * k, y: b.y + (+s.getAttribute('height') - y) * k }; }, [tx.x, tx.y]);
+      await p.mouse.dblclick(at.x, at.y); await q('text-editor').waitFor();
+      await p.keyboard.press('End'); for (let i = 0; i < 7; i++) await p.keyboard.press('Backspace');       // keeps the live number: "ΔY 30.000)" -> "ΔY "
+      await p.keyboard.insertText('2)'); await p.keyboard.press('Enter');
+      await p.waitForFunction(() => /Dimension text unchanged/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.equal(label(await save()), '241.868  (ΔX 240.000, ΔY 30.000)', 'matching text is rewritten back');
       await p.mouse.move(1000, 700);
       for (const theme of ['light', 'dark']) {
         await p.locator('[data-ribbon-tab=View]').click();
