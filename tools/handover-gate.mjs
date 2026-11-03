@@ -8,8 +8,9 @@ const ROW = /^(\s*)(?:- \[([ x])\] )?(\d+[a-z]*\d*)\.\s*(✅)?/; // "- [x] 160."
 export const tickIds = (line) => line.match(/^\s*(?:\d+\.\s+)?`?Tick\s+(?:TODO\s+)?(\d{2,}[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d{2,}[a-z]*\d*)*)/i)?.[1].match(/\d{2,}[a-z]*\d*/g) ?? [];
 
 export function briefIds(text) {
-  const id = /^\uFEFF?(?:Build|King fix|Knight fix|Fix round):?\s+TODO\s+(\d{2,}[a-z]*\d*)\b/i.exec(text)?.[1];
-  return [...new Set([...(id ? [id] : []), ...text.split(/\r?\n/).flatMap(tickIds)].map((s) => s.toLowerCase()))];
+  const lines = text.split(/\r?\n/);
+  const ids = [...lines[0].matchAll(/\bTODO\s+(\d{2,}[a-z]*\d*(?:\s*(?:,|and|&|\/|\+)\s*(?:TODO\s+)?\d{2,}[a-z]*\d*)*)/gi)].flatMap((m) => m[1].match(/\d{2,}[a-z]*\d*/gi));
+  return [...new Set([...ids, ...lines.flatMap(tickIds)].map((s) => s.toLowerCase()))];
 }
 
 // shortcut: id#occurrence miscounts when a same-number open row is inserted above a ticked one; it only feeds the queue line (never a launch), upgrade if the line misleads.

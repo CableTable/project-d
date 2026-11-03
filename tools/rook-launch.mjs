@@ -84,12 +84,12 @@ export function lintBrief(text) {
     if (numbered && !/^`?(Screenshots|npm\.cmd test|Tick|Append|Add a DECISIONS|Report)\b/i.test(numbered[1])) behaviours++;
     if (/^\s*(\d+\.\s+)?Also\b/i.test(line)) problems.push(`line ${i + 1}: line starts with Also (scope creep: make it a numbered item or drop it)`);
     if (new Set(tickIds(line)).size > 1) problems.push(`line ${i + 1}: Tick line names more than one TODO id`);
-    for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\b[^'"]*\s(['"])(.*?)\1/g)) {
+    for (const [, , filter] of line.matchAll(/\bbrowser\.test\.mjs\b.*?\s(['"])(.*?)\1/g)) {
       for (const piece of filter.split('|')) {
         if (/^(?:[a-z]|\[[a-z]{2}\])+$/i.test(piece.trim())) problems.push(`line ${i + 1}: one-word browser filter piece '${piece}'`);
       }
     }
-    if (/full (browser )?suite/i.test(line) && !/\bRook\b/i.test(line) && !/\b(never|not|no|don'?t)\s+(run\s+)?(the\s+)?full (browser )?suite/i.test(line)) problems.push(`line ${i + 1}: builder asked for the full suite`);
+    if (/full (browser )?suite/i.test(line) && !/\bRook\b/i.test(line) && !/\b(never|not|no|don['’]?t)\s+(ever\s+)?(run\s+)?(the\s+)?full (browser )?suite/i.test(line)) problems.push(`line ${i + 1}: builder asked for the full suite`);
     if (/(^|[\s(`'"])runs\d+\//.test(line)) problems.push(`line ${i + 1}: bare runs<N>/ path; use ../runs<N>/ or an absolute path`);
   }
   if (behaviours > 5) problems.unshift(`${behaviours} behaviour lines (maximum 5)`);

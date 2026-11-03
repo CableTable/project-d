@@ -54,6 +54,34 @@ test('TODO 185a: tick ids exclude single-digit prose; launch ids come from the b
   assert.deepEqual(briefIds('No ids in this brief.'), []);
 });
 
+test('TODO 185b: every header TODO id is read, including fix rounds and joined ids', () => {
+  for (const [header, ids] of [
+    ['Fix round 2: TODO 155m2', ['155m2']],
+    ['King fix: full-suite red after TODO 155l1', ['155l1']],
+    ['Fix round: TODO 174 + 171', ['174', '171']],
+    ['Build: TODO 185B and TODO 185a; after TODO 174', ['185b', '185a', '174']],
+  ]) {
+    for (const eol of ['\n', '\r\n']) {
+      assert.deepEqual(briefIds(`${header}${eol}Spec: TODO 999`), ids, header);
+      const launches = [{ kind: 'fix', ids: briefIds(header) }];
+      const before = ids.map((id) => `- [ ] ${id}. item`).join(eol);
+      assert.equal(countTicked(before, before.replaceAll('[ ]', '[x]'), skipIds({ launches })), 0, header);
+    }
+  }
+});
+
+test('TODO 185b: a tool sub-id ticking its parent row does not count as an item', () => {
+  const w = world();
+  const before = '- [ ] 185. Tool lows sweep\n';
+  const after = '- [x] 185. Tool lows sweep\n';
+  w.env.git = (...a) => ({ 'rev-parse claude/session30': 'head0', 'show head0:TODO.md': before, 'show claude/session30:TODO.md': after })[a.join(' ')];
+  w.files['b.txt'] = 'Build: TODO 185b (tools).\nTick 185 (185a and 185b both done) when this is green.';
+  const gate = gateOps(w.env);
+  assert.equal(gate.record({ tool: true, brief: 'b.txt', branch: 'knight/185b' }), 'items since start (Rook S30): 0 ticked, 0 launched / 2, 1 tool');
+  assert.deepEqual(state(w).launches[0].ids, ['185b', '185']);
+  assert.match(gate.report(), /: 0 ticked, 0 launched/);
+});
+
 test('TODO 185a: recorded tool/fix flags skip ticks regardless of branch name, and ids survive brief reuse', () => {
   const w = world();
   const before = '- [ ] 167b. tool\n- [ ] 167c. fix\n- [ ] 170. item\n';

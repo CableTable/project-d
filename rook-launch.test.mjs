@@ -60,6 +60,20 @@ test('TODO 172: lintBrief refuses oversized behaviours, one-word filters, builde
   }
 });
 
+test('TODO 185b: lint checks filters after apostrophes and accepts directly negated suite requests', () => {
+  for (const [brief, problems] of [
+    ["browser.test.mjs, don't skip: 'Layout'", ["line 1: one-word browser filter piece 'Layout'"]],
+    ["Don't ever run the full suite", []],
+    ['Don’t run the full suite', []],
+    ['Don’t ever run the full browser suite', []],
+    ['Never run the full suite', []],
+    ['Do not run the full suite', []],
+    ['No full suite', []],
+    ['Rook runs the full suite', []],
+    ['Do not skip lint; run the full suite', ['line 1: builder asked for the full suite']],
+  ]) assert.deepEqual(lintBrief(brief), problems, brief);
+});
+
 test('TODO 172: build and knight refuse every brief problem before changes; --big overrides, including fixes', () => {
   const brief = 'Spec: runs31/grill-175.md\nnode browser.test.mjs <port> "Layout"\nthen the full browser suite once\n'
     + Array.from({ length: 6 }, (_, i) => `${i + 1}. Change behaviour ${i + 1}`).join('\n');
