@@ -13,7 +13,7 @@ import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
-import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement } from './web/layoutdoc.js';
+import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc } from './web/layoutdoc.js';
 import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
@@ -10861,6 +10861,60 @@ try {
     same(await pos(), p2, 'after save and reopen');
     await shot('layout-block-grips-moved');
     await closeTabs(/./);
+  });
+
+  const block186 = () => {
+    const doc = newDoc(4);
+    addBlock(doc, 'Attributed', [dxfLine(0, 0, 60, 0)]);
+    const ins = dxfInsert('Attributed', 200, 300);
+    ins.kids = [['AAA', 'TAG1', 260, 360], ['BBB', 'TAG2', 260, 240]].map(([v, tag, x, y]) => entity('ATTRIB', [[10, x], [20, y], [40, 5], [2, tag], [1, v], [70, 0]]).r);
+    addEntities(doc, ins);
+    const raw = readDxf(writeDxf(doc)), lay = newLayout('Block186');
+    lay.parts.b = objectPart('b', 'Attributed block', raw.entities[0], raw.layers, raw.header, raw.blocks);
+    lay.placed = [objectPlacement(lay.parts.b)];
+    return { raw, lay };
+  };
+
+  await step('TODO 186: several hot grips on one Layout block object', async () => {
+    await menuItem('View', 'Theme: light');
+    const { raw, lay } = block186(), ids = ['i', 'a0', 'a1'];
+    const positions = async () => Object.fromEntries(await Promise.all(ids.map(async (id) => [id, await gripBox('0:' + id)])));
+    const same = (a, b, what) => { for (const id of ids) assert.ok(near(a[id].x, b[id].x, 2) && near(a[id].y, b[id].y, 2), `${what}: ${id}`); };
+    const ink = (p) => t('drawing').evaluate((c, p) => {
+      const r = c.getBoundingClientRect(), sx = c.width / r.width, sy = c.height / r.height;
+      const w = Math.round(80 * sx), h = Math.round(40 * sy), d = c.getContext('2d').getImageData(Math.round((p.x - 10 - r.x) * sx), Math.round((p.y - 25 - r.y) * sy), w, h).data;
+      let b = null;
+      for (let i = 4; i < d.length; i += 4) if (Math.abs(d[i] - d[0]) + Math.abs(d[i + 1] - d[1]) + Math.abs(d[i + 2] - d[2]) > 60) { const x = (i / 4) % w, y = Math.floor(i / 4 / w); b = b ? [Math.min(b[0], x), Math.min(b[1], y), Math.max(b[2], x), Math.max(b[3], y)] : [x, y, x, y]; }
+      return b;
+    }, p);
+    // TODO 171 delegates to Drawings; check the same block there and on a Layout, in both hot orders.
+    for (const [kind, text] of [['Drawing', writeDxf(raw)], ['Layout', writeDxf(layoutRaw(lay))]]) {
+      await openGrips(text, `block186-${kind}.dxf`);
+      await page.keyboard.press('Control+a'); await gripWhen(3);
+      const before = await positions();
+      for (const hot of [['a0', 'a1'], ['a1', 'a0'], ['i', 'a0', 'a1'], ['a1', 'a0', 'i']]) {
+        for (const id of hot) { const p = await gripBox('0:' + id); await page.keyboard.down('Shift'); try { await page.mouse.click(p.x, p.y); } finally { await page.keyboard.up('Shift'); } await frames(); }
+        assert.equal(await page.locator('[data-testid=grip-hot]').count(), hot.length);
+        const expected = Object.fromEntries(ids.map((id) => [id, { x: before[id].x + (hot.includes(id) ? 40 : 0), y: before[id].y + (hot.includes(id) ? 30 : 0) }]));
+        const drag = async () => { const p = await gripBox('0:' + hot[0]); await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(p.x + 40, p.y + 30, { steps: 6 }); await frames(); };
+        await drag();
+        assert.ok(+(await t('drawing').getAttribute('data-preview') || 0) > 0, kind + ': preview while dragging');
+        const preview = await Promise.all(['a0', 'a1'].map((id) => ink(expected[id])));
+        await page.mouse.up(); await frames(); await gripWhen(3);
+        same(await positions(), expected, `${kind} ${hot}: both attributes move once; insertion moves only when hot`);
+        await page.keyboard.press('Escape'); await frames();       // deselect: the selection box is not the text
+        for (const [i, id] of ['a0', 'a1'].entries()) { const post = await ink(expected[id]); assert.ok(preview[i] && post && preview[i].every((v, k) => near(v, post[k], 3)), `${kind} ${hot}: ${id} preview ${JSON.stringify(preview[i])} vs commit ${JSON.stringify(post)}`); }
+        await page.keyboard.press('Control+a'); await gripWhen(3);
+        await g164a.undo(); await page.keyboard.press('Control+a'); await gripWhen(3);       // Undo clears the selection after the deselect above
+        same(await positions(), before, kind + ': one Undo restores every hot grip');
+        // Reheat and cancel the same drag without committing.
+        for (const id of hot) { const p = await gripBox('0:' + id); await page.keyboard.down('Shift'); try { await page.mouse.click(p.x, p.y); } finally { await page.keyboard.up('Shift'); } await frames(); }
+        await drag(); await page.keyboard.press('Escape'); await page.mouse.up(); await frames();
+        await page.keyboard.press('Control+a'); await gripWhen(3);
+        same(await positions(), before, kind + ': Esc mid-drag leaves the block unchanged');
+      }
+      await closeTabs(/./);
+    }
   });
 
   await step('TODO 164a: hot MTEXT width grip + hot attribute grip: the preview shows the MTEXT reflowed in place (not moved whole), the commit agrees', async () => {
