@@ -38,6 +38,7 @@ test('wait: a .jsonl is done at its result line, a .txt when non-empty; unfinish
   assert.equal(firstDone({ 'a.jsonl': running, 's.log': 'tests\r\nSUITE unit=0 browser=1\r\n' }), 's.log');
   assert.equal(firstDone({ 's.log': 'SUITE unit=0 browser=0\n(node:1) [DEP0190] DeprecationWarning: x\n(Use `node --trace-deprecation ...`)\n' }), 's.log'); // warning lines after the SUITE line
   assert.equal(firstDone({ 's.log': 'tests\n(node:1) warning\n' }), null);
+  assert.equal(firstDone({ 's.log': 'SUITE unit=1 browser=skipped\n' }), 's.log'); // TODO 193a: a red unit run skips the browser run
 });
 
 test('wait (CLI): exits 0 printing DONE <file> for a finished run; a bad --ci is a usage error', () => {
@@ -286,6 +287,17 @@ test('result skips a half-written last line: no result yet for an unfinished run
     assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'no result yet');
     writeFileSync(run, line(assistant({ input_tokens: 5 })) + line(result) + '{"type":"assis');
     assert.match(execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }), /^Done/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('TODO 193a: result ends its token line with the report line count (blank lines not counted)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
+  try {
+    const run = join(dir, 'run.jsonl');
+    const result = { type: 'result', result: 'one\n\ntwo\r\n  \nthree\n', usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 }, permission_denials: [] };
+    writeFileSync(run, JSON.stringify(assistant({ input_tokens: 5 })) + '\n' + JSON.stringify(result) + '\n');
+    const lines = execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }).split(/\r?\n/);
+    assert.match(lines.find((l) => l.startsWith('tokens ')), /· denials 0 · report 3 lines$/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 

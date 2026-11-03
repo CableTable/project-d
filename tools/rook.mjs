@@ -27,7 +27,7 @@ import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
-import { review, build, knight, suite, retro, pawn, acad, gate, runningNote, EXTRAS } from './rook-launch.mjs';
+import { review, build, knight, suite, retro, pawn, acad, gate, runningNote, rookContextLine, EXTRAS } from './rook-launch.mjs';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -193,9 +193,11 @@ if (cmd === 'result') {
     const u = r.usage;
     console.log(r.result);
     const fresh = u.input_tokens + u.cache_creation_input_tokens + u.output_tokens;
-    console.log(`tokens ${k(fresh + u.cache_read_input_tokens)} (${k(fresh)} new) · denials ${r.permission_denials.length}` + (r.permission_denials.length ? ': ' + r.permission_denials.map((d) => String(d.tool_input.command || d.tool_name).slice(0, 60)).join(' | ') : ''));
+    console.log(`tokens ${k(fresh + u.cache_read_input_tokens)} (${k(fresh)} new) · denials ${r.permission_denials.length}` + (r.permission_denials.length ? ': ' + r.permission_denials.map((d) => String(d.tool_input.command || d.tool_name).slice(0, 60)).join(' | ') : '') + ` · report ${String(r.result ?? '').split(/\r?\n/).filter((l) => l.trim()).length} lines`); // TODO 193a: the cap counts physical lines, blanks not
     const peak = peakContext(events);
     console.log(`peak context ${Math.round(peak / 1e3)}k` + (peak > 150_000 ? ' (over 150k: split the ticket)' : ''));
+    const rook = rookContextLine();
+    if (rook) console.log(rook);
   } else {
     console.log(readFileSync(arg, 'utf8').trim());
     const log = arg.replace(/\.txt$/, '.log');

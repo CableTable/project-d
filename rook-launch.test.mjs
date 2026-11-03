@@ -430,6 +430,27 @@ test('TODO 167c: lintBrief refuses a line starting Also and a Tick line naming t
   ]) assert.equal(lintBrief(brief).length, count, brief);
 });
 
+test('TODO 193a: lintBrief refuses ../Project D extras/runs paths, cmd /c and powershell.exe lines', () => {
+  for (const [brief, count] of [
+    ['Spec: "../Project D extras/runs35/grill-193.md"', 1], ['Spec: "../runs35/grill-193.md"', 0], ['Spec: "E:/Project B/Claude/Project D extras/runs35/x.md"', 0],
+    ['Run cmd /c npm test', 1], ['Run cmd.exe /c dir', 1], ['Run powershell.exe -File x', 1], ['Use the cmdline and a powershell tool', 0], ['Write tmp-x.mjs', 0],
+  ]) assert.equal(lintBrief(brief).length, count, brief);
+});
+
+test('TODO 193a: knight refuses a sha named in the brief that the clone lacks, one line, before anything starts', () => {
+  const brief = 'Build: x\nRead it with git show 86d88ee before you start. Commit 2026110 and deadbeef are not shas.\nOld steps: none';
+  const r = recorder();
+  r.x.read = () => brief;
+  r.x.has = (dir, sha) => { r.calls.push(['has', dir, sha]); return sha !== '86d88ee'; };
+  assert.throws(() => knight(['b.txt', 'k.txt', 'br', 'abc1234'], r.x), (e) => e.message === 'brief names 86d88ee, which is not in the Knight clone: fetch it there first' && !e.message.includes('\n'));
+  assert.equal(r.calls.some((c) => ['open', 'truncate', 'launch'].includes(c[0]) || (c[0] === 'git' && c[2] === 'switch')), false);
+  assert.deepEqual(r.calls.filter((c) => c[0] === 'has').map((c) => c[2]), ['abc1234', '86d88ee']);
+  const ok = recorder();
+  ok.x.read = () => brief;
+  knight(['b.txt', 'k.txt', 'br', 'abc1234'], ok.x);
+  assert.ok(launched(ok.calls));
+});
+
 test('TODO 167a: review checks the context gate first (nothing launches when refused); --over is passed on', () => {
   const refused = recorder('gateContext');
   assert.throws(() => review(['abc1234', 'b.txt', 'o.jsonl'], refused.x), /gateContext failed/);
