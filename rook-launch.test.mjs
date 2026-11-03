@@ -61,6 +61,28 @@ test('TODO 190b: build briefs require an Old steps line; fix briefs do not', () 
   }
 });
 
+test('TODO 190b fix: the Old steps rule also sees a BOM-first build brief (BOM / none x Build / fix / review)', () => {
+  const need = ['build brief needs an Old steps line'];
+  for (const [bom, first, expected] of [['', 'Build: TODO 1', need], ['﻿', 'Build: TODO 1', need], ['', 'Knight fix: TODO 1', []], ['﻿', 'King fix: TODO 1', []], ['', 'Review: TODO 1', []], ['﻿', 'Review: TODO 1', []]]) {
+    assert.deepEqual(lintBrief(`${bom}${first}\n1. Fix the launcher`), expected, JSON.stringify([bom, first]));
+  }
+});
+
+test('TODO 190b fix: the usage gate skips a row whose resets time is past, and is skipped when Bishop is locked and no --as was given', (t) => {
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'log', () => {});
+  const csv = (resets) => `agent,window,used_pct,resets\nPip,5h,90,${resets}\n`;
+  const future = new Date(Date.now() + 36e5).toISOString();
+  for (const [resets, flags, locked, refused] of [['2020-01-01T00:00:00+05:30', [], false, false], [future, [], false, true], ['', [], false, true], [future, ['--as', 'bishop'], true, true], [future, [], true, false]]) {
+    const r = recorder();
+    r.x.read = () => csv(resets);
+    r.x.locked = (dir) => locked && dir.endsWith('ProjectD-s15fix'); // only Bishop's folder is locked
+    const run = () => review(['abc1234', 'b.txt', 'o.jsonl', ...flags], r.x);
+    if (refused) assert.throws(run, /Bishop 5h 90%/, JSON.stringify([resets, flags, locked]));
+    else { run(); assert.ok(launched(r.calls)); }
+  }
+});
+
 test('TODO 190b: knight refuses runs-folder screenshots before changes, even with overrides', () => {
   for (const flags of [[], ['--big'], ['--over'], ['--fix']]) {
     const r = recorder();

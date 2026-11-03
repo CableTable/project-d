@@ -140,7 +140,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 
 Briefs start from `tools/briefs/<kind>.txt` (build, fix, review).
 Write the brief to a file and pass it on **stdin** (a quoted `-p "$(cat …)"` arrived empty once).
-Run `wait` in the background or as a Monitor, never in the foreground: it prints only at the end (S33f). `node tools/rook.mjs wait <run file>... [--ci <sha>]` (as a Monitor command) prints `DONE <file>` when the first run ends, or `CI RUN <id> <conclusion>`; every launch (build / knight / review, `--fix` too) is refused with `HANDOVER: context <N>k` once this Rook's context passes 150k (`--over` passes).
+Run `wait` in the background or as a Monitor, never in the foreground: it prints only at the end (S33f). `node tools/rook.mjs wait <run file>... [--ci <sha>]` (as a Monitor command) prints `DONE <file>` when the first run ends, or `CI RUN <id> <conclusion>`; with run files, `CI RUN none <reason>` (no CI run found, e.g. a branch with no PR) is only printed and the wait goes on, while `--ci` alone exits 1 there; every launch (build / knight / review, `--fix` too) is refused with `HANDOVER: context <N>k` once this Rook's context passes 150k (`--over` passes).
 
 ```bash
 C2=/c/Users/raksh/.local/bin/claude2.cmd
@@ -308,7 +308,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   started (his call 2026-10-31, was 3 from 2026-10-30; review fix bundles and tool tickets don't count), its context
   passes ~150k (auto-compact fires at ~218k: S29, 3 times), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
-  the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end). Then `node tools/rook.mjs next` starts Rook.lnk and waits for the new transcript (`NEXT ROOK <uuid> started`); the Stop hook blocks a Rook that has not done it (TODO 190a).
+  the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end). Then `node tools/rook.mjs next` starts Rook.lnk and waits for the new transcript (`NEXT ROOK <uuid> started`); the Stop hook blocks a Rook that has not done it (TODO 190a); `next` refuses while rook-next.txt still names this session. Shutting down: stop again, the second stop passes.
   **The launcher enforces the 2** (his ask 2026-10-31, TODO 165; S29 built 9 against this rule): `rook.mjs build` / `knight` count
   the new-item launches per Rook (rook-next.txt line 1 = the uuid; state in runs<N>/rook-gate.json), refuse the 3rd, and keep line 2 of
   queue.txt ("items since start ...", `rook.mjs gate` rewrites it). Fix rounds pass `--fix`; a 3rd item needs `--over` with his OK.

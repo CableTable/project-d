@@ -66,12 +66,13 @@ export function gitBash(exec = execFileSync, exists = existsSync) {
 
 // Runs ci-watch.sh for <sha>: forwards its stderr; every end prints one `CI RUN ...` line (TODO 190a):
 // `CI RUN <id> <conclusion>` and exit 0 at the RUN line, else `CI RUN none <reason>` and exit 1 (no run found / unknown sha / watcher failed or ended without a RUN line).
-export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBash()) {
+// keep (wait with run files): a `none` line is printed but does not exit, the files are still waited on.
+export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBash(), keep = false) {
   const tools = dirname(fileURLToPath(import.meta.url));
   const ci = spawnFn(bash, [join(tools, 'ci-watch.sh'), sha], { cwd: join(tools, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
   process.on('exit', () => ci.kill()); // a killed wait must not leave the watcher holding the pipes
   let done = false;
-  const end = (line, code) => { if (!done) { done = true; console.log(line); exit(code); } };
+  const end = (line, code) => { if (!done) { done = true; console.log(line); if (!(keep && code)) exit(code); } };
   const scan = (lines) => {
     const run = lines.find((l) => l.startsWith('RUN '));
     if (run) return end(`CI ${run}`, 0);
@@ -95,9 +96,10 @@ export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBas
 
 // `next`: starts Rook.lnk (the next Rook, uuid = rook-next.txt line 1) and waits up to 60 s for its transcript; returns { line, code }.
 // All effects are injected so the test starts nothing.
-export async function nextRook({ read, exists, start, sleep, now, projects }) {
+export async function nextRook({ read, exists, start, sleep, now, projects, own }) {
   const uuid = read().split(/\r?\n/)[0].trim();
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(uuid)) throw new Error('rook-next.txt line 1 is not a uuid');
+  if (uuid === own) throw new Error('rook-next.txt names this session: write the handover first');
   const seen = () => exists(`${projects}/${uuid}.jsonl`);
   if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} already running` };
   start();
@@ -112,7 +114,7 @@ export async function nextRook({ read, exists, start, sleep, now, projects }) {
 function wait(args) {
   const i = args.indexOf('--ci'), files = i < 0 ? args : args.slice(0, i), sha = i < 0 ? '' : args[i + 1];
   if ((!files.length && !sha) || (i >= 0 && (!sha || args.length > i + 2))) { console.error('usage: node tools/rook.mjs wait <run file>... [--ci <sha>]'); process.exit(1); }
-  if (sha) watchCi(sha);
+  if (sha) watchCi(sha, spawn, process.exit, gitBash(), files.length > 0);
   const check = () => {
     const texts = Object.fromEntries(files.map((f) => [f, existsSync(f) ? readFileSync(f, 'utf8') : null]));
     const done = firstDone(texts);
@@ -249,7 +251,7 @@ if (cmd === 'result') {
   nextRook({
     read: () => readFileSync(`${EXTRAS}/rook-next.txt`, 'utf8'), exists: existsSync, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
     start: () => spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk}'`], { detached: true, stdio: 'ignore' }).unref(),
-    projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'),
+    projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
   console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro | pawn <out.json> "<question>" | acad <item>');

@@ -98,7 +98,7 @@ export function lintBrief(text) {
     if (/(^|[\s(`'"])runs\d+\//.test(line)) problems.push(`line ${i + 1}: bare runs<N>/ path; use ../runs<N>/ or an absolute path`);
   }
   if (behaviours > 5) problems.unshift(`${behaviours} behaviour lines (maximum 5)`);
-  if (/^Build:/.test(text) && !/^Old steps\b/m.test(text)) problems.push('build brief needs an Old steps line');
+  if (/^﻿?Build:/.test(text) && !/^Old steps\b/m.test(text)) problems.push('build brief needs an Old steps line');
   return problems;
 }
 
@@ -229,18 +229,19 @@ export function review(args, x = io) {
   const parsed = parseReview(args), { sha, brief, out, from, over } = parsed;
   let as = parsed.as;
   x.gate.context(over);
-  if (as === 'bishop' && !over) {
+  // TODO 167d: no --as = Bishop, or King when Bishop's reviewer folder is locked (both locked: needClean refuses King's below)
+  const busy = parsed.auto && x.locked(folder('bishop', 'review'));
+  if (as === 'bishop' && !over && !busy) {
     let h5;
     try {
       const row = parseCsv(x.read(join(REPO, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => ['Pip', 'Bishop'].includes(r.agent) && r.window === '5h');
       const used = Number(row?.used_pct);
       if (!row?.used_pct?.trim() || !Number.isFinite(used)) throw new Error('missing or invalid Bishop 5h reading');
-      h5 = used;
+      if (!(Date.parse(row.resets) < Date.now())) h5 = used; // a past reset time = the window has reset, the reading is old
     } catch (e) { console.error(`review: Bishop usage cache unavailable (${e.message}); allowing review`); }
     if (h5 > 85) throw new Error(`Bishop 5h ${h5}%: use --as king, or --over`);
   }
-  // TODO 167d: no --as = Bishop, or King when Bishop's reviewer folder is locked (both locked: needClean refuses King's below)
-  if (parsed.auto && x.locked(folder('bishop', 'review'))) { as = 'king'; console.log('review: Bishop busy, King'); }
+  if (busy) { as = 'king'; console.log('review: Bishop busy, King'); }
   const wt = folder(as, 'review');
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);

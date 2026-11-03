@@ -102,6 +102,31 @@ test('TODO 190a: wait --ci prints exactly one CI RUN line on every path (run, no
   } finally { console.log = log; console.error = error; }
 });
 
+test('TODO 190a fix: wait with run files prints CI RUN none and keeps waiting (no exit); --ci alone exits 1; a RUN line still exits 0', () => {
+  const log = console.log, error = console.error;
+  try {
+    for (const [keep, line, expectCodes] of [[true, 'no CI run found for abc after 15 min', []], [false, 'no CI run found for abc after 15 min', [1]], [true, 'RUN 5 success', [0]]]) {
+      const c = new EventEmitter(), out = [], codes = [];
+      c.stdout = new PassThrough(); c.stderr = new PassThrough(); c.kill = () => {};
+      console.log = (s) => out.push(s); console.error = () => {};
+      watchCi('abc', () => c, (x) => codes.push(x), 'bash', keep);
+      c.stdout.write(`${line}\n`);
+      c.emit('close', 0);
+      assert.deepEqual(codes, expectCodes, `${keep} ${line}`);
+      assert.deepEqual(out, [line.startsWith('RUN') ? `CI ${line}` : `CI RUN none ${line}`]);
+    }
+  } finally { console.log = log; console.error = error; }
+});
+
+test('TODO 190a fix: next refuses when rook-next.txt names this session, before starting anything', async () => {
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8', started = [];
+  let t = 0; // sleep advances the clock so a missing refusal ends in "not started", not a hang
+  const deps = { read: () => `${U}\r\n`, exists: () => false, start: () => started.push(1), sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P' };
+  await assert.rejects(nextRook({ ...deps, own: U }), /rook-next\.txt names this session: write the handover first/);
+  assert.deepEqual(started, []);
+  assert.equal((await nextRook({ ...deps, exists: () => true, own: 'other' })).code, 0);
+});
+
 test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; already there starts nothing; 60 s without it is exit 1', async () => {
   const U = '81b99077-20db-45ec-9515-c01615c70fa8';
   let t = 0;
