@@ -259,7 +259,7 @@ cd ~/agy-research && "/c/Users/raksh/AppData/Local/agy/bin/agy.exe" -p "<questio
 # Big research (many sources) goes to Bishop (Sonnet + WebSearch) instead; Pawn takes quick lookups only.
 # (2026-10-19: two multi-page Pawn runs died on one blocked action each: a shell command, then a URL.)
 # follow-up: --conversation <conversation_id>; its quota: /usage inside agy (interactive only; he pastes it)
-# Two weekly pools: Gemini (Flash/Pro; ~1.5% per short question) and Claude/GPT (Sonnet 4.6, Opus 4.6, GPT-OSS).
+# One weekly pool: Gemini (Flash/Pro; ~1.5% per short question).
 # Default Gemini 3.8 Flash; hard questions: a Gemini Pro slug (`agy models`). Sonnet 4.6, Opus 4.6 and GPT-OSS left Antigravity on 2026-11-02 (his plan keeps Gemini only).
 ```
 

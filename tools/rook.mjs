@@ -16,7 +16,7 @@
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty and runs<N>/retro<N>.applied exists (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
-//   node tools/rook.mjs next   start Rook.lnk (the uuid in rook-next.txt line 1) and wait up to 60 s for its transcript; prints `NEXT ROOK <uuid> started|already running|not started after 60 s`
+//   node tools/rook.mjs next   start Rook.lnk (the uuid in rook-next.txt line 1) and wait up to 60 s for its transcript; prints `NEXT ROOK <uuid> started|already running|not started after 60 s`; refused when the resume file on line 3 (relative to the extras folder) lacks the merge-due.log line; a Rook started by next outlived its caller (Rook S35c, 2026-11-03, session id matched rook-next.txt)
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
@@ -98,7 +98,13 @@ export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBas
 // `next`: starts Rook.lnk (the next Rook, uuid = rook-next.txt line 1) and waits up to 60 s for its transcript; returns { line, code }.
 // All effects are injected so the test starts nothing.
 // Not `detached`: a detached powershell has no console and its Start-Process of a .lnk silently starts nothing (TODO 192).
-export const startArgs = (lnk) => ['powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk.replace(/'/g, "''")}'`], { stdio: 'ignore' }];
+// PowerShell ends a '...' string on ASCII and curly single quotes alike: double them all.
+export const startArgs = (lnk) => ['powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk.replace(/['‘’‚‛]/g, '$&$&')}'`], { stdio: 'ignore' }];
+
+// Spawns [bin, args, opts] unref'd; a spawn error or non-zero exit goes to onFail as the reason line.
+export function startWatched([bin, args, opts], onFail, spawnFn = spawn) {
+  spawnFn(bin, args, opts).on('error', (e) => onFail(`spawn error: ${e.message}`)).on('exit', (c) => { if (c) onFail(`${bin} exit ${c}`); }).unref();
+}
 
 // `why` (optional) returns the spawn's error / exit code, appended to the "not started" line.
 // The resume file named on rook-next.txt line 3 must have a line mentioning merge-due.log (TODO 193b); shortcut: no line 3 = no check.
@@ -108,7 +114,7 @@ export async function nextRook({ read, exists, start, sleep, now, projects, own,
   if (uuid === own) throw new Error('rook-next.txt names this session: write the handover first');
   if (resume) {
     let text = '';
-    try { text = readFile(resume); } catch { /* reported below */ }
+    try { text = readFile(resolve(EXTRAS, resume)); } catch { /* reported below */ }
     if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} is missing or has no line "read the last line of ../Project D extras/merge-due.log first"`);
   }
   const seen = () => exists(`${projects}/${uuid}.jsonl`);
@@ -287,10 +293,7 @@ if (cmd === 'result') {
   let failure = '';
   nextRook({
     read: () => readFileSync(`${EXTRAS}/rook-next.txt`, 'utf8'), exists: existsSync, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    start: () => {
-      const [bin, args, opts] = startArgs(lnk);
-      spawn(bin, args, opts).on('error', (e) => { failure = `spawn error: ${e.message}`; }).on('exit', (c) => { if (c) failure = `${bin} exit ${c}`; }).unref();
-    },
+    start: () => startWatched(startArgs(lnk), (f) => { failure = f; }),
     why: () => failure,
     projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });

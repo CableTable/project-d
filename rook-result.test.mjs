@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
-import { printRookContext } from './tools/rook-launch.mjs';
-import { watchCi, nextRook, startArgs, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
+import { printRookContext, EXTRAS } from './tools/rook-launch.mjs';
+import { watchCi, nextRook, startArgs, startWatched, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -139,6 +139,25 @@ test('TODO 193b fix: next refuses, before starting anything, when the resume fil
   assert.deepEqual(started, []);
   const ok = await nextRook({ ...deps, exists: () => true, readFile: () => 'read the last line of ../Project D extras/merge-due.log first\n' });
   assert.equal(ok.code, 0);
+  assert.deepEqual(started, []);
+  let up = false; // the transcript appears only after start(): start runs exactly once
+  const once = await nextRook({ ...deps, exists: () => up, start: () => { started.push(2); up = true; }, readFile: () => 'merge-due.log' });
+  assert.deepEqual([once.code, started], [0, [2]]);
+  const read = []; // a relative line 3 resolves against EXTRAS, an absolute one stays
+  for (const r of ['R.txt', resolve('C:\\abs\\R.txt')]) await nextRook({ ...deps, exists: () => true, read: () => `${U}\r\nx\r\n${r}\r\n`, readFile: (p) => { read.push(p); return 'merge-due.log'; } });
+  assert.deepEqual(read, [resolve(EXTRAS, 'R.txt'), resolve('C:\\abs\\R.txt')]);
+});
+
+test('TODO 193d2: startWatched reports a real child exiting 3 and a missing exe; exit 0 reports nothing', async () => {
+  const run = (bin, args) => new Promise((done) => {
+    const got = [];
+    startWatched([bin, args, { stdio: 'ignore' }], (f) => got.push(f));
+    setTimeout(() => done(got), 1500);
+  });
+  assert.deepEqual(await run(process.execPath, ['-e', 'process.exit(3)']), [`${process.execPath} exit 3`]);
+  assert.deepEqual(await run(process.execPath, ['-e', '0']), []);
+  const [missing] = await run('no-such-exe-193d2', []);
+  assert.match(missing, /^spawn error: spawn no-such-exe-193d2 ENOENT$/);
 });
 
 test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; already there starts nothing; 60 s without it is exit 1', async () => {
@@ -162,6 +181,7 @@ test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; alr
 test('TODO 192: next spawns powershell Start-Process on the .lnk (spaces and a quote ok) without detached; a failed start names its reason', async () => {
   const lnk = "C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook's.lnk";
   assert.deepEqual(startArgs(lnk), ['powershell.exe', ['-NoProfile', '-Command', "Start-Process 'C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook''s.lnk'"], { stdio: 'ignore' }]);
+  assert.equal(startArgs('C:\\Rook\u2019s\u2018\u201A\u201B.lnk')[1][2], "Start-Process 'C:\\Rook\u2019\u2019s\u2018\u2018\u201A\u201A\u201B\u201B.lnk'");
   const U = '81b99077-20db-45ec-9515-c01615c70fa8';
   let t = 0;
   const r = await nextRook({ read: () => U, exists: () => false, start: () => {}, sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P', why: () => 'powershell.exe exit 1' });
