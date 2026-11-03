@@ -10,16 +10,16 @@ test('TODO 185b: rook-suite always runs unit then browser, reports both codes, a
   for (const [unit, browser, code] of [[0, 0, 0], [1, 0, 1], [0, 2, 1], [1, 2, 1]]) {
     const calls = [], lines = [], process = {};
     runInNewContext(source, {
-      spawnSync(command, args, options) {
-        calls.push([command, [...args], { ...options }]);
+      spawnSync(command, options) {
+        calls.push([command, { ...options }]);
         return { status: calls.length === 1 ? unit : browser };
       },
       console: { log(line) { lines.push(line); } },
       process,
     });
     assert.deepEqual(calls, [
-      ['npm.cmd', ['test'], { stdio: 'inherit', shell: true }],
-      ['npm.cmd', ['run', 'test:browser'], { stdio: 'inherit', shell: true }],
+      ['npm.cmd test', { stdio: 'inherit', shell: true }], // one string: no DEP0190 warning
+      ['npm.cmd run test:browser', { stdio: 'inherit', shell: true }],
     ]);
     assert.deepEqual(lines, [`SUITE unit=${unit} browser=${browser}`]);
     assert.equal(process.exitCode, code);
