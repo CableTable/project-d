@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
-import { watchCi, gitBash, mergeRefusal, merge } from './tools/rook.mjs';
+import { watchCi, nextRook, gitBash, mergeRefusal, merge } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -70,13 +70,54 @@ test('wait --ci: spawns the watcher with piped stderr, forwards it, prints CI <R
   assert.match(calls[0][1][0], /ci-watch\.sh$/);
   assert.deepEqual([calls[0][1][1], calls[0][2]], ['abc', ['ignore', 'pipe', 'pipe']]);
   assert.deepEqual(seen, ['gh: boom\n']);
-  assert.deepEqual(out, ['CI RUN 77 failure']);
+  assert.deepEqual(out, ['CI RUN 77 failure', 'CI RUN none ci-watch.sh exit 3']);
   assert.deepEqual(codes, [0, 1]);
   assert.deepEqual(err, ['ci-watch.sh ended with exit 3']);
   const gitExec = (path) => () => path;
   assert.equal(gitBash(gitExec('C:\\Git\\mingw64\\libexec\\git-core\n'), () => true), join('C:\\Git\\mingw64\\libexec\\git-core', '..', '..', '..', 'bin', 'bash.exe'));
   assert.equal(gitBash(gitExec('/x'), () => false), 'bash');
   assert.equal(gitBash(() => { throw new Error('no git'); }, () => true), 'bash');
+});
+
+test('TODO 190a: wait --ci prints exactly one CI RUN line on every path (run, no run found, unknown sha, exit code, clean end, spawn error)', () => {
+  const paths = [
+    ['RUN line', (c) => { c.stdout.write('RUN 5 success\n'); c.emit('close', 0); }, 'CI RUN 5 success', 0],
+    ['RUN line without newline at close', (c) => { c.stdout.write('RUN 6 failure'); c.emit('close', 0); }, 'CI RUN 6 failure', 0],
+    ['no run after 15 min', (c) => { c.stdout.write('no CI run found for abc after 15 min\n'); c.emit('close', 0); }, 'CI RUN none no CI run found for abc after 15 min', 1],
+    ['unknown sha', (c) => { c.stdout.write('unknown sha abc\n'); c.emit('close', 2); }, 'CI RUN none unknown sha abc', 1],
+    ['usage exit', (c) => c.emit('close', 2), 'CI RUN none ci-watch.sh exit 2', 1],
+    ['clean end, no RUN', (c) => c.emit('close', 0), 'CI RUN none ci-watch.sh ended without a RUN line', 1],
+    ['spawn error', (c) => { c.emit('error', new Error('ENOENT bash')); c.emit('close', null); }, 'CI RUN none watcher not started: ENOENT bash', 1],
+  ];
+  const log = console.log, error = console.error;
+  try {
+    for (const [name, drive, line, code] of paths) {
+      const c = new EventEmitter(), out = [], codes = [];
+      c.stdout = new PassThrough(); c.stderr = new PassThrough(); c.kill = () => {};
+      console.log = (s) => out.push(s); console.error = () => {};
+      watchCi('abc', () => c, (x) => codes.push(x), 'bash');
+      drive(c);
+      assert.deepEqual([out, codes], [[line], [code]], name);
+    }
+  } finally { console.log = log; console.error = error; }
+});
+
+test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; already there starts nothing; 60 s without it is exit 1', async () => {
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8';
+  let t = 0;
+  const run = (appears, text = `${U}\r\nRook S35\r\n`) => {
+    const started = [], slept = [];
+    const deps = { read: () => text, exists: () => appears !== null && t >= appears, start: () => started.push(t), sleep: async (ms) => { slept.push(ms); t += ms; }, now: () => t, projects: 'P' };
+    return nextRook(deps).then((r) => ({ ...r, started, slept }));
+  };
+  t = 100; // the transcript is already there
+  assert.deepEqual(await run(0), { code: 0, line: `NEXT ROOK ${U} already running`, started: [], slept: [] });
+  t = 0; // appears 5 s after the start
+  assert.deepEqual(await run(5000), { code: 0, line: `NEXT ROOK ${U} started`, started: [0], slept: [2000, 2000, 2000] });
+  t = 0; // never
+  const never = await run(null);
+  assert.deepEqual([never.code, never.line, never.started.length, never.slept.length], [1, `NEXT ROOK ${U} not started after 60 s`, 1, 30]);
+  await assert.rejects(run(0, 'Rook S35\n'), /not a uuid/);
 });
 
 test('merge: refuses without a non-empty retro file unless --no-retro, a non-head sha, or CI not success; otherwise merges', () => {

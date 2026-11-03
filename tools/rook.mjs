@@ -13,8 +13,9 @@
 //   node tools/rook.mjs retro   the three retros of runs<N>/ (retro<N>, retro<N>king, retro<N>rook: .txt in, .out out) on Bishop, detached; refused when a .txt is missing
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
 //   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
-//   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`); polls every 20 s
+//   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
+//   node tools/rook.mjs next   start Rook.lnk (the uuid in rook-next.txt line 1) and wait up to 60 s for its transcript; prints `NEXT ROOK <uuid> started|already running|not started after 60 s`
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
@@ -63,20 +64,48 @@ export function gitBash(exec = execFileSync, exists = existsSync) {
   return 'bash';
 }
 
-// Runs ci-watch.sh for <sha>: forwards its stderr, prints `CI <RUN line>` and exits 0 at the RUN line; a non-zero end exits 1.
+// Runs ci-watch.sh for <sha>: forwards its stderr; every end prints one `CI RUN ...` line (TODO 190a):
+// `CI RUN <id> <conclusion>` and exit 0 at the RUN line, else `CI RUN none <reason>` and exit 1 (no run found / unknown sha / watcher failed or ended without a RUN line).
 export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBash()) {
   const tools = dirname(fileURLToPath(import.meta.url));
   const ci = spawnFn(bash, [join(tools, 'ci-watch.sh'), sha], { cwd: join(tools, '..'), stdio: ['ignore', 'pipe', 'pipe'] });
   process.on('exit', () => ci.kill()); // a killed wait must not leave the watcher holding the pipes
+  let done = false;
+  const end = (line, code) => { if (!done) { done = true; console.log(line); exit(code); } };
+  const scan = (lines) => {
+    const run = lines.find((l) => l.startsWith('RUN '));
+    if (run) return end(`CI ${run}`, 0);
+    const none = lines.find((l) => /^(no CI run found|unknown sha)/.test(l));
+    if (none) end(`CI RUN none ${none}`, 1);
+  };
   ci.stderr.on('data', (d) => process.stderr.write(d));
   let buf = '';
   ci.stdout.on('data', (d) => {
     const lines = (buf += d).split(/\r?\n/);
     buf = lines.pop();
-    const run = lines.find((l) => l.startsWith('RUN '));
-    if (run) { console.log(`CI ${run}`); exit(0); }
+    scan(lines);
   });
-  ci.on('close', (c) => { if (c) { console.error(`ci-watch.sh ended with exit ${c}`); exit(1); } });
+  ci.on('error', (e) => end(`CI RUN none watcher not started: ${e.message}`, 1));
+  ci.on('close', (c) => {
+    scan(buf.split(/\r?\n/));
+    if (c) console.error(`ci-watch.sh ended with exit ${c}`);
+    end(`CI RUN none ci-watch.sh ${c ? `exit ${c}` : 'ended without a RUN line'}`, 1);
+  });
+}
+
+// `next`: starts Rook.lnk (the next Rook, uuid = rook-next.txt line 1) and waits up to 60 s for its transcript; returns { line, code }.
+// All effects are injected so the test starts nothing.
+export async function nextRook({ read, exists, start, sleep, now, projects }) {
+  const uuid = read().split(/\r?\n/)[0].trim();
+  if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(uuid)) throw new Error('rook-next.txt line 1 is not a uuid');
+  const seen = () => exists(`${projects}/${uuid}.jsonl`);
+  if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} already running` };
+  start();
+  for (const t0 = now(); now() - t0 < 60_000;) {
+    await sleep(2000);
+    if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} started` };
+  }
+  return { code: 1, line: `NEXT ROOK ${uuid} not started after 60 s` };
 }
 
 // `wait <run file>... [--ci <sha>]`: checks now and every 20 s; prints `DONE <file>` for the first finished run or `CI <RUN line>` and exits 0 (TODO 167a).
@@ -215,8 +244,15 @@ if (cmd === 'result') {
 } else if (cmd === 'gate') {
   try { console.log(gate()); }
   catch (e) { console.error(e.message); process.exit(1); }
+} else if (cmd === 'next') {
+  const lnk = join(process.env.APPDATA || '', 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup', 'Rook.lnk');
+  nextRook({
+    read: () => readFileSync(`${EXTRAS}/rook-next.txt`, 'utf8'), exists: existsSync, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+    start: () => spawn('powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk}'`], { detached: true, stdio: 'ignore' }).unref(),
+    projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'),
+  }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro | pawn <out.json> "<question>" | acad <item>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro | pawn <out.json> "<question>" | acad <item>');
 }
 }
 

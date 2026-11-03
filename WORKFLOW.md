@@ -308,7 +308,7 @@ read + cache write + output from the final `result.usage`; new = input + cache w
   started (his call 2026-10-31, was 3 from 2026-10-30; review fix bundles and tool tickets don't count), its context
   passes ~150k (auto-compact fires at ~218k: S29, 3 times), he is shutting down / going to sleep, or a usage reset is near. A merge alone is no reason; a big session hands over mid-PR
   (the resume file names the open PR and branch). The next Rook is `Rook S<N>b`, `c`, … on the same branch and runs<N>;
-  the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end).
+  the session number goes up only with a new PR. Handover = runs<N>/resume-rook.txt + rook-next.txt (see Session end). Then `node tools/rook.mjs next` starts Rook.lnk and waits for the new transcript (`NEXT ROOK <uuid> started`); the Stop hook blocks a Rook that has not done it (TODO 190a).
   **The launcher enforces the 2** (his ask 2026-10-31, TODO 165; S29 built 9 against this rule): `rook.mjs build` / `knight` count
   the new-item launches per Rook (rook-next.txt line 1 = the uuid; state in runs<N>/rook-gate.json), refuse the 3rd, and keep line 2 of
   queue.txt ("items since start ...", `rook.mjs gate` rewrites it). Fix rounds pass `--fix`; a 3rd item needs `--over` with his OK.
