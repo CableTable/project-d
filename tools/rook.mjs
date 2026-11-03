@@ -162,13 +162,14 @@ export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf
   try {
     let until = '';
     try { until = readFileSync(`${extras}/merge-ok-until.txt`, 'utf8').trim(); } catch { /* refused below */ }
-    if (!/^\d{4}-\d\d-\d\d$/.test(until)) throw new Error('refused: merge-ok-until.txt is missing or unreadable: ask him');
+    const real = /^\d{4}-\d\d-\d\d$/.test(until) && !isNaN(Date.parse(until + 'T00:00Z')) && new Date(until + 'T00:00Z').toISOString().slice(0, 10) === until; // trim() above also strips a BOM
+    if (!real) throw new Error('refused: merge-ok-until.txt is missing or unreadable: ask him');
     if (ist.slice(0, 10) > until) throw new Error(`refused: merge OK expired ${until}: ask him`);
     const prs = JSON.parse(run('gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName,headRefOid'])).filter((p) => /^claude\/session\d+$/.test(p.headRefName));
     if (prs.length > 1) throw new Error(`refused: ${prs.length} open claude/session PRs (${prs.map((p) => '#' + p.number).join(', ')})`);
     line = prs.length ? merge([String(prs[0].number), prs[0].headRefOid], run, extras) : 'NOTHING DUE';
   } catch (e) {
-    appendFileSync(`${extras}/merge-due.log`, `${ist.slice(0, 16).replace('T', ' ')} ${e.message}\n`);
+    appendFileSync(`${extras}/merge-due.log`, `${ist.slice(0, 16).replace('T', ' ')} ${e.message.trim().replace(/\s*\n\s*/g, ' ')}\n`);
     throw e;
   }
   appendFileSync(`${extras}/merge-due.log`, `${ist.slice(0, 16).replace('T', ' ')} ${line}\n`);

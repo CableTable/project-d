@@ -236,6 +236,38 @@ test('TODO 191: merge --due merges the one open session PR inside the OK window,
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 
+test('TODO 191 fix: merge --due refuses red / missing CI, logs a throwing run on one IST line, and rejects impossible or BOM-prefixed dates', () => {
+  const extras = mkdtempSync(join(tmpdir(), 'projectd-due-'));
+  try {
+    const sha = 'e'.repeat(40), T = Date.parse('2026-11-08T05:00:00+05:30');
+    const gh = (ci, boom) => (cmd, a) => {
+      if (boom && a[0] === 'pr' && a[1] === 'list') throw new Error('Command failed: gh pr list\nHTTP 502\n  bad gateway\n');
+      if (cmd === 'git') return sha;
+      if (a[0] === 'pr' && a[1] === 'list') return JSON.stringify([{ number: 5, headRefName: 'claude/session35', headRefOid: sha }]);
+      if (a[0] === 'pr' && a[1] === 'view') return JSON.stringify({ headRefOid: sha, headRefName: 'claude/session35', state: 'MERGED' });
+      if (a[0] === 'run') return JSON.stringify(ci);
+      return '';
+    };
+    const log = () => readFileSync(join(extras, 'merge-due.log'), 'utf8').trim().split('\n');
+    mkdirSync(join(extras, 'runs35'));
+    writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    writeFileSync(join(extras, 'merge-ok-until.txt'), '2026-11-08\n');
+    assert.throws(() => mergeDue(gh([{ status: 'completed', conclusion: 'failure' }]), extras, T), /CI for .* is failure, not success/);
+    assert.throws(() => mergeDue(gh([]), extras, T), /CI for .* is not found, not success/);
+    assert.throws(() => mergeDue(gh([], true), extras, T), /HTTP 502/);
+    assert.equal(log().length, 3);
+    assert.match(log()[0], /^2026-11-08 05:00 refused: CI for e+ is failure, not success$/);
+    assert.match(log()[1], /^2026-11-08 05:00 refused: CI for e+ is not found, not success$/);
+    assert.equal(log()[2], '2026-11-08 05:00 Command failed: gh pr list HTTP 502 bad gateway');
+    for (const bad of ['2026-99-99', '2026-02-30', '2026-13-01']) {
+      writeFileSync(join(extras, 'merge-ok-until.txt'), bad + '\n');
+      assert.throws(() => mergeDue(gh([]), extras, T), /missing or unreadable/, bad);
+    }
+    writeFileSync(join(extras, 'merge-ok-until.txt'), '﻿2026-11-08\r\n');
+    assert.equal(mergeDue(gh([{ status: 'completed', conclusion: 'success' }]), extras, T), `MERGED #5 ${sha}`, 'a BOM and CRLF in the date file are fine');
+  } finally { rmSync(extras, { recursive: true, force: true }); }
+});
+
 test('result skips a half-written last line: no result yet for an unfinished run, the result once it is there', () => {
   const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
   try {
