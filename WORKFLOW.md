@@ -34,11 +34,11 @@ briefs, reading short reports and merging.
    ("X never Y"), a Bishop run with no memory of the grill reads only `runs<N>/grill-<item>.md`, the TODO row and the code
    files the grill names, and writes `runs<N>/fresh-<item>.out` (max 8 lines: gaps, contradictions, missing cases; per
    invariant the code line that keeps it, or "not found"). Rook folds each line into the brief or reopens that grill Q. From runs<N>:
-   `claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 2 --output-format text --add-dir "E:/Project B/Claude/Project D" --allowedTools Read Grep Glob --disallowedTools Agent "Fresh read of TODO <item>: read grill-<item>.md, TODO.md row <item> and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing." > fresh-<item>.out 2>&1`
+   `/c/Users/raksh/.local/bin/claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 2 --output-format text --add-dir "E:/Project B/Claude/Project D" --allowedTools Read Grep Glob --disallowedTools Agent "Fresh read of TODO <item>: read grill-<item>.md, TODO.md row <item> and the code files it names. Max 8 lines: gaps, contradictions, missing cases; for each 'X never Y' answer, quote the code line that keeps it or say not found. Change nothing." > fresh-<item>.out 2>&1`
 3. **Build:** a fresh builder session with a brief (spec = the chosen artboard, decisions for DECISIONS.md,
    tests, screenshots light + dark, tick TODO.md, commit (never push), don't stage `mockups/`). Keep its `session_id`.
 4. **Review:** a Bishop-review session on the build's commits (ranked findings, "ship as is" / "fix first").
-5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run.
+5. **Fix:** findings go to a fresh builder session (short brief: findings + commit range), full tests re-run. A fix round that fixes a High, resolves conflicts, or reports anything partly done gets a re-review before the suite (S33 retro).
 6. **As built:** every UI build gets an AB board (mockups/R<n>_AB_*.html, local), drawn from the screenshots (his call, 2026-10-20).
 7. **Ship:** one PR per session number (it may span several Rook sessions); merge on a green run for the head commit (his OK per PR, or Rook's call under full control, CLAUDE.md). CI publishes the exe. A doc-only push (only .md files) skips test and build, but only when the previous push's test and build were green (else they run); the merge rule's green run is then the latest run that tested code on the same PR, with nothing but .md after it.
 8. **PC test** (when he asks, after a merge): PC tester on the released exe; findings become TODO items.
@@ -84,7 +84,7 @@ usage-agent-install.ps1.
    Aliases: his `%APPDATA%AutodeskAutoCAD 2027R26.0enuSupportcad.pgp`.
    **Bishop-acad (claude2, always; never King) runs these checks, not Rook** (his calls 2026-10-28, to save Rook's usage, and 2026-10-29: Bishop is the tester): Rook writes the questions
    (what to try, which prompts / keys / screenshots), then from `Project D extras/runs<N>`:
-   `claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Edit Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out` (or `node tools/rook.mjs acad <item>`: detached, from `runs<N>`, one queue line).
+   `/c/Users/raksh/.local/bin/claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --allowedTools PowerShell Read Write Edit Glob Grep "WebFetch(domain:help.autodesk.com)" --disallowedTools Agent < acad<item>.txt > acad<item>.out` (or `node tools/rook.mjs acad <item>`: detached, from `runs<N>`, one queue line).
    The brief always says: one AutoCAD session at a time; only new scratch drawings (`Documents.Add()`), never his open
    drawings, close scratch ones without saving; wrap SendCommand in Start-Job with a timeout (it blocks while a prompt
    waits; Esc via SendKeys frees it); zoom before picking (off-screen picks are ignored); PrintWindow the AutoCAD window
@@ -118,11 +118,13 @@ usage-agent-install.ps1.
    Briefs for pure geometry (S29 retro) name the **case grid** (positions before / at / inside / beyond, both orders, both picks; every entity type that shares the code) and ask for ONE table-driven unit test over it.
    Grip tickets (S30 retro: 4 of 5 King fix rounds): the grid also has several hot grips (with a grip of another entity, every hot order), and the preview (`gripAim`) is asserted equal to the commit (`gripCommit`).
    A brief that asks for every X (every button, every caller) carries the grep Rook ran to find them, with its hit list; the builder's report quotes the same grep (S31 retros: 175 took 2 fix rounds on "+" buttons a hand list missed).
-   A wide filter names its known subset-only reds in the brief (now: 'tracking: POLAR also locks a grip', 'review: the gripper label': they need earlier steps' state); the builder skips them.
+   A function gaining a failure result (a throw, a refusal, a false): the grill lists every caller (`grep -n "<fn>("`, hit list in the brief) and what each does on failure; the first build adds a guard test over all of them. A 2nd fix round that finds a new caller stops the chain: re-grill the root cause before round 3 (S33: 184 took 6 rounds).
+   A wide filter names its known subset-only reds in the brief (now: 'tracking: POLAR also locks a grip', 'review: the gripper label', 'TODO 120 fix / TODO 135b': they need earlier steps' state); the builder skips them.
    Briefs (S28 retros): name the base by commit ("from <sha>, contains <sha>"), never by what is on the remote (builders can't reach it); paths into runs<N>/ are written `../runs<N>/` (the builder's cwd is its worktree; S31 King retro);
    when an item changes existing behaviour, name the old browser steps that check it (`grep -n` in browser.test.mjs) and say to update
    them in the same commit; tests are `npm.cmd test` and the item's steps by argument (`node browser.test.mjs <port> '<name>'`), never an
    env var and never the full suite.
+   Briefs use only the builder's git verbs (`add`, `commit`, `fetch`, `checkout`, `switch`, `cherry-pick`, `rebase`, `apply`); squash = `cherry-pick -n` (S33: `merge --squash` was refused).
 **Rook's daily cap** (his call, 2026-10-20): Rook's week must last to the Sun 15:30 reset. This week (49% on Tue 21:45):
 by the end of each IST day at most Tue 50, Wed 61, Thu 72, Fri 83, Sat 94 %. From next week: 14% × k by the end of day k
 after the reset, like Bishop. At the cap Rook finishes the step it is on, says so in one line, and pauses until the next day.
@@ -138,7 +140,7 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 
 Briefs start from `tools/briefs/<kind>.txt` (build, fix, review).
 Write the brief to a file and pass it on **stdin** (a quoted `-p "$(cat …)"` arrived empty once).
-`node tools/rook.mjs wait <run file>... [--ci <sha>]` (as a Monitor command) prints `DONE <file>` when the first run ends, or `CI RUN <id> <conclusion>`; every launch (build / knight / review, `--fix` too) is refused with `HANDOVER: context <N>k` once this Rook's context passes 150k (`--over` passes).
+Run `wait` in the background or as a Monitor, never in the foreground: it prints only at the end (S33f). `node tools/rook.mjs wait <run file>... [--ci <sha>]` (as a Monitor command) prints `DONE <file>` when the first run ends, or `CI RUN <id> <conclusion>`; every launch (build / knight / review, `--fix` too) is refused with `HANDOVER: context <N>k` once this Rook's context passes 150k (`--over` passes).
 
 ```bash
 C2=/c/Users/raksh/.local/bin/claude2.cmd
@@ -189,6 +191,7 @@ $C2 -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mod
 cd -
 # A new worktree folder needs trusting once on account 2 (he runs claude2 there and accepts): reuse ProjectD-s15fix.
 
+# Bishop board / look, from runs<N> (S33f): /c/Users/raksh/.local/bin/claude2.cmd -p --model claude-sonnet-5-5 --effort high --permission-mode dontAsk --max-budget-usd 4 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --add-dir "E:/Project B/Claude/Project D" --allowedTools Read Write Edit Glob Grep "Bash(node:*)" --disallowedTools Agent < b-ab<id>.txt > b-ab<id>.out. Brief: absolute paths, no cd prefix, grep for existing shots first.
 # Lookup (Haiku)
 # Reddit: WebFetch, curl, .json (403) and the Chrome extension all fail (S31). Route: a Bishop run opens the link in normal Chrome, PowerShell CopyFromScreen + SendKeys PgDn, reads the shots, reports in lines; Rook never reads the images.
 $C2 -p --model claude-haiku-5-5 --permission-mode acceptEdits --output-format text < question.txt
@@ -208,11 +211,12 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # A step red unsharded or in the full suite but green alone or in shards: Rook appends "<date> <step> <shard|unsharded>" to runs<N>/flakes.txt on reading the report; a 2nd hit becomes a TODO.
 # One call does the clone check, fetch, `switch -c` and launch below (raw commands are the fallback):
 #   node tools/rook.mjs knight <brief file> <report txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]   (log = the report's name with .log; --fix / --tool / --over / --big / --review as for build; the launch empties an existing report file, so `wait` waits for the new report; every launch also writes `<kind> <branch|sha> -> <out file>: running` into runs<N>/queue.txt, lines 1-2 stay, and the run's end rewrites it to `ended`)
+# `rook.mjs knight` takes any local sha: the launcher fetches unpushed commits from the repo into the clone, so never undo a commit for Knight (S33f). To drop a local commit anyway: `git reset --soft HEAD~1`.
 # Before a build: git -C "../Project D extras/ProjectD-rowan" fetch, then switch -c <branch> <sha> (always a commit id, never
 # FETCH_HEAD: it is per worktree and goes stale; session 26 retro). King's worktree shares the repo's objects: no fetch,
 # `git switch -c <branch> <sha>`. After: Rook pushes.
 # Full suite (Rook, on the session branch, Bash run_in_background; ~20 min) = `node tools/rook.mjs suite <sha>` (detached, <sha> must be HEAD, log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`, `wait` the .log); by hand: L="../Project D extras/runs<N>/suite-<sha>.log"; npm.cmd test > "$L" 2>&1; echo unit=$?; npm.cmd run test:browser >> "$L" 2>&1; echo browser=$?; grep -E "^FAIL|[0-9]+ failed|passed" "$L" | tail -8
-# Retros (rule 4) = `node tools/rook.mjs retro` (the three runs detached, none starts when a .txt is missing); by hand, from runs<N>: for n in retro<N> retro<N>king retro<N>rook; do claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --add-dir "E:/Project B/Claude/Project D" --add-dir "C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D" --add-dir "C:/Users/raksh/.claude/plugins/cache/mattpocock" --allowedTools Read Grep Glob Write "Bash(git log:*)" "Bash(git show:*)" "Bash(wc:*)" --disallowedTools Agent < $n.txt > $n.out 2>&1 & done; wait
+# Retros (rule 4) = `node tools/rook.mjs retro` (the three runs detached, none starts when a .txt is missing); by hand, from runs<N>: for n in retro<N> retro<N>king retro<N>rook; do /c/Users/raksh/.local/bin/claude2.cmd -p --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 --output-format text --add-dir "E:/Project B/Claude/Project D extras" --add-dir "E:/Project B/Claude/Project D" --add-dir "C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D" --add-dir "C:/Users/raksh/.claude/plugins/cache/mattpocock" --allowedTools Read Grep Glob Write "Bash(git log:*)" "Bash(git show:*)" "Bash(wc:*)" --disallowedTools Agent < $n.txt > $n.out 2>&1 & done; wait
 #   Briefs: copy runs<N-1>/retro<N-1>*.txt (header + "=== retro skill ===" + the skill), new transcripts and known events in the header.
 # Builders never start a server or end a process: browser.test.mjs starts and stops its own (taskkill would kill Rook's suites).
 # If package-lock.json changed since its last build, Rook runs `npm.cmd ci` in ProjectD-rowan first (its sandbox cannot
@@ -230,7 +234,7 @@ cd ~/codex-research && /c/Users/raksh/AppData/Roaming/npm/codex.cmd exec -p rese
 # duplicate TODO rows. Run two builds at once (King + Knight) only when their briefs touch different files; otherwise
 # base the 2nd build on the 1st's commit (session 25: 69e and 69f both edited web/app.js and the cherry-pick conflicted).
 # Every UI ticket touches web/app.js (session 26 retro): parallel builds only when one of them stays out of web/;
-# otherwise the 2nd build starts from the 1st's commit, or waits.
+# otherwise the 2nd build starts from the 1st's commit, or waits. A fix chain still open on web/ counts as a running build (S33: 187 during 184).
 # Knight says "Selected model is at capacity": wait 5 min, then a FRESH run with the brief plus the STATE line above
 # (not `exec resume`, see above). Knight runs ponytail "full" too (%APPDATA%\ponytail\config.json), like every builder.
 # Browser test inside the sandbox: `node browser.test.mjs <port>` (npm.cmd run test:browser exits 1 on npm's notice).
@@ -339,9 +343,9 @@ read + cache write + output from the final `result.usage`; new = input + cache w
 - **One call per step, short output:** `node tools/rook.mjs usage` (3 lines; refreshes `mockups/_design/usage/`) and
   `node tools/rook.mjs result <run file>` (the reply + tokens). Write the brief with the real base sha already in it (Write tool; never `sed` a brief), then launch with one plain `node tools/rook.mjs build|knight|review ...` call (S31: two `sed -i` + launch chains denied).
   Change a brief or queue.txt with Read + Edit in the same turn (launchers rewrite queue line 2), never `sed -i` or a chain with a launch (denied, S30 retro); git and launches go in their own command.
-- Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head, only after every review on the branch says ship (S31b ran it twice) (builders run `npm.cmd test` and their item's steps; reviewers unit only); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
+- Rook never opens screenshots or images (Bishop-look reports in lines); Rook runs the full browser suite once per push, in the background, on the combined head, only after every review on the branch says ship (S31b ran it twice) (builders run `npm.cmd test` and their item's steps; reviewers `npm.cmd test` and the steps `reviewer.md` step 3 names, never the full suite); Rook tries a `.claude/` edit once itself and writes `runs<N>/paste-*.txt` for him only after a denial,
   never reads skill or reference docs it has read before in the session.
-- While runs go, Rook ends its turn and waits for the notice; no status messages in between.
+- While runs go, Rook ends its turn and waits for the notice; no status messages in between. A turn ends with a waiter running or a question for him; a clear next step with nothing running is done in the same turn, status questions included (S33c: 6 h idle).
 - The usage page is https://project-d-usage.web.app (Firebase, his Google account only; session 12). The PC agent
   (tools/usage-agent.mjs, Startup shortcut) refreshes it hourly and on its "Update now" button, so Rook uploads nothing.
   Rules / page changes deploy with `GOOGLE_APPLICATION_CREDENTIALS=%APPDATA%\ProjectD\firebase-key.json npx.cmd
@@ -394,7 +398,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
   (Without it, claude2 reads CLAUDE.md's builder rule and tries to start claude2 itself.)
 - Builders use ponytail full (the default level; his call 2026-10-21, was lite); plain commands, no `cd … &&`, no `$?` tricks; a refused command is reported, not worked around.
 - Branch name, the spec file, which files it may touch, what not to stage, what to reply (max N lines).
-- Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then commit at once; Rook runs the full suite after them (S28b retro: the ~12 min suite outlives a builder's 10 min command limit, goes to the background and the run ends uncommitted, 3x). Every build branches from the CURRENT session head (items already on it), so two builds never conflict on the cherry-pick (S28b: 156b4 from an old base conflicted with 156c). Briefs say: the worktree is already your working folder, no `cd "<worktree>" &&` prefix (denied 6-11x a run). Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers unit only (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
+- Builders: `npm.cmd test`, their own new / changed browser steps while working (`node browser.test.mjs <port> '<step names>'`), then commit at once; Rook runs the full suite after them (S28b retro: the ~12 min suite outlives a builder's 10 min command limit, goes to the background and the run ends uncommitted, 3x). Every build branches from the CURRENT session head (items already on it), so two builds never conflict on the cherry-pick (S28b: 156b4 from an old base conflicted with 156c). Briefs say: the worktree is already your working folder, no `cd "<worktree>" &&` prefix (denied 6-11x a run). Screenshots light + dark through their steps. **Rook still runs the full browser suite** (background script, pass / fail summary only) on the combined branch before every push; reviewers `npm.cmd test` and the steps `reviewer.md` step 3 names, never the full suite (his call 2026-10-28, after builders' filtered runs missed 2 old steps and CI went red).
   Builders grep `browser.test.mjs` for every UI string they change (prompts, readouts like `R `) and add those steps to their `'<step names>'` filter.
   While fixing, filter on their own step only (`'TODO <id>'`); widen once, before commit, to whole step-name pieces they grepped, never single words like `Text` (session 26 King retro: 5 unrelated slow steps per run).
 - **Proof before "done"** (his yes 2026-11-01, idea from obra/superpowers' verification-before-completion, not installed; the rule now lives in `AGENTS.md`, `.claude/agents/builder.md` and `reviewer.md`, so briefs from `tools/briefs/` do not repeat it): a report claims only what a command run AFTER the last edit showed; each claim (tests green, step passes, FAIL on base, screenshot taken) quotes that run's line. No "should work" / "looks right" without one; anything not run goes under Not checked. Reviewers check the quotes against the commit.
