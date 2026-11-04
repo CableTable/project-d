@@ -68,7 +68,7 @@ export function follow(groups = [], before, after) {
       const removed = [];
       for (; old < stop; old++) if (!at.has(before[old])) removed.push(old);
       const added = Array.from({ length: end - start }, (_, k) => start + k);
-      // shortcut: a fallback only; every command that removes or splits entities passes an explicit map (pure erases and appends need none). Delete this guess once nothing new relies on it.
+      // shortcut: a fallback only; load (follow after linkFills, a pure erase) is the one remaining caller without an explicit map. Delete this guess once it passes one.
       removed.forEach((i, k) => indexes.set(i, removed.length === 1 && end < after.length ? added : added.length ? [added[Math.min(k, added.length - 1)]] : []));
       old = stop + 1; start = end + 1;
     }

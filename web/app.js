@@ -7872,8 +7872,7 @@ function filletPolyDo(d, ent) {
   const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
   m.stage = 'obj'; m.ent = null;
-  const n = d.raw.entities.length, at = d.raw.entities.indexOf(ent), tail = r.ents.slice(1).map((_, k) => n + k);       // the polyline's extra pieces stay with it
-  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, i === at ? [i, ...tail] : [i]]))))) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
+  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))))) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why; No trim adds new arcs, which join no group
   note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */

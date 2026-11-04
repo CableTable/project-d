@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 import { readDxf, flatten, DrawingError } from './web/drawing.js';
 import { layerCounts, entityCount, drawingBoxMm } from './web/doc.js';
 import * as W from './web/dxf-write.js';
-import { filletEntities } from './web/fillet.js';
+import { filletEntities, filletAllPolyline } from './web/fillet.js';
 import { trimEntity, mirrorEntity } from './web/modify.js';
 import { moveEntities, copyEntities, removeEntities, createHistory } from './web/edit.js';
 import { group, ungroup, groupOf, prune, remap, copy, follow } from './web/groups.js';
@@ -405,7 +405,7 @@ test('TODO 97a fix 4: Join gaps drops micro pieces from their groups and appends
   assert.deepEqual(members(remap(doc.groups, r.indexes)), [[0, 2]], 'the micro piece leaves its group, which then dissolves');
 });
 
-test('TODO 97a fix 4: Break Apart, Trim and polyline Fillet keep every piece with its source', () => {
+test('TODO 97a fix 5: Break Apart and Trim keep source groups; polyline Fillet adds ungrouped arcs', () => {
   const e = (n) => Array.from({ length: n }, (_, i) => W.line(i, 0, i + 1, 0));
   const doc = { ...W.newDoc(), entities: e(5), groups: [make(0, 4), make(1, 3)] };
   const apart = runInNewContext(appFunction('breakApartSelected') + '\nbreakApartSelected;', {
@@ -422,13 +422,14 @@ test('TODO 97a fix 4: Break Apart, Trim and polyline Fillet keep every piece wit
   });
   trimmed({ raw: trim }, 1, [0, 0]);
   assert.deepEqual(members(trim.groups), [[0, 4], [1, 2, 3]], 'Trim: a split gives both pieces to the source group');
-  const poly = { ...W.newDoc(), entities: e(3), groups: [make(0, 2)] }, more = [W.line(9, 9, 9, 8), W.line(8, 8, 7, 7), W.line(6, 6, 5, 5)];
+  const poly = { ...W.newDoc(), entities: [W.rect(0, 0, 10, 10), W.circle(50, 50, 2)], groups: [make(0, 1)] };
   const fillet = runInNewContext(appFunction('filletPolyDo') + '\nfilletPolyDo;', {
-    state: { mod: {}, filR: 1 }, filletAllPolyline: () => ({ ents: more, count: 1 }), filletCommit: (d, entities, groups) => { d.raw.entities = entities; d.raw.groups = groups; return true; },
+    state: { mod: { trim: false }, filR: 1 }, filletAllPolyline, filletCommit: (d, entities, groups) => { d.raw.entities = entities; d.raw.groups = groups; return true; },
     remapGroups: remap, note() {}, ui: { cmdUI: { message() {} } }, paintOverlay() {},
   });
   fillet({ raw: poly, factor: 1 }, poly.entities[0]);
-  assert.deepEqual(members(poly.groups), [[0, 2, 3, 4]], 'Fillet: the polyline\'s extra pieces join its group');
+  assert.deepEqual([...poly.entities.map((x) => x.type)], ['LWPOLYLINE', 'CIRCLE', 'ARC', 'ARC', 'ARC', 'ARC']);
+  assert.deepEqual(members(poly.groups), [[0, 1]], 'Fillet, No trim: the four new arcs join no group');
 });
 
 test('TODO 97a fix 4: Offset with Erase source puts the new object in the erased source\'s group', () => {
