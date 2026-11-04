@@ -7375,7 +7375,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label]) => [(theme === mode ? '✓ ' : '  ') + 'Theme: ' + label, false])]);
+      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['  Dotted crosshair', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label]) => [(theme === mode ? '✓ ' : '  ') + 'Theme: ' + label, false])]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
@@ -7522,7 +7522,7 @@ try {
     assert.equal(await guideLines(), 0); assert.equal(await ribbonToggle('Show guides').isChecked(), false);
     // View menu: Guides, Lock guides, Clear all guides
     await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(5, 11)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(r.findIndex((x) => /Rulers/.test(x)), r.findIndex((x) => /Clear all guides/.test(x)) + 1)), ['✓ Rulers', '  Wireframe', '  Dotted crosshair', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
     await page.getByRole('menuitem', { name: /Guides/ }).click();
     assert.equal(await guideLines(), 1); assert.equal(await ribbonToggle('Show guides').isChecked(), true);
     await menuItem('View', 'Clear all guides');
