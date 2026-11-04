@@ -26,6 +26,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Base point**: The reference point from which Move measures displacement to its target. Click it with snaps or type absolute x,y in mm; a typed target pair is dx,dy from this point. Where: `DECISIONS.md`, Move tool (TODO 66a).
 
+**Break**: Cuts the piece between two points out of one line, arc, circle or polyline, leaving two objects (a circle becomes an arc). **Break at point** splits an open object in two with no gap. Where: `DECISIONS.md`, Break and Join. Avoid: Break Apart (ungroups); Trim (cuts at crossing edges).
+
+**Join**: Merges several selected objects whose ends touch, or collinear lines / same-circle arcs, into one object, which takes the first object's properties. Where: `DECISIONS.md`, Break and Join. Avoid: Join gaps, which only moves nearby ends together and leaves the objects separate.
+
 **Break Apart**: Separates one selected layout group into ungrouped outlines, or an outline-only drawing block into its members one level down, keeping their placement and layers. Results stay selected; one Undo restores the object and selection. Modify menu, Ctrl+K or `BREAKAPART`. Where: `web/breakapart.js`, `web/app.js`. Avoid: Explode, which also splits polylines into lines and arcs.
 
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
