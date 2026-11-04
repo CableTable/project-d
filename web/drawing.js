@@ -1,6 +1,7 @@
 import { ACI } from './colour.js';
 import { restoreDimensionInserts } from './dimension-text.js';
 import { closedOutline, linkFills, fillCss, fillHoles, fillOps } from './fill.js';
+import { group, remap } from './groups.js';
 // The drawing viewer's reader (.dxf), pure: no DOM, no canvas — drawing.test.mjs. dxf-worker.js runs it off the
 // page's thread, viewers.js draws what it gives, and Measure asks pickAt / describe2d / measure2d (geom.js words them).
 //
@@ -39,7 +40,7 @@ export function decodeDxf(bytes) {
   }
 }
 
-/** The file's sections: header, layers, line types, blocks, entities. */
+/** The file's sections: header, layers, line types, blocks, entities and drawing groups. */
 export function readDxf(text) {
   const raw = String(text).split(/\r\n|\r|\n/), C = [], V = [];
   for (let i = 0; i + 1 < raw.length; i += 2) {
@@ -51,7 +52,8 @@ export function readDxf(text) {
     C.push(c); V.push(raw[i + 1].replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16))));   // the writer encodes it again
   }
   if (!C.length) throw new DrawingError('This drawing is empty.');
-  const doc = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [] };
+  const doc = { header: {}, layers: {}, ltypes: {}, blocks: {}, entities: [], groups: [] };
+  let objects = [];
   for (let i = 0; i < C.length; i++) {
     if (!(C[i] === 0 && V[i].trim() === 'SECTION' && C[i + 1] === 2)) continue;
     const name = V[i + 1].trim();
@@ -61,9 +63,63 @@ export function readDxf(text) {
     else if (name === 'TABLES') tables(doc, records(C, V, i + 2, end));
     else if (name === 'BLOCKS') blocks(doc, records(C, V, i + 2, end));
     else if (name === 'ENTITIES') doc.entities = entities(records(C, V, i + 2, end));
+    else if (name === 'OBJECTS') objects = records(C, V, i + 2, end);
     i = end;
   }
-  return linkFills(restoreDimensionInserts(doc));
+  doc.groups = readGroups(objects, doc.entities);
+  restoreDimensionInserts(doc);
+  const before = doc.entities;
+  linkFills(doc);
+  if (doc.groups.length && before !== doc.entities) {
+    const indexes = new Map(doc.entities.map((e, i) => [e, i]));
+    doc.groups = remap(doc.groups, new Map(before.map((e, i) => [i, indexes.has(e) ? [indexes.get(e)] : []])));
+  }
+  return doc;
+}
+
+/** ACAD_GROUP names point to GROUP objects; nested handles are expanded without recursion. */
+function readGroups(objects, entities) {
+  const handle = (v) => (v || '').trim().toUpperCase();
+  const byHandle = new Map(objects.map((r) => [handle(firsts(r)[5]), r]));
+  const entries = (r) => {
+    const pairs = [];
+    let name;
+    for (let i = 0; i < r.c.length; i++) {
+      if (r.c[i] === 3) name = r.v[i].trim();
+      else if (r.c[i] === 350 && name != null) { pairs.push([name, handle(r.v[i])]); name = null; }
+    }
+    return pairs;
+  };
+  const root = objects.find((r) => r.type === 'DICTIONARY' && entries(r).some(([name]) => name === 'ACAD_GROUP'));
+  const dictionary = root && byHandle.get(entries(root).find(([name]) => name === 'ACAD_GROUP')[1]);
+  if (dictionary?.type !== 'DICTIONARY') return [];
+  const named = entries(dictionary);
+  if (!named.length) return [];
+  const entityIndex = new Map();
+  entities.forEach((e, i) => { const h = handle(firsts(e.r)[5]); if (h) entityIndex.set(h, i); });
+  let groups = [];
+  for (const [name, h] of named) {
+    const record = byHandle.get(h);
+    if (record?.type !== 'GROUP') continue;
+    const members = [], pending = [h], visited = new Set();
+    while (pending.length) {
+      const next = pending.pop();
+      if (visited.has(next)) continue;
+      visited.add(next);
+      const r = byHandle.get(next);
+      if (r?.type !== 'GROUP') continue;
+      for (let i = 0; i < r.c.length; i++) if (r.c[i] === 340) {
+        const member = handle(r.v[i]);
+        if (entityIndex.has(member)) members.push(entityIndex.get(member));
+        else if (byHandle.get(member)?.type === 'GROUP') pending.push(member);
+      }
+    }
+    if (new Set(members).size < 2) continue;
+    groups = group(groups, members);
+    const f = firsts(record), last = groups[groups.length - 1];
+    groups[groups.length - 1] = { ...last, name, description: f[300] || '', unnamed: num(f[70]) === 1, selectable: num(f[71], 1) === 1 };
+  }
+  return groups;
 }
 
 function header(doc, C, V, from, to) {
