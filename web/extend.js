@@ -203,7 +203,7 @@ function spGrow(sp, shapes) {
   const { p, U, P, F } = sp, N = P.length, b = U.at(-1), a = U[N - 1], none = { error: 'No boundary ahead of that end: nothing changed' };
   const ok = nurbsOk(P, U, p) && U.slice(N).every((u) => Math.abs(u - b) < 1e-12) && a < b;       // clamped at this end, else the end span is not a span of its own
   if (!ok && !(F.length > 1 && !P.length)) return { error: "Can't extend this spline" };
-  const segs = shapes.flatMap((sh) => pathOf(sh).segs).filter((s) => dist(s.a, s.b) >= 1e-9);
+  const own = shapes.map((sh) => ({ q: sh.q, segs: pathOf(sh).segs.filter((s) => dist(s.a, s.b) >= 1e-9) })), segs = own.flatMap((o) => o.segs);
   if (F.length) {                                       // straight along the end tangent: the last two control points (fit points when there are no controls)
     const line = ok ? P : F, E = line.at(-1), from = line.findLast((q) => dist(q, E) > 1e-9);
     const H = from && rayHit(from, E, shapes);
@@ -221,7 +221,8 @@ function spGrow(sp, shapes) {
   };
   const h = b - a, base = piece(b + h), dt = h / 48, onC = (t) => nurbsAt(P.map((q) => q.slice(0, 2)), U, p, sp.W, t);
   const onQ = (s) => { const d = base.map((q) => q.slice()); for (let r = 1; r <= p; r++) for (let j = 0; j <= p - r; j++) d[j] = d[j].map((x, k) => (1 - s / h) * x + (s / h) * d[j + 1][k]); return [d[0][0] / d[0][2], d[0][1] / d[0][2]]; };
-  let span = 0, len = 0, i = 0, bx = [Infinity, -Infinity, Infinity, -Infinity];
+  const p0 = onQ(0);
+  let span = 0, len = 0, i = 0, bx = [p0[0], p0[0], p0[1], p0[1]];
   for (let k = 0; k < 48; k++) span += dist(onC(a + k * dt), onC(a + (k + 1) * dt));
   for (; i < 4000 && len < 4 * span; i++) { const p1 = onQ((i + 1) * dt); len += dist(onQ(i * dt), p1); bx = [Math.min(bx[0], p1[0]), Math.max(bx[1], p1[0]), Math.min(bx[2], p1[1]), Math.max(bx[3], p1[1])]; }      // out to 4 spans' length along the continued curve
   const near = segs.filter((s) => {                     // only boundaries inside the box the continued curve covers
@@ -230,12 +231,15 @@ function spGrow(sp, shapes) {
   });
   let d = curveGrowth(onQ, i * dt, near);
   if (d == null) return { error: 'Object does not intersect an edge' };
-  for (const { q } of shapes) if (q) {                  // a hit found on an ellipse's chords moves onto the true ellipse (Newton on the spline's parameter)
-    const det = q.m[0] * q.n[1] - q.m[1] * q.n[0], gap = i * dt, h = 1e-6 * gap;
-    const f = (s) => { const P = onQ(s), x = P[0] - q.c[0], y = P[1] - q.c[1], u = (x * q.n[1] - y * q.n[0]) / det, v = (q.m[0] * y - q.m[1] * x) / det; return u * u + v * v - 1; };
+  for (const { q, segs: mine } of own) if (q) {         // a hit found on an ellipse's chords moves onto the true ellipse (Newton on the spline's parameter), only the one the curve hit
+    const det = q.m[0] * q.n[1] - q.m[1] * q.n[0], gap = i * dt, h = 1e-6 * gap, dq = curveGrowth(onQ, gap, mine.filter((s) => near.includes(s)));
+    if (dq == null || Math.abs(dq - d) > gap * 1e-6) continue;
+    const uv = (s) => { const P = onQ(s), x = P[0] - q.c[0], y = P[1] - q.c[1]; return [(x * q.n[1] - y * q.n[0]) / det, (q.m[0] * y - q.m[1] * x) / det]; };
+    const f = (s) => { const [u, v] = uv(s); return u * u + v * v - 1; };
     let s = d;
     for (let k = 0; k < 8 && det; k++) { const g = f(s), dg = (f(s + h) - g) / h; if (!dg) break; s -= g / dg; }
-    if (det && Number.isFinite(s) && Math.abs(s - d) < gap * 1e-3 && Math.abs(f(s)) < 1e-9) { d = s; break; }
+    const [u, v] = det && Number.isFinite(s) ? uv(s) : [0, 0];
+    if (det && Number.isFinite(s) && Math.abs(s - d) < gap * 1e-3 && Math.abs(f(s)) < 1e-9 && wrap(Math.atan2(v, u) - q.t0 + 1e-6) <= q.t1 - q.t0 + 2e-6) { d = s; break; }
   }
   const B = piece(b + d).slice(1);
   return { sp: { ...sp, U: [...U.slice(0, -1), ...Array(p + 1).fill(b + d)], P: [...P, ...B.map((q) => [q[0] / q[2], q[1] / q[2], 0])], W: sp.W && [...sp.W, ...B.map((q) => q[2])] } };

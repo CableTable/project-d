@@ -193,6 +193,18 @@ test('extendEntity spline: a control-vertex spline reaches an ellipse on the tru
   assert.ok(Math.abs(((p[0] - 200) / 40) ** 2 + ((p[1] - 130) / 20) ** 2 - 1) < 1e-8, `${p}`);
 });
 
+test('extendEntity spline: a control-vertex spline stops at a wall within 1/48 of its end, whatever lies beyond', () => {
+  const cps = [[0, 110], [50, 140], [100, 100], [150, 120]], near = line(151, 0, 151, 200);
+  for (const edges of [[near], [near, wall]]) { const p = endOf(extendEntity(cv(cps), edges, [149, 121]).ent); assert.ok(Math.abs(p[0] - 151) < 1e-6, `${p}`); }
+});
+
+test('extendEntity spline: a line plus a partial ellipse the curve never reaches: the end stays on the line', () => {
+  for (const [cx, cy, k] of [[200, 130, 0.5], [200, 125, 0.75], [210, 150, 0.3], [190, 140, 0.5], [180, 150, 0.4], [205, 160, 0.5], [200, 160, 0.2], [200.203, 140.2439, 0.5]]) {
+    const p = endOf(extendEntity(cv([[0, 110], [50, 140], [100, 100], [150, 120]]), [wall, ellipse(cx, cy, 40, 0, k, 0, 1)], [149, 121]).ent);
+    assert.ok(Math.abs(p[0] - 200) < 1e-9 && Math.abs(p[1] - 160) < 1e-3, `${cx},${cy},${k}: ${p}`);
+  }
+});
+
 test('extendEntity spline: a control-vertex spline continues its own last span; the old part is exactly the same; a miss says so', () => {
   const cps = [[0, 110], [50, 140], [100, 100], [150, 120]], old = cv(cps), r = extendEntity(old, [wall], [149, 121]);
   assert.ok(r.ent, r.error);
