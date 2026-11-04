@@ -1376,7 +1376,7 @@ function buildZoomLevel() {
   };
   const close = () => {
     if (input.hidden) return;
-    input.hidden = list.hidden = true;
+    input.hidden = true; list.remove();       // the list only exists while open: a closed one would be a second "Fit" button
     ui.pct.style.visibility = '';
     input.blur();       // focus to the body, so Space does not reopen the editor
   };
@@ -1396,16 +1396,16 @@ function buildZoomLevel() {
     if (presets[index] === 'Fit') { close(); fitView(); }
     else apply(presets[index]);
   };
-  const list = h('div', { class: 'zoom-presets', id: 'zoom-presets', role: 'listbox', 'aria-label': 'Zoom presets', hidden: true },
+  const list = h('div', { class: 'zoom-presets', id: 'zoom-presets', role: 'listbox', 'aria-label': 'Zoom presets' },
     presets.map((value, i) => h('button', { type: 'button', role: 'option', tabindex: '-1', id: 'zoom-preset-' + i,
       onpointerdown: (e) => e.preventDefault(), onclick: () => choose(i) }, value.replace('%', ' %'))));
   ui.pct = h('button', { class: 'pct mono', type: 'button', 'data-testid': 'zoom', title: 'Zoom level', onclick: () => {
     input.value = ui.pct.textContent;
     input.removeAttribute('aria-invalid'); input.classList.remove('invalid'); highlight(-1);
-    ui.pct.style.visibility = 'hidden'; input.hidden = list.hidden = false;
+    ui.pct.style.visibility = 'hidden'; input.hidden = false; control.append(list);
     input.focus(); input.select();
   } }, '100%');
-  const control = h('div', { class: 'zoom-level' }, ui.pct, input, list);
+  const control = h('div', { class: 'zoom-level' }, ui.pct, input);
   input.addEventListener('input', () => { highlight(-1); input.removeAttribute('aria-invalid'); input.classList.remove('invalid'); });
   input.addEventListener('blur', () => close());
   document.addEventListener('pointerdown', (e) => { if (!control.contains(e.target)) close(); }, true);
