@@ -240,7 +240,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 135. ✅ **Ctrl + drag: copy and drag the copy does not work** (M, bug, T45): see T45 in support/tickets.md. Grilled 2026-10-24: on drawing tabs, Ctrl+drag copies the selection and drags the copy (original stays, one Undo step, hint "Ctrl-drag = copy"), as layouts already do (`web/app.js:1973`); today drawing tabs just move (`web/app.js:3490`, `moveSelectionTo` 4025).
     135b. ✅ (built, Knight; review finding 2026-10-24) Ctrl+Shift-drag on a drawing tab copies straight along X or Y (as layouts, DECISIONS "Move and copy by dragging"). Updated by 66a2: plain Shift-drag moves selected objects straight; from empty space it keeps box selection. Browser checks both axes, one Undo, unchanged originals, and refusal of Ctrl-drag / Ctrl+Shift-drag on a locked layer.
 136. **Start page with recent files and pinned / favourite drawings instead of an empty sheet** (M, ask, T46): see T46 in support/tickets.md. Grill first.
-137. **Zoom level at bottom right: type a custom zoom** (S, ask, T47): see T47 in support/tickets.md. Grill first.
+137. ✅ (built, Knight + Rook builder fix, Rook S36d full control, 2026-11-04) **Zoom level at bottom right: type a custom zoom** (S, T47): click the readout, type a value or pick 25 / 50 / 100 / 200 / 400 % / Fit (grill `runs36/grill-137.md`).
 138. **Open .tif / .tiff files (as a background picture and for Trace bitmap)** (M, ask, T48): see T48 in support/tickets.md. Grill first.
 139. **Shape tool (CorelDRAW): edit the nodes of lines and polylines** (M, ask, T51): see T51 in support/tickets.md. Grill first.
 140. **Pen tool (CorelDRAW): draw lines and Bezier curves** (M, ask, T52): see T52 in support/tickets.md. Grill first.
