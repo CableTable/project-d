@@ -13,6 +13,8 @@ import * as G from './web/groups.js';
 import { explodeSelection } from './web/explode.js';
 import { outlineEntities } from './web/textoutline.js';
 import * as SH from './web/shaping.js';
+import * as CL from './web/cleanup.js';
+import * as Ed from './web/edit.js';
 import * as GR from './web/grips.js';
 import * as TX from './web/text.js';
 import opentype from './web/vendor/opentype/opentype.js';
@@ -371,4 +373,73 @@ test('TODO 97a fix 3: Offset Multiple with Erase source keeps the member as the 
   end({ raw: doc });
   assert.deepEqual(doc.entities, [c, k1, k2]);
   assert.deepEqual(members(doc.groups), [[0, 2]], 'the group is the circle and the last copy');
+});
+
+test('TODO 97a fix 4: Remove duplicates of two adjacent members keeps each piece in its own source group', () => {
+  const [x1, x2, a, b, c1, c2] = [W.line(3, 0, 6, 0), W.line(13, 0, 16, 0), W.line(0, 0, 10, 0), W.line(10, 0, 20, 0), W.circle(50, 50, 2), W.circle(60, 60, 2)];
+  const doc = { ...W.newDoc(), entities: [x1, x2, a, b, c1, c2], groups: [make(2, 4), make(3, 5)] };
+  const d = { raw: doc, locked: new Set() };
+  const run = runInNewContext(appFunction('removeDuplicates') + '\nremoveDuplicates;', {
+    editable: () => d, CL, lockedEnt: () => false, ui: { duplicateRemove: {}, duplicateReason: {} }, renderEdit() {}, note() {}, remapGroups: remap,
+    commit: (dd, next) => { Object.assign(dd.raw, next); return true; },
+  });
+  run();
+  assert.equal(doc.entities.length, 8, 'A and B split in two each');
+  assert.deepEqual(members(doc.groups), [[2, 3, 6], [4, 5, 7]], 'the guess gave [[2, 6], [3, 7]]');
+});
+
+test('TODO 97a fix 4: Front minus back and Back minus front give the result to the target\'s group only', () => {
+  const sq = (x, ents) => ({ pts: [[x, 0], [x + 10, 0], [x + 10, 10], [x, 10]], ents: new Set(ents) });
+  const loops = [sq(0, [0]), sq(5, [1])], all = goneEntities(loops, [], [0, 1]);
+  for (const [op, want] of [['frontminus', [[1, 2]]], ['backminus', [[0, 2]]]]) {
+    const res = shape(op, loops);
+    assert.deepEqual(members(swap([make(0, 2), make(1, 3)], 4, ringsOf(op, loops, res, all))), want, op + ': the cutter\'s group gets no ring');
+  }
+});
+
+test('TODO 97a fix 4: Join gaps drops micro pieces from their groups and appends bridges to none', () => {
+  const [a, micro, b, c] = [W.line(0, 0, 10, 0), W.line(10, 0, 10.001, 0), W.line(10.002, 0, 20, 0), W.circle(50, 50, 2)];
+  const doc = { ...W.newDoc(), entities: [a, micro, b, c], groups: [make(0, 3), make(1, 2)] };
+  const r = Ed.joinTinyGaps(doc, CL.checkIndex(doc), 0.01);
+  assert.equal(r.removed, 1);
+  assert.deepEqual(members(remap(doc.groups, r.indexes)), [[0, 2]], 'the micro piece leaves its group, which then dissolves');
+});
+
+test('TODO 97a fix 4: Break Apart, Trim and polyline Fillet keep every piece with its source', () => {
+  const e = (n) => Array.from({ length: n }, (_, i) => W.line(i, 0, i + 1, 0));
+  const doc = { ...W.newDoc(), entities: e(5), groups: [make(0, 4), make(1, 3)] };
+  const apart = runInNewContext(appFunction('breakApartSelected') + '\nbreakApartSelected;', {
+    curLay: () => false, editable: () => ({ raw: doc, sel: new Set([1]), locked: new Set() }), breakApart: () => ({ selected: new Set([1, 2, 3]) }), pushHistory() {}, snapshotOf() {},
+    restore: (d, st) => { d.raw.groups = st.groups; }, setSel() {}, note() {}, spliceGroups: G.splice,
+  });
+  apart();
+  assert.deepEqual(members(doc.groups), [[0, 6], [1, 2, 3, 5]], 'Break Apart: the block\'s three outlines stay one group');
+  const pieces = [W.line(0, 0, 1, 0), W.line(2, 0, 3, 0)], trim = { ...W.newDoc(), entities: e(4), groups: [make(0, 3), make(1, 2)] };
+  const commit = (d, next) => { Object.assign(d.raw, next); return true; };
+  const trimmed = runInNewContext(appFunction('trimDo') + '\ntrimDo;', {
+    state: { mod: { edges: [], quick: false } }, MD: { canModify: () => true, trimEntity: () => ({ ents: pieces }) }, curveEdgesOnly: () => false, trimEdges: () => [], view: {},
+    trimCommit: commit, renderCommand() {}, note() {}, spliceGroups: G.splice,
+  });
+  trimmed({ raw: trim }, 1, [0, 0]);
+  assert.deepEqual(members(trim.groups), [[0, 4], [1, 2, 3]], 'Trim: a split gives both pieces to the source group');
+  const poly = { ...W.newDoc(), entities: e(3), groups: [make(0, 2)] }, more = [W.line(9, 9, 9, 8), W.line(8, 8, 7, 7), W.line(6, 6, 5, 5)];
+  const fillet = runInNewContext(appFunction('filletPolyDo') + '\nfilletPolyDo;', {
+    state: { mod: {}, filR: 1 }, filletAllPolyline: () => ({ ents: more, count: 1 }), filletCommit: (d, entities, groups) => { d.raw.entities = entities; d.raw.groups = groups; return true; },
+    remapGroups: remap, note() {}, ui: { cmdUI: { message() {} } }, paintOverlay() {},
+  });
+  fillet({ raw: poly, factor: 1 }, poly.entities[0]);
+  assert.deepEqual(members(poly.groups), [[0, 2, 3, 4]], 'Fillet: the polyline\'s extra pieces join its group');
+});
+
+test('TODO 97a fix 4: Offset with Erase source puts the new object in the erased source\'s group', () => {
+  const [src, c, k] = [W.line(0, 0, 10, 0), W.circle(50, 50, 2), W.line(0, 2, 10, 2)];
+  const doc = { ...W.newDoc(), entities: [src, c], groups: [make(0, 1)], layers: {} }, d = { raw: doc };
+  const offset = runInNewContext(appFunction('offsetDo') + '\noffsetDo;', {
+    modSync() {}, state: { mod: { ent: src, src, eraseSource: true, multiple: false, offsetSteps: [], layer: 'Same' }, pointLast: null }, offsetPick: () => ({ target: src, r: { ent: k }, sig: null }),
+    snapshotOf: () => ({}), view: {}, remapGroups: remap, commit: (dd, next) => { Object.assign(dd.raw, next); return true; }, mdoc: (t) => t, historyOf: () => ({ revision: 0 }),
+    offsetPrompt: () => '', note() {}, paintOverlay() {}, setTool() {},
+  });
+  offset(d, [0, 0]);
+  assert.deepEqual([...doc.entities], [c, k]);
+  assert.deepEqual(members(doc.groups), [[0, 1]], 'the group is the circle and the new line');
 });

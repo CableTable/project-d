@@ -45,6 +45,11 @@ export function swap(groups = [], count, standIn) {
   return remap(groups, indexes);
 }
 
+/** One entity (index `at` of `count`) becomes `n` entities in its place; the rest shift by n - 1. */
+export function splice(groups = [], count, at, n) {
+  return remap(groups, new Map(Array.from({ length: count }, (_, i) => [i, i < at ? [i] : i === at ? Array.from({ length: n }, (_, k) => at + k) : [i + n - 1]])));
+}
+
 /** Surviving objects anchor the indexes; new objects in a removed member's place inherit its group. */
 export function follow(groups = [], before, after) {
   if (!groups.length || before === after) return groups;
@@ -63,7 +68,7 @@ export function follow(groups = [], before, after) {
       const removed = [];
       for (; old < stop; old++) if (!at.has(before[old])) removed.push(old);
       const added = Array.from({ length: end - start }, (_, k) => start + k);
-      // shortcut: still needed for Join (many sources → one); Explode, Text outlines, Shaping, Mirror, Offset, Fillet and Trim pass an explicit map, so this guesses only for the rest.
+      // shortcut: a fallback only; every command that removes or splits entities passes an explicit map (pure erases and appends need none). Delete this guess once nothing new relies on it.
       removed.forEach((i, k) => indexes.set(i, removed.length === 1 && end < after.length ? added : added.length ? [added[Math.min(k, added.length - 1)]] : []));
       old = stop + 1; start = end + 1;
     }

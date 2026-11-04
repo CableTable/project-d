@@ -676,7 +676,9 @@ export function joinTinyGaps(raw, ed, tol, eligible = () => true, method = 'aver
   }
   const gaps = findGaps({ ...ed, shown: ed.shown.filter((e) => !drop.has(e)) }, tol).filter((g) => g.ends.every((x) => eligible(x.e)));
   const result = joinGaps(raw, ed, gaps, method);
-  return { ...result, entities: result.entities.filter((_, e) => !drop.has(e)), removed: drop.size, changed: result.changed + drop.size };
+  let rank = 0;       // old index → new index (dropped micro pieces go; bridges appended by a method belong to no group)
+  const indexes = new Map(raw.entities.map((_, e) => [e, drop.has(e) ? [] : [rank++]]));
+  return { ...result, entities: result.entities.filter((_, e) => !drop.has(e)), indexes, removed: drop.size, changed: result.changed + drop.size };
 }
 
 // ---------------------------------------------------------------- join methods (TODO 121)

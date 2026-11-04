@@ -15,7 +15,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
-import { follow as followGroups, remap as remapGroups, swap as swapGroups } from './groups.js';
+import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups } from './groups.js';
 import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
@@ -4992,7 +4992,7 @@ function breakApartSelected() {
   const r = breakApart(d.raw, d.sel, d.locked);
   if (r.error) { note('Break Apart: ' + r.error); return; }
   pushHistory(d, { ...snapshotOf(d), sel: [...d.sel] }, 'Break Apart');
-  restore(d, r);
+  restore(d, { ...r, groups: spliceGroups(d.raw.groups, d.raw.entities.length, [...d.sel][0], r.selected.size) });
   setSel(d, r.selected);
   note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
 }
@@ -7810,7 +7810,8 @@ function offsetDo(d, p) {
     r.ent = PR.withLayer(r.ent, name);
   }
   if (m.multiple && m.eraseSource && m.offsetSource == null) m.offsetSource = index;
-  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== target), r.ent], blocks: d.raw.blocks, layers };
+  const erased = m.eraseSource && !m.multiple, last = d.raw.entities.length - (erased ? 1 : 0);       // the new object takes the erased source's place in its group
+  const next = { entities: [...d.raw.entities.filter((e) => !erased || e !== target), r.ent], groups: remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [erased ? (i < index ? i : i === index ? last : i - 1) : i]]))), blocks: d.raw.blocks, layers };
   view.fitted = false; m.offsetRaw = null;
   let done = true;
   if (!m.offsetSteps.length) done = commit(d, next, 'Offset');
@@ -7871,7 +7872,8 @@ function filletPolyDo(d, ent) {
   const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
   m.stage = 'obj'; m.ent = null;
-  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)])) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
+  const n = d.raw.entities.length, at = d.raw.entities.indexOf(ent), tail = r.ents.slice(1).map((_, k) => n + k);       // the polyline's extra pieces stay with it
+  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, i === at ? [i, ...tail] : [i]]))))) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
   note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
@@ -8020,7 +8022,7 @@ function trimDo(d, idx, p) {
   view.fitted = false;
   // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
   if (m.edges.includes(ent)) { for (const p of r.ents) m.was.set(p, ent); m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e])); }
-  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim')) return;
+  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), groups: spliceGroups(d.raw.groups, d.raw.entities.length, idx, r.ents.length), blocks: d.raw.blocks }, 'Trim')) return;
   renderCommand();
   note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
 }
@@ -10142,7 +10144,7 @@ function joinTinyGaps(whole = false) {
   if (!ed) return;
   const method = state.gapMethod, r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e), method);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
-  if (!commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps')) return;
+  if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, 'Join gaps')) return;
   edIndex(d); renderEdit();
   const left = gapsOf(d) || [];
   // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
@@ -10158,7 +10160,7 @@ function removeDuplicates() {
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
   d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
   if (!r.count) { renderEdit(); note(ui.duplicateRemove.disabled ? ui.duplicateReason.textContent : 'No removable duplicates / overlaps (locked layers are kept)'); return; }
-  if (!commit(d, r, 'Remove duplicates / overlaps')) return;
+  if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, 'Remove duplicates / overlaps')) return;
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
 
