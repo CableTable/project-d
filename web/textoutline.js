@@ -202,7 +202,7 @@ export function textPolys(it, font, tol, missing = new Set()) {
  * done (the entity indexes), missing (unique characters absent from their font) }
  */
 export function outlineEntities(items, raw, fontOf, tol) {
-  const ents = [], done = new Set(), missing = new Set(), notes = new Set();
+  const ents = [], done = new Set(), missing = new Set(), notes = new Set(), from = new Map();       // from: text entity → offsets of its letters in ents
   for (const item of items) {
     const it = item.runs ? item : outlineItem(item, raw[item.e] || {});
     const e = raw[it.e];
@@ -212,8 +212,8 @@ export function outlineEntities(items, raw, fontOf, tol) {
     const runs = e.type === 'MTEXT' ? mtextLayout(it, fontOf).flatMap((l) => l.runs.map((r) => ({ ...it, ...r, multi: false, ha: 0, va: 'alphabetic', lines: [r.text],
       x: it.x + r.x * c - l.y * s, y: it.y + r.x * s + l.y * c }))) : [it];
     const polys = runs.flatMap((r) => textPolys(r, fontOf(r), tol, missing));
-    if (polys.length) done.add(it.e);                      // a blank text has no outlines: it stays
+    if (polys.length) { done.add(it.e); from.set(it.e, [...(from.get(it.e) || []), ...polys.map((_, k) => ents.length + k)]); }       // a blank text has no outlines: it stays
     for (const p of polys) ents.push(lwpoly(p, { closed: true, layer: e.layer, lt: e.lt, aci: e.aci, tc: e.tc, lw: e.lw, lts: e.lts, hidden: e.hidden, ps: e.ps }));
   }
-  return { ents, texts: done.size, done, missing: [...missing], notes: [...notes] };
+  return { ents, texts: done.size, done, from, missing: [...missing], notes: [...notes] };
 }

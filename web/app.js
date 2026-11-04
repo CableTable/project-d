@@ -15,7 +15,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
-import { follow as followGroups, remap as remapGroups } from './groups.js';
+import { follow as followGroups, remap as remapGroups, swap as swapGroups } from './groups.js';
 import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
@@ -4970,7 +4970,7 @@ async function textToOutlines() {
   const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
   view.fitted = false;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
-  if (!commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`)) return;
+  if (!commit(d, { entities: [...kept.entities, ...r.ents], groups: swapGroups(d.raw.groups, raw.length, r.from), blocks: kept.blocks }, `Text to outlines × ${r.texts}`)) return;
   if (lay) selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : [])));      // the new letters; commit's update() has made placedNow
   else { d.txoSel = new Set(r.ents.map((_, i) => at + i)); setSel(d, d.txoSel); }    // keep the new letters readable; a fresh selection enables their grips
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
@@ -5042,7 +5042,7 @@ function explodeOrBurst(burst) {
   const r = explodeSelection(d.raw, d.sel, d.locked, burst);
   const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
   if (!r.exploded) { note(label + ': nothing explodable (0 exploded)' + skipped); return; }
-  if (!commit(d, { entities: r.entities, blocks: r.blocks }, label)) return;
+  if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, label)) return;
   setSel(d, r.selected);
   note(`${label}: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
 }
@@ -5074,7 +5074,7 @@ function shapeSelection(op) {
     return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps });
   }), at = kept.entities.length;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
-  if (!commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name)) return;
+  if (!commit(d, { entities: [...kept.entities, ...made], groups: swapGroups(d.raw.groups, d.raw.entities.length, SH.ringsOf(op, found.loops, r, gone)), blocks: kept.blocks }, name)) return;
   if (lay) { selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : []))); update(); }      // the new objects; commit's update() has made placedNow
   else setSel(d, new Set(made.map((_, i) => at + i)));
   note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' && !keep ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : keep ? '. The originals stay. Ctrl+Z removes the result' : '. Ctrl+Z puts the originals back'));
@@ -7833,7 +7833,7 @@ function offsetEnd(d) {
     const entities = d.raw.entities.filter((_, i) => i !== m.offsetSource);
     m.offsetRaw = null;
     if (d.vlay) { LD.objectCommit(d.vlay.lay, d, entities, () => 'o' + uid()); touch(); update(); }
-    else restore(d, { entities, blocks: d.raw.blocks });
+    else restore(d, { entities, groups: remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i < m.offsetSource ? i : i === m.offsetSource ? entities.length - 1 : i - 1]]))), blocks: d.raw.blocks });       // the source's place goes to the last copy
   }
   setTool('select'); note('Offset ended');
 }
@@ -7853,11 +7853,11 @@ function offsetUndo(d) {
 }
 const filletSettings = (m) => `Current settings: Mode = ${m.trim ? 'TRIM' : 'NO TRIM'}, Radius = ${mmText(state.filR)} mm`;
 /** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
-function filletCommit(d, entities) {
+function filletCommit(d, entities, groups) {
   const m = state.mod, hist = historyOf(d.vlay || d), n = hist.labels().past.length;
   m.base = Math.min(m.base, n);
   view.fitted = false;
-  if (!commit(d, { entities, blocks: d.raw.blocks }, 'Fillet')) return false;
+  if (!commit(d, { entities, groups, blocks: d.raw.blocks }, 'Fillet')) return false;
   m.base -= n + 1 - hist.labels().past.length;
   return true;
 }
@@ -7886,7 +7886,7 @@ function filletDo(d, ent, p, sharp) {
     note('Already a sharp corner. Pick the next first line, arc, circle or polyline segment, or Esc ends'); paintOverlay(); return;
   }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
-  const ok = filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
+  const ok = filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))));       // the fillet arc joins no group
   m.stage = 'obj'; m.ent = null;
   if (!ok) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
   const radius = r.ents[2]?.type === 'ARC' ? GR.get(r.ents[2].r, 40) * d.factor : sharp ? 0 : state.filR;
@@ -8046,7 +8046,7 @@ function modAnswer(d, erase) {
   }
   if (!made.length) { setTool('select'); note('Mirror: nothing could be mirrored' + (skipped.length ? ' (' + skipped[0] + ')' : '')); return; }
   // Include the copies so cleanup keeps shared blocks that they still use.
-  const next = { entities: [...d.raw.entities, ...made], blocks }, out = erase ? Ed.removeEntities(next, new Set(done)) : next, first = out.entities.length - made.length;
+  const next = { entities: [...d.raw.entities, ...made], blocks }, out = erase ? { ...Ed.removeEntities(next, new Set(done)), groups: swapGroups(d.raw.groups, d.raw.entities.length, new Map(done.map((i, k) => [i, [k]]))) } : next, first = out.entities.length - made.length;
   view.fitted = false;
   if (!commit(d, out, 'Mirror')) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
   setTool('select'); setSel(d, new Set(made.map((_, i) => first + i)));

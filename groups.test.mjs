@@ -6,9 +6,17 @@ import { readDxf, flatten, DrawingError } from './web/drawing.js';
 import { layerCounts, entityCount, drawingBoxMm } from './web/doc.js';
 import * as W from './web/dxf-write.js';
 import { filletEntities } from './web/fillet.js';
-import { trimEntity } from './web/modify.js';
+import { trimEntity, mirrorEntity } from './web/modify.js';
 import { moveEntities, copyEntities, removeEntities, createHistory } from './web/edit.js';
 import { group, ungroup, groupOf, prune, remap, copy, follow } from './web/groups.js';
+import * as G from './web/groups.js';
+import { explodeSelection } from './web/explode.js';
+import { outlineEntities } from './web/textoutline.js';
+import * as SH from './web/shaping.js';
+import * as GR from './web/grips.js';
+import * as TX from './web/text.js';
+import opentype from './web/vendor/opentype/opentype.js';
+const { swap } = G, { shape, goneEntities, ringsOf } = SH;       // namespace imports: on the base a missing export fails its test, not the whole file
 
 const fixture = readFileSync('fixtures/groups.dxf', 'utf8').replace(/\r\n/g, '\n');
 const members = (groups) => groups.map((g) => g.members.slice().sort((a, b) => a - b));
@@ -292,4 +300,75 @@ test('TODO 97a fix: a named group keeps its name and unnamed flag; new and copie
   doc.groups = [named, copied, { ...make(5, 6), name: '*A1', unnamed: true }, make(7, 8)];
   const back = readDxf(W.writeDxf(doc));
   assert.deepEqual(back.groups.map((g) => g.name), ['Parallel lines', '*A2', '*A1', '*A3'], 'the copy of a named group is unnamed; new names skip the used *A1');
-  assert.deepEqual(back.groups.map((g) => g.unnamed), [false, true, true, true]);});
+  assert.deepEqual(back.groups.map((g) => g.unnamed), [false, true, true, true]);
+});
+
+test('TODO 97a fix 3: a fillet of a grouped line with a circle adds no arc to the group', () => {
+  const a = W.line(0, 0, 20, 0), c = W.circle(10, 6, 3), d = W.line(0, 30, 20, 30);
+  const doc = { ...W.newDoc(), entities: [a, c, d], groups: [make(0, 2)] };
+  const run = runInNewContext(appFunction('filletDo') + '\nfilletDo;', {
+    state: { mod: { ent: a, p0: [3, 0], trim: true, stage: '' }, filR: 2 }, filletEntities, remapGroups: remap, GR, mmText: String,
+    note() {}, paintOverlay() {}, ui: { cmdUI: { message() {} } },
+    filletCommit: (dd, entities, groups) => { Object.assign(dd.raw, { entities, groups }); return true; },
+  });
+  run({ raw: doc, factor: 1 }, c, [8, 3.2], false);
+  assert.deepEqual([...doc.entities.map((e) => e.type)], ['LINE', 'CIRCLE', 'LINE', 'ARC']);
+  assert.deepEqual(members(doc.groups), [[0, 2]], 'a and d stay grouped; the arc (3) is outside');
+});
+
+test('TODO 97a fix 3: Explode of several members keeps each piece in its own source group', () => {
+  const [p1, p2, c, c2] = [W.rect(0, 0, 5, 5), W.rect(20, 0, 5, 5), W.circle(50, 50, 2), W.circle(60, 60, 2)];
+  const two = { ...W.newDoc(), entities: [p1, p2, c, c2], groups: [make(0, 2), make(1, 3)] };
+  const r = explodeSelection(two, new Set([0, 1]));
+  assert.equal(r.entities.length, 10);
+  assert.deepEqual(members(remap(two.groups, r.indexes)), [[0, 1, 2, 3, 8], [4, 5, 6, 7, 9]]);
+  const one = { ...W.newDoc(), entities: [p1, c, p2], groups: [make(0, 1, 2)] };
+  const r1 = explodeSelection(one, new Set([0, 2]));
+  assert.deepEqual(members(remap(one.groups, r1.indexes)), [[0, 1, 2, 3, 4, 5, 6, 7, 8]], 'non-adjacent members keep every piece');
+});
+
+test('TODO 97a fix 3: Text to outlines of several members maps each letter set to its text', () => {
+  const buf = readFileSync('web/vendor/fonts/LiberationSans-Regular.ttf'), font = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
+  const model = (s, x) => ({ type: 'TEXT', x, y: 50, h: 10, lines: [s], angle: 0, ha: 0, font: 'Standard', styleName: 'Standard', bold: false });
+  const doc = W.addEntities(W.newDoc(4), [TX.encode(model('A', 0)), TX.encode(model('B', 40)), W.circle(0, 0, 1), W.circle(5, 5, 1)]);
+  const raw = readDxf(W.writeDxf(doc)), items = flatten(raw).items.filter((it) => it.k === 't');
+  const r = outlineEntities(items, raw.entities, () => font, 0.01);
+  assert.deepEqual([r.ents.length, r.from.get(0), r.from.get(1)], [5, [0, 1], [2, 3, 4]]);
+  assert.deepEqual(members(swap([make(0, 2), make(1, 3)], 4, r.from)), [[0, 2, 3], [1, 4, 5, 6]]);
+});
+
+test('TODO 97a fix 3: Shaping gives a ring to the group of the outline it came from', () => {
+  const sq = (x, ents) => ({ pts: [[x, 0], [x + 10, 0], [x + 10, 10], [x, 10]], ents: new Set(ents) });
+  const loops = [sq(0, [0]), sq(5, [1])], res = shape('simplify', loops);       // the back square loses the front one's corner
+  const gone = goneEntities(loops, [], res.operands.flatMap((o, i) => (res.untouched.includes(i) ? [] : o.loops)));
+  assert.deepEqual([...gone], [0]);
+  const rings = ringsOf('simplify', loops, res, gone);
+  assert.deepEqual(members(swap([make(0, 2), make(1, 3)], 4, rings)), [[1, 3], [0, 2]], 'ring (3) joins the first group; the other keeps its shifted members');
+  const weld = shape('weld', loops), all = goneEntities(loops, [], [0, 1]);
+  assert.deepEqual(members(swap([make(0, 2), make(1, 3)], 4, ringsOf('weld', loops, weld, all))), [[0, 2], [1, 2]], 'a weld: every source member goes to the one ring');
+});
+
+test('TODO 97a fix 3: Mirror with erase puts each copy in its own source group, in click order', () => {
+  const [l1, l2, c, c2] = [W.line(0, 0, 10, 0), W.line(0, 5, 10, 5), W.circle(50, 50, 2), W.circle(60, 60, 2)];
+  const doc = { ...W.newDoc(), entities: [l1, l2, c, c2], groups: [make(0, 2), make(1, 3)] };
+  const mirror = runInNewContext(appFunction('modAnswer') + '\nmodAnswer;', {
+    state: { mod: { objs: [l2, l1], p1: [0, -10], p2: [10, -10] } }, MD: { mirrorEntity }, Ed: { removeEntities }, swapGroups: swap, view: {},
+    setTool() {}, setSel() {}, note() {}, commit: (d, next) => { Object.assign(d.raw, next); return true; },
+  });
+  mirror({ raw: doc }, true);
+  assert.equal(doc.entities.length, 4);
+  assert.deepEqual([...doc.entities.slice(2).map((e) => e.type)], ['LINE', 'LINE']);
+  assert.deepEqual(members(doc.groups), [[0, 3], [1, 2]], 'the copy of l1 (3) is in l1\'s group, the copy of l2 (2) in l2\'s');
+});
+
+test('TODO 97a fix 3: Offset Multiple with Erase source keeps the member as the last copy', () => {
+  const [src, c, k1, k2] = [W.line(0, 0, 10, 0), W.circle(50, 50, 2), W.line(0, 2, 10, 2), W.line(0, 4, 10, 4)];
+  const doc = { ...W.newDoc(), entities: [src, c, k1, k2], groups: [make(0, 1)] };
+  const end = runInNewContext(appFunction('offsetEnd') + '\noffsetEnd;', {
+    state: { mod: { offsetSource: 0, offsetSteps: [1] } }, modSync() {}, remapGroups: remap, setTool() {}, note() {},
+    restore: (d, next) => Object.assign(d.raw, next),
+  });
+  end({ raw: doc });
+  assert.deepEqual(doc.entities, [c, k1, k2]);
+  assert.deepEqual(members(doc.groups), [[0, 2]], 'the group is the circle and the last copy');
+});

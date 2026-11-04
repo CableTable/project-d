@@ -36,6 +36,13 @@ export function goneEntities(loops, openEnts, usedLoops) {
   return gone;
 }
 
+/** Each gone entity → offsets of the rings that replace it: its own outline's rings for an each-op (none when it vanished), all rings otherwise. */
+export function ringsOf(op, loops, res, gone) {
+  const own = new Map();
+  res.operands.forEach((o, n) => o.loops.forEach((l) => loops[l].ents.forEach((e) => own.set(e, n))));
+  return new Map([...gone].map((e) => [e, res.rings.flatMap((_, k) => (!OPS[op].each || res.sources[k] === own.get(e) ? [k] : []))]));
+}
+
 export const OPS = {
   weld: { label: 'Weld', run: (polys) => pc.union(polys[0], ...polys.slice(1)) },
   trim: { label: 'Trim', run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },

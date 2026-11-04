@@ -38,6 +38,13 @@ export function remap(groups = [], indexes) {
   return groups.map((g) => ({ ...g, members: unique(g.members.flatMap((i) => indexes.get(i) || [])) })).filter((g) => g.members.length >= 2);
 }
 
+/** `standIn` maps each removed index (of `count` entities) to offsets in the new tail, which starts at count - standIn.size; the rest shift down. */
+export function swap(groups = [], count, standIn) {
+  const tail = count - standIn.size, indexes = new Map([...standIn].map(([i, ks]) => [i, ks.map((k) => tail + k)]));
+  for (let i = 0, rank = 0; i < count; i++) if (!indexes.has(i)) indexes.set(i, [rank++]);
+  return remap(groups, indexes);
+}
+
 /** Surviving objects anchor the indexes; new objects in a removed member's place inherit its group. */
 export function follow(groups = [], before, after) {
   if (!groups.length || before === after) return groups;
@@ -56,7 +63,7 @@ export function follow(groups = [], before, after) {
       const removed = [];
       for (; old < stop; old++) if (!at.has(before[old])) removed.push(old);
       const added = Array.from({ length: end - start }, (_, k) => start + k);
-      // shortcut: adjacent multi-source splits have no piece boundaries; use an explicit remap when a command needs them.
+      // shortcut: still needed for Join (many sources → one); Explode, Text outlines, Shaping, Mirror, Offset, Fillet and Trim pass an explicit map, so this guesses only for the rest.
       removed.forEach((i, k) => indexes.set(i, removed.length === 1 && end < after.length ? added : added.length ? [added[Math.min(k, added.length - 1)]] : []));
       old = stop + 1; start = end + 1;
     }
