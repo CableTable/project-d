@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { acad, acadArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief } from './tools/rook-launch.mjs';
+import { acad, acadArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -306,7 +306,7 @@ test('review arguments: three positionals, optional --as and --from clone branch
 });
 
 test('build arguments: four positionals, optional --as (default king), a real commit id, paths absolute', () => {
-  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, tool: false, over: false, big: false, review: undefined });
+  assert.deepEqual(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234']), { brief: resolve('b.txt'), out: resolve('o.jsonl'), branch: 'king/x', sha: 'abc1234', as: 'king', dir: undefined, fix: false, regrilled: false, tool: false, over: false, big: false, review: undefined });
   const flagged = parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--fix', '--over', '--as', 'king']);
   assert.deepEqual([flagged.fix, flagged.over, flagged.as], [true, true, 'king']);
   assert.equal(parseBuild(['b.txt', 'o.jsonl', 'king/x', 'abc1234', '--as', 'bishop']).as, 'bishop');
@@ -316,7 +316,7 @@ test('build arguments: four positionals, optional --as (default king), a real co
 
 test('knight arguments: four positionals, report ends in .txt, log sits next to it, paths absolute', () => {
   assert.deepEqual(parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234']),
-    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, tool: false, over: false, big: false, review: undefined });
+    { brief: resolve('b.txt'), report: resolve('runs/k.txt'), branch: 'knight/x', sha: 'abc1234', log: resolve('runs/k.log'), fix: false, regrilled: false, tool: false, over: false, big: false, review: undefined });
   assert.deepEqual(['--fix', '--over'].map((f) => parseKnight(['b.txt', 'runs/k.txt', 'knight/x', 'abc1234', f])).map((p) => [p.fix, p.over]), [[true, false], [false, true]]);
   assert.throws(() => parseKnight(['b.txt', 'k.txt', 'knight/x']), /usage: knight/);
   assert.throws(() => parseKnight(['b.txt', 'k.md', 'knight/x', 'abc1234']), /must end in \.txt/);
@@ -485,6 +485,64 @@ test('TODO 167c: a brief whose line 1 starts King fix / Knight fix / Fix round c
       const [, fix, , tool] = calls.find((c) => c[0] === 'gateCheck'), rec = calls.find((c) => c[0] === 'gateRecord')[1];
       assert.deepEqual([fix, tool, rec.fix, rec.tool], [kind === 'fix', kind === 'tool', kind === 'fix', kind === 'tool'], `${run.name} ${first} ${flags}`);
     }
+  }
+});
+
+test('TODO 196b: the third fix round needs a re-grill file in the current runs folder', (t) => {
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'error', () => {});
+  const dir = mkdtempSync(join(tmpdir(), 'rook-fixes-')), queue = join(dir, 'queue.txt');
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const first = 'build king/196bfix1 -> fix1.jsonl: ended';
+  const second = 'knight knight/196bfix2 -> fix2.txt: running';
+  const other = 'build king/196bcfix1 -> other.jsonl: ended\nreview bishop/196bfix2 -> review.jsonl: ended';
+  const refusal = '3rd fix round of 196b: re-grill the root cause, then --regrilled';
+  for (const eol of ['\n', '\r\n']) {
+    assert.equal(fixRoundRefusal('196b', other), '');
+    assert.equal(fixRoundRefusal('196b', [first, other].join(eol)), '');
+    assert.equal(fixRoundRefusal('196b', [first, second, other].join(eol)), refusal);
+    assert.equal(fixRoundRefusal('196b', `${first} knight/196bfix2`), '', 'count lines, not mentions');
+    assert.equal(fixRoundRefusal('196b', `king/196bfix\nknight/196bfix10`), refusal, 'fix wildcard and branch at start');
+  }
+  for (const [run, out, branch] of [[build, 'o.jsonl', 'king/196bfix3'], [knight, 'k.txt', 'knight/196bfix30']]) {
+    const make = (text = '') => {
+      const r = recorder();
+      r.x.gate.queueFile = () => queue;
+      r.x.read = (path) => path === queue ? readFileSync(path, 'utf8') : text;
+      r.x.need = (path, what) => { if (what === 're-grill file' && !existsSync(path)) throw new Error(`${what} not found: ${path}`); };
+      return r;
+    };
+    const args = ['b.txt', out, branch, 'abc1234'];
+    for (const prior of ['', first]) {
+      writeFileSync(queue, prior);
+      const r = make();
+      run([...args, '--fix'], r.x);
+      assert.ok(launched(r.calls));
+    }
+    writeFileSync(queue, `${first}\r\n${second}\r\n${other}`);
+    const normal = make();
+    run(args, normal.x);
+    assert.ok(launched(normal.calls), 'new builds do not count as fix rounds');
+    for (const flags of [['--fix'], ['--fix', '--over', '--tool', '--big'], []]) {
+      const r = make(flags.length ? '' : 'Knight fix: TODO 196b');
+      assert.throws(() => run([...args, ...flags], r.x), { message: refusal });
+      assert.ok(!r.calls.some((c) => ['launch', 'open', 'truncate'].includes(c[0]) || isSwitch(c)), 'refusal precedes mutations');
+    }
+    for (const name of [branch.replace(/\d+$/, ''), branch.replace(/fix\d+$/, '')]) {
+      const r = make();
+      assert.throws(() => run(['b.txt', out, name, 'abc1234', '--fix'], r.x), { message: refusal });
+    }
+    const proof = join(dir, 'grill-196b-regrill.md');
+    for (const flags of [['--regrilled'], ['--fix', '--regrilled']]) {
+      const r = make();
+      assert.throws(() => run([...args, ...flags], r.x), { message: `re-grill file not found: ${proof}` });
+      assert.ok(!launched(r.calls));
+    }
+    writeFileSync(proof, 'Root cause re-grilled');
+    const allowed = make();
+    run([...args, '--fix', '--regrilled'], allowed.x);
+    assert.ok(launched(allowed.calls));
+    rmSync(proof);
   }
 });
 
@@ -725,6 +783,16 @@ test('TODO 167e: pawn adds the house sentence, runs in ~/agy-research with a jso
   pawn(['b.json', 'Q2?'], two.x);
   assert.match(launched(two.calls)[9], /agy-research[\\/]\.run-lock-b\.json$/);
   assert.throws(() => pawn(['a.json', 'Q1?'], two.x), /in use/);
+});
+
+test('TODO 196b: Pawn refuses a second numbered question before opening files or launching', () => {
+  for (const question of ['(1) First? (2) Second?', '(2) Second?', '1. First? 2. Second?', '1) First? 2) Second?', '2. Second?', '2) Second?']) {
+    assert.throws(() => pawnArgs(question), { message: 'pawn: one question per Pawn run' });
+    const r = recorder();
+    assert.throws(() => pawn(['out.json', question], r.x), { message: 'pawn: one question per Pawn run' });
+    assert.deepEqual(r.calls, []);
+  }
+  for (const question of ['1. First?', 'Q2?', 'What does x2) mean?', 'What about (12)?']) assert.equal(pawnArgs(question)[1].startsWith(question), true);
 });
 
 test('TODO 167e lows: a missing queue.txt gives no queue line; launchRun with its own lock writes and removes that one', () => {

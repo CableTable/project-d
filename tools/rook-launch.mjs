@@ -54,28 +54,43 @@ export function parseReview(args) {
 const reviewOf = (v) => v && { brief: resolve(v[0]), out: resolve(v[1]) };
 
 export function parseBuild(args) {
-  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
-  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
+  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--regrilled': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   if (!SHA.test(pos[3])) throw new Error(`not a commit id: ${pos[3]}`);
   const as = account(flags, 'king', usage), dir = flags['--dir'] && flags['--dir'][0];
   if (dir && (dir !== 'king2' || as !== 'king')) throw new Error(`${usage}\n--dir king2 is for King (--as king)`);
-  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
+  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], regrilled: !!flags['--regrilled'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
 }
 
 export function parseKnight(args) {
-  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
-  const { pos, flags } = parseFlags(args, { '--fix': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
+  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
+  const { pos, flags } = parseFlags(args, { '--fix': 0, '--regrilled': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   const [brief, report, branch, sha] = pos;
   if (!report.endsWith('.txt')) throw new Error(`report must end in .txt (the log goes next to it): ${report}`);
   if (!SHA.test(sha)) throw new Error(`not a commit id: ${sha}`);
   const abs = resolve(report);
-  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
+  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], regrilled: !!flags['--regrilled'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
 }
 
 // TODO 167c: a brief whose line 1 opens like a fix round counts as one without `--fix`.
 export const isFixBrief = (text) => /^﻿?(King fix|Knight fix|Fix round)\b/.test(text);
+
+export function fixRoundRefusal(id, queue) {
+  // shortcut: counts only this runs folder's queue lines; use cross-session history if fixes span folders.
+  const count = queue.split(/\r?\n/).filter((line) => [...line.matchAll(/(?:^|\s)(?:king|knight)\/(\S+)/g)].some((m) => m[1].startsWith(`${id}fix`))).length;
+  return count >= 2 ? `3rd fix round of ${id}: re-grill the root cause, then --regrilled` : '';
+}
+
+function checkFixRound(x, branch, regrilled) {
+  const queue = x.gate.queueFile(), id = branch.replace(/^(king|knight)\//, '').replace(/fix\d*$/, '');
+  if (regrilled) x.need(join(dirname(queue), `grill-${id}-regrill.md`), 're-grill file');
+  else {
+    const refusal = fixRoundRefusal(id, x.read(queue));
+    if (refusal) throw new Error(refusal);
+  }
+}
 
 export function lintBrief(text) {
   const problems = [];
@@ -273,7 +288,7 @@ export function review(args, x = io) {
 }
 
 export function build(args, x = io) {
-  const { brief, out, branch, sha, as, dir: second, fix: fixFlag, tool, over, big, review: chain } = parseBuild(args);
+  const { brief, out, branch, sha, as, dir: second, fix: fixFlag, regrilled, tool, over, big, review: chain } = parseBuild(args);
   const dir =second ? folder(as, 'review') : folder(as, 'build'); // king2 is King's review folder: needClean refuses it while a review runs
   x.need(brief, 'brief file');
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
@@ -281,6 +296,7 @@ export function build(args, x = io) {
   x.gate.check(fix, over, tool);
   if (as === 'king' && !over) kingGate(x, 'build');
   checkBrief(text, big);
+  if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
   needHooks(x, dir);
@@ -315,7 +331,7 @@ function needHooks(x, dir) {
 }
 
 export function knight(args, x = io) {
-  const { brief, report, branch, sha, log, fix: fixFlag, tool, over, big, review: chain } = parseKnight(args);
+  const { brief, report, branch, sha, log, fix: fixFlag, regrilled, tool, over, big, review: chain } = parseKnight(args);
   const clone = `${EXTRAS}/ProjectD-rowan`;
   x.need(brief, 'brief file');
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
@@ -323,6 +339,7 @@ export function knight(args, x = io) {
   if (/\.\.\/runs\d+\/shots/.test(text)) throw new Error('shots go in shots-<id>/ in the clone root');
   x.gate.check(fix, over, tool);
   checkBrief(text, big);
+  if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(CODEX, basename(CODEX));
   needClean(x, clone);
   needHooks(x, clone);
@@ -363,6 +380,7 @@ export const acadArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-
 // WORKFLOW.md lines 248-250: one question, the house sentence added here; a newline would end the cmd.exe line.
 export const pawnArgs = (question) => {
   if (/[\r\n]/.test(question)) throw new Error('pawn: the question must be one line');
+  if (/\(2\)|(?:^|\s)2[.)]/.test(question)) throw new Error('pawn: one question per Pawn run');
   if (/[%"]/.test(question)) throw new Error('pawn: the question may not hold % or " (cmd.exe expands %NAME% inside quotes); use single quotes / spell it out');
   return ['-p', `${question} Open https links only, skip http ones, run no commands; read at most 3 pages; cite URLs.`, '--output-format', 'json', '--print-timeout', '10m'];
 };
