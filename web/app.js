@@ -7046,7 +7046,7 @@ function modPrompt(d) {
     if (m.stage === 'edges') return { status: `Command: ${m.kind.toUpperCase()}   ${ext ? 'Boundary' : 'Cutting'} edges: ${n}`, prompt: `Select ${ext ? 'boundary' : 'cutting'} edges (click adds or takes out), Enter = all:` };
     return { status, prompt: ext ? `Select object to extend or shift-select to trim or [Boundary edges/Crossing/mOde${undoOpt()}]:` : `Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase${undoOpt()}]:` };
   }
-  if (ext) return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all [mOde]:' : 'Click near the end of a line, arc or open polyline to extend [mOde]. Enter or Esc ends:' };
+  if (ext) return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all [mOde]:' : 'Click near the end of a line, arc, spline or open polyline to extend [mOde]. Enter or Esc ends:' };
   if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all [mOde]:' : 'Click the part to cut away [mOde]. Enter or Esc ends:' };
   const objs = m.objs.length;
   return { status: `Command: MIRROR   ${m.stage === 'pick' ? `${n} selected` : `${objs} object${objs === 1 ? '' : 's'}`}`,
@@ -7104,7 +7104,7 @@ function modEnter(d) {
     paintOverlay(); return;
   }
   if (m.kind === 'extend') {
-    if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc or open polyline to extend`); paintOverlay(); }
+    if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc, spline or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc, spline or open polyline to extend`); paintOverlay(); }
     else modEsc(d);
     return;
   }
@@ -7922,7 +7922,7 @@ function editDo(d, p, shift) {
   m.askMode = false;                                            // a click answers the mode question with "stay"
   if (idx < 0 && m.quick && m.stage === 'cut' && !shift && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) >= 0) { note('On a locked layer'); return; }      // not the start of a fence
   if (idx < 0 && m.quick && m.stage === 'cut' && !shift) { m.fence = [p]; note(`Fence started: click the next point, Enter ${ext ? 'extends' : 'trims'} everything it ${ext ? 'touches' : 'crosses'}, Esc cancels`); renderCommand(); paintOverlay(); return; }
-  if (idx < 0) { note(ext ? 'Extend: nothing there. Click near the end of a line, arc or open polyline' : 'Trim: nothing there. Click the part to cut away'); return; }
+  if (idx < 0) { note(ext ? 'Extend: nothing there. Click near the end of a line, arc, spline or open polyline' : 'Trim: nothing there. Click the part to cut away'); return; }
   if (ext !== !!shift) extendDo(d, idx, p); else trimDo(d, idx, p);
 }
 /** Every edge Trim was given is an ellipse or spline, which Trim can't cut with yet (Extend can use them). */

@@ -150,7 +150,47 @@ test('extendEntity spline: a fit-point spline grows a straight piece along its e
   assert.equal(nums(r.ent, 10).length, 9); assert.deepEqual(nums(r.ent, 10).slice(0, 6), cps.map((c) => c[0]));
   assert.deepEqual([72, 73, 74].map((c) => get(r.ent.r, c)), [13, 9, 5]);
   assert.deepEqual(nums(r.ent, 40).slice(0, 9), knots.slice(0, 9));                            // same knots and control points up to the old end: the old part is the same curve
-  assert.deepEqual(nums(r.ent, 40).slice(9), Array(4).fill(53));
+  assert.deepEqual(nums(r.ent, 40).slice(9), Array(4).fill(6));      // the straight piece gets as much parameter range as the old curve
+});
+
+/** How far the points `pts` lie from the polyline `poly` (max). */
+const deviation = (pts, poly) => Math.max(...pts.map((p) => Math.min(...poly.slice(1).map((b, i) => {
+  const a = poly[i], dx = b[0] - a[0], dy = b[1] - a[1], t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy || 1)));
+  return Math.hypot(p[0] - a[0] - t * dx, p[1] - a[1] - t * dy);
+}))));
+
+test('extendEntity spline: the old part of an extended fit spline still flattens as before, whatever its knot range', () => {
+  const cps = [[0, 50], [30, 80], [60, 70], [100, 60], [130, 90], [150, 90]], fit = [[0, 50], [50, 80], [100, 60], [150, 90]];
+  for (const k of [1, 3, 170]) {
+    const old = spline(3, [0, 0, 0, 0, 1, 2, 3, 3, 3, 3].map((u) => u * k / 3), cps, { fit }), r = extendEntity(old, [line(5000, -9e3, 5000, 9e3)], [149, 90]);
+    assert.ok(r.ent, r.error);
+    const dev = deviation(curveShape(old).pts, curveShape(r.ent).pts);
+    assert.ok(dev < 0.2, `knots 0..${k}: ${dev}`);
+  }
+  const cvOld = cv([[0, 110], [50, 140], [100, 100], [150, 120]]), cvNew = extendEntity(cvOld, [wall], [149, 121]).ent;
+  assert.ok(deviation(curveShape(cvOld).pts, curveShape(cvNew).pts) < 0.5);
+});
+
+test('extendEntity spline: a fit-point spline extends at its start; fit and rational splines survive write then read', () => {
+  const cps = [[0, 50], [30, 80], [60, 70], [100, 60], [130, 90], [150, 90]], fit = [[0, 50], [50, 80], [100, 60], [150, 90]];
+  const r = extendEntity(spline(3, [0, 0, 0, 0, 1, 2, 3, 3, 3, 3], cps, { fit }), [line(-40, -50, -40, 200)], [1, 50]);
+  assert.ok(r.ent, r.error);
+  assert.ok(Math.abs(curveShape(r.ent).pts[0][0] + 40) < 1e-6);
+  assert.equal(nums(r.ent, 11)[0], -40); assert.deepEqual(nums(r.ent, 11).slice(1), [0, 50, 100, 150]);
+  assert.deepEqual(nums(r.ent, 10).slice(-6), cps.map((c) => c[0]));
+  assert.deepEqual([72, 73, 74].map((c) => get(r.ent.r, c)), [13, 9, 5]);
+  const rat = extendEntity(cv([[0, 110], [50, 140], [100, 100], [150, 120]], { w: [1, 2, 1, 1] }), [line(160, 0, 160, 300)], [149, 121]).ent;
+  for (const e of [r.ent, rat]) {
+    const doc = newDoc(4); addEntities(doc, e);
+    const back = readDxf(writeDxf(doc)).entities[0];
+    for (const c of [10, 11, 40, 41]) { assert.equal(nums(back, c).length, nums(e, c).length); nums(e, c).forEach((x, k) => assert.ok(Math.abs(nums(back, c)[k] - x) < 1e-5)); }
+    assert.deepEqual([72, 73, 74].map((c) => get(back.r, c)), [72, 73, 74].map((c) => get(e.r, c)));
+  }
+});
+
+test('extendEntity spline: a control-vertex spline reaches an ellipse on the true curve, not its chords', () => {
+  const r = extendEntity(cv([[0, 110], [50, 140], [100, 100], [150, 120]]), [ellipse(200, 130, 40, 0, 0.5)], [149, 121]), p = endOf(r.ent);
+  assert.ok(Math.abs(((p[0] - 200) / 40) ** 2 + ((p[1] - 130) / 20) ** 2 - 1) < 1e-8, `${p}`);
 });
 
 test('extendEntity spline: a control-vertex spline continues its own last span; the old part is exactly the same; a miss says so', () => {
@@ -161,6 +201,7 @@ test('extendEntity spline: a control-vertex spline continues its own last span; 
   assert.deepEqual([72, 73, 74].map((c) => get(r.ent.r, c)), [11, 7, 0]);
   const q = curveShape(r.ent).pts, o = curveShape(old).pts;                                    // the first 1/1.333 of the new curve is the old one
   assert.ok(o.every((p) => q.some((s) => Math.hypot(s[0] - p[0], s[1] - p[1]) < 3)));
+  assert.deepEqual(nums(r.ent, 40).slice(0, 7), [0, 0, 0, 0, 1, 1, 1]);                        // knots and controls of the old part are untouched, so its curve is exact
   assert.match(extendEntity(cv([[0, 150], [50, 180], [100, 140], [150, 170]]), [wall], [149, 169]).error, /Object does not intersect an edge/);   // AutoCAD: it reaches x = 200 above the line's end
   assert.equal(extendEntity(old, [line(-50, 0, 400, 0)], [149, 121]).error, 'Object does not intersect an edge');
 });
