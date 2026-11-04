@@ -52,7 +52,7 @@ import { movePoint, movePrompt } from './move.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
-import { breakEntity, breakAtPoint } from './break.js';
+import { breakEntity, breakAtPoint, breakWhy } from './break.js';
 import { joinEntities, NO_TOUCH } from './join.js';
 import * as PR from './props.js';
 import { openQuickSelect } from './qselectdlg.js';
@@ -7971,7 +7971,7 @@ function breakDo(d, p) {
   const m = state.mod, idx = d.raw.entities.indexOf(m.ent), label = modLabel(m.kind);
   if (idx < 0) { setTool('select'); note('Object changed: start Break again'); return; }
   const pieces = m.kind === 'breakatpoint' ? breakAtPoint(m.ent, p) : breakEntity(m.ent, m.p0, p);
-  if (!pieces) { note('Break works on lines, arcs, circles and polylines'); return; }
+  if (!pieces) { note(breakWhy(m.ent, m.p0 || p, p)); return; }
   view.fitted = false;
   if (!commit(d, { entities: d.raw.entities.flatMap((e, i) => i === idx ? pieces : [e]), groups: spliceGroups(d.raw.groups, d.raw.entities.length, idx, pieces.length), blocks: d.raw.blocks }, label)) return;
   setTool('select'); note(`${label}: ${pieces.length} piece${pieces.length === 1 ? '' : 's'}. Ctrl+Z takes it back`);

@@ -3,10 +3,23 @@ import { shapeOf, get } from './grips.js';
 import { pathOf, closest, subSeg, shapeOfPiece, rebuilt } from './modify.js';
 
 /** Pieces keep the source properties; document GROUP membership is remapped by the caller. */
+const usable = (entity, p1, p2) => ['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE'].includes(entity?.type)
+  && [p1, p2].every((p) => p?.length >= 2 && p.slice(0, 2).every(Number.isFinite))
+  && (entity.type === 'LINE' || Math.abs(get(entity.r, 210) ?? 0) <= 1e-9 && Math.abs(get(entity.r, 220) ?? 0) <= 1e-9);
+const noLength = (path) => path.segs.some((s) => Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) < 1e-9);
+const circleAngle = (sh, p) => (Math.atan2(p[1] - sh.c[1], p[0] - sh.c[0]) * 180 / Math.PI + 360) % 360;
+
+/** Why breakEntity / breakAtPoint returned null, for the caller's note. */
+export function breakWhy(entity, p1, p2) {
+  const generic = 'Break works on lines, arcs, circles and polylines';
+  if (!usable(entity, p1, p2)) return generic;
+  const sh = shapeOf(entity);
+  if (sh.t === 'poly') return noLength(pathOf(sh)) ? 'The polyline has a side without length' : generic;
+  return sh.t === 'circle' && sh.r > 0 ? 'Cannot break a closed object at one point' : generic;
+}
+
 export function breakEntity(entity, p1, p2) {
-  if (!['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE'].includes(entity?.type)) return null;
-  if (![p1, p2].every((p) => p?.length >= 2 && p.slice(0, 2).every(Number.isFinite))) return null;
-  if (entity.type !== 'LINE' && (Math.abs(get(entity.r, 210) ?? 0) > 1e-9 || Math.abs(get(entity.r, 220) ?? 0) > 1e-9)) return null;
+  if (!usable(entity, p1, p2)) return null;
   const sh = shapeOf(entity), flip = entity.type !== 'LINE' && (get(entity.r, 230) ?? 1) < 0;
   if (flip) {
     if (sh.t === 'poly') sh.pts = sh.pts.map(([x, y, b = 0, ...w]) => [-x, y, -b, ...w]);
@@ -17,8 +30,9 @@ export function breakEntity(entity, p1, p2) {
   }
   if (sh.t === 'circle') {
     if (!(sh.r > 0)) return null;
-    const angle = (p) => (Math.atan2(p[1] - sh.c[1], p[0] - sh.c[0]) * 180 / Math.PI + 360) % 360;
-    return [rebuilt({ ...sh, t: 'arc', a0: angle(p2), a1: angle(p1) }, entity)];
+    const a0 = circleAngle(sh, p2), a1 = circleAngle(sh, p1), d = Math.abs(a1 - a0);
+    if (d < 1e-9 || d > 360 - 1e-9) return null; // one point would write a zero-sweep arc that draws as a circle
+    return [rebuilt({ ...sh, t: 'arc', a0, a1 }, entity)];
   }
   const path = pathOf(sh);
   // pathOf omits the closing segment of a two-vertex closed polyline.
@@ -26,7 +40,7 @@ export function breakEntity(entity, p1, p2) {
     path.closed = true; path.segs.push({ a: sh.pts[1], b: sh.pts[0], bulge: sh.pts[1][2] || 0 });
   }
   const n = path.segs.length;
-  if (!n || path.segs.some((s) => Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) < 1e-9)) return null;
+  if (!n || noLength(path)) return null;
   let a = closest(path, p1).u, b = closest(path, p2).u;
   if (!path.closed && a > b) [a, b] = [b, a];
   const ranges = path.closed ? [[b, a > b ? a : a + n]] : [[0, a], [b, n]];

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { breakEntity, breakAtPoint } from './web/break.js';
+import { breakEntity, breakAtPoint, breakWhy } from './web/break.js';
 import { line, arc, circle, lwpoly, ellipse, entity, writeDxf, newDoc, addEntities } from './web/dxf-write.js';
 import { shapeOf, get } from './web/grips.js';
 import { readDxf } from './web/drawing.js';
@@ -77,6 +77,18 @@ test('pieces preserve all common source properties, constant width and elevation
 test('unsupported, invalid and degenerate geometry returns null', () => {
   for (const e of [ellipse(0, 0, 10, 0, .5), entity('SPLINE', []), entity('TEXT', []), line(0, 0, 0, 0)]) assert.equal(breakEntity(e, [0, 0], [1, 0]), null);
   assert.equal(breakEntity(line(0, 0, 10, 0), [NaN, 0], [1, 0]), null);
+});
+
+test('a circle at one point is refused (no zero-sweep arc); a repeated vertex has its own note', () => {
+  const c = circle(0, 0, 10), same = 'Cannot break a closed object at one point';
+  for (const [p1, p2] of [[[10, 0], [10, 0]], [[10, 0], [30, 0]], [[0, 5], [0, 99]]]) {
+    assert.equal(breakEntity(c, p1, p2), null); assert.equal(breakWhy(c, p1, p2), same);
+  }
+  assert.equal(breakEntity(c, [10, 0], [0, 10]).length, 1);
+  const dup = lwpoly([[0, 0], [10, 0], [10, 0], [20, 0]]);
+  assert.equal(breakEntity(dup, [5, 0], [15, 0]), null);
+  assert.equal(breakWhy(dup, [5, 0], [15, 0]), 'The polyline has a side without length');
+  assert.equal(breakWhy(entity('TEXT', []), [0, 0], [1, 0]), 'Break works on lines, arcs, circles and polylines');
 });
 
 test('layout split pieces keep their source member group and leave the saved source untouched', () => {
