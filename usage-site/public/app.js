@@ -2,7 +2,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
-import { codexWindow, resetLabel, weeklyForecast } from './usage-window.js';
+import { resetLabel, weeklyForecast, windowReading } from './usage-window.js';
 import { firebaseConfig } from './firebase-config.js';
 import { cumulativeTokens, resetTimes, tokenEndLabels } from './token-chart.js';
 
@@ -68,7 +68,7 @@ function drawAgents(limits, pace) {
     card.append(head);
     ['5h', 'week'].forEach((w) => {
       const r = rows.find((x) => x.window === w); if (!r) return;
-      const [used, resets] = a === 'Rowan' ? codexWindow([Number(r.used_pct), r.resets ? Date.parse(r.resets) / 1000 : null]) : [Number(r.used_pct), Date.parse(r.resets) / 1000];
+      const [used, resets] = windowReading(a, r);
       const p = resets == null ? null : pk.get(a + '|' + w), cap = num(r.cap_pct);
       const m = el('div', 'ud-meter');
       const top = el('div', 'ud-mrow');

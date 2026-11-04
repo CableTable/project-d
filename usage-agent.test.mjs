@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo } from './tools/usage-agent.mjs';
-import { claudeUsage, usageProbe, limitedLine } from './tools/rook.mjs';
+import { claudeUsage, usageProbe, limitedLine, limitedRows } from './tools/rook.mjs';
 
 test('tickets keep the eight columns, comma tags, escaped pipes and full note text as plain data', () => {
   const text = `# Tickets
@@ -171,8 +171,22 @@ test('TODO 196a: an account at its limit reads as 100% (with its reset text) ins
   assert.throws(() => usageProbe('claude2', limited('hook crashed'), () => {}), /Bishop usage probe failed, exit 1/);
   assert.equal(limitedLine('Bishop', '5pm (Asia/Calcutta)'), 'Bishop: 100% (resets 5pm (Asia/Calcutta))');
   assert.equal(limitedLine('King', '', ' (live)'), 'King: 100% (live)');
+  // stream-json output (runs36/rev-97afix.jsonl:8): the reset text stops at the closing quote
+  const streamJson = '{"type":"result","is_error":true,"api_error":"usage_limit_reached","result":"You\'ve hit your 5-hour limit · resets 2:40am (Asia/Kolkata)","session_id":"abc"}';
+  assert.deepEqual(usageProbe('claude2', limited(streamJson), () => {}), { limited: '2:40am (Asia/Kolkata)' });
   const success = JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: .25, resetsAt: 123 }, seven_day: { utilization: .5, resetsAt: 456 } } } });
   assert.deepEqual(usageProbe('claude2', () => success, () => {}), { h5: [25, 123], wk: [50, 456] });
+});
+
+test('TODO 196a: a limited account writes 5h at 100% (old 5h window kept while ahead) and keeps its last week row', () => {
+  const now = Date.parse('2026-11-05T10:00:00Z'), asOf = '2026-11-05T15:30:00+05:30';
+  const h5 = (resets) => ({ agent: 'Pip', window: '5h', used_pct: '40', starts: 's5', resets, as_of: 'old' });
+  const wk = { agent: 'Bishop', window: 'week', used_pct: '55', cap_pct: '42', starts: 'sw', resets: 'rw', as_of: 'oldw' };
+  const rows = (old) => limitedRows('Pip', 'role', 'model', old, now, asOf);
+  assert.deepEqual(rows([h5('2026-11-05T12:00:00Z'), wk]), ['Pip,role,model,5h,100,,s5,2026-11-05T12:00:00Z,' + asOf, 'Pip,role,model,week,55,42,sw,rw,oldw']);
+  assert.equal(rows([h5('2026-11-05T09:00:00Z')])[0], 'Pip,role,model,5h,100,,,,' + asOf); // the old window has reset: blank, nothing to carry
+  assert.equal(rows([h5('')]).length, 1); // blank old reset, no week row
+  assert.deepEqual(limitedRows('King', 'r', 'm', [wk], now, asOf), ['King,r,m,5h,100,,,,' + asOf]); // another agent's rows are not carried
 });
 
 test('TODO keeps every section, continuation text and section-local numbers, with done winning duplicates', () => {

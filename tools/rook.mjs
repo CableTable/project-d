@@ -51,7 +51,7 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
       const output = `${e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`;
       const limited = /limit (?:has been |is )?reached|you[’']?ve hit your[^\n]*limit|rate_limit_error|usage_limit_reached/i.test(output);
       const who = bin === 'claude' ? 'Rook' : /claude3/.test(bin) ? 'King' : 'Bishop';
-      throw limited ? Object.assign(new Error(`${{ Rook: 'Main', King: 'Third' }[who] || 'Second'} account: 100%, limit reached`), { reset: /resets? ([^\n·]*)/i.exec(output)?.[1].trim() || '' })
+      throw limited ? Object.assign(new Error(`${{ Rook: 'Main', King: 'Third' }[who] || 'Second'} account: 100%, limit reached`), { reset: /resets? ([^\n·"]*)/i.exec(output)?.[1].trim() || '' })
         : new Error(`${who} usage probe failed, exit ${Number.isInteger(e.status) ? e.status : 'unknown'}`);
     }
   }
@@ -62,7 +62,13 @@ export function usageProbe(bin, execute = execSync, report = console.error) {
   try { return claudeUsage(bin, execute, report); }
   catch (e) { if (e.reset !== undefined) return { limited: e.reset }; throw e; }
 }
-export const limitedLine = (name, limited, suffix = '') => `${name}: 100%${limited ? ` (resets ${limited})` : ''}${suffix}`;
+// The limits.csv rows of a limited account: 5h at 100% (the old 5h window kept while it is still ahead, so a gate reads the row as stale once it passes) and the last week row as written (a limited probe says nothing of the week).
+export function limitedRows(a, role, model, oldLimits, now, asOf) {
+  const old = (w) => oldLimits.find((r) => (a === 'Pip' ? ['Pip', 'Bishop'] : [a]).includes(r.agent) && r.window === w);
+  const h5 = old('5h'), wk = old('week'), keep = h5 && Date.parse(h5.resets) > now ? h5 : { starts: '', resets: '' };
+  return [[a, role, model, '5h', 100, '', keep.starts, keep.resets, asOf], ...(wk ? [[a, role, model, 'week', wk.used_pct, wk.cap_pct, wk.starts, wk.resets, wk.as_of]] : [])].map((r) => r.join(','));
+}
+export const limitedLine =(name, limited, suffix = '') => `${name}: 100%${limited ? ` (resets ${limited})` : ''}${suffix}`;
 
 // Git Bash, not WSL's bash.exe that PowerShell may find first: `git --exec-path` is <Git>/mingw64/libexec/git-core, three levels below <Git>.
 export function gitBash(exec = execFileSync, exists = existsSync) {
@@ -279,9 +285,7 @@ if (cmd === 'result') {
     if (u.limited !== undefined) { // a limited probe says nothing of the week: keep the last week row as it was written (the cached read needs both rows)
       console.log(limitedLine(label(a), u.limited, suffix));
       if (!cached) {
-        rows.push([a, role, model, '5h', 100, '', '', '', iso(now)].join(','));
-        const wk = oldLimits.find((r) => (a === 'Pip' ? ['Pip', 'Bishop'] : [a]).includes(r.agent) && r.window === 'week');
-        if (wk) rows.push([a, role, model, 'week', wk.used_pct, wk.cap_pct, wk.starts, wk.resets, wk.as_of].join(','));
+        rows.push(...limitedRows(a, role, model, oldLimits, now, iso(now)));
         appendFileSync(join(U, 'history.csv'), `${iso(now)},${a},5h,100\n`);
       }
       continue;

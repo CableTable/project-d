@@ -3,6 +3,11 @@ export function codexWindow([used, resets], now = Date.now()) {
   return resets == null || resets * 1000 <= now ? [0, null] : [used, resets];
 }
 export const resetLabel = (resets, format) => resets == null ? 'Reset' : 'Resets ' + format(resets);
+// [used %, reset in seconds or null] of one limits.csv row; a limited account's 5h row has a blank reset (Date.parse('') is NaN, and formatting NaN throws).
+export function windowReading(agent, r) {
+  const reading = [Number(r.used_pct), r.resets ? Date.parse(r.resets) / 1000 : null];
+  return agent === 'Rowan' ? codexWindow(reading) : reading;
+}
 
 export function weeklyForecast(r, now = Date.now()) {
   const s = Date.parse(r.starts), e = Date.parse(r.resets), a = Date.parse(r.as_of);
