@@ -10,7 +10,8 @@
 //     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed; a brief whose line 1 starts `King fix`, `Knight fix` or `Fix round` counts as one without it),
 //     --tool = a tool ticket (passes the gate, not counted as an item; the gate line adds `, <k> tool`), --over = a 3rd item with his OK
 //   node tools/rook.mjs suite <sha>   full suite (`npm.cmd test`, then `npm.cmd run test:browser`) in this checkout, detached; <sha> must be HEAD; log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`
-//   node tools/rook.mjs retro   the three retros of runs<N>/ (retro<N>, retro<N>king, retro<N>rook: .txt in, .out out) on Bishop, detached; refused when a .txt is missing
+//   node tools/rook.mjs retro [--over]   the three retros of runs<N>/ (retro<N>, retro<N>king, retro<N>rook: .txt in, .out out) on Bishop, detached; refused when a .txt is missing or cached Bishop 5h is above 40% (--over passes)
+//     review / build --as king (and review falling back to King) are refused above 85% cached King 5h (--over passes); `usage` prints `<name>: 100%` for an account at its limit
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
 //   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
@@ -50,11 +51,18 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
       const output = `${e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`;
       const limited = /limit (?:has been |is )?reached|you[’']?ve hit your[^\n]*limit|rate_limit_error|usage_limit_reached/i.test(output);
       const who = bin === 'claude' ? 'Rook' : /claude3/.test(bin) ? 'King' : 'Bishop';
-      throw new Error(limited ? `${{ Rook: 'Main', King: 'Third' }[who] || 'Second'} account: 100%, limit reached`
-        : `${who} usage probe failed, exit ${Number.isInteger(e.status) ? e.status : 'unknown'}`);
+      throw limited ? Object.assign(new Error(`${{ Rook: 'Main', King: 'Third' }[who] || 'Second'} account: 100%, limit reached`), { reset: /resets? ([^\n·]*)/i.exec(output)?.[1].trim() || '' })
+        : new Error(`${who} usage probe failed, exit ${Number.isInteger(e.status) ? e.status : 'unknown'}`);
     }
   }
 }
+
+// TODO 196a: an account that hit its limit is at 100%, not a failed probe: { limited: <reset text or ''> } in place of a reading (other failures still throw).
+export function usageProbe(bin, execute = execSync, report = console.error) {
+  try { return claudeUsage(bin, execute, report); }
+  catch (e) { if (e.reset !== undefined) return { limited: e.reset }; throw e; }
+}
+export const limitedLine = (name, limited, suffix = '') => `${name}: 100%${limited ? ` (resets ${limited})` : ''}${suffix}`;
 
 // Git Bash, not WSL's bash.exe that PowerShell may find first: `git --exec-path` is <Git>/mingw64/libexec/git-core, three levels below <Git>.
 export function gitBash(exec = execFileSync, exists = existsSync) {
@@ -144,6 +152,7 @@ function wait(args) {
 // The merge checks (TODO 167b): '' when the merge may go ahead, else the one-line refusal. retro = the retro file's text or null.
 export function mergeRefusal({ n, pr, sha, head, retro, applied, noRetro, ci }) {
   if (!noRetro && !(retro || '').trim()) return `refused: runs${n}/retro${n}.out is missing or empty (run the retro, or pass --no-retro)`;
+  if (!noRetro && /hit your .*limit/i.test(retro)) return `refused: runs${n}/retro${n}.out is only a usage-limit message (the retro did not run: re-run it after the limit resets, or pass --no-retro)`; // TODO 196a
   if (!noRetro && !applied) return `refused: runs${n}/retro${n}.applied is missing (apply the retro suggestions, then write it, or pass --no-retro)`; // TODO 193b
   if (head !== sha) return `refused: ${sha} is not the head of PR #${pr} (head is ${head})`;
   if (ci !== 'success') return `refused: CI for ${sha} is ${ci || 'not found'}, not success`;
@@ -254,10 +263,10 @@ if (cmd === 'result') {
     } catch (e) { if (e.code !== 'ENOENT') throw e; }
   }
   const agents = cached || [
-    ['Rook', 'Lead (main account)', 'Opus 5.5', claudeUsage('claude')],
-    ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
+    ['Rook', 'Lead (main account)', 'Opus 5.5', usageProbe('claude')],
+    ['Pip', 'Builds and reviews (claude2)', 'Sonnet / Opus / Haiku', usageProbe('C:\\Users\\raksh\\.local\\bin\\claude2.cmd')],
     // King is new and the likeliest to fail: a failed probe skips King, it does not take Rook, Bishop and Knight down
-    ['King', 'Builds and leads in Castle mode (claude3)', 'Sonnet', (() => { try { return claudeUsage('C:\\Users\\raksh\\.local\\bin\\claude3.cmd'); } catch { return null; } })()],
+    ['King', 'Builds and leads in Castle mode (claude3)', 'Sonnet', (() => { try { return usageProbe('C:\\Users\\raksh\\.local\\bin\\claude3.cmd'); } catch { return null; } })()],
     ['Rowan', 'Builder and web research (Codex)', 'gpt-6.1-sol', codex()],
   ];
   for (const [a, , , u] of agents) if (!u && a !== 'Rowan' && a !== 'King') throw new Error(`${label(a)} usage probe failed, exit unknown`);
@@ -265,6 +274,14 @@ if (cmd === 'result') {
   if (!cached) mkdirSync(U, { recursive: true });
   for (const [a, role, model, u] of agents) {
     if (!u) { console.log(`${label(a)}: no reading${suffix}`); continue; }
+    if (u.limited !== undefined) { // 5h row only: the week is unknown, and review / build gates read the 5h row
+      console.log(limitedLine(label(a), u.limited, suffix));
+      if (!cached) {
+        rows.push([a, role, model, '5h', 100, '', '', '', iso(now)].join(','));
+        appendFileSync(join(U, 'history.csv'), `${iso(now)},${a},5h,100\n`);
+      }
+      continue;
+    }
     if (a === 'Rowan') for (const w of ['h5', 'wk']) u[w] = codexWindow(u[w], now);
     const wkLen = 7 * 864e5, s = u.wk[1] * 1e3 - wkLen, el = now - s;
     const cap = a === 'Pip' ? Math.min(100, 14 * Math.ceil((now - s) / 864e5)) : '';
@@ -298,7 +315,7 @@ if (cmd === 'result') {
     projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro | pawn <out.json> "<question>" | acad <item>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro [--over] | pawn <out.json> "<question>" | acad <item>');
 }
 }
 

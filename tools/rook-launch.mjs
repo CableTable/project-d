@@ -227,6 +227,22 @@ function needClean(x, dir) {
 // What the RUN script hands to tools/rook-end.mjs when the run ends: its queue line (q) and the review to chain; null when there is neither.
 const afterOf = (q, review) => (q || review ? { ...q, review } : null);
 
+// The cached 5h reading of one account (limits.csv, written by `rook.mjs usage`); undefined, with a warning, when it is unreadable or the window has reset.
+function cachedH5(x, names, who, what) {
+  try {
+    const row = parseCsv(x.read(join(REPO, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => names.includes(r.agent) && r.window === '5h');
+    const used = Number(row?.used_pct);
+    if (!row?.used_pct?.trim() || !Number.isFinite(used)) throw new Error(`missing or invalid ${who} 5h reading`);
+    if (!(Date.parse(row.resets) < Date.now())) return used; // a past reset time = the window has reset, the reading is old
+  } catch (e) { console.error(`${what}: ${who} usage cache unavailable (${e.message}); allowing ${what}`); }
+}
+
+// TODO 196a: King builds and reviews are refused above 85% of his cached 5h, like Bishop's review gate; --over passes.
+function kingGate(x, what) {
+  const h5 = cachedH5(x, ['King'], 'King', what);
+  if (h5 > 85) throw new Error(`King 5h ${h5}%: use Knight, or --over`);
+}
+
 export function review(args, x = io) {
   const parsed = parseReview(args), { sha, brief, out, from, over } = parsed;
   let as = parsed.as;
@@ -234,16 +250,11 @@ export function review(args, x = io) {
   // TODO 167d: no --as = Bishop, or King when Bishop's reviewer folder is locked (both locked: needClean refuses King's below)
   const busy = parsed.auto && x.locked(folder('bishop', 'review'));
   if (as === 'bishop' && !over && !busy) {
-    let h5;
-    try {
-      const row = parseCsv(x.read(join(REPO, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => ['Pip', 'Bishop'].includes(r.agent) && r.window === '5h');
-      const used = Number(row?.used_pct);
-      if (!row?.used_pct?.trim() || !Number.isFinite(used)) throw new Error('missing or invalid Bishop 5h reading');
-      if (!(Date.parse(row.resets) < Date.now())) h5 = used; // a past reset time = the window has reset, the reading is old
-    } catch (e) { console.error(`review: Bishop usage cache unavailable (${e.message}); allowing review`); }
+    const h5 = cachedH5(x, ['Pip', 'Bishop'], 'Bishop', 'review');
     if (h5 > 85) throw new Error(`Bishop 5h ${h5}%: use --as king, or --over`);
   }
   if (busy) { as = 'king'; console.log('review: Bishop busy, King'); }
+  if (as === 'king' && !over) kingGate(x, 'review');
   const wt = folder(as, 'review');
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);
@@ -268,6 +279,7 @@ export function build(args, x = io) {
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   x.gate.check(fix, over, tool);
+  if (as === 'king' && !over) kingGate(x, 'build');
   checkBrief(text, big);
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
@@ -379,7 +391,12 @@ export function suite(args, x = io) {
 
 // `retro`: the three retro runs of runs<N>/ (retro<N>, retro<N>king, retro<N>rook), each from its .txt into its .out; none starts when a .txt is missing.
 export function retro(args, x = io) {
-  if (args.length) throw new Error('usage: retro');
+  const over = args.includes('--over');
+  if (args.length > +over) throw new Error('usage: retro [--over]');
+  if (!over) { // TODO 196a: three Opus retros took Bishop from 61% to 100% (S36)
+    const h5 = cachedH5(x, ['Pip', 'Bishop'], 'Bishop', 'retro');
+    if (h5 > 40) throw new Error(`Bishop 5h ${h5}%: the three retros need room; wait for the reset, or --over`);
+  }
   const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1], names = [`retro${n}`, `retro${n}king`, `retro${n}rook`];
   for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');
   x.need(claude('bishop'), ACCOUNTS.bishop.bin);

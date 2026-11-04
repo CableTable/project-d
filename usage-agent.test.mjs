@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo } from './tools/usage-agent.mjs';
-import { claudeUsage } from './tools/rook.mjs';
+import { claudeUsage, usageProbe, limitedLine } from './tools/rook.mjs';
 
 test('tickets keep the eight columns, comma tags, escaped pipes and full note text as plain data', () => {
   const text = `# Tickets
@@ -161,6 +161,18 @@ test('Rook retries once, keeps full diagnostics local, and exports only fixed su
   assert.equal(refreshFailure({ stderr: 'stack\nUSAGE_ERROR: Rook usage probe failed, exit 1\nhook JSON' }), 'Rook usage probe failed, exit 1');
   assert.equal(refreshFailure({ stderr: 'USAGE_ERROR: Main account: 100%, limit reached\n' }), 'Main account: 100%, limit reached');
   assert.equal(refreshFailure({ message: 'secret stack', stderr: 'USAGE_ERROR: private hook JSON' }), 'Usage refresh failed; see the local agent log');
+});
+
+test('TODO 196a: an account at its limit reads as 100% (with its reset text) instead of throwing; other failures still throw', () => {
+  const limited = (stdout) => () => { throw Object.assign(new Error('exit 1'), { status: 1, stdout }); };
+  assert.deepEqual(usageProbe('claude2', limited("You've hit your limit · resets 5pm (Asia/Calcutta)"), () => {}), { limited: '5pm (Asia/Calcutta)' });
+  assert.deepEqual(usageProbe('C:\\bin\\claude3.cmd', limited("You've hit your limit · resets tomorrow\n"), () => {}), { limited: 'tomorrow' });
+  assert.deepEqual(usageProbe('claude2', limited('rate_limit_error'), () => {}), { limited: '' }); // limit without a reset text
+  assert.throws(() => usageProbe('claude2', limited('hook crashed'), () => {}), /Bishop usage probe failed, exit 1/);
+  assert.equal(limitedLine('Bishop', '5pm (Asia/Calcutta)'), 'Bishop: 100% (resets 5pm (Asia/Calcutta))');
+  assert.equal(limitedLine('King', '', ' (live)'), 'King: 100% (live)');
+  const success = JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: .25, resetsAt: 123 }, seven_day: { utilization: .5, resetsAt: 456 } } } });
+  assert.deepEqual(usageProbe('claude2', () => success, () => {}), { h5: [25, 123], wk: [50, 456] });
 });
 
 test('TODO keeps every section, continuation text and section-local numbers, with done winning duplicates', () => {

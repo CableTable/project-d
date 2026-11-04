@@ -137,7 +137,7 @@ test('TODO 190b: review gates Bishop above 85 percent; King, over and unavailabl
       assert.deepEqual(reads, [resolve('mockups/_design/usage/limits.csv')]);
     }
   }
-  for (const flags of [['--as', 'king'], ['--over']]) {
+  for (const flags of [['--over'], ['--as', 'king', '--over']]) { // TODO 196a: --as king alone now reads King's 99% and is refused
     const r = recorder(), reads = [];
     r.x.read = (path) => { reads.push(path); return csv('Pip', 99); };
     review(['abc1234', 'b.txt', 'o.jsonl', ...flags], r.x);
@@ -151,6 +151,74 @@ test('TODO 190b: review gates Bishop above 85 percent; King, over and unavailabl
     assert.ok(launched(r.calls));
     assert.match(warnings.mock.calls[before].arguments[0], /Bishop usage cache unavailable.*allowing review/);
   }
+});
+
+// A recorder whose limits.csv holds the given 5h readings; `reads` collects the cache reads.
+function withUsage(rows) {
+  const r = recorder(), reads = [];
+  r.reads = reads;
+  r.x.read = (path) => { if (!path.endsWith('limits.csv')) return ''; reads.push(path); return `agent,window,used_pct,resets\n${rows}`; };
+  return r;
+}
+
+test('TODO 196a: King builds and reviews are refused above 85% King 5h; --over, Knight/Bishop and an unavailable cache pass', (t) => {
+  const warnings = t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'log', () => {});
+  const future = new Date(Date.now() + 36e5).toISOString();
+  const row = (p) => `King,5h,${p},${future}\nPip,5h,10,${future}\n`;
+  const calls = {
+    'review --as king': (x) => review(['abc1234', 'b.txt', 'o.jsonl', '--as', 'king'], x),
+    'review fallback to King': (x) => { x.locked = (dir) => dir.endsWith('ProjectD-s15fix'); review(['abc1234', 'b.txt', 'o.jsonl'], x); },
+    'build (King by default)': (x) => build(['b.txt', 'o.jsonl', 'br', 'abc1234'], x),
+    'build --as king --dir king2': (x) => build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--as', 'king', '--dir', 'king2'], x),
+  };
+  for (const [name, run] of Object.entries(calls)) {
+    const refused = withUsage(row(86));
+    assert.throws(() => run(refused.x), /^Error: King 5h 86%: use Knight, or --over$/, name);
+    assert.equal(refused.calls.some((c) => isSwitch(c) || ['open', 'npmCi', 'launch'].includes(c[0])), false, name);
+    const ok = withUsage(row(85));
+    run(ok.x);
+    assert.ok(launched(ok.calls), name);
+  }
+  for (const run of [(x) => review(['abc1234', 'b.txt', 'o.jsonl', '--as', 'king', '--over'], x), (x) => build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--over'], x)]) {
+    const over = withUsage(row(99));
+    run(over.x);
+    assert.ok(launched(over.calls));
+    assert.deepEqual(over.reads, []);
+  }
+  const bishop = withUsage(row(99)); // Bishop's own build is not King's gate
+  build(['b.txt', 'o.jsonl', 'br', 'abc1234', '--as', 'bishop'], bishop.x);
+  assert.ok(launched(bishop.calls));
+  for (const csv of ['Pip,5h,10,\n', `King,5h,,${future}\n`, `King,5h,high,${future}\n`, 'King,5h,99,2020-01-01T00:00:00+05:30\n']) { // no King row, blank / invalid reading, window already reset
+    const before = warnings.mock.calls.length, r = withUsage(csv);
+    build(['b.txt', 'o.jsonl', 'br', 'abc1234'], r.x);
+    assert.ok(launched(r.calls), csv);
+    assert.equal(warnings.mock.calls.length > before, !csv.includes('2020'), csv); // the reset window is a quiet pass
+  }
+});
+
+test('TODO 196a: retro is refused above 40% Bishop 5h, naming the percent; 40%, --over and an unavailable cache pass', (t) => {
+  const warnings = t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'log', () => {});
+  const future = new Date(Date.now() + 36e5).toISOString();
+  const refused = withUsage(`Pip,5h,41,${future}\n`);
+  assert.throws(() => retro([], refused.x), /^Error: Bishop 5h 41%: .*--over$/);
+  assert.equal(refused.calls.some((c) => ['open', 'launch'].includes(c[0])), false);
+  for (const agent of ['Pip', 'Bishop']) {
+    const ok = withUsage(`${agent},5h,40,${future}\n`);
+    retro([], ok.x);
+    assert.equal(ok.calls.filter((c) => c[0] === 'launch').length, 3, agent);
+  }
+  const over = withUsage(`Pip,5h,99,${future}\n`);
+  retro(['--over'], over.x);
+  assert.equal(over.calls.filter((c) => c[0] === 'launch').length, 3);
+  assert.deepEqual(over.reads, []);
+  assert.throws(() => retro(['--over', 'x'], over.x), /usage: retro \[--over\]/);
+  assert.throws(() => retro(['x'], over.x), /usage: retro \[--over\]/);
+  const before = warnings.mock.calls.length, none = withUsage('King,5h,99,\n');
+  retro([], none.x);
+  assert.equal(none.calls.filter((c) => c[0] === 'launch').length, 3);
+  assert.match(warnings.mock.calls[before].arguments[0], /retro: Bishop usage cache unavailable.*allowing retro/);
 });
 
 test('TODO 172: lintBrief refuses oversized behaviours, one-word filters, builder suites and bare runs paths', () => {

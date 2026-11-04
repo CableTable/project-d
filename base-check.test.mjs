@@ -102,7 +102,7 @@ test('TODO 193a: base-check prints HUNG (not FAIL) when the test never ends, and
     mkdirSync(join(repo, 'node_modules'));
     copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
     writeFileSync(join(repo, 'tmp-hang.test.mjs'), "import { test } from 'node:test';\ntest('x', () => new Promise(() => setInterval(() => {}, 1000)));\n");
-    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' } });
+    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' }, timeout: 30000 }); // the test expects HUNG after 2 s: 30 s only bounds a sandbox stall (S36 retro)
     assert.equal(r.status, 1);
     assert.match(r.stderr, /^HUNG on base after 2 s/m);
     assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);

@@ -196,6 +196,11 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
   assert.match(mergeRefusal({ ...ok, retro: null }), /^refused: runs33\/retro33\.out is missing or empty/);
   assert.match(mergeRefusal({ ...ok, retro: ' \r\n' }), /missing or empty/);
   assert.equal(mergeRefusal({ ...ok, retro: null, noRetro: true }), '');
+  for (const limit of ["You've hit your limit · resets 5pm", "You've hit your weekly limit"]) { // TODO 196a: a limit message is no retro
+    assert.match(mergeRefusal({ ...ok, retro: limit }), /^refused: runs33\/retro33\.out is only a usage-limit message/, limit);
+    assert.equal(mergeRefusal({ ...ok, retro: limit, noRetro: true }), '');
+  }
+  assert.equal(mergeRefusal({ ...ok, retro: 'We never hit the limit of our patience' }), ''); // not the limit message: no "hit your"
   const other = mergeRefusal({ ...ok, head: 'b'.repeat(40) });
   assert.ok(other.includes(ok.sha) && other.includes('b'.repeat(40)) && other.includes('#5'), other);
   for (const ci of ['failure', 'in_progress', 'queued', undefined]) assert.match(mergeRefusal({ ...ok, ci }), /^refused: CI for a+ is (?:failure|in_progress|queued|not found), not success$/);
