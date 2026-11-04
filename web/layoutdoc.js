@@ -172,7 +172,7 @@ const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Pol
 export function objectCommit(lay, view, entities, newId) {
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
-  const fresh = entities.filter((e) => !view.at.has(e)), oneAt = gone.size === 1 && fresh.length === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // one object replaced by one piece (a trim): it keeps its slot, group, lock and name
+  const oneAt = gone.size === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // split pieces inherit the source member's group and lock, as a single replacement does
   const oneName = one && lay.parts[one.partId]?.name;
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));

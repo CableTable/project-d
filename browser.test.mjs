@@ -22846,6 +22846,134 @@ try {
     assert.deepEqual(errors, []);
   });
 
+  const open97c = async (raw, name = 'break97c.dxf') => {
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+    await typeCmd('select');
+    if (await t('tog-snap').getAttribute('aria-pressed') === 'true') await t('tog-snap').click();
+    await frames();
+  };
+  const key97c = async (key) => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press(key); await frames(); };
+  const lineDoc97c = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 300, 100, { layer: '0', aci: 3, tc: 0x257abd, lt: 'CONTINUOUS', lw: 35 }), dxfLine(100, 180, 300, 180));
+    raw.groups = [{ members: [0, 1], name: '', description: '', unnamed: true, selectable: true }];
+    return raw;
+  };
+  const lineEnds97c = (raw) => raw.entities.filter((e) => e.type === 'LINE').map((e) => [10, 20, 11, 21].map((c) => fieldOf(e, c)));
+  const pickedLines97c = (actual, expected) => {
+    assert.equal(actual.length, expected.length);
+    actual.forEach((line, i) => line.forEach((v, j) => assert.ok(Math.abs(v - expected[i][j]) < 1, `pick coordinate ${v} near ${expected[i][j]}`)));
+  };
+
+  await step('TODO 97c: Break two picks, F, @, group properties, Esc, one Undo and source edit', async () => {
+    await open97c(lineDoc97c());
+    await typeCmd('br'); assert.equal(await prompt(), 'Select object:');
+    await click(160, 100); assert.equal(await prompt(), 'Specify second break point or [First point]:');
+    await click(240, 100); await frames();
+    let raw = await savedDoc();
+    pickedLines97c(lineEnds97c(raw), [[100, 100, 160, 100], [240, 100, 300, 100], [100, 180, 300, 180]]);
+    assert.deepEqual(raw.groups.map((g) => g.members), [[0, 1, 2]], 'split pieces stay in the member group');
+    for (const e of raw.entities.slice(0, 2)) { assert.equal(e.tc, 0x257abd); assert.equal(e.lw, 35); assert.equal(e.lt, 'CONTINUOUS'); }
+    assert.equal((await histLabels()).at(-1), 'Break');
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(lineDoc97c()));
+    await typeCmd('break'); await click(120, 100); await typeCmd('F'); assert.equal(await prompt(), 'Specify first break point:');
+    await typeCmd('150,120'); assert.equal(await prompt(), 'Specify second break point:'); await typeCmd('250,80');
+    assert.deepEqual(lineEnds97c(await savedDoc()).slice(0, 2), [[100, 100, 150, 100], [250, 100, 300, 100]]);
+    await key97c('Control+z');
+    await typeCmd('break'); await click(200, 100); await typeCmd('@');
+    raw = await savedDoc(); assert.equal(raw.entities.length, 3); pickedLines97c(lineEnds97c(raw).slice(0, 2), [[100, 100, 200, 100], [200, 100, 300, 100]]);
+    assert.equal(fieldOf(raw.entities[0], 11), fieldOf(raw.entities[1], 10), '@ has exactly no gap');
+    await key97c('Control+z');
+    await typeCmd('break'); await click(170, 100); await typeCmd('f'); await key97c('Escape');
+    assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(lineDoc97c()), 'Esc before the replacement makes no edit');
+    await key97c('Control+a'); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,20'); await key97c('Escape');
+    assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 120, 300, 120], [100, 200, 300, 200]], 'source still edits after Break and Undo');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97c: circle CCW side, Break at point line, closed refusal, unsupported type, snaps and Esc', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfCircle(200, 180, 50), dxfLine(100, 100, 300, 100), dxfLine(200, 110, 200, 140), dxfPoly([[350, 100], [400, 100], [400, 150]], { closed: true }), dxfEllipse(400, 220, 40, 0, .5));
+    await open97c(raw);
+    await typeCmd('break'); await click(250, 180); await click(200, 230);
+    let doc = await savedDoc(); assert.equal(doc.entities[0].type, 'ARC');
+    assert.ok(Math.abs(fieldOf(doc.entities[0], 50) - 90) < 1); assert.ok(Math.min(fieldOf(doc.entities[0], 51), 360 - fieldOf(doc.entities[0], 51)) < 1, 'remaining arc runs CCW from top round to right');
+    await key97c('Control+z');
+    for (const [x, y] of [[250, 180], [375, 100]]) {
+      await typeCmd('breakatpoint'); await click(x, y);
+      assert.match(await t('cmd-hist').textContent(), /Cannot break a closed object at one point/);
+      await key97c('Escape');
+    }
+    await typeCmd('break'); await click(440, 220); assert.match(await t('cmd-hist').textContent(), /Break works on lines, arcs, circles and polylines/); await key97c('Escape');
+    await typeCmd('breakatpoint'); await click(150, 100); assert.equal(await prompt(), 'Specify break point:'); await key97c('Escape');
+    assert.equal((await savedDoc()).entities.length, 5, 'Break at point Esc changes nothing');
+    await typeCmd('breakatpoint'); await click(150, 100);
+    await t('tog-snap').click();
+    const p = await at(200, 110); await page.mouse.move(p.x + 2, p.y - 1); await frames();
+    await page.mouse.click(p.x + 2, p.y - 1); await frames();
+    await t('tog-snap').click();
+    doc = await savedDoc(); const lines = lineEnds97c(doc);
+    assert.deepEqual(lines.slice(0, 2), [[100, 100, 200, 100], [200, 100, 300, 100]], 'snapped endpoint projects onto the source');
+    assert.equal((await histLabels()).at(-1), 'Break at point');
+    await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 5);
+    await key97c('Escape'); await click(150, 100); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,10'); await key97c('Escape');
+    assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 110, 300, 110], 'the source still edits after Break at point and Undo');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97c: Layout and Compare command and ribbon parity with one Undo', async () => {
+    const lay = newLayout('Break layout');
+    lay.parts.a = objectPart('a', 'Source', dxfLine(100, 100, 300, 100), newDoc(4).layers);
+    lay.parts.b = objectPart('b', 'Other', dxfLine(100, 180, 300, 180), newDoc(4).layers);
+    lay.placed = [{ ...objectPlacement(lay.parts.a), g: 'g1' }, { ...objectPlacement(lay.parts.b), g: 'g1' }];
+    await open97c(layoutRaw(lay), 'layout97c.dxf');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Break', exact: true }).isEnabled(), true);
+    await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Break', exact: true }).click();
+    await click(160, 100); await click(240, 100);
+    let saved = layoutFromRaw(await savedDoc());
+    assert.equal(saved.placed.length, 3); assert.ok(saved.placed.every((p) => p.g === 'g1'));
+    await key97c('Control+z'); saved = layoutFromRaw(await savedDoc()); assert.equal(saved.placed.length, 2);
+    await typeCmd('breakatpoint'); await click(150, 100); await typeCmd('200,100');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 3); await key97c('Control+z');
+    await open97c(lineDoc97c(), 'compare97c.dxf'); await typeCmd('compare');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Break', exact: true }).click();
+    await click(160, 100); await typeCmd('240,100');
+    await key97c('Escape');
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97c(?:-edited)*\.dxf$/ }) });
+    await source.click(); assert.equal((await savedDoc()).entities.length, 3); await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 2);
+    await typeCmd('compare'); await page.locator('[data-ribbon-tab=Home]').click();
+    await page.locator('.ribbon-body').getByTestId('break-flyout').click();
+    await page.getByRole('menuitem', { name: 'Break at point', exact: true }).click();
+    await click(150, 100); await typeCmd('200,100'); await key97c('Escape'); await source.click();
+    assert.equal((await savedDoc()).entities.length, 3); await key97c('Control+z');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97c: light and dark Modify dropdown and broken line mid-command screenshots', async () => {
+    await open97c(lineDoc97c()); await page.locator('[data-ribbon-tab=Modify]').click();
+    mkdirSync('shots-97c', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Modify]').click();
+      await page.locator('.ribbon-body').getByTestId('break-flyout').click();
+      await page.getByRole('menuitem', { name: 'Break at point', exact: true }).waitFor();
+      await page.screenshot({ path: `shots-97c/modify-dropdown-${theme}.png` });
+      await key97c('Escape');
+      await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Break', exact: true }).click();
+      await click(160, 100); await click(240, 100);
+      await typeCmd('break'); await click(160, 180);
+      const p = await at(240, 180); await page.mouse.move(p.x, p.y); await frames();
+      assert.equal(await t('mod-preview').count(), 2);
+      await cmdLine().focus();
+      await page.screenshot({ path: `shots-97c/broken-line-command-${theme}.png` });
+      await key97c('Escape'); await key97c('Control+z');
+    }
+    for (const theme of ['light', 'dark']) for (const name of ['modify-dropdown', 'broken-line-command']) assert.ok(readFileSync(`shots-97c/${name}-${theme}.png`).length > 1000);
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {

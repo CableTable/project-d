@@ -54,6 +54,8 @@ const TABLE = [
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
   ['scale', 'Edit', 'Scale drawing objects uniformly about a base point', ['sc'], 'draw'],
   ['fillet', 'Edit', 'Round the corner between two lines with a radius', ['f'], 'draw'],
+  ['break', 'Edit', 'Remove the part between two points on an object', ['br'], 'draw'],
+  ['breakatpoint', 'Edit', 'Split an open object at one point without a gap', [], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],

@@ -52,6 +52,7 @@ import { movePoint, movePrompt } from './move.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
+import { breakEntity, breakAtPoint } from './break.js';
 import * as PR from './props.js';
 import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
@@ -158,6 +159,8 @@ const TOOLS = [
   { id: 'rotate', label: 'Rotate', svg: '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>' },
   { id: 'scale', label: 'Scale', svg: '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>' },
   { id: 'fillet', label: 'Fillet', svg: '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>' },
+  { id: 'break', label: 'Break', svg: '<path d="M3 17l6-6M15 9l6-6M9 5v6h6M9 13v6h6"/>' },
+  { id: 'breakatpoint', label: 'Break at point', svg: '<path d="M3 21l7-7M14 10l7-7M8 8l8 8M12 5v3M5 12h3"/>' },
   { id: 'offset', label: 'Offset', svg: '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>' },
   { id: 'contour', label: 'Contour', svg: '<rect x="3" y="3" width="18" height="18" rx="5"/><rect x="6.5" y="6.5" width="11" height="11" rx="3"/><rect x="10" y="10" width="4" height="4" rx="1"/>' },
   { id: 'trim', label: 'Trim', cap: 'round', svg: '<circle cx="6" cy="7" r="2.5"/><circle cx="6" cy="17" r="2.5"/><path d="M8.2 8.5L20 17M8.2 15.5L20 7"/>' },
@@ -168,7 +171,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', description: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['auto', 'Automatic', 'DIM', '<path d="M3 15L11 7M3 15l3-1M3 15l1-3M11 7l-3 1M11 7l1 3"/><circle cx="14.5" cy="13.5" r="3.5"/>', 'DIM'],
@@ -638,6 +641,13 @@ function ribbonTool(id, small = false) {
     b.setAttribute('aria-haspopup', 'menu');
     dimButton(b);
   }
+  if (id === 'break') {
+    b.append(h('span', { class: 'flyout', title: 'Break options', 'aria-label': 'Break options', 'data-testid': 'break-flyout' }, '▾'));
+    b.setAttribute('aria-haspopup', 'menu');
+    const open = () => { const r = b.getBoundingClientRect(); popMenu(r.left, r.bottom, [['Break at point', () => setTool('breakatpoint'), 'BREAKATPOINT']]); };
+    b.addEventListener('click', (e) => { if (e.target.closest('.flyout')) { e.stopPropagation(); open(); } }, true);
+    b.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); open(); } });
+  }
   return b;
 }
 const ribbonStack = (...kids) => h('div', { class: 'ribbon-stack' }, kids);
@@ -681,7 +691,7 @@ function ribbonContents(kind) {
   if (ribbon.tab === 'Modify') return [
     group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
-      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true))),
+      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break')),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>', false, undefined, true),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
@@ -716,12 +726,13 @@ function ribbonContents(kind) {
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('contour'))];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('contour'), ribbonTool('break'))];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
-      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true))));
+      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break')));
   }
+  if (kind === 'compare') groups.push(group('Modify', ribbonTool('break')));
   groups.push(group('Groups', btn('Group', ICONS.group, groupSel, { command: 'group', enabled: () => !!editable() && editable().sel.size > 1 && !wholeDrawingGroup(editable().raw.groups, editable().sel) }),
     btn('Ungroup', ICONS.ungroup, ungroupSel, { command: 'ungroup', enabled: () => !!editable() && [...editable().sel].some((i) => groupOf(editable().raw.groups, i)) })));
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
@@ -1275,7 +1286,7 @@ function buildSelbar() {
 
 function buildRail() {
   ui.toolBtns = {};
-  const items = TOOLS.filter((t) => !['copy', 'array', 'rotate', 'scale', 'fillet', 'extend'].includes(t.id)).map((t) => {
+  const items = TOOLS.filter((t) => !['copy', 'array', 'rotate', 'scale', 'fillet', 'extend', 'break', 'breakatpoint'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id, t.description), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
@@ -7016,11 +7027,11 @@ function cursorKey(e) {
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
-const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
+const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
 const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
 const FILLET_TRIM_SAVED = 'pd-fillet-trim';
-const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
+const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset', 'break', 'breakatpoint'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
 const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
@@ -7105,6 +7116,7 @@ function trimRegionPreview(d, m, paint) {
 function modStart(id) {
   const m = state.mod, d = editable() || curDoc();
   if (d.lay && !OBJ_MODS.includes(id)) { layModStart(id); return; }
+  if (id === 'break' || id === 'breakatpoint') { m.stage = 'obj'; state.msg = 'Select object:'; return; }
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
   else if (id === 'fillet') {
@@ -7137,6 +7149,7 @@ function modPrompt(d) {
   if (d.lay) d = { sel: new Set(selIdxs()) };               // a layout: only how many are selected is read
 
   const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
+  if (m.kind === 'break' || m.kind === 'breakatpoint') return { status: `Command: ${m.kind.toUpperCase()}`, prompt: m.stage === 'obj' ? 'Select object:' : m.kind === 'breakatpoint' ? 'Specify break point:' : m.stage === 'first' ? 'Specify first break point:' : m.first ? 'Specify second break point:' : 'Specify second break point or [First point]:' };
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
   if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
   if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode) };
@@ -7183,6 +7196,7 @@ function modEnter(d) {
   d = mdoc(d);
   if (d.lay && state.mod.stage === 'pick') { layTake(d); return; }
   const m = state.mod;
+  if (m.kind === 'break' || m.kind === 'breakatpoint') { note(modPrompt(d).prompt); return; }
   if (['move', 'copy'].includes(m.kind)) {
     if (m.stage === 'pick') moveTake(d);
     else if (m.stage === 'mode') { m.stage = 'p1'; note(modPrompt(d).prompt); }
@@ -7237,6 +7251,7 @@ function modTakes(c) {
   if (dimAutoLive() && state.dim.askText) return true;              // Automatic DIM's "Enter dimension text" takes any text
   const m = state.mod;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
+  if ((modLive() || layModLive()) && (m.kind === 'break' || m.kind === 'breakatpoint')) return m.stage !== 'obj';
   if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
   if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
   if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
@@ -7249,6 +7264,17 @@ function modTyped(d, raw) {
   d = mdoc(d);
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (m.kind === 'break' || m.kind === 'breakatpoint') {
+    if (m.kind === 'break' && m.stage === 'second' && /^(f|first|first point)$/.test(c)) { m.first = true; m.stage = 'first'; note(modPrompt(d).prompt); paintOverlay(); return true; }
+    if (m.stage === 'second' && c === '@') { breakDo(d, m.p0); return true; }
+    if (m.stage !== 'obj') {
+      const q = DR.typedPoint(DR.parseInput(raw), m.p0?.map((v) => v * d.factor));
+      if (q) breakPoint(d, q.map((v) => v / d.factor));
+      else note(modPrompt(d).prompt);
+      return true;
+    }
+    return false;
+  }
   if (m.kind === 'offset') return offsetTyped(d, raw, c);
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     m.cursorInput = null;
@@ -7370,6 +7396,7 @@ function modHover(d, cx, cy, shift) {
   d = mdoc(d);
   const m = state.mod, p = toDrawing(d, cx, cy);
   m.p = p; m.shift = shift;
+  if ((m.kind === 'break' || m.kind === 'breakatpoint') && m.stage !== 'obj') m.cur = snapPoint(d, p);
   if (m.kind === 'trim' || m.kind === 'extend') m.client = [cx, cy];
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
     m.cur = movePick(d, p, shift, true);
@@ -7404,7 +7431,15 @@ function modUp(d, was, p, shift, crossing) {
   if (['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (was.moved) return;
   if (d.vlay && partRefused(d, m, was.p)) return;
-  if (m.kind === 'offset') {
+  if (m.kind === 'break' || m.kind === 'breakatpoint') {
+    if (m.stage === 'obj') {
+      const ent = modEntAt(d, was.p);
+      if (!ent) { note('Select object:'); return; }
+      if (!['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE'].includes(ent.type)) { note('Break works on lines, arcs, circles and polylines'); return; }
+      if (m.kind === 'breakatpoint' && (ent.type === 'CIRCLE' || ent.type === 'LWPOLYLINE' && ((GR.get(ent.r, 70) ?? 0) & 1))) { note('Cannot break a closed object at one point'); return; }
+      m.ent = ent; m.p0 = was.p; m.stage = m.kind === 'break' ? 'second' : 'point'; note(modPrompt(d).prompt); paintOverlay();
+    } else breakPoint(d, snapPoint(d, was.p));
+  } else if (m.kind === 'offset') {
     if (m.stage === 'obj') {
       const ent = modEntAt(d, was.p);
       if (!ent) { note('Offset: nothing there. Click a line, arc, circle, ellipse, spline or polyline'); return; }
@@ -7885,6 +7920,20 @@ function offsetUndo(d) {
   note(offsetPrompt(m)); paintOverlay();
 }
 const filletSettings = (m) => `Current settings: Mode = ${m.trim ? 'TRIM' : 'NO TRIM'}, Radius = ${mmText(state.filR)} mm`;
+function breakPoint(d, p) {
+  const m = state.mod;
+  if (m.stage === 'first') { m.p0 = p; m.stage = 'second'; note(modPrompt(d).prompt); paintOverlay(); }
+  else breakDo(d, p);
+}
+function breakDo(d, p) {
+  const m = state.mod, idx = d.raw.entities.indexOf(m.ent), label = modLabel(m.kind);
+  if (idx < 0) { setTool('select'); note('Object changed: start Break again'); return; }
+  const pieces = m.kind === 'breakatpoint' ? breakAtPoint(m.ent, p) : breakEntity(m.ent, m.p0, p);
+  if (!pieces) { note('Break works on lines, arcs, circles and polylines'); return; }
+  view.fitted = false;
+  if (!commit(d, { entities: d.raw.entities.flatMap((e, i) => i === idx ? pieces : [e]), groups: spliceGroups(d.raw.groups, d.raw.entities.length, idx, pieces.length), blocks: d.raw.blocks }, label)) return;
+  setTool('select'); note(`${label}: ${pieces.length} piece${pieces.length === 1 ? '' : 's'}. Ctrl+Z takes it back`);
+}
 /** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
 function filletCommit(d, entities, groups) {
   const m = state.mod, hist = historyOf(d.vlay || d), n = hist.labels().past.length;
@@ -8109,6 +8158,10 @@ function modOvl(d, out, paint) {
   } else if (m.kind === 'offset') {
     if (m.stage === 'obj') { const e = m.p ? modEntAt(d, m.p) : null; if (e && MD.canOffset(e)) addEnt(e, 'dr-guide'); }
     else if (m.ent) { const pick = m.p ? offsetPick(d, m.p) : null; addEnt(pick?.target ?? m.ent, 'dr-guide'); if (pick?.r.ent) addEnt(pick.r.ent, 'dr-shape', 'mod-preview'); }
+  } else if (m.kind === 'break' || m.kind === 'breakatpoint') {
+    if (m.ent) addEnt(m.ent, 'dr-guide');
+    const pieces = m.ent && m.stage !== 'first' && m.cur ? (m.kind === 'break' ? breakEntity(m.ent, m.p0, m.cur) : breakAtPoint(m.ent, m.cur)) : null;
+    if (pieces) for (const e of pieces) addEnt(e, 'dr-shape', 'mod-preview');
   } else if (m.kind === 'fillet') {
     if (m.ent) addEnt(m.ent, 'dr-guide');
     const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f, m.trim) : null;
