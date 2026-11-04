@@ -72,6 +72,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Fit**: Changes the view so the drawing or sheet fits in the window. Where: `TODO.md`, item 42. Avoid: Scaling the drawing; Fit to sheet.
 
+**Dotted crosshair**: Thin dotted lines that carry the crosshair's two arms out to the canvas edges, for lining things up by eye; off unless turned on, never snaps or prints. Where: `DECISIONS.md`, Dotted crosshair (TODO 133, T43). Avoid: Rubber band (a line from a picked point to the pointer); Tracking line.
+
 **Zoom level**: The percentage at the bottom right of the canvas; 100 % shows the drawing at true size. It can be typed or picked from presets. Where: `DECISIONS.md`, Typed zoom level (TODO 137, T47). Avoid: Zoom factor; Scale (a drawing's scale is a different thing).
 
 **Zoom Window**: Fills the view with a box dragged on the canvas. Where: `DECISIONS.md`, More zooms (TODO 74).
