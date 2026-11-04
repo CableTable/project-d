@@ -5644,7 +5644,7 @@ try {
       tx = pdfText(dl);
       const bx = boxes(tx)[0].sort((x, y) => x - y);
       assert.ok(Math.abs(bx[1] - wide) < 0.3 && Math.abs(bx[0] - high) < 0.3, `${paper}: ${bx}`);
-      assert.match(tx, /NOT 1:1/); assert.match(tx, /not 1:1, not to be used as film/); assert.match(tx, /\(80\.00\) Tj/);
+      assert.match(tx, /NOT 1:1/); assert.match(tx, /not 1:1, not to be used as film/); assert.match(tx, /\(80\.00  .*X 80\.00, .*Y 0\.00.*\) Tj/, 'the dimension keeps its real number and deltas');
     }
     // the same file on Layout: the layout dialog, as it was
     await t('add-to-layout').click();
@@ -16193,9 +16193,11 @@ try {
       assert.ok(await t('draw-tip').isVisible(), 'the Line readout is showing');
       await cmdLine().focus(); await frames();
       const box = await t('cmd-bar').boundingBox();
-      assert.equal(box.x, cursor.x + 20, 'the box takes the first clear corner, right-above');
-      assert.equal(box.y + box.height, cursor.y - 20);
+      // DYN is on: the Length box lies over right-above (TODO 155t fix), so the first clear corner in 146's order is left-below
+      assert.equal(box.x + box.width, cursor.x - 20, 'the box takes the first clear corner, left-below');
+      assert.equal(box.y, cursor.y + 20);
       const clear = async () => {
+        for (const f of await page.locator('label.on-drawing').all()) assert.equal(overlap(box, await f.boundingBox()), 0, 'the box clears the Length / Angle boxes');
         assert.equal(overlap(box, await t('draw-preview').boundingBox()), 0, 'the box clears the Line');
         assert.equal(overlap(box, await t('draw-tip').boundingBox()), 0, 'the box clears the readout');
       };
