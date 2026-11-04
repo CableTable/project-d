@@ -152,7 +152,7 @@ function wait(args) {
 // The merge checks (TODO 167b): '' when the merge may go ahead, else the one-line refusal. retro = the retro file's text or null.
 export function mergeRefusal({ n, pr, sha, head, retro, applied, noRetro, ci }) {
   if (!noRetro && !(retro || '').trim()) return `refused: runs${n}/retro${n}.out is missing or empty (run the retro, or pass --no-retro)`;
-  if (!noRetro && /hit your .*limit/i.test(retro)) return `refused: runs${n}/retro${n}.out is only a usage-limit message (the retro did not run: re-run it after the limit resets, or pass --no-retro)`; // TODO 196a
+  if (!noRetro && retro.trim().length < 300 && /hit your .*limit/i.test(retro)) return `refused: runs${n}/retro${n}.out is only a usage-limit message (the retro did not run: re-run it after the limit resets, or pass --no-retro)`; // TODO 196a
   if (!noRetro && !applied) return `refused: runs${n}/retro${n}.applied is missing (apply the retro suggestions, then write it, or pass --no-retro)`; // TODO 193b
   if (head !== sha) return `refused: ${sha} is not the head of PR #${pr} (head is ${head})`;
   if (ci !== 'success') return `refused: CI for ${sha} is ${ci || 'not found'}, not success`;
@@ -272,12 +272,16 @@ if (cmd === 'result') {
   for (const [a, , , u] of agents) if (!u && a !== 'Rowan' && a !== 'King') throw new Error(`${label(a)} usage probe failed, exit unknown`);
   const rows = ['agent,role,model,window,used_pct,cap_pct,starts,resets,as_of'];
   if (!cached) mkdirSync(U, { recursive: true });
+  let oldLimits = [];
+  try { oldLimits = parseCsv(readFileSync(join(U, 'limits.csv'), 'utf8')); } catch { /* no file yet: no week to keep */ }
   for (const [a, role, model, u] of agents) {
     if (!u) { console.log(`${label(a)}: no reading${suffix}`); continue; }
-    if (u.limited !== undefined) { // 5h row only: the week is unknown, and review / build gates read the 5h row
+    if (u.limited !== undefined) { // a limited probe says nothing of the week: keep the last week row as it was written (the cached read needs both rows)
       console.log(limitedLine(label(a), u.limited, suffix));
       if (!cached) {
         rows.push([a, role, model, '5h', 100, '', '', '', iso(now)].join(','));
+        const wk = oldLimits.find((r) => (a === 'Pip' ? ['Pip', 'Bishop'] : [a]).includes(r.agent) && r.window === 'week');
+        if (wk) rows.push([a, role, model, 'week', wk.used_pct, wk.cap_pct, wk.starts, wk.resets, wk.as_of].join(','));
         appendFileSync(join(U, 'history.csv'), `${iso(now)},${a},5h,100\n`);
       }
       continue;

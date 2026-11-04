@@ -201,6 +201,9 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     assert.equal(mergeRefusal({ ...ok, retro: limit, noRetro: true }), '');
   }
   assert.equal(mergeRefusal({ ...ok, retro: 'We never hit the limit of our patience' }), ''); // not the limit message: no "hit your"
+  const longRetro = "The builder said \"You've hit your limit\" twice; ".repeat(20); // ~1 kB real retro quoting the phrase
+  assert.ok(longRetro.length > 900 && longRetro.length < 1200);
+  assert.equal(mergeRefusal({ ...ok, retro: longRetro }), ''); // only a SHORT file is a limit message
   const other = mergeRefusal({ ...ok, head: 'b'.repeat(40) });
   assert.ok(other.includes(ok.sha) && other.includes('b'.repeat(40)) && other.includes('#5'), other);
   for (const ci of ['failure', 'in_progress', 'queued', undefined]) assert.match(mergeRefusal({ ...ok, ci }), /^refused: CI for a+ is (?:failure|in_progress|queued|not found), not success$/);
