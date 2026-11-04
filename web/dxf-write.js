@@ -349,7 +349,14 @@ function writePreparedDxf(doc, opts) {
   const find = (n) => [...rec.keys()].find((k) => k.toLowerCase() === n.toLowerCase());
   const modelRec = rec.get(find('*Model_Space')), paperRec = rec.get(find('*Paper_Space'));
 
-  const drawingGroups = (doc.groups || []).map((g) => ({ ...g, handle: handle() })), memberOf = new Map();
+  // a group keeps the name it was read with; an unnamed or repeated one gets the next free *A<n>
+  const taken = new Set(), kept = (doc.groups || []).map((g) => !!g.name && !taken.has(g.name.toUpperCase()) && !!taken.add(g.name.toUpperCase()));
+  let n = 0;
+  const drawingGroups = (doc.groups || []).map((g, i) => {
+    let name = g.name;
+    if (!kept[i]) { do n++; while (taken.has('*A' + n)); name = '*A' + n; taken.add(name); }
+    return { ...g, name, unnamed: kept[i] ? g.unnamed !== false : true, handle: handle() };
+  }), memberOf = new Map();
   for (const g of drawingGroups) for (const i of g.members) {
     if (!memberOf.has(i)) memberOf.set(i, []);
     memberOf.get(i).push(g.handle);
@@ -503,10 +510,10 @@ function writePreparedDxf(doc, opts) {
     o.s(0, 'DICTIONARY').p(5, H.ROOT).p(330, 0).s(100, 'AcDbDictionary').p(281, 1)
       .s(3, 'ACAD_GROUP').p(350, groups).s(3, 'ACAD_PLOTSTYLENAME').p(350, plotStyles);
     o.s(0, 'DICTIONARY').p(5, groups).p(330, H.ROOT).s(100, 'AcDbDictionary').p(281, 1);
-    drawingGroups.forEach((g, i) => o.s(3, '*A' + (i + 1)).p(350, g.handle));
+    for (const g of drawingGroups) o.s(3, g.name).p(350, g.handle);
     for (const g of drawingGroups) {
       o.s(0, 'GROUP').p(5, g.handle).s(102, '{ACAD_REACTORS').p(330, groups).s(102, '}').p(330, groups)
-        .s(100, 'AcDbGroup').s(300, g.description || '').p(70, 1).p(71, g.selectable === false ? 0 : 1);
+        .s(100, 'AcDbGroup').s(300, g.description || '').p(70, g.unnamed ? 1 : 0).p(71, g.selectable === false ? 0 : 1);
       for (const i of g.members) o.p(340, entityHandles[i]);
     }
     o.s(0, 'ACDBDICTIONARYWDFLT').p(5, plotStyles).s(102, '{ACAD_REACTORS').p(330, H.ROOT).s(102, '}').p(330, H.ROOT)

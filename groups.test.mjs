@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { readDxf } from './web/drawing.js';
 import * as W from './web/dxf-write.js';
-import { group, ungroup, groupOf, prune, remap, copy } from './web/groups.js';
+import { group, ungroup, groupOf, prune, remap, copy, follow } from './web/groups.js';
 
 const fixture = readFileSync('fixtures/groups.dxf', 'utf8').replace(/\r\n/g, '\n');
 const members = (groups) => groups.map((g) => g.members.slice().sort((a, b) => a - b));
@@ -31,8 +31,8 @@ test('TODO 97a: hand-written AutoCAD-style GROUP reads names, flags and entity i
   assert.equal(doc.entities[doc.groups[0].members[1]].type, 'LINE');
   const before = structuredClone(doc), back = readDxf(W.writeDxf(doc));
   assert.deepEqual(members(back.groups), [[0, 1]]);
-  assert.equal(back.groups[0].name, '*A1');
-  assert.equal(back.groups[0].unnamed, true);
+  assert.equal(back.groups[0].name, 'Parallel lines');
+  assert.equal(back.groups[0].unnamed, false);
   assert.equal(back.groups[0].description, 'Two parallel lines');
   assert.deepEqual(doc, before, 'save leaves the source alone');
   const disabled = readDxf(fixture.replace('71\n1\n340', '71\n0\n340'));
@@ -72,7 +72,7 @@ test('TODO 97a: writer assigns unnamed groups, unique handles, owners, members a
   const text = W.writeDxf(doc), recs = records(text), gs = recs.filter((r) => r.type === 'GROUP');
   const root = recs.find((r) => r.type === 'DICTIONARY' && values(r, 3).includes('ACAD_GROUP'));
   const dict = recs.find((r) => r.type === 'DICTIONARY' && first(r, 5) === first(root, 350));
-  assert.deepEqual(values(dict, 3), ['*A1', '*A2']);
+  assert.deepEqual(values(dict, 3), ['Parallel lines', '*A1']);
   assert.deepEqual(values(dict, 350), gs.map((r) => first(r, 5)));
   assert.equal(values(dict, 330).at(-1), first(root, 5));
   const allHandles = recs.filter((r) => r.type !== 'SECTION').flatMap((r) => [...values(r, 5), ...values(r, 105)]);
@@ -81,7 +81,7 @@ test('TODO 97a: writer assigns unnamed groups, unique handles, owners, members a
   for (const r of recs) for (const h of values(r, 330)) assert.ok(h === '0' || allHandles.includes(h), 'owner / reactor resolves');
   const entities = recs.filter((r) => ['LINE', 'CIRCLE'].includes(r.type));
   gs.forEach((g, i) => {
-    assert.equal(first(g, 70), '1'); assert.equal(first(g, 71), '1');
+    assert.equal(first(g, 70), i ? '1' : '0'); assert.equal(first(g, 71), '1');
     assert.deepEqual(values(g, 330), [first(dict, 5), first(dict, 5)]);
     assert.deepEqual(values(g, 340), entities.slice(i * 2, i * 2 + 2).map((r) => first(r, 5)));
     for (const e of entities.slice(i * 2, i * 2 + 2)) {
@@ -160,3 +160,29 @@ test('TODO 97a: erase / explode remaps indexes; copy creates independent groups'
   assert.deepEqual(groups, before);
   assert.deepEqual(members(copy(groups, new Map([[0, [5]]]))), members(groups), 'a partial copy with one member dissolves');
 });
+
+test('TODO 97a fix: groups follow the entity list through erase, Move, copy; saved members are the right objects', () => {
+  const doc = readDxf(fixture);
+  doc.entities.push(W.line(40, 0, 50, 0), W.line(60, 0, 70, 0));
+  doc.groups.push(make(3, 4));                               // entities: LINE LINE CIRCLE LINE LINE; groups [0, 1] and [3, 4]
+  const saved = structuredClone(doc.groups), erased = doc.entities.slice(1);       // what Ed.removeEntities leaves of an erase of entity 0
+  assert.deepEqual(members(follow(doc.groups, doc.entities, erased)), [[2, 3]], 'the pair that lost a member dissolves, the other shifts');
+  const back = readDxf(W.writeDxf({ ...doc, entities: erased, groups: follow(doc.groups, doc.entities, erased) }));
+  assert.deepEqual(members(back.groups), [[2, 3]]);
+  assert.deepEqual(back.groups[0].members.map((i) => back.entities[i].type), ['LINE', 'LINE']);
+  assert.deepEqual(back.entities.map((e) => e.type), ['LINE', 'CIRCLE', 'LINE', 'LINE']);
+  const moved = doc.entities.map((e, i) => (i === 1 ? { ...e } : e));
+  assert.equal(follow(doc.groups, doc.entities, moved), doc.groups, 'Move keeps the count: indexes stay');
+  assert.deepEqual(members(follow(doc.groups, doc.entities, [...doc.entities, W.line(0, 0, 1, 1)])), [[0, 1], [3, 4]], 'a copy appends: members stay');
+  assert.deepEqual(doc.groups, saved, 'follow leaves its input alone; Undo hands the snapshot back');
+  assert.equal(follow([], doc.entities, erased).length, 0);
+});
+
+test('TODO 97a fix: a named group keeps its name and unnamed flag; new and copied groups take free *A names', () => {
+  const doc = readDxf(fixture);
+  for (let i = 1; i <= 6; i++) doc.entities.push(W.line(40 * i, 0, 40 * i + 10, 0));
+  const [named] = doc.groups, copied = copy(doc.groups, new Map([[0, [3]], [1, [4]]]))[1];
+  doc.groups = [named, copied, { ...make(5, 6), name: '*A1', unnamed: true }, make(7, 8)];
+  const back = readDxf(W.writeDxf(doc));
+  assert.deepEqual(back.groups.map((g) => g.name), ['Parallel lines', '*A2', '*A1', '*A3'], 'the copy of a named group is unnamed; new names skip the used *A1');
+  assert.deepEqual(back.groups.map((g) => g.unnamed), [false, true, true, true]);});

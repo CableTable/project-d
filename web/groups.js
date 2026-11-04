@@ -38,5 +38,12 @@ export function remap(groups = [], indexes) {
   return groups.map((g) => ({ ...g, members: unique(g.members.flatMap((i) => indexes.get(i) || [])) })).filter((g) => g.members.length >= 2);
 }
 
+/** The groups after the entity list changed from `before` to `after`: an edit that keeps the count (Move, Rotate…) keeps the indexes; otherwise members follow their entity object, and gone ones drop. */
+export function follow(groups = [], before, after) {
+  if (!groups.length || before === after || before.length === after.length) return groups;
+  const at = new Map(after.map((e, i) => [e, i]));
+  return remap(groups, new Map(before.map((e, i) => [i, at.has(e) ? [at.get(e)] : []])));
+}
+
 /** A copy map describes only the new entities; the original groups stay separate. */
 export const copy = (groups = [], indexes) => [...groups, ...remap(groups, indexes)];

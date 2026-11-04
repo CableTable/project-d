@@ -1,7 +1,7 @@
 import { ACI } from './colour.js';
 import { restoreDimensionInserts } from './dimension-text.js';
 import { closedOutline, linkFills, fillCss, fillHoles, fillOps } from './fill.js';
-import { group, remap } from './groups.js';
+import { group, follow } from './groups.js';
 // The drawing viewer's reader (.dxf), pure: no DOM, no canvas — drawing.test.mjs. dxf-worker.js runs it off the
 // page's thread, viewers.js draws what it gives, and Measure asks pickAt / describe2d / measure2d (geom.js words them).
 //
@@ -70,10 +70,7 @@ export function readDxf(text) {
   restoreDimensionInserts(doc);
   const before = doc.entities;
   linkFills(doc);
-  if (doc.groups.length && before !== doc.entities) {
-    const indexes = new Map(doc.entities.map((e, i) => [e, i]));
-    doc.groups = remap(doc.groups, new Map(before.map((e, i) => [i, indexes.has(e) ? [indexes.get(e)] : []])));
-  }
+  doc.groups = follow(doc.groups, before, doc.entities);
   return doc;
 }
 
