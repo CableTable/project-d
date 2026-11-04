@@ -5608,7 +5608,7 @@ function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objec
 function layObjCommit(v, next, label, keepSel) {
   const d = v.vlay;
   pushLay(d, keepSel ? { ...laySnap(d.lay), grip: true } : null, '', label);
-  LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid());
+  LD.objectCommit(d.lay, v, next.entities, () => 'o' + uid(), next.heir);
   touch(d); update();       // the layout itself: a run ended by a tab change commits after state.doc moved on
 }
 /** A grip edit of layout objects (each [entity of layObjDoc `v`, what it becomes]): the same objects, in one undo step. False (and nothing changed) when nothing is left of one. */
@@ -7121,7 +7121,7 @@ function modStart(id) {
   if (id === 'break' || id === 'breakatpoint') { m.stage = 'obj'; state.msg = 'Select object:'; return; }
   if (id === 'join') {
     const v = d.lay ? layObjSelDoc(d) : d;
-    m.objs = [...v.sel].map((i) => v.raw.entities[i]).filter(Boolean); m.stage = m.objs.length ? 'more' : 'src';
+    m.objs = [...v.sel].filter((i) => !lockedEnt(v, i)).map((i) => v.raw.entities[i]).filter(Boolean); m.stage = m.objs.length ? 'more' : 'src';
     if (m.objs.length > 1) joinRun(mdoc(d)); else state.msg = m.objs.length ? '1 selected' : null;       // two or more selected before the command: it runs at once
     return;
   }
@@ -7954,10 +7954,10 @@ function joinRun(d, close = false) {
   for (const { reason } of skipped) words.set(reason, (words.get(reason) || 0) + 1);
   const left = [...words].map(([reason, n]) => reason === NO_TOUCH ? `${n} object${n === 1 ? '' : 's'} not joined: ${reason} (Join gaps can close them)` : `${n} skipped: ${reason}`).join('. ');
   if (!result) { setTool('select'); note(ents.length ? `Nothing joined. ${left}` : 'Join: nothing selected'); return; }
-  const gone = new Set(ents.filter((e) => !skipped.some((s) => s.entity === e))), at = all.indexOf(ents.find((e) => gone.has(e))), keep = new Map(), entities = [];
+  const gone = new Set(ents.filter((e) => !skipped.some((s) => s.entity === e))), source = ents.find((e) => gone.has(e)), at = all.indexOf(source), keep = new Map(), entities = [];
   all.forEach((e, i) => { if (i === at) { keep.set(i, [entities.length]); entities.push(result); } else if (!gone.has(e)) { keep.set(i, [entities.length]); entities.push(e); } });
   view.fitted = false;
-  if (!commit(d, { entities, groups: remapGroups(d.raw.groups, keep), blocks: d.raw.blocks }, `Join ${gone.size}`)) return;
+  if (!commit(d, { entities, groups: remapGroups(d.raw.groups, keep), blocks: d.raw.blocks, heir: source }, `Join ${gone.size}`)) return;       // heir: a layout's result takes the source's group, lock and place
   setTool('select');
   if (!d.vlay) setSel(d, new Set([keep.get(at)[0]]));
   note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);

@@ -23090,6 +23090,22 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  await step('TODO 97d fix: on a layout Ctrl+A then Join leaves a locked object alone, and the result keeps the source group and place', async () => {
+    const lay = newLayout('Join lock'), layers = newDoc(4).layers;
+    lay.parts.p = objectPart('p', 'Pad', dxfLine(100, 300, 180, 300), layers);
+    lay.parts.a = objectPart('a', 'Left', dxfLine(100, 100, 180, 100), layers);
+    lay.parts.b = objectPart('b', 'Right', dxfLine(180, 100, 260, 100), layers);
+    lay.parts.c = objectPart('c', 'Locked', dxfLine(260, 100, 340, 100), layers);
+    lay.placed = [{ ...objectPlacement(lay.parts.a), g: 'g1' }, objectPlacement(lay.parts.b), { ...objectPlacement(lay.parts.c), lock: true }, objectPlacement(lay.parts.p)];
+    await open97c(layoutRaw(lay), 'layout97d-lock.dxf');
+    await key97c('Control+a'); await typeCmd('join');
+    assert.match(await prompt(), /Joined 2 objects into 1 line/);
+    const placed = layoutFromRaw(await savedDoc()).placed;
+    assert.equal(placed.length, 3, 'the locked line stayed');
+    assert.deepEqual(placed.map((p) => [p.g || null, !!p.lock]), [['g1', false], [null, true], [null, false]], 'the result in the source place with its group, the locked line, the pad');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97d: light and dark Modify panel with Join and a joined polyline selected', async () => {
     await open97c(chainDoc97d(), 'join97d-shots.dxf');
     for (const theme of ['light', 'dark']) {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { joinEntities, NO_TOUCH } from './web/join.js';
 import { line, arc, circle, lwpoly, ellipse, entity } from './web/dxf-write.js';
 import { shapeOf, get } from './web/grips.js';
+import { offsetEntity } from './web/modify.js';
 
 const near = (a, b) => assert.ok(Math.abs(a - b) < 2e-6, `${a} != ${b}`);
 const own = { layer: 'Cut', aci: 3, tc: 0x257abd, lt: 'DASHED', lw: 35 };
@@ -77,4 +78,18 @@ test('ends within 2e-6 touch and 3e-6 do not; a mirrored arc is refused', () => 
   const { skipped } = joinEntities([line(0, 0, 5, 0), mirrored]);
   assert.match(skipped[0].reason, /mirrored/);
   assert.equal(get(mirrored.r, 230), -1);
+});
+
+test('TODO 97d fix: a hat profile joins all 5 lines (the chain beats the 2-line merge); a tie goes to the merge', () => {
+  const { result, skipped } = joinEntities([line(0, 0, 10, 0), line(10, 0, 10, 5), line(10, 5, 20, 5), line(20, 5, 20, 0), line(20, 0, 30, 0)]);
+  assert.deepEqual(shapeOf(result), { t: 'poly', pts: [[0, 0], [10, 0], [10, 5], [20, 5], [20, 0], [30, 0]], closed: false });
+  assert.equal(skipped.length, 0);
+  assert.deepEqual(shapeOf(joinEntities([line(0, 0, 10, 0), line(20, 0, 30, 0)]).result), { t: 'line', a: [0, 0], b: [30, 0] });
+});
+
+test('TODO 97d fix: a line + arc D-shape is an open 3-vertex polyline (a closed 2-vertex one is not drawn by Offset), and Offset keeps both parts', () => {
+  const d = joinEntities([line(0, 0, 10, 0), arc(5, 0, 5, 0, 180)]).result, s = shapeOf(d);
+  assert.deepEqual([s.closed, s.pts.length], [false, 3]);
+  const o = shapeOf(offsetEntity(d, 1, [5, -3]).ent);
+  assert.equal(o.pts.length, 3); assert.ok(o.pts[1][2], 'the arc side is still a bulge');
 });

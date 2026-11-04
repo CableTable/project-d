@@ -14,7 +14,7 @@ export function breakWhy(entity, p1, p2) {
   const generic = 'Break works on lines, arcs, circles and polylines';
   if (!usable(entity, p1, p2)) return generic;
   const sh = shapeOf(entity);
-  if (sh.t === 'poly') return noLength(pathOf(sh)) ? 'The polyline has a side without length' : generic;
+  if (sh.t === 'poly') return noLength(pathOf(sh)) ? 'The polyline has a side without length' : sh.closed && p1[0] === p2[0] && p1[1] === p2[1] ? 'Cannot break a closed object at one point' : generic;
   return sh.t === 'circle' && sh.r > 0 ? 'Cannot break a closed object at one point' : generic;
 }
 

@@ -89,6 +89,8 @@ test('a circle at one point is refused (no zero-sweep arc); a repeated vertex ha
   assert.equal(breakEntity(dup, [5, 0], [15, 0]), null);
   assert.equal(breakWhy(dup, [5, 0], [15, 0]), 'The polyline has a side without length');
   assert.equal(breakWhy(entity('TEXT', []), [0, 0], [1, 0]), 'Break works on lines, arcs, circles and polylines');
+  const box = lwpoly([[0, 0], [20, 0], [20, 20], [0, 20]], { closed: true });       // Break at point: the closed polyline says so too (TODO 97c)
+  assert.equal(breakAtPoint(box, [10, 0]), null); assert.equal(breakWhy(box, [10, 0], [10, 0]), same);
 });
 
 test('layout split pieces keep their source member group and leave the saved source untouched', () => {

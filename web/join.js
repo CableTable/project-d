@@ -70,7 +70,7 @@ function chained(src, items) {
     const head = !tail && take(segs[0].a);
     if (head) segs = [...flip(head), ...segs];
     more = !!(tail || head);
-    closed = used.length > 1 && dist(segs[segs.length - 1].b, segs[0].a) <= TOL;
+    closed = used.length > 1 && segs.length > 2 && dist(segs[segs.length - 1].b, segs[0].a) <= TOL;
   }
   if (used.length < 2) return null;
   const sh = polyOf(segs, closed);
@@ -84,7 +84,7 @@ export function joinEntities(entities, opts = {}) {
     const c = classify(entity);
     if (c.reason) skipped.push({ entity, reason: c.reason }); else items.push({ entity, ...c });
   }
-  const src = items[0], r = src && (merged(src, items, opts.close) || chained(src, items));
+  const src = items[0], m = src && merged(src, items, opts.close), c = src && chained(src, items), r = c && (!m || !opts.close && c.used.length > m.used.length) ? c : m;       // the one that joins more pieces; a tie goes to the merge
   if (!r) return { result: null, skipped: [...skipped, ...items.map(({ entity }) => ({ entity, reason: NO_TOUCH }))] };
   return { result: rebuilt(r.sh, src.entity), skipped: [...skipped, ...items.filter((i) => !r.used.includes(i)).map(({ entity }) => ({ entity, reason: NO_TOUCH }))] };
 }

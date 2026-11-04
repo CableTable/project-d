@@ -169,10 +169,11 @@ export function objectSelection(lay, placed, selected, skip = () => false) {
 }
 const OBJ_NAMES = { LINE: 'Line', ARC: 'Arc', CIRCLE: 'Circle', LWPOLYLINE: 'Polyline', POLYLINE: 'Polyline', ELLIPSE: 'Ellipse', SPLINE: 'Spline', SOLID: 'Solid', MTEXT: 'Text' };
 /** What a command left of objectDoc(lay) (`entities`): objects whose entity is gone are removed (and their part, if nothing else is placed from it), each new entity becomes an object. */
-export function objectCommit(lay, view, entities, newId) {
+export function objectCommit(lay, view, entities, newId, heir) {       // heir: the entity of `view` whose group, lock and place a joined result takes
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
-  const oneAt = gone.size === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // split pieces inherit the source member's group and lock, as a single replacement does
+  const oneAt = gone.has(view.at.get(heir)) ? view.at.get(heir) : gone.size === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // split pieces inherit the source member's group and lock, as a single replacement does
+  const slot = oneAt - [...gone].filter((i) => i < oneAt).length;       // where oneAt lands once the gone ones are removed
   const oneName = one && lay.parts[one.partId]?.name;
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
@@ -185,7 +186,7 @@ export function objectCommit(lay, view, entities, newId) {
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part;
-    if (one) lay.placed.splice(oneAt, 0, pl); else lay.placed.push(pl);
+    if (one) lay.placed.splice(slot, 0, pl); else lay.placed.push(pl);
     bakedCache.set(part, new Map([[bakeKey(pl), e]]));
   }
 }
