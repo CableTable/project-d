@@ -6,15 +6,17 @@
 //   writeDxfWithReport(doc, opts) → { text, tables, skipped }: the same file and counts for the caller's Save note
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
-//   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities }
+//   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities, groups (groups.js) }
 // An entity: { type, layer, lt, aci, tc, lw, lts, hidden, ps, flip, r: { type, c: [codes], v: [values] }, kids }
 //   Its common properties (layer, colour, line type, weight, scale, hidden, sheet) are the fields; r holds the rest as
 //   group-code pairs. kids: a POLYLINE's VERTEX records or an INSERT's ATTRIB records (each { type, c, v }).
-// Handles, owners, reactors, extension dictionaries and xdata are not kept: the writer makes its own handles.
+// Source handles, owners and reactors are not kept: the writer makes its own, including GROUP membership.
+// Extension dictionaries and xdata are not kept.
 
 import { flatten } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
 import { fillHatch, fillHoles } from './fill.js';
+import { remap } from './groups.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
@@ -104,7 +106,7 @@ export function insert(name, x, y, o = {}) {
 
 /** A new empty document in these units (4 = mm). */
 export function newDoc(units = 4) {
-  return { header: { $ACADVER: 'AC1015', $INSUNITS: String(units) }, layers: { 0: layerDef() }, ltypes: {}, blocks: {}, entities: [] };
+  return { header: { $ACADVER: 'AC1015', $INSUNITS: String(units) }, layers: { 0: layerDef() }, ltypes: {}, blocks: {}, entities: [], groups: [] };
 }
 const layerDef = (o = {}) => ({ aci: o.aci ?? 7, tc: o.tc ?? null, off: !!o.off, frozen: !!o.frozen, lt: o.lt ?? 'CONTINUOUS', lw: o.lw ?? -3, handle: '' });
 /** Adds (or replaces) a layer: o = { aci, tc, lt, lw, off, frozen }. */
@@ -151,9 +153,10 @@ function prepareSave(doc, includeFills = true) {
   findTables(doc.entities);
   for (const b of Object.values(sourceBlocks)) if (!b.xref) findTables(b.entities);
   const n = new Map(), add = (t) => n.set(t, (n.get(t) || 0) + 1);
-  const saved = (list) => {
+  const saved = (list, indexes) => {
     const result = [], holes = includeFills ? fillHoles(list || []) : new Map();
-    for (let e of list || []) {
+    for (const [i, source] of (list || []).entries()) {
+      let e = source;
       const name = ['ACAD_TABLE', 'INSERT', 'DIMENSION'].includes(e.type) ? field(e, 2) : '', normal = renamed.get(name);
       if (e.type === 'ACAD_TABLE' && normal) {
         const rot = Math.atan2(+field(e, 21, '0'), +field(e, 11, '1')) * 180 / Math.PI;
@@ -165,18 +168,20 @@ function prepareSave(doc, includeFills = true) {
         e = { ...e, r: { ...e.r, v } };
       }
       const hatch = includeFills && fillHatch(e, holes.get(e));
+      const start = result.length;
       if (hatch) result.push(hatch);
       result.push(hatch ? { ...e, fill: undefined } : e); // The saved HATCH already carries the fill; extents need only its geometry.
+      if (indexes) indexes.set(i, hatch ? [start, start + 1] : [start]);
     }
     return result;
   };
-  const entities = saved(doc.entities), blocks = {};
+  const indexes = doc.groups?.length ? new Map() : null, entities = saved(doc.entities, indexes), blocks = {};
   for (const [name, b] of Object.entries(sourceBlocks)) {
     if (b.xref) add('XREF');
     blocks[renamed.get(name) || name] = { ...b, entities: b.xref ? [] : saved(b.entities) };
   }
   const skipped = [...n].map(([type, count]) => ({ type, count })).sort((a, b) => b.count - a.count || (a.type < b.type ? -1 : 1));
-  return { doc: { ...doc, entities, blocks }, tables, skipped };
+  return { doc: { ...doc, entities, blocks, groups: indexes ? remap(doc.groups, indexes) : [] }, tables, skipped };
 }
 
 // ---------------------------------------------------------------- one entity's pairs
@@ -344,11 +349,30 @@ function writePreparedDxf(doc, opts) {
   const find = (n) => [...rec.keys()].find((k) => k.toLowerCase() === n.toLowerCase());
   const modelRec = rec.get(find('*Model_Space')), paperRec = rec.get(find('*Paper_Space'));
 
+  // a group keeps the name it was read with; an unnamed or repeated one gets the next free *A<n>
+  const taken = new Set(), kept = (doc.groups || []).map((g) => !!g.name && !taken.has(g.name.toUpperCase()) && !!taken.add(g.name.toUpperCase()));
+  let n = 0;
+  const drawingGroups = (doc.groups || []).map((g, i) => {
+    let name = g.name;
+    if (!kept[i]) { do n++; while (taken.has('*A' + n)); name = '*A' + n; taken.add(name); }
+    return { ...g, name, unnamed: kept[i] ? g.unnamed !== false : true, handle: handle() };
+  }), memberOf = new Map();
+  for (const g of drawingGroups) for (const i of g.members) {
+    if (!memberOf.has(i)) memberOf.set(i, []);
+    memberOf.get(i).push(g.handle);
+  }
+
   // entities
-  const ent = (o, e, owner) => {
+  const ent = (o, e, owner, reactors = []) => {
     const isEnt = !!e.r, r = isEnt ? e.r : e, p = isEnt ? { ...props(), ...e } : propsOf(e);
     const h = handle();
-    o.s(0, r.type).p(5, h).p(330, owner).s(100, 'AcDbEntity');
+    o.s(0, r.type).p(5, h);
+    if (reactors.length) {
+      o.s(102, '{ACAD_REACTORS');
+      for (const group of reactors) o.p(330, group);
+      o.s(102, '}');
+    }
+    o.p(330, owner).s(100, 'AcDbEntity');
     if (p.ps) o.p(67, 1);
     o.s(8, p.layer);
     if (p.lt) o.s(6, p.lt);
@@ -370,6 +394,7 @@ function writePreparedDxf(doc, opts) {
       if (p.ps) o.p(67, 1);
       o.s(8, p.layer);
     }
+    return h;
   };
   const insertAfterMarker = (spec, pair) => (spec.length && spec[0][0] === 100 ? [spec[0], pair, ...spec.slice(1)] : [pair, ...spec]);
   const kidRec = (o, kid, owner, flags) => {
@@ -400,9 +425,9 @@ function writePreparedDxf(doc, opts) {
     o.s(0, 'ENDSEC'); }
 
   // ENTITIES
-  const entSec = [];
+  const entSec = [], entityHandles = [];
   { const o = out(entSec); o.s(0, 'SECTION').s(2, 'ENTITIES');
-    for (const e of doc.entities) ent(o, e, e.ps ? paperRec : modelRec);
+    for (const [i, e] of doc.entities.entries()) entityHandles.push(ent(o, e, e.ps ? paperRec : modelRec, memberOf.get(i)));
     o.s(0, 'ENDSEC'); }
 
   // TABLES
@@ -485,6 +510,12 @@ function writePreparedDxf(doc, opts) {
     o.s(0, 'DICTIONARY').p(5, H.ROOT).p(330, 0).s(100, 'AcDbDictionary').p(281, 1)
       .s(3, 'ACAD_GROUP').p(350, groups).s(3, 'ACAD_PLOTSTYLENAME').p(350, plotStyles);
     o.s(0, 'DICTIONARY').p(5, groups).p(330, H.ROOT).s(100, 'AcDbDictionary').p(281, 1);
+    for (const g of drawingGroups) o.s(3, g.name).p(350, g.handle);
+    for (const g of drawingGroups) {
+      o.s(0, 'GROUP').p(5, g.handle).s(102, '{ACAD_REACTORS').p(330, groups).s(102, '}').p(330, groups)
+        .s(100, 'AcDbGroup').s(300, g.description || '').p(70, g.unnamed ? 1 : 0).p(71, g.selectable === false ? 0 : 1);
+      for (const i of g.members) o.p(340, entityHandles[i]);
+    }
     o.s(0, 'ACDBDICTIONARYWDFLT').p(5, plotStyles).s(102, '{ACAD_REACTORS').p(330, H.ROOT).s(102, '}').p(330, H.ROOT)
       .s(100, 'AcDbDictionary').p(281, 1).s(3, 'Normal').p(350, normalPlotStyle).s(100, 'AcDbDictionaryWithDefault').p(340, normalPlotStyle);
     o.s(0, 'ACDBPLACEHOLDER').p(5, normalPlotStyle).s(102, '{ACAD_REACTORS').p(330, plotStyles).s(102, '}').p(330, plotStyles);

@@ -180,9 +180,11 @@ test('placeBar: avoidance tries corners in order, then the least overlap', () =>
   assert.deepEqual(place([[0, 0, 50, 50]]), { x: 320, y: 320, corner: 0 });
   assert.deepEqual(place([[310, 310, 500, 500]]), { x: 320, y: 220, corner: 1 });
   assert.deepEqual(place([[310, 0, 500, 600]]), { x: 180, y: 320, corner: 2 });
-  assert.deepEqual(place([[250, 250, 600, 600]]), { x: 180, y: 220, corner: 3 }, 'all overlap: left-above covers the least');
-  assert.deepEqual(place([[250, 250, 600, 600], [200, 200, 250, 250]]), { x: 180, y: 320, corner: 2 }, 'all overlap: sum the covered area across both rectangles');
-  assert.deepEqual(place([[0, 0, 340, 340]]), { x: 320, y: 320, corner: 0 }, 'all overlap: right-below covers the least');
+  assert.deepEqual(place([[250, 250, 600, 600]]), { x: 320, y: 190, corner: null }, 'all four corners overlap: the clear spot flush above the box');
+  assert.deepEqual(place([[250, 250, 600, 600], [200, 200, 250, 250]]), { x: 250, y: 190, corner: null }, 'a spot clear of both rectangles');
+  assert.deepEqual(place([[0, 0, 340, 340]]), { x: 320, y: 340, corner: null }, 'flush below the box');
+  const ring = [[0, 0, 800, 270], [0, 330, 800, 600], [0, 270, 270, 330], [330, 270, 800, 330]];
+  assert.deepEqual(place(ring), { x: 270, y: 320, corner: null }, 'nothing clear (a ring round the cursor): the least overlap, off the cursor');
   assert.equal(place([[0, 0, 800, 600]]).corner, 0, 'equal areas keep the specified order');
   assert.equal(place([[310, 310, 500, 500]], 2).corner, 2, 'keep a clear sticky corner even when an earlier one is clear');
   assert.equal(place([[310, 310, 500, 500]], 0).corner, 1, 'switch when the sticky corner overlaps');
@@ -194,7 +196,7 @@ test('placeBar: avoid candidates clamp at canvas edges, including an oversized b
   const area = { w: 500, h: 300 }, avoid = [[0, 0, 1, 1]];
   assert.deepEqual(CB.placeBar({ x: 495, y: 295 }, { w: 100, h: 60 }, area, 20, avoid), { x: 400, y: 215, corner: 1 }, 'the clamped right-below corner would sit on the cursor');
   assert.deepEqual(CB.placeBar({ x: 850, y: 560 }, { w: 300, h: 70 }, { w: 900, h: 600 }, 20, avoid), { x: 600, y: 470, corner: 1 }, 'near the bottom-right edge the box stays off the cursor');
-  assert.deepEqual(CB.placeBar({ x: 0, y: 0 }, { w: 100, h: 60 }, area, 20, [[20, 20, 120, 80]]), { x: 20, y: 0, corner: 1 }, 'least overlap is measured after clamping, among corners off the cursor');
+  assert.deepEqual(CB.placeBar({ x: 0, y: 0 }, { w: 100, h: 60 }, area, 20, [[20, 20, 120, 80]]), { x: 0, y: 80, corner: null }, 'every corner is clamped onto the box: the spot flush below it is clear');
   assert.deepEqual(CB.placeBar({ x: 5, y: 5 }, { w: 600, h: 400 }, area, 20, avoid), { x: 0, y: 0, corner: 0 });
 });
 
@@ -206,14 +208,14 @@ test('placeBox: stays at its anchor while the kept corner is clear', () => {
   assert.deepEqual(CB.placeBox(anchor, cursor, size, area, [[250, 100, 650, 500]], 0), { x: 670, y: 320, corner: 0, anchor: cursor }, 'Circle: all old corners overlap and the kept corner is least covered, but the cursor has a clear corner');
 });
 
-test('placeBox: when all four corners overlap, follows the cursor with the least overlap', () => {
+test('placeBox: when all four corners overlap, follows the cursor to the nearest clear spot', () => {
   const anchor = { x: 300, y: 300 }, cursor = { x: 350, y: 320 };
   const size = { w: 100, h: 60 }, area = { w: 800, h: 600 }, avoid = [[250, 250, 600, 600]];
   const placed = CB.placeBox(anchor, cursor, size, area, avoid, 0);
-  assert.deepEqual(placed, { x: 230, y: 240, corner: 3, anchor: cursor }, 'left-above has the least overlap at the new cursor');
+  assert.deepEqual(placed, { x: 370, y: 190, corner: null, anchor: cursor }, 'flush above the box, off the cursor');
   const next = { x: 360, y: 330 };
   assert.deepEqual(CB.placeBox(placed.anchor, next, size, area, avoid, placed.corner),
-    { x: 240, y: 350, corner: 2, anchor: next }, 'an overlapping box follows the cursor, breaking equal-overlap ties in corner order');
+    { x: 380, y: 190, corner: null, anchor: next }, 'a box at a spot with no corner follows the cursor');
 });
 
 test('history: filter, copy text, the last three fade', () => {

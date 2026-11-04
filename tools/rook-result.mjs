@@ -3,7 +3,7 @@
 export function firstDone(texts) {
   const done = (file, text) => text != null && (file.endsWith('.jsonl')
     ? text.startsWith('NO REVIEW:') || text.split(/\r?\n/).some((l) => { try { return JSON.parse(l).type === 'result'; } catch { return false; } })
-    : file.endsWith('.log') ? /^SUITE unit=\d+ browser=\d+/m.test(text) // TODO 167e: a suite log has a `SUITE unit=<code> browser=<code>` line (Node warnings may follow it)
+    : file.endsWith('.log') ? /^SUITE unit=\d+ browser=(\d+|skipped)/m.test(text) // TODO 167e: a suite log has a `SUITE unit=<code> browser=<code>` line (Node warnings may follow it)
     : text.trim() !== '');
   return Object.keys(texts).find((f) => done(f, texts[f])) ?? null;
 }

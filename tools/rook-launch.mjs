@@ -96,6 +96,8 @@ export function lintBrief(text) {
     }
     if (/full (browser )?suite/i.test(line) && !/\bRook\b/i.test(line) && !/\b(never|not|no|don['’]?t)\s+(ever\s+)?(run\s+)?(the\s+)?full (browser )?suite/i.test(line)) problems.push(`line ${i + 1}: builder asked for the full suite`);
     if (/(^|[\s(`'"])runs\d+\//.test(line)) problems.push(`line ${i + 1}: bare runs<N>/ path; use ../runs<N>/ or an absolute path`);
+    if (/\.\.\/Project D extras\/runs/.test(line)) problems.push(`line ${i + 1}: use ../runs<N>/ (the worktree sits beside runs<N>/)`);
+    if (/\b(cmd(\.exe)? \/c|powershell\.exe)\b/i.test(line)) problems.push(`line ${i + 1}: cmd /c and powershell.exe are off King's allowlist; use a tmp-*.mjs`);
   }
   if (behaviours > 5) problems.unshift(`${behaviours} behaviour lines (maximum 5)`);
   if (/^﻿?Build:/.test(text) && !/^Old steps\b/m.test(text)) problems.push('build brief needs an Old steps line');
@@ -286,6 +288,11 @@ export function build(args, x = io) {
   if (line) console.log(line);
 }
 
+// `rook.mjs result`'s last line: this Rook's own context ('' when its transcript is not found).
+export const rookContextLine = (x = io) => x.gate.contextLine();
+// What `result` prints after the peak context line: this Rook's context, or nothing when its transcript is not there.
+export const printRookContext = (x = io, log = console.log) => { const line = rookContextLine(x); if (line) log(line); };
+
 // `rook.mjs gate`: rewrite line 2 of runs<N>/queue.txt now and print it.
 export const gate = (x = io) => x.gate.report();
 
@@ -314,6 +321,10 @@ export function knight(args, x = io) {
     x.git(clone, 'fetch', REPO, holder);
     if (!x.has(clone, sha)) throw new Error(`commit ${sha} still missing in the clone after fetching ${holder}`);
   }
+  // S35 retro: a brief that says `git show <sha>` for a commit the clone lacks wastes the run. A sha has both a digit and a letter (a bare number or a word is not one).
+  // shortcut: any hex token with a digit and a letter (e.g. a transcript id like 81b99077) counts as a sha and blocks the launch; an all-digit sha (about 3.7% of 7-char ones) is never checked. Upgrade if either bites.
+  const missing = (text.match(/\b[0-9a-f]{7,40}\b/gi) || []).find((s) => /\d/.test(s) && /[a-f]/i.test(s) && !x.has(clone, s));
+  if (missing) throw new Error(`brief names ${missing}, which is not in the Knight clone: fetch it there first`);
   x.need(dirname(log), 'output folder');
   const inFd = x.open(brief, 'r');
   x.git(clone, 'switch', '-c', branch, sha);

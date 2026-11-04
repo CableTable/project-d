@@ -13,13 +13,13 @@
 //   removeEntities / keepOnly    → { entities, blocks } without (or with only) some entities; unused blocks go too
 //   scaleAbout(raw, s, ax, ay)   → { entities, blocks, skipped } scaled uniformly about (ax, ay)
 //   createHistory()              → undo / redo of { entities, blocks } states
-import { mapply, mscale, pickIndex, pickAt, piecesNear } from './drawing.js';
+import { mapply, mscale, pickIndex, pickAt, piecesNear, flatten } from './drawing.js';
 import { rotateRecord } from './rotate.js';
 import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
-import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord } from './dimension-text.js';
+import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord, measureOverride, isMeasureOverride } from './dimension-text.js';
 
 // ---------------------------------------------------------------- the index
 
@@ -676,7 +676,9 @@ export function joinTinyGaps(raw, ed, tol, eligible = () => true, method = 'aver
   }
   const gaps = findGaps({ ...ed, shown: ed.shown.filter((e) => !drop.has(e)) }, tol).filter((g) => g.ends.every((x) => eligible(x.e)));
   const result = joinGaps(raw, ed, gaps, method);
-  return { ...result, entities: result.entities.filter((_, e) => !drop.has(e)), removed: drop.size, changed: result.changed + drop.size };
+  let rank = 0;       // old index → new index (dropped micro pieces go; bridges appended by a method belong to no group)
+  const indexes = new Map(raw.entities.map((_, e) => [e, drop.has(e) ? [] : [rank++]]));
+  return { ...result, entities: result.entities.filter((_, e) => !drop.has(e)), indexes, removed: drop.size, changed: result.changed + drop.size };
 }
 
 // ---------------------------------------------------------------- join methods (TODO 121)
@@ -994,14 +996,23 @@ export function relabel(ents, s) {
  * Every kept dimension re-labelled with dp decimals, from its own geometry (drawing units × factor), so no rounding
  * piles up. → { entities, blocks } (as commit takes), or null when nothing changes.
  */
-export function relabelDims(raw, factor, dp) {
-  const blocks = { ...raw.blocks };
+export function relabelDims(raw, factor, dp, kept = false) {       // kept: only kept Measure callouts, at their own decimals (what an edit leaves stale)
+  const blocks = { ...raw.blocks }, inserts = new Map();
   let changed = false;
+  raw.entities.forEach((e, i) => { if (e.type === 'INSERT' && !inserts.has(fieldOf(e.r, 2))) inserts.set(fieldOf(e.r, 2), i); });
   for (const [nm, b] of Object.entries(raw.blocks)) {
-    const m = readDim(nm, b), g = m && dimGeom(m.kind, m.params, factor || 1, dp);
+    const m = readDim(nm, b), ov = m && m.params.override || '', callout = m && (m.kind === 'aligned' || m.kind === 'linear') && isMeasureOverride(ov);       // radius / diameter / angle have no points a, b: their text stays
+    if (kept && !callout) continue;
+    if (kept) dp = placesOf(measuredText(b.entities));
+    if (callout) {       // the deltas of the callout as drawn: the INSERT's transform applied to the block's points
+      const at = inserts.get(nm), fl = at != null && flatten({ ...raw, entities: [{ ...raw.entities[at], hidden: false }] }), mat = fl && fl.items.length && fl.mats[fl.items[0].m];
+      const w = (p) => mat ? mapply(mat, ...p) : p;
+      m.params.override = measureOverride(w(m.params.a), w(m.params.b), factor || 1, dp, ov);
+    }
+    const g = m && dimGeom(m.kind, m.params, factor || 1, dp);
     if (!g) continue;
     const ents = b.entities.map((e) => {
-      if (e === textRecord(b.entities)) { if (measuredText(b.entities) !== g.measured) changed = true; return overrideRecord(readOverride(b.entities), g.measured); }
+      if (e === textRecord(b.entities)) { if (measuredText(b.entities) !== g.measured || readOverride(b.entities) !== m.params.override) changed = true; return overrideRecord(m.params.override, g.measured); }
       if (e.type !== 'TEXT') return e;
       const k = e.r.c.indexOf(1);
       if (k < 0 || unesc(e.r.v[k]) === g.label) return e;
@@ -1426,6 +1437,7 @@ export function dimBlock(g, name) {
   return { name, block: { base: [0, 0], xref: false, entities: ents }, insert: insert(name, 0, 0, { layer: DIM_LAYER }), mm: g.mm, label: g.label };
 }
 export const buildDim = (kind, params, factor, name, dp = 2) => {
+  params = { ...params, override: measureOverride(params.a, params.b, factor || 1, dp, params.override || '') };
   const g = dimGeom(kind, params, factor, dp), built = g && dimBlock(g, name);
   if (built && overrideText(params.override)) built.block.entities.push(overrideRecord(params.override, g.measured));
   // Keep the axis in-session too when rebuilding an old untagged Linear block.

@@ -4,7 +4,7 @@ import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { parseArgs, testCommand } from './tools/base-check.mjs';
+import { parseArgs, runCapped, testCommand } from './tools/base-check.mjs';
 
 test('base-check arguments: a commit id and an in-repo test file; a step only for browser.test.mjs', () => {
   assert.deepEqual(parseArgs(['abc1234', 'a.test.mjs']), { sha: 'abc1234', file: 'a.test.mjs', step: undefined });
@@ -66,6 +66,73 @@ test('base-check: the copied test file is run on the base (PASS), a test needing
   } finally {
     rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test('TODO 193a: base-check prints LOAD ERROR (not FAIL) when the copied test cannot load on the base', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'base-check-load-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', `core.hooksPath=${join(repo, '.git/hooks')}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'node_modules'));
+    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    writeFileSync(join(repo, 'tmp-load.test.mjs'), "import { nope } from './not-on-base.mjs';\nimport { test } from 'node:test';\ntest('x', () => nope());\n");
+    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-load.test.mjs'], { cwd: repo, encoding: 'utf8' });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /^LOAD ERROR on base/m);
+    assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);
+    assert.equal(git('worktree', 'list').trim().split('\n').length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('TODO 193a: base-check prints HUNG (not FAIL) when the test never ends, and removes the worktree', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'base-check-hung-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', `core.hooksPath=${join(repo, '.git/hooks')}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    writeFileSync(join(repo, 'base.txt'), 'base\n');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    mkdirSync(join(repo, 'tools'));
+    mkdirSync(join(repo, 'node_modules'));
+    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    writeFileSync(join(repo, 'tmp-hang.test.mjs'), "import { test } from 'node:test';\ntest('x', () => new Promise(() => setInterval(() => {}, 1000)));\n");
+    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' } });
+    assert.equal(r.status, 1);
+    assert.match(r.stderr, /^HUNG on base after 2 s/m);
+    assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);
+    assert.equal(git('worktree', 'list').trim().split('\n').length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// A child that starts a grandchild (as node --test does) and prints its pid; `alive` is true while that pid exists.
+const spawner = "const c = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' }); console.log(c.pid); setTimeout(() => {}, 60000);";
+const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+const gone = async (pid) => { for (let i = 0; i < 50 && alive(pid); i++) await new Promise((r) => setTimeout(r, 100)); return !alive(pid); };
+
+test('TODO 193a: runCapped gives up at the limit and kills the whole tree; a quick run returns its status and output', async () => {
+  const quick = await runCapped(process.execPath, ['-e', "console.log('hi'); process.exit(3)"], { capture: true, limitMs: 20000 });
+  assert.deepEqual([quick.status, quick.out.trim(), quick.timedOut], [3, 'hi', false]);
+  const hung = await runCapped(process.execPath, ['-e', spawner], { capture: true, limitMs: 1500 });
+  assert.equal(hung.timedOut, true);
+  assert.ok(await gone(Number(hung.out.trim())), 'the grandchild is dead too');
+});
+
+test('TODO 193a: the child dies when base-check exits (no orphan node.exe)', async () => {
+  const r = spawnSync(process.execPath, ['--input-type=module', '--eval', `
+    import { runCapped } from './tools/base-check.mjs';
+    runCapped(process.execPath, ['-e', ${JSON.stringify(spawner)}], { capture: true });
+    setTimeout(() => process.exit(0), 1500);
+  `], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.ok(await gone(Number(r.stdout.trim())));
 });
 
 test('the pre-commit hook refuses a staged conflict marker and names the file; a marker mid-line passes', () => {

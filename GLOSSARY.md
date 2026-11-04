@@ -31,7 +31,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
 
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
-**Cursor field**: One editable or read-only box in the Dynamic input tag: Length and Angle take typing (Tab switches), Δx and Δy show live. Before the first point the editable fields are absolute X and Y; comma switches later chain points to coordinate entry. Rectangle and Rounded rectangle use Width and Height at the other corner, signed toward the cursor. Where: `DECISIONS.md`, Dynamic input (TODO 69). Avoid: Command bar.
+**Cursor field**: One editable or read-only box by the cursor or on the drawing beside the segment: Length and Angle take typing (Tab switches), Δx and Δy show live. Before the first point the editable fields are absolute X and Y; comma switches later chain points to coordinate entry. Rectangle and Rounded rectangle use Width and Height at the other corner, signed toward the cursor. Where: `DECISIONS.md`, Dynamic input (TODO 69), Dynamic input fields on the drawing (TODO 155t). Avoid: Command bar.
 **Dynamic input**: The tag beside the cursor during point prompts showing length, angle, Δx and Δy (absolute X and Y before the first point; Width and Height at a rectangle's other corner), where typed numbers go instead of the command bar; F12 or DYN turns it on and off. Where: `DECISIONS.md`, Dynamic input (TODO 69); `TODO.md`, item 69. Avoid: Cursor tag, Live numbers.
 
 **Compare**: Overlays up to five drawing snapshots in different colours and highlights each ticked item's outline differences from the reference beyond a chosen tolerance. The Compare button calculates the differences and a table of signed area, perimeter and width × height changes; a move afterwards marks the result "out of date". Where: `TODO.md`, items 41 and 114; `web/compare.js`, `web/compare-list.js`.
@@ -72,6 +72,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Fit**: Changes the view so the drawing or sheet fits in the window. Where: `TODO.md`, item 42. Avoid: Scaling the drawing; Fit to sheet.
 
+**Dotted crosshair**: Thin dotted lines that carry the crosshair's two arms out to the canvas edges, for lining things up by eye; off unless turned on, never snaps or prints. Where: `DECISIONS.md`, Dotted crosshair (TODO 133, T43). Avoid: Rubber band (a line from a picked point to the pointer); Tracking line.
+
+**Zoom level**: The percentage at the bottom right of the canvas; 100 % shows the drawing at true size. It can be typed or picked from presets. Where: `DECISIONS.md`, Typed zoom level (TODO 137, T47). Avoid: Zoom factor; Scale (a drawing's scale is a different thing).
+
 **Zoom Window**: Fills the view with a box dragged on the canvas. Where: `DECISIONS.md`, More zooms (TODO 74).
 
 **Window selection**: Dragging left to right draws a solid blue box that selects only objects lying fully inside it; layout parts use their rotated outline boxes. Where: `DECISIONS.md`, Window / crossing selection (TODO 71). Avoid: Box select; Marquee; Zoom Window (a different thing).
@@ -102,7 +106,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Grips**: Small handles on selected drawing geometry that move or stretch its points, centres or radius; none show when more than 200 shapes are selected (`MAX_SELECTED`), when their total handles exceed 5000 (`MAX_GRIPS`), or on the immediate Text to outlines result selection. Selecting those outlines again enables their grips within both limits. Where: `DECISIONS.md`, Grips. Avoid: Grippers.
 
-**Group**: A set of placed parts that selects, moves, turns and copies as one while keeping its members as parts. Where: `DECISIONS.md`, Group and Ungroup. Avoid: DXF block.
+**Group**: A set of placed parts (on a layout) or drawing objects (on a drawing) that selects, moves, turns and copies as one while keeping its members as they are. Where: `DECISIONS.md`, Group and Ungroup; Group on drawings. Avoid: DXF block.
 
 **Guidelines**: Positioning guides dragged from rulers and used for snapping. Where: `TODO.md`, item 38; `web/guides.js`.
 **Alignment guide**: A temporary thin line shown while dragging parts on a layout when the selection's box lines up with the sheet, a gripper margin or another part, with the gap in mm beside it. Where: `DECISIONS.md`, Alignment guides (TODO 67); `TODO.md`, item 67. Avoid: Guidelines (those stay until removed), Smart guide, Dynamic guide.
@@ -297,6 +301,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **SOLID / TRACE**: DXF filled shapes handled together by the reader and left out of cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`. Avoid: Bitmap tracing for TRACE.
 
 **SPLINE**: A DXF curve defined by control data and approximated by a polyline for cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
+
+**Fit-point spline**: A SPLINE that carries the points it passes through (fit points) as well as its control points. Extend lengthens it with a straight piece along its end direction.
+
+**Control-vertex spline**: A SPLINE that carries only control points, so the curve is pulled toward them rather than through them. Extend continues its own last curve.
 
 **TEXT**: A DXF single-line text entity, unlike MTEXT. Where: `web/drawing.js`, `web/dxf-write.js`.
 

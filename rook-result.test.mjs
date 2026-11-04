@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
-import { watchCi, nextRook, startArgs, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
+import { printRookContext, EXTRAS } from './tools/rook-launch.mjs';
+import { watchCi, nextRook, startArgs, startWatched, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -38,6 +39,7 @@ test('wait: a .jsonl is done at its result line, a .txt when non-empty; unfinish
   assert.equal(firstDone({ 'a.jsonl': running, 's.log': 'tests\r\nSUITE unit=0 browser=1\r\n' }), 's.log');
   assert.equal(firstDone({ 's.log': 'SUITE unit=0 browser=0\n(node:1) [DEP0190] DeprecationWarning: x\n(Use `node --trace-deprecation ...`)\n' }), 's.log'); // warning lines after the SUITE line
   assert.equal(firstDone({ 's.log': 'tests\n(node:1) warning\n' }), null);
+  assert.equal(firstDone({ 's.log': 'SUITE unit=1 browser=skipped\n' }), 's.log'); // TODO 193a: a red unit run skips the browser run
 });
 
 test('wait (CLI): exits 0 printing DONE <file> for a finished run; a bad --ci is a usage error', () => {
@@ -127,6 +129,37 @@ test('TODO 190a fix: next refuses when rook-next.txt names this session, before 
   assert.equal((await nextRook({ ...deps, exists: () => true, own: 'other' })).code, 0);
 });
 
+test('TODO 193b fix: next refuses, before starting anything, when the resume file on rook-next.txt line 3 lacks the merge-due.log line', async () => {
+  const U = '81b99077-20db-45ec-9515-c01615c70fa8', started = [];
+  let t = 0;
+  const deps = { read: () => `${U}\r\nRook S36\r\nR.txt\r\n`, exists: () => false, start: () => started.push(1), sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P' };
+  for (const text of ['branch x\n', null]) {
+    await assert.rejects(nextRook({ ...deps, readFile: () => { if (text === null) throw new Error('ENOENT'); return text; } }), /refused: R\.txt is missing or has no line .*merge-due\.log first/);
+  }
+  assert.deepEqual(started, []);
+  const ok = await nextRook({ ...deps, exists: () => true, readFile: () => 'read the last line of ../Project D extras/merge-due.log first\n' });
+  assert.equal(ok.code, 0);
+  assert.deepEqual(started, []);
+  let up = false; // the transcript appears only after start(): start runs exactly once
+  const once = await nextRook({ ...deps, exists: () => up, start: () => { started.push(2); up = true; }, readFile: () => 'merge-due.log' });
+  assert.deepEqual([once.code, started], [0, [2]]);
+  const read = []; // a relative line 3 resolves against EXTRAS, an absolute one stays
+  for (const r of ['R.txt', resolve('C:\\abs\\R.txt')]) await nextRook({ ...deps, exists: () => true, read: () => `${U}\r\nx\r\n${r}\r\n`, readFile: (p) => { read.push(p); return 'merge-due.log'; } });
+  assert.deepEqual(read, [resolve(EXTRAS, 'R.txt'), resolve('C:\\abs\\R.txt')]);
+});
+
+test('TODO 193d2: startWatched reports a real child exiting 3 and a missing exe; exit 0 reports nothing', async () => {
+  const run = (bin, args) => new Promise((done) => {
+    const got = [];
+    startWatched([bin, args, { stdio: 'ignore' }], (f) => got.push(f));
+    setTimeout(() => done(got), 1500);
+  });
+  assert.deepEqual(await run(process.execPath, ['-e', 'process.exit(3)']), [`${process.execPath} exit 3`]);
+  assert.deepEqual(await run(process.execPath, ['-e', '0']), []);
+  const [missing] = await run('no-such-exe-193d2', []);
+  assert.match(missing, /^spawn error: spawn no-such-exe-193d2 ENOENT$/);
+});
+
 test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; already there starts nothing; 60 s without it is exit 1', async () => {
   const U = '81b99077-20db-45ec-9515-c01615c70fa8';
   let t = 0;
@@ -148,6 +181,7 @@ test('TODO 190a: next starts Rook.lnk once and waits for the new transcript; alr
 test('TODO 192: next spawns powershell Start-Process on the .lnk (spaces and a quote ok) without detached; a failed start names its reason', async () => {
   const lnk = "C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook's.lnk";
   assert.deepEqual(startArgs(lnk), ['powershell.exe', ['-NoProfile', '-Command', "Start-Process 'C:\\Users\\a b\\Start Menu\\Programs\\Startup\\Rook''s.lnk'"], { stdio: 'ignore' }]);
+  assert.equal(startArgs('C:\\Rook\u2019s\u2018\u201A\u201B.lnk')[1][2], "Start-Process 'C:\\Rook\u2019\u2019s\u2018\u2018\u201A\u201A\u201B\u201B.lnk'");
   const U = '81b99077-20db-45ec-9515-c01615c70fa8';
   let t = 0;
   const r = await nextRook({ read: () => U, exists: () => false, start: () => {}, sleep: async (ms) => { t += ms; }, now: () => t, projects: 'P', why: () => 'powershell.exe exit 1' });
@@ -155,8 +189,10 @@ test('TODO 192: next spawns powershell Start-Process on the .lnk (spaces and a q
 });
 
 test('merge: refuses without a non-empty retro file unless --no-retro, a non-head sha, or CI not success; otherwise merges', () => {
-  const ok = { n: 33, pr: 5, sha: 'a'.repeat(40), head: 'a'.repeat(40), retro: 'retro text', noRetro: false, ci: 'success' };
+  const ok = { n: 33, pr: 5, sha: 'a'.repeat(40), head: 'a'.repeat(40), retro: 'retro text', applied: true, noRetro: false, ci: 'success' };
   assert.equal(mergeRefusal(ok), '');
+  assert.match(mergeRefusal({ ...ok, applied: false }), /^refused: runs33\/retro33\.applied is missing/); // TODO 193b
+  assert.equal(mergeRefusal({ ...ok, applied: false, noRetro: true }), '');
   assert.match(mergeRefusal({ ...ok, retro: null }), /^refused: runs33\/retro33\.out is missing or empty/);
   assert.match(mergeRefusal({ ...ok, retro: ' \r\n' }), /missing or empty/);
   assert.equal(mergeRefusal({ ...ok, retro: null, noRetro: true }), '');
@@ -182,6 +218,8 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     writeFileSync(join(extras, 'runs33', 'retro33.out'), '');
     assert.throws(() => merge(['5', 'cc'], gh(), extras), /missing or empty/);
     writeFileSync(join(extras, 'runs33', 'retro33.out'), 'Suggestions\n');
+    assert.throws(() => merge(['5', 'cc'], gh(), extras), /retro33\.applied is missing/);
+    writeFileSync(join(extras, 'runs33', 'retro33.applied'), '2026-11-03 applied R1-R3\n');
     assert.throws(() => merge(['5', 'cc'], gh({ head: 'd'.repeat(40) }), extras), /not the head/);
     assert.throws(() => merge(['5', 'cc'], gh({ ci: [{ status: 'completed', conclusion: 'failure' }] }), extras), /is failure/);
     assert.throws(() => merge(['5', 'cc'], gh({ ci: [] }), extras), /not found/);
@@ -201,6 +239,10 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
     writeFileSync(join(extras, 'runs33', 'retro33.out'), ' \n');
     merge(['5', 'cc', '--no-retro'], gh(), extras);
     assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8').split('\n').length, 4, 'an empty retro file still gets the line');
+    rmSync(join(extras, 'runs34'), { recursive: true });
+    writeFileSync(join(extras, 'runs33', 'retro33.out'), 'Suggestions\n'); // TODO 193b fix: retro.out present, no .applied
+    merge(['5', 'cc', '--no-retro'], gh(), extras);
+    assert.equal(readFileSync(join(extras, 'runs34', 'resume-rook.txt'), 'utf8'), 'retro33 edits not applied (merged without retro33.applied)\n');
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 
@@ -231,17 +273,19 @@ test('TODO 191: merge --due merges the one open session PR inside the OK window,
     assert.ok(!cmds.some((c) => c.includes('pr merge')));
     mkdirSync(join(extras, 'runs35'));
     writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, T), /retro35\.applied is missing/);
+    writeFileSync(join(extras, 'runs35', 'retro35.applied'), '2026-11-03 applied all\n');
     assert.equal(mergeDue(gh([pr(5, 'claude/session35'), pr(7, 'king/191')]), extras, T), `MERGED #5 ${sha}`);
     assert.ok(cmds.includes(`gh pr merge 5 --merge --match-head-commit ${sha}`));
     assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T05:00:00')), /merge OK expired 2026-11-08: ask him/);
     assert.throws(() => mergeDue(gh([pr(5, 'claude/session35')]), extras, at('2026-11-09T00:00:00')), /expired/);
     assert.equal(mergeDue(gh([]), extras, at('2026-11-08T23:59:00')), 'NOTHING DUE');
     const l = log();
-    assert.equal(l.length, 10);
+    assert.equal(l.length, 11);
     assert.equal(l[0], '2026-11-08 05:00 refused: merge-ok-until.txt is missing or unreadable: ask him');
     assert.equal(l[2], '2026-11-08 05:00 NOTHING DUE');
-    assert.equal(l[6], `2026-11-08 05:00 MERGED #5 ${sha}`);
-    assert.equal(l[7], '2026-11-09 05:00 refused: merge OK expired 2026-11-08: ask him');
+    assert.equal(l[7], `2026-11-08 05:00 MERGED #5 ${sha}`);
+    assert.equal(l[8], '2026-11-09 05:00 refused: merge OK expired 2026-11-08: ask him');
   } finally { rmSync(extras, { recursive: true, force: true }); }
 });
 
@@ -260,6 +304,7 @@ test('TODO 191 fix: merge --due refuses red / missing CI, logs a throwing run on
     const log = () => readFileSync(join(extras, 'merge-due.log'), 'utf8').trim().split('\n');
     mkdirSync(join(extras, 'runs35'));
     writeFileSync(join(extras, 'runs35', 'retro35.out'), 'Suggestions\n');
+    writeFileSync(join(extras, 'runs35', 'retro35.applied'), 'done\n');
     writeFileSync(join(extras, 'merge-ok-until.txt'), '2026-11-08\n');
     assert.throws(() => mergeDue(gh([{ status: 'completed', conclusion: 'failure' }]), extras, T), /CI for .* is failure, not success/);
     assert.throws(() => mergeDue(gh([]), extras, T), /CI for .* is not found, not success/);
@@ -287,6 +332,24 @@ test('result skips a half-written last line: no result yet for an unfinished run
     writeFileSync(run, line(assistant({ input_tokens: 5 })) + line(result) + '{"type":"assis');
     assert.match(execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }), /^Done/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('TODO 193a: result ends its token line with the report line count (blank lines not counted)', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
+  try {
+    const run = join(dir, 'run.jsonl');
+    const result = { type: 'result', result: 'one\n\ntwo\r\n  \nthree\n', usage: { input_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0, output_tokens: 1 }, permission_denials: [] };
+    writeFileSync(run, JSON.stringify(assistant({ input_tokens: 5 })) + '\n' + JSON.stringify(result) + '\n');
+    const lines = execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8' }).split(/\r?\n/);
+    assert.match(lines.find((l) => l.startsWith('tokens ')), /· denials 0 · report 3 lines$/);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('TODO 193a: result prints the Rook context line when the gate has one, and nothing when it has none', () => {
+  const seen = [];
+  printRookContext({ gate: { contextLine: () => 'Rook context 106k (handover at 150k)' } }, (l) => seen.push(l));
+  printRookContext({ gate: { contextLine: () => '' } }, (l) => seen.push(l));
+  assert.deepEqual(seen, ['Rook context 106k (handover at 150k)']);
 });
 
 test('result prints peak context and warns strictly above 150k; Codex logs skip it', () => {

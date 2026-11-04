@@ -606,6 +606,56 @@ try {
       await p.locator('.status').screenshot({ path: dir + '/status-dark.png' });
     } finally { await context.close(); }
   });
+  await step('TODO 133: dotted crosshair toggles from the View tab and DOTCROSS', async () => {
+    for (const theme of ['light', 'dark']) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
+      try {
+        const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+        p.on('pageerror', (e) => errs.push(String(e)));
+        await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        const open = async (name, x) => {
+          const doc = newDoc(4); addEntities(doc, dxfLine(20, 20, 60, 20), dxfLine(x, 20, x, 50), dxfCircle(80, 40, 8));
+          await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+        };
+        await open('dots-133a.dxf', 20); await open('dots-133b.dxf', 30);
+        const xh = p.getByTestId('crosshair'), dh = p.getByTestId('dotcross-h'), dv = p.getByTestId('dotcross-v');
+        const dotBtn = p.locator('.ribbon button[aria-label="Dotted crosshair"]');
+        const pressed = async () => { await p.locator('[data-ribbon-tab=View]').click(); return dotBtn.getAttribute('aria-pressed'); };
+        const hover = async () => { const cv = await p.getByTestId('canvas').boundingBox(); const pt = { x: cv.x + cv.width * .45, y: cv.y + cv.height * .5 }; await p.mouse.move(pt.x - 40, pt.y - 20); await p.mouse.move(pt.x, pt.y, { steps: 3 }); await xh.waitFor({ state: 'visible' }); return { cv, pt }; };
+        const spans = async ({ cv, pt }, label) => {
+          const a = await dh.boundingBox(), b = await dv.boundingBox();
+          assert.ok(a.x <= cv.x + 1 && a.x + a.width >= cv.x + cv.width - 1 && Math.abs(a.y + a.height / 2 - pt.y) <= 1.5 && a.height <= 1.5, `${label}: the horizontal line spans the canvas through the pointer`);
+          assert.ok(b.y <= cv.y + 1 && b.y + b.height >= cv.y + cv.height - 1 && Math.abs(b.x + b.width / 2 - pt.x) <= 1.5 && b.width <= 1.5, `${label}: the vertical line spans the canvas through the pointer`);
+          assert.equal(await dh.evaluate((el) => getComputedStyle(el).opacity), '0.6');
+        };
+        assert.equal(await pressed(), 'false', 'off by default');
+        await hover();
+        assert.equal(await dh.isVisible(), false, 'no dotted lines while off'); assert.equal(await dv.isVisible(), false);
+        await dotBtn.click();
+        assert.equal(await pressed(), 'true', 'the View tab button turns it on');
+        const on = await hover(); await spans(on, 'Drawings');
+        await p.mouse.move(on.pt.x + 90, on.pt.y + 50, { steps: 3 }); await spans({ cv: on.cv, pt: { x: on.pt.x + 90, y: on.pt.y + 50 } }, 'moved');
+        await p.screenshot({ path: `${shotDir}/todo133-dotted-crosshair-${theme}.png` });
+        const rb = await p.locator('.ribbon').first().boundingBox();
+        await p.mouse.move(rb.x + 40, rb.y + 20, { steps: 3 }); await xh.waitFor({ state: 'hidden' });
+        assert.equal(await dh.isVisible(), false, 'hidden with the crosshair over the ribbon');
+        await q('new-layout').click(); await spans(await hover(), 'Layouts');
+        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+        await q('cmp-item').first().waitFor(); await spans(await hover(), 'Compare');
+        await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        assert.equal(await pressed(), 'true', 'remembered after reload');
+        assert.ok(await p.getByTestId('canvas').evaluate((el) => el.classList.contains('dotcross')));
+        await q('cmd-echo').click(); await q('cmd-input').fill('dotcross'); await q('cmd-input').press('Enter');
+        assert.equal(await pressed(), 'false', 'DOTCROSS turns it off');
+        assert.equal(await p.getByTestId('canvas').evaluate((el) => el.classList.contains('dotcross')), false);
+        await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        assert.equal(await pressed(), 'false', 'off is remembered too');
+        assert.deepEqual(errs, []);
+      } finally { await context.close(); }
+    }
+  });
+
   await step('TODO 155o-r: crosshair cursor over the canvas only, green outline snap marker of 6, box fill 25%, grip 5 with hover and hot colours', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
@@ -5386,6 +5436,68 @@ try {
     await page.locator('[data-tool=step]').click();
   });
 
+  await step('TODO 194: measure keep shows dx dy', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const save = async () => {
+      const [dl] = await Promise.all([p.waitForEvent('download'), p.keyboard.press('Control+s')]);
+      return readDxf(readFileSync(await dl.path(), 'latin1'));
+    };
+    const label = (doc) => flatten(doc).items.find((i) => i.k === 't').lines.join(' ');
+    const command = async (text) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    try {
+      await p.goto(URL_ + '?autosave=86400000');
+      const raw = newDoc(4); addEntities(raw, dxfLine(50, 50, 290, 80));
+      await q('picker').setInputFiles({ name: 'measure-194.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+      await p.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'measure-194.dxf');
+      await q('decimals').selectOption('2');
+      await command('measure'); await command('50,50'); await p.keyboard.press('Escape');
+      assert.equal((await save()).entities.length, 1, 'Esc mid-measure adds nothing');
+      await command('measure'); await command('50,50'); await command('290,80'); await p.keyboard.press('Enter');
+      assert.equal(label(await save()), '241.87  (ΔX 240.00, ΔY 30.00)');
+      await p.keyboard.press('Control+z');
+      assert.equal((await save()).entities.length, 1, 'one Undo removes Keep');
+      await p.keyboard.press('Control+y');
+      await q('decimals').selectOption('3');
+      let doc = await save();
+      assert.equal(label(doc), '241.868  (ΔX 240.000, ΔY 30.000)');
+      assert.equal(readOverride(doc.blocks.PD_DIM_1.entities), '<>  (ΔX 240.000, ΔY 30.000)');
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await p.locator('[data-tool=select]').click();                       // typing the pattern back into the text editor: settled to what it was, said so, no history step
+      const tx = flatten(doc).items.find((i) => i.k === 't');
+      const at = await p.evaluate(([x, y]) => { const s = document.querySelector('rect.sheet'), b = s.getBoundingClientRect(), k = b.width / +s.getAttribute('width'); return { x: b.x + x * k, y: b.y + (+s.getAttribute('height') - y) * k }; }, [tx.x, tx.y]);
+      await p.mouse.dblclick(at.x, at.y); await q('text-editor').waitFor();
+      await p.keyboard.press('End'); for (let i = 0; i < 7; i++) await p.keyboard.press('Backspace');       // keeps the live number: "ΔY 30.000)" -> "ΔY "
+      await p.keyboard.insertText('2)'); await p.keyboard.press('Enter');
+      await p.waitForFunction(() => /Dimension text unchanged/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));
+      assert.equal(label(await save()), '241.868  (ΔX 240.000, ΔY 30.000)', 'matching text is rewritten back');
+      await p.mouse.move(1000, 700);
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        await p.locator('[data-ribbon-tab=Home]').click();
+        await p.waitForTimeout(150);
+        const path = `${shotDir}/measure-keep-${theme}.png`;
+        await p.screenshot({ path }); assert.ok(readFileSync(path).length > 0, 'kept callout screenshot exists');
+      }
+      await p.keyboard.press('Control+a');
+      const grip = p.locator('[data-testid=grip][data-grip="0:b"]');
+      await grip.waitFor(); const box = await grip.boundingBox();
+      await p.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+      await command('350,10');
+      doc = await save();
+      assert.equal(label(doc), '302.655  (ΔX 300.000, ΔY -40.000)', 'source grip refreshes signed deltas');
+      await p.keyboard.press('Control+a'); await command('ro'); await command('0,0'); await command('90');
+      assert.equal(label(await save()), '302.655  (ΔX 40.000, ΔY 300.000)', 'Rotate turns the deltas');
+      await p.keyboard.press('Control+a'); await command('sc'); await command('0,0'); await command('2');
+      assert.equal(label(await save()), '605.310  (ΔX 80.000, ΔY 600.000)', 'Scale doubles the deltas');
+    } finally { await context.close(); }
+  });
+
   await step('dimension: Keep (button or Enter) makes the measure a dimension on a Dimensions layer: one pickable thing, undoable, saved, re-labelled when the drawing is scaled', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
@@ -5397,7 +5509,7 @@ try {
     await t('meas-keep').click();
     await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 16');
     assert.ok((await page.locator('.layer .nm').allTextContents()).includes('Dimensions'));
-    assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06 mm/);
+    assert.match(await t('cmd-prompt').textContent(), /Dimension kept: 36\.06 mm  \(ΔX 30\.00, ΔY 20\.00\)/);
     assert.equal(await t('meas-keep').isVisible(), false);
     // Enter keeps a second one
     await click(10, 0); await click(90, 0);
@@ -5420,23 +5532,23 @@ try {
     assert.ok(doc.layers.Dimensions && doc.blocks.PD_DIM_1 && doc.blocks.PD_DIM_2);
     assert.deepEqual(doc.entities.filter((e) => e.type === 'INSERT' && e.layer === 'Dimensions').length, 2);
     const labels = (d) => Object.values(d.blocks).flatMap((b) => b.entities).filter((e) => e.type === 'TEXT').map((e) => e.r.v[e.r.c.indexOf(1)]).sort();
-    assert.deepEqual(labels(doc), ['36.06', '80.00']);
+    assert.deepEqual(labels(doc), ['36.06  (ΔX 30.00, ΔY 20.00)', '80.00  (ΔX 80.00, ΔY 0.00)']);
     await t('dw').fill('272'); await t('dw').press('Enter');
     await page.waitForFunction(() => document.querySelector('[data-testid=dw]').value === '272');
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160.00', '72.11'], 'linked values are rebuilt from scaled geometry, without doubling a rounded label');
+    assert.deepEqual(labels(readDxf(dl.text)), ['160.00  (ΔX 160.00, ΔY 0.00)', '72.11  (ΔX 60.00, ΔY 40.00)'], 'linked values are rebuilt from scaled geometry, without doubling a rounded label');
     // the status bar's decimal places re-label every kept dimension; Ctrl+Z undoes it
     assert.equal(await t('decimals').inputValue(), '2');
     await t('decimals').selectOption('1');
     assert.match(await t('cmd-prompt').textContent(), /Dimensions: 1 decimal place \(re-labelled in 1 drawing/);
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160.0', '72.1']);
+    assert.deepEqual(labels(readDxf(dl.text)), ['160.0  (ΔX 160.0, ΔY 0.0)', '72.1  (ΔX 60.0, ΔY 40.0)']);
     await t('decimals').selectOption('0');
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160', '72']);
+    assert.deepEqual(labels(readDxf(dl.text)), ['160  (ΔX 160, ΔY 0)', '72  (ΔX 60, ΔY 40)']);
     await page.keyboard.press('Control+z');
     dl = await downloaded(() => page.keyboard.press('Control+s'));
-    assert.deepEqual(labels(readDxf(dl.text)), ['160.0', '72.1'], 'undone');
+    assert.deepEqual(labels(readDxf(dl.text)), ['160.0  (ΔX 160.0, ΔY 0.0)', '72.1  (ΔX 60.0, ΔY 40.0)'], 'undone');
     await t('decimals').selectOption('2');
     assert.equal(await page.evaluate(() => localStorage.getItem('pd-decimals')), '2');
     await page.locator('.tabs .dtab.on .x').click();
@@ -5560,7 +5672,7 @@ try {
     let tx = pdfText(dl);
     assert.equal(boxes(tx).length, 1);
     assert.ok(Math.abs(boxes(tx)[0][0] - w) < 0.2 && Math.abs(boxes(tx)[0][1] - h2) < 0.2, 'the page is the part: ' + boxes(tx)[0]);
-    assert.match(tx, /\(80\.00\) Tj/, 'the dimension\'s number');
+    assert.match(tx, /\(80\.00  .*X 80\.00, .*Y 0\.00.*\) Tj/, 'the dimension\'s number and deltas');
     assert.ok(!/\/Image|\/XObject/.test(tx), 'no background picture');
   });
 
@@ -5582,7 +5694,7 @@ try {
       tx = pdfText(dl);
       const bx = boxes(tx)[0].sort((x, y) => x - y);
       assert.ok(Math.abs(bx[1] - wide) < 0.3 && Math.abs(bx[0] - high) < 0.3, `${paper}: ${bx}`);
-      assert.match(tx, /NOT 1:1/); assert.match(tx, /not 1:1, not to be used as film/); assert.match(tx, /\(80\.00\) Tj/);
+      assert.match(tx, /NOT 1:1/); assert.match(tx, /not 1:1, not to be used as film/); assert.match(tx, /\(80\.00  .*X 80\.00, .*Y 0\.00.*\) Tj/, 'the dimension keeps its real number and deltas');
     }
     // the same file on Layout: the layout dialog, as it was
     await t('add-to-layout').click();
@@ -7263,7 +7375,7 @@ try {
     // View → Rulers
     await page.locator('[data-menu=View]').click();
     assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label]) => [(theme === mode ? '✓ ' : '  ') + 'Theme: ' + label, false])]);
+      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['  Dotted crosshair', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label]) => [(theme === mode ? '✓ ' : '  ') + 'Theme: ' + label, false])]);
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
@@ -7410,7 +7522,7 @@ try {
     assert.equal(await guideLines(), 0); assert.equal(await ribbonToggle('Show guides').isChecked(), false);
     // View menu: Guides, Lock guides, Clear all guides
     await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(5, 11)), ['✓ Rulers', '  Wireframe', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
+    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => b.firstChild.textContent)).then((r) => r.slice(r.findIndex((x) => /Rulers/.test(x)), r.findIndex((x) => /Clear all guides/.test(x)) + 1)), ['✓ Rulers', '  Wireframe', '  Dotted crosshair', '  Guides', '✓ Lock guides', '✓ Snap to guides', 'Clear all guides']);
     await page.getByRole('menuitem', { name: /Guides/ }).click();
     assert.equal(await guideLines(), 1); assert.equal(await ribbonToggle('Show guides').isChecked(), true);
     await menuItem('View', 'Clear all guides');
@@ -8570,6 +8682,8 @@ try {
   });
   await step('TODO 135: Ctrl+drag copies a drawing selection, leaves originals, Undo removes copies, Ctrl-click toggles', async () => {
     await closeTabs(/./);
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed') === 'true';
+    if (snapOn) await t('tog-snap').click(); // These distances test free dragging; snapped pickup has its own flow.
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
     await t('picker').setInputFiles({ name: 'ctrl-drag.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
@@ -8617,9 +8731,12 @@ try {
     await row.click({ modifiers: ['Control'] }); await waitSel('1 selected');
     await t('ptab-drawing').click();
     await closeTabs(/ctrl-drag/);
+    if (snapOn) await t('tog-snap').click();
   });
   await step('TODO 135b / 66a2: Ctrl+Shift-drag copies straight on either axis; Shift-drag moves selected objects straight', async () => {
     await closeTabs(/./);
+    const snapOn = await t('tog-snap').getAttribute('aria-pressed') === 'true';
+    if (snapOn) await t('tog-snap').click();
     const raw = newDoc(4);
     addEntities(raw, [dxfLine(20, 20, 60, 20), dxfLine(20, 40, 60, 40)]);
     await t('picker').setInputFiles({ name: 'straight-copy.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw)) });
@@ -8672,6 +8789,7 @@ try {
     await page.mouse.up(); await page.keyboard.up('Shift');
     assert.deepEqual((await savedDoc()).entities, before.entities);
     await closeTabs(/straight-copy/);
+    if (snapOn) await t('tog-snap').click();
   });
   await step('TODO 120 / T37: PDF selections drag, stay unlocked, undo once and cancel safely', async () => {
     await closeTabs(/./);
@@ -9526,6 +9644,90 @@ try {
   const undoGrips = async (n) => { await page.evaluate(() => document.activeElement && document.activeElement.blur()); await page.keyboard.press('Control+z'); await gripWhen(n); };       // (not from inside the command line, where Ctrl+Z is the field's own)
   const entOf = (doc, i) => doc.entities[i];
   const near = (a, b, e) => Math.abs(a - b) < e;
+  await step('TODO 195: drag selection snaps to endpoint', async () => {
+    const raw = newDoc(4), a = [20.1234, 20.4321], b = [100.9876, 60.8765];
+    // A block's line endpoint is away from its insertion grip, so pickup exercises body drag, not Stretch.
+    addBlock(raw, 'DragLine', [dxfLine(...a, a[0] + 40, a[1])]);
+    addEntities(raw, dxfInsert('DragLine', 0, 0), dxfLine(...b, b[0], b[1] + 40));
+    await openGrips(writeDxf(raw), 'drag-snap.dxf');
+    const before = await savedDoc(), snapOn = await t('tog-snap').getAttribute('aria-pressed'), orthoOn = await t('tog-ortho').getAttribute('aria-pressed');
+    const theme = await page.locator('html').getAttribute('data-theme') || 'light';
+    const setChip = async (id, on) => { if (await t(id).getAttribute('aria-pressed') !== String(on)) await t(id).click(); };
+    const select = async () => { await click(a[0] + 12, a[1]); await waitSel('1 selected'); };
+    const begin = async (x = a[0], y = a[1]) => {
+      await select(); const p = await at(x, y);
+      await page.evaluate(() => { window.__drag195 = []; });
+      await page.mouse.move(p.x + 1, p.y + .5); await page.mouse.down();
+    };
+    const land = async (x = b[0], y = b[1]) => { const p = await at(x, y); await page.mouse.move(p.x + 2, p.y + 1, { steps: 6 }); await frames(); return p; };
+    const xy = (doc) => [10, 20].map((code) => fieldOf(doc.entities[0], code));
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); assert.deepEqual((await savedDoc()).entities, before.entities, 'one Undo restores the whole drag'); };
+    await page.evaluate(() => {
+      window.__drag195Fill = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) {
+        if (this.canvas.dataset.testid === 'drawing') window.__drag195.push(text);
+        return window.__drag195Fill.call(this, text, ...args);
+      };
+      window.__drag195 = [];
+    });
+    try {
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      for (const colour of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + colour);
+        await begin(); const target = await land();
+        assert.ok(await page.evaluate(() => window.__drag195.includes('end')), 'drawMarks paints the endpoint name during body drag');
+        assert.ok(await t('drawing').evaluate((c, p) => {
+          const r = c.getBoundingClientRect(), k = c.width / r.width, x = Math.round((p.x - r.x) * k), y = Math.round((p.y - r.y) * k), radius = Math.ceil(9 * k);
+          const pixels = c.getContext('2d').getImageData(x - radius, y - radius, radius * 2, radius * 2).data;
+          return pixels.some((v, i) => i % 4 === 0 && Math.abs(v - 2) < 6 && Math.abs(pixels[i + 1] - 157) < 6 && Math.abs(pixels[i + 2] - 3) < 6 && pixels[i + 3] > 200);
+        }, target), 'the green snap marker is visible during the drag');
+        await page.screenshot({ path: `shots-195/drag-snap-${colour}.png` });
+        await page.mouse.up();
+        const moved = await savedDoc(), offset = xy(moved);
+        for (let i = 0; i < 2; i++) assert.ok(Math.abs(a[i] + offset[i] - b[i]) < 1e-9, 'the dragged end lands exactly on the other line end without rounding');
+        assert.deepEqual(moved.entities[1], before.entities[1], 'the target line stays put');
+        assert.deepEqual(moved.blocks.DragLine, before.blocks.DragLine, 'body drag preserves the line length');
+        await undo();
+      }
+      await begin(); await land(a[0] + 40, a[1]);
+      assert.equal(await page.evaluate(() => window.__drag195.includes('end')), false, 'landing skips the selected block');
+      await page.keyboard.press('Escape'); await page.mouse.up();
+      assert.deepEqual((await savedDoc()).entities, before.entities, 'Esc cancels the drag');
+      for (const mode of ['shift', 'ortho', 'off']) {
+        await setChip('tog-snap', mode !== 'off'); await setChip('tog-ortho', mode === 'ortho');
+        await begin();
+        if (mode === 'shift') await page.keyboard.down('Shift');
+        await land(); await page.mouse.up(); await page.keyboard.up('Shift');
+        const offset = xy(await savedDoc());
+        if (mode === 'off') {
+          assert.equal(await page.evaluate(() => window.__drag195.includes('end')), false, 'SNAP off paints no object snap');
+          assert.ok(Math.abs(a[0] + offset[0] - b[0]) > .05, 'SNAP off uses the pressed point and free landing');
+        } else {
+          assert.ok(Math.abs(a[0] + offset[0] - b[0]) < 1e-9, mode + ' snaps X exactly');
+          assert.equal(offset[1], 0, mode + ' keeps Y straight as Move does');
+        }
+        await undo();
+      }
+      await setChip('tog-snap', true); await setChip('tog-ortho', false);
+      await begin(); await land(); await page.mouse.up();
+      await page.keyboard.press('ArrowRight');
+      assert.ok(xy(await savedDoc())[0] > b[0] - a[0], 'the source remains editable after the snapped drag');
+      // Ordinary LINE body pickup outside its grips also uses Nearest.
+      await openGrips(writeDxf(addEntities(newDoc(4), dxfLine(20, 20, 60, 20), dxfLine(100, 60, 140, 60))), 'drag-line.dxf');
+      await click(30, 20); await waitSel('1 selected');
+      const start = await at(30, 20), target = await at(100, 60);
+      await page.mouse.move(start.x, start.y); await page.mouse.down(); await page.mouse.move(target.x + 2, target.y + 1, { steps: 6 }); await page.mouse.up();
+      const line = (await savedDoc()).entities[0];
+      assert.ok(Math.abs(fieldOf(line, 20) - 60) < 1e-9, 'ordinary body pickup snaps to nearest and landing snaps exactly to the target Y');
+      assert.ok(Math.abs(fieldOf(line, 11) - fieldOf(line, 10) - 40) < 1e-9, 'ordinary body drag preserves the line length');
+      console.log('195: exact endpoint landing, marker/name, selected-object skip, SNAP off, Shift/ORTHO, Esc, Undo, later edit; light/dark shots-195');
+    } finally {
+      await page.mouse.up(); await page.keyboard.up('Shift');
+      await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__drag195Fill; delete window.__drag195Fill; delete window.__drag195; });
+      await setChip('tog-snap', snapOn === 'true'); await setChip('tog-ortho', orthoOn === 'true');
+      await menuItem('View', 'Theme: ' + theme); await closeTabs(/drag-(snap|line)/);
+    }
+  });
   await step('command messages: an error sits above the visible hint with a selection and grips on', async () => {
     await openGrips();
     await click(70, 30); await gripWhen(3);
@@ -11599,8 +11801,11 @@ try {
     await page.locator('[data-tool=select]').click(); await propsOnNow();
   };
   const picked162b = async (n) => {
-    await page.waitForFunction((k) => document.querySelectorAll('[data-group=tools] .sel-box').length === k, n);
-    return page.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => Math.min(...el.getAttribute('points').split(' ').map((p) => Number(p.split(',')[0])))).sort((a, b) => a - b));
+    const handle = await page.waitForFunction((k) => {
+      const boxes = [...document.querySelectorAll('[data-group=tools] .sel-box')];
+      return boxes.length === k && boxes.map((el) => Math.min(...el.getAttribute('points').split(' ').map((p) => Number(p.split(',')[0])))).sort((a, b) => a - b);
+    }, n);
+    return handle.jsonValue();
   };
   await step('TODO 162b: Layouts Properties button and typed QSELECT, Layer scope, mixed Append / replace, Cancel / Esc, source edit and Undo; light and dark', async () => {
     await openLayout162b();
@@ -11748,8 +11953,7 @@ try {
   await step('TODO 189 Undo keeps grips every mode', async () => {
     await menuItem('View', 'Theme: light');
     const endpoint = async () => {
-      await page.waitForFunction(() => !document.querySelector('[data-testid=grip-hot]') && document.querySelector('[data-testid=grip][data-grip$=":a"]'));
-      return page.locator('[data-testid=grip][data-grip$=":a"]').getAttribute('data-grip');
+      return (await page.waitForFunction(() => !document.querySelector('[data-testid=grip-hot]') && document.querySelector('[data-testid=grip][data-grip$=":a"]')?.dataset.grip)).jsonValue();
     };
     const hot = async (mode) => {
       const p = await gripBox(await endpoint()); await page.mouse.click(p.x, p.y);
@@ -11796,20 +12000,109 @@ try {
       await jump(1); await gripWhen(3);
       const moved = await gripBox(await endpoint()), want = await at(120, 120);
       assert.ok(near(moved.x, want.x, 2) && near(moved.y, want.y, 2), kind + ': history jump selects the Move step’s first line');
-      await jump(2); await gripWhen(0);
+      await jump(2); await gripWhen(kind === 'Layout' ? 3 : 0);
       await jump(3); await gripWhen(3);
       const selected = await gripBox(await endpoint());
       assert.ok(near(selected.x, rotated.x, 2) && near(selected.y, rotated.y, 2), kind + ': forward history jump selects the Rotate step’s second line');
       await key('Delete');
       await jump(3); await gripWhen(3);
-      await jump(4); await gripWhen(0);
-      console.log(`189 ${kind}: all five grip modes with / without Copy retain grips through Undo / Redo; history selects the target grip edit and clears for regular edits`);
+      await jump(4); await gripWhen(kind === 'Layout' ? 3 : 0);
+      await jump(1); await gripWhen(3);
+      await jump(0); await gripWhen(kind === 'Layout' ? 3 : 0);
+      if (kind === 'Layout') {
+        const start = await gripBox(await endpoint()), origin = await at(100, 100);
+        assert.ok(near(start.x, origin.x, 2) && near(start.y, origin.y, 2), kind + ': Start keeps the restored original line selected');
+      }
+      console.log(`189 ${kind}: all five grip modes with / without Copy retain grips through Undo / Redo; history selects the target grip edit; plain steps and Start ${kind === 'Layout' ? 'keep the restored selection' : 'clear it'}`);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 193d1 Layout history keeps objects and placed parts selected at plain steps and Start', async () => {
+    await openLayout162b();
+    await click(175, 100); await click(700, 380, { shift: true });
+    assert.deepEqual(await picked162b(2), [100, 650]);
+    for (const position of ['25', '50']) {
+      await t('guide-position').fill(position); await t('guide-add-v').click();
+    }
+    assert.deepEqual(await histLabels(), ['Start', 'Add guide', 'Add guide']);
+    for (const row of [1, 0, 2]) {
+      await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(row).click();
+      await t('hist-dialog').waitFor({ state: 'detached' });
+      assert.deepEqual(await picked162b(2), [100, 650], 'history keeps the Layout object and placed part selected');
+      assert.equal(await t('guide-pos').count(), row);
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 193d1 Layout history clears the selection when the placed parts changed', async () => {
+    await openLayout162b();
+    await page.keyboard.press('Escape'); await picked162b(0);                   // nothing selected at Start
+    await t('guide-position').fill('25'); await t('guide-add-v').click();
+    await click(175, 100); assert.deepEqual(await picked162b(1), [100]);        // part A
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Delete'); await frames();
+    await click(175, 400); assert.deepEqual(await picked162b(1), [100]);        // part D: copied and pasted, so the list is as long as at Start again
+    await page.keyboard.press('Control+c'); await page.keyboard.press('Control+v'); await frames();
+    await click(325, 200); assert.deepEqual(await picked162b(1), [275]);        // part C
+    await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(0).click();
+    await t('hist-dialog').waitFor({ state: 'detached' }); await frames();
+    assert.deepEqual(await picked162b(0), [], 'Start has other placed parts: nothing stays selected, never the part at the same list position');
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 193d1 Layout history clears a pick when the grid copy count changed (Rows 1 to 2)', async () => {
+    for (const how of ['jump to Start', 'Ctrl+Z']) {
+      await closeTabs(/./);
+      const lay = newLayout('Grid pick'), small = newDoc(4);
+      addEntities(small, roundRect(0, 0, 20, 20, 0));
+      lay.parts.grid = makePart('grid', 'Grid part', small, 1);
+      Object.assign(lay.s, { sheetW: 760, sheetH: 430, gridPart: 'grid', rows: 1, cols: 1, fit: false, gripTop: 0, gripBottom: 0, gripLeft: 0, gripRight: 0 });
+      for (const [id, x, y] of [['a', 100, 100], ['c', 400, 250]]) {                 // two loose parts: A, then C
+        const doc = newDoc(4); addEntities(doc, roundRect(0, 0, 40, 40, 0));
+        lay.parts[id] = makePart(id, id, doc, 1); lay.placed.push({ partId: id, x, y, rot: 0 });
+      }
+      await t('picker').setInputFiles({ name: 'grid-pick.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'grid-pick.dxf');
+      await page.locator('[data-tool=select]').click(); await propsOnNow();
+      const rows = panelControl(page, page.locator('[data-key=rows]'));
+      await rows.fill('2'); await rows.press('Tab'); await frames();
+      await page.keyboard.press('Escape'); await click(120, 120); assert.deepEqual(await picked162b(1), [100], 'part A picked with the two-row grid');
+      if (how === 'Ctrl+Z') { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); }
+      else { await menuItem('Edit', 'Undo history…'); await t('hist-row').nth(0).click(); await t('hist-dialog').waitFor({ state: 'detached' }); }
+      await frames();
+      assert.equal(await rows.inputValue(), '1', how + ': Rows are back to 1');
+      const xs = await page.locator('[data-group=tools] .sel-box').evaluateAll((els) => els.map((el) => Math.min(...el.getAttribute('points').split(' ').map((p) => Number(p.split(',')[0])))));
+      assert.ok(xs.every((x) => x === 100), how + ': A or nothing is selected, never part C: ' + JSON.stringify(xs));
+    }
+    assert.deepEqual(errors, []); await closeTabs(/./);
+  });
+
+  await step('TODO 193d1 pick another shape after grip Undo in every tab', async () => {
+    const raw = newDoc(4), lay = newLayout('Pick after Undo');
+    addEntities(raw, dxfLine(100, 100, 250, 100), dxfCircle(350, 100, 30));
+    for (const [i, e] of raw.entities.entries()) {
+      const part = objectPart('pick' + i, 'Shape ' + i, e, raw.layers);
+      lay.parts[part.id] = part; lay.placed.push(objectPlacement(part));
+    }
+    for (const kind of ['Drawing', 'Compare', 'Layout']) {
+      await openGrips(writeDxf(kind === 'Layout' ? layoutRaw(lay) : raw), `pick193d1-${kind}.dxf`);
+      if (kind === 'Compare') { await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').click(); await page.locator('[data-tool=select]').click(); }
+      await page.keyboard.press('Escape'); await frames();
+      await click(175, 100); await gripWhen(3);
+      const id = await (await page.waitForFunction(() => document.querySelector('[data-testid=grip][data-grip$=":a"]')?.dataset.grip)).jsonValue();
+      await dragGripTo(id, 80, 120); await gripWhen(3);
+      await undoGrips(3);
+      await click(350, 130); await gripWhen(5); await propsOnNow();
+      assert.equal(await t('prop-chip').textContent(), 'Circle', kind + ': a different shape is picked right after grip Undo');
+      await click(175, 100); await gripWhen(3);
+      assert.equal(await t('prop-chip').textContent(), 'Line', kind + ': restored line can still be picked');
+      console.log(`193d1 ${kind}: hit-test picks another shape and the restored line after grip Undo`);
     }
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
 
   await step('TODO 189 read-only look', async () => {
-    const shots = 'shots-189'; mkdirSync(shots, { recursive: true });
+    const shots = 'shots-193d1'; mkdirSync(shots, { recursive: true });
     const looks = {}, ratios = {};
     for (const kind of ['Drawing', 'Compare', 'Layout']) {
       await open188(kind);
@@ -11828,17 +12121,20 @@ try {
         if (kind === 'Drawing') looks[theme] = look; else assert.deepEqual(look, looks[theme], kind + ': same Properties look');
         assert.deepEqual(look.fields.map((f) => f.key), ['angle', 'startX', 'startY', 'endX', 'endY']);
         for (const f of look.fields) {
-          assert.equal(f.colour, look.muted); assert.equal(f.background, look.app); assert.equal(f.opacity, '1');
+          assert.equal(f.colour, look.fields[0].colour); assert.equal(f.background, look.app); assert.equal(f.opacity, '1');
+          assert.ok(contrastRatio(f.colour, f.background) >= 4.5, 'read-only text reaches 4.5:1');
           assert.notEqual(f.colour, look.length.colour); assert.notEqual(f.background, look.length.background);
         }
         assert.ok(+look.length.weight >= 600, 'Length stays bold');
         ratios[theme] = contrastRatio(look.placeholder.colour, look.field.background);
+        assert.ok(ratios[theme] >= 4.5, 'ByLayer placeholder reaches 4.5:1');
+        assert.notEqual(look.placeholder.colour, look.field.colour, 'ByLayer differs from typed text');
         assert.equal(look.placeholder.opacity, '1');
         await t('props-panel').screenshot({ path: `${shots}/properties-${kind.toLowerCase()}-${theme}.png` });
       }
-      assert.ok(ratios.dark >= ratios.light - .1, 'dark ByLayer placeholder reaches light contrast: ' + JSON.stringify(ratios));
       await menuItem('View', 'Theme: light');
-      console.log(`189 ${kind} Properties: read-only fields dim in both themes; Length bold; ByLayer contrast light=${ratios.light.toFixed(2)} dark=${ratios.dark.toFixed(2)}; screenshots saved in ${shots}/`);
+      const light = looks.light.fields[0];
+      console.log(`193d1 ${kind} Properties: light read-only contrast ${contrastRatio('#62625f', '#d9d9d9').toFixed(2)} -> ${contrastRatio(light.colour, light.background).toFixed(2)}; Length bold; distinct ByLayer contrast light=${ratios.light.toFixed(2)} dark=${ratios.dark.toFixed(2)}; screenshots saved in ${shots}/`);
     }
     assert.deepEqual(errors, []); await closeTabs(/./);
   });
@@ -15821,8 +16117,8 @@ try {
     assert.equal(await prompt(), 'Select boundary edges (click adds or takes out), Enter = all [mOde]:'); assert.equal(await t('tool-chip').textContent(), 'Tool: Extend');
     assert.equal(await page.locator('nav.rail [data-tool=extend]').count(), 0);
     await click(80, 30); await frames(); assert.equal(await t('trim-edge').count(), 1);
-    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line, arc or open polyline to extend [mOde]. Enter or Esc ends:');
-    assert.match(await histLine(), /1 boundary edge\. Click near the end of a line, arc or open polyline to extend$/);
+    await page.keyboard.press('Enter'); assert.equal(await prompt(), 'Click near the end of a line, arc, spline or open polyline to extend [mOde]. Enter or Esc ends:');
+    assert.match(await histLine(), /1 boundary edge\. Click near the end of a line, arc, spline or open polyline to extend$/);
     const hover = () => hoverPreview(38, 20);
     await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended line is previewed');
     await shotBoth('extend', hover);
@@ -15830,12 +16126,12 @@ try {
     let doc = await savedDoc(); assert.equal(doc.entities.length, 4);
     assert.deepEqual(coords(doc.entities[0]), [20, 20, 80, 20], 'the picked end reaches the boundary, the other stays');
     assert.equal(doc.entities[0].layer, 'Cut'); assert.equal((await histLabels()).at(-1), 'Extend');
-    assert.match(await prompt(), /^Click near the end of a line, arc or open polyline to extend/, 'Extend repeats');
+    assert.match(await prompt(), /^Click near the end of a line, arc, spline or open polyline to extend/, 'Extend repeats');
     await click(38, 70); assert.match(await histLine(), /No boundary ahead/);
     assert.equal((await savedDoc()).entities.length, 4); await undo();
     await page.keyboard.press('Escape'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select', 'Esc ends Extend');
     await typeCmd('ex'); await page.keyboard.press('Enter');
-    assert.match(await histLine(), /Every line, arc, circle and polyline is a boundary edge\. Click near the end of a line, arc or open polyline to extend$/);
+    assert.match(await histLine(), /Every line, arc, circle and polyline is a boundary edge\. Click near the end of a line, arc, spline or open polyline to extend$/);
     await click(22, 20);
     doc = await savedDoc(); assert.deepEqual(coords(doc.entities[0]), [5, 20, 40, 20], 'Enter alone: every object is a boundary; the near end moves');
     await undo(); await page.keyboard.press('Escape');
@@ -15847,7 +16143,7 @@ try {
     await menuItem('Modify', 'Extend'); assert.match(await prompt(), /^Select boundary edges/);
     await page.keyboard.press('Enter');
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Cut] [data-act=lock]').click(); await t('ptab-drawing').click();
-    await click(38, 20); assert.match(await histLine(), /Extend: nothing there\. Click near the end of a line, arc or open polyline$/, 'a line on a locked layer is not extended');
+    await click(38, 20); assert.match(await histLine(), /Extend: nothing there\. Click near the end of a line, arc, spline or open polyline$/, 'a line on a locked layer is not extended');
     assert.deepEqual((await savedDoc()).entities, before.entities); await page.keyboard.press('Escape'); await closeTabs(/extend/);
   });
 
@@ -15869,6 +16165,27 @@ try {
     assert.deepEqual((await savedDoc()).entities, before.entities, 'undo puts the ellipse back');
     await click(80, 100); assert.match(await histLine(), /closed shape/, 'a full ellipse is refused like a circle');
     await page.keyboard.press('Escape'); await closeTabs(/extend-ellipse/);
+  });
+
+  await step('TODO 155m: Extend lengthens a spline', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, entity('SPLINE', [[70, 8], [71, 3], [72, 8], [73, 4], [74, 0], ...[0, 0, 0, 0, 1, 1, 1, 1].map((v) => [40, v]),
+      ...[[0, 30], [25, 50], [50, 20], [75, 40]].flatMap(([x, y]) => [[10, x], [20, y], [30, 0]])]), dxfLine(100, 0, 100, 100));
+    await openGrips(writeDxf(raw), 'extend-spline.dxf');
+    const before = await savedDoc(), endX = (e) => curveShape(e).pts.at(-1)[0];
+    assert.ok(Math.abs(endX(before.entities[0]) - 75) < 1e-6);
+    await extStd(); await click(100, 50); await page.keyboard.press('Enter');
+    const hover = () => hoverPreview(74, 40);
+    await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended spline is previewed');
+    await shotBoth('extend-spline', hover);
+    await click(74, 40);
+    const doc = await savedDoc();
+    assert.ok(Math.abs(endX(doc.entities[0]) - 100) < 1e-4, `the spline now ends on the line: ${endX(doc.entities[0])}`);
+    assert.equal(fieldOf(doc.entities[0], 73), 7); assert.equal(doc.entities.length, 2); assert.equal((await histLabels()).at(-1), 'Extend');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'undo puts the spline back');
+    await page.keyboard.press('Escape'); await closeTabs(/extend-spline/);
   });
 
   await step('TODO 146: command box clear of preview', async () => {
@@ -15947,9 +16264,11 @@ try {
       assert.ok(await t('draw-tip').isVisible(), 'the Line readout is showing');
       await cmdLine().focus(); await frames();
       const box = await t('cmd-bar').boundingBox();
-      assert.equal(box.x, cursor.x + 20, 'the box takes the first clear corner, right-above');
-      assert.equal(box.y + box.height, cursor.y - 20);
+      // DYN is on: the Length box lies over right-above (TODO 155t fix), so the first clear corner in 146's order is left-below
+      assert.equal(box.x + box.width, cursor.x - 20, 'the box takes the first clear corner, left-below');
+      assert.equal(box.y, cursor.y + 20);
       const clear = async () => {
+        for (const f of await page.locator('label.on-drawing').all()) assert.equal(overlap(box, await f.boundingBox()), 0, 'the box clears the Length / Angle boxes');
         assert.equal(overlap(box, await t('draw-preview').boundingBox()), 0, 'the box clears the Line');
         assert.equal(overlap(box, await t('draw-tip').boundingBox()), 0, 'the box clears the readout');
       };
@@ -20956,6 +21275,114 @@ try {
   const viewBox = async () => (await page.locator('[data-testid=canvas] > svg').first().getAttribute('viewBox')).split(' ').map(Number);
   const viewItemOff = async (name) => { await page.locator('[data-menu=View]').click(); const off = await page.getByRole('menuitem', { name, exact: true }).isDisabled(); await page.locator('[data-menu=View]').click(); return off; };
 
+  await step('TODO 137: type a zoom level and pick a preset', async () => {
+    const input = t('zoom-input'), list = page.getByRole('listbox', { name: 'Zoom presets' });
+    const readout = () => t('zoom').textContent();
+    const near = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-8, `${a} ≈ ${b}`));
+    const centre = (v) => [v[0] + v[2] / 2, v[1] + v[3] / 2];
+    const enter = async (value) => { await t('zoom').click(); await input.fill(value); await input.press('Enter'); };
+    const exercise = async (tab) => {
+      await page.locator('.zoombox').getByRole('button', { name: 'Fit', exact: true }).click();
+      const fitted = await viewBox(), label = await readout(), box = await t('zoom').boundingBox();
+      await t('zoom').click();
+      assert.deepEqual(await list.getByRole('option').allTextContents(), ['25 %', '50 %', '100 %', '200 %', '400 %', 'Fit']);
+      const editorBox = await input.boundingBox(), listBox = await list.boundingBox();
+      near([editorBox.x, editorBox.y, editorBox.width, editorBox.height], [box.x, box.y, box.width, box.height]);
+      assert.ok(listBox.y + listBox.height < editorBox.y, 'presets open upward');
+      assert.equal(await input.evaluate((el) => el.value.slice(el.selectionStart, el.selectionEnd)), label, 'readout text selected');
+      await input.fill('250'); await input.press('Enter');
+      assert.equal(await readout(), '250%', tab);
+      near(centre(await viewBox()), centre(fitted));
+      await menuItem('View', 'Zoom Previous'); near(await viewBox(), fitted);
+      await enter('99999999'); assert.equal(await readout(), '26458%');
+      await enter('0'); assert.equal(await readout(), '1%');
+      await enter(' 150% '); assert.equal(await readout(), '150%');
+      await enter('37.5'); assert.equal(await readout(), '38%');
+      const before = await viewBox(), beforeLabel = await readout();
+      await t('zoom').click(); await input.fill('abc'); await input.press('Enter');
+      assert.equal(await input.isVisible(), true);
+      assert.equal(await input.getAttribute('aria-invalid'), 'true');
+      assert.equal(await input.evaluate((el) => getComputedStyle(el).outlineColor), 'rgb(223, 51, 69)');
+      await input.fill('Fit'); await input.press('Enter');
+      assert.equal(await input.getAttribute('aria-invalid'), 'true', 'Fit is a preset, not a typed number');
+      await input.press('Escape'); assert.equal(await input.isVisible(), false);
+      assert.equal(await readout(), beforeLabel); near(await viewBox(), before);
+      await t('zoom').click(); await input.fill('200'); await input.press('Tab');
+      assert.equal(await input.isVisible(), false); near(await viewBox(), before);
+      await t('zoom').click(); await input.fill('200'); await page.locator('.coords').click();
+      assert.equal(await input.isVisible(), false); near(await viewBox(), before);
+      await t('zoom').click(); await list.getByRole('option', { name: '50 %', exact: true }).click();
+      assert.equal(await readout(), '50%');
+      await t('zoom').click(); await input.press('ArrowUp');
+      assert.equal(await list.getByRole('option', { selected: true }).textContent(), 'Fit');
+      await input.press('Enter'); near(await viewBox(), fitted);
+      await t('zoom').click(); await input.press('ArrowDown'); await input.press('ArrowDown');
+      assert.equal(await list.getByRole('option', { selected: true }).textContent(), '50 %');
+      await input.press('Enter'); assert.equal(await readout(), '50%');
+      await t('zoom').click(); await input.press('ArrowDown'); await input.fill('200'); await input.press('Enter');
+      assert.equal(await readout(), '200%', 'typing clears the preset highlight');
+      await t('zoom').click(); await list.getByRole('option', { name: 'Fit', exact: true }).click();
+      near(await viewBox(), fitted);
+      const promptBefore = await prompt(), nameBefore = await page.locator('.tabs .dtab.on .tname').textContent();
+      const snap = await t('tog-snap').getAttribute('aria-pressed');
+      await t('zoom').click();
+      for (const key of ['F3', 'Delete', 'Control+Tab', 'Control+w']) await input.press(key);
+      await input.fill('z');
+      assert.equal(await t('tog-snap').getAttribute('aria-pressed'), snap);
+      assert.equal(await prompt(), promptBefore, 'keys leave the command bar alone');
+      assert.equal(await page.locator('.tabs .dtab.on .tname').textContent(), nameBefore, 'tab shortcuts stay in the input');
+      await input.press('Escape');
+    };
+    await openGrips();
+    await typeCmd('line'); const pending = await prompt();
+    await t('zoom').click(); await input.press('Escape');
+    assert.equal(await prompt(), pending, 'Esc in the editor preserves the pending canvas command');
+    await page.keyboard.press('Escape');
+    await exercise('Drawings');
+    const count = await entCount();
+    await typeCmd('line'); await click(30, 40); await click(50, 40); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), count + 1, 'drawing can be edited after zooming');
+    await t('zoom').click();       // app-level keys pass through the open editor (dirty drawing: the exe's reload guard fires)
+    await page.evaluate(() => { window.__TAURI__ = {}; });
+    for (const key of ['F5', 'F3', 'F7']) assert.equal(await input.evaluate((el, key) => {
+      const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      el.dispatchEvent(e); return e.defaultPrevented;
+    }, key), true, key + ' reaches the app handlers from the zoom editor');
+    assert.equal(await input.evaluate((el) => {
+      const e = new KeyboardEvent('keydown', { key: 'r', ctrlKey: true, bubbles: true, cancelable: true });
+      el.dispatchEvent(e); return e.defaultPrevented;
+    }), true, 'Ctrl+R reaches the reload guard');
+    await page.evaluate(() => { delete window.__TAURI__; });
+    await input.press('Escape');
+    assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'focus leaves the readout after cancel');
+    await enter('250');
+    assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'focus leaves the readout after apply'); const typedView = await viewBox();
+    await page.locator('.coords').click(); await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), count, 'zoom adds no geometry Undo step'); near(await viewBox(), typedView);
+    mkdirSync('shots-137', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((theme) => document.documentElement.dataset.theme = theme, theme);
+      await t('zoom').click(); await input.press('ArrowDown');
+      const path = `shots-137/zoom-level-${theme}.png`;
+      await page.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+      await input.press('Escape');
+    }
+    await page.evaluate(() => document.documentElement.dataset.theme = 'light');
+    await t('add-to-layout').click();
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    const sheetPct = await t('pct').textContent();
+    await exercise('Layouts'); assert.equal(await t('pct').textContent(), sheetPct, '% of sheet stays unchanged');
+    await closeTabs(/./);
+    await t('picker').setInputFiles(plateDxf('zoom-a.dxf', 30));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-a.dxf');
+    await t('picker').setInputFiles(plateDxf('zoom-b.dxf', 31));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-b.dxf');
+    await menuItem('File', 'Compare drawings…');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await exercise('Compare');
+    await closeTabs(/./);
+  });
+
   await step('fix72: Esc during a Zoom Window drag cancels only the zoom and keeps the pending polyline', async () => {
     await openGrips();
     await page.locator('[data-tool=polyline]').click();
@@ -21274,6 +21701,151 @@ try {
       assert.equal(await t('tool-chip').textContent(), 'Tool: Dimension', `${key} repeats the last command`);
     }
     await closeTabs(/./);
+  });
+
+  await step('TODO 155t2: Width / Height and Radius boxes sit on their guides', async () => {
+    await open70([dxfLine(-100, -100, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await t('decimals').selectOption('2');
+    const start = await at(0, 0), end = { x: start.x - 180, y: start.y - 120 };
+    const centre = (id) => t(id).evaluate((el) => { const b = el.parentElement.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+    const onDrawing = (id) => t(id).evaluate((el) => el.parentElement.classList.contains('on-drawing'));
+    const check = async (id, guide, expected) => {
+      const actual = await centre(id);
+      assert.ok(Math.hypot(...actual.map((v, i) => v - expected[i])) < 3, `${id} sits outside its rectangle edge or at its radius midpoint`);
+      assert.equal(await onDrawing(id), true);
+      const middle = await t(guide).evaluate((el) => {
+        const p = el.getPointAtLength(el.getTotalLength() / 2), m = el.getScreenCTM();
+        return [m.a * p.x + m.c * p.y + m.e, m.b * p.x + m.d * p.y + m.f];
+      });
+      assert.ok(Math.hypot(...actual.map((v, i) => v - middle[i])) < 3, 'box centre follows its guide midpoint');
+      const box = await t(id).evaluate((el) => el.parentElement.getBoundingClientRect().toJSON()), cv = await t('canvas').boundingBox();
+      assert.ok(box.x >= cv.x + 3 && box.y >= cv.y + 3 && box.right <= cv.x + cv.width - 3 && box.bottom <= cv.y + cv.height - 3, 'whole box stays inside canvas');
+    };
+    const checkRectangle = async () => {
+      assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Width');
+      assert.equal(await t('cursor-angle').getAttribute('aria-label'), 'Height');
+      await check('cursor-length', 'dynamic-length-guide', [(start.x + end.x) / 2, end.y - 24]);
+      await check('cursor-angle', 'dynamic-height-guide', [end.x - 24, (start.y + end.y) / 2]);
+      assert.equal(await t('dynamic-angle-guide').count(), 0);
+    };
+    const show = async (kind) => {
+      await page.locator(`[data-tool=${kind}]`).click();
+      if (kind === 'rrect') await typeCmd('3');
+      await typeCmd('0,0'); await page.mouse.move(end.x, end.y); await frames();
+      if (kind !== 'circle') await checkRectangle();
+      else {
+        assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Radius');
+        await check('cursor-length', 'dynamic-length-guide', [(start.x + end.x) / 2, (start.y + end.y) / 2]);
+        assert.equal(await t('cursor-angle').isVisible(), false);
+        assert.equal(await t('dynamic-angle-guide').count(), 0);
+      }
+    };
+    const hide = async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); };
+    const checkOff = async () => {
+      await page.keyboard.press('F12'); await frames();
+      assert.equal(await t('dynamic-guides').count(), 0, 'F12 off hides dimension guides');
+      for (const id of ['cursor-length', 'cursor-angle', 'cursor-dx', 'cursor-dy']) assert.equal(await t(id).isVisible(), false, 'F12 off hides all cursor fields');
+      await page.keyboard.press('F12'); await frames();
+    };
+    for (const kind of ['rect', 'circle']) await shotBoth('155t2-' + kind, () => show(kind), hide);
+    for (const kind of ['rect', 'rrect', 'circle']) {
+      await show(kind); await checkOff();
+      if (kind === 'circle') assert.equal(await page.locator('.dr-guide').count(), 0, 'the Radius box carries the centre guide');
+      if (kind === 'circle') {
+        await typeCmd('d'); await frames();
+        assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Diameter');
+        await check('cursor-length', 'dynamic-length-guide', [(start.x + end.x) / 2, (start.y + end.y) / 2]);
+      } else {
+        await page.mouse.move(start.x - 20, end.y); await frames();
+        assert.equal(await onDrawing('cursor-length'), false, 'short Width returns to cursor tag');
+        assert.equal(await onDrawing('cursor-angle'), true, 'long Height stays on its guide');
+      }
+      if (kind === 'circle') {
+        await page.mouse.move(start.x - 20, start.y); await frames();
+        assert.equal(await page.locator('.dr-guide').count(), 1, 'a 20 px circle still shows its radius guide');
+      }
+      await page.mouse.move(start.x - 20, start.y - 20); await frames();
+      assert.equal(await t('dynamic-guides').count(), 0, 'short dimensions hide guides');
+      assert.equal(await onDrawing('cursor-length'), false, 'short dimension returns to cursor tag');
+      if (kind !== 'circle') assert.equal(await onDrawing('cursor-angle'), false);
+      await hide(); assert.equal(await t('dynamic-guides').count(), 0, 'Esc removes guides');
+    }
+    await closeTabs(/./);
+    for (const kind of ['rect', 'circle']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-155t2-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
+  });
+
+  await step("TODO 155t1: Length and Angle boxes sit on the segment's guides", async () => {
+    await open70([dxfLine(-100, -100, 200, 200)]);
+    if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+    for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+    await t('decimals').selectOption('2');
+    const start = await at(0, 0), end = { x: start.x + 180, y: start.y - 120 };
+    const centre = (id) => t(id).evaluate((el) => { const b = el.parentElement.getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; });
+    const check = async (only = false) => {
+      const length = await centre('cursor-length');
+      const middle = await t('dynamic-length-guide').evaluate((el) => {
+        const p = el.getPointAtLength(el.getTotalLength() / 2), m = el.getScreenCTM();
+        return [m.a * p.x + m.c * p.y + m.e, m.b * p.x + m.d * p.y + m.f];
+      });
+      assert.ok(Math.hypot(...length.map((v, i) => v - middle[i])) < 30, 'Length box centre follows the dimension line middle');
+      assert.equal(await t('cursor-length').evaluate((el) => el.parentElement.classList.contains('on-drawing')), true);
+      if (!only) {
+        const angle = await centre('cursor-angle'), radius = Math.hypot(end.x - start.x, end.y - start.y) * .4;
+        const half = Math.atan2(start.y - end.y, end.x - start.x) / 2;
+        assert.ok(Math.hypot(angle[0] - start.x - radius * Math.cos(half), angle[1] - start.y + radius * Math.sin(half)) < 3, 'Angle box sits halfway along the arc');
+        assert.equal(await t('dynamic-angle-guide').isVisible(), true);
+      }
+      for (const id of ['cursor-length', ...(only ? [] : ['cursor-angle'])]) {
+        const box = await t(id).evaluate((el) => el.parentElement.getBoundingClientRect().toJSON()), cv = await t('canvas').boundingBox();
+        assert.ok(box.x >= cv.x + 3 && box.y >= cv.y + 3 && box.right <= cv.x + cv.width - 3 && box.bottom <= cv.y + cv.height - 3, 'whole box stays inside canvas');
+      }
+    };
+    const show = async (kind) => {
+      await page.locator(`[data-tool=${kind}]`).click(); await typeCmd('0,0');
+      await page.mouse.move(end.x, end.y); await frames(); await check(kind === 'measure');
+    };
+    for (const kind of ['line', 'arc']) await shotBoth('155t1-' + kind, () => show(kind), async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
+    for (const kind of ['polyline', 'ellipse', 'measure']) {
+      await show(kind); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    }
+    // 155tfix: Length / Angle / the tag's Δx Δy / the command bar never cover one another
+    const rectOf = (id, sel) => t(id).evaluate((el, sel) => { const b = el.closest(sel).getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom]; }, sel);
+    const apart = (a, b) => a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1];
+    const clear = async (what, withBar) => {
+      const names = ['Length', 'Angle', 'Δx Δy'], rects = [await rectOf('cursor-length', 'label'), await rectOf('cursor-angle', 'label'), await rectOf('cursor-dx', '.drawtip')];
+      if (withBar) { const bar = await t('cmd-bar').boundingBox(); names.push('command bar'); rects.push([bar.x, bar.y, bar.x + bar.width, bar.y + bar.height]); }
+      for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) if (rects[i][2] > rects[i][0] && rects[j][2] > rects[j][0]) assert.ok(apart(rects[i], rects[j]), `${what}: ${names[i]} and ${names[j]} overlap: ${rects[i]} / ${rects[j]}`);
+    };
+    // ends with a 1: the command bar must clear the boxes too. The rest are boxes only: there the bar's four corners all hit something (canvas edge, or a box wider than the cursor offset)
+    for (const [dx, dy, bar] of [[0, -50, 1], [0, -100, 1], [50, -50, 1], [50, -100, 1], [50, -150, 1], [-50, -100, 1], [-150, -50, 1], [0, 50, 1], [50, 0, 1], [-50, 0, 1], [-100, 0, 1], [-200, 0, 1], [0, -200, 1], [200, 0], [120, -60], [100, -50], [250, -30], [0, -150], [140, 100], [60, 0], [300, 200]]) {
+      await page.locator('[data-tool=line]').click(); await typeCmd('0,0');
+      await page.mouse.move(start.x + dx, start.y + dy); await frames();
+      await clear(`Line to ${dx},${dy}`, false);
+      await page.keyboard.press('u'); await t('cmd-bar').waitFor(); await frames();
+      if (bar) await clear(`Line to ${dx},${dy} with the command bar`, true);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    }
+    for (const [name, dx, dy] of [['left', -200, 0], ['up', 0, -200]]) await shotBoth('155tfix2-bar-' + name, async () => {
+      await page.locator('[data-tool=line]').click(); await typeCmd('0,0');
+      await page.mouse.move(start.x + dx, start.y + dy); await frames();
+      await page.keyboard.press('u'); await t('cmd-bar').waitFor(); await frames();
+      await clear(`Line to ${dx},${dy} with the command bar, ${name}`, true);
+    }, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
+    await show('line');
+    await page.mouse.move(start.x + 20, start.y); await frames();
+    assert.equal(await t('dynamic-guides').count(), 0, 'short segment hides guides');
+    for (const id of ['cursor-length', 'cursor-angle']) assert.equal(await t(id).evaluate((el) => el.parentElement.classList.contains('on-drawing')), false, '20 px segment returns fields to cursor tag');
+    await page.mouse.move(end.x, end.y); await frames(); await check();
+    await page.keyboard.type('10,20'); await frames();
+    assert.equal(await t('dynamic-guides').count(), 0, 'comma entry keeps coordinate fields in the tag');
+    await page.keyboard.press('Escape'); await page.keyboard.press('F12'); await frames();
+    assert.equal(await t('dynamic-guides').count(), 0);
+    assert.equal(await t('cursor-length').count(), 0); assert.equal(await t('cursor-angle').count(), 0);
+    await page.keyboard.press('F12'); await page.keyboard.press('Escape'); await closeTabs(/./);
+    for (const kind of ['line', 'arc']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-155t1-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
+    for (const name of ['left', 'up']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-155tfix2-bar-${name}-${theme}.png`).length > 1000, 'required screenshot exists');
   });
 
   await step('TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges', async () => {

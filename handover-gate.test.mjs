@@ -235,6 +235,14 @@ test('context gate: over 150k refuses every launch (--fix too), --over passes, a
   } finally { console.log = log; }
 });
 
+test('TODO 193a: contextLine gives one Rook context line from the transcript, and nothing without one', () => {
+  const w = world();
+  w.files['/c/uuid-1.jsonl'] = turn(300_000) + turn(151_400);
+  assert.equal(w.gate.contextLine(), 'Rook context 151k (handover at 150k)');
+  delete w.files['/c/uuid-1.jsonl'];
+  assert.equal(w.gate.contextLine(), '');
+});
+
 test('gate: without rook-next.txt or a runs<N> line it stops with a message', () => {
   const w = world();
   w.files['/x/rook-next.txt'] = 'uuid-1\nRook S30\n';

@@ -14,9 +14,9 @@
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
 //   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
-//   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
+//   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty and runs<N>/retro<N>.applied exists (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
-//   node tools/rook.mjs next   start Rook.lnk (the uuid in rook-next.txt line 1) and wait up to 60 s for its transcript; prints `NEXT ROOK <uuid> started|already running|not started after 60 s`
+//   node tools/rook.mjs next   start Rook.lnk (the uuid in rook-next.txt line 1) and wait up to 60 s for its transcript; prints `NEXT ROOK <uuid> started|already running|not started after 60 s`; refused when the resume file on line 3 (relative to the extras folder) lacks the merge-due.log line; a Rook started by next outlived its caller (Rook S35c, 2026-11-03, session id matched rook-next.txt)
 //   node tools/rook.mjs gate   rewrite line 2 of runs<N>/queue.txt ("items since start ...") and print it
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import { readFileSync, writeFileSync, appendFileSync, existsSync, readdirSync, statSync, mkdirSync } from 'node:fs';
@@ -27,7 +27,7 @@ import { parseCsv } from './usage-agent.mjs';
 import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
-import { review, build, knight, suite, retro, pawn, acad, gate, runningNote, EXTRAS } from './rook-launch.mjs';
+import { review, build, knight, suite, retro, pawn, acad, gate, runningNote, printRookContext, EXTRAS } from './rook-launch.mjs';
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -98,13 +98,25 @@ export function watchCi(sha, spawnFn = spawn, exit = process.exit, bash = gitBas
 // `next`: starts Rook.lnk (the next Rook, uuid = rook-next.txt line 1) and waits up to 60 s for its transcript; returns { line, code }.
 // All effects are injected so the test starts nothing.
 // Not `detached`: a detached powershell has no console and its Start-Process of a .lnk silently starts nothing (TODO 192).
-export const startArgs = (lnk) => ['powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk.replace(/'/g, "''")}'`], { stdio: 'ignore' }];
+// PowerShell ends a '...' string on ASCII and curly single quotes alike: double them all.
+export const startArgs = (lnk) => ['powershell.exe', ['-NoProfile', '-Command', `Start-Process '${lnk.replace(/['‘’‚‛]/g, '$&$&')}'`], { stdio: 'ignore' }];
+
+// Spawns [bin, args, opts] unref'd; a spawn error or non-zero exit goes to onFail as the reason line.
+export function startWatched([bin, args, opts], onFail, spawnFn = spawn) {
+  spawnFn(bin, args, opts).on('error', (e) => onFail(`spawn error: ${e.message}`)).on('exit', (c) => { if (c) onFail(`${bin} exit ${c}`); }).unref();
+}
 
 // `why` (optional) returns the spawn's error / exit code, appended to the "not started" line.
-export async function nextRook({ read, exists, start, sleep, now, projects, own, why = () => '' }) {
-  const uuid = read().split(/\r?\n/)[0].trim();
+// The resume file named on rook-next.txt line 3 must have a line mentioning merge-due.log (TODO 193b); shortcut: no line 3 = no check.
+export async function nextRook({ read, exists, start, sleep, now, projects, own, why = () => '', readFile = (p) => readFileSync(p, 'utf8') }) {
+  const [uuid, , resume = ''] = read().split(/\r?\n/).map((l) => l.trim());
   if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(uuid)) throw new Error('rook-next.txt line 1 is not a uuid');
   if (uuid === own) throw new Error('rook-next.txt names this session: write the handover first');
+  if (resume) {
+    let text = '';
+    try { text = readFile(resolve(EXTRAS, resume)); } catch { /* reported below */ }
+    if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} is missing or has no line "read the last line of ../Project D extras/merge-due.log first"`);
+  }
   const seen = () => exists(`${projects}/${uuid}.jsonl`);
   if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} already running` };
   start();
@@ -130,8 +142,9 @@ function wait(args) {
 }
 
 // The merge checks (TODO 167b): '' when the merge may go ahead, else the one-line refusal. retro = the retro file's text or null.
-export function mergeRefusal({ n, pr, sha, head, retro, noRetro, ci }) {
+export function mergeRefusal({ n, pr, sha, head, retro, applied, noRetro, ci }) {
   if (!noRetro && !(retro || '').trim()) return `refused: runs${n}/retro${n}.out is missing or empty (run the retro, or pass --no-retro)`;
+  if (!noRetro && !applied) return `refused: runs${n}/retro${n}.applied is missing (apply the retro suggestions, then write it, or pass --no-retro)`; // TODO 193b
   if (head !== sha) return `refused: ${sha} is not the head of PR #${pr} (head is ${head})`;
   if (ci !== 'success') return `refused: CI for ${sha} is ${ci || 'not found'}, not success`;
   return '';
@@ -148,13 +161,15 @@ export function merge(args, run = (cmd, a) => execFileSync(cmd, a, { encoding: '
   const retroFile = `${extras}/runs${n}/retro${n}.out`;
   const [r] = JSON.parse(run('gh', ['run', 'list', '--commit', sha, '--workflow', 'ci.yml', '--limit', '1', '--json', 'status,conclusion']));
   const retro = existsSync(retroFile) ? readFileSync(retroFile, 'utf8') : null;
-  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro, noRetro, ci: r && (r.status === 'completed' ? r.conclusion : r.status) });
+  const applied = existsSync(`${extras}/runs${n}/retro${n}.applied`);
+  const msg = mergeRefusal({ n, pr, sha, head: info.headRefOid, retro, applied, noRetro, ci: r &&(r.status === 'completed' ? r.conclusion : r.status) });
   if (msg) throw new Error(msg);
   run('gh', ['pr', 'merge', pr, '--merge', '--match-head-commit', sha]);
   if (JSON.parse(run('gh', ['pr', 'view', pr, '--json', 'state'])).state !== 'MERGED') throw new Error(`PR #${pr} is not MERGED after gh pr merge`);
-  if (noRetro && !(retro || '').trim()) {
+  const noOut = !(retro || '').trim();
+  if (noRetro && (noOut || !applied)) {
     mkdirSync(`${extras}/runs${+n + 1}`, { recursive: true });
-    appendFileSync(`${extras}/runs${+n + 1}/resume-rook.txt`, `retro${n} due first (merged without it)\n`);
+    appendFileSync(`${extras}/runs${+n + 1}/resume-rook.txt`, noOut ? `retro${n} due first (merged without it)\n` : `retro${n} edits not applied (merged without retro${n}.applied)\n`);
   }
   return `MERGED #${pr} ${sha}`;
 }
@@ -193,9 +208,10 @@ if (cmd === 'result') {
     const u = r.usage;
     console.log(r.result);
     const fresh = u.input_tokens + u.cache_creation_input_tokens + u.output_tokens;
-    console.log(`tokens ${k(fresh + u.cache_read_input_tokens)} (${k(fresh)} new) · denials ${r.permission_denials.length}` + (r.permission_denials.length ? ': ' + r.permission_denials.map((d) => String(d.tool_input.command || d.tool_name).slice(0, 60)).join(' | ') : ''));
+    console.log(`tokens ${k(fresh + u.cache_read_input_tokens)} (${k(fresh)} new) · denials ${r.permission_denials.length}` + (r.permission_denials.length ? ': ' + r.permission_denials.map((d) => String(d.tool_input.command || d.tool_name).slice(0, 60)).join(' | ') : '') + ` · report ${String(r.result ?? '').split(/\r?\n/).filter((l) => l.trim()).length} lines`); // TODO 193a: the cap counts physical lines, blanks not
     const peak = peakContext(events);
     console.log(`peak context ${Math.round(peak / 1e3)}k` + (peak > 150_000 ? ' (over 150k: split the ticket)' : ''));
+    printRookContext();
   } else {
     console.log(readFileSync(arg, 'utf8').trim());
     const log = arg.replace(/\.txt$/, '.log');
@@ -277,10 +293,7 @@ if (cmd === 'result') {
   let failure = '';
   nextRook({
     read: () => readFileSync(`${EXTRAS}/rook-next.txt`, 'utf8'), exists: existsSync, now: Date.now, sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-    start: () => {
-      const [bin, args, opts] = startArgs(lnk);
-      spawn(bin, args, opts).on('error', (e) => { failure = `spawn error: ${e.message}`; }).on('exit', (c) => { if (c) failure = `${bin} exit ${c}`; }).unref();
-    },
+    start: () => startWatched(startArgs(lnk), (f) => { failure = f; }),
     why: () => failure,
     projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });

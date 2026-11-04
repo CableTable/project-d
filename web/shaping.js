@@ -36,13 +36,20 @@ export function goneEntities(loops, openEnts, usedLoops) {
   return gone;
 }
 
+/** Each gone entity → offsets of the rings that replace it: its own outline's rings for an own-op (Simplify, Trim, Front / Back minus; none when it vanished), all rings otherwise. */
+export function ringsOf(op, loops, res, gone) {
+  const own = new Map();
+  res.operands.forEach((o, n) => o.loops.forEach((l) => loops[l].ents.forEach((e) => own.set(e, n))));
+  return new Map([...gone].map((e) => [e, res.rings.flatMap((_, k) => (!OPS[op].own || res.sources[k] === own.get(e) ? [k] : []))]));
+}
+
 export const OPS = {
   weld: { label: 'Weld', run: (polys) => pc.union(polys[0], ...polys.slice(1)) },
-  trim: { label: 'Trim', run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
+  trim: { label: 'Trim', own: true, run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
   intersect: { label: 'Intersect', run: (polys) => pc.intersection(polys[0], ...polys.slice(1)) },
-  simplify: { label: 'Simplify', each: true, run: (polys, t) => pc.difference(polys[t], ...polys.slice(t + 1)) },
-  frontminus: { label: 'Front minus back', target: (polys) => polys.length - 1, run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
-  backminus: { label: 'Back minus front', target: () => 0, run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
+  simplify: { label: 'Simplify', each: true, own: true, run: (polys, t) => pc.difference(polys[t], ...polys.slice(t + 1)) },
+  frontminus: { label: 'Front minus back', own: true, target: (polys) => polys.length - 1, run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
+  backminus: { label: 'Back minus front', own: true, target: () => 0, run: (polys, t) => pc.difference(polys[t], ...polys.filter((_, i) => i !== t)) },
   boundary: { label: 'Create boundary', run: (polys) => pc.union(polys[0], ...polys.slice(1)) },
 };
 

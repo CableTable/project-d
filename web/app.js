@@ -15,10 +15,12 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
+import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups } from './groups.js';
 import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
+import { zoomScale } from './zoom-level.js';
 import * as UF from './unitfix.js';
 import * as CL from './cleanup.js';
 import * as DM from './dims.js';
@@ -39,7 +41,7 @@ import * as DI from './dynamic-input.js';
 import * as TX from './text.js';
 import { openAttributes } from './attributedlg.js';
 import { attributeRows } from './attribute-edit.js';
-import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText } from './dimension-text.js';
+import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText, measureOverride, readOverride } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import * as GM from './gripmode.js';
@@ -228,6 +230,7 @@ const state = {
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
   wireframe: false,
+  dotCross: false,                 // the dotted crosshair (TODO 133): dotted lines through the pointer to the canvas edges
   zwin: false,                     // Zoom Window is waiting for its box (TODO 74)
   shapingKeepOriginals: false,
   workArea: 'Follow app',
@@ -434,6 +437,7 @@ function buildMenus() {
       return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
         [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
         [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
+        [tick(state.dotCross, 'Dotted crosshair'), toggleDotCross, null, null, null, false, state.dotCross],
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!guideTarget().s.guidesShow), null, () => !!guideTarget()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!guideTarget().s.guidesLock), null, () => !!guideTarget()],
         [tick(ribbon.guideSnap, 'Snap to guides'), toggleGuideSnap, null, () => !!guideTarget()],
@@ -656,7 +660,8 @@ function ribbonContents(kind) {
       btn('Lock guides', LOCK, () => setGuidesLock(!guideTarget().s.guidesLock), { enabled: () => !!guideTarget(), pressed: () => !!guideTarget()?.s.guidesLock }),
       btn('Clear all guides', '<path d="M6 6l12 12M18 6L6 18"/>', clearGuides, { enabled: () => !!guideTarget()?.s.guides.length })),
     group('Navigate', btn('Fit to window', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit, { command: 'fit' }),
-      btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe })),
+      btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe }),
+      btn('Dotted crosshair', '<path d="M12 3v18M3 12h18" stroke-dasharray="1 3"/>', toggleDotCross, { pressed: () => state.dotCross, command: 'dotcross' })),
     group('Windows', btn('Properties panel', '<rect x="3" y="4" width="18" height="16"/><path d="M15 4v16"/>', toggleProps, { pressed: () => state.propsOn, command: 'properties' }),
       btn('Tool rail', '<rect x="3" y="4" width="18" height="16"/><path d="M8 4v16"/>', toggleRail, { pressed: () => ribbon.rail }),
       btn('Swatch strip', '<rect x="8" y="3" width="8" height="18"/><path d="M8 9h8M8 15h8"/>', toggleStrip, { pressed: () => strip.on })),
@@ -1359,6 +1364,70 @@ function setTool(id) {
   renderCommand(); renderEdit(); paintOverlay();
 }
 
+function buildZoomLevel() {
+  const input = h('input', { class: 'fld zoom-input', hidden: true, type: 'text', inputmode: 'decimal', autocomplete: 'off', spellcheck: 'false',
+    role: 'combobox', 'aria-label': 'Zoom level', 'aria-controls': 'zoom-presets', 'aria-expanded': 'true', 'aria-autocomplete': 'none', 'data-testid': 'zoom-input' });
+  const presets = ['25%', '50%', '100%', '200%', '400%', 'Fit'];
+  let highlighted = -1;
+  const highlight = (index) => {
+    highlighted = index;
+    [...list.children].forEach((row, i) => row.setAttribute('aria-selected', String(i === index)));
+    if (index < 0) input.removeAttribute('aria-activedescendant');
+    else input.setAttribute('aria-activedescendant', 'zoom-preset-' + index);
+  };
+  const close = () => {
+    if (input.hidden) return;
+    input.hidden = true; list.remove();       // the list only exists while open: a closed one would be a second "Fit" button
+    ui.pct.style.visibility = '';
+    input.blur();       // focus to the body, so Space does not reopen the editor
+  };
+  const apply = (value) => {
+    const scale = zoomScale(value);
+    if (scale === null) {
+      input.setAttribute('aria-invalid', 'true');
+      input.classList.remove('invalid');
+      void input.offsetWidth;       // replay the shake on another invalid Enter
+      input.classList.add('invalid');
+      return;
+    }
+    close();
+    zoomBy(scale / view.scale);
+  };
+  const choose = (index) => {
+    if (presets[index] === 'Fit') { close(); fitView(); }
+    else apply(presets[index]);
+  };
+  const list = h('div', { class: 'zoom-presets', id: 'zoom-presets', role: 'listbox', 'aria-label': 'Zoom presets' },
+    presets.map((value, i) => h('button', { type: 'button', role: 'option', tabindex: '-1', id: 'zoom-preset-' + i,
+      onpointerdown: (e) => e.preventDefault(), onclick: () => choose(i) }, value.replace('%', ' %'))));
+  ui.pct = h('button', { class: 'pct mono', type: 'button', 'data-testid': 'zoom', title: 'Zoom level', onclick: () => {
+    input.value = ui.pct.textContent;
+    input.removeAttribute('aria-invalid'); input.classList.remove('invalid'); highlight(-1);
+    ui.pct.style.visibility = 'hidden'; input.hidden = false; control.append(list);
+    input.focus(); input.select();
+  } }, '100%');
+  const control = h('div', { class: 'zoom-level' }, ui.pct, input);
+  input.addEventListener('input', () => { highlight(-1); input.removeAttribute('aria-invalid'); input.classList.remove('invalid'); });
+  input.addEventListener('blur', () => close());
+  document.addEventListener('pointerdown', (e) => { if (!control.contains(e.target)) close(); }, true);
+  // Capture before document shortcuts, including tab switching and dynamic input.
+  for (const type of ['keydown', 'keyup', 'keypress']) window.addEventListener(type, (e) => {
+    if (e.target !== input) return;
+    const k = e.key.toLowerCase();       // app-level keys behave as with the editor closed
+    if (e.key === 'F5' || e.key === 'F3' || e.key === 'F7' || ((e.ctrlKey || e.metaKey) && !e.altKey && (k === 'r' || k === 's'))) return;
+    e.stopPropagation();
+    if (type !== 'keydown' || e.isComposing) return;
+    if (e.key === 'Tab' && (e.ctrlKey || e.metaKey || e.altKey)) { e.preventDefault(); return; }
+    if (e.key === 'Escape' || e.key === 'Tab') { if (e.key === 'Escape') e.preventDefault(); close(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (highlighted < 0) apply(input.value); else choose(highlighted); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      highlight(highlighted < 0 ? (e.key === 'ArrowDown' ? 0 : presets.length - 1) : (highlighted + (e.key === 'ArrowDown' ? 1 : -1) + presets.length) % presets.length);
+    }
+  }, true);
+  return control;
+}
+
 function buildCanvas() {
   ui.svg = s('svg', { role: 'img', 'aria-label': 'Sheet with the parts laid out' });
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
@@ -1374,7 +1443,7 @@ function buildCanvas() {
     if (f && trace) traceBitmap();
   });
   ui.bgPicker.addEventListener('cancel', () => { traceAfter = false; });
-  ui.pct = h('span', { class: 'pct mono', 'data-testid': 'zoom' }, '100%');
+  const zoomLevel = buildZoomLevel();
   ui.fitBtn = h('button', { class: 'tog on', type: 'button', onclick: fitView }, 'Fit');
   ui.rubber = h('div', { class: 'rubber', hidden: true, 'data-testid': 'rubber' });
   ui.dropHint = h('div', { class: 'pop drophint', hidden: true, 'data-testid': 'drop-hint' });
@@ -1416,11 +1485,12 @@ function buildCanvas() {
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
-      ui.pct,
+      zoomLevel,
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
       ui.fitBtn));
   attachCanvasEvents();
   ui.canvas.append(attachCrosshair(ui.canvas));
+  ui.canvas.classList.toggle('dotcross', state.dotCross);
   ui.canvas.addEventListener('pointermove', (e) => ui.cmdUI.pointer(e.clientX, e.clientY));
   return ui.canvas;
 }
@@ -1889,13 +1959,13 @@ function pushLay(d, snap, key = '', label) {
   lastPush = { key, t: now, d };
 }
 function layRestore(d, st, dirty = true) {
-  const sameSet = d.lay.placed.length === st.placed.length && d.lay.s.gridPart === st.gridPart;      // a move, align or flag change: the same parts are still selected
+  const before = JSON.stringify(LD.placedAll(d.lay));      // the picks are placedAll positions (grid copies first): kept only when that whole list is unchanged
   if (st.lsel && st.lsel.length) selLooseMany = st.lsel.slice();
   const sized = st.sw != null && (st.sw !== d.lay.s.sheetW || st.sh !== d.lay.s.sheetH);
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
-  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (!sameSet) { picksArr = []; state.sel = -1; }
+  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
   d.dirty = dirty; renderTabs(); update(sized && view.fitted);
 }
@@ -1951,6 +2021,7 @@ function showHistory() {
     finish();
     if (r === now) return;
     const forward = r > now, dir = forward ? 'redo' : 'undo';
+    const target = d.cmp ? cmpSourceTab(cmpSelected(d.cmp)) : d;
     if (d.cmp) for (let i = 0; i < Math.abs(r - now); i++) {
       const current = historyOf(d), target = historyDocs(d).find((x) => x.hist && x.hist === current[forward ? 'redoHistory' : 'undoHistory']);
       if (!target || target !== d && !cmpEdit()) return;
@@ -1965,12 +2036,13 @@ function showHistory() {
       else if (restore(d, st) === false) { hist[forward ? 'undoMany' : 'redoMany'](Math.abs(r - now), st); return; }       // the whole jump goes back where it was
     }
     const current = historyOf(d), step = (d.cmp ? current.undoHistory : current)?.currentStep;
-    if (d.lay) {
-      selectMany(step?.grip ? placedNow.map((p, i) => p.src === 'loose' && step.lsel.includes(p.i) ? i : -1).filter((i) => i >= 0) : []); update();
-    } else {
-      const target = d.cmp ? cmpSourceTab(cmpSelected(d.cmp)) : d;
-      if (target) setSel(target, new Set(step?.grip ? step.sel.filter((i) => i < target.raw.entities.length) : []));
-    }
+    if (step?.grip) {
+      if (d.lay) {
+        selectMany(placedNow.map((p, i) => p.src === 'loose' && step.lsel.includes(p.i) ? i : -1).filter((i) => i >= 0)); update();
+      } else {
+        if (target) setSel(target, new Set(step.sel.filter((i) => i < target.raw.entities.length)));
+      }
+    } else if (!d.lay && target) setSel(target, new Set());       // Drawings and Compare: a plain step or Start clears (TODO 189); object indexes are not stable ids
     note(r < now ? `Went back ${now - r} step${now - r === 1 ? '' : 's'}, to ${rows[r] === 'Start' ? 'the start' : 'after ' + rows[r]}` : `Went forward ${r - now} step${r - now === 1 ? '' : 's'}, to after ${rows[r]}`);
   };
   const list = h('div', { class: 'histlist', 'data-testid': 'hist-list' }, rows.map((text, r) => {
@@ -3872,7 +3944,7 @@ const DO = {
   paste: pasteSelection,
   history: () => showHistory(), selectall: () => selectAll(), qselect: startQuickSelect, delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: fitView, zoomwindow: zoomWindow, zoomselection: zoomSelection, zoomprevious: zoomPrevious, rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
-  wireframe: () => toggleWireframe(),
+  wireframe: () => toggleWireframe(), dotcross: toggleDotCross,
   shortcuts: () => showShortcuts(),
   closetab: () => closeTab(curDoc()), nexttab: () => cycleTab(1), previoustab: () => cycleTab(-1),
 };
@@ -3983,6 +4055,14 @@ function setDecimals(n) {
   update();
   if (refused) return;                                                       // too nested: commit showed why
   note(`Dimensions: ${state.dp} decimal place${state.dp === 1 ? '' : 's'}` + (k ? ` (re-labelled in ${k} drawing${k === 1 ? '' : 's'}; Ctrl+Z undoes)` : ''));
+}
+
+function toggleDotCross() {
+  state.dotCross = !state.dotCross;
+  ui.canvas.classList.toggle('dotcross', state.dotCross);
+  renderRibbon();
+  note(state.dotCross ? 'Dotted crosshair on' : 'Dotted crosshair off');
+  viewStore.put({ id: 'dotCross', on: state.dotCross }).catch(() => note('Could not remember the Dotted crosshair; it still applies until the app closes'));
 }
 
 function toggleWireframe() {
@@ -4275,8 +4355,11 @@ function previewBounds() {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
-  const boxes = bounds ? [bounds] : [], tip = ui.tip.getBoundingClientRect();
-  if (tip.width || tip.height) boxes.push([tip.left - canvas.left, tip.top - canvas.top, tip.right - canvas.left, tip.bottom - canvas.top]);
+  const boxes = bounds ? [bounds] : [];
+  for (const el of [ui.tip, ...ui.tip.querySelectorAll('label.on-drawing')]) {       // the cursor tag and its Length / Angle boxes lying on the drawing
+    const r = el.getBoundingClientRect();
+    if (r.width || r.height) boxes.push([r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
+  }
   return boxes.map((box) => box.map((v, i) => v + (i < 2 ? -3 : 3)));
 }
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
@@ -4365,6 +4448,8 @@ function paintOverlay(gesture = false) {
 
 function paintEditable(c, d, base, marks) {
   const ed = state.text.ed?.d === d && state.text.ed.dim ? state.text.ed : null;
+  const dragSnap = state.entityDrag?.d === d && state.entityDrag.to;
+  if (dragSnap?.[2]) marks = [[dragSnap[0], dragSnap[1], dragSnap[2], true]];
   const drawn = paintDrawing(c, { ...base, fl: ed ? ed.dim.fl : d && d.fl, off: base.cmpOff || d && d.off, factor: d ? d.factor : 1,
     bg: d && d.bg, hl: d ? ((state.drawingRotate?.drag?.items || state.entityDrag?.items) ? null : (state.grip && state.grip.d === d && state.grip.next ? d.hl.filter((it) => !gripShown(state.grip).includes(it.e)) : textSel(d) ? d.hl.filter((it) => it.k !== 't') : ed ? d.hl.filter((it) => it.e !== ed.e || it.k !== 't') : d.hl)) : null, hide: hideNow(d), marks: marks || (drawLive() && state.drawHover && state.drawHover[2] ? [[state.drawHover[0] / d.factor, state.drawHover[1] / d.factor, state.drawHover[2], true]] : state.grip && state.grip.d === d && state.grip.to && state.grip.to[2] ? [[state.grip.to[0], state.grip.to[1], state.grip.to[2], true]] : null), dim: previewDim(d), gaps: d && d.ed && editable() ? Ed.gapMarks(gapsOf(d), d.gapShow) : null,
     contour: d && d.cRes && state.tool === 'contour' ? d.cRes.polys : null,
@@ -4513,7 +4598,9 @@ function attachCanvasEvents() {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
         if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p))) {
-          drag.move = state.entityDrag = { d, sel: new Set(d.sel), raw: d.raw.entities, from: drag.p, copy: e.ctrlKey || e.metaKey };
+          const sel = new Set(d.sel), ed = edIndex(d);
+          const grab = Ed.snapPick(ed, ...drag.p, pickTol(d), state.snap, new Set(ed.shown.filter((i) => !sel.has(i))), state.snapTypes);
+          drag.move = state.entityDrag = { d, sel, raw: d.raw.entities, from: grab ? [grab.x, grab.y] : drag.p, copy: e.ctrlKey || e.metaKey };
         }
         capture(c, e);
       }
@@ -4883,7 +4970,7 @@ async function textToOutlines() {
   const kept = Ed.removeEntities(d.raw, r.done), at = kept.entities.length;
   view.fitted = false;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
-  if (!commit(d, { entities: [...kept.entities, ...r.ents], blocks: kept.blocks }, `Text to outlines × ${r.texts}`)) return;
+  if (!commit(d, { entities: [...kept.entities, ...r.ents], groups: swapGroups(d.raw.groups, raw.length, r.from), blocks: kept.blocks }, `Text to outlines × ${r.texts}`)) return;
   if (lay) selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : [])));      // the new letters; commit's update() has made placedNow
   else { d.txoSel = new Set(r.ents.map((_, i) => at + i)); setSel(d, d.txoSel); }    // keep the new letters readable; a fresh selection enables their grips
   const subs = [...new Set([...fonts.values()].filter((f) => f.fallback).map((f) => `${f.wanted} → ${f.name}`))];
@@ -4905,7 +4992,7 @@ function breakApartSelected() {
   const r = breakApart(d.raw, d.sel, d.locked);
   if (r.error) { note('Break Apart: ' + r.error); return; }
   pushHistory(d, { ...snapshotOf(d), sel: [...d.sel] }, 'Break Apart');
-  restore(d, r);
+  restore(d, { ...r, groups: spliceGroups(d.raw.groups, d.raw.entities.length, [...d.sel][0], r.selected.size) });
   setSel(d, r.selected);
   note(`Break Apart: ${r.selected.size} outlines are separate, still selected. Ctrl+Z restores the block`);
 }
@@ -4955,7 +5042,7 @@ function explodeOrBurst(burst) {
   const r = explodeSelection(d.raw, d.sel, d.locked, burst);
   const skipped = (r.skipped ? `; ${r.skipped} locked skipped` : '') + (r.errors.length ? '; ' + r.errors.join('; ') : '');
   if (!r.exploded) { note(label + ': nothing explodable (0 exploded)' + skipped); return; }
-  if (!commit(d, { entities: r.entities, blocks: r.blocks }, label)) return;
+  if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, label)) return;
   setSel(d, r.selected);
   note(`${label}: ${r.exploded} exploded → ${r.selected.size} pieces` + skipped + '. ' + r.messages.join(' ') + (r.messages.length ? ' ' : '') + 'Ctrl+Z puts the originals back');
 }
@@ -4987,7 +5074,7 @@ function shapeSelection(op) {
     return lwpoly(ring, op === 'boundary' ? { closed: true, layer: curLayerName(d.vlay || d) } : { closed: true, layer: src.layer, lt: src.lt, aci: src.aci, tc: src.tc, lw: src.lw, lts: src.lts, hidden: src.hidden, ps: src.ps });
   }), at = kept.entities.length;
   const had = lay ? new Set(Object.keys(lay.parts)) : null;
-  if (!commit(d, { entities: [...kept.entities, ...made], blocks: kept.blocks }, name)) return;
+  if (!commit(d, { entities: [...kept.entities, ...made], groups: swapGroups(d.raw.groups, d.raw.entities.length, SH.ringsOf(op, found.loops, r, gone)), blocks: kept.blocks }, name)) return;
   if (lay) { selectMany(placedNow.flatMap((p, k) => (p.src === 'loose' && !had.has(p.partId) ? [k] : []))); update(); }      // the new objects; commit's update() has made placedNow
   else setSel(d, new Set(made.map((_, i) => at + i)));
   note(`${name}: ${r.operands.length} outlines → ${made.length + r.untouched.length} outline${made.length + r.untouched.length === 1 ? '' : 's'}, area ${fmt(r.area * d.factor * d.factor)} mm²` + skipped + (op === 'trim' && !keep ? '. The cutters stay' : '') + (op === 'boundary' ? '. The originals stay. Ctrl+Z removes the boundary' : keep ? '. The originals stay. Ctrl+Z removes the result' : '. Ctrl+Z puts the originals back'));
@@ -5105,7 +5192,7 @@ const dimTarget = () => { const d = curDoc(); if (d?.lay) { d.factor = 1; return
 const pointTarget = () => state.tool === 'measure' ? measureTarget() : state.tool === 'dimension' ? dimTarget() : editable();
 const drawBox = (fl) => fl.boxes[spaceOf(fl) ? 'paper' : 'model'];
 const fmtSize = (v) => String(+Number(v).toFixed(2));
-const snapshotOf = (d) => ({ attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
+const snapshotOf = (d) => ({ attmode: d.raw?.header.$ATTMODE, guides: d.guideState && structuredClone(d.guideState.s.guides), groups: d.raw?.groups, entities: d.raw?.entities, blocks: d.raw?.blocks, layers: d.raw?.layers, ltypes: d.raw?.ltypes, mm: d.bg ? d.bg.mm : null, pos: d.bg ? [d.bg.x, d.bg.y] : null, bl: d.balloons });
 function copySelection() {
   const lay = curLay();
   if (lay) {
@@ -5361,11 +5448,13 @@ function drawingRotateOverlay(out) {
 function moveSelectionTo(g, e) {
   if (g.d !== editable() || g.raw !== g.d.raw.entities) { state.entityDrag = null; return false; }
   if (moveLocked(g.d, g.sel)) { state.entityDrag = null; paintOverlay(); return false; }
-  const p = toDrawing(g.d, e.clientX, e.clientY), q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
-  g.dx = Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
-  g.dy = Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
+  const p = snapPoint(g.d, toDrawing(g.d, e.clientX, e.clientY), g.sel, [], g.from);
+  const q = e.shiftKey || state.ortho ? Ed.orthoLock(g.from, p) : p;
+  g.to = q;
+  g.dx = p[2] ? q[0] - g.from[0] : Math.round((q[0] - g.from[0]) * g.d.factor * 100) / 100 / g.d.factor;
+  g.dy = p[2] ? q[1] - g.from[1] : Math.round((q[1] - g.from[1]) * g.d.factor * 100) / 100 / g.d.factor;
   const gs = guideTarget().s;
-  const box = state.snap && ribbon.guideSnap && gs.guidesShow && gs.guides.length && OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
+  const box = !p[2] && state.snap && ribbon.guideSnap && gs.guidesShow && gs.guides.length && OB.boxOf(g.d.fl, g.sel), f = g.d.factor, straight = e.shiftKey || state.ortho;
   if (box) {
     const hit = snapGuideBox(box.map((v, i) => (v + (i % 2 ? g.dy : g.dx)) * f), { skipX: straight && g.dx === 0, skipY: straight && g.dy === 0 });
     g.dx += hit.dx / f; g.dy += hit.dy / f;
@@ -5449,11 +5538,18 @@ function layersWith(raw, name, o) {
   addLayer(doc, name, o);
   return doc.layers;
 }
+/** `next` with every kept Measure callout's ΔX / ΔY read again from where it now is (Scale, Rotate, Mirror, Move, Stretch, grips all end in commit). */
+function settleMeasures(d, next) {
+  if (!d.raw || !next.entities || !next.blocks) return next;
+  const fixed = Ed.relabelDims({ ...d.raw, ...next }, d.factor, 0, true);
+  return fixed ? { ...next, ...fixed } : next;
+}
 /** A new state for the tab: kept for undo; the drawing is drawn again from it. False (nothing changed, no undo step, the message shown) when it is too nested to draw. */
 function commit(d, next, label, keepSel) {       // keepSel (a grip edit's objects): Undo / Redo of this step select them again
   if (d.vlay) { layObjCommit(d, next, label, keepSel); return true; }
   let fl;       // drawn first, so a too-nested result leaves history, Redo and the drawing untouched; restore reuses it
   const raw = d.raw;
+  next = settleMeasures(d, next);
   if (raw && (next.entities !== raw.entities || next.blocks !== raw.blocks || next.layers && next.layers !== raw.layers || 'attmode' in next && next.attmode !== raw.header.$ATTMODE)) {
     try { fl = flatten({ ...raw, entities: next.entities, blocks: next.blocks, layers: next.layers || raw.layers, ltypes: next.ltypes || raw.ltypes, header: 'attmode' in next ? { ...raw.header, $ATTMODE: next.attmode } : raw.header }, d.hid); } catch (e) {
       if (!(e instanceof DrawingError)) throw e;
@@ -5499,12 +5595,13 @@ function restore(d, st, drawn) {
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
+  d.raw.groups = st.groups || followGroups(d.raw.groups, d.raw.entities, st.entities);       // Undo / Redo bring the groups back; an edit follows its entities
   d.raw.entities = st.entities; d.raw.blocks = st.blocks;
   const names = [...d.off].map((i) => d.fl.layers[i] && d.fl.layers[i].name);
   let fl;
   try { fl = drawn || flatten(d.raw, d.hid); } catch (e) {
     if (!(e instanceof DrawingError)) throw e;
-    Object.assign(d.raw, { header, entities: before.entities, blocks: before.blocks, layers: before.layers, ltypes: before.ltypes });       // the drawing stays as it was
+    Object.assign(d.raw, { header, groups: before.groups, entities: before.entities, blocks: before.blocks, layers: before.layers, ltypes: before.ltypes });       // the drawing stays as it was
     d.balloons = before.bl;
     if (before.guides) { guideTarget(d).s.guides = before.guides; rememberGuides(d); }
     note(e.message); return false;
@@ -5673,10 +5770,11 @@ function measurePoint(d, p, shift = false, typed = false) {
 function keepMeasure() {
   const d = editable(), M = state.meas;
   if (!d || !M || M.pts.length !== 2) return;
-  const dim = Ed.makeDimension(M.pts[0], M.pts[1], d.factor, d.raw.blocks, state.dp, dimNew(d));
+  const override = measureOverride(M.pts[0], M.pts[1], d.factor, state.dp);
+  const dim = Ed.makeDimension(M.pts[0], M.pts[1], d.factor, d.raw.blocks, state.dp, { ...dimNew(d), override });
   if (!dim) return;
   if (!commit(d, Ed.addDimension(d.raw, dim), 'Add dimension')) return;
-  note(`Dimension kept: ${dim.label} mm, on the layer ${Ed.DIM_LAYER}. Select it to delete it`);
+  note(`Dimension kept: ${measuredText(dim.block.entities)} mm${override.slice(2)}, on the layer ${Ed.DIM_LAYER}. Select it to delete it`);
 }
 /// Dimension: first point, second point, then the callout follows the mouse sideways and a third click places it (AutoCAD's way). Linear is the
 // same with the pointer choosing a horizontal or a vertical line. Radius and diameter: pick a circle or an arc, then place it. Angle: pick two lines, then the arc.
@@ -6659,13 +6757,16 @@ function drawTyped(raw) {
 function drawOvl(paint = false) {
   if (!ui.ovl) return;
   const tab = curDoc(), d = state.tool === 'measure' && tab?.cmp ? tab : editable() || tab, H = state.sheetH, out = [], grips = [];
-  let tip = null;
+  let tip = null, circleGuide = null;
 
   if (tab?.cmp?.show && !tab.cmp.moving && tab.cmp.res && !tab.cmp.stale) cmpGlow(tab.cmp, out);
   if (d && drawLive()) {
     const T = state.draw, dynamic = cursorDynamic() && T.hover ? cursorPoint() : null;
     const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
-    for (const g of pv.guides) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
+    for (const g of pv.guides) {
+      out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
+      if (dynamic && T.kind === 'circle') circleGuide = out.at(-1);        // dropped below once the Radius box's own guide is placed
+    }
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', transform: drawingTransform(d), d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
     if (pv.at && (pv.readout || state.trk.res || dynamic)) {
       tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: T.hover[0], y: T.hover[1] };
@@ -6673,6 +6774,10 @@ function drawOvl(paint = false) {
         tip.fields = DR.dynamicInput(T.pts.at(-1) || [0, 0], pv.at, state.dp);
         tip.dynamic = dynamic; tip.single = DI.isSingle(DI.inputMode(T)) ? DI.inputMode(T) : null;
         tip.tracking = state.trk.res?.text;
+        if (T.pts.length && (['line', 'polyline'].includes(T.kind) || ['arc', 'ellipse'].includes(T.kind) && T.pts.length === 1) && cursorInput().mode === 'polar') tip.segment = [T.pts.at(-1), pv.at];
+        if (T.pts.length && ['rect', 'rrect', 'circle'].includes(T.kind) && ['size', 'radius'].includes(cursorInput().mode)) {
+          tip.segment = [T.pts[0], pv.at]; tip.placementKind = T.kind;
+        }
       }
     }
   }
@@ -6680,6 +6785,7 @@ function drawOvl(paint = false) {
   if (CT?.hover && (DI.inputMode(CT) !== null || DI.readOnlyLength(CT))) {
     const only = DI.readOnlyLength(CT), dynamic = only ? null : cursorPoint(), typed = dynamic?.point && DI.hasTyped(cursorInput());
     tip = { text: '', x: CT.hover[0], y: CT.hover[1], only, single: DI.isSingle(DI.inputMode(CT)) ? DI.inputMode(CT) : null, dynamic, tracking: state.trk.res?.text, fields: DR.dynamicInput(DI.anchorOf(CT) || [0, 0], typed ? dynamic.point : CT.hover, state.dp) };
+    if (only) tip.segment = [CT.pts[0], CT.hover];
   }
   if (d && !d.lay && modLive()) modOvl(d, out, paint);
   else if (d && d.lay && layModLive() && OBJ_MODS.includes(state.mod.kind)) modOvl(layObjDoc(d), out, paint);
@@ -6708,6 +6814,11 @@ function drawOvl(paint = false) {
     ui.gripHint.textContent = grips.some((g) => g.rect) ? 'Grips: drag an edge to resize · Shift = keep proportions · Esc cancels' : 'Grips: drag, or click one then click the new place · type x,y · Shift = straight · Esc cancels';
   }
   const t = ui.tip;
+  for (const key of ['length', 'angle']) {
+    const label = ui.cursorFields[key].parentElement;
+    label.classList.remove('on-drawing'); label.style.left = ''; label.style.top = '';
+  }
+  t.classList.remove('segment-only');
   if (!tip) { t.hidden = true; return; }
   const r = canvasSize(), px = (tip.x - view.ox) * view.scale + 16, py = (H - tip.y - view.oy) * view.scale + 16;
   t.classList.toggle('dynamic-input', !!tip.fields);
@@ -6736,9 +6847,40 @@ function drawOvl(paint = false) {
     }
   } else t.textContent = tip.text;
   t.hidden = false;
-  const left = tip.fields && px + t.offsetWidth > r.w - 4 ? px - 32 - t.offsetWidth : px;
-  const top = tip.fields && py + t.offsetHeight > r.h - 4 ? py - 32 - t.offsetHeight : py;
-  t.style.left = Math.max(4, Math.min(left, r.w - t.offsetWidth - 4)) + 'px'; t.style.top = Math.max(4, Math.min(top, r.h - t.offsetHeight - 4)) + 'px';
+  let placement = null;
+  if (tip.segment) {
+    const screen = (p) => [(p[0] + (item?.offset[0] || 0) - view.ox) * view.scale, (H - p[1] - (item?.offset[1] || 0) - view.oy) * view.scale];
+    const labels = ['length', 'angle'].map((key) => ui.cursorFields[key].parentElement);
+    labels.forEach((el) => el.classList.add('on-drawing'));
+    placement = DR.dynamicInputPlacement(...tip.segment.map(screen), r, { length: [labels[0].offsetWidth, labels[0].offsetHeight], angle: [labels[1].offsetWidth, labels[1].offsetHeight] }, tip.placementKind);
+    labels.forEach((el, i) => el.classList.toggle('on-drawing', !!placement?.[i ? 'angle' : 'length']));
+    if (placement) {
+      circleGuide?.remove();
+      t.classList.toggle('segment-only', (!!tip.only || tip.single === 'radius') && !tip.tracking);
+      const path = ([a, b]) => `M${a.join(' ')}L${b.join(' ')}`, arc = placement.arc;
+      const guides = s('g', { class: 'dynamic-guide', transform: `translate(${view.ox} ${view.oy}) scale(${1 / view.scale})`, 'data-testid': 'dynamic-guides' },
+        ...(placement.line ? [s('path', { d: path(placement.line), 'data-testid': 'dynamic-length-guide' })] : []),
+        ...(placement.heightLine ? [s('path', { d: path(placement.heightLine), 'data-testid': 'dynamic-height-guide' })] : []),
+        ...placement.extensions.map((line) => s('path', { d: path(line) })));
+      if (arc && !tip.only) guides.append(s('path', { d: `${path([arc.c, [arc.c[0] + arc.radius, arc.c[1]]])}M${arc.c[0] + arc.radius} ${arc.c[1]}A${arc.radius} ${arc.radius} 0 ${arc.angle > Math.PI ? 1 : 0} 0 ${arc.end.join(' ')}`, 'data-testid': 'dynamic-angle-guide' }));
+      ui.ovl.append(guides);
+    }
+  }
+  const tw = t.offsetWidth, th = t.offsetHeight, left = tip.fields && px + tw > r.w - 4 ? px - 32 - tw : px;
+  const top = tip.fields && py + th > r.h - 4 ? py - 32 - th : py;
+  const fit = ([x, y]) => [Math.max(4, Math.min(x, r.w - tw - 4)), Math.max(4, Math.min(y, r.h - th - 4))];
+  const boxRects = ['length', 'angle'].filter((key) => placement?.[key]).map((key) => { const b = ui.cursorFields[key].parentElement; return [placement[key][0] - b.offsetWidth / 2, placement[key][1] - b.offsetHeight / 2, placement[key][0] + b.offsetWidth / 2, placement[key][1] + b.offsetHeight / 2]; });
+  // the cursor tag (Δx / Δy) tries its usual corner, then the flipped ones: the first clear of the boxes lying on the drawing, else the one covering the least
+  const spots = [[left, top], [px - 32 - tw, top], [left, py - 32 - th], [px - 32 - tw, py - 32 - th]].map(fit);
+  const covered = ([x, y]) => boxRects.reduce((sum, b) => sum + CB.overlapArea([x, y, x + tw, y + th], b), 0);
+  const [tx, ty] = spots.reduce((q, p) => (covered(p) < covered(q) ? p : q));
+  t.style.left = tx + 'px'; t.style.top = ty + 'px';
+  if (placement) for (const key of ['length', 'angle']) {
+    if (!placement[key]) continue;
+    const label = ui.cursorFields[key].parentElement;
+    label.style.left = placement[key][0] - label.offsetWidth / 2 - t.offsetLeft - t.clientLeft + 'px';
+    label.style.top = placement[key][1] - label.offsetHeight / 2 - t.offsetTop - t.clientTop + 'px';
+  }
 }
 
 /** Keys while a drawing tool is on or a letter starts one. Returns true when it took the key. */
@@ -6983,7 +7125,7 @@ function modPrompt(d) {
     if (m.stage === 'edges') return { status: `Command: ${m.kind.toUpperCase()}   ${ext ? 'Boundary' : 'Cutting'} edges: ${n}`, prompt: `Select ${ext ? 'boundary' : 'cutting'} edges (click adds or takes out), Enter = all:` };
     return { status, prompt: ext ? `Select object to extend or shift-select to trim or [Boundary edges/Crossing/mOde${undoOpt()}]:` : `Select object to trim or shift-select to extend or [cuTting edges/Crossing/mOde/eRase${undoOpt()}]:` };
   }
-  if (ext) return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all [mOde]:' : 'Click near the end of a line, arc or open polyline to extend [mOde]. Enter or Esc ends:' };
+  if (ext) return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all [mOde]:' : 'Click near the end of a line, arc, spline or open polyline to extend [mOde]. Enter or Esc ends:' };
   if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all [mOde]:' : 'Click the part to cut away [mOde]. Enter or Esc ends:' };
   const objs = m.objs.length;
   return { status: `Command: MIRROR   ${m.stage === 'pick' ? `${n} selected` : `${objs} object${objs === 1 ? '' : 's'}`}`,
@@ -7041,7 +7183,7 @@ function modEnter(d) {
     paintOverlay(); return;
   }
   if (m.kind === 'extend') {
-    if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc or open polyline to extend`); paintOverlay(); }
+    if (m.stage === 'edges') { m.all = !m.edges.length; m.stage = 'cut'; note(m.all ? 'Every line, arc, circle and polyline is a boundary edge. Click near the end of a line, arc, spline or open polyline to extend' : `${m.edges.length} boundary edge${m.edges.length === 1 ? '' : 's'}. Click near the end of a line, arc, spline or open polyline to extend`); paintOverlay(); }
     else modEsc(d);
     return;
   }
@@ -7668,7 +7810,8 @@ function offsetDo(d, p) {
     r.ent = PR.withLayer(r.ent, name);
   }
   if (m.multiple && m.eraseSource && m.offsetSource == null) m.offsetSource = index;
-  const next = { entities: [...d.raw.entities.filter((e) => !m.eraseSource || m.multiple || e !== target), r.ent], blocks: d.raw.blocks, layers };
+  const erased = m.eraseSource && !m.multiple, last = d.raw.entities.length - (erased ? 1 : 0);       // the new object takes the erased source's place in its group
+  const next = { entities: [...d.raw.entities.filter((e) => !erased || e !== target), r.ent], groups: remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [erased ? (i < index ? i : i === index ? last : i - 1) : i]]))), blocks: d.raw.blocks, layers };
   view.fitted = false; m.offsetRaw = null;
   let done = true;
   if (!m.offsetSteps.length) done = commit(d, next, 'Offset');
@@ -7691,7 +7834,7 @@ function offsetEnd(d) {
     const entities = d.raw.entities.filter((_, i) => i !== m.offsetSource);
     m.offsetRaw = null;
     if (d.vlay) { LD.objectCommit(d.vlay.lay, d, entities, () => 'o' + uid()); touch(); update(); }
-    else restore(d, { entities, blocks: d.raw.blocks });
+    else restore(d, { entities, groups: remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i < m.offsetSource ? i : i === m.offsetSource ? entities.length - 1 : i - 1]]))), blocks: d.raw.blocks });       // the source's place goes to the last copy
   }
   setTool('select'); note('Offset ended');
 }
@@ -7711,11 +7854,11 @@ function offsetUndo(d) {
 }
 const filletSettings = (m) => `Current settings: Mode = ${m.trim ? 'TRIM' : 'NO TRIM'}, Radius = ${mmText(state.filR)} mm`;
 /** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
-function filletCommit(d, entities) {
+function filletCommit(d, entities, groups) {
   const m = state.mod, hist = historyOf(d.vlay || d), n = hist.labels().past.length;
   m.base = Math.min(m.base, n);
   view.fitted = false;
-  if (!commit(d, { entities, blocks: d.raw.blocks }, 'Fillet')) return false;
+  if (!commit(d, { entities, groups, blocks: d.raw.blocks }, 'Fillet')) return false;
   m.base -= n + 1 - hist.labels().past.length;
   return true;
 }
@@ -7729,7 +7872,7 @@ function filletPolyDo(d, ent) {
   const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor, m.trim);
   if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
   m.stage = 'obj'; m.ent = null;
-  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)])) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
+  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))))) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why; No trim adds new arcs, which join no group
   note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
@@ -7744,7 +7887,7 @@ function filletDo(d, ent, p, sharp) {
     note('Already a sharp corner. Pick the next first line, arc, circle or polyline segment, or Esc ends'); paintOverlay(); return;
   }
   const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
-  const ok = filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)]);
+  const ok = filletCommit(d, [...d.raw.entities.map((e, i) => (i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e)), ...r.ents.slice(i1 === i2 ? 1 : 2)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))));       // the fillet arc joins no group
   m.stage = 'obj'; m.ent = null;
   if (!ok) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why
   const radius = r.ents[2]?.type === 'ARC' ? GR.get(r.ents[2].r, 40) * d.factor : sharp ? 0 : state.filR;
@@ -7790,7 +7933,12 @@ function trimRegionDo(d, hit, what, shift = state.mod.shift) {
     if (m.edges.includes(ent)) { for (const q of c.ents) m.was.set(q, ent); m.edges = m.edges.flatMap((e) => (e === ent ? c.ents : [e])); }
   }
   view.fitted = false;
-  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim')) return false;
+  let at = 0;
+  const indexes = new Map(), entities = d.raw.entities.flatMap((e, i) => {
+    const pieces = rep.has(i) ? rep.get(i) : [e];
+    indexes.set(i, pieces.map(() => at++)); return pieces;
+  });
+  if (!trimCommit(d, { entities, groups: remapGroups(d.raw.groups, indexes), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim')) return false;
   note(`${what} ${ext ? 'extended' : 'trimmed'} ${r.changed.length} object${r.changed.length === 1 ? '' : 's'}.` + (r.skipped ? (ext ? ` ${r.skipped} left alone (no boundary ahead).` : ` ${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone.`) : '') + ' Ctrl+Z takes it back');
   return true;
 }
@@ -7859,7 +8007,7 @@ function editDo(d, p, shift) {
   m.askMode = false;                                            // a click answers the mode question with "stay"
   if (idx < 0 && m.quick && m.stage === 'cut' && !shift && Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)) >= 0) { note('On a locked layer'); return; }      // not the start of a fence
   if (idx < 0 && m.quick && m.stage === 'cut' && !shift) { m.fence = [p]; note(`Fence started: click the next point, Enter ${ext ? 'extends' : 'trims'} everything it ${ext ? 'touches' : 'crosses'}, Esc cancels`); renderCommand(); paintOverlay(); return; }
-  if (idx < 0) { note(ext ? 'Extend: nothing there. Click near the end of a line, arc or open polyline' : 'Trim: nothing there. Click the part to cut away'); return; }
+  if (idx < 0) { note(ext ? 'Extend: nothing there. Click near the end of a line, arc, spline or open polyline' : 'Trim: nothing there. Click the part to cut away'); return; }
   if (ext !== !!shift) extendDo(d, idx, p); else trimDo(d, idx, p);
 }
 /** Every edge Trim was given is an ellipse or spline, which Trim can't cut with yet (Extend can use them). */
@@ -7873,7 +8021,7 @@ function trimDo(d, idx, p) {
   view.fitted = false;
   // the pieces of a cutting edge are still cutting edges (set before the commit, whose redraw drops edges that are gone)
   if (m.edges.includes(ent)) { for (const p of r.ents) m.was.set(p, ent); m.edges = m.edges.flatMap((e) => (e === ent ? r.ents : [e])); }
-  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), blocks: d.raw.blocks }, 'Trim')) return;
+  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (i === idx ? r.ents : [e])), groups: spliceGroups(d.raw.groups, d.raw.entities.length, idx, r.ents.length), blocks: d.raw.blocks }, 'Trim')) return;
   renderCommand();
   note((r.ents.length ? `Trimmed: ${r.ents.length} piece${r.ents.length === 1 ? '' : 's'} left.` : 'Trimmed away.') + ' Click another part, or Esc ends. Ctrl+Z takes it back');
 }
@@ -7899,7 +8047,7 @@ function modAnswer(d, erase) {
   }
   if (!made.length) { setTool('select'); note('Mirror: nothing could be mirrored' + (skipped.length ? ' (' + skipped[0] + ')' : '')); return; }
   // Include the copies so cleanup keeps shared blocks that they still use.
-  const next = { entities: [...d.raw.entities, ...made], blocks }, out = erase ? Ed.removeEntities(next, new Set(done)) : next, first = out.entities.length - made.length;
+  const next = { entities: [...d.raw.entities, ...made], blocks }, out = erase ? { ...Ed.removeEntities(next, new Set(done)), groups: swapGroups(d.raw.groups, d.raw.entities.length, new Map(done.map((i, k) => [i, [k]]))) } : next, first = out.entities.length - made.length;
   view.fitted = false;
   if (!commit(d, out, 'Mirror')) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
   setTool('select'); setSel(d, new Set(made.map((_, i) => first + i)));
@@ -8116,10 +8264,16 @@ function textCommit() {
     if (override === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); return; }
     const built = Ed.buildDim(dim.kind, { ...dim.params, override }, d.factor || 1, dim.name, dim.dp);
     if (d.lay) {
+      const kept = Ed.relabelDims({ entities: [], blocks: { [dim.name]: built.block } }, d.factor || 1, 0, true);       // as the drawing path: matching text settles back to what it was
+      if (kept && readOverride(kept.blocks[dim.name].entities) === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); note('Dimension text unchanged: a kept Measure callout follows its points'); return; }
       const snap = laySnap(d.lay);
       if (!LD.replaceDim(d.lay, dim.placed, dim.raw.entities[ed.e], { ...dim.raw.blocks, [dim.name]: built.block }, () => 'o' + uid(), new Set(Object.values(d.lay.parts).map((p) => p.name)))) return;
       pushLay(d, snap, '', 'Dimension text'); touch(); update();
-    } else { if (!commit(d, Ed.replaceDimension(d.raw, built), 'Dimension text')) return; setSel(d, new Set([ed.e])); }
+    } else {
+      const next = settleMeasures(d, Ed.replaceDimension(d.raw, built));
+      if (readOverride(next.blocks[dim.name].entities) === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); note('Dimension text unchanged: a kept Measure callout follows its points'); return; }       // typed text that still matches is rewritten back: no step, no "changed"
+      if (!commit(d, next, 'Dimension text')) return; setSel(d, new Set([ed.e]));
+    }
     note('Dimension text changed. Ctrl+Z takes it back');
     return;
   }
@@ -9989,7 +10143,7 @@ function joinTinyGaps(whole = false) {
   if (!ed) return;
   const method = state.gapMethod, r = Ed.joinTinyGaps(d.raw, ed, state.gapMm / d.factor, (e) => !lockedEnt(d, e), method);
   if (!r.changed) { note('Join gaps: nothing could be moved' + skippedText(r.skipped)); return; }
-  if (!commit(d, { entities: r.entities, blocks: r.blocks }, 'Join gaps')) return;
+  if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, 'Join gaps')) return;
   edIndex(d); renderEdit();
   const left = gapsOf(d) || [];
   // a method's own count is the joined gaps; the others are the ones it handed on (fillet → chamfer, anything → average point)
@@ -10005,7 +10159,7 @@ function removeDuplicates() {
   const r = CL.removeDuplicates(d.raw, (i) => !lockedEnt(d, i));
   d.duplicates = { source: d.raw.entities, count: d.locked?.size ? CL.removeDuplicates(d.raw).count : r.count };
   if (!r.count) { renderEdit(); note(ui.duplicateRemove.disabled ? ui.duplicateReason.textContent : 'No removable duplicates / overlaps (locked layers are kept)'); return; }
-  if (!commit(d, r, 'Remove duplicates / overlaps')) return;
+  if (!commit(d, { entities: r.entities, groups: remapGroups(d.raw.groups, r.indexes), blocks: r.blocks }, 'Remove duplicates / overlaps')) return;
   note(`Removed redundant geometry from ${r.count} entities. Ctrl+Z brings it back`);
 }
 
@@ -10473,6 +10627,7 @@ async function init() {
   try {
     const saved = await viewStore.all();
     state.wireframe = saved.some((r) => r.id === 'wireframe' && r.on === true);
+    state.dotCross = saved.some((r) => r.id === 'dotCross' && r.on === true);
     state.dynamicInput = saved.find((r) => r.id === 'dynamicInput')?.on !== false;
     const mode = saved.find((r) => r.id === 'workArea')?.mode;
     if (WORK_AREAS.includes(mode)) state.workArea = mode;

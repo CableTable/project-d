@@ -98,15 +98,24 @@ export function gateOps(env) {
     return line;
   }
   // Throws `HANDOVER: context <N>k ...` when this Rook's transcript is over CONTEXT_LIMIT (every launch, --fix too); --over passes; no transcript: warns and allows.
+  function ownContext() {
+    const uuid = (env.read(`${env.extras}/rook-next.txt`) || '').split(/\r?\n/)[0].trim();
+    const text = uuid && env.read(`${env.claudeDir}/${uuid}.jsonl`);
+    return text && contextOf(text);
+  }
   function context(over) {
     if (over) return;
-    const uuid = (env.read(`${env.extras}/rook-next.txt`) || '').split(/\r?\n/)[0].trim();
-    const text = uuid && env.read(`${env.claudeDir}/${uuid}.jsonl`), n = text && contextOf(text);
+    const n = ownContext();
     if (!n) return void console.log(`context not checked: no transcript for this Rook in ${env.claudeDir}`);
     if (n > CONTEXT_LIMIT) throw new Error(`HANDOVER: context ${Math.round(n / 1e3)}k (over ${CONTEXT_LIMIT / 1e3}k). Hand over (WORKFLOW.md Handover), or pass --over with his OK.`);
   }
   return {
     context,
+    // TODO 193a: the line `rook.mjs result` ends with; '' when this Rook's transcript is not there (nothing to say).
+    contextLine() {
+      const n = ownContext();
+      return n ? `Rook context ${Math.round(n / 1e3)}k (handover at ${CONTEXT_LIMIT / 1e3}k)` : '';
+    },
     // TODO 167d: this Rook's runs<N>/queue.txt (rook-next.txt line 3 names runs<N>/resume-rook.txt).
     queueFile() {
       const n = /runs(\d+)/.exec((env.read(`${env.extras}/rook-next.txt`) || '').split(/\r?\n/)[2] || '')?.[1];

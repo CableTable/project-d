@@ -14,7 +14,7 @@ Started 2026-10-16. Unrelated to Projects B, P, R and WF in the parent folder, b
 Built so far: sessions 1-34 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
 AutoCAD-style draw / modify / dimension / snap / grip (with Grip options) / Fillet / Offset / Explode / Quick select tools in every tab, ribbon + panel UI in AutoCAD
 colours, CI that builds `ProjectD.exe` and publishes it to Releases on a merge to main (doc-only PR pushes skip the tests and build).
-Repo **CableTable/project-d** (private). **Next:** `TODO.md` and the current `runs<N>/resume-rook*.txt`. Commit each finished item and tick it in TODO.md at once; push once per Rook handover (his call, 2026-10-31).
+Repo **CableTable/project-d** (public until LibreDWG work starts, DECISIONS.md). **Next:** `TODO.md` and the current `runs<N>/resume-rook*.txt`. A builder commits each finished item; Rook ticks it in TODO.md after the cherry-pick; push once per Rook handover (his call, 2026-10-31).
 
 ## The app
 
@@ -56,10 +56,10 @@ Set up in session 1, the same shape as Project R:
 - **One PR per session number, merged once.** A session number (`claude/session<N>`, `runs<N>`) may span several Rook sessions (`Rook S28`, `Rook S28b`, …). All of its changes go on ONE branch, a commit per
   change, in ONE pull request, with the PR body's list of changes kept up to date. Merge only when
   he says so (or at session end with his OK), on a green run for the head commit
-  (`gh pr merge <n> --merge --match-head-commit <sha>`). When he asks for **auto-merge**: label the
+  (`node tools/rook.mjs merge <n> <sha>`, which checks the head sha, CI and the retro). When he asks for **auto-merge**: label the
   PR `automerge`, then push; the CI run's `merge` job merges once the tests and the build pass
   (as in Project R; GitHub's own auto-merge needs a paid plan). A doc-only last push skips the `merge` job: merge it by hand
-  with `--match-head-commit` once its run is green. Never merge on red; revert rather than patch forward. Every failed
+  with `node tools/rook.mjs merge <n> <sha>` (or `--match-head-commit`) once its run is green. Never merge on red; revert rather than patch forward. Every failed
   run emails him, so get each push right.
 - Releases go through GitHub, never by hand: a merge to main builds the exe and publishes it.
 - **Still Rakshith's, not Claude's:** keys, passwords, code-signing certificates, billing

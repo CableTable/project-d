@@ -75,6 +75,19 @@ test('radius reads back (centre, radius, pointer) through Save and reopen with t
   assert.equal(txt(E.relabelDims({ blocks: { PD_DIM_R1: reopen(dim) }, entities: [] }, 1, 3).blocks.PD_DIM_R1), 'R25.000', 'the decimals re-label it, keeping the R');
 });
 
+test('relabelDims: text matching the Measure pattern on a radius or angle dimension is left alone (no points to read ΔX from)', () => {
+  const ov = '<>  (ΔX 5, ΔY 30.00)';
+  const raw = newDoc(4); raw.layers.Dimensions = { name: 'Dimensions' };       // with INSERTs: the transform is read for them
+  for (const [kind, p, nm] of [['radius', { c: [100, 50], r: 25, p: [120, 90] }, 'PD_DIM_R1'], ['angle', { v: [0, 0], r: 20, a0: 10, a1: 70 }, 'PD_DIM_A1']]) {
+    const dim = E.buildDim(kind, { ...p, textH: 3, override: ov }, 1, nm, 1); raw.blocks[nm] = dim.block; raw.entities.push(dim.insert);
+  }
+  const doc = readDxf(writeDxf(raw, { escapeUnicode: true }));
+  for (const kept of [false, true]) {
+    const out = E.relabelDims(doc, 1, 2, kept);
+    for (const nm of ['PD_DIM_R1', 'PD_DIM_A1']) assert.equal(E.readDim(nm, out ? out.blocks[nm] : doc.blocks[nm]).params.override, ov, `${nm} keeps its text (kept ${kept})`);
+  }
+});
+
 test('diameter: Ø, the line through the centre the pointer points along, arrowheads at both ends, the text above and along it', () => {
   const ends = E.diameterEnds([100, 50], 25, [100, 100]);
   near(ends.a[0], 100); near(ends.a[1], 25); near(ends.b[1], 75);

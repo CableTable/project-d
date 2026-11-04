@@ -279,7 +279,7 @@ export function explodeDimension(e, raw) {
 /** Replace only explodable selected entities, preserving draw order and returning the new selection. */
 export function explodeSelection(raw, selection, locked = new Set(), burst = false) {
   let blocks = raw.blocks, exploded = 0, skipped = 0;
-  const entities = [], selected = new Set(), errors = [], messages = new Set(), dims = new Set();
+  const entities = [], selected = new Set(), errors = [], messages = new Set(), dims = new Set(), indexes = new Map();       // indexes: old entity → its new indexes, for the groups
   raw.entities.forEach((e, i) => {
     let pieces;
     if (selection.has(i)) {
@@ -293,10 +293,10 @@ export function explodeSelection(raw, selection, locked = new Set(), burst = fal
     }
     if (pieces?.length) {
       exploded++;
-      for (const piece of pieces) { selected.add(entities.length); entities.push(piece); }
-    } else entities.push(e);
+      indexes.set(i, pieces.map((piece) => { selected.add(entities.length); entities.push(piece); return entities.length - 1; }));
+    } else { indexes.set(i, [entities.length]); entities.push(e); }
   });
   const used = usedBlocks(blocks, entities);
   if ([...dims].some((n) => !used.has(n))) { blocks = { ...blocks }; for (const n of dims) if (!used.has(n)) delete blocks[n]; }       // a dimension's block nothing else uses goes with it, as on Delete
-  return { entities, blocks, selected, exploded, skipped, errors: [...new Set(errors)], messages: [...messages] };
+  return { entities, blocks, indexes, selected, exploded, skipped, errors: [...new Set(errors)], messages: [...messages] };
 }

@@ -63,13 +63,14 @@ function nearbyKeys([kind, ...coords]) {
  * eligible limits repairs (e.g. locked layers); redundant counts entities, including partially trimmed ones.
  */
 export function removeDuplicates(raw, eligible = () => true) {
-  const entities = [], offenders = [], groups = new Map(), exact = new Set();
+  const entities = [], offenders = [], groups = new Map(), exact = new Set(), indexes = new Map();   // indexes: old entity → its new indexes
   raw.entities.forEach((ent, i) => {
     const key = exactKey(ent);
+    indexes.set(i, []);
     if (exact.has(key) && eligible(i)) { offenders.push(i); return; }
     exact.add(key);
     const sh = canModify(ent) && !(ent.type === 'LINE' && get(ent.r, 30) !== get(ent.r, 31)) && shapeOf(ent);
-    if (!sh) { entities.push(ent); return; }
+    if (!sh) { indexes.set(i, [entities.length]); entities.push(ent); return; }
     const pk = planeKey(ent), previous = groups.get(pk) || new Map(), path = pathOf(sh), runs = [];
     let changed = false, run = [];
     for (const s of path.segs) {
@@ -97,15 +98,15 @@ export function removeDuplicates(raw, eligible = () => true) {
     }
     groups.set(pk, previous);
     if (run.length) runs.push(run);
-    if (!changed) { entities.push(ent); return; }
+    if (!changed) { indexes.set(i, [entities.length]); entities.push(ent); return; }
     offenders.push(i);
     if (path.closed && runs.length > 1 && near(runs[runs.length - 1].at(-1).b, runs[0][0].a)) runs[0] = runs.pop().concat(runs[0]);
     for (const pieces of runs) {
       const shape = shapeOfPiece(pieces, path.type);
-      if (shape) entities.push(rebuildPiece(shape, ent));
+      if (shape) { indexes.get(i).push(entities.length); entities.push(rebuildPiece(shape, ent)); }
     }
   });
-  return { entities, blocks: raw.blocks, offenders, count: offenders.length };
+  return { entities, blocks: raw.blocks, offenders, count: offenders.length, indexes };
 }
 
 /** Include hidden entities as well as hidden layers; session visibility never suppresses warnings. */

@@ -1,6 +1,7 @@
 // draw.js — the drawing tools' geometry and typed input.   node draw.test.mjs
 import assert from 'node:assert/strict';
 import * as DR from './web/draw.js';
+import { overlapArea } from './web/cmdbar.js';
 import { movePoint } from './web/move.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { newDoc, addEntities, writeDxf } from './web/dxf-write.js';
@@ -9,6 +10,82 @@ let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
 const near = (a, b, e = 1e-6) => assert.ok(Math.abs(a - b) < e, `${a} vs ${b}`);
 const nearPt = (a, b, e = 1e-6) => { near(a[0], b[0], e); near(a[1], b[1], e); };
+
+test('dynamicInputPlacement: both sides, edge flip, radius and box clamps, short segments', () => {
+  const canvas = { w: 800, h: 600 }, boxes = { length: [120, 30], angle: [110, 30] };
+  const place = (a, b) => DR.dynamicInputPlacement(a, b, canvas, boxes);
+  let p = place([200, 300], [400, 300]);
+  nearPt(p.length, [300, 276]); nearPt(p.angle, [280, 310]); near(p.arc.radius, 80);       // 300 would cover the Length box: moved 4 px clear
+  assert.deepEqual(p.line, [[200, 276], [400, 276]]);
+  assert.deepEqual(p.extensions, [[[200, 300], [200, 270]], [[400, 300], [400, 270]]]);
+  p = place([400, 300], [200, 300]);
+  nearPt(p.length, [300, 324]); nearPt(p.angle, [400, 220]); near(p.arc.angle, Math.PI);
+  for (const sign of [-1, 1]) {
+    p = place([250, 300], [350, 300 + sign * 100]);
+    nearPt(p.length, [300 + sign * 24 / Math.SQRT2, 300 + sign * 50 - 24 / Math.SQRT2]);
+    near(DR.dist(p.arc.c, p.angle), p.arc.radius);
+    near(p.arc.angle, (sign < 0 ? 45 : 315) / 180 * Math.PI);
+  }
+  p = place([200, 20], [400, 20]); nearPt(p.length, [300, 44]);
+  assert.deepEqual(p.line, [[200, 44], [400, 44]], 'off-canvas left normal flips');
+  near(place([200, 300], [240, 300]).arc.radius, 30);
+  near(place([200, 300], [700, 300]).arc.radius, 120);
+  p = place([0, 0], [100, 0]); nearPt(p.length, [64, 24]); nearPt(p.angle, [59, 58]);
+  assert.equal(place([200, 300], [220, 300]), null);
+  assert.equal(place([200, 300], [239.99, 300]), null);
+  assert.equal(place([200, 300], [200, 300]), null);
+});
+
+test('dynamicInputPlacement: Length and Angle boxes never overlap, segments 40-800 px at 10 angles', () => {
+  const canvas = { w: 2000, h: 1600 }, boxes = { length: [140, 39], angle: [140, 39] }, c = [1000, 800];
+  const rect = (p, size) => [p[0] - size[0] / 2, p[1] - size[1] / 2, p[0] + size[0] / 2, p[1] + size[1] / 2];
+  let n = 0;
+  for (let len = 41; len <= 800; len += 10) for (const deg of [0, 10, 30, 45, 90, 135, 180, 225, 270, 330]) {
+    const b = [c[0] + len * Math.cos(deg / 180 * Math.PI), c[1] - len * Math.sin(deg / 180 * Math.PI)], p = DR.dynamicInputPlacement(c, b, canvas, boxes);
+    assert.equal(overlapArea(rect(p.length, boxes.length), rect(p.angle, boxes.angle)), 0, `${len} px at ${deg}°`); n++;
+  }
+  assert.equal(n, 760);
+});
+
+test('dynamicInputPlacement: Rectangle and Rounded rectangle Width / Height in all four quadrants', () => {
+  const canvas = { w: 800, h: 600 }, boxes = { length: [120, 30], angle: [110, 30] };
+  for (const kind of ['rect', 'rrect']) {
+    const place = (a, b) => DR.dynamicInputPlacement(a, b, canvas, boxes, kind);
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      const a = [400, 300], b = [400 + sx * 200, 300 + sy * 100], top = Math.min(a[1], b[1]);
+      const p = place(a, b);
+      nearPt(p.length, [400 + sx * 100, top - 24]);
+      nearPt(p.angle, [b[0] + sx * 24, 300 + sy * 50]);
+      assert.deepEqual(p.line, [[a[0], top - 24], [b[0], top - 24]]);
+      assert.deepEqual(p.heightLine, [[b[0] + sx * 24, a[1]], [b[0] + sx * 24, b[1]]]);
+      assert.equal(p.extensions.length, 4); assert.equal(p.arc, undefined);
+    }
+    nearPt(place([400, 300], [0, 0]).length, [200, 19]);
+    nearPt(place([400, 300], [0, 0]).angle, [59, 150]);
+    nearPt(place([400, 300], [800, 600]).angle, [741, 450]);
+    assert.equal(place([400, 300], [420, 320]), null);
+    assert.equal(place([400, 300], [439.99, 339.99]), null);
+    assert.equal(place([400, 300], [400, 300]), null);
+    assert.equal(place([400, 300], [420, 400]).length, null);
+    assert.equal(place([400, 300], [500, 320]).angle, null);
+    assert.ok(place([400, 300], [440, 340]).length);
+    assert.ok(place([400, 300], [440, 340]).angle);
+  }
+});
+
+test('dynamicInputPlacement: Circle Radius / Diameter midpoint, clamps and short radii', () => {
+  const place = (a, b) => DR.dynamicInputPlacement(a, b, { w: 800, h: 600 }, { length: [120, 30] }, 'circle');
+  for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+    const a = [400, 300], b = [400 + sx * 200, 300 + sy * 100], p = place(a, b);
+    nearPt(p.length, [400 + sx * 100, 300 + sy * 50]);
+    assert.deepEqual(p.line, [a, b]); assert.deepEqual(p.extensions, []);
+    assert.equal(p.angle, undefined); assert.equal(p.arc, undefined);
+  }
+  nearPt(place([0, 0], [40, 0]).length, [64, 19]);
+  nearPt(place([800, 600], [760, 600]).length, [736, 581]);
+  assert.equal(place([400, 300], [439.99, 300]), null);
+  assert.equal(place([400, 300], [400, 300]), null);
+});
 
 test('parseInput: x,y, @dx,dy, polar, a length, words, Enter', () => {
   assert.deepEqual(DR.parseInput('10,20'), { kind: 'xy', rel: false, abs: false, x: 10, y: 20 });
