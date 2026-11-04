@@ -11,7 +11,7 @@ export const crosshairArm = (screenH, pct = CURSORSIZE) => Math.round(screenH * 
 
 /** The crosshair for `canvas`: visible only where the OS cursor is hidden (cursor: none), so panels, buttons and the pan / text cursors keep theirs. */
 export function attachCrosshair(canvas) {
-  const el = h('div', { class: 'xhair', hidden: true, 'aria-hidden': 'true', 'data-testid': 'crosshair' }, h('i', { class: 'xh-h' }), h('i', { class: 'xh-v' }), h('i', { class: 'xh-box' }));
+  const el = h('div', { class: 'xhair', hidden: true, 'aria-hidden': 'true', 'data-testid': 'crosshair' }, h('i', { class: 'xh-dh', 'data-testid': 'dotcross-h' }), h('i', { class: 'xh-dv', 'data-testid': 'dotcross-v' }), h('i', { class: 'xh-h' }), h('i', { class: 'xh-v' }), h('i', { class: 'xh-box' }));
   el.style.setProperty('--pb', pickBoxSide() + 'px');
   let rect = null, target = null, x = 0, y = 0;            // the cached canvas rect, the element last under the pointer, the pointer in client px
   const arm = () => el.style.setProperty('--arm', crosshairArm(screen.height) + 'px');

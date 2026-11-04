@@ -606,6 +606,56 @@ try {
       await p.locator('.status').screenshot({ path: dir + '/status-dark.png' });
     } finally { await context.close(); }
   });
+  await step('TODO 133: dotted crosshair toggles from the View tab and DOTCROSS', async () => {
+    for (const theme of ['light', 'dark']) {
+      const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: theme });
+      try {
+        const p = await context.newPage(), q = (id) => panelControl(p, p.getByTestId(id)), errs = [];
+        p.on('pageerror', (e) => errs.push(String(e)));
+        await p.goto(URL_); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        const open = async (name, x) => {
+          const doc = newDoc(4); addEntities(doc, dxfLine(20, 20, 60, 20), dxfLine(x, 20, x, 50), dxfCircle(80, 40, 8));
+          await q('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(doc)) });
+          await p.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+        };
+        await open('dots-133a.dxf', 20); await open('dots-133b.dxf', 30);
+        const xh = p.getByTestId('crosshair'), dh = p.getByTestId('dotcross-h'), dv = p.getByTestId('dotcross-v');
+        const dotBtn = p.locator('.ribbon button[aria-label="Dotted crosshair"]');
+        const pressed = async () => { await p.locator('[data-ribbon-tab=View]').click(); return dotBtn.getAttribute('aria-pressed'); };
+        const hover = async () => { const cv = await p.getByTestId('canvas').boundingBox(); const pt = { x: cv.x + cv.width * .45, y: cv.y + cv.height * .5 }; await p.mouse.move(pt.x - 40, pt.y - 20); await p.mouse.move(pt.x, pt.y, { steps: 3 }); await xh.waitFor({ state: 'visible' }); return { cv, pt }; };
+        const spans = async ({ cv, pt }, label) => {
+          const a = await dh.boundingBox(), b = await dv.boundingBox();
+          assert.ok(a.x <= cv.x + 1 && a.x + a.width >= cv.x + cv.width - 1 && Math.abs(a.y + a.height / 2 - pt.y) <= 1.5 && a.height <= 1.5, `${label}: the horizontal line spans the canvas through the pointer`);
+          assert.ok(b.y <= cv.y + 1 && b.y + b.height >= cv.y + cv.height - 1 && Math.abs(b.x + b.width / 2 - pt.x) <= 1.5 && b.width <= 1.5, `${label}: the vertical line spans the canvas through the pointer`);
+          assert.equal(await dh.evaluate((el) => getComputedStyle(el).opacity), '0.6');
+        };
+        assert.equal(await pressed(), 'false', 'off by default');
+        await hover();
+        assert.equal(await dh.isVisible(), false, 'no dotted lines while off'); assert.equal(await dv.isVisible(), false);
+        await dotBtn.click();
+        assert.equal(await pressed(), 'true', 'the View tab button turns it on');
+        const on = await hover(); await spans(on, 'Drawings');
+        await p.mouse.move(on.pt.x + 90, on.pt.y + 50, { steps: 3 }); await spans({ cv: on.cv, pt: { x: on.pt.x + 90, y: on.pt.y + 50 } }, 'moved');
+        await p.screenshot({ path: `${shotDir}/todo133-dotted-crosshair-${theme}.png` });
+        const rb = await p.locator('.ribbon').first().boundingBox();
+        await p.mouse.move(rb.x + 40, rb.y + 20, { steps: 3 }); await xh.waitFor({ state: 'hidden' });
+        assert.equal(await dh.isVisible(), false, 'hidden with the crosshair over the ribbon');
+        await q('new-layout').click(); await spans(await hover(), 'Layouts');
+        await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+        await q('cmp-item').first().waitFor(); await spans(await hover(), 'Compare');
+        await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        assert.equal(await pressed(), 'true', 'remembered after reload');
+        assert.ok(await p.getByTestId('canvas').evaluate((el) => el.classList.contains('dotcross')));
+        await q('cmd-echo').click(); await q('cmd-input').fill('dotcross'); await q('cmd-input').press('Enter');
+        assert.equal(await pressed(), 'false', 'DOTCROSS turns it off');
+        assert.equal(await p.getByTestId('canvas').evaluate((el) => el.classList.contains('dotcross')), false);
+        await p.reload(); await p.waitForSelector('[data-testid=count]', { state: 'attached' });
+        assert.equal(await pressed(), 'false', 'off is remembered too');
+        assert.deepEqual(errs, []);
+      } finally { await context.close(); }
+    }
+  });
+
   await step('TODO 155o-r: crosshair cursor over the canvas only, green outline snap marker of 6, box fill 25%, grip 5 with hover and hot colours', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {

@@ -87,6 +87,7 @@ const TABLE = [
   ['zoomprevious', 'View', 'Back to the previous view (the last 10)', ['zp'], ''],
   ['rulers', 'View', 'Show or hide the rulers', [], ''],
   ['wireframe', 'View', 'Outline-only view; PDF / Print keeps fills', [], '', 'F9'],
+  ['dotcross', 'View', 'Dotted lines through the pointer to the canvas edges (reference only)', [], ''],
   ['properties', 'View', 'Show or hide the Properties bar', ['props'], '', 'Ctrl+1'],
   ['shortcuts', 'Edit', 'Own typed aliases and key shortcuts', [], ''],
 ];

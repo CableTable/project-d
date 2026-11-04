@@ -192,6 +192,11 @@ select.fld { font-family: var(--sans); }
 .xhair i { position: absolute; background: #fff; }
 .xh-h { left: calc(var(--arm, 0px) * -1); width: calc(var(--arm, 0px) * 2 + 1px); top: 0; height: 1px; }
 .xh-v { top: calc(var(--arm, 0px) * -1); height: calc(var(--arm, 0px) * 2 + 1px); left: 0; width: 1px; }
+/* TODO 133 dotted crosshair: two 1 px lines, dots 1 on 3 like .dynamic-guide, carried to the canvas edges (the canvas clips them) by the same moved element */
+.xh-dh, .xh-dv { display: none; opacity: .6; }                  /* the gradients below need !important to beat ".xhair i" */
+.canvas.dotcross .xh-dh, .canvas.dotcross .xh-dv { display: block; }
+.xh-dh { left: -20000px; width: 40000px; top: 0; height: 1px; background: repeating-linear-gradient(90deg, #fff 0 1px, transparent 1px 4px) !important; }
+.xh-dv { top: -20000px; height: 40000px; left: 0; width: 1px; background: repeating-linear-gradient(180deg, #fff 0 1px, transparent 1px 4px) !important; }
 .xh-box { left: calc(var(--pb) / -2 + .5px); top: calc(var(--pb) / -2 + .5px); width: var(--pb); height: var(--pb); background: none !important; border: 1px solid #fff; box-sizing: border-box; }
 .canvas.pan { cursor: grab; } .canvas.panning { cursor: grabbing; }
 .canvas svg { display: block; width: 100%; height: 100%; }

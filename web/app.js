@@ -229,6 +229,7 @@ const state = {
   polar: { on: true, inc: 15 }, otrack: true,   // the POLAR (increment in degrees) and OTRACK toggles, remembered on this PC (track.js, mock-up R7a)
   trk: { d: null, acq: [], res: null, cand: null, timer: 0 },   // tracking: the tab, the acquired points, the lock under the pointer, the snap point hovered on
   wireframe: false,
+  dotCross: false,                 // the dotted crosshair (TODO 133): dotted lines through the pointer to the canvas edges
   zwin: false,                     // Zoom Window is waiting for its box (TODO 74)
   shapingKeepOriginals: false,
   workArea: 'Follow app',
@@ -435,6 +436,7 @@ function buildMenus() {
       return [['Fit to window', fitView, 'Ctrl+0'], ['Zoom Window', zoomWindow, 'ZW'], ['Zoom Selection', zoomSelection, 'ZS', () => !!selectionBox()], ['Zoom Previous', zoomPrevious, 'ZP', () => !!curDoc()?.viewHist?.length],
         [tick(state.propsOn, 'Properties'), toggleProps, 'Ctrl+1'], [tick(state.rulers, 'Rulers'), () => setRulers(!state.rulers)],
         [tick(state.wireframe, 'Wireframe'), toggleWireframe, 'F9', null, null, false, state.wireframe],
+        [tick(state.dotCross, 'Dotted crosshair'), toggleDotCross, null, null, null, false, state.dotCross],
         [tick(!!lay && lay.s.guidesShow, 'Guides'), () => setGuidesShow(!guideTarget().s.guidesShow), null, () => !!guideTarget()],
         [tick(!!lay && lay.s.guidesLock, 'Lock guides'), () => setGuidesLock(!guideTarget().s.guidesLock), null, () => !!guideTarget()],
         [tick(ribbon.guideSnap, 'Snap to guides'), toggleGuideSnap, null, () => !!guideTarget()],
@@ -657,7 +659,8 @@ function ribbonContents(kind) {
       btn('Lock guides', LOCK, () => setGuidesLock(!guideTarget().s.guidesLock), { enabled: () => !!guideTarget(), pressed: () => !!guideTarget()?.s.guidesLock }),
       btn('Clear all guides', '<path d="M6 6l12 12M18 6L6 18"/>', clearGuides, { enabled: () => !!guideTarget()?.s.guides.length })),
     group('Navigate', btn('Fit to window', '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>', fit, { command: 'fit' }),
-      btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe })),
+      btn('Wireframe', '<path d="M12 3l8 4v10l-8 4-8-4V7zM4 7l8 4 8-4M12 11v10"/>', toggleWireframe, { pressed: () => state.wireframe }),
+      btn('Dotted crosshair', '<path d="M12 3v18M3 12h18" stroke-dasharray="1 3"/>', toggleDotCross, { pressed: () => state.dotCross, command: 'dotcross' })),
     group('Windows', btn('Properties panel', '<rect x="3" y="4" width="18" height="16"/><path d="M15 4v16"/>', toggleProps, { pressed: () => state.propsOn, command: 'properties' }),
       btn('Tool rail', '<rect x="3" y="4" width="18" height="16"/><path d="M8 4v16"/>', toggleRail, { pressed: () => ribbon.rail }),
       btn('Swatch strip', '<rect x="8" y="3" width="8" height="18"/><path d="M8 9h8M8 15h8"/>', toggleStrip, { pressed: () => strip.on })),
@@ -1486,6 +1489,7 @@ function buildCanvas() {
       ui.fitBtn));
   attachCanvasEvents();
   ui.canvas.append(attachCrosshair(ui.canvas));
+  ui.canvas.classList.toggle('dotcross', state.dotCross);
   ui.canvas.addEventListener('pointermove', (e) => ui.cmdUI.pointer(e.clientX, e.clientY));
   return ui.canvas;
 }
@@ -3939,7 +3943,7 @@ const DO = {
   paste: pasteSelection,
   history: () => showHistory(), selectall: () => selectAll(), qselect: startQuickSelect, delete: () => (curLay() ? deletePlaced() : deleteSelection()),
   fit: fitView, zoomwindow: zoomWindow, zoomselection: zoomSelection, zoomprevious: zoomPrevious, rulers: () => setRulers(!state.rulers), properties: () => toggleProps(),
-  wireframe: () => toggleWireframe(),
+  wireframe: () => toggleWireframe(), dotcross: toggleDotCross,
   shortcuts: () => showShortcuts(),
   closetab: () => closeTab(curDoc()), nexttab: () => cycleTab(1), previoustab: () => cycleTab(-1),
 };
@@ -4050,6 +4054,14 @@ function setDecimals(n) {
   update();
   if (refused) return;                                                       // too nested: commit showed why
   note(`Dimensions: ${state.dp} decimal place${state.dp === 1 ? '' : 's'}` + (k ? ` (re-labelled in ${k} drawing${k === 1 ? '' : 's'}; Ctrl+Z undoes)` : ''));
+}
+
+function toggleDotCross() {
+  state.dotCross = !state.dotCross;
+  ui.canvas.classList.toggle('dotcross', state.dotCross);
+  renderRibbon();
+  note(state.dotCross ? 'Dotted crosshair on' : 'Dotted crosshair off');
+  viewStore.put({ id: 'dotCross', on: state.dotCross }).catch(() => note('Could not remember the Dotted crosshair; it still applies until the app closes'));
 }
 
 function toggleWireframe() {
@@ -10607,6 +10619,7 @@ async function init() {
   try {
     const saved = await viewStore.all();
     state.wireframe = saved.some((r) => r.id === 'wireframe' && r.on === true);
+    state.dotCross = saved.some((r) => r.id === 'dotCross' && r.on === true);
     state.dynamicInput = saved.find((r) => r.id === 'dynamicInput')?.on !== false;
     const mode = saved.find((r) => r.id === 'workArea')?.mode;
     if (WORK_AREAS.includes(mode)) state.workArea = mode;
