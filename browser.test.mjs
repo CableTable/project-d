@@ -22974,6 +22974,143 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  const gapDoc97d = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 180, 100, { layer: '0', aci: 3, tc: 0x257abd, lt: 'CONTINUOUS', lw: 35 }), dxfLine(300, 100, 220, 100), dxfLine(100, 180, 300, 180));
+    raw.groups = [{ members: [0, 2], name: '', description: '', unnamed: true, selectable: true }];
+    return raw;
+  };
+  const chainDoc97d = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100, { aci: 3 }), dxfLine(200, 100, 200, 160), dxfLine(200, 160, 260, 160));
+    return raw;
+  };
+  const types97d = (raw) => raw.entities.map((e) => e.type);
+  const drag97d = async (x0, y0, x1, y1) => {
+    const a = await at(x0, y0), b = await at(x1, y1);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 6 }); await page.mouse.up(); await frames();
+  };
+  const hist97d = () => t('cmd-hist').textContent();
+
+  await step('TODO 97d: collinear lines with a gap join into one line with the first line properties and group, one Undo', async () => {
+    await open97c(gapDoc97d(), 'join97d.dxf');
+    await typeCmd('j'); assert.equal(await prompt(), 'Select source object or multiple objects to join at once:');
+    await click(140, 100); assert.equal(await prompt(), 'Select objects to join:');
+    await click(260, 100); await key97c('Enter');
+    const said = await prompt();      // the answer shows until the next command; saving replaces it
+    let raw = await savedDoc();
+    pickedLines97c(lineEnds97c(raw), [[100, 100, 300, 100], [100, 180, 300, 180]]);
+    const e = raw.entities[0]; assert.equal(e.tc, 0x257abd); assert.equal(e.lw, 35);
+    assert.deepEqual(raw.groups.map((g) => g.members), [[0, 1]], 'the group follows the source and the untouched member');
+    assert.equal((await histLabels()).at(-1), 'Join 2');
+    assert.match(said, /Joined 2 objects into 1 line/);
+    await key97c('Control+z'); raw = await savedDoc();
+    assert.deepEqual(lineEnds97c(raw), lineEnds97c(gapDoc97d())); assert.deepEqual(raw.groups.map((g) => g.members), [[0, 2]]);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97d: touching line / arc / line become one polyline, two arcs of one circle plus cLose become a circle', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100, { aci: 3 }), dxfArc(200, 150, 50, 270, 0), dxfLine(250, 230, 250, 150), dxfArc(400, 150, 50, 0, 90), dxfArc(400, 150, 50, 180, 270));
+    await open97c(raw, 'join97d-pieces.dxf');
+    await typeCmd('join'); await click(150, 100); await click(235.4, 114.6); await click(250, 190); await key97c('Enter');
+    assert.match(await prompt(), /Joined 3 objects into 1 polyline/);
+    let doc = await savedDoc();
+    assert.deepEqual(types97d(doc), ['LWPOLYLINE', 'ARC', 'ARC']);
+    assert.equal(fieldOf(doc.entities[0], 90), 4, 'four vertices'); assert.equal(fieldOf(doc.entities[0], 70), 0); assert.equal(doc.entities[0].aci, 3);
+    await key97c('Escape');      // the joined polyline is still selected, and one selected object is the source
+    await typeCmd('join'); await click(435.4, 185.4); assert.equal(await prompt(), 'Select objects to join or [cLose]:');
+    await click(364.6, 114.6); await typeCmd('l');
+    assert.match(await prompt(), /Joined 2 objects into 1 circle/);
+    doc = await savedDoc();
+    assert.deepEqual(types97d(doc), ['LWPOLYLINE', 'CIRCLE']); assert.equal(fieldOf(doc.entities[1], 40), 50);
+    await key97c('Control+z'); await key97c('Control+z');
+    assert.deepEqual(types97d(await savedDoc()), ['LINE', 'ARC', 'LINE', 'ARC', 'ARC']);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97d: pre-selected objects join at once, what does not touch is reported and left, nothing to join leaves the drawing', async () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100), dxfLine(200, 100, 200, 180), dxfLine(300, 100, 300, 180), dxfEllipse(400, 220, 40, 0, .5));
+    await open97c(raw, 'join97d-pre.dxf');
+    await key97c('Control+a'); await typeCmd('join');
+    const text = await prompt(), doc = await savedDoc();
+    assert.deepEqual(types97d(doc).sort(), ['ELLIPSE', 'LINE', 'LWPOLYLINE']);
+    assert.match(text, /Joined 2 objects into 1 polyline/);
+    assert.match(text, /1 object not joined: ends do not touch \(Join gaps can close them\)/);
+    assert.match(text, /1 skipped: ellipses and splines are not joined/);
+    assert.equal((await histLabels()).at(-1), 'Join 2');
+    await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 4);
+    await key97c('Escape');
+    const steps = (await histLabels()).length;
+    await typeCmd('j'); await click(150, 100); await click(300, 140); await key97c('Enter');
+    assert.match(await prompt(), /Nothing joined\. 2 objects not joined: ends do not touch/);
+    assert.equal((await histLabels()).length, steps, 'nothing joined makes no undo step');
+    assert.equal((await savedDoc()).entities.length, 4);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97d: a window picks the pieces, Esc changes nothing, Enter joins them in one Undo step', async () => {
+    await open97c(chainDoc97d(), 'join97d-box.dxf');
+    await typeCmd('join'); await drag97d(90, 90, 270, 170);
+    assert.equal(await prompt(), 'Select objects to join:'); assert.match(await hist97d(), /3 selected/);
+    await key97c('Escape');
+    assert.deepEqual(types97d(await savedDoc()), ['LINE', 'LINE', 'LINE'], 'Esc is no change');
+    assert.equal((await histLabels()).filter((l) => /^Join/.test(l)).length, 0);
+    await typeCmd('join'); await drag97d(270, 170, 90, 90); await key97c('Enter');
+    assert.deepEqual(types97d(await savedDoc()), ['LWPOLYLINE']);
+    assert.equal((await histLabels()).at(-1), 'Join 3');
+    await key97c('Control+z'); assert.deepEqual(types97d(await savedDoc()), ['LINE', 'LINE', 'LINE'], 'one Undo brings all three pieces back');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97d: Layout and Compare command and ribbon parity with one Undo', async () => {
+    const lay = newLayout('Join layout');
+    lay.parts.a = objectPart('a', 'Left', dxfLine(100, 100, 180, 100), newDoc(4).layers);
+    lay.parts.b = objectPart('b', 'Right', dxfLine(220, 100, 300, 100), newDoc(4).layers);
+    lay.placed = [objectPlacement(lay.parts.a), objectPlacement(lay.parts.b)];
+    await open97c(layoutRaw(lay), 'layout97d.dxf');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const join = page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Join', exact: true });
+    assert.equal(await join.isEnabled(), true);
+    await key97c('Escape'); await join.click(); assert.equal(await prompt(), 'Select source object or multiple objects to join at once:');
+    await click(140, 100); await click(260, 100); await key97c('Enter');
+    assert.match(await prompt(), /Joined 2 objects into 1 line/);
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 1);
+    await key97c('Control+z'); assert.equal(layoutFromRaw(await savedDoc()).placed.length, 2);
+    await key97c('Control+a'); await typeCmd('join');
+    assert.match(await prompt(), /Joined 2 objects into 1 line/, 'both objects selected before the command join at once');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 1); await key97c('Control+z');
+    await open97c(gapDoc97d(), 'compare97d.dxf'); await typeCmd('compare');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Join', exact: true }).click();
+    await click(140, 100); await click(260, 100); await key97c('Enter'); await key97c('Escape');
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97d(?:-edited)*\.dxf$/ }) });
+    await source.click(); assert.equal((await savedDoc()).entities.length, 2); await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 3);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97d: light and dark Modify panel with Join and a joined polyline selected', async () => {
+    await open97c(chainDoc97d(), 'join97d-shots.dxf');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Modify]').click();
+      const join = page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Join', exact: true });
+      await join.waitFor(); await page.screenshot({ path: `${shotDir}/todo97d-modify-panel-${theme}.png` });
+      await key97c('Control+a'); await typeCmd('join'); await frames();
+      assert.deepEqual(types97d(await savedDoc()), ['LWPOLYLINE']);
+      await page.screenshot({ path: `${shotDir}/todo97d-joined-polyline-${theme}.png` });
+      await key97c('Control+z');
+      await key97c('Escape');
+    }
+    for (const theme of ['light', 'dark']) for (const name of ['modify-panel', 'joined-polyline']) assert.ok(readFileSync(`${shotDir}/todo97d-${name}-${theme}.png`).length > 1000);
+    const size = page.viewportSize(); await page.setViewportSize({ width: 1024, height: 700 }); await frames();
+    const box = await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Join', exact: true }).boundingBox();
+    assert.ok(box && box.x + box.width <= 1024, 'the Join button is inside the window at 1024 px');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'fits 1024 px');
+    await page.screenshot({ path: `${shotDir}/todo97d-modify-panel-1024.png` }); await page.setViewportSize(size);
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {

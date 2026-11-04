@@ -56,6 +56,7 @@ const TABLE = [
   ['fillet', 'Edit', 'Round the corner between two lines with a radius', ['f'], 'draw'],
   ['break', 'Edit', 'Remove the part between two points on an object', ['br'], 'draw'],
   ['breakatpoint', 'Edit', 'Split an open object at one point without a gap', [], 'draw'],
+  ['join', 'Edit', 'Merge lines, arcs and polylines that meet end to end into one object', ['j'], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],

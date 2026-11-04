@@ -433,7 +433,7 @@ function offsetPath(P, dd) {
 }
 
 /** Is the path a polyline shape again: points with bulges. */
-function polyOf(segs, closed) {
+export function polyOf(segs, closed) {
   const pts = segs.map((s) => (s.a.length > 3 || s.bulge ? [s.a[0], s.a[1], s.bulge || 0, ...s.a.slice(3)] : [s.a[0], s.a[1]]));
   if (!closed) pts.push(segs[segs.length - 1].b.slice());
   return { t: 'poly', pts, closed };
