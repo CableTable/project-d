@@ -5534,6 +5534,7 @@ function clickSelect(d, p, shift) {
   const next = new Set(shift ? d.sel : []);
   for (const i of selectionOf(d.raw.groups, [e])) { if (shift && d.sel.has(e)) next.delete(i); else next.add(i); }
   setSel(d, next);
+  if (moveLocked(d, next, 'pick')) return;
   if (next.has(e)) d.lastPick = e;
   note(`${next.size} ${next.size === 1 ? 'entity' : 'entities'} selected`);
 }
@@ -10652,8 +10653,6 @@ function cmpKey(e, mod) {
   if (c && mod && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) { e.preventDefault(); undoCurrent(e.key.toLowerCase() === 'y' || e.shiftKey); return true; }
   if (!c || state.tool !== 'select' || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
-  const source = editable();
-  if (source && wholeDrawingGroup(source.raw.groups, source.sel)) { nudgeDrawing(source, dir, e.shiftKey); return true; }
   const manual = cmpManual(c), [dx, dy] = PL.nudgeVector(dir, state.nudge, e.shiftKey);
   item.offset = [PL.r6(item.offset[0] + dx), PL.r6(item.offset[1] + dy)];
   cmpMoved(d);

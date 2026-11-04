@@ -22701,6 +22701,40 @@ try {
   };
   const geometry97b = (raw) => raw.entities.map((e) => [10, 20, 11, 21].map((c) => fieldOf(e, c)));
 
+  await step('TODO 97b: a group with a member on a locked layer gives the locked note and no selection', async () => {
+    await closeTabs(/./);
+    const raw = lines97b(true); addLayer(raw, 'Locked member');
+    raw.entities[1] = dxfLine(100, 160, 200, 160, { layer: 'Locked member' });
+    await open97b(raw, 'locked97b.dxf');
+    await t('ptab-objects').click();
+    await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Locked member"] [data-act=lock]').click();
+    await t('ptab-drawing').click();
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme);
+      await click(150, 100); await waitSel('0 selected');
+      assert.equal(await prompt(), 'Layer Locked member is locked: unlock it in the Objects tab to pick this');
+      assert.equal(await t('grip').count(), 0); assert.equal(await t('drawing-group-box').count(), 0);
+      await page.screenshot({ path: `${shotDir}/97b-locked-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    assert.deepEqual(geometry97b(await savedDoc()), geometry97b(raw));
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97b: Compare ArrowRight nudges the snapshot with a group selected and leaves the drawing unchanged', async () => {
+    await closeTabs(/./); await open97b(lines97b(true), 'nudge97b.dxf');
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^nudge97b.dxf$/ }) });
+    await typeCmd('compare'); await key97b('Control+a'); await waitSel('Group of 2');
+    await typeCmd('nudge'); await t('nudge-input').fill('1'); await t('nudge-input').press('Enter');
+    const before = await cmpOffX();
+    await key97b('ArrowRight');
+    assert.equal(await cmpOffX(), before + 1, 'the selected snapshot moves by the shared step');
+    assert.equal(await source.locator('.dot').count(), 0, 'the source drawing stays clean');
+    await source.click();
+    assert.deepEqual(geometry97b(await savedDoc()), geometry97b(lines97b()), 'both source members stay in place');
+    await closeTabs(/./);
+  });
+
   await step('TODO 97b: group two lines, whole-group click / Shift / window / crossing, centre grip, Ungroup, Undo / Redo, Esc, DXF reopen and light / dark', async () => {
     await closeTabs(/./); await open97b(lines97b());
     await key97b('Control+g'); assert.match(await prompt(), /two or more objects/);
@@ -22796,12 +22830,11 @@ try {
     const grip = await t('grip').boundingBox();
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
     await page.mouse.move(grip.x + grip.width / 2 + 30, grip.y + grip.height / 2 - 20, { steps: 5 }); await page.mouse.up(); await frames();
-    await key97b('ArrowRight');
     await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97b.dxf$/ }) }).click();
     const moved = geometry97b(await savedDoc());
     assert.ok(moved[0][0] > 100 && moved[1][0] > 100, 'Compare moves the linked members');
     assert.equal(moved[0][0], moved[1][0]); assert.ok(Math.abs(moved[1][1] - moved[0][1] - 60) < 1e-6);
-    await key97b('Control+z'); await key97b('Control+z'); assert.deepEqual(geometry97b(await savedDoc()), geometry97b(lines97b()));
+    await key97b('Control+z'); assert.deepEqual(geometry97b(await savedDoc()), geometry97b(lines97b()));
     await closeTabs(/./);
     const lay = newLayout('Layout parity 97b'), raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [40, 0], [40, 30], [0, 30]], true));
     lay.parts.plate = makePart('plate', 'Plate', raw);
