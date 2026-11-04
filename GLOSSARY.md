@@ -298,6 +298,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **SPLINE**: A DXF curve defined by control data and approximated by a polyline for cutter export. Where: `web/drawing.js`, `web/dxf-cutter.js`.
 
+**Fit-point spline**: A SPLINE that carries the points it passes through (fit points) as well as its control points. Extend lengthens it with a straight piece along its end direction.
+
+**Control-vertex spline**: A SPLINE that carries only control points, so the curve is pulled toward them rather than through them. Extend continues its own last curve.
+
 **TEXT**: A DXF single-line text entity, unlike MTEXT. Where: `web/drawing.js`, `web/dxf-write.js`.
 
 **Tolerance**: The allowed distance used by a particular operation, such as joining tiny gaps, comparing outlines or flattening cutter curves. Where: `TODO.md`, items 41 and 46; `DECISIONS.md`, Cutter-safe DXF. Avoid: One global precision setting.
