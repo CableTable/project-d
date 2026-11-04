@@ -38,11 +38,34 @@ export function remap(groups = [], indexes) {
   return groups.map((g) => ({ ...g, members: unique(g.members.flatMap((i) => indexes.get(i) || [])) })).filter((g) => g.members.length >= 2);
 }
 
-/** The groups after the entity list changed from `before` to `after`: an edit that keeps the count (Move, Rotate…) keeps the indexes; otherwise members follow their entity object, and gone ones drop. */
+/** Surviving objects anchor the indexes; new objects in a removed member's place inherit its group. */
 export function follow(groups = [], before, after) {
-  if (!groups.length || before === after || before.length === after.length) return groups;
+  if (!groups.length || before === after) return groups;
   const at = new Map(after.map((e, i) => [e, i]));
-  return remap(groups, new Map(before.map((e, i) => [i, at.has(e) ? [at.get(e)] : []])));
+  if (before.length === after.length && before.every((e, i) => !at.has(e) || at.get(e) === i)) return groups;
+  const was = new Map(before.map((e, i) => [e, i]));
+  const indexes = new Map(before.map((e, i) => [i, at.has(e) ? [at.get(e)] : []]));
+  const gone = before.flatMap((e, i) => at.has(e) ? [] : [i]);
+  const made = after.flatMap((e, i) => was.has(e) ? [] : [i]);
+  if (gone.length === 1) indexes.set(gone[0], made);       // one edited source: all its split pieces, even when appended
+  else {
+    let old = 0, start = 0;
+    for (let end = 0; end <= after.length; end++) {
+      if (end < after.length && !was.has(after[end])) continue;
+      const stop = end < after.length ? was.get(after[end]) : before.length;
+      const removed = [];
+      for (; old < stop; old++) if (!at.has(before[old])) removed.push(old);
+      const added = Array.from({ length: end - start }, (_, k) => start + k);
+      // shortcut: adjacent multi-source splits have no piece boundaries; use an explicit remap when a command needs them.
+      removed.forEach((i, k) => indexes.set(i, removed.length === 1 && end < after.length ? added : added.length ? [added[Math.min(k, added.length - 1)]] : []));
+      old = stop + 1; start = end + 1;
+    }
+    const pending = gone.filter((i) => !indexes.get(i).length);
+    const used = new Set([...indexes.values()].flat());
+    const free = made.filter((i) => !used.has(i));
+    pending.forEach((i, k) => indexes.set(i, pending.length === 1 ? free : free[k] == null ? [] : [free[k]]));
+  }
+  return remap(groups, indexes);
 }
 
 /** A copy map describes only the new entities; the original groups stay separate. */

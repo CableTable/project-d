@@ -15,7 +15,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
-import { follow as followGroups } from './groups.js';
+import { follow as followGroups, remap as remapGroups } from './groups.js';
 import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
@@ -7932,7 +7932,12 @@ function trimRegionDo(d, hit, what, shift = state.mod.shift) {
     if (m.edges.includes(ent)) { for (const q of c.ents) m.was.set(q, ent); m.edges = m.edges.flatMap((e) => (e === ent ? c.ents : [e])); }
   }
   view.fitted = false;
-  if (!trimCommit(d, { entities: d.raw.entities.flatMap((e, i) => (rep.has(i) ? rep.get(i) : [e])), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim')) return false;
+  let at = 0;
+  const indexes = new Map(), entities = d.raw.entities.flatMap((e, i) => {
+    const pieces = rep.has(i) ? rep.get(i) : [e];
+    indexes.set(i, pieces.map(() => at++)); return pieces;
+  });
+  if (!trimCommit(d, { entities, groups: remapGroups(d.raw.groups, indexes), blocks: d.raw.blocks }, ext ? 'Extend' : 'Trim')) return false;
   note(`${what} ${ext ? 'extended' : 'trimmed'} ${r.changed.length} object${r.changed.length === 1 ? '' : 's'}.` + (r.skipped ? (ext ? ` ${r.skipped} left alone (no boundary ahead).` : ` ${r.skipped} closed shape${r.skipped === 1 ? '' : 's'} with only one crossing left alone.`) : '') + ' Ctrl+Z takes it back');
   return true;
 }

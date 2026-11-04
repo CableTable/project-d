@@ -1,8 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { readDxf } from './web/drawing.js';
+import { runInNewContext } from 'node:vm';
+import { readDxf, flatten, DrawingError } from './web/drawing.js';
+import { layerCounts, entityCount, drawingBoxMm } from './web/doc.js';
 import * as W from './web/dxf-write.js';
+import { filletEntities } from './web/fillet.js';
+import { trimEntity } from './web/modify.js';
+import { moveEntities, copyEntities, removeEntities, createHistory } from './web/edit.js';
 import { group, ungroup, groupOf, prune, remap, copy, follow } from './web/groups.js';
 
 const fixture = readFileSync('fixtures/groups.dxf', 'utf8').replace(/\r\n/g, '\n');
@@ -11,6 +16,12 @@ const make = (...indexes) => group([], indexes)[0];
 const pairs = (...ps) => ps.map(([c, v]) => c + '\n' + v).join('\n') + '\n';
 const addObjects = (text, extra) => text.replace('0\nENDSEC\n0\nEOF', extra + '0\nENDSEC\n0\nEOF');
 const record = (h, refs) => pairs([0, 'GROUP'], [5, h], [330, 'D'], [100, 'AcDbGroup'], [300, 'Nested'], [70, 1], [71, 1], ...refs.map((h) => [340, h]));
+const appSource = readFileSync('web/app.js', 'utf8').split(/\r?\n/).join('\n');
+const appFunction = (name) => {
+  const start = appSource.indexOf('function ' + name + '(');
+  assert.ok(start >= 0, name + ' exists');
+  return appSource.slice(start, appSource.indexOf('\n}', start) + 2);
+};
 
 // Inspect raw output independently of readDxf so regenerated pointers cannot mask writer errors.
 function records(text) {
@@ -176,6 +187,102 @@ test('TODO 97a fix: groups follow the entity list through erase, Move, copy; sav
   assert.deepEqual(members(follow(doc.groups, doc.entities, [...doc.entities, W.line(0, 0, 1, 1)])), [[0, 1], [3, 4]], 'a copy appends: members stay');
   assert.deepEqual(doc.groups, saved, 'follow leaves its input alone; Undo hands the snapshot back');
   assert.equal(follow([], doc.entities, erased).length, 0);
+});
+
+test('TODO 97a fix 2: fillet replacements keep their group through Save; the new arc stays separate', () => {
+  const a = W.line(0, 0, 10, 0), b = W.line(10, 0, 10, 10), c = W.circle(30, 30, 2);
+  const doc = { ...W.newDoc(), entities: [a, b, c], groups: [make(0, 1, 2)] };
+  const { ents: [a2, b2, arc] } = filletEntities(a, [5, 0], b, [10, 5], 2);
+  for (const [before, after] of [
+    [[a, b, c], [a2, b2, c, arc]],
+    [[c, a, b], [c, a2, b2, arc]],
+    [[a, c, b], [a2, c, b2, arc]],
+  ]) {
+    const groups = follow(doc.groups, before, after);
+    assert.deepEqual(members(groups), [[0, 1, 2]]);
+    const back = readDxf(W.writeDxf({ ...doc, entities: after, groups }));
+    assert.deepEqual(members(back.groups), [[0, 1, 2]]);
+    assert.equal(back.entities[3].type, 'ARC');
+  }
+});
+
+test('TODO 97a fix 2: trim-split and break pieces inherit the source group at the start, middle or end', () => {
+  const a = W.line(0, 0, 30, 0), b = W.circle(40, 40, 2), c = W.circle(50, 50, 2);
+  const cut = trimEntity(a, [W.line(10, -5, 10, 5), W.line(20, -5, 20, 5)], [15, 0], false);
+  assert.equal(cut.ents.length, 2);
+  for (const pieces of [cut.ents, [W.line(0, 0, 10, 0), W.line(20, 0, 30, 0)]]) {
+    for (const [before, after] of [
+      [[a, b, c], [...pieces, b, c]],
+      [[b, a, c], [b, ...pieces, c]],
+      [[b, c, a], [b, c, ...pieces]],
+      [[a, b, c], [b, c, ...pieces]],
+    ]) {
+      const groups = [make(0, 1, 2)], saved = structuredClone(groups);
+      const next = follow(groups, before, after);
+      assert.deepEqual(members(next), [[0, 1, 2, 3]]);
+      assert.deepEqual(members(readDxf(W.writeDxf({ ...W.newDoc(), entities: after, groups: next })).groups), [[0, 1, 2, 3]]);
+      assert.deepEqual(groups, saved);
+    }
+  }
+});
+
+test('TODO 97a fix 2: erase, Move and copy still use the right members; relocated replacements and joins inherit', () => {
+  const doc = { ...W.newDoc(), entities: [W.line(0, 0, 10, 0), W.line(10, 0, 20, 0), W.circle(30, 30, 2)], groups: [make(0, 1, 2)] };
+  assert.deepEqual(members(follow(doc.groups, doc.entities, removeEntities(doc, new Set([0])).entities)), [[0, 1]]);
+  assert.deepEqual(follow([make(0, 1)], doc.entities, removeEntities(doc, new Set([0])).entities), [], 'erase still dissolves a singleton');
+  assert.equal(follow(doc.groups, doc.entities, moveEntities(doc, new Set([0, 1]), 2, 3).entities), doc.groups);
+  const copied = copyEntities(doc, new Set([0, 1]), 2, 3).entities;
+  assert.deepEqual(members(follow(doc.groups, doc.entities, copied)), [[0, 1, 2]], 'copies never join the source group');
+  const [a, b, c] = doc.entities, a2 = W.line(0, 2, 10, 2);
+  assert.deepEqual(members(follow([make(0, 2)], doc.entities, [b, c, a2])), [[1, 2]], 'offset with source erased appends its replacement');
+  assert.deepEqual(members(follow(doc.groups, doc.entities, [W.line(0, 0, 20, 0), c])), [[0, 1]], 'a join maps both old members to the joined object');
+  assert.deepEqual(members(follow([make(0, 1)], [a, b], [])), []);
+});
+
+test('TODO 97a fix 2: region Trim remaps adjacent sources with unequal splits and erasures', () => {
+  for (const counts of [[2, 3, 0, 1], [2, 0, 1, 1]]) {
+    const entities = counts.map((_, i) => W.line(i * 10, 0, i * 10 + 5, 0));
+    const doc = { ...W.newDoc(), entities, groups: [make(0, 2), make(1, 3)] };
+    const changed = counts.flatMap((count, i) => count === 1 ? [] : [{ i, ents: Array.from({ length: count }, (_, k) => W.line(i * 10, k, i * 10 + 5, k)) }]);
+    const region = runInNewContext(appFunction('trimRegionDo') + '\ntrimRegionDo;', {
+      state: { mod: { edges: [] } }, view: {}, remapGroups: remap, note() {},
+      trimRegionResult: () => ({ idxs: [0, 1, 2, 3], ext: false, changed }),
+      trimCommit: (d, next) => { Object.assign(d.raw, next); return true; },
+    });
+    assert.equal(region({ raw: doc }, null, 'Fence', false), true);
+    assert.deepEqual(members(doc.groups), counts[1] ? [[0, 1], [2, 3, 4, 5]] : [[0, 1, 2]]);
+    assert.deepEqual(members(readDxf(W.writeDxf(doc)).groups), members(doc.groups));
+  }
+});
+
+test('TODO 97a fix 2: snapshotOf / restore carry edited and split groups through Undo and Redo', () => {
+  const snapshotSource = appSource.match(/^const snapshotOf = .*;$/m)[0];
+  const { snapshotOf, restore } = runInNewContext([
+    snapshotSource, appFunction('restoreBg'), appFunction('restore'), '({ snapshotOf, restore });',
+  ].join('\n'), {
+    followGroups: follow, flatten, DrawingError, layerCounts, entityCount, drawingBoxMm,
+    cmpDoc: () => false, showDoc() {}, warm() {}, update() {},
+  });
+  const a = W.line(0, 0, 10, 0), b = W.line(10, 0, 10, 10), c = W.circle(30, 30, 2);
+  for (const after of [
+    [...filletEntities(a, [5, 0], b, [10, 5], 2).ents.slice(0, 2), c, W.arc(8, 2, 2, 270, 0)],
+    [W.line(0, 0, 3, 0), W.line(7, 0, 10, 0), b, c],
+  ]) {
+    const raw = { ...W.newDoc(), entities: [a, b, c], groups: [make(0, 1, 2)] };
+    const d = { raw, fl: flatten(raw), off: new Set(), factor: 1 }, history = createHistory();
+    const before = snapshotOf(d);
+    history.push(before, 'Edit');
+    restore(d, { entities: after, blocks: raw.blocks });
+    const edited = snapshotOf(d), expected = members(d.raw.groups);
+    assert.deepEqual(expected, after[1].type === 'LINE' && after[2] === b ? [[0, 1, 2, 3]] : [[0, 1, 2]]);
+    restore(d, history.undo(edited));
+    assert.equal(d.raw.groups, before.groups);
+    assert.equal(d.raw.entities, before.entities);
+    restore(d, history.redo(snapshotOf(d)));
+    assert.equal(d.raw.groups, edited.groups);
+    assert.equal(d.raw.entities, after);
+    assert.deepEqual(members(readDxf(W.writeDxf(d.raw)).groups), expected);
+  }
 });
 
 test('TODO 97a fix: a named group keeps its name and unnamed flag; new and copied groups take free *A names', () => {
