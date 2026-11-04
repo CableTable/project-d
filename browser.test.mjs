@@ -21638,7 +21638,7 @@ try {
       for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) if (rects[i][2] > rects[i][0] && rects[j][2] > rects[j][0]) assert.ok(apart(rects[i], rects[j]), `${what}: ${names[i]} and ${names[j]} overlap: ${rects[i]} / ${rects[j]}`);
     };
     // ends with a 1: the command bar must clear the boxes too. The rest are boxes only: there the bar's four corners all hit something (canvas edge, or a box wider than the cursor offset)
-    for (const [dx, dy, bar] of [[0, -50, 1], [0, -100, 1], [50, -50, 1], [50, -100, 1], [50, -150, 1], [-50, -100, 1], [-150, -50, 1], [0, 50, 1], [200, 0], [120, -60], [100, -50], [250, -30], [0, -150], [140, 100], [60, 0], [-200, 0], [300, 200]]) {
+    for (const [dx, dy, bar] of [[0, -50, 1], [0, -100, 1], [50, -50, 1], [50, -100, 1], [50, -150, 1], [-50, -100, 1], [-150, -50, 1], [0, 50, 1], [50, 0, 1], [-50, 0, 1], [-100, 0, 1], [-200, 0, 1], [0, -200, 1], [200, 0], [120, -60], [100, -50], [250, -30], [0, -150], [140, 100], [60, 0], [300, 200]]) {
       await page.locator('[data-tool=line]').click(); await typeCmd('0,0');
       await page.mouse.move(start.x + dx, start.y + dy); await frames();
       await clear(`Line to ${dx},${dy}`, false);
@@ -21646,6 +21646,12 @@ try {
       if (bar) await clear(`Line to ${dx},${dy} with the command bar`, true);
       await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     }
+    for (const [name, dx, dy] of [['left', -200, 0], ['up', 0, -200]]) await shotBoth('155tfix2-bar-' + name, async () => {
+      await page.locator('[data-tool=line]').click(); await typeCmd('0,0');
+      await page.mouse.move(start.x + dx, start.y + dy); await frames();
+      await page.keyboard.press('u'); await t('cmd-bar').waitFor(); await frames();
+      await clear(`Line to ${dx},${dy} with the command bar, ${name}`, true);
+    }, async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
     await show('line');
     await page.mouse.move(start.x + 20, start.y); await frames();
     assert.equal(await t('dynamic-guides').count(), 0, 'short segment hides guides');
@@ -21658,6 +21664,7 @@ try {
     assert.equal(await t('cursor-length').count(), 0); assert.equal(await t('cursor-angle').count(), 0);
     await page.keyboard.press('F12'); await page.keyboard.press('Escape'); await closeTabs(/./);
     for (const kind of ['line', 'arc']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-155t1-${kind}-${theme}.png`).length > 1000, 'required screenshot exists');
+    for (const name of ['left', 'up']) for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-155tfix2-bar-${name}-${theme}.png`).length > 1000, 'required screenshot exists');
   });
 
   await step('TODO 69a: Line cursor fields, decimals, F12 / DYN remembered, tracking and canvas edges', async () => {

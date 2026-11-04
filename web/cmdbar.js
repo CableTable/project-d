@@ -182,26 +182,28 @@ const barCorner = (cursor, size, area, gap, corner) => clampBar(
   corner < 2 ? cursor.x + gap : cursor.x - gap - size.w,
   corner % 2 === 0 ? cursor.y + gap : cursor.y - gap - size.h, size, area);
 
-/** Keep the anchor until its kept corner overlaps the preview; then try corners round the current cursor. */
+/** Keep the anchor until its kept corner overlaps the preview (or the box sits at a spot with no corner); then try the spots round the current cursor. */
 export function placeBox(anchor, cursor, size, area, avoid, corner = null) {
-  if (avoid && corner != null) {
-    const p = barCorner(anchor, size, area, 20, corner);
-    if (avoid.reduce((sum, box) => sum + overlapArea([p.x, p.y, p.x + size.w, p.y + size.h], box), 0)) { anchor = cursor; corner = null; }
+  if (avoid) {
+    const p = corner != null && barCorner(anchor, size, area, 20, corner);
+    if (!p || avoid.reduce((sum, box) => sum + overlapArea([p.x, p.y, p.x + size.w, p.y + size.h], box), 0)) { anchor = cursor; corner = null; }
   }
   return { ...placeBar(anchor, size, area, 20, avoid, corner), anchor };
 }
 
-/** Without avoid (a list of [left, top, right, bottom] boxes), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above; a corner covering the cursor (the box ± gap round it) always loses to one that does not. */
+/** Without avoid (a list of [left, top, right, bottom] boxes), preserve the original edge flips. With it, keep a clear previous corner or try right-below, right-above, left-below, left-above; then the spots flush against a box's edges, nearest the cursor first (corner null: they depend on the boxes, so none is kept); a spot covering the cursor (the box ± gap round it) always loses to one that does not, then the least overlap wins. */
 export function placeBar(cursor, size, area, gap = 20, avoid = null, corner = null) {
   if (avoid) {
     const zone = [cursor.x - gap, cursor.y - gap, cursor.x + gap, cursor.y + gap];
-    const candidates = [0, 1, 2, 3].map((corner) => {
-      const p = barCorner(cursor, size, area, gap, corner), r = [p.x, p.y, p.x + size.w, p.y + size.h];
-      return { ...p, corner, covers: overlapArea(r, zone) > 0, hit: avoid.reduce((sum, box) => sum + overlapArea(r, box), 0) };
-    });
+    const rate = (p, c) => { const r = [p.x, p.y, p.x + size.w, p.y + size.h]; return { ...p, corner: c, covers: overlapArea(r, zone) > 0, hit: avoid.reduce((sum, box) => sum + overlapArea(r, box), 0) }; };
+    const candidates = [0, 1, 2, 3].map((c) => rate(barCorner(cursor, size, area, gap, c), c));
+    const xs = [cursor.x + gap, cursor.x - gap - size.w, ...avoid.flatMap((b) => [b[2], b[0] - size.w])];
+    const ys = [cursor.y + gap, cursor.y - gap - size.h, ...avoid.flatMap((b) => [b[3], b[1] - size.h])];
+    const near = (p) => Math.hypot(p.x + size.w / 2 - cursor.x, p.y + size.h / 2 - cursor.y);
+    const extra = xs.flatMap((x) => ys.map((y) => rate(clampBar(x, y, size, area), null))).sort((p, q) => near(p) - near(q));
     const kept = candidates[corner];
     const best = kept && !kept.covers && !kept.hit ? kept
-      : candidates.reduce((q, p) => (p.covers !== q.covers ? !p.covers : p.hit < q.hit) ? p : q);
+      : [...candidates, ...extra].reduce((q, p) => (p.covers !== q.covers ? !p.covers : p.hit < q.hit) ? p : q);
     return { x: best.x, y: best.y, corner: best.corner };
   }
   let x = cursor.x + gap, y = cursor.y + gap;

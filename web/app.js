@@ -6791,9 +6791,10 @@ function drawOvl(paint = false) {
   const top = tip.fields && py + th > r.h - 4 ? py - 32 - th : py;
   const fit = ([x, y]) => [Math.max(4, Math.min(x, r.w - tw - 4)), Math.max(4, Math.min(y, r.h - th - 4))];
   const boxRects = ['length', 'angle'].filter((key) => placement?.[key]).map((key) => { const b = ui.cursorFields[key].parentElement; return [placement[key][0] - b.offsetWidth / 2, placement[key][1] - b.offsetHeight / 2, placement[key][0] + b.offsetWidth / 2, placement[key][1] + b.offsetHeight / 2]; });
-  // the cursor tag (Δx / Δy) tries its usual corner, then the flipped ones, until it is clear of the boxes lying on the drawing
+  // the cursor tag (Δx / Δy) tries its usual corner, then the flipped ones: the first clear of the boxes lying on the drawing, else the one covering the least
   const spots = [[left, top], [px - 32 - tw, top], [left, py - 32 - th], [px - 32 - tw, py - 32 - th]].map(fit);
-  const [tx, ty] = spots.find(([x, y]) => !boxRects.some((b) => CB.overlapArea([x, y, x + tw, y + th], b))) || spots[0];
+  const covered = ([x, y]) => boxRects.reduce((sum, b) => sum + CB.overlapArea([x, y, x + tw, y + th], b), 0);
+  const [tx, ty] = spots.reduce((q, p) => (covered(p) < covered(q) ? p : q));
   t.style.left = tx + 'px'; t.style.top = ty + 'px';
   if (placement) for (const key of ['length', 'angle']) {
     if (!placement[key]) continue;
