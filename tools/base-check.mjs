@@ -33,13 +33,16 @@ const LOAD_ERROR = /does not provide an export named|Cannot find module/;
 // shortcut: a hard kill of this process (Windows runs no handler) leaves the scratch worktree in `git worktree list`; remove it by hand (git worktree remove --force), upgrade only if kills become common.
 export function runCapped(bin, argv, { cwd, env, capture = false, limitMs = Infinity }) {
   return new Promise((done) => {
-    const child = spawn(bin, argv, { cwd, env, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
+    const win = process.platform === 'win32';
+    // Off Windows the child leads its own process group, so one kill reaches its children too (node --test's own child); a detached child gets no terminal Ctrl+C, hence the SIGINT listener.
+    const child = spawn(bin, argv, { cwd, env, stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit', detached: !win });
     let out = '', timedOut = false;
-    const kill = () => { if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); else child.kill('SIGKILL'); };
+    const kill = () => { if (win) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' }); else { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* the group is gone */ } } };
     const timer = limitMs < Infinity && setTimeout(() => { timedOut = true; kill(); }, limitMs);
     process.prependOnceListener('exit', kill); // before the worktree cleanup: a live child locks its folder
+    if (!win) process.on('SIGINT', kill);
     for (const [stream, sink] of [[child.stdout, process.stdout], [child.stderr, process.stderr]]) stream?.on('data', (d) => { out += d; sink.write(d); });
-    child.on('close', (status) => { clearTimeout(timer); process.removeListener('exit', kill); done({ status, out, timedOut }); });
+    child.on('close', (status) => { clearTimeout(timer); process.removeListener('exit', kill); process.removeListener('SIGINT', kill); done({ status, out, timedOut }); });
   });
 }
 
