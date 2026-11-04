@@ -566,6 +566,7 @@ select.fld { font-family: var(--sans); }
 .sel-union { fill: none; stroke: var(--accent); stroke-dasharray: 6 4; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }
 .sel-readout { fill: var(--accent); font-family: var(--mono); font-weight: 500; }
 .group-tag { fill: var(--accent); }
+.drawing-group-box { stroke-width: 1.5; stroke-dasharray: 6 4; vector-effect: non-scaling-stroke; }
 .group-tag-text { fill: var(--accentink); font-family: var(--sans); font-weight: 600; }
 .pick-badge circle { fill: var(--accent); }
 .pick-badge text { fill: var(--accentink); font-family: var(--sans); font-weight: 600; }

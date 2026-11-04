@@ -15,7 +15,7 @@ import { FOLDS, ribbonTabs, nextFold, doubleFold } from './ribbon.js';
 import { PRESETS, presetFor, stepRepeat, gridCellNote, GRIP_KEYS } from './layout.js';
 import { unitFactor, convertedNote, startHidden, entityCount, layerCounts, drawingBoxMm, fitRect, cursorMm, fitsSheet, spaceOf, boxOnSheet, itemVisible, addRecent, closePrompt } from './doc.js';
 import * as Ed from './edit.js';
-import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups } from './groups.js';
+import { follow as followGroups, remap as remapGroups, splice as spliceGroups, swap as swapGroups, copy as copyGroups, group as groupDrawing, ungroup as ungroupDrawing, groupOf, selectionOf, wholeGroup as wholeDrawingGroup } from './groups.js';
 import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
@@ -722,6 +722,8 @@ function ribbonContents(kind) {
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true))));
   }
+  groups.push(group('Groups', btn('Group', ICONS.group, groupSel, { command: 'group', enabled: () => !!editable() && editable().sel.size > 1 && !wholeDrawingGroup(editable().raw.groups, editable().sel) }),
+    btn('Ungroup', ICONS.ungroup, ungroupSel, { command: 'ungroup', enabled: () => !!editable() && [...editable().sel].some((i) => groupOf(editable().raw.groups, i)) })));
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
     const d = editable(); if (!d) return;
     d.curLayer = e.target.value; renderLayers(); renderCommand(); renderEdit();
@@ -2363,7 +2365,21 @@ function editFlags(label, fn) {
   selLooseMany = idxs; update();
   return { g, idxs, n: items.length };
 }
+function drawingGroup(ungroup) {
+  const d = editable();
+  if (!d) return;
+  const sel = new Set(d.sel), label = ungroup ? 'Ungroup' : 'Group';
+  if (ungroup ? ![...sel].some((i) => groupOf(d.raw.groups, i)) : sel.size < 2) { note(`${label}: select ${ungroup ? 'a group' : 'two or more objects'} first`); return; }
+  if (!ungroup && wholeDrawingGroup(d.raw.groups, sel)) { note('These objects are one group already (Ctrl+Shift+G ungroups)'); return; }
+  const groups = (ungroup ? ungroupDrawing : groupDrawing)(d.raw.groups, sel);
+  if (!commit(d, { ...snapshotOf(d), groups }, label, sel)) return;
+  setSel(d, sel);
+  note(ungroup ? `Ungrouped: ${sel.size} objects are separate again, still selected` : `Grouped ${sel.size} objects (Ctrl+Shift+G ungroups)`);
+}
+const drawingSelectionName = (d) => wholeDrawingGroup(d.raw.groups, d.sel) ? `Group of ${d.sel.size}` : `${d.sel.size} selected`;
+
 function groupSel() {
+  if (!curLay()) { drawingGroup(false); return; }
   const items = selItems();
   if (items.length < 2) { note('Group: select two or more parts first (Shift-click, or drag a box round them)'); return; }
   if (wholeGroup()) { note('These parts are one group already (Ctrl+Shift+G ungroups)'); return; }
@@ -2372,6 +2388,7 @@ function groupSel() {
   say(`Grouped ${r.n} parts: a click on one selects the group, and it moves, turns and copies as one (Ctrl+Shift+G ungroups)`, loosenedNote(r.g));
 }
 function ungroupSel() {
+  if (!curLay()) { drawingGroup(true); return; }
   const items = selItems();
   if (!items.length) { note('Ungroup: select a group first'); return; }
   if (!items.some((x) => x.p.g)) { note('Ungroup: the selection holds no group'); return; }
@@ -3578,7 +3595,7 @@ function markObjSel(d, reveal) {
   const lay = !!d.lay, key = lay ? 'place' : 'e', rows = ui.objTree.querySelectorAll(lay ? '.or[data-place]' : '.or.obj[data-e]'), want = new Set(lay ? selIdxs() : d.sel);
   if (reveal && !lay && d.sel.size && d.sel.size <= 50) { const listed = new Set([...rows].map((r) => +r.dataset[key])); for (const e of want) if (!listed.has(e)) return false; }
   for (const r of rows) r.classList.toggle('sel', want.has(+r.dataset[key]));
-  ui.objSelN.textContent = want.size + ' selected';
+  ui.objSelN.textContent = lay ? want.size + ' selected' : drawingSelectionName(d);
   if (reveal) { const s = ui.objTree.querySelector('.or.sel'); if (s && s.scrollIntoView) s.scrollIntoView({ block: 'nearest' }); }
   return true;
 }
@@ -3653,7 +3670,7 @@ function renderObjects(reveal = false) {
   ui.objToggle.replaceChildren(oIcon(om.open.size ? CHEV_DOWN : CHEV_RIGHT, 12));
   ui.objTree.replaceChildren(...(rows.length ? rows : [h('div', { class: 'omempty' }, om.query || om.filter !== 'all' ? 'Nothing matches.' : 'This drawing has no objects.')]));
   ui.objCount.replaceChildren(h('b', null, tree.objects), ` object${tree.objects === 1 ? '' : 's'} · ${tree.nLayers} layer${tree.nLayers === 1 ? '' : 's'}`);
-  ui.objSelN.textContent = d.sel.size + ' selected';
+  ui.objSelN.textContent = drawingSelectionName(d);
   if (reveal) { const s = ui.objTree.querySelector('.or.sel'); if (s && s.scrollIntoView) s.scrollIntoView({ block: 'nearest' }); }
 }
 let objLast = null;                              // the tree as last drawn (its layers' object lists, for Select on a layer)
@@ -3723,7 +3740,8 @@ function objSelect(d, ents, add) {
   const free = ents.filter((e) => !lockedEnt(d, e));
   if (!free.length) { note(`Layer ${d.raw.entities[ents[0]].layer} is locked: unlock it to select its objects`); return; }
   const next = new Set(add ? d.sel : []);
-  if (add && free.length === 1 && next.has(free[0])) next.delete(free[0]); else for (const e of free) next.add(e);
+  const picked = selectionOf(d.raw.groups, free);
+  if (add && free.length === 1 && next.has(free[0])) for (const e of picked) next.delete(e); else for (const e of picked) next.add(e);
   setSel(d, next);
   note(`${next.size} selected`);
 }
@@ -4588,6 +4606,13 @@ function attachCanvasEvents() {
       if (sheetDown(e)) { capture(c, e); return; }
       if (drawingRotateDown(e)) { capture(c, e); return; }
       if (balDown(e)) { capture(c, e); return; }
+      const gd = editable(), gg = gd && gripOn(gd) && gripAt(gd, e.clientX, e.clientY);
+      if (gg?.group) {
+        const p = [gg.x, gg.y];
+        drag = { x: e.clientX, y: e.clientY, p, moved: false, shift: e.shiftKey };
+        drag.move = state.entityDrag = { d: gd, sel: new Set(gg.group.members), raw: gd.raw.entities, from: p, copy: e.ctrlKey || e.metaKey };
+        capture(c, e); return;
+      }
       if (gripDown(e)) { capture(c, e); return; }
       if (!state.match && !state.drawingRotate && textHandleDown(e)) { capture(c, e); return; }
       if (state.tool === 'text' && drawTarget()) { textToolDown(e); return; }
@@ -4724,7 +4749,10 @@ function attachCanvasEvents() {
     const p = toDrawing(d, e.clientX, e.clientY), hit = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d));
     if (hit >= 0 && !d.sel.has(hit)) clickSelect(d, p, false);
     if (!d.sel.size) return;
-    const items = [['Select connected', () => selectConnected(d)], ['Measure from here', () => { setTool('measure'); measurePoint(d, p, false); }], ['Delete', deleteSelection]];
+    const items = [['Select connected', () => selectConnected(d)],
+      ['Group', groupSel, 'Ctrl+G', d.sel.size > 1 && !wholeDrawingGroup(d.raw.groups, d.sel)],
+      ['Ungroup', ungroupSel, 'Ctrl+Shift+G', [...d.sel].some((i) => groupOf(d.raw.groups, i))],
+      ['Measure from here', () => { setTool('measure'); measurePoint(d, p, false); }], ['Delete', deleteSelection]];
     const partial = Ed.connectedSelection(edIndex(d), d.sel, Ed.chainTol(drawBox(d.fl), d.factor)).size > d.sel.size;
     const actions = selHasPart(d) ? [['Extract part…', extractPart], ['Keep only this', keepSelection]] : [];   // a dimension alone is not a part
     popMenu(e.clientX, e.clientY, partial ? [items[0], ...actions, ...items.slice(1)] : [...actions, ...items]);
@@ -5248,7 +5276,7 @@ async function pasteSelection() {
     }
     const names = new Set([...Object.keys(d.raw.layers), ...d.fl.layers.map((l) => l.name)]);
     const r = pasteSnapshot(clipboard, { raw: d.raw, factor: d.factor, names, hidden: hiddenLayerNames(d), locked: d.locked || [], cur: curLayerName(d), space: spaceOf(d.fl), dp: state.dp });
-    if (!commit(d, { entities: r.entities, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`)) return;       // too nested: commit showed why
+    if (!commit(d, { entities: r.entities, groups: r.groups, blocks: r.blocks, layers: r.layers, ltypes: r.ltypes }, `Paste ${r.count}`)) return;       // too nested: commit showed why
     if (r.made.length) d.newLayer = r.made[0];
     setSel(d, new Set(Array.from({ length: r.count }, (_, i) => r.from + i)));
     renderLayers();
@@ -5292,7 +5320,8 @@ function cycleSelect(e) {
   if (d.lay) { selectMany([...(e.shiftKey ? selIdxs() : []), hit], hit); update(); }
   else {
     const sel = new Set(e.shiftKey ? d.sel : []);
-    sel.delete(selectionCycle.drop); sel.add(hit);
+    for (const i of selectionOf(d.raw.groups, [selectionCycle.drop])) sel.delete(i);
+    for (const i of selectionOf(d.raw.groups, [hit])) sel.add(i);
     setSel(d, sel); d.lastPick = hit;
   }
   note(`${index + 1} of ${hits.length} objects here`);
@@ -5383,6 +5412,7 @@ function pickPoint(d, p, pts, shift, hover = false) {
 }
 
 function setSel(d, sel) {
+  if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i));
   state.drawingRotate = null;
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
@@ -5492,7 +5522,7 @@ function clickSelect(d, p, shift) {
   const ed = edIndex(d), e = Ed.hitEntity(ed, p[0], p[1], pickTol(d));
   if (e >= 0 && lockedEnt(d, e)) { note(`Layer ${d.raw.entities[e].layer} is locked: unlock it in the Objects tab to pick this`); return; }
   if (e < 0) { if (!shift && d.sel.size) setSel(d, new Set()); return; }
-  if (!shift && state.tool === 'select' && d.sel.has(e)) {
+  if (!shift && state.tool === 'select' && d.sel.has(e) && !groupOf(d.raw.groups, e)) {
     const box = OB.boxOf(d.fl, [...d.sel]);
     if (box) {
       state.drawingRotate = state.drawingRotate ? null : { d, box, pivot: [(box[0] + box[2]) / 2, (box[1] + box[3]) / 2] };
@@ -5502,7 +5532,7 @@ function clickSelect(d, p, shift) {
     }
   }
   const next = new Set(shift ? d.sel : []);
-  if (shift && d.sel.has(e)) next.delete(e); else next.add(e);
+  for (const i of selectionOf(d.raw.groups, [e])) { if (shift && d.sel.has(e)) next.delete(i); else next.add(i); }
   setSel(d, next);
   if (next.has(e)) d.lastPick = e;
   note(`${next.size} ${next.size === 1 ? 'entity' : 'entities'} selected`);
@@ -5517,7 +5547,7 @@ function selectConnected(d) {
 }
 /** A dragged window or crossing box, chosen by the screen drag direction. */
 function boxSelect(d, a, b, add, crossing) {
-  const inside = (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), next = new Set(add ? d.sel : []);
+  const inside = [...selectionOf(d.raw.groups, (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), crossing)], next = new Set(add ? d.sel : []);
   for (const e of inside) next.add(e);
   setSel(d, next);
   note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + (crossing ? ' touching the box' : ' inside the box'));
@@ -5583,15 +5613,16 @@ function restoreBg(d, st) {
 /** Puts the tab in the state `st`. False (and the tab as it was, everything) when the drawing is too nested to draw again. */
 function restore(d, st, drawn) {
   const before = snapshotOf(d), header = d.raw?.header;
+  const groupsChanged = 'groups' in st && st.groups !== d.raw?.groups;
   if (st.guides) { guideTarget(d).s.guides = structuredClone(st.guides); rememberGuides(d); }
   const attributesChanged = d.raw && 'attmode' in st && st.attmode !== d.raw.header.$ATTMODE;
-  if (!d.raw || !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
+  if (!d.raw || !groupsChanged && !attributesChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks && st.layers === d.raw.layers && st.ltypes === d.raw.ltypes && st.bl === d.balloons && st.mm === (d.bg ? d.bg.mm : null) && JSON.stringify(st.pos) === JSON.stringify(d.bg ? [d.bg.x, d.bg.y] : null)) { update(); return; }
   if (attributesChanged) d.raw.header = { ...d.raw.header, $ATTMODE: st.attmode };
   const layerTableChanged = st.layers && st.layers !== d.raw.layers;
   if (st.layers) d.raw.layers = st.layers;                      // the layer table is replaced, never edited, when a layer is added or changed by hand
   if (st.ltypes) d.raw.ltypes = st.ltypes;
   if ('bl' in st) d.balloons = d.pdf ? PS.restoreBalloons(balOf(d), st.bl || BAL.EMPTY, d.pdf.page) : st.bl;
-  if (!attributesChanged && !layerTableChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
+  if (!groupsChanged && !attributesChanged && !layerTableChanged && st.entities === d.raw.entities && st.blocks === d.raw.blocks) {       // only the balloons (or the background's size) changed: nothing to flatten again
     restoreBg(d, st);
     d.dirty = true; if (cmpDoc()) cmpRefresh(d); showDoc(); return;
   }
@@ -8047,7 +8078,7 @@ function modAnswer(d, erase) {
   }
   if (!made.length) { setTool('select'); note('Mirror: nothing could be mirrored' + (skipped.length ? ' (' + skipped[0] + ')' : '')); return; }
   // Include the copies so cleanup keeps shared blocks that they still use.
-  const next = { entities: [...d.raw.entities, ...made], blocks }, out = erase ? { ...Ed.removeEntities(next, new Set(done)), groups: swapGroups(d.raw.groups, d.raw.entities.length, new Map(done.map((i, k) => [i, [k]]))) } : next, first = out.entities.length - made.length;
+  const next = { entities: [...d.raw.entities, ...made], groups: copyGroups(d.raw.groups, new Map(done.map((i, k) => [i, [d.raw.entities.length + k]]))), blocks }, out = erase ? { ...Ed.removeEntities(next, new Set(done)), groups: swapGroups(d.raw.groups, d.raw.entities.length, new Map(done.map((i, k) => [i, [k]]))) } : next, first = out.entities.length - made.length;
   view.fitted = false;
   if (!commit(d, out, 'Mirror')) { const msg = state.msg; setTool('select'); note(msg); return; }       // too nested: commit showed why; the command ends
   setTool('select'); setSel(d, new Set(made.map((_, i) => first + i)));
@@ -8615,22 +8646,29 @@ function gripDoc() {
   return v.sel.size ? v : null;
 }
 /** Do grips show? On a drawing tab (or a layout's objects) with the Select tool, something selected (not too many things). A single text shows them with its handles: the grip takes the click (gripDown runs first). */
-const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && d.sel.size <= GR.MAX_SELECTED && !textEditing();
+const gripOn = (d) => !!d && !state.drawingRotate && !state.match && !state.colourTool && gripDoc() === d && state.tool === 'select' && !state.setlen && !!d.sel && d.sel !== d.txoSel && d.sel.size > 0 && (d.sel.size <= GR.MAX_SELECTED || !!wholeDrawingGroup(d.raw.groups, d.sel)) && !textEditing();
 /** 164a: the drawing's attribute display mode (0 none, 1 normal, 2 all): the block attribute grips follow it. */
 const attMode = (d) => { const v = Number(d.raw.header?.$ATTMODE ?? 1); return Number.isFinite(v) ? v : 1; };
 /** Every grip of the selection: [{ e, id, kind, x, y }] (drawing units); kept while the selection and the drawing stay the same. */
 function gripList(d) {
   const ents = d.raw.entities;
-  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents) return d.gripCache.list;
-  const list = [];
+  if (d.gripCache && d.gripCache.sel === d.sel && d.gripCache.ents === ents && d.gripCache.groups === d.raw.groups) return d.gripCache.list;
+  const list = [], grouped = new Set();
+  for (const g of d.raw.groups || []) {
+    if (g.selectable === false || !g.members.every((i) => d.sel.has(i))) continue;
+    g.members.forEach((i) => grouped.add(i));
+    const box = OB.boxOf(d.fl, g.members);
+    if (box) list.push({ e: g.members[0], id: 'group', kind: 'group', group: g, box, x: (box[0] + box[2]) / 2, y: (box[1] + box[3]) / 2 });
+  }
   for (const e of d.sel) {
+    if (grouped.has(e)) continue;
     const ent = ents[e], lp = ent && ldrPseudo(d, e);
     if (lp) { for (const g of GR.gripsOf(lp)) list.push({ e, ...g }); continue; }       // a leader: a grip at each point
     if (!ent || ent.layer === Ed.DIM_LAYER || (d.lockedEnts && d.lockedEnts.has(ent))) continue;      // lockedEnts: a layout's locked objects
     for (const g of GR.gripsOf(ent, attMode(d))) list.push({ e, ...g });
   }
   const shown = GR.capGrips(list);
-  d.gripCache = { sel: d.sel, ents, list: shown };
+  d.gripCache = { sel: d.sel, ents, groups: d.raw.groups, list: shown };
   return shown;
 }
 const sheetPx = (d, p) => { const [sx, sy] = toSheetPt(d, p), r = ui.canvas.getBoundingClientRect(); return [(sx - view.ox) * view.scale + r.left, (sy - view.oy) * view.scale + r.top]; };
@@ -8811,7 +8849,7 @@ function gripHoverAt(e) {
   if (id === state.gripHover) return;
   state.gripHover = id; drawOvl();
   clearTimeout(gripOptTimer);
-  if (hit && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
+  if (hit && !hit.group && !ui.ctx) gripOptTimer = setTimeout(() => gripOptionsOpen(hit), 300);       // 163a: the grip's options list after 300 ms of rest
 }
 /** The hot grips (Shift-click) of d's selection as a Map 'e:id' → grip, or null when there are none or the selection / drawing changed since. */
 function hotsOf(d) {
@@ -9053,16 +9091,26 @@ function gripOvl(d, out, k, grips) {
   }
   if (!gripOn(d)) return null;
   const list = gripList(d);
+  for (const x of list.filter((x) => x.group)) {
+    const move = state.entityDrag?.d === d && x.group.members.every((i) => state.entityDrag.sel.has(i)) ? state.entityDrag : null;
+    const dx = move?.dx || 0, dy = move?.dy || 0, pad = 7 * k;
+    const a = toSheetPt(d, [x.box[0] + dx, x.box[3] + dy]), b = toSheetPt(d, [x.box[2] + dx, x.box[1] + dy]);
+    const text = `Group of ${x.group.members.length}`, tw = (text.length * 7 + 18) * k;
+    out.push(s('rect', { class: 'sel-box drawing-group-box', x: a[0] - pad, y: a[1] - pad, width: b[0] - a[0] + 2 * pad, height: b[1] - a[1] + 2 * pad, 'data-testid': 'drawing-group-box' }),
+      s('rect', { class: 'group-tag', x: a[0] - pad, y: a[1] - pad - 30 * k, width: tw, height: 24 * k, rx: 4 * k }),
+      s('text', { class: 'group-tag-text', x: a[0] - pad + tw / 2, y: a[1] - pad - 13 * k, 'text-anchor': 'middle', 'font-size': 13 * k, 'data-testid': 'drawing-group-tag' }, text));
+  }
   for (const e of d.sel) {                                          // an arc's spokes: the centre to each end
     const ent = d.raw.entities[e];
-    if (ent && ent.type === 'ARC' && GR.hasGrips(ent)) {
+    if (ent && ent.type === 'ARC' && GR.hasGrips(ent) && !groupOf(d.raw.groups, e)) {
       const gs = GR.gripsOf(ent), c = gs.find((x) => x.id === 'c'), a = gs.find((x) => x.id === 'a'), b = gs.find((x) => x.id === 'b'), P = (q) => toSheetPt(d, [q.x, q.y]).join(' ');
       out.push(s('path', { class: 'gr-spoke', d: `M${P(a)}L${P(c)}L${P(b)}` }));
     }
   }
   const hots = hotsOf(d);
   for (const x of list) {
-    grips.push(square([x.x, x.y], !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
+    const move = x.group && state.entityDrag?.d === d && x.group.members.every((i) => state.entityDrag.sel.has(i)) ? state.entityDrag : null;
+    grips.push(square([x.x + (move?.dx || 0), x.y + (move?.dy || 0)], !!move || !!hots && hots.has(x.e + ':' + x.id), x.e + ':' + x.id, x.tri));
     if (x.kind === 'centre') { const [sx, sy] = toSheetPt(d, [x.x, x.y]), px = (sx - view.ox) / k, py = (sy - view.oy) / k; grips.push(s('path', { class: 'gr-cross', d: `M${px - 12} ${py}h24M${px} ${py - 12}v24` })); }
   }
   return null;
@@ -9497,7 +9545,9 @@ function renderPropsPanel(d) {
     return;
   }
   const pe = propEnts(d), ents = pe.map((x) => x[1]), all = propEnts(d, true).map((x) => x[1]), sm = PR.summarize(ents), none = !ents.length;
-  ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none;
+  const group = !lay && wholeDrawingGroup(d.raw.groups, d.sel);
+  ui.propEmpty.hidden = !none; ui.propBody.hidden = !all.length; ui.propChip.hidden = none && !group;
+  ui.propChip.textContent = group ? drawingSelectionName(d) : sm.chip;
   ui.propCommon.hidden = none; ui.propGeo.hidden = none;
   ui.propSimilar.hidden = ui.propMatch.hidden = none;
   ui.propQuick.hidden = false;
@@ -9519,7 +9569,6 @@ function renderPropsPanel(d) {
   ui.propFill.classList.toggle('no-fill', !fill);
   ui.propFill.style.backgroundColor = fill ? colourCss(fill) : '';
   ui.propFillLabel.textContent = closed.some((e) => e.fill !== fill) ? VARIES : fill ? PR.colourLabel(fill) : 'No fill';
-  ui.propChip.textContent = sm.chip;
   setSelect(ui.propLayer, [...(sm.layer == null ? [['', VARIES]] : []), ...propLayers(d, pe).map((n) => [n, n])], sm.layer == null ? '' : sm.layer);
   setSelect(ui.propColour, [...(sm.colour == null ? [['', VARIES]] : []), ...PR.colourOptions(sm.colour)], sm.colour == null ? '' : sm.colour);
   const lts = [...PR.LINETYPES.map((c) => [c.key, c.label])];
@@ -10112,7 +10161,7 @@ function renderSelection(d) {
   if (!n) { ui.selName.textContent = 'Nothing selected'; ui.selLayer.textContent = 'right-click an edge → Select connected'; ui.selArea.textContent = ''; return; }
   const ed = edIndex(d);
   const k = outs ? outs.findIndex((o) => o.set.size === n && [...d.sel].every((e) => o.set.has(e))) : -1;
-  ui.selName.textContent = k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';        // one wording with the panel's count ("1 selected")
+  ui.selName.textContent = wholeDrawingGroup(d.raw.groups, d.sel) ? drawingSelectionName(d) : k >= 0 ? 'Outline ' + (k + 1) : n + ' selected';
   ui.selLayer.textContent = 'layer ' + d.raw.entities[[...d.sel][0]].layer;
   // area and perimeter (TODO 31): for ink and cost; skipped on a huge selection, where it would be slow
   const ap = n <= 3000 ? Ed.areaPerimeter(ed, d.sel, d.factor, Ed.chainTol(drawBox(d.fl), d.factor)) : null;
@@ -10264,7 +10313,7 @@ function renderEdit() {
   ui.scaleTarget.hidden = !(d.bg && d.box);
   ui.scaleTarget.value = sizeTarget(d);
   ui.selRow.hidden = n === 0;
-  ui.selCount.textContent = n + ' selected';
+  ui.selCount.textContent = drawingSelectionName(d);
   const sd = dimSel(d);
   ui.dimRow.hidden = !sd;
   if (sd && document.activeElement !== ui.dimH) ui.dimH.value = String(+(sd.params.textH * d.factor).toFixed(3));
@@ -10603,6 +10652,8 @@ function cmpKey(e, mod) {
   if (c && mod && !e.altKey && ['z', 'y'].includes(e.key.toLowerCase())) { e.preventDefault(); undoCurrent(e.key.toLowerCase() === 'y' || e.shiftKey); return true; }
   if (!c || state.tool !== 'select' || !item?.visible || !dir || mod || e.altKey) return false;
   e.preventDefault();
+  const source = editable();
+  if (source && wholeDrawingGroup(source.raw.groups, source.sel)) { nudgeDrawing(source, dir, e.shiftKey); return true; }
   const manual = cmpManual(c), [dx, dy] = PL.nudgeVector(dir, state.nudge, e.shiftKey);
   item.offset = [PL.r6(item.offset[0] + dx), PL.r6(item.offset[1] + dy)];
   cmpMoved(d);

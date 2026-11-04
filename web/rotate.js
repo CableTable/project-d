@@ -45,7 +45,7 @@ export function rotateEntities(raw, selection, pivot, degrees, copy = false) {
       kid.type === 'VERTEX' ? e.flip : +field(kid, 230) < 0)) };
   };
   const entities = next.entities.map((e, i) => (copy ? i >= raw.entities.length : selection.has(i)) ? one(e) : e);
-  return { entities, blocks };
+  return { entities, blocks, ...(copy && next.groups ? { groups: next.groups } : {}) };
 }
 
 export function rotateRecord(type, r, pivot, degrees, flip) {

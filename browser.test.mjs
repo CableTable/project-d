@@ -22684,6 +22684,135 @@ try {
     await closeTabs(/./);
   });
 
+  const open97b = async (raw, name = 'group97b.dxf') => {
+    await t('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+    await page.waitForFunction((n) => document.querySelector('.dtab.on .tname').textContent === n, name);
+    await typeCmd('select'); await frames();
+  };
+  const lines97b = (grouped = false) => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(100, 100, 200, 100), dxfLine(100, 160, 200, 160));
+    if (grouped) raw.groups = [{ members: [0, 1], name: '', description: '', unnamed: true, selectable: true }];
+    return raw;
+  };
+  const key97b = async (key) => { await page.evaluate(() => document.activeElement.blur()); await page.keyboard.press(key); await frames(); };
+  const drag97b = async (a, b) => {
+    const p = await at(...a), q = await at(...b);
+    await page.mouse.move(p.x, p.y); await page.mouse.down(); await page.mouse.move(q.x, q.y, { steps: 6 }); await page.mouse.up(); await frames();
+  };
+  const geometry97b = (raw) => raw.entities.map((e) => [10, 20, 11, 21].map((c) => fieldOf(e, c)));
+
+  await step('TODO 97b: group two lines, whole-group click / Shift / window / crossing, centre grip, Ungroup, Undo / Redo, Esc, DXF reopen and light / dark', async () => {
+    await closeTabs(/./); await open97b(lines97b());
+    await key97b('Control+g'); assert.match(await prompt(), /two or more objects/);
+    await click(150, 100); await click(150, 160, { shift: true }); await waitSel('2 selected');
+    await key97b('Control+g'); await waitSel('Group of 2');
+    assert.equal(await t('sel-name').textContent(), 'Group of 2');
+    assert.equal(await t('prop-chip').textContent(), 'Group of 2');
+    assert.equal(await t('grip').count(), 1); assert.equal(await t('drawing-group-box').count(), 1);
+    assert.equal(await t('drawing-group-tag').textContent(), 'Group of 2');
+    assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1]]);
+    await key97b('Control+z'); await waitSel('2 selected'); assert.equal((await savedDoc()).groups.length, 0);
+    await key97b('Control+y'); await waitSel('Group of 2'); assert.equal((await savedDoc()).groups.length, 1);
+    await key97b('Escape'); await click(150, 100); await waitSel('Group of 2');
+    await click(150, 100, { shift: true }); await waitSel('0 selected');
+    await click(150, 100, { shift: true }); await waitSel('Group of 2');
+    await key97b('Escape'); await drag97b([90, 115], [210, 90]); await waitSel('0 selected');
+    await drag97b([210, 115], [90, 90]); await waitSel('Group of 2');
+    await key97b('Escape'); await drag97b([90, 175], [210, 90]); await waitSel('Group of 2');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const panel = page.locator('.ribbon-body [data-panel=Groups]');
+    assert.equal(await panel.getByRole('button', { name: 'Group', exact: true }).isDisabled(), true);
+    assert.equal(await panel.getByRole('button', { name: 'Ungroup', exact: true }).isEnabled(), true);
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: `${shotDir}/97b-group-${theme}.png` });
+      await panel.screenshot({ path: `${shotDir}/97b-ribbon-${theme}.png` });
+    }
+    await menuItem('View', 'Theme: light');
+    const baseline = geometry97b(await savedDoc());
+    await drag97b([150, 130], [170, 145]); await waitSel('Group of 2');
+    const moved = geometry97b(await savedDoc());
+    for (let i = 0; i < 2; i++) for (let j = 0; j < 4; j++) assert.ok(Math.abs(moved[i][j] - baseline[i][j] - (j % 2 ? 15 : 20)) < 0.5, 'both members moved by the grip');
+    await key97b('Control+z'); assert.deepEqual(geometry97b(await savedDoc()), baseline, 'one Undo moves both back');
+    await typeCmd('move'); await typeCmd('0,0'); await key97b('Escape');
+    assert.deepEqual(geometry97b(await savedDoc()), baseline, 'Esc cancels Move mid-command');
+    await key97b('Control+a');
+    const centre = await at(150, 130), target = await at(180, 150);
+    await page.mouse.move(centre.x, centre.y); await page.mouse.down(); await page.mouse.move(target.x, target.y, { steps: 4 });
+    await key97b('Escape'); await page.mouse.up();
+    assert.deepEqual(geometry97b(await savedDoc()), baseline, 'Esc cancels a centre-grip drag');
+    await key97b('Control+Shift+g'); await waitSel('2 selected');
+    assert.equal(await t('grip').count(), 6, 'member grips return');
+    await key97b('Control+z'); await waitSel('Group of 2');
+    await key97b('Control+y'); await waitSel('2 selected');
+    await key97b('Escape'); await click(150, 100); await key97b('ArrowRight');
+    const edited = geometry97b(await savedDoc());
+    assert.notDeepEqual(edited[0], baseline[0]); assert.deepEqual(edited[1], baseline[1], 'after Ungroup a member edits independently');
+    await key97b('Control+z'); await key97b('Control+a'); await typeCmd('g'); await waitSel('Group of 2');
+    const saved = await downloaded(() => page.keyboard.press('Control+s'));
+    await closeTabs(/./);
+    await t('picker').setInputFiles({ name: 'reopened97b.dxf', mimeType: 'text/plain', buffer: Buffer.from(saved.text, 'latin1') });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'reopened97b.dxf');
+    await click(150, 160); await waitSel('Group of 2');
+    const p = await at(150, 160); await page.mouse.click(p.x, p.y, { button: 'right' });
+    assert.equal(await page.getByRole('menuitem', { name: 'Group', exact: true }).isDisabled(), true);
+    await page.getByRole('menuitem', { name: 'Ungroup', exact: true }).click(); await waitSel('2 selected');
+    await typeCmd('group'); await waitSel('Group of 2');
+    await typeCmd('ungroup'); await waitSel('2 selected');
+    await page.locator('.ribbon-body [data-panel=Groups]').getByRole('button', { name: 'Group', exact: true }).click(); await waitSel('Group of 2');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97b: whole-group Move / Copy / Rotate / Mirror / Scale / Erase / nudge, one Undo each, flat grouping, clipboard and Explode membership', async () => {
+    await closeTabs(/./); await open97b(lines97b(true));
+    const baseline = geometry97b(await savedDoc());
+    const back = async () => { await key97b('Escape'); await key97b('Escape'); await key97b('Control+z'); const raw = await savedDoc(); assert.deepEqual(geometry97b(raw), baseline); assert.deepEqual(raw.groups.map((g) => g.members), [[0, 1]]); };
+    for (const [command, answers] of [['move', ['0,0', '10,20']], ['copy', ['0,0', '10,20']], ['rotate', ['0,0', '90']], ['scale', ['0,0', '2']], ['mirror', ['0,0', '0,10', 'y']]]) {
+      await key97b('Control+a'); await typeCmd(command); for (const answer of answers) await typeCmd(answer);
+      const raw = await savedDoc();
+      if (command === 'copy') { assert.equal(raw.entities.length, 4); assert.deepEqual(raw.groups.map((g) => g.members), [[0, 1], [2, 3]]); }
+      else { assert.equal(raw.entities.length, 2); assert.notDeepEqual(geometry97b(raw)[0], baseline[0]); assert.notDeepEqual(geometry97b(raw)[1], baseline[1]); assert.equal(raw.groups.length, 1); }
+      await back();
+    }
+    await key97b('Control+a'); await key97b('ArrowRight'); assert.notDeepEqual(geometry97b(await savedDoc()), baseline); await back();
+    await key97b('Control+a'); await key97b('Delete'); assert.equal((await savedDoc()).entities.length, 0); assert.equal((await savedDoc()).groups.length, 0); await back();
+    await key97b('Control+a'); await key97b('Control+c'); await key97b('Control+v');
+    assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1], [2, 3]]); await back();
+    const raw = lines97b(true); addEntities(raw, dxfPoly([[240, 100], [280, 100], [280, 140]], false));
+    await open97b(raw, 'flat97b.dxf'); await key97b('Control+a'); await typeCmd('group');
+    assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1, 2]]);
+    await typeCmd('explode');
+    const exploded = await savedDoc(); assert.equal(exploded.entities.length, 4); assert.equal(exploded.groups.length, 1); assert.equal(exploded.groups[0].members.length, 4);
+    await key97b('Control+z'); assert.deepEqual((await savedDoc()).groups.map((g) => g.members), [[0, 1, 2]]);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97b: Compare edits its drawing group with keys and centre grip; layout Ctrl+G still groups parts', async () => {
+    await closeTabs(/./); await open97b(lines97b(), 'compare97b.dxf');
+    await typeCmd('compare'); await key97b('Control+a'); await key97b('Control+g'); await waitSel('Group of 2');
+    assert.equal(await t('drawing-group-box').count(), 1); assert.equal(await t('grip').count(), 1);
+    await key97b('Control+Shift+g'); await waitSel('2 selected'); await typeCmd('g'); await waitSel('Group of 2');
+    await frames();
+    const grip = await t('grip').boundingBox();
+    await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2); await page.mouse.down();
+    await page.mouse.move(grip.x + grip.width / 2 + 30, grip.y + grip.height / 2 - 20, { steps: 5 }); await page.mouse.up(); await frames();
+    await key97b('ArrowRight');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97b.dxf$/ }) }).click();
+    const moved = geometry97b(await savedDoc());
+    assert.ok(moved[0][0] > 100 && moved[1][0] > 100, 'Compare moves the linked members');
+    assert.equal(moved[0][0], moved[1][0]); assert.ok(Math.abs(moved[1][1] - moved[0][1] - 60) < 1e-6);
+    await key97b('Control+z'); await key97b('Control+z'); assert.deepEqual(geometry97b(await savedDoc()), geometry97b(lines97b()));
+    await closeTabs(/./);
+    const lay = newLayout('Layout parity 97b'), raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [40, 0], [40, 30], [0, 30]], true));
+    lay.parts.plate = makePart('plate', 'Plate', raw);
+    lay.placed.push({ partId: 'plate', x: 100, y: 100, rot: 0 }, { partId: 'plate', x: 200, y: 100, rot: 0 });
+    await open97b(layoutRaw(lay), 'layout97b.dxf'); await key97b('Control+a'); await key97b('Control+g');
+    assert.equal(await t('pp-name').textContent(), 'Group of 2'); assert.equal(await page.locator('[data-group=tools] .group-tag').count(), 1);
+    await key97b('Control+Shift+g'); assert.equal(await page.locator('[data-group=tools] .group-tag').count(), 0);
+    await closeTabs(/./);
+    assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {

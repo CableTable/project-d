@@ -27,7 +27,7 @@ test('every reserved key has a reason; bare and Shift letters/digits cannot be k
 test('defaults have no clashes; aliases overlap across draw/layout only, keys clash across scopes', () => {
   const b = SC.bindings();
   assert.deepEqual(SC.clashes(b), []);
-  b.trace.alias.push('ww'); b.group.alias.push('ww');
+  b.trace.alias.push('ww'); b.apply.alias.push('ww');
   assert.deepEqual(SC.clashes(b), []);
   b.trace.alias.push('mi'); b.trace.key = 'Ctrl+G';
   assert.ok(SC.clashes(b).some((c) => c.field === 'alias' && c.other === 'trace' && c.name === 'mirror'));

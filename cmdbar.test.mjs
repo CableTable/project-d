@@ -26,6 +26,14 @@ test('tooltip text uses the command aliases and keys, with no empty brackets', (
   assert.equal(CB.tooltipText('Line', CB.resolve('line'), 'draw', 'Straight segments'), 'Line (L)\nStraight segments');
 });
 
+test('TODO 97b: Group / G and Ungroup resolve on drawing, Compare and layout tabs with the layout keys', () => {
+  for (const tab of ['draw', 'compare', 'layout']) {
+    for (const word of ['group', 'g']) { assert.equal(CB.resolve(word, tab).name, 'group'); assert.equal(CB.resolve(word, tab).where, ''); }
+    assert.equal(CB.resolve('ungroup', tab).where, '');
+  }
+  assert.equal(CB.resolve('group').key, 'Ctrl+G'); assert.equal(CB.resolve('ungroup').key, 'Ctrl+Shift+G');
+});
+
 test('every name and alias is lower case, and no command repeats a word on the same tab', () => {
   for (const tab of ['draw', 'layout']) {
     const seen = new Map();
