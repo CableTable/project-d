@@ -1,7 +1,7 @@
-// Extend (EX): a line's, arc's, elliptical arc's or open polyline's picked end moved on to the nearest boundary ahead, the other end fixed; pure: extend.test.mjs.
+// Extend (EX): a line's, arc's, elliptical arc's, spline's or open polyline's picked end moved on to the nearest boundary ahead, the other end fixed; pure: extend.test.mjs.
 // Drawing units, y up. Boundaries are any shapes modify.js pathOf takes (line, arc, circle, polyline with bulges), plus ellipses and splines (flattened).
-import { shapeOf, get, at, withValues } from './grips.js';
-import { nurbs } from './drawing.js';
+import { shapeOf, get, at, num, withValues } from './grips.js';
+import { nurbs, nurbsAt, nurbsOk } from './drawing.js';
 import { pathOf, segInter, geo, rebuilt, canModify, trimEntity } from './modify.js';
 
 const TAU = Math.PI * 2, DEG = 180 / Math.PI;
@@ -72,7 +72,7 @@ const boundaryOf = (e) => (canModify(e) ? shapeOf(e, 1) : curveShape(e));
 /** Can Extend take this as a boundary (a picked edge, or among "all")? */
 export const isBoundary = (e) => !!e && (canModify(e) || !!curveShape(e));
 /** Can Extend lengthen this? (A full ellipse is refused inside extendEntity, like a circle.) */
-export const extendable = (e) => !!e && (canModify(e) || (e.type === 'ELLIPSE' && !!e.r));
+export const extendable = (e) => !!e && (canModify(e) || (e.type === 'ELLIPSE' && !!e.r) || (e.type === 'SPLINE' && !!curveShape(e)));
 
 /** The nearest point where the ray from `end` (direction from → end) meets a boundary shape, beyond `end`; null when none. */
 export function rayHit(from, end, shapes) {
@@ -130,13 +130,15 @@ function arcGrowth(g, atEnd, shapes) {
  * `segs` ahead, within the gap (rad) it leaves open; null when none. Coarse chords find the first crossing, then two finer passes
  * over just that chord's segments pin it down.
  */
-function ellipseGrowth(q, from, dir, gap, segs) {
+const ellipseGrowth = (q, from, dir, gap, segs) => curveGrowth((d) => ellAt(q, from + dir * d), gap, segs);
+/** The same search for any curve: pt(d) is its point d along (0..gap); the smallest d where it meets `segs`, or null. */
+function curveGrowth(pt, gap, segs) {
   let lo = 0, hi = gap, live = segs, best = null;
   for (const n of [256, 64, 64]) {
     const dt = (hi - lo) / n;
     let found = null;
     for (let i = 0; i < n && !found; i++) {
-      const ch = { a: ellAt(q, from + dir * (lo + i * dt)), b: ellAt(q, from + dir * (lo + (i + 1) * dt)), bulge: 0 }, hits = [];
+      const ch = { a: pt(lo + i * dt), b: pt(lo + (i + 1) * dt), bulge: 0 }, hits = [];
       for (const s of live) for (const h of segInter(ch, s)) { const d = lo + (i + h.fs) * dt; if (d > 1e-9 && d < gap - 1e-9) hits.push({ d, s }); }
       if (hits.length) found = { i, hits, d: Math.min(...hits.map((h) => h.d)) };
     }
@@ -159,6 +161,81 @@ function extendEllipse(ent, shapes, pick) {
   const d = ellipseGrowth(q, atEnd ? q.t1 : q.t0, atEnd ? 1 : -1, gap, segs);
   if (d == null || k < 0) return { error: 'No boundary ahead of that end: nothing changed' };
   return { ent: withValues(ent, [[k, wrap(atEnd ? q.t1 + d : q.t0 - d)]]) };
+}
+
+// ---------------------------------------------------------------- splines
+
+const txt = (n) => String(+Number(n).toPrecision(15));
+/** A SPLINE record's numbers: degree p, knots U, control points P and fit points F ([x, y, z]), weights W (null when none). */
+function splineOf(r) {
+  const P = [], F = [], U = [], W = [], pt = (k) => [0, 1, 2].map((i) => (r.c[k + i] === r.c[k] + 10 * i ? num(r.v[k + i]) : 0));
+  r.c.forEach((c, k) => { if (c === 10) P.push(pt(k)); else if (c === 11) F.push(pt(k)); else if (c === 40) U.push(num(r.v[k])); else if (c === 41) W.push(num(r.v[k])); });
+  return { p: get(r, 71) ?? 3, U, P, F, W: W.length && W.length === P.length ? W : null };
+}
+/** The same spline run the other way (so a start is extended as an end). */
+const spReverse = (s) => ({ ...s, U: s.U.map((_, i) => s.U[0] + s.U.at(-1) - s.U[s.U.length - 1 - i]), P: s.P.slice().reverse(), F: s.F.slice().reverse(), W: s.W && s.W.slice().reverse() });
+/** The record with sp's knots, weights, control and fit points swapped in at the first of them (counts 72 / 73 / 74 updated); the rest stays as it was. */
+function spRecord(ent, sp) {
+  const c = [], v = [], put = (code, val) => { c.push(code); v.push(txt(val)); };
+  let done = false;
+  ent.r.c.forEach((code, k) => {
+    if ([72, 73, 74].includes(code)) return put(code, code === 72 ? sp.U.length : code === 73 ? sp.P.length : sp.F.length);
+    if (![10, 20, 30, 11, 21, 31, 40, 41].includes(code)) { c.push(code); v.push(ent.r.v[k]); return; }
+    if (done) return;
+    done = true;
+    sp.U.forEach((u) => put(40, u)); sp.W?.forEach((w) => put(41, w));
+    for (const [list, a] of [[sp.P, 10], [sp.F, 11]]) list.forEach((p) => p.forEach((x, i) => put(a + 10 * i, x)));
+  });
+  return { ...ent, r: { ...ent.r, c, v } };
+}
+/** A point of the (extended) polynomial of sp's last span, rational and homogeneous: the blossom of ts (p values) over that span. */
+function spBlossom({ p, U, P, W }, ts) {
+  const s = P.length - 1, w = (k) => (W ? W[k] : 1), d = [];
+  for (let j = 0; j <= p; j++) { const k = j + s - p; d.push([P[k][0] * w(k), P[k][1] * w(k), w(k)]); }
+  for (let r = 1; r <= p; r++) for (let j = p; j >= r; j--) {
+    const den = U[j + 1 + s - r] - U[j + s - p], al = den ? (ts[r - 1] - U[j + s - p]) / den : 0;
+    d[j] = d[j].map((x, k) => (1 - al) * d[j - 1][k] + al * x);
+  }
+  return d[p];
+}
+/** sp's end lengthened to the first of `shapes` ahead: { sp } | { error }. A fit-point spline grows a straight piece along its end tangent, a control-vertex one its own last span. */
+function spGrow(sp, shapes) {
+  const { p, U, P, F } = sp, N = P.length, b = U.at(-1), a = U[N - 1], none = { error: 'No boundary ahead of that end: nothing changed' };
+  const ok = nurbsOk(P, U, p) && U.slice(N).every((u) => Math.abs(u - b) < 1e-12) && a < b;       // clamped at this end, else the end span is not a span of its own
+  if (!ok && !(F.length > 1 && !P.length)) return { error: "Can't extend this spline" };
+  const segs = shapes.flatMap((sh) => pathOf(sh).segs).filter((s) => dist(s.a, s.b) >= 1e-9);
+  if (F.length) {                                       // straight along the end tangent: the last two control points (fit points when there are no controls)
+    const line = ok ? P : F, E = line.at(-1), from = line.findLast((q) => dist(q, E) > 1e-9);
+    const H = from && rayHit(from, E, shapes);
+    if (!H) return none;
+    if (!ok) return { sp: { ...sp, F: [...F, [H[0], H[1], 0]] } };
+    const T = b + dist(E, H);
+    return { sp: { ...sp, U: [...U.slice(0, -1), ...Array(p + 1).fill(T)], P: [...P, ...Array.from({ length: p }, (_, i) => [E[0] + (H[0] - E[0]) * (i + 1) / p, E[1] + (H[1] - E[1]) * (i + 1) / p, 0])],
+      F: [...F, [H[0], H[1], 0]], W: sp.W && [...sp.W, ...Array(p).fill(1)] } };
+  }
+  // AutoCAD carries the end span on as its value, slope and curvature (a parabola in the parameter), without the cubic term: (200, 159.994) in its sample, not the cubic's 164.8
+  const piece = (T) => {                                // the continuation over [b, T] as homogeneous Bezier points 0..p
+    const B = [0, 1, 2].filter((i) => i <= p).map((i) => spBlossom(sp, [...Array(p - i).fill(b), ...Array(i).fill(T)]));
+    const d1 = B[1].map((x, k) => x - B[0][k]), d2 = p > 1 ? B[2].map((x, k) => x - 2 * B[1][k] + B[0][k]) : [0, 0, 0];
+    return Array.from({ length: p + 1 }, (_, i) => B[0].map((x, k) => x + i * d1[k] + (i * (i - 1) / 2) * d2[k]));
+  };
+  const h = b - a, base = piece(b + h), dt = h / 48, onC = (t) => nurbsAt(P.map((q) => q.slice(0, 2)), U, p, sp.W, t);
+  const onQ = (s) => { const d = base.map((q) => q.slice()); for (let r = 1; r <= p; r++) for (let j = 0; j <= p - r; j++) d[j] = d[j].map((x, k) => (1 - s / h) * x + (s / h) * d[j + 1][k]); return [d[0][0] / d[0][2], d[0][1] / d[0][2]]; };
+  let span = 0, len = 0, i = 0;
+  for (let k = 0; k < 48; k++) span += dist(onC(a + k * dt), onC(a + (k + 1) * dt));
+  for (; i < 4000 && len < 4 * span; i++) len += dist(onQ(i * dt), onQ((i + 1) * dt));      // out to 4 spans' length along the continued curve
+  const d = curveGrowth(onQ, i * dt, segs);
+  if (d == null) return { error: 'Object does not intersect an edge' };
+  const B = piece(b + d).slice(1);
+  return { sp: { ...sp, U: [...U.slice(0, -1), ...Array(p + 1).fill(b + d)], P: [...P, ...B.map((q) => [q[0] / q[2], q[1] / q[2], 0])], W: sp.W && [...sp.W, ...B.map((q) => q[2])] } };
+}
+/** A spline extended at the end nearest `pick`: { ent } | { error }. */
+function extendSpline(ent, shapes, pick) {
+  const sh = curveShape(ent), ends = sh && [sh.pts[0], sh.pts.at(-1)];
+  if (!sh) return { error: "Can't extend this spline" };
+  if (sh.closed || ((get(ent.r, 70) ?? 0) & 2) || dist(ends[0], ends[1]) < 1e-9) return { error: "Can't extend a closed shape" };
+  const atEnd = dist(pick, ends[1]) <= dist(pick, ends[0]), sp = splineOf(ent.r), r = spGrow(atEnd ? sp : spReverse(sp), shapes);
+  return r.error ? r : { ent: spRecord(ent, atEnd ? r.sp : spReverse(r.sp)) };
 }
 const onCircle = (g, t) => [g.c[0] + g.r * Math.cos(t), g.c[1] + g.r * Math.sin(t)];
 
@@ -185,10 +262,10 @@ function extendPoly(ent, sh, pick, shapes) {
 /** A line, arc, elliptical arc or open polyline extended at the end nearest `pick` to the nearest boundary (entities) ahead: { ent } | { error }. */
 export function extendEntity(ent, edges, pick) {
   const type = ent && ent.type;
-  if (type === 'SPLINE') return { error: 'Splines are not extended yet' };
-  if (!extendable(ent) || !['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE', 'ELLIPSE'].includes(type)) return { error: 'Extend takes lines, arcs, elliptical arcs and open polylines' };
+  if (!extendable(ent) || !['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE', 'ELLIPSE', 'SPLINE'].includes(type)) return { error: 'Extend takes lines, arcs, elliptical arcs, splines and open polylines' };
   const shapes = edges.filter((e) => e !== ent).map(boundaryOf).filter(Boolean);
   if (type === 'ELLIPSE') return extendEllipse(ent, shapes, pick);
+  if (type === 'SPLINE') return extendSpline(ent, shapes, pick);
   const sh = shapeOf(ent, 1), none = { error: 'No boundary ahead of that end: nothing changed' };
   if (sh.closed || pathOf(sh).closed) return { error: "Can't extend a closed shape" };
   if (type === 'LWPOLYLINE') { const e = sh.pts.length > 1 && extendPoly(ent, sh, pick, shapes); return e ? { ent: e } : none; }
@@ -232,6 +309,7 @@ function addedPiece(ent, ext) {
     const grewEnd = Math.abs(get(ent.r, 42) - get(ext.r, 42)) > 1e-12, [k, l] = [at(ent.r, 41), at(ent.r, 42)];
     return withValues(ent, grewEnd ? [[k, get(ent.r, 42)], [l, get(ext.r, 42)]] : [[k, get(ext.r, 41)], [l, get(ent.r, 41)]]);
   }
+  if (ent.type === 'SPLINE') return ext;                  // shown whole
   const a = shapeOf(ent, 1), b = shapeOf(ext, 1);
   if (a.t === 'line') return rebuilt(dist(a.a, b.a) > 1e-9 ? { t: 'line', a: b.a, b: a.a } : { t: 'line', a: a.b, b: b.b }, ent);
   if (a.t === 'arc') return rebuilt(Math.abs(a.a1 - b.a1) > 1e-9 ? { ...a, a0: a.a1, a1: b.a1 } : { ...a, a0: b.a0, a1: a.a0 }, ent);

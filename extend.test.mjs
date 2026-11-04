@@ -4,7 +4,8 @@ import { rayHit, extendEntity, extendRegion, previewEdit, curveShape } from './w
 import { fenceHit } from './web/modify.js';
 import { shapeOf } from './web/grips.js';
 import { get } from './web/grips.js';
-import { line, circle, arc, ellipse, lwpoly, text, entity } from './web/dxf-write.js';
+import { line, circle, arc, ellipse, lwpoly, text, entity, newDoc, addEntities, writeDxf } from './web/dxf-write.js';
+import { readDxf } from './web/drawing.js';
 
 const close = (p, q) => assert.ok(Math.hypot(p[0] - q[0], p[1] - q[1]) < 1e-7, `${p} != ${q}`);
 const S = (e) => shapeOf(e, 1);
@@ -125,12 +126,65 @@ test('extendEntity ellipse: a rotated ellipse, and one flipped by its extrusion 
   nearE(E(extendEntity(flip, [line(-20, 3, 20, 3)], [-10, 0]).ent, 42), PI + Math.asin(0.6));      // flipped: 0 to π is the lower half, so it grows up
 });
 
-test('extendEntity ellipse: no crossing, a full ellipse and a spline are each refused with a message', () => {
+test('extendEntity ellipse: no crossing and a full ellipse are each refused with a message', () => {
   const half = ellipse(0, 0, 10, 0, 0.5, 0, PI);
   assert.match(extendEntity(half, [line(-20, -9, 20, -9)], [-10, 0]).error, /No boundary/);
   assert.match(extendEntity(half, [], [-10, 0]).error, /No boundary/);
   assert.match(extendEntity(ellipse(0, 0, 10, 0, 0.5), [line(-20, -3, 20, -3)], [10, 0]).error, /closed/);
-  assert.match(extendEntity(spline1(0, 0, 5, 0), [line(20, -5, 20, 5)], [5, 0]).error, /Splines are not extended yet/);
+});
+
+// ---- splines (TODO 155m)
+const spline = (deg, knots, cps, { fit = [], w = [], flags = 8, o } = {}) => entity('SPLINE', [[70, flags], [71, deg], [72, knots.length], [73, cps.length], [74, fit.length],
+  ...knots.map((k) => [40, k]), ...w.map((x) => [41, x]), ...cps.flatMap(([x, y]) => [[10, x], [20, y], [30, 0]]), ...fit.flatMap(([x, y]) => [[11, x], [21, y], [31, 0]])], o);
+const cv = (cps, o) => spline(3, [0, 0, 0, 0, 1, 1, 1, 1], cps, o);
+const wall = line(200, 0, 200, 200);
+const nums = (ent, c) => ent.r.c.map((x, k) => (x === c ? parseFloat(ent.r.v[k]) : null)).filter((x) => x !== null);
+const endOf = (ent) => { const p = curveShape(ent).pts; return p.at(-1); };
+
+test('extendEntity spline: a fit-point spline grows a straight piece along its end tangent to the line; old curve and fit points stay', () => {
+  const knots = [0, 0, 0, 0, 1, 2, 3, 3, 3, 3], cps = [[0, 50], [30, 80], [60, 70], [100, 60], [130, 90], [150, 90]], fit = [[0, 50], [50, 80], [100, 60], [150, 90]];
+  const old = spline(3, knots, cps, { fit }), r = extendEntity(old, [wall], [149, 90]);
+  assert.ok(r.ent, r.error);
+  close(endOf(r.ent).slice(0, 2), [200, 90]);                                                  // the end tangent is horizontal
+  assert.deepEqual(nums(r.ent, 11), [0, 50, 100, 150, 200]); assert.deepEqual(nums(r.ent, 21), [50, 80, 60, 90, 90]);
+  assert.equal(nums(r.ent, 10).length, 9); assert.deepEqual(nums(r.ent, 10).slice(0, 6), cps.map((c) => c[0]));
+  assert.deepEqual([72, 73, 74].map((c) => get(r.ent.r, c)), [13, 9, 5]);
+  assert.deepEqual(nums(r.ent, 40).slice(0, 9), knots.slice(0, 9));                            // same knots and control points up to the old end: the old part is the same curve
+  assert.deepEqual(nums(r.ent, 40).slice(9), Array(4).fill(53));
+});
+
+test('extendEntity spline: a control-vertex spline continues its own last span; the old part is exactly the same; a miss says so', () => {
+  const cps = [[0, 110], [50, 140], [100, 100], [150, 120]], old = cv(cps), r = extendEntity(old, [wall], [149, 121]);
+  assert.ok(r.ent, r.error);
+  assert.ok(Math.abs(endOf(r.ent)[0] - 200) < 1e-5 && Math.abs(endOf(r.ent)[1] - 159.994) < 1e-2,`${endOf(r.ent)}`);        // AutoCAD: 200,159.994
+  assert.deepEqual(nums(r.ent, 10).slice(0, 4), [0, 50, 100, 150]); assert.equal(nums(r.ent, 10).length, 7);
+  assert.deepEqual([72, 73, 74].map((c) => get(r.ent.r, c)), [11, 7, 0]);
+  const q = curveShape(r.ent).pts, o = curveShape(old).pts;                                    // the first 1/1.333 of the new curve is the old one
+  assert.ok(o.every((p) => q.some((s) => Math.hypot(s[0] - p[0], s[1] - p[1]) < 3)));
+  assert.match(extendEntity(cv([[0, 150], [50, 180], [100, 140], [150, 170]]), [wall], [149, 169]).error, /Object does not intersect an edge/);   // AutoCAD: it reaches x = 200 above the line's end
+  assert.equal(extendEntity(old, [line(-50, 0, 400, 0)], [149, 121]).error, 'Object does not intersect an edge');
+});
+
+test('extendEntity spline: the start extends too; closed and wrong-way splines are refused; weights are kept', () => {
+  const left = line(-50, 0, -50, 200), r = extendEntity(cv([[0, 110], [50, 140], [100, 100], [150, 120]]), [left], [1, 110]);
+  assert.ok(r.ent, r.error); assert.ok(Math.abs(curveShape(r.ent).pts[0][0] + 50) < 1e-5);
+  assert.deepEqual(nums(r.ent, 10).slice(-4), [0, 50, 100, 150]);
+  assert.match(extendEntity(cv([[0, 0], [10, 20], [20, -20], [0, 0]]), [wall], [0, 0]).error, /closed shape/);
+  assert.match(extendEntity(spline(3, [0, 0, 0, 0, 1, 1, 1, 1], [[0, 0], [10, 20], [20, -20], [30, 0]], { flags: 11 }), [wall], [30, 0]).error, /closed shape/);
+  const w = extendEntity(cv([[0, 110], [50, 140], [100, 100], [150, 120]], { w: [1, 2, 1, 1] }), [line(160, 0, 160, 300)], [149, 121]);       // a rational curve runs out of reach sooner: the wall is near
+  assert.ok(w.ent, w.error); assert.deepEqual(nums(w.ent, 41).slice(0, 4), [1, 2, 1, 1]); assert.equal(nums(w.ent, 41).length, 7);
+  assert.ok(Math.abs(endOf(w.ent)[0] - 160) < 1e-5);
+  assert.equal(extendEntity(spline1(0, 0, 5, 0), [line(20, -5, 20, 5)], [5, 0]).ent.r.c.filter((c) => c === 10).length, 3);          // degree 1: a straight spline
+});
+
+test('extendEntity spline: a fit-only spline gets the hit point as a new fit point; write then read gives the same spline back', () => {
+  const fitOnly = spline(3, [], [], { fit: [[0, 0], [10, 5], [20, 0]] }), r = extendEntity(fitOnly, [line(40, -20, 40, 20)], [20, 0]);
+  assert.ok(r.ent, r.error); assert.deepEqual(nums(r.ent, 11), [0, 10, 20, 40]); assert.equal(get(r.ent.r, 74), 4);
+  const e = extendEntity(cv([[0, 110], [50, 140], [100, 100], [150, 120]]), [wall], [149, 121]).ent, doc = newDoc(4);
+  addEntities(doc, e);
+  const back = readDxf(writeDxf(doc)).entities[0];
+  nums(e, 10).forEach((x, k) => assert.ok(Math.abs(nums(back, 10)[k] - x) < 1e-5)); assert.equal(nums(back, 40).length, nums(e, 40).length); assert.equal(get(back.r, 73), 7);
+  assert.ok(Math.abs(curveShape(back).pts.at(-1)[0] - 200) < 1e-5);
 });
 
 test('extendEntity: ellipses and splines are boundaries for a line, an arc and an elliptical arc', () => {

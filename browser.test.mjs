@@ -16117,6 +16117,27 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/extend-ellipse/);
   });
 
+  await step('TODO 155m: Extend lengthens a spline', async () => {
+    await closeTabs(/./);
+    const raw = newDoc(4);
+    addEntities(raw, entity('SPLINE', [[70, 8], [71, 3], [72, 8], [73, 4], [74, 0], ...[0, 0, 0, 0, 1, 1, 1, 1].map((v) => [40, v]),
+      ...[[0, 30], [25, 50], [50, 20], [75, 40]].flatMap(([x, y]) => [[10, x], [20, y], [30, 0]])]), dxfLine(100, 0, 100, 100));
+    await openGrips(writeDxf(raw), 'extend-spline.dxf');
+    const before = await savedDoc(), endX = (e) => curveShape(e).pts.at(-1)[0];
+    assert.ok(Math.abs(endX(before.entities[0]) - 75) < 1e-6);
+    await extStd(); await click(100, 50); await page.keyboard.press('Enter');
+    const hover = () => hoverPreview(74, 40);
+    await hover(); assert.equal(await t('mod-preview').count(), 1, 'the extended spline is previewed');
+    await shotBoth('extend-spline', hover);
+    await click(74, 40);
+    const doc = await savedDoc();
+    assert.ok(Math.abs(endX(doc.entities[0]) - 100) < 1e-4, `the spline now ends on the line: ${endX(doc.entities[0])}`);
+    assert.equal(fieldOf(doc.entities[0], 73), 7); assert.equal(doc.entities.length, 2); assert.equal((await histLabels()).at(-1), 'Extend');
+    await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z');
+    assert.deepEqual((await savedDoc()).entities, before.entities, 'undo puts the spline back');
+    await page.keyboard.press('Escape'); await closeTabs(/extend-spline/);
+  });
+
   await step('TODO 146: command box clear of preview', async () => {
     await closeTabs(/./);
     const raw = newDoc(4);
