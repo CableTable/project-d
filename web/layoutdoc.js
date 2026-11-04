@@ -173,7 +173,7 @@ export function objectCommit(lay, view, entities, newId, heir) {       // heir: 
   const have = new Set(entities), gone = new Set(), layers = layersOf(lay);
   for (const [e, i] of view.at) if (!have.has(e)) gone.add(i);
   const oneAt = gone.has(view.at.get(heir)) ? view.at.get(heir) : gone.size === 1 ? [...gone][0] : -1, one = lay.placed[oneAt];       // split pieces inherit the source member's group and lock, as a single replacement does
-  const slot = oneAt - [...gone].filter((i) => i < oneAt).length;       // where oneAt lands once the gone ones are removed
+  let slot = oneAt -[...gone].filter((i) => i < oneAt).length;       // where oneAt lands once the gone ones are removed
   const oneName = one && lay.parts[one.partId]?.name;
   lay.placed = lay.placed.filter((_, i) => !gone.has(i));
   const used = new Set(lay.placed.map((p) => p.partId));
@@ -186,7 +186,7 @@ export function objectCommit(lay, view, entities, newId, heir) {       // heir: 
     if (!part) continue;
     if (one) Object.assign(pl, one.g ? { g: one.g } : {}, one.lock ? { lock: true } : {});
     names.add(part.name); lay.parts[part.id] = part;
-    if (one) lay.placed.splice(slot, 0, pl); else lay.placed.push(pl);
+    if (one) lay.placed.splice(slot++, 0, pl); else lay.placed.push(pl);
     bakedCache.set(part, new Map([[bakeKey(pl), e]]));
   }
 }
