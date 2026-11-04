@@ -4277,8 +4277,11 @@ function previewBounds() {
     const r = el.getBoundingClientRect();
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
-  const boxes = bounds ? [bounds] : [], tip = ui.tip.getBoundingClientRect();
-  if (tip.width || tip.height) boxes.push([tip.left - canvas.left, tip.top - canvas.top, tip.right - canvas.left, tip.bottom - canvas.top]);
+  const boxes = bounds ? [bounds] : [];
+  for (const el of [ui.tip, ...ui.tip.querySelectorAll('label.on-drawing')]) {       // the cursor tag and its Length / Angle boxes lying on the drawing
+    const r = el.getBoundingClientRect();
+    if (r.width || r.height) boxes.push([r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
+  }
   return boxes.map((box) => box.map((v, i) => v + (i < 2 ? -3 : 3)));
 }
 // A heavy drawing (perf.js heavy) keeps the bitmap of its last full paint: wheel and pan frames move and scale that, and one full paint follows when the view settles (TODO 55)
@@ -6675,13 +6678,16 @@ function drawTyped(raw) {
 function drawOvl(paint = false) {
   if (!ui.ovl) return;
   const tab = curDoc(), d = state.tool === 'measure' && tab?.cmp ? tab : editable() || tab, H = state.sheetH, out = [], grips = [];
-  let tip = null;
+  let tip = null, circleGuide = null;
 
   if (tab?.cmp?.show && !tab.cmp.moving && tab.cmp.res && !tab.cmp.stale) cmpGlow(tab.cmp, out);
   if (d && drawLive()) {
     const T = state.draw, dynamic = cursorDynamic() && T.hover ? cursorPoint() : null;
     const pv = DR.toolPreview(dynamic?.point && DI.hasTyped(cursorInput()) ? { ...T, hover: dynamic.point } : T);
-    for (const g of pv.guides) if (!(dynamic && T.kind === 'circle')) out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
+    for (const g of pv.guides) {
+      out.push(s('path', { class: 'dr-guide', transform: drawingTransform(d), d: DR.svgPath({ t: 'line', a: g[0], b: g[1] }, H) }));
+      if (dynamic && T.kind === 'circle') circleGuide = out.at(-1);        // dropped below once the Radius box's own guide is placed
+    }
     for (const sh of pv.shapes) out.push(s('path', { class: 'dr-shape', transform: drawingTransform(d), d: DR.svgPath(sh, H), 'data-testid': 'draw-preview' }));
     if (pv.at && (pv.readout || state.trk.res || dynamic)) {
       tip = { text: state.trk.res ? state.trk.res.text : pv.readout, x: T.hover[0], y: T.hover[1] };
@@ -6770,6 +6776,7 @@ function drawOvl(paint = false) {
     placement = DR.dynamicInputPlacement(...tip.segment.map(screen), r, { length: [labels[0].offsetWidth, labels[0].offsetHeight], angle: [labels[1].offsetWidth, labels[1].offsetHeight] }, tip.placementKind);
     labels.forEach((el, i) => el.classList.toggle('on-drawing', !!placement?.[i ? 'angle' : 'length']));
     if (placement) {
+      circleGuide?.remove();
       t.classList.toggle('segment-only', (!!tip.only || tip.single === 'radius') && !tip.tracking);
       const path = ([a, b]) => `M${a.join(' ')}L${b.join(' ')}`, arc = placement.arc;
       const guides = s('g', { class: 'dynamic-guide', transform: `translate(${view.ox} ${view.oy}) scale(${1 / view.scale})`, 'data-testid': 'dynamic-guides' },
@@ -6780,9 +6787,14 @@ function drawOvl(paint = false) {
       ui.ovl.append(guides);
     }
   }
-  const left = tip.fields && px + t.offsetWidth > r.w - 4 ? px - 32 - t.offsetWidth : px;
-  const top = tip.fields && py + t.offsetHeight > r.h - 4 ? py - 32 - t.offsetHeight : py;
-  t.style.left = Math.max(4, Math.min(left, r.w - t.offsetWidth - 4)) + 'px'; t.style.top = Math.max(4, Math.min(top, r.h - t.offsetHeight - 4)) + 'px';
+  const tw = t.offsetWidth, th = t.offsetHeight, left = tip.fields && px + tw > r.w - 4 ? px - 32 - tw : px;
+  const top = tip.fields && py + th > r.h - 4 ? py - 32 - th : py;
+  const fit = ([x, y]) => [Math.max(4, Math.min(x, r.w - tw - 4)), Math.max(4, Math.min(y, r.h - th - 4))];
+  const boxRects = ['length', 'angle'].filter((key) => placement?.[key]).map((key) => { const b = ui.cursorFields[key].parentElement; return [placement[key][0] - b.offsetWidth / 2, placement[key][1] - b.offsetHeight / 2, placement[key][0] + b.offsetWidth / 2, placement[key][1] + b.offsetHeight / 2]; });
+  // the cursor tag (Δx / Δy) tries its usual corner, then the flipped ones, until it is clear of the boxes lying on the drawing
+  const spots = [[left, top], [px - 32 - tw, top], [left, py - 32 - th], [px - 32 - tw, py - 32 - th]].map(fit);
+  const [tx, ty] = spots.find(([x, y]) => !boxRects.some((b) => CB.overlapArea([x, y, x + tw, y + th], b))) || spots[0];
+  t.style.left = tx + 'px'; t.style.top = ty + 'px';
   if (placement) for (const key of ['length', 'angle']) {
     if (!placement[key]) continue;
     const label = ui.cursorFields[key].parentElement;

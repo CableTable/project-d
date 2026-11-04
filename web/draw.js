@@ -72,9 +72,15 @@ export function dynamicInputPlacement(a, b, { w, h }, boxes, kind = 'segment') {
   const offset = (p, n) => [p[0] + normal[0] * n, p[1] + normal[1] * n];
   const side = [a, b].every((p) => inside(offset(p, 24), [0, 0])) && inside(offset(mid, 24), boxes.length) ? 1 : -1;
   const radius = Math.max(30, Math.min(120, len * .4)), angle = angleOf([0, 0], [dx, -dy]) / DEG;
+  const length = clamp(offset(mid, 24 * side), boxes.length);
+  let at = clamp([a[0] + radius * Math.cos(angle / 2), a[1] - radius * Math.sin(angle / 2)], boxes.angle);
+  const reach = [0, 1].map((i) => (boxes.length[i] + boxes.angle[i]) / 2 + 4), covers = (p) => [0, 1].every((i) => Math.abs(p[i] - length[i]) < reach[i] - 1e-9);
+  if (covers(at)) {                                          // the Angle box moves the shortest way clear of the Length box (4 px gap), still on screen
+    const moves = [0, 1].flatMap((i) => [-1, 1].map((s) => clamp(at.map((v, j) => j === i ? length[i] + s * reach[i] : v), boxes.angle)));
+    at = moves.filter((p) => !covers(p)).sort((p, q) => Math.hypot(p[0] - at[0], p[1] - at[1]) - Math.hypot(q[0] - at[0], q[1] - at[1]))[0] || at;
+  }
   return {
-    length: clamp(offset(mid, 24 * side), boxes.length),
-    angle: clamp([a[0] + radius * Math.cos(angle / 2), a[1] - radius * Math.sin(angle / 2)], boxes.angle),
+    length, angle: at,
     line: [offset(a, 24 * side), offset(b, 24 * side)],
     extensions: [[a, offset(a, 30 * side)], [b, offset(b, 30 * side)]],
     arc: { c: a, radius, angle, end: [a[0] + dx / len * radius, a[1] + dy / len * radius] },

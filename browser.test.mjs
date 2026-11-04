@@ -21571,6 +21571,7 @@ try {
     for (const kind of ['rect', 'circle']) await shotBoth('155t2-' + kind, () => show(kind), hide);
     for (const kind of ['rect', 'rrect', 'circle']) {
       await show(kind); await checkOff();
+      if (kind === 'circle') assert.equal(await page.locator('.dr-guide').count(), 0, 'the Radius box carries the centre guide');
       if (kind === 'circle') {
         await typeCmd('d'); await frames();
         assert.equal(await t('cursor-length').getAttribute('aria-label'), 'Diameter');
@@ -21579,6 +21580,10 @@ try {
         await page.mouse.move(start.x - 20, end.y); await frames();
         assert.equal(await onDrawing('cursor-length'), false, 'short Width returns to cursor tag');
         assert.equal(await onDrawing('cursor-angle'), true, 'long Height stays on its guide');
+      }
+      if (kind === 'circle') {
+        await page.mouse.move(start.x - 20, start.y); await frames();
+        assert.equal(await page.locator('.dr-guide').count(), 1, 'a 20 px circle still shows its radius guide');
       }
       await page.mouse.move(start.x - 20, start.y - 20); await frames();
       assert.equal(await t('dynamic-guides').count(), 0, 'short dimensions hide guides');
@@ -21623,6 +21628,23 @@ try {
     for (const kind of ['line', 'arc']) await shotBoth('155t1-' + kind, () => show(kind), async () => { await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); });
     for (const kind of ['polyline', 'ellipse', 'measure']) {
       await show(kind); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
+    }
+    // 155tfix: Length / Angle / the tag's Δx Δy / the command bar never cover one another
+    const rectOf = (id, sel) => t(id).evaluate((el, sel) => { const b = el.closest(sel).getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom]; }, sel);
+    const apart = (a, b) => a[2] <= b[0] || b[2] <= a[0] || a[3] <= b[1] || b[3] <= a[1];
+    const clear = async (what, withBar) => {
+      const names = ['Length', 'Angle', 'Δx Δy'], rects = [await rectOf('cursor-length', 'label'), await rectOf('cursor-angle', 'label'), await rectOf('cursor-dx', '.drawtip')];
+      if (withBar) { const bar = await t('cmd-bar').boundingBox(); names.push('command bar'); rects.push([bar.x, bar.y, bar.x + bar.width, bar.y + bar.height]); }
+      for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) if (rects[i][2] > rects[i][0] && rects[j][2] > rects[j][0]) assert.ok(apart(rects[i], rects[j]), `${what}: ${names[i]} and ${names[j]} overlap: ${rects[i]} / ${rects[j]}`);
+    };
+    // ends with a 1: the command bar must clear the boxes too. The rest are boxes only: there the bar's four corners all hit something (canvas edge, or a box wider than the cursor offset)
+    for (const [dx, dy, bar] of [[0, -50, 1], [0, -100, 1], [50, -50, 1], [50, -100, 1], [50, -150, 1], [-50, -100, 1], [-150, -50, 1], [0, 50, 1], [200, 0], [120, -60], [100, -50], [250, -30], [0, -150], [140, 100], [60, 0], [-200, 0], [300, 200]]) {
+      await page.locator('[data-tool=line]').click(); await typeCmd('0,0');
+      await page.mouse.move(start.x + dx, start.y + dy); await frames();
+      await clear(`Line to ${dx},${dy}`, false);
+      await page.keyboard.press('u'); await t('cmd-bar').waitFor(); await frames();
+      if (bar) await clear(`Line to ${dx},${dy} with the command bar`, true);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Escape'); await page.keyboard.press('Escape');
     }
     await show('line');
     await page.mouse.move(start.x + 20, start.y); await frames();

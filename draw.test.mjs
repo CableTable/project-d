@@ -1,6 +1,7 @@
 // draw.js — the drawing tools' geometry and typed input.   node draw.test.mjs
 import assert from 'node:assert/strict';
 import * as DR from './web/draw.js';
+import { overlapArea } from './web/cmdbar.js';
 import { movePoint } from './web/move.js';
 import { readDxf, flatten } from './web/drawing.js';
 import { newDoc, addEntities, writeDxf } from './web/dxf-write.js';
@@ -14,7 +15,7 @@ test('dynamicInputPlacement: both sides, edge flip, radius and box clamps, short
   const canvas = { w: 800, h: 600 }, boxes = { length: [120, 30], angle: [110, 30] };
   const place = (a, b) => DR.dynamicInputPlacement(a, b, canvas, boxes);
   let p = place([200, 300], [400, 300]);
-  nearPt(p.length, [300, 276]); nearPt(p.angle, [280, 300]); near(p.arc.radius, 80);
+  nearPt(p.length, [300, 276]); nearPt(p.angle, [280, 310]); near(p.arc.radius, 80);       // 300 would cover the Length box: moved 4 px clear
   assert.deepEqual(p.line, [[200, 276], [400, 276]]);
   assert.deepEqual(p.extensions, [[[200, 300], [200, 270]], [[400, 300], [400, 270]]]);
   p = place([400, 300], [200, 300]);
@@ -29,10 +30,21 @@ test('dynamicInputPlacement: both sides, edge flip, radius and box clamps, short
   assert.deepEqual(p.line, [[200, 44], [400, 44]], 'off-canvas left normal flips');
   near(place([200, 300], [240, 300]).arc.radius, 30);
   near(place([200, 300], [700, 300]).arc.radius, 120);
-  p = place([0, 0], [100, 0]); nearPt(p.length, [64, 24]); nearPt(p.angle, [59, 19]);
+  p = place([0, 0], [100, 0]); nearPt(p.length, [64, 24]); nearPt(p.angle, [59, 58]);
   assert.equal(place([200, 300], [220, 300]), null);
   assert.equal(place([200, 300], [239.99, 300]), null);
   assert.equal(place([200, 300], [200, 300]), null);
+});
+
+test('dynamicInputPlacement: Length and Angle boxes never overlap, segments 40-800 px at 10 angles', () => {
+  const canvas = { w: 2000, h: 1600 }, boxes = { length: [140, 39], angle: [140, 39] }, c = [1000, 800];
+  const rect = (p, size) => [p[0] - size[0] / 2, p[1] - size[1] / 2, p[0] + size[0] / 2, p[1] + size[1] / 2];
+  let n = 0;
+  for (let len = 41; len <= 800; len += 10) for (const deg of [0, 10, 30, 45, 90, 135, 180, 225, 270, 330]) {
+    const b = [c[0] + len * Math.cos(deg / 180 * Math.PI), c[1] - len * Math.sin(deg / 180 * Math.PI)], p = DR.dynamicInputPlacement(c, b, canvas, boxes);
+    assert.equal(overlapArea(rect(p.length, boxes.length), rect(p.angle, boxes.angle)), 0, `${len} px at ${deg}°`); n++;
+  }
+  assert.equal(n, 760);
 });
 
 test('dynamicInputPlacement: Rectangle and Rounded rectangle Width / Height in all four quadrants', () => {
