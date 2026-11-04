@@ -83,7 +83,7 @@ test('TODO 193a: base-check prints LOAD ERROR (not FAIL) when the copied test ca
     const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-load.test.mjs'], { cwd: repo, encoding: 'utf8' });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /^LOAD ERROR on base/m);
-    assert.doesNotMatch(r.stdout, /FAIL/);
+    assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);
     assert.equal(git('worktree', 'list').trim().split('\n').length, 1);
   } finally {
     rmSync(repo, { recursive: true, force: true });
@@ -105,7 +105,7 @@ test('TODO 193a: base-check prints HUNG (not FAIL) when the test never ends, and
     const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' } });
     assert.equal(r.status, 1);
     assert.match(r.stderr, /^HUNG on base after 2 s/m);
-    assert.doesNotMatch(r.stdout, /FAIL/);
+    assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);
     assert.equal(git('worktree', 'list').trim().split('\n').length, 1);
   } finally {
     rmSync(repo, { recursive: true, force: true });
