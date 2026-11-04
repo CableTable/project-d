@@ -21225,6 +21225,114 @@ try {
   const viewBox = async () => (await page.locator('[data-testid=canvas] > svg').first().getAttribute('viewBox')).split(' ').map(Number);
   const viewItemOff = async (name) => { await page.locator('[data-menu=View]').click(); const off = await page.getByRole('menuitem', { name, exact: true }).isDisabled(); await page.locator('[data-menu=View]').click(); return off; };
 
+  await step('TODO 137: type a zoom level and pick a preset', async () => {
+    const input = t('zoom-input'), list = page.getByRole('listbox', { name: 'Zoom presets' });
+    const readout = () => t('zoom').textContent();
+    const near = (a, b) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-8, `${a} ≈ ${b}`));
+    const centre = (v) => [v[0] + v[2] / 2, v[1] + v[3] / 2];
+    const enter = async (value) => { await t('zoom').click(); await input.fill(value); await input.press('Enter'); };
+    const exercise = async (tab) => {
+      await page.locator('.zoombox').getByRole('button', { name: 'Fit', exact: true }).click();
+      const fitted = await viewBox(), label = await readout(), box = await t('zoom').boundingBox();
+      await t('zoom').click();
+      assert.deepEqual(await list.getByRole('option').allTextContents(), ['25 %', '50 %', '100 %', '200 %', '400 %', 'Fit']);
+      const editorBox = await input.boundingBox(), listBox = await list.boundingBox();
+      near([editorBox.x, editorBox.y, editorBox.width, editorBox.height], [box.x, box.y, box.width, box.height]);
+      assert.ok(listBox.y + listBox.height < editorBox.y, 'presets open upward');
+      assert.equal(await input.evaluate((el) => el.value.slice(el.selectionStart, el.selectionEnd)), label, 'readout text selected');
+      await input.fill('250'); await input.press('Enter');
+      assert.equal(await readout(), '250%', tab);
+      near(centre(await viewBox()), centre(fitted));
+      await menuItem('View', 'Zoom Previous'); near(await viewBox(), fitted);
+      await enter('99999999'); assert.equal(await readout(), '26458%');
+      await enter('0'); assert.equal(await readout(), '1%');
+      await enter(' 150% '); assert.equal(await readout(), '150%');
+      await enter('37.5'); assert.equal(await readout(), '38%');
+      const before = await viewBox(), beforeLabel = await readout();
+      await t('zoom').click(); await input.fill('abc'); await input.press('Enter');
+      assert.equal(await input.isVisible(), true);
+      assert.equal(await input.getAttribute('aria-invalid'), 'true');
+      assert.equal(await input.evaluate((el) => getComputedStyle(el).outlineColor), 'rgb(223, 51, 69)');
+      await input.fill('Fit'); await input.press('Enter');
+      assert.equal(await input.getAttribute('aria-invalid'), 'true', 'Fit is a preset, not a typed number');
+      await input.press('Escape'); assert.equal(await input.isVisible(), false);
+      assert.equal(await readout(), beforeLabel); near(await viewBox(), before);
+      await t('zoom').click(); await input.fill('200'); await input.press('Tab');
+      assert.equal(await input.isVisible(), false); near(await viewBox(), before);
+      await t('zoom').click(); await input.fill('200'); await page.locator('.coords').click();
+      assert.equal(await input.isVisible(), false); near(await viewBox(), before);
+      await t('zoom').click(); await list.getByRole('option', { name: '50 %', exact: true }).click();
+      assert.equal(await readout(), '50%');
+      await t('zoom').click(); await input.press('ArrowUp');
+      assert.equal(await list.getByRole('option', { selected: true }).textContent(), 'Fit');
+      await input.press('Enter'); near(await viewBox(), fitted);
+      await t('zoom').click(); await input.press('ArrowDown'); await input.press('ArrowDown');
+      assert.equal(await list.getByRole('option', { selected: true }).textContent(), '50 %');
+      await input.press('Enter'); assert.equal(await readout(), '50%');
+      await t('zoom').click(); await input.press('ArrowDown'); await input.fill('200'); await input.press('Enter');
+      assert.equal(await readout(), '200%', 'typing clears the preset highlight');
+      await t('zoom').click(); await list.getByRole('option', { name: 'Fit', exact: true }).click();
+      near(await viewBox(), fitted);
+      const promptBefore = await prompt(), nameBefore = await page.locator('.tabs .dtab.on .tname').textContent();
+      const snap = await t('tog-snap').getAttribute('aria-pressed');
+      await t('zoom').click();
+      for (const key of ['F3', 'Delete', 'Control+Tab', 'Control+w']) await input.press(key);
+      await input.fill('z');
+      assert.equal(await t('tog-snap').getAttribute('aria-pressed'), snap);
+      assert.equal(await prompt(), promptBefore, 'keys leave the command bar alone');
+      assert.equal(await page.locator('.tabs .dtab.on .tname').textContent(), nameBefore, 'tab shortcuts stay in the input');
+      await input.press('Escape');
+    };
+    await openGrips();
+    await typeCmd('line'); const pending = await prompt();
+    await t('zoom').click(); await input.press('Escape');
+    assert.equal(await prompt(), pending, 'Esc in the editor preserves the pending canvas command');
+    await page.keyboard.press('Escape');
+    await exercise('Drawings');
+    const count = await entCount();
+    await typeCmd('line'); await click(30, 40); await click(50, 40); await page.keyboard.press('Enter');
+    assert.equal(await entCount(), count + 1, 'drawing can be edited after zooming');
+    await t('zoom').click();       // app-level keys pass through the open editor (dirty drawing: the exe's reload guard fires)
+    await page.evaluate(() => { window.__TAURI__ = {}; });
+    for (const key of ['F5', 'F3', 'F7']) assert.equal(await input.evaluate((el, key) => {
+      const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
+      el.dispatchEvent(e); return e.defaultPrevented;
+    }, key), true, key + ' reaches the app handlers from the zoom editor');
+    assert.equal(await input.evaluate((el) => {
+      const e = new KeyboardEvent('keydown', { key: 'r', ctrlKey: true, bubbles: true, cancelable: true });
+      el.dispatchEvent(e); return e.defaultPrevented;
+    }), true, 'Ctrl+R reaches the reload guard');
+    await page.evaluate(() => { delete window.__TAURI__; });
+    await input.press('Escape');
+    assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'focus leaves the readout after cancel');
+    await enter('250');
+    assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'focus leaves the readout after apply'); const typedView = await viewBox();
+    await page.locator('.coords').click(); await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), count, 'zoom adds no geometry Undo step'); near(await viewBox(), typedView);
+    mkdirSync('shots-137', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await page.evaluate((theme) => document.documentElement.dataset.theme = theme, theme);
+      await t('zoom').click(); await input.press('ArrowDown');
+      const path = `shots-137/zoom-level-${theme}.png`;
+      await page.screenshot({ path }); assert.ok(readFileSync(path).length > 0);
+      await input.press('Escape');
+    }
+    await page.evaluate(() => document.documentElement.dataset.theme = 'light');
+    await t('add-to-layout').click();
+    await page.waitForFunction(() => /layout/.test(document.querySelector('.tabs .dtab.on .tname').textContent));
+    const sheetPct = await t('pct').textContent();
+    await exercise('Layouts'); assert.equal(await t('pct').textContent(), sheetPct, '% of sheet stays unchanged');
+    await closeTabs(/./);
+    await t('picker').setInputFiles(plateDxf('zoom-a.dxf', 30));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-a.dxf');
+    await t('picker').setInputFiles(plateDxf('zoom-b.dxf', 31));
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'zoom-b.dxf');
+    await menuItem('File', 'Compare drawings…');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'Compare');
+    await exercise('Compare');
+    await closeTabs(/./);
+  });
+
   await step('fix72: Esc during a Zoom Window drag cancels only the zoom and keeps the pending polyline', async () => {
     await openGrips();
     await page.locator('[data-tool=polyline]').click();

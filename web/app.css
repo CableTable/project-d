@@ -199,7 +199,15 @@ select.fld { font-family: var(--sans); }
 .drawing-grid { position: absolute; inset: 0; pointer-events: none; opacity: .3; background-image: radial-gradient(circle, var(--muted) 1px, transparent 1px); }
 .canvas.dropping { outline: 2px dashed var(--accent); outline-offset: -4px; }
 .zoombox { position: absolute; right: 14px; bottom: 14px; display: flex; align-items: center; gap: 4px; padding: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
-.zoombox .pct { font-size: 12px; min-width: 40px; text-align: center; }
+.zoombox .pct { font-size: 12px; min-width: 40px; height: 22px; padding: 0; border: 0; background: none; color: var(--text); text-align: center; cursor: text; }
+.zoom-level { position: relative; }
+.zoom-input.fld { position: absolute; inset: 0; width: 100%; height: 100%; padding: 0 2px; text-align: center; }
+.zoom-input[aria-invalid='true'] { outline: 2px solid #df3345; outline-offset: -1px; }
+.zoom-input.invalid { animation: zoom-shake .18s; }
+@keyframes zoom-shake { 25%, 75% { transform: translateX(-2px); } 50% { transform: translateX(2px); } }
+.zoom-presets { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6; min-width: 90px; padding: 4px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel); box-shadow: 0 3px 12px var(--shadow); }
+.zoom-presets button { display: block; width: 100%; padding: 4px 8px; border: 0; border-radius: 3px; background: none; color: var(--text); text-align: left; cursor: pointer; }
+.zoom-presets button:hover, .zoom-presets [aria-selected='true'] { background: var(--sel); }
 .zoombox .tog { display: inline-flex; align-items: center; justify-content: center; }       /* the − / + icons sit centred by geometry */
 .tog { height: 22px; padding: 0 8px; border: 0; border-radius: var(--r); background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; }
 .tog:has(> .icon) { display: inline-flex; align-items: center; gap: 4px; }       /* an icon beside words (Layers + Add) centres on the words */

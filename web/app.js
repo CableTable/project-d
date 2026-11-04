@@ -19,6 +19,7 @@ import * as AD from './autodim.js';
 import { cyclePick } from './selection-cycle.js';
 import { SNAP_NAME, snapTypes, lineSnaps, preferSnap } from './snap.js';
 import { pushView, popView } from './viewhist.js';
+import { zoomScale } from './zoom-level.js';
 import * as UF from './unitfix.js';
 import * as CL from './cleanup.js';
 import * as DM from './dims.js';
@@ -1359,6 +1360,70 @@ function setTool(id) {
   renderCommand(); renderEdit(); paintOverlay();
 }
 
+function buildZoomLevel() {
+  const input = h('input', { class: 'fld zoom-input', hidden: true, type: 'text', inputmode: 'decimal', autocomplete: 'off', spellcheck: 'false',
+    role: 'combobox', 'aria-label': 'Zoom level', 'aria-controls': 'zoom-presets', 'aria-expanded': 'true', 'aria-autocomplete': 'none', 'data-testid': 'zoom-input' });
+  const presets = ['25%', '50%', '100%', '200%', '400%', 'Fit'];
+  let highlighted = -1;
+  const highlight = (index) => {
+    highlighted = index;
+    [...list.children].forEach((row, i) => row.setAttribute('aria-selected', String(i === index)));
+    if (index < 0) input.removeAttribute('aria-activedescendant');
+    else input.setAttribute('aria-activedescendant', 'zoom-preset-' + index);
+  };
+  const close = () => {
+    if (input.hidden) return;
+    input.hidden = list.hidden = true;
+    ui.pct.style.visibility = '';
+    input.blur();       // focus to the body, so Space does not reopen the editor
+  };
+  const apply = (value) => {
+    const scale = zoomScale(value);
+    if (scale === null) {
+      input.setAttribute('aria-invalid', 'true');
+      input.classList.remove('invalid');
+      void input.offsetWidth;       // replay the shake on another invalid Enter
+      input.classList.add('invalid');
+      return;
+    }
+    close();
+    zoomBy(scale / view.scale);
+  };
+  const choose = (index) => {
+    if (presets[index] === 'Fit') { close(); fitView(); }
+    else apply(presets[index]);
+  };
+  const list = h('div', { class: 'zoom-presets', id: 'zoom-presets', role: 'listbox', 'aria-label': 'Zoom presets', hidden: true },
+    presets.map((value, i) => h('button', { type: 'button', role: 'option', tabindex: '-1', id: 'zoom-preset-' + i,
+      onpointerdown: (e) => e.preventDefault(), onclick: () => choose(i) }, value.replace('%', ' %'))));
+  ui.pct = h('button', { class: 'pct mono', type: 'button', 'data-testid': 'zoom', title: 'Zoom level', onclick: () => {
+    input.value = ui.pct.textContent;
+    input.removeAttribute('aria-invalid'); input.classList.remove('invalid'); highlight(-1);
+    ui.pct.style.visibility = 'hidden'; input.hidden = list.hidden = false;
+    input.focus(); input.select();
+  } }, '100%');
+  const control = h('div', { class: 'zoom-level' }, ui.pct, input, list);
+  input.addEventListener('input', () => { highlight(-1); input.removeAttribute('aria-invalid'); input.classList.remove('invalid'); });
+  input.addEventListener('blur', () => close());
+  document.addEventListener('pointerdown', (e) => { if (!control.contains(e.target)) close(); }, true);
+  // Capture before document shortcuts, including tab switching and dynamic input.
+  for (const type of ['keydown', 'keyup', 'keypress']) window.addEventListener(type, (e) => {
+    if (e.target !== input) return;
+    const k = e.key.toLowerCase();       // app-level keys behave as with the editor closed
+    if (e.key === 'F5' || e.key === 'F3' || e.key === 'F7' || ((e.ctrlKey || e.metaKey) && !e.altKey && (k === 'r' || k === 's'))) return;
+    e.stopPropagation();
+    if (type !== 'keydown' || e.isComposing) return;
+    if (e.key === 'Tab' && (e.ctrlKey || e.metaKey || e.altKey)) { e.preventDefault(); return; }
+    if (e.key === 'Escape' || e.key === 'Tab') { if (e.key === 'Escape') e.preventDefault(); close(); }
+    else if (e.key === 'Enter') { e.preventDefault(); if (highlighted < 0) apply(input.value); else choose(highlighted); }
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      highlight(highlighted < 0 ? (e.key === 'ArrowDown' ? 0 : presets.length - 1) : (highlighted + (e.key === 'ArrowDown' ? 1 : -1) + presets.length) % presets.length);
+    }
+  }, true);
+  return control;
+}
+
 function buildCanvas() {
   ui.svg = s('svg', { role: 'img', 'aria-label': 'Sheet with the parts laid out' });
   // the opened drawing: a canvas over the sheet, same view (applyView), drawn at true size
@@ -1374,7 +1439,7 @@ function buildCanvas() {
     if (f && trace) traceBitmap();
   });
   ui.bgPicker.addEventListener('cancel', () => { traceAfter = false; });
-  ui.pct = h('span', { class: 'pct mono', 'data-testid': 'zoom' }, '100%');
+  const zoomLevel = buildZoomLevel();
   ui.fitBtn = h('button', { class: 'tog on', type: 'button', onclick: fitView }, 'Fit');
   ui.rubber = h('div', { class: 'rubber', hidden: true, 'data-testid': 'rubber' });
   ui.dropHint = h('div', { class: 'pop drophint', hidden: true, 'data-testid': 'drop-hint' });
@@ -1416,7 +1481,7 @@ function buildCanvas() {
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
-      ui.pct,
+      zoomLevel,
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom in', onclick: () => zoomBy(1.25) }, domIcon('plus', 12)),
       ui.fitBtn));
   attachCanvasEvents();
