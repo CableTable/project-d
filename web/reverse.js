@@ -8,11 +8,11 @@ const txt = (n) => String(+Number(n).toPrecision(15));
 const swap = (a, i, j) => { [a[i], a[j]] = [a[j], a[i]]; };
 
 /** Per vertex (the segment from it to the next): bulge and start / end width of the reversed polyline. The last open vertex has no segment: zeros. */
-function flipped(vs, closed) {
+function flipped(vs, closed, dws = 0, dwe = 0) {
   const n = vs.length;
   return vs.map((_, j) => {
     const k = closed ? (n - 2 - j + n) % n : n - 2 - j, s = k >= 0 ? vs[k] : null;
-    return s ? { b: -s.b, ws: s.we, we: s.ws } : { b: 0, ws: 0, we: 0 };
+    return s ? { b: -s.b, ws: s.we, we: s.ws } : { b: 0, ws: dws, we: dwe };
   });
 }
 
@@ -32,29 +32,33 @@ function lwpolyline(ent) {
   return { ...ent, r: { ...r, c: [...c, ...r.c.slice(last + 1)], v: [...v, ...r.v.slice(last + 1)] } };
 }
 
-/** The code's value in a VERTEX record, set (added after the codes before it when missing and not zero). */
-function setCode(kid, code, val) {
+/** The code's value in a VERTEX record, set (added after the codes before it when missing and different from def, the value a missing code means). */
+function setCode(kid, code, val, def) {
   const c = kid.c.slice(), v = kid.v.slice(), k = c.indexOf(code);
   if (k >= 0) v[k] = txt(val);
-  else if (val) { let p = 0; c.forEach((x, i) => { if ([10, 20, 30, 40, 41, 42].includes(x) && x < code) p = i + 1; }); c.splice(p, 0, code); v.splice(p, 0, txt(val)); }
+  else if (val !== def) { let p = 0; c.forEach((x, i) => { if ([10, 20, 30, 40, 41, 42].includes(x) && x < code) p = i + 1; }); c.splice(p, 0, code); v.splice(p, 0, txt(val)); }
   return { ...kid, c, v };
 }
 
 function polyline(ent) {
   const r = ent.r, flags = get(r, 70) ?? 0, kids = ent.kids || [], closed = (flags & 1) === 1;
   if (flags & 94 || kids.length < 2 || kids.some((k) => k.type !== 'VERTEX' || (get(k, 70) ?? 0) & 16)) return null;       // shortcut: 3-D, curve-fit, spline-fit polylines and meshes are filtered out; upgrade when someone needs them
-  const rest = flipped(kids.map((k) => ({ b: get(k, 42) ?? 0, ws: get(k, 40) ?? 0, we: get(k, 41) ?? 0 })), closed);
-  const out = kids.slice().reverse().map((k, j) => setCode(setCode(setCode(k, 42, rest[j].b), 40, rest[j].ws), 41, rest[j].we));
-  const rc = r.c.slice(), rv = r.v.slice(), a = rc.indexOf(40), b = rc.indexOf(41);
-  if (a >= 0 && b >= 0) swap(rv, a, b);                                    // the default start / end widths swap too
+  const dws = get(r, 40) ?? 0, dwe = get(r, 41) ?? 0;                       // a vertex with no 40 / 41 takes the header's
+  const rc = r.c.slice(), rv = r.v.slice(), a = rc.indexOf(40), b = rc.indexOf(41), both = a >= 0 && b >= 0;
+  if (both) swap(rv, a, b);                                                // the default start / end widths swap too
+  const nws = both ? dwe : dws, nwe = both ? dws : dwe;                     // the defaults the reversed vertices fall back on
+  const rest = flipped(kids.map((k) => ({ b: get(k, 42) ?? 0, ws: get(k, 40) ?? dws, we: get(k, 41) ?? dwe })), closed, nws, nwe);
+  const out = kids.slice().reverse().map((k, j) => setCode(setCode(setCode(k, 42, rest[j].b, 0), 40, rest[j].ws, nws), 41, rest[j].we, nwe));
   return { ...ent, r: { ...r, c: rc, v: rv }, kids: out };
 }
 
 function spline(ent) {
   const sp = splineOf(ent.r);
   if (!sp.P.length && !sp.F.length) return null;
-  const e = spRecord(ent, spReverse(sp)), c = e.r.c.map((code) => ([12, 22, 32, 13, 23, 33].includes(code) ? code + (code % 10 === 2 ? 1 : -1) : code));       // start and end tangents swap and turn round
-  const v = e.r.v.map((x, k) => ([12, 22, 32, 13, 23, 33].includes(e.r.c[k]) ? txt(-num(x)) : x));
+  const e = spRecord(ent, spReverse(sp)), tan = [12, 22, 32, 13, 23, 33], other = (code) => code + (code % 10 === 2 ? 1 : -1);
+  // start and end tangents swap and turn round: the values move, the codes stay in place (a lone tangent changes its code)
+  const c = e.r.c.map((code) => (tan.includes(code) && !e.r.c.includes(other(code)) ? other(code) : code));
+  const v = e.r.v.map((x, k) => { const code = e.r.c[k]; if (!tan.includes(code)) return x; const p = e.r.c.indexOf(other(code)); return txt(-num(p >= 0 ? e.r.v[p] : x)); });
   return { ...e, r: { ...e.r, c, v } };
 }
 

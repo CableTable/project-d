@@ -23941,6 +23941,46 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  await step('TODO 97h: Esc after picking the objects leaves the drawing unchanged', async () => {
+    await open97c(doc97h(), 'reverse97h-esc.dxf');
+    const steps = (await histLabels()).length;
+    await typeCmd('reverse'); await click(150, 100); await key97c('Escape');
+    assert.deepEqual(start97h(await savedDoc()), [100, 100], 'the start is still the old start');
+    assert.equal((await histLabels()).length, steps, 'no undo step');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i1: Esc partway through Align leaves the drawing unchanged; Align moves a text onto a line', async () => {
+    await open97c(doc97i1(), 'align97i1-esc.dxf');
+    const steps = (await histLabels()).length;
+    await typeCmd('al'); await click(150, 100); await key97c('Enter'); await click(100, 100); await click(150, 150);
+    assert.equal(await prompt(), 'Specify second source point:'); await key97c('Escape');
+    near97i1(await savedDoc(), [[100, 100, 200, 100], [100, 220, 180, 220]]);
+    assert.equal((await histLabels()).length, steps, 'no undo step');
+    await closeTabs(/./);
+    const raw = newDoc(4); addEntities(raw, dxfText(100, 100, 8, 'ALIGN'), dxfLine(100, 220, 180, 220));
+    await open97c(raw, 'align97i1-text.dxf');
+    await typeCmd('al'); await click(104, 104); await key97c('Enter'); await click(100, 100); await click(130, 220); await key97c('Enter');
+    const after = await savedDoc(), tx = after.entities.find((e) => e.type === 'TEXT');
+    assert.ok(Math.hypot(fieldOf(tx, 10) - 130, fieldOf(tx, 20) - 220) < 0.5, 'the text start is on the line');
+    near97i1(after, [[100, 220, 180, 220]]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i1: Layouts the Rotate / Align dropdown is enabled with nothing selected and starts Align', async () => {
+    const lay = newLayout('Align dropdown 97i1'), layers = newDoc(4).layers;
+    lay.parts.a = objectPart('a', 'Line', dxfLine(100, 100, 200, 100), layers);
+    lay.placed = [objectPlacement(lay.parts.a)];
+    await open97c(layoutRaw(lay), 'align97i1-dropdown.dxf');
+    await page.locator('[data-ribbon-tab=Home]').click(); await key97c('Escape');
+    const rotate = page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Rotate', exact: true });
+    assert.equal(await rotate.isEnabled(), true);
+    await page.locator('.ribbon-body [data-panel=Modify] [data-testid=rotate-flyout]').click();
+    await page.getByRole('menuitem', { name: /^Align/ }).click();
+    assert.equal(await prompt(), 'Select objects:'); await key97c('Escape');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {

@@ -77,6 +77,13 @@ test('a 2D polyline reverses its VERTEX records the same way', () => {
   assert.equal(reverse({ ...make(false), r: entity('POLYLINE', [[66, 1], [70, 8]]).r }), null, 'a 3-D polyline');
 });
 
+test('a 2D polyline vertex with no widths takes the header default, never 0', () => {
+  const vtx = (x, w) => ({ type: 'VERTEX', c: [8, 10, 20, 30, ...(w ? [40, 41] : [])], v: ['0', String(x), '0', '0', ...(w ? [String(w), String(w)] : [])] });
+  const p = { ...entity('POLYLINE', [[66, 1], [10, 0], [20, 0], [30, 0], [40, 1], [41, 1], [70, 0]], own), kids: [vtx(0), vtx(10, 3), vtx(20)] }, r = reverse(p);
+  assert.deepEqual(r.kids.map((k) => [get(k, 40) ?? get(r.r, 40), get(k, 41) ?? get(r.r, 41)]), [[3, 3], [1, 1], [1, 1]], 'C->B keeps 3/3, B->A is the default 1/1, the last vertex gets no explicit 0');
+  assert.ok(r.kids.every((k) => get(k, 40) !== 0 && get(k, 41) !== 0), 'no vertex is saved with 40:0 / 41:0');
+});
+
 const spl = (extra = []) => entity('SPLINE', [[70, 8], [71, 3], [72, 9], [73, 5], [74, 0], ...[0, 0, 0, 0, 2, 5, 5, 5, 5].map((u) => [40, u]), [41, 1], [41, 2], [41, 1], [41, 3], [41, 1],
   ...[[0, 0], [5, 10], [10, 10], [15, -4], [20, 0]].flatMap(([x, y]) => [[10, x], [20, y], [30, 0]]), ...extra], own);
 test('a spline: control points, weights, knots, tangents', () => {
@@ -87,6 +94,7 @@ test('a spline: control points, weights, knots, tangents', () => {
   assert.deepEqual(nums(41), [1, 3, 1, 2, 1], 'weights backwards');
   assert.deepEqual(nums(10), [20, 15, 10, 5, 0]);
   assert.deepEqual([12, 22, 32, 13, 23, 33].map((c) => nums(c)[0] + 0), [3, -4, 0, -1, -2, 0].map((x) => x + 0), 'start and end tangents swapped and negated');
+  assert.deepEqual(r.r.c.filter((c) => c > 11 && c < 34 && c !== 20 && c !== 30), [12, 22, 32, 13, 23, 33], 'the tangent codes stay in the written order');
   assert.equal(get(r.r, 73), 5); assert.equal(r.layer, 'Cut');
   assert.deepEqual(drawn(reverse(r)).map(key), drawn(s).map(key));
 });

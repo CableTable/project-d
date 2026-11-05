@@ -645,8 +645,8 @@ function ribbonButton(label, svg, action, { small = false, enabled = () => true,
 }
 function ribbonTool(id, small = false) {
   const t = TOOLS.find((t) => t.id === id);
-  const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? DO.rotate() : setTool(id),
-    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay() && !!selectedPlaced()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
+  const b = ribbonButton(t.label, t.svg, () => id === 'nest' ? openNestDialog() : id === 'step' ? DO.step() : id === 'rotate' ? (curLay() && !selectedPlaced() ? note('Rotate: select a part first (Align is in the dropdown)') : DO.rotate()) : setTool(id),
+    { small, enabled: () => id === 'step' || id === 'nest' ? !!curLay() : id === 'measure' ? !!measureTarget() : id === 'dimension' ? !!dimTarget() : DR.KINDS.includes(id) || id === 'text' ? !!curDoc() : !!editable() || (id === 'contour' && !!curLay()) || (id === 'rotate' && !!curLay()) || (LAY_MODS.includes(id) && !!curLay()), pressed: () => state.tool === id, command: id, description: t.description });
   if (id === 'dimension') {
     b.append(h('span', { class: 'flyout', title: 'Dimension types', 'aria-label': 'Dimension types' }, '▾'));
     b.setAttribute('aria-haspopup', 'menu');
@@ -7739,7 +7739,7 @@ function moveTake(d) {
   m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = align ? 's1' : 'p1';
   if (align) {
     m.sel = new Set(free); m.preview = flatten({ ...d.raw, entities: free.map((i) => m.raw[i]) });
-    m.lockMessage = free.length < d.sel.size && moveLocked(d, [...d.sel].filter((i) => lockedEnt(d, i))) ? state.msg : null;
+    m.lockMessage = free.length < d.sel.size && moveLocked(d, [...d.sel].filter((i) => lockedEnt(d, i)), 'align') ? state.msg : null;
     state.msg = m.lockMessage; renderCommand(); paintOverlay(); return;
   }
   if (m.kind === 'stretch') {
@@ -7983,7 +7983,7 @@ function layTake(d) {
 }
 function layModStart(id) {
   curDoc().factor = 1;
-  if (selIdxs().length) layTake(curDoc()); else if (id === 'stretch') stretchSelectPrompt(); else state.msg = `${modLabel(id)}: select the objects, then press Enter`;
+  if (selIdxs().length) layTake(curDoc()); else if (id === 'stretch') stretchSelectPrompt(); else if (id === 'align') state.msg = 'Select objects:'; else state.msg = `${modLabel(id)}: select the objects, then press Enter`;
 }
 /**
  * The placements the running command would make: one list for each result (a placement per taken part). Move / Copy: arg = the target point;
