@@ -1,10 +1,62 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { parseArgs, runCapped, testCommand } from './tools/base-check.mjs';
+import { modulesDir, parseArgs, runCapped, testCommand } from './tools/base-check.mjs';
+
+test('Retro 37: modules prefer the worktree, then the git common directory parent (absolute or relative)', () => {
+  const repo = resolve('tmp-worktree');
+  const common = resolve('tmp-main/.git');
+  assert.equal(modulesDir(repo, common, (p) => p === join(repo, 'node_modules')), join(repo, 'node_modules'));
+  assert.equal(modulesDir(repo, common, () => false), resolve('tmp-main/node_modules'));
+  assert.equal(modulesDir(repo, '../tmp-main/.git', () => false), resolve('tmp-main/node_modules'));
+});
+
+test('Retro 37: --link shares the common repo modules in the cwd worktree and can run twice', () => {
+  const root = mkdtempSync(join(tmpdir(), 'base-check-link-'));
+  const main = join(root, 'main'), wt = join(root, 'wt');
+  try {
+    mkdirSync(join(main, 'node_modules'), { recursive: true });
+    writeFileSync(join(main, 'node_modules', 'marker'), 'shared');
+    execFileSync('git', ['init', '-q', '--separate-git-dir', join(main, '.git'), wt]);
+    mkdirSync(join(wt, 'tools'));
+    copyFileSync('tools/base-check.mjs', join(wt, 'tools/base-check.mjs'));
+    for (let i = 0; i < 2; i++) {
+      const r = spawnSync(process.execPath, ['tools/base-check.mjs', '--link'], { cwd: wt, encoding: 'utf8', timeout: 10000 });
+      assert.equal(r.status, 0, r.stdout + r.stderr);
+      assert.match(r.stdout, /node_modules ready/);
+      assert.ok(lstatSync(join(wt, 'node_modules')).isSymbolicLink());
+      assert.equal(readFileSync(join(wt, 'node_modules', 'marker'), 'utf8'), 'shared');
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Retro 37 fix: --link and a check refuse with "run npm ci" when the repo has no node_modules (no link to itself)', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'base-check-nomod-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', `core.hooksPath=${join(repo, '.git/hooks')}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    writeFileSync(join(repo, 'a.test.mjs'), '');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    mkdirSync(join(repo, 'tools'));
+    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    for (const args of [['--link'], [git('rev-parse', 'HEAD').trim(), 'a.test.mjs']]) {
+      const r = spawnSync(process.execPath, ['tools/base-check.mjs', ...args], { cwd: repo, encoding: 'utf8', timeout: 20000 });
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /^no node_modules at .*node_modules: run npm ci/m);
+      assert.doesNotMatch(r.stdout, /node_modules ready/);
+    }
+    assert.equal(existsSync(join(repo, 'node_modules')), false);
+    assert.equal(git('worktree', 'list').trim().split('\n').length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
 
 test('base-check arguments: a commit id and an in-repo test file; a step only for browser.test.mjs', () => {
   assert.deepEqual(parseArgs(['abc1234', 'a.test.mjs']), { sha: 'abc1234', file: 'a.test.mjs', step: undefined });
@@ -102,7 +154,7 @@ test('TODO 193a: base-check prints HUNG (not FAIL) when the test never ends, and
     mkdirSync(join(repo, 'node_modules'));
     copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
     writeFileSync(join(repo, 'tmp-hang.test.mjs'), "import { test } from 'node:test';\ntest('x', () => new Promise(() => setInterval(() => {}, 1000)));\n");
-    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' } });
+    const r = spawnSync(process.execPath, ['tools/base-check.mjs', git('rev-parse', 'HEAD').trim(), 'tmp-hang.test.mjs'], { cwd: repo, encoding: 'utf8', env: { ...process.env, BASE_CHECK_LIMIT_MS: '2000' }, timeout: 30000 }); // the test expects HUNG after 2 s: 30 s only bounds a sandbox stall (S36 retro)
     assert.equal(r.status, 1);
     assert.match(r.stderr, /^HUNG on base after 2 s/m);
     assert.doesNotMatch(r.stdout, /^FAIL\s*$/m);

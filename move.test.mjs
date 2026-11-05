@@ -2,6 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { movePoint, movePrompt } from './web/move.js';
 
+test('Stretch shares Move point prompts and remembers its displacement with four decimals', () => {
+  assert.equal(movePrompt('stretch', 'pick'), 'Select objects:');
+  assert.equal(movePrompt('stretch', 'p1'), 'Specify base point or [Displacement] <Displacement>:');
+  assert.equal(movePrompt('stretch', 'p2'), 'Specify second point or <use first point as displacement>:');
+  assert.equal(movePrompt('stretch', 'displacement'), 'Specify displacement <0.0000, 0.0000>:');
+  assert.equal(movePrompt('stretch', 'displacement', null, [10, -5]), 'Specify displacement <10.0000, -5.0000>:');
+});
+
 test('Move / Copy prompts expose only their supported options and remembered mode', () => {
   assert.equal(movePrompt('copy', 'p1', 'Multiple'), 'Specify base point or [Displacement/mOde] <Displacement>:');
   assert.equal(movePrompt('move', 'p1'), 'Specify base point or [Displacement] <Displacement>:');

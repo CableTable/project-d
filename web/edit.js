@@ -19,6 +19,7 @@ import { spaceOf, itemVisible } from './doc.js';
 import { line, insert, entity, addLayer, arc, lwpoly } from './dxf-write.js';
 import { DEFAULT_TYPES, perpFoot, preferSnap, tangentPoints, orderCandidates } from './snap.js';
 import { pieceInter } from './modify.js';
+import { copy as copyGroups } from './groups.js';
 import { dimensionText, measuredText, readOverride, overrideText, overrideRecord, textRecord, measureOverride, isMeasureOverride } from './dimension-text.js';
 
 // ---------------------------------------------------------------- the index
@@ -1170,8 +1171,8 @@ function moveMleader(r, dx, dy) {
 
 /** Copy and Array share one batch: select once, allocate block names once, append once. */
 export function copyMany(raw, selection, placements, pivot = [0, 0]) {
-  const selected = raw.entities.filter((_, i) => selection.has(i)), copies = [];
-  let blocks = raw.blocks;
+  const indexes = raw.entities.flatMap((_, i) => selection.has(i) ? [i] : []), selected = indexes.map((i) => raw.entities[i]), copies = [];
+  let blocks = raw.blocks, groups = raw.groups;
   const counters = new Map();
   const ownName = (prefix) => {
     if (blocks === raw.blocks) blocks = { ...blocks };
@@ -1203,9 +1204,10 @@ export function copyMany(raw, selection, placements, pivot = [0, 0]) {
       }
       return { ...e, r, kids: e.kids?.map((kid) => record(kid.type, kid, kid.type === 'VERTEX' ? e.flip : +fieldOf(kid, 230) < 0)) };
     };
+    if (groups?.length) groups = copyGroups(groups, new Map(indexes.map((i, k) => [i, [raw.entities.length + copies.length + k]])));
     for (const e of selected) copies.push(one(e));
   }
-  return { entities: [...raw.entities, ...copies], blocks };
+  return { entities: [...raw.entities, ...copies], blocks, ...(raw.groups?.length ? { groups } : {}) };
 }
 
 /** Append one translated copy of the selection. */

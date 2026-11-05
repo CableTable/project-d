@@ -9,7 +9,20 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SHA = /^[0-9a-f]{7,40}$/i;
-const USAGE = 'usage: node tools/base-check.mjs <base-sha> <test-file> [step]';
+const USAGE = 'usage: node tools/base-check.mjs <base-sha> <test-file> [step] | --link';
+
+export function modulesDir(repo, commonDir, exists = existsSync) {
+  const local = join(repo, 'node_modules');
+  return exists(local) ? local : resolve(repo, dirname(commonDir), 'node_modules');
+}
+
+const git = (...a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
+const linkModules = (dir) => {
+  const target = modulesDir(REPO, git('rev-parse', '--git-common-dir'));
+  // A missing target also covers a main checkout without modules (the link would point at itself).
+  if (!existsSync(target) || resolve(target) === resolve(dir, 'node_modules')) throw new Error(`no node_modules at ${target}: run npm ci`);
+  symlinkSync(target, join(dir, 'node_modules'), 'junction');
+};
 
 // The command that runs the file: browser.test.mjs takes a port and an optional step regex, any other test file runs under node --test.
 export function testCommand(file, step) {
@@ -49,7 +62,6 @@ export function runCapped(bin, argv, { cwd, env, capture = false, limitMs = Infi
 async function check(args) {
   const { sha, file, step } = parseArgs(args);
   if (!existsSync(join(REPO, file))) throw new Error(`test file not found: ${file}`);
-  const git = (...a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
   const wt = join(mkdtempSync(join(tmpdir(), 'base-check-')), 'wt');
   let added = false, cleaned = false;
   const cleanup = () => {
@@ -64,8 +76,8 @@ async function check(args) {
   try {
     git('worktree', 'add', '--detach', wt, sha);
     added = true;
-    // The dependencies are the current tree's: a junction, so no npm ci
-    symlinkSync(join(REPO, 'node_modules'), join(wt, 'node_modules'), 'junction');
+    // Share dependencies through a junction, so no npm ci.
+    linkModules(wt);
     mkdirSync(dirname(join(wt, file)), { recursive: true });
     copyFileSync(join(REPO, file), join(wt, file));
     const [bin, argv] = testCommand(file, step);
@@ -85,8 +97,14 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   process.on('SIGINT', () => {});
   process.on('SIGTERM', () => process.exit(143)); // POSIX only: Windows terminates without calling it
   try {
-    const ok = await check(process.argv.slice(2));
-    console.log(ok ? 'PASS' : 'FAIL');
-    process.exitCode = ok ? 0 : 1;
+    const args = process.argv.slice(2);
+    if (args.length === 1 && args[0] === '--link') {
+      if (!existsSync(join(process.cwd(), 'node_modules'))) linkModules(process.cwd());
+      console.log('node_modules ready');
+    } else {
+      const ok = await check(args);
+      console.log(ok ? 'PASS' : 'FAIL');
+      process.exitCode = ok ? 0 : 1;
+    }
   } catch (e) { console.error(e.message); process.exitCode = 1; }
 }

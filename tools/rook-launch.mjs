@@ -1,13 +1,14 @@
 // `node tools/rook.mjs review ...`, `build ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
 import { parseCsv } from './usage-agent.mjs';
+import { retroSessions } from './retro-brief.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXTRAS = 'E:/Project B/Claude/Project D extras';
@@ -54,28 +55,43 @@ export function parseReview(args) {
 const reviewOf = (v) => v && { brief: resolve(v[0]), out: resolve(v[1]) };
 
 export function parseBuild(args) {
-  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
-  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
+  const usage = 'usage: build <brief file> <out jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
+  const { pos, flags } = parseFlags(args, { '--as': 1, '--dir': 1, '--fix': 0, '--regrilled': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   if (!SHA.test(pos[3])) throw new Error(`not a commit id: ${pos[3]}`);
   const as = account(flags, 'king', usage), dir = flags['--dir'] && flags['--dir'][0];
   if (dir && (dir !== 'king2' || as !== 'king')) throw new Error(`${usage}\n--dir king2 is for King (--as king)`);
-  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
+  return { brief: resolve(pos[0]), out: resolve(pos[1]), branch: pos[2], sha: pos[3], as, dir, fix: !!flags['--fix'], regrilled: !!flags['--regrilled'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
 }
 
 export function parseKnight(args) {
-  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
-  const { pos, flags } = parseFlags(args, { '--fix': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
+  const usage = 'usage: knight <brief file> <report txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out jsonl>]';
+  const { pos, flags } = parseFlags(args, { '--fix': 0, '--regrilled': 0, '--tool': 0, '--over': 0, '--big': 0, '--review': 2 }, usage);
   if (pos.length !== 4) throw new Error(usage);
   const [brief, report, branch, sha] = pos;
   if (!report.endsWith('.txt')) throw new Error(`report must end in .txt (the log goes next to it): ${report}`);
   if (!SHA.test(sha)) throw new Error(`not a commit id: ${sha}`);
   const abs = resolve(report);
-  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
+  return { brief: resolve(brief), report: abs, branch, sha, log: abs.replace(/\.txt$/, '.log'), fix: !!flags['--fix'], regrilled: !!flags['--regrilled'], tool: !!flags['--tool'], over: !!flags['--over'], big: !!flags['--big'], review: reviewOf(flags['--review']) };
 }
 
 // TODO 167c: a brief whose line 1 opens like a fix round counts as one without `--fix`.
 export const isFixBrief = (text) => /^﻿?(King fix|Knight fix|Fix round)\b/.test(text);
+
+export function fixRoundRefusal(id, queue) {
+  // shortcut: counts only this runs folder's queue lines; use cross-session history if fixes span folders.
+  const count = queue.split(/\r?\n/).filter((line) => [...line.matchAll(/(?:^|\s)(?:king|knight)\/(\S+)/g)].some((m) => m[1].startsWith(`${id}fix`))).length;
+  return count >= 2 ? `3rd fix round of ${id}: re-grill the root cause, then --regrilled` : '';
+}
+
+function checkFixRound(x, branch, regrilled) {
+  const queue = x.gate.queueFile(), id = branch.replace(/^(king|knight)\//, '').replace(/fix\d*$/, '');
+  if (regrilled) x.need(join(dirname(queue), `grill-${id}-regrill.md`), 're-grill file');
+  else {
+    const refusal = fixRoundRefusal(id, existsSync(queue) ? x.read(queue) : '');
+    if (refusal) throw new Error(refusal);
+  }
+}
 
 export function lintBrief(text) {
   const problems = [];
@@ -177,6 +193,10 @@ const io = {
   has(dir, sha) { try { execFileSync('git', ['-C', dir, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'pipe' }); return true; } catch { return false; } },
   need(path, what) { if (!existsSync(path)) throw new Error(`${what} not found: ${path}`); },
   read: (path) => readFileSync(path, 'utf8'),
+  exists: existsSync,
+  mtime: (path) => statSync(path).mtimeMs,
+  list: (path) => readdirSync(path, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name),
+  write: (path, text) => writeFileSync(path, text, { flag: 'wx' }),
   open: (path, mode) => openSync(path, mode),
   locked: (dir, lock = lockFile(dir)) => existsSync(lock),
   npmCi(dir) {
@@ -227,6 +247,22 @@ function needClean(x, dir) {
 // What the RUN script hands to tools/rook-end.mjs when the run ends: its queue line (q) and the review to chain; null when there is neither.
 const afterOf = (q, review) => (q || review ? { ...q, review } : null);
 
+// The cached 5h reading of one account (limits.csv, written by `rook.mjs usage`); undefined, with a warning, when it is unreadable or the window has reset.
+function cachedH5(x, names, who, what) {
+  try {
+    const row = parseCsv(x.read(join(REPO, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => names.includes(r.agent) && r.window === '5h');
+    const used = Number(row?.used_pct);
+    if (!row?.used_pct?.trim() || !Number.isFinite(used)) throw new Error(`missing or invalid ${who} 5h reading`);
+    if (!(Date.parse(row.resets) < Date.now())) return used; // a past reset time = the window has reset, the reading is old
+  } catch (e) { console.error(`${what}: ${who} usage cache unavailable (${e.message}); allowing ${what}`); }
+}
+
+// TODO 196a: King builds and reviews are refused above 85% of his cached 5h, like Bishop's review gate; --over passes.
+function kingGate(x, what) {
+  const h5 = cachedH5(x, ['King'], 'King', what);
+  if (h5 > 85) throw new Error(`King 5h ${h5}%: use Knight, or --over`);
+}
+
 export function review(args, x = io) {
   const parsed = parseReview(args), { sha, brief, out, from, over } = parsed;
   let as = parsed.as;
@@ -234,16 +270,11 @@ export function review(args, x = io) {
   // TODO 167d: no --as = Bishop, or King when Bishop's reviewer folder is locked (both locked: needClean refuses King's below)
   const busy = parsed.auto && x.locked(folder('bishop', 'review'));
   if (as === 'bishop' && !over && !busy) {
-    let h5;
-    try {
-      const row = parseCsv(x.read(join(REPO, 'mockups', '_design', 'usage', 'limits.csv'))).find((r) => ['Pip', 'Bishop'].includes(r.agent) && r.window === '5h');
-      const used = Number(row?.used_pct);
-      if (!row?.used_pct?.trim() || !Number.isFinite(used)) throw new Error('missing or invalid Bishop 5h reading');
-      if (!(Date.parse(row.resets) < Date.now())) h5 = used; // a past reset time = the window has reset, the reading is old
-    } catch (e) { console.error(`review: Bishop usage cache unavailable (${e.message}); allowing review`); }
+    const h5 = cachedH5(x, ['Pip', 'Bishop'], 'Bishop', 'review');
     if (h5 > 85) throw new Error(`Bishop 5h ${h5}%: use --as king, or --over`);
   }
   if (busy) { as = 'king'; console.log('review: Bishop busy, King'); }
+  if (as === 'king' && !over) kingGate(x, 'review');
   const wt = folder(as, 'review');
   x.need(brief, 'brief file');
   x.need(claude(as), ACCOUNTS[as].bin);
@@ -262,13 +293,15 @@ export function review(args, x = io) {
 }
 
 export function build(args, x = io) {
-  const { brief, out, branch, sha, as, dir: second, fix: fixFlag, tool, over, big, review: chain } = parseBuild(args);
+  const { brief, out, branch, sha, as, dir: second, fix: fixFlag, regrilled, tool, over, big, review: chain } = parseBuild(args);
   const dir =second ? folder(as, 'review') : folder(as, 'build'); // king2 is King's review folder: needClean refuses it while a review runs
   x.need(brief, 'brief file');
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
   const text = x.read(brief), fix = fixFlag || isFixBrief(text);
   x.gate.check(fix, over, tool);
+  if (as === 'king' && !over) kingGate(x, 'build');
   checkBrief(text, big);
+  if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(claude(as), ACCOUNTS[as].bin);
   needClean(x, dir);
   needHooks(x, dir);
@@ -299,11 +332,13 @@ export const gate = (x = io) => x.gate.report();
 function needHooks(x, dir) {
   let hooks;
   try { hooks = x.git(dir, 'config', 'core.hooksPath'); } catch { /* Missing config also refuses the launch. */ }
-  if (hooks !== 'tools/hooks') throw new Error(`hooksPath required: git -C "${dir}" config core.hooksPath tools/hooks`);
+  // A worktree shares main's config, which holds main's absolute tools/hooks: accept that too.
+  const ok = hooks && [resolve(dir, 'tools/hooks'), resolve(dirname(MAIN_GIT), 'tools/hooks')].includes(resolve(dir, hooks));
+  if (!ok) throw new Error(`hooksPath required: git -C "${dir}" config core.hooksPath tools/hooks`);
 }
 
 export function knight(args, x = io) {
-  const { brief, report, branch, sha, log, fix: fixFlag, tool, over, big, review: chain } = parseKnight(args);
+  const { brief, report, branch, sha, log, fix: fixFlag, regrilled, tool, over, big, review: chain } = parseKnight(args);
   const clone = `${EXTRAS}/ProjectD-rowan`;
   x.need(brief, 'brief file');
   if (chain) { x.need(chain.brief, 'review brief file'); x.need(dirname(chain.out), 'review output folder'); }
@@ -311,6 +346,7 @@ export function knight(args, x = io) {
   if (/\.\.\/runs\d+\/shots/.test(text)) throw new Error('shots go in shots-<id>/ in the clone root');
   x.gate.check(fix, over, tool);
   checkBrief(text, big);
+  if (fix || regrilled) checkFixRound(x, branch, regrilled);
   x.need(CODEX, basename(CODEX));
   needClean(x, clone);
   needHooks(x, clone);
@@ -351,6 +387,7 @@ export const acadArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-
 // WORKFLOW.md lines 248-250: one question, the house sentence added here; a newline would end the cmd.exe line.
 export const pawnArgs = (question) => {
   if (/[\r\n]/.test(question)) throw new Error('pawn: the question must be one line');
+  if (/\(2\)|(?:^|\s)2(?:\.(?!\d)|\))/.test(question)) throw new Error('pawn: one question per Pawn run');
   if (/[%"]/.test(question)) throw new Error('pawn: the question may not hold % or " (cmd.exe expands %NAME% inside quotes); use single quotes / spell it out');
   return ['-p', `${question} Open https links only, skip http ones, run no commands; read at most 3 pages; cite URLs.`, '--output-format', 'json', '--print-timeout', '10m'];
 };
@@ -377,13 +414,39 @@ export function suite(args, x = io) {
   plainRun(x, { kind: 'suite', id: sha, bin: process.execPath, args: [SUITE], cwd: REPO, out: `${runsDir(x)}/suite-${sha}.log` });
 }
 
-// `retro`: the three retro runs of runs<N>/ (retro<N>, retro<N>king, retro<N>rook), each from its .txt into its .out; none starts when a .txt is missing.
+// `retro`: fill missing briefs, then launch the three retros from their .txt into their .out.
 export function retro(args, x = io) {
-  if (args.length) throw new Error('usage: retro');
+  const usage = 'usage: retro [--over] [--events "<text>"]';
+  const { pos, flags } = parseFlags(args, { '--over': 0, '--events': 1 }, usage);
+  if (pos.length) throw new Error(usage);
+  const over = !!flags['--over'];
   const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1], names = [`retro${n}`, `retro${n}king`, `retro${n}rook`];
-  for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');
+  if (!over) { // TODO 196a: three Opus retros took Bishop from 61% to 100% (S36)
+    const h5 = cachedH5(x, ['Pip', 'Bishop'], 'Bishop', 'retro');
+    if (h5 > 40) throw new Error(`Bishop 5h ${h5}%: the three retros need room; wait for the reset, or --over`);
+  }
   x.need(claude('bishop'), ACCOUNTS.bishop.bin);
   for (const name of names) if (x.locked(dir, `${dir}/.run-lock-${name}`)) throw new Error(`${name} is in use by a running launch (${dir}/.run-lock-${name}); if that run is dead, delete the lock file`);
+  const missing = names.filter((name) => !x.exists(`${dir}/${name}.txt`)); // filled last: a refused run writes nothing
+  if (missing.length) {
+    const transcripts = [], sessions = new Set();
+    const project = 'C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D';
+    const files = x.list(project).filter((f) => f.endsWith('.jsonl')).sort().map((f) => [f, x.mtime(`${project}/${f}`)]).sort((a, b) => a[1] - b[1]); // oldest first: S37, S37b, S37c
+    for (const [file] of files) {
+      const found = retroSessions(x.read(`${project}/${file}`), n);
+      if (found === null) continue;
+      transcripts.push(`${project}/${file}`);
+      for (const session of found) sessions.add(session);
+    }
+    if (!transcripts.length) throw new Error(`no Rook transcripts for session ${n}`);
+    const values = { N: n, SESSIONS: [...sessions].join(', '), TRANSCRIPTS: transcripts.join(', '), EVENTS: flags['--events']?.[0] ?? 'none given.' };
+    for (const name of missing) {
+      const suffix = name.slice(`retro${n}`.length);
+      const template = x.read(join(REPO, 'tools', 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
+      x.write(`${dir}/${name}.txt`, template.replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]));
+    }
+  }
+  for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');
   for (const name of names) plainRun(x, { kind: 'retro', id: name, bin: claude('bishop'), args: retroArgs(), cwd: dir, inPath: `${dir}/${name}.txt`, out: `${dir}/${name}.out`, lock: `${dir}/.run-lock-${name}` });
 }
 
@@ -406,4 +469,17 @@ export function pawn(args, x = io) {
   x.need(AGY_DIR, 'folder');
   x.need(dirname(resolve(out)), 'output folder');
   plainRun(x, { kind: 'pawn', id: 'agy', bin: AGY, args: cmdArgs, cwd: AGY_DIR, out: resolve(out), lock: `${AGY_DIR}/.run-lock-${basename(out)}` }); // one lock per out file: parallel Pawn runs
+}
+
+// TODO 196g: WORKFLOW.md line 194's Bishop board / look flags.
+export const boardArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--permission-mode', 'dontAsk', '--max-budget-usd', '4', '--output-format', 'text',
+  '--add-dir', extras, '--add-dir', MAIN_GIT.replace(/\/\.git$/, ''), '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(node:*)', '--disallowedTools', 'Agent'];
+
+// `board <brief> <out>`: Bishop on <brief> (stdin) -> <out>, from runs<N>.
+export function board(args, x = io) {
+  const [brief, out, ...rest] = args;
+  if (!brief || !out || rest.length) throw new Error('usage: board <brief> <out>');
+  x.need(resolve(brief), 'board brief');
+  x.need(claude('bishop'), ACCOUNTS.bishop.bin);
+  plainRun(x, { kind: 'board', id: basename(out), bin: claude('bishop'), args: boardArgs(), cwd: runsDir(x), inPath: resolve(brief), out: resolve(out), lock: `${runsDir(x)}/.run-lock-${basename(out)}` });
 }

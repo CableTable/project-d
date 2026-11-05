@@ -45,7 +45,7 @@ export function scaleEntities(raw, selection, base, factor, copy = false) {
   const copies = next.entities.slice(raw.entities.length).map((e) => one(e, base));
   let k = 0;
   const entities = copy ? [...raw.entities, ...copies] : raw.entities.map((e, i) => selection.has(i) ? copies[k++] : e);
-  return { entities, blocks };
+  return { entities, blocks, ...(copy && next.groups ? { groups: next.groups } : {}) };
 }
 
 function scaleRecord(type, r, base, factor, flip) {

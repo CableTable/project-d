@@ -11,6 +11,7 @@ import { rotateEntities, rotationAngle } from './rotate.js';
 import { scaleEntities, scaleDistance } from './scale.js';
 import { mirrorEntity } from './modify.js';
 import { n2 } from './draw.js';
+import { copy as copyGroups } from './groups.js';
 
 export const MODES = ['STRETCH', 'MOVE', 'ROTATE', 'SCALE', 'MIRROR'];
 /** The undo step's name of a mode: 'Rotate' for ROTATE. */
@@ -41,14 +42,14 @@ export function readout(mode, base, v, factor = 1) {
 
 function mirror(raw, sel, p1, p2, copy) {
   let blocks = raw.blocks;
-  const entities = raw.entities.slice(), olds = [], skipped = [];
+  const entities = raw.entities.slice(), olds = [], skipped = [], indexes = new Map();
   for (const i of sel) {
     const r = mirrorEntity(raw.entities[i], p1, p2, blocks);
     if (r.blocks) blocks = r.blocks;
-    if (r.ent) { if (copy) entities.push(r.ent); else entities[i] = r.ent; olds.push(raw.entities[i]); } else skipped.push(r.skip);
+    if (r.ent) { if (copy) { indexes.set(i, [entities.length]); entities.push(r.ent); } else entities[i] = r.ent; olds.push(raw.entities[i]); } else skipped.push(r.skip);
   }
   if (!olds.length) throw new Error('nothing could be mirrored' + (skipped.length ? ` (${skipped[0]})` : ''));       // as the Mirror command's note
-  if (copy) return { entities, blocks, skipped };                  // the originals stay
+  if (copy) return { entities, blocks, skipped, ...(raw.groups?.length ? { groups: copyGroups(raw.groups, indexes) } : {}) };                  // the originals stay
   // the old entities go through removeEntities so a dimension's block that only they used goes too; skipped: why each left-out object was
   return { entities, blocks: removeEntities({ entities: entities.concat(olds), blocks }, new Set(olds.map((_, k) => entities.length + k))).blocks, skipped };
 }

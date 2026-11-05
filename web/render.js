@@ -153,9 +153,9 @@ function paintItems(c, fl, off, T, k, vr, dpr, col, sheetBg, hide, factor, wiref
     if (mode === 'fill') { c.beginPath(); trace(c, it.ops, origin); c.globalAlpha = it.a == null ? 1 : it.a; c.fillStyle = col(it.css, it.exact); c.fill('evenodd'); c.globalAlpha = 1; }
     else if (mode === 'mask') { c.beginPath(); trace(c, it.ops, origin); c.fillStyle = sheetBg; c.fill(); }
     else if (mode === 'point') {
-      c.beginPath(); c.arc(it.x - origin[0], it.y - origin[1], 1.8 * dpr / kk, 0, Math.PI * 2);
-      if (wireframe) { c.strokeStyle = col(it.css); c.setLineDash([]); wireStroke(c, dpr); }
-      else { c.fillStyle = col(it.css); c.fill(); }
+      const [x, y] = mapply(mmul(T, mats[cur]), it.x, it.y), arm = 3 * dpr;
+      c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.strokeStyle = col(it.css); c.lineWidth = dpr; c.setLineDash([]);
+      c.beginPath(); c.moveTo(x - arm, y); c.lineTo(x + arm, y); c.moveTo(x, y - arm); c.lineTo(x, y + arm); c.stroke(); c.restore();
     }
     else if (mode === 'text') drawText(c, it, kk, dpr, col, wireframe, origin);
     else if (mode === 'hatch') drawHatch(c, it, kk, dpr, col, origin);

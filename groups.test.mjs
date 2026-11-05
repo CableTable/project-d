@@ -17,6 +17,9 @@ import * as CL from './web/cleanup.js';
 import * as Ed from './web/edit.js';
 import * as GR from './web/grips.js';
 import * as TX from './web/text.js';
+import { rotateEntities } from './web/rotate.js';
+import { scaleEntities } from './web/scale.js';
+import * as GM from './web/gripmode.js';
 import opentype from './web/vendor/opentype/opentype.js';
 const { swap } = G, { shape, goneEntities, ringsOf } = SH;       // namespace imports: on the base a missing export fails its test, not the whole file
 
@@ -45,6 +48,53 @@ function records(text) {
 }
 const values = (r, c) => r.pairs.filter(([code]) => code === c).map(([, v]) => v);
 const first = (r, c) => values(r, c)[0];
+
+test('TODO 97b: clicks and crossing expand groups; windows require every member; locked and nonselectable groups', () => {
+  const groups = [make(0, 1), make(2, 3)];
+  assert.deepEqual([...G.selectionOf(groups, [1, 4])], [1, 4, 0]);
+  assert.deepEqual([...G.selectionOf(groups, [0, 4], false)], [4]);
+  assert.deepEqual([...G.selectionOf(groups, [0, 1, 2], false)], [0, 1]);
+  assert.deepEqual([...G.selectionOf(groups, [0, 4], true, (i) => i !== 1)], [4]);
+  assert.deepEqual([...G.selectionOf([{ ...groups[0], selectable: false }], [0])], [0]);
+  assert.equal(G.wholeGroup(groups, new Set([1, 0])), groups[0]);
+  assert.equal(G.wholeGroup(groups, new Set([0])), null);
+  assert.equal(G.wholeGroup(groups, new Set([0, 1, 4])), null);
+});
+
+test('TODO 97b: Copy, Rotate Copy, Scale Copy and Mirror Copy make independent groups in entity order', () => {
+  const raw = { ...W.newDoc(), entities: [W.circle(50, 50, 2), W.line(0, 0, 10, 0), W.line(0, 10, 10, 10)], groups: [make(1, 2)] };
+  const selected = new Set([2, 1]), before = structuredClone(raw);
+  for (const next of [copyEntities(raw, selected, 10, 20), rotateEntities(raw, selected, [0, 0], 90, true), scaleEntities(raw, selected, [0, 0], 2, true), GM.apply(raw, selected, 'MIRROR', [0, 0], [0, 10], true)]) {
+    assert.deepEqual(members(next.groups), [[1, 2], [3, 4]]);
+    assert.deepEqual(members(readDxf(W.writeDxf({ ...raw, ...next })).groups), [[1, 2], [3, 4]]);
+    const erased = Ed.removeEntities({ ...raw, ...next }, new Set([1, 2]));
+    assert.equal(follow(next.groups, next.entities, erased.entities).length, 1, 'erasing the source leaves the copy grouped');
+  }
+  const multiple = Ed.copyMany(raw, selected, [{ dx: 10 }, { dy: 20 }]);
+  assert.deepEqual(members(multiple.groups), [[1, 2], [3, 4], [5, 6]]);
+  assert.deepEqual(raw, before);
+});
+
+test('TODO 97b: group-only restore, Undo and Redo leave entity and block references unchanged', () => {
+  const snapshotSource = appSource.match(/^const snapshotOf = .*;$/m)[0];
+  const { snapshotOf, restore } = runInNewContext([
+    snapshotSource, appFunction('restoreBg'), appFunction('restore'), '({ snapshotOf, restore });',
+  ].join('\n'), {
+    followGroups: follow, flatten, DrawingError, layerCounts, entityCount, drawingBoxMm,
+    cmpDoc: () => false, showDoc() {}, warm() {}, update() {},
+  });
+  const raw = { ...W.newDoc(), entities: [W.line(0, 0, 10, 0), W.line(0, 10, 10, 10)] };
+  const d = { raw, fl: flatten(raw), off: new Set(), factor: 1 }, history = createHistory();
+  const before = snapshotOf(d), grouped = { ...before, groups: [make(0, 1)] };
+  history.push(before, 'Group'); restore(d, grouped);
+  assert.equal(d.raw.groups, grouped.groups);
+  restore(d, history.undo(snapshotOf(d))); assert.equal(d.raw.groups, before.groups);
+  restore(d, history.redo(snapshotOf(d))); assert.equal(d.raw.groups, grouped.groups);
+  history.push(snapshotOf(d), 'Ungroup'); restore(d, { ...snapshotOf(d), groups: [] });
+  assert.equal(d.raw.groups.length, 0);
+  restore(d, history.undo(snapshotOf(d))); assert.equal(d.raw.groups, grouped.groups);
+  assert.equal(d.raw.entities, before.entities); assert.equal(d.raw.blocks, before.blocks);
+});
 
 test('TODO 97a: hand-written AutoCAD-style GROUP reads names, flags and entity indexes; round trip keeps members', () => {
   const doc = readDxf(fixture);
@@ -354,7 +404,7 @@ test('TODO 97a fix 3: Mirror with erase puts each copy in its own source group, 
   const [l1, l2, c, c2] = [W.line(0, 0, 10, 0), W.line(0, 5, 10, 5), W.circle(50, 50, 2), W.circle(60, 60, 2)];
   const doc = { ...W.newDoc(), entities: [l1, l2, c, c2], groups: [make(0, 2), make(1, 3)] };
   const mirror = runInNewContext(appFunction('modAnswer') + '\nmodAnswer;', {
-    state: { mod: { objs: [l2, l1], p1: [0, -10], p2: [10, -10] } }, MD: { mirrorEntity }, Ed: { removeEntities }, swapGroups: swap, view: {},
+    state: { mod: { objs: [l2, l1], p1: [0, -10], p2: [10, -10] } }, MD: { mirrorEntity }, Ed: { removeEntities }, swapGroups: swap, copyGroups: copy, view: {},
     setTool() {}, setSel() {}, note() {}, commit: (d, next) => { Object.assign(d.raw, next); return true; },
   });
   mirror({ raw: doc }, true);

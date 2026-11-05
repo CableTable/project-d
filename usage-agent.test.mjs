@@ -3,8 +3,101 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo } from './tools/usage-agent.mjs';
-import { claudeUsage } from './tools/rook.mjs';
+import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo, isRookStale, LONGEST_RUN_MS, collectRookStatus, alertRook } from './tools/usage-agent.mjs';
+import { claudeUsage, usageProbe, limitedLine, limitedRows } from './tools/rook.mjs';
+
+test('TODO 198b: Rook stale needs over 30 minutes and a later queue with an ended line', () => {
+  const jsonlMtime = Date.parse('2026-11-05T10:00:00Z');
+  const input = { jsonlMtime, queueText: 'build a -> a.jsonl: ended\r\n', queueMtime: jsonlMtime + 1, now: jsonlMtime + 31 * 60_000 };
+  assert.equal(isRookStale(input), true);
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 29 * 60_000 }), false);
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 30 * 60_000 }), false);
+  assert.equal(isRookStale({ ...input, queueMtime: jsonlMtime }), false);
+  assert.equal(isRookStale({ ...input, queueMtime: jsonlMtime - 1 }), false);
+  for (const queueText of ['', 'build a: running', 'build a: ended badly', 'not ended']) assert.equal(isRookStale({ ...input, queueText }), false);
+  for (const key of Object.keys(input)) {
+    for (const missing of [null, undefined]) assert.equal(isRookStale({ ...input, [key]: missing }), false);
+  }
+  assert.equal(isRookStale(), false);
+});
+
+test('TODO 198b: ended + running = not stuck', () => {
+  const jsonlMtime = Date.parse('2026-11-05T10:00:00Z');
+  const input = { jsonlMtime, queueMtime: jsonlMtime + 1, now: jsonlMtime + 31 * 60_000 };
+  for (const queueText of ['a: ended\r\nb: running\r\n', 'b: running\r\na: ended\r\n', 'a: ended\nb: running']) assert.equal(isRookStale({ ...input, queueText }), false);
+  assert.equal(isRookStale({ ...input, queueText: 'a: ended\r\nb: ended\r\n' }), true);
+});
+
+test('TODO 198b Low: a running line in a queue unchanged longer than the longest run stops silencing the alert', () => {
+  const jsonlMtime = Date.parse('2026-11-05T10:00:00Z'), queueText = 'a: ended\r\nb: running\r\n';
+  const input = { jsonlMtime, queueText, queueMtime: jsonlMtime + 1 };
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 1 + LONGEST_RUN_MS }), false); // exactly the longest run: still running
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 2 + LONGEST_RUN_MS }), true);
+  assert.equal(isRookStale({ ...input, queueText: 'b: running\r\n', now: jsonlMtime + 2 + LONGEST_RUN_MS }), true); // running only, 5h: a dead run line alerts
+  assert.equal(isRookStale({ ...input, queueText: 'b: running\r\n', now: jsonlMtime + 31 * 60_000 }), false); // running only, fresh: live
+});
+
+test('TODO 198b: collector reads line 1 and highest numbered queue, tolerating missing files', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'projectd-rook-'));
+  const now = Date.parse('2026-11-05T11:00:00Z'), mtime = new Date(now - 3600_000);
+  const uuid = '12345678-1234-1234-1234-123456789abc';
+  const transcript = join(folder, '.claude', 'projects', 'E--Project-B-Claude-Project-D', uuid + '.jsonl');
+  const check = () => collectRookStatus(folder, folder, now);
+  try {
+    assert.deepEqual(check(), { stuck: false, since: null });
+    writeFileSync(join(folder, 'rook-next.txt'), uuid + '\r\nRook\r\nresume.txt\r\n');
+    assert.deepEqual(check(), { stuck: false, since: null });
+    mkdirSync(join(folder, '.claude', 'projects', 'E--Project-B-Claude-Project-D'), { recursive: true });
+    writeFileSync(transcript, ''); utimesSync(transcript, mtime, mtime);
+    assert.deepEqual(check(), { stuck: false, since: mtime.toISOString() });
+    for (const n of [9, 10, 11]) mkdirSync(join(folder, 'runs' + n));
+    const queue = join(folder, 'runs10', 'queue.txt');
+    writeFileSync(join(folder, 'runs9', 'queue.txt'), 'build old: ended\n');
+    writeFileSync(queue, 'build new: running\n');
+    utimesSync(queue, new Date(now), new Date(now));
+    assert.equal(check().stuck, false); // runs9 cannot override runs10; runs11 has no queue yet.
+    writeFileSync(queue, 'build new: ended\n'); utimesSync(queue, new Date(now), new Date(now));
+    assert.deepEqual(check(), { stuck: true, since: mtime.toISOString() });
+    utimesSync(transcript, new Date(now), new Date(now));
+    assert.equal(check().stuck, false);
+    writeFileSync(join(folder, 'rook-next.txt'), '../private\n');
+    assert.deepEqual(check(), { stuck: false, since: null });
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('TODO 198b: one PowerShell toast per persisted episode, failures logged without retry', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'projectd-rook-toast-'));
+  const path = join(folder, 'state.json'), logs = [], calls = [];
+  const rook = { stuck: true, since: '2026-11-05T18:45:00.000Z' };
+  const shell = async (...args) => { calls.push(args); };
+  const alert = (status = rook, run = shell) => alertRook(status, path, (line) => logs.push(line), run);
+  try {
+    await alert(); await alert();
+    assert.equal(calls.length, 1);
+    const [exe, args, options] = calls[0];
+    assert.equal(exe, 'powershell.exe');
+    assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
+    const script = Buffer.from(args[3], 'base64').toString('utf16le');
+    assert.match(script, /Rook stuck since 00:15/);
+    assert.match(script, /Windows\.UI\.Notifications/);
+    assert.match(script, /CreateToastNotifier/);
+    assert.equal(options.windowsHide, true);
+    await alert({ ...rook, stuck: false });
+    await alert(); assert.equal(calls.length, 2);
+    await alert({ ...rook, stuck: false });
+    await alert(rook, async () => { throw new Error('toast unavailable'); });
+    await alert(); assert.equal(calls.length, 2);
+    assert.deepEqual(logs, ['Rook toast ERROR: toast unavailable']);
+    await alert({ ...rook, since: '2026-11-05T20:45:00.000Z' }); assert.equal(calls.length, 3); // second episode: different since
+    await alert({ ...rook, since: '2026-11-05T20:45:00.000Z' }); assert.equal(calls.length, 3);
+    for (const bad of ['invalid JSON', '']) { // bad state file = no previous state, rewritten
+      writeFileSync(path, bad);
+      await alert(); assert.equal(calls.length, 3 + (bad ? 1 : 2));
+      await alert(); assert.equal(calls.length, 3 + (bad ? 1 : 2));
+    }
+    assert.deepEqual(logs, ['Rook toast ERROR: toast unavailable']);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
 
 test('tickets keep the eight columns, comma tags, escaped pipes and full note text as plain data', () => {
   const text = `# Tickets
@@ -161,6 +254,32 @@ test('Rook retries once, keeps full diagnostics local, and exports only fixed su
   assert.equal(refreshFailure({ stderr: 'stack\nUSAGE_ERROR: Rook usage probe failed, exit 1\nhook JSON' }), 'Rook usage probe failed, exit 1');
   assert.equal(refreshFailure({ stderr: 'USAGE_ERROR: Main account: 100%, limit reached\n' }), 'Main account: 100%, limit reached');
   assert.equal(refreshFailure({ message: 'secret stack', stderr: 'USAGE_ERROR: private hook JSON' }), 'Usage refresh failed; see the local agent log');
+});
+
+test('TODO 196a: an account at its limit reads as 100% (with its reset text) instead of throwing; other failures still throw', () => {
+  const limited = (stdout) => () => { throw Object.assign(new Error('exit 1'), { status: 1, stdout }); };
+  assert.deepEqual(usageProbe('claude2', limited("You've hit your limit · resets 5pm (Asia/Calcutta)"), () => {}), { limited: '5pm (Asia/Calcutta)' });
+  assert.deepEqual(usageProbe('C:\\bin\\claude3.cmd', limited("You've hit your limit · resets tomorrow\n"), () => {}), { limited: 'tomorrow' });
+  assert.deepEqual(usageProbe('claude2', limited('rate_limit_error'), () => {}), { limited: '' }); // limit without a reset text
+  assert.throws(() => usageProbe('claude2', limited('hook crashed'), () => {}), /Bishop usage probe failed, exit 1/);
+  assert.equal(limitedLine('Bishop', '5pm (Asia/Calcutta)'), 'Bishop: 100% (resets 5pm (Asia/Calcutta))');
+  assert.equal(limitedLine('King', '', ' (live)'), 'King: 100% (live)');
+  // stream-json output (runs36/rev-97afix.jsonl:8): the reset text stops at the closing quote
+  const streamJson = '{"type":"result","is_error":true,"api_error":"usage_limit_reached","result":"You\'ve hit your 5-hour limit · resets 2:40am (Asia/Kolkata)","session_id":"abc"}';
+  assert.deepEqual(usageProbe('claude2', limited(streamJson), () => {}), { limited: '2:40am (Asia/Kolkata)' });
+  const success = JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: .25, resetsAt: 123 }, seven_day: { utilization: .5, resetsAt: 456 } } } });
+  assert.deepEqual(usageProbe('claude2', () => success, () => {}), { h5: [25, 123], wk: [50, 456] });
+});
+
+test('TODO 196a: a limited account writes 5h at 100% (old 5h window kept while ahead) and keeps its last week row', () => {
+  const now = Date.parse('2026-11-05T10:00:00Z'), asOf = '2026-11-05T15:30:00+05:30';
+  const h5 = (resets) => ({ agent: 'Pip', window: '5h', used_pct: '40', starts: 's5', resets, as_of: 'old' });
+  const wk = { agent: 'Bishop', window: 'week', used_pct: '55', cap_pct: '42', starts: 'sw', resets: 'rw', as_of: 'oldw' };
+  const rows = (old) => limitedRows('Pip', 'role', 'model', old, now, asOf);
+  assert.deepEqual(rows([h5('2026-11-05T12:00:00Z'), wk]), ['Pip,role,model,5h,100,,s5,2026-11-05T12:00:00Z,' + asOf, 'Pip,role,model,week,55,42,sw,rw,oldw']);
+  assert.equal(rows([h5('2026-11-05T09:00:00Z')])[0], 'Pip,role,model,5h,100,,,,' + asOf); // the old window has reset: blank, nothing to carry
+  assert.equal(rows([h5('')]).length, 1); // blank old reset, no week row
+  assert.deepEqual(limitedRows('King', 'r', 'm', [wk], now, asOf), ['King,r,m,5h,100,,,,' + asOf]); // another agent's rows are not carried
 });
 
 test('TODO keeps every section, continuation text and section-local numbers, with done winning duplicates', () => {

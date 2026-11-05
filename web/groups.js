@@ -28,6 +28,23 @@ export function ungroup(groups = [], selection) {
 
 export const groupOf = (groups = [], entity) => groups.find((g) => g.members.includes(entity)) || null;
 
+/** A crossing / click expands touched groups; a window accepts only complete groups. */
+export function selectionOf(groups = [], selection, crossing = true, eligible = () => true) {
+  const seeds = new Set([...selection].filter(eligible)), picked = new Set(seeds);
+  for (const g of groups) {
+    if (g.selectable === false || !g.members.some((i) => seeds.has(i))) continue;
+    const include = g.members.every(eligible) && (crossing || g.members.every((i) => seeds.has(i)));
+    for (const i of g.members) { if (include) picked.add(i); else picked.delete(i); }
+  }
+  return picked;
+}
+
+/** The selection is exactly one complete, selectable group. */
+export function wholeGroup(groups = [], selection) {
+  const g = groupOf(groups, selection.values().next().value);
+  return g && g.selectable !== false && g.members.length === selection.size && g.members.every((i) => selection.has(i)) ? g : null;
+}
+
 /** Remove erased members (alive is a Set of surviving indexes); singletons dissolve. */
 export function prune(groups = [], alive) {
   return groups.map((g) => ({ ...g, members: unique(g.members).filter((i) => alive.has(i)) })).filter((g) => g.members.length >= 2);

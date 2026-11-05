@@ -26,6 +26,16 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Base point**: The reference point from which Move measures displacement to its target. Click it with snaps or type absolute x,y in mm; a typed target pair is dx,dy from this point. Where: `DECISIONS.md`, Move tool (TODO 66a).
 
+**Break**: Cuts the piece between two points out of one line, arc, circle or polyline, leaving two objects (a circle becomes an arc). **Break at point** splits an open object in two with no gap. Where: `DECISIONS.md`, Break and Join. Avoid: Break Apart (ungroups); Trim (cuts at crossing edges).
+
+**Join**: Merges several selected objects whose ends touch, or collinear lines / same-circle arcs, into one object, which takes the first object's properties. Where: `DECISIONS.md`, Break and Join. Avoid: Join gaps, which only moves nearby ends together and leaves the objects separate.
+
+**Lengthen**: Changes the length of one open line, arc or polyline at the end nearest the pick, by an amount, a percent, a total or a drag; the far end stays. Where: `DECISIONS.md`, Lengthen and Chamfer. Avoid: Extend (grows to a boundary edge); the grip option Lengthen (one grip, same result).
+
+**Chamfer**: Joins two straight lines (or every straight corner of a polyline) with a straight bevel set back by two distances, or a length and an angle, trimming or extending the lines to it. Where: `DECISIONS.md`, Lengthen and Chamfer. Avoid: Fillet (a round corner); Join gaps' Chamfer method (bridges tiny gaps only).
+
+**Stretch**: Moves the points inside a crossing box; objects wholly inside move. Several boxes count together; an individually picked object moves whole. STRETCH / STR uses Move's point entry in Drawings, Layouts and Compare; placed parts move by their insertion point. Where: `web/stretch.js`; `DECISIONS.md`, Stretch (TODO 97g).
+
 **Break Apart**: Separates one selected layout group into ungrouped outlines, or an outline-only drawing block into its members one level down, keeping their placement and layers. Results stay selected; one Undo restores the object and selection. Modify menu, Ctrl+K or `BREAKAPART`. Where: `web/breakapart.js`, `web/app.js`. Avoid: Explode, which also splits polylines into lines and arcs.
 
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
@@ -127,7 +137,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Lock**: Prevents edits to a layer's objects on a drawing or movement of locked parts on a layout. Where: `DECISIONS.md`, Objects tab; `TODO.md`, item 37. Avoid: Hide.
 
-**Measure**: Picks points or geometry to report a distance, size or angle without adding a saved callout unless it is kept. Where: `DECISIONS.md`, Measure and Dimensions; `web/drawing.js`. Avoid: Dimension.
+**Measure**: Picks points or geometry to report a distance, size or angle without adding a saved callout unless it is kept. Where: `DECISIONS.md`, Measure and Dimensions; `web/drawing.js`. Avoid: Dimension, Measure points.
+
+**Measure tag**: The small label beside a measured line showing its distance, ΔX, ΔY and angle, with the Keep button where keeping is allowed; it goes when the measure clears. Where: `DECISIONS.md`, Measure tag. Avoid: Cursor tag, Dynamic input.
+
+**Measure points**: Places point objects along a curve every given length from its start, leaving the curve unchanged; AutoCAD's MEASURE command. Divide is the same with a count of equal parts. Where: `DECISIONS.md`, Divide and Measure points. Avoid: Measure (that is the distance tool).
 
 **Micro piece**: An entity whose own path length is at most the Join gaps tolerance and whose end is within that tolerance of an entity longer than the tolerance. Join gaps removes these pieces before joining, reports the count and restores them with the joins in one Undo. A lone tiny entity stays. Where: `web/edit.js`; `DECISIONS.md`, Join gaps: micro pieces.
 
@@ -154,6 +168,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Properties**: The panel for inspecting or changing selected objects' layer, colour, line type, outline width and supported shape values. Where: `TODO.md`, item 24; `DECISIONS.md`, Line width.
 
 **Ribbon**: The grouped commands below the menu and document tabs. Its tabs follow the active document kind. Full shows icons and labels; Panel titles shows group names; Tab names shows only tabs. Folded commands open over the canvas. Where: `web/ribbon.js`, `web/app.js`; `DECISIONS.md`, R19 pick: Option A.
+**Ribbon panel**: One titled group of commands on a ribbon tab, such as Draw or Modify on Home; each panel appears at most once per ribbon tab. Where: `web/app.js`. Avoid: Properties panel (the side panel).
 
 **Recovery**: Offers local copies of unsaved tabs after an interrupted run, with copies removed after a successful save or clean close. Where: `DECISIONS.md`, Autosave and recovery and Recovery after a clean close. Avoid: A backup of original files.
 

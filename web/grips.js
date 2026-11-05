@@ -33,7 +33,7 @@
 //   cmpDown (Compare): leave source grips to the shared grip handler.
 //   layObjSelDoc (Layouts): map selected objects into the objects' drawing.
 //   layGripCommit (Layouts): replace layout objects with one Undo step.
-//   gripStretchHots (Drawings, Layouts): with several hot grips every one moves by the base → pick vector; the only caller of stretchHots.
+//   gripStretchHots (Drawings, Layouts): with several hot grips every one moves by the base → pick vector, through stretch.js stretchGrips.
 //   stretchHots (here): normalize hot grips so each vertex stretches once.
 import { arcThrough3, sweepOf, angleOf, dist, n2 } from './draw.js';
 import { moveEntities } from './edit.js';          // a move-type grip moves the whole object the way the Move command does (155e4)

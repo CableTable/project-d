@@ -8,7 +8,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { firstDone, peakContext } from './tools/rook-result.mjs';
 import { printRookContext, EXTRAS } from './tools/rook-launch.mjs';
-import { watchCi, nextRook, startArgs, startWatched, gitBash, mergeRefusal, merge, mergeDue } from './tools/rook.mjs';
+import { watchCi, nextRook, startArgs, startWatched, gitBash, mergeRefusal, merge, mergeDue, failLines, handover, handoverArgsError } from './tools/rook.mjs';
 
 const assistant = (usage) => ({ type: 'assistant', message: { usage } });
 
@@ -137,14 +137,19 @@ test('TODO 193b fix: next refuses, before starting anything, when the resume fil
     await assert.rejects(nextRook({ ...deps, readFile: () => { if (text === null) throw new Error('ENOENT'); return text; } }), /refused: R\.txt is missing or has no line .*merge-due\.log first/);
   }
   assert.deepEqual(started, []);
-  const ok = await nextRook({ ...deps, exists: () => true, readFile: () => 'read the last line of ../Project D extras/merge-due.log first\n' });
+  const full = 'read the last line of ../Project D extras/merge-due.log first\nload select:Monitor,TaskStop\none ci-watch per push\n';
+  const ok = await nextRook({ ...deps, exists: () => true, readFile: () => full });
   assert.equal(ok.code, 0);
   assert.deepEqual(started, []);
+  for (const need of ['select:Monitor,TaskStop', 'one ci-watch per push']) { // TODO 198c: each missing line is named in the refusal
+    await assert.rejects(nextRook({ ...deps, readFile: () => full.replace(need, 'x') }), (e) => e.message === `refused: R.txt has no line containing "${need}"`);
+  }
+  assert.deepEqual(started, []);
   let up = false; // the transcript appears only after start(): start runs exactly once
-  const once = await nextRook({ ...deps, exists: () => up, start: () => { started.push(2); up = true; }, readFile: () => 'merge-due.log' });
+  const once = await nextRook({ ...deps, exists: () => up, start: () => { started.push(2); up = true; }, readFile: () => full });
   assert.deepEqual([once.code, started], [0, [2]]);
   const read = []; // a relative line 3 resolves against EXTRAS, an absolute one stays
-  for (const r of ['R.txt', resolve('C:\\abs\\R.txt')]) await nextRook({ ...deps, exists: () => true, read: () => `${U}\r\nx\r\n${r}\r\n`, readFile: (p) => { read.push(p); return 'merge-due.log'; } });
+  for (const r of ['R.txt', resolve('C:\\abs\\R.txt')]) await nextRook({ ...deps, exists: () => true, read: () => `${U}\r\nx\r\n${r}\r\n`, readFile: (p) => { read.push(p); return full; } });
   assert.deepEqual(read, [resolve(EXTRAS, 'R.txt'), resolve('C:\\abs\\R.txt')]);
 });
 
@@ -196,6 +201,14 @@ test('merge: refuses without a non-empty retro file unless --no-retro, a non-hea
   assert.match(mergeRefusal({ ...ok, retro: null }), /^refused: runs33\/retro33\.out is missing or empty/);
   assert.match(mergeRefusal({ ...ok, retro: ' \r\n' }), /missing or empty/);
   assert.equal(mergeRefusal({ ...ok, retro: null, noRetro: true }), '');
+  for (const limit of ["You've hit your limit · resets 5pm", "You've hit your weekly limit"]) { // TODO 196a: a limit message is no retro
+    assert.match(mergeRefusal({ ...ok, retro: limit }), /^refused: runs33\/retro33\.out is only a usage-limit message/, limit);
+    assert.equal(mergeRefusal({ ...ok, retro: limit, noRetro: true }), '');
+  }
+  assert.equal(mergeRefusal({ ...ok, retro: 'We never hit the limit of our patience' }), ''); // not the limit message: no "hit your"
+  const longRetro = "The builder said \"You've hit your limit\" twice; ".repeat(20); // ~1 kB real retro quoting the phrase
+  assert.ok(longRetro.length > 900 && longRetro.length < 1200);
+  assert.equal(mergeRefusal({ ...ok, retro: longRetro }), ''); // only a SHORT file is a limit message
   const other = mergeRefusal({ ...ok, head: 'b'.repeat(40) });
   assert.ok(other.includes(ok.sha) && other.includes('b'.repeat(40)) && other.includes('#5'), other);
   for (const ci of ['failure', 'in_progress', 'queued', undefined]) assert.match(mergeRefusal({ ...ok, ci }), /^refused: CI for a+ is (?:failure|in_progress|queued|not found), not success$/);
@@ -370,5 +383,64 @@ test('result prints peak context and warns strictly above 150k; Codex logs skip 
     writeFileSync(reply, 'Codex done\n');
     assert.equal(read(reply).trim(), 'Codex done\ntokens 123,456');
     assert.ok(!read(log).includes('peak context'));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('TODO 196g fix: fails reads the real suite-log lines (browser [shard n/m] FAIL, node:test spec ✖ + summary), with the first 3 +/- lines, max 40', () => {
+  const E = '\x1b';
+  // Copied from runs35/suite-da8a469.log (lines 1173, 1622-1628) and runs36/suite-b6de1a7.log (1821, 2295, 2444).
+  const slow = 'cached usage shares live summaries, avoids processes and writes, and falls back when missing or stale';
+  const spec = [`${E}[32m✔ some passing test ${E}[90m(2.0039ms)${E}[39m${E}[39m`, `${E}[31m✖ ${slow} ${E}[90m(256.7319ms)${E}[39m${E}[39m`, `${E}[32m✔ later test ${E}[90m(0.3ms)${E}[39m${E}[39m`,
+    `${E}[31m✖ failing tests:${E}[39m`, '', 'test at rook-cache.test.mjs:21:1', `${E}[31m✖ ${slow} ${E}[90m(256.7319ms)${E}[39m${E}[39m`,
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:', '  + actual - expected', '', "  + 'x'", "  - 'y'", '  + 1', '  - 2'].join('\n');
+  assert.deepEqual(failLines(spec, 'u.log'), [slow, "+ 'x'", "- 'y'", '+ 1']); // the inline line and its summary repeat count once
+  const browser = ['[shard 1/4] FAIL part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged ', '[shard 2/4] FAIL TODO 146: an up-left Line and its readout leave a clear, stationary command box ', 'SUITE unit=0 browser=1'].join('\r\n');
+  assert.deepEqual(failLines(browser, 'b.log'), ['part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged', 'TODO 146: an up-left Line and its readout leave a clear, stationary command box']);
+  assert.deepEqual(failLines('[shard 2/4] FAIL a step\n[shard 2/4] - The input did not match the regular expression /\\(80\\.00\\) Tj/\n[shard 2/4] + 1', 's.log'), ['a step', '- The input did not match the regular expression /\\(80\\.00\\) Tj/', '+ 1']); // TODO 196g Low 1
+  assert.deepEqual(failLines(`FAIL bare step\n${E}[31m- 1${E}[39m\n${E}[32m+ 2${E}[39m`, 'a.log'), ['bare step', '- 1', '+ 2']);
+  assert.deepEqual(failLines('ok 1\nok step\nSUITE unit=0 browser=0\n', 'x.log'), ['no failures in x.log']);
+  assert.deepEqual(failLines('lots of output\nSUITE unit=1 browser=0\n', 'r.log'), ['red (unit=1 browser=0) but no failing step lines found in r.log']);
+  assert.deepEqual(failLines('SUITE unit=0 browser=2', 'r.log'), ['red (unit=0 browser=2) but no failing step lines found in r.log']);
+  const many = Array.from({ length: 30 }, (_, i) => `FAIL step ${i}\n+ a\n- b`).join('\n');
+  assert.equal(failLines(many, 'm.log').length, 40);
+});
+
+test('TODO 196g: handover refuses a missing resume file or a line 2 without both skills; otherwise writes uuid, name, absolute resume path and does not start anything', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'handover-'));
+  try {
+    const skills = 'First action: the Skill tool for mattpocock-skills:grilling AND mattpocock-skills:domain-modeling';
+    const good = join(dir, 'runs37', 'resume-rook.txt');
+    mkdirSync(join(dir, 'runs37'));
+    const needs = 'read merge-due.log\r\nload select:Monitor,TaskStop\r\none ci-watch per push\r\n'; // the lines `next` requires too
+    writeFileSync(good, `Rook S37\r\n${skills}\r\n${needs}`);
+    assert.throws(() => handover(join(dir, 'none.txt'), 'Rook S37d', dir), /missing/);
+    for (const line2 of ['mattpocock-skills:grilling only', 'mattpocock-skills:domain-modeling only', '']) {
+      const bad = join(dir, 'bad.txt');
+      writeFileSync(bad, `${skills}\n${line2}\n`);
+      assert.throws(() => handover(bad, 'Rook S37d', dir), /line 2 .* lacks/);
+    }
+    assert.throws(() => handover(good, '', dir), /usage/);
+    const noRuns = join(dir, 'resume.txt'), noLog = join(dir, 'runs37', 'resume-nolog.txt');
+    writeFileSync(noRuns, `Rook S37\n${skills}\n${needs}`);
+    for (const need of ['select:Monitor,TaskStop', 'one ci-watch per push']) { // refused before rook-next.txt is written, with the message `next` gives
+      const part = join(dir, 'runs37', 'resume-part.txt');
+      writeFileSync(part, `Rook S37\n${skills}\n${needs.replace(need, 'x')}`);
+      assert.throws(() => handover(part, 'Rook S37d', dir), (e) => e.message === `refused: ${part} has no line containing "${need}"`);
+    }
+    writeFileSync(noLog, `Rook S37\n${skills}\nnothing else\n`);
+    assert.throws(() => handover(noRuns, 'Rook S37d', dir), /no runs<N> folder/);
+    assert.throws(() => handover(noLog, 'Rook S37d', dir), /no merge-due\.log line/);
+    const argv = ['node', 'rook.mjs', 'handover', good, 'Rook S37d']; // the CLI guard, pure: no process, no live rook-next.txt
+    assert.equal(handoverArgsError(argv), '');
+    assert.match(handoverArgsError([...argv.slice(0, 4), 'Rook', 'S37d']), /2 arguments/); // an unquoted name
+    assert.ok(!existsSync(join(dir, 'rook-next.txt')));
+    const printed = handover(good, 'Rook S37d', dir, '11111111-2222-3333-4444-555555555555');
+    const lines = readFileSync(join(dir, 'rook-next.txt'), 'utf8').split('\n');
+    assert.deepEqual(lines, ['11111111-2222-3333-4444-555555555555', 'Rook S37d', resolve(good).replaceAll('\\', '/'), '']);
+    assert.equal(printed, lines.slice(0, 3).join('\n'));
+    assert.match(handover(good, 'x', dir).split('\n')[0], /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/); // a new random uuid by default
+    const cwd = process.cwd(); // TODO 196g Low 3: a bare file name run from inside runs37 passes the runs<N> check
+    process.chdir(join(dir, 'runs37'));
+    try { assert.equal(handover('resume-rook.txt', 'x', dir).split('\n')[2], resolve(good).replaceAll('\\', '/')); } finally { process.chdir(cwd); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

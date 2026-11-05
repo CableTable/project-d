@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { codexWindow, resetLabel, weeklyForecast } from './usage-site/public/usage-window.js';
+import { codexWindow, resetLabel, weeklyForecast, windowReading } from './usage-site/public/usage-window.js';
 test('expired five-hour and weekly Codex readings show zero and Reset without guessing the next reset', () => {
   for (const reading of [[100, 10], [61, 15], [0, null], [100, 20]]) {
     const [used, resets] = codexWindow(reading, 20_000);
@@ -9,6 +9,16 @@ test('expired five-hour and weekly Codex readings show zero and Reset without gu
   }
   assert.deepEqual(codexWindow([61, 30], 20_000), [61, 30]);
   assert.equal(resetLabel(30, String), 'Resets 30');
+});
+
+test('TODO 196a: a limited account\'s 5h row with a blank reset reads as no reset, not NaN (the card would throw)', () => {
+  const row = { used_pct: '100', resets: '' };
+  for (const agent of ['Rook', 'Pip', 'King', 'Rowan']) {
+    const [used, resets] = windowReading(agent, row);
+    assert.equal(resets, null);
+    assert.equal(resetLabel(resets, () => assert.fail('formatted a blank reset')), 'Reset');
+  }
+  assert.deepEqual(windowReading('Pip', { used_pct: '61', resets: '1970-01-01T00:00:30Z' }), [61, 30]);
 });
 
 test('Knight forecasts once the new window has 3 h of data and some use', () => {

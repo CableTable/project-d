@@ -1,0 +1,17 @@
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { test } from 'node:test';
+import { unitFiles } from './tools/unit.mjs';
+
+test('TODO 196a: unit.mjs --skip leaves the named files out; an unknown name or a bad flag is an error', () => {
+  const all = ['a.test.mjs', 'b.test.mjs', 'c.test.mjs'];
+  assert.deepEqual(unitFiles(all, []), all);
+  assert.deepEqual(unitFiles(all, ['--skip', 'b.test.mjs']), ['a.test.mjs', 'c.test.mjs']);
+  assert.deepEqual(unitFiles(all, ['--skip', 'a.test.mjs', '--skip', 'c.test.mjs']), ['b.test.mjs']);
+  assert.throws(() => unitFiles(all, ['--skip', 'nope.test.mjs']), /--skip: no unit file named nope\.test\.mjs/);
+  assert.throws(() => unitFiles(all, ['--skip']), /usage/);
+  assert.throws(() => unitFiles(all, ['--bogus', 'a.test.mjs']), /usage/);
+  const r = spawnSync(process.execPath, ['tools/unit.mjs', '--skip', 'nope.test.mjs'], { encoding: 'utf8', timeout: 30000 });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /no unit file named nope\.test\.mjs/);
+});

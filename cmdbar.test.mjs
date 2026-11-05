@@ -26,6 +26,14 @@ test('tooltip text uses the command aliases and keys, with no empty brackets', (
   assert.equal(CB.tooltipText('Line', CB.resolve('line'), 'draw', 'Straight segments'), 'Line (L)\nStraight segments');
 });
 
+test('TODO 97b: Group / G and Ungroup resolve on drawing, Compare and layout tabs with the layout keys', () => {
+  for (const tab of ['draw', 'compare', 'layout']) {
+    for (const word of ['group', 'g']) { assert.equal(CB.resolve(word, tab).name, 'group'); assert.equal(CB.resolve(word, tab).where, ''); }
+    assert.equal(CB.resolve('ungroup', tab).where, '');
+  }
+  assert.equal(CB.resolve('group').key, 'Ctrl+G'); assert.equal(CB.resolve('ungroup').key, 'Ctrl+Shift+G');
+});
+
 test('every name and alias is lower case, and no command repeats a word on the same tab', () => {
   for (const tab of ['draw', 'layout']) {
     const seen = new Map();
@@ -35,6 +43,14 @@ test('every name and alias is lower case, and no command repeats a word on the s
       assert.ok(!seen.has(w), `${w} is both ${seen.get(w)} and ${c.name} on a ${tab} tab`);
       seen.set(w, c.name);
     }
+  }
+});
+
+test('TODO 97j2: Divide and Measure points aliases keep distance Measure in every tab', () => {
+  for (const tab of ['draw', 'layout', 'compare']) {
+    for (const word of ['divide', 'div']) assert.equal(CB.resolve(word, tab).name, 'divide');
+    for (const word of ['measurepoints', 'me']) assert.equal(CB.resolve(word, tab).name, 'measurepoints');
+    for (const word of ['measure', 'm', 'mea']) assert.equal(CB.resolve(word, tab).name, 'measure');
   }
 });
 
@@ -227,6 +243,15 @@ test('history: filter, copy text, the last three fade', () => {
   assert.deepEqual(CB.fadeOf(lines).map((l) => l.age), [3, 2, 1]);
   assert.deepEqual(CB.fadeOf(lines.slice(0, 1)).map((l) => l.age), [1]);
   assert.deepEqual(CB.fadeOf([]), []);
+});
+
+test('Chamfer Distance opens its own prompts; existing inline value options keep their behavior', () => {
+  assert.equal(CB.optionNeedsValue('Distance', 'CHAMFER'), false);
+  assert.equal(CB.optionNeedsValue('Distance', 'CONTOUR'), true);
+  assert.equal(CB.optionNeedsValue('Height', 'TEXT'), true);
+  assert.equal(CB.optionNeedsValue('Trim', 'CHAMFER'), false);
+  assert.equal(CB.resolve('cha', 'draw').name, 'chamfer');
+  assert.equal(CB.resolve('cha', 'layout').name, 'chamfer');
 });
 
 console.log(n + ' cmdbar tests passed');

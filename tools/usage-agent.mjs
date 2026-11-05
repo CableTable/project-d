@@ -2,7 +2,7 @@
 import { createSign } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, createReadStream, existsSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, rmdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -13,6 +13,55 @@ import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
+
+export const LONGEST_RUN_MS = 3 * 3600_000; // shortcut: a guess at the longest build / review run, raise it if a real run outlasts it
+
+export function isRookStale({ jsonlMtime, queueText, queueMtime, now } = {}) {
+  return [jsonlMtime, queueMtime, now].every(Number.isFinite)
+    && now - jsonlMtime > 30 * 60_000 && queueMtime > jsonlMtime
+    // a `running` line in a queue.txt unchanged for longer than any run is dead: it counts as no live run, and as a run that ended
+    && typeof queueText === 'string' && /: (?:ended|running)\s*$/m.test(queueText) && (now - queueMtime > LONGEST_RUN_MS || !/: running\s*$/m.test(queueText));
+}
+
+export function collectRookStatus(extras, home = homedir(), now = Date.now(), log = console.error) {
+  let jsonlMtime;
+  try {
+    const uuid = readFileSync(join(extras, 'rook-next.txt'), 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/)[0].trim();
+    if (!/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i.test(uuid)) return { stuck: false, since: null };
+    jsonlMtime = statSync(join(home, '.claude', 'projects', 'E--Project-B-Claude-Project-D', uuid + '.jsonl')).mtimeMs;
+    const queues = readdirSync(extras, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && /^runs\d+$/.test(entry.name))
+      .sort((a, b) => Number(b.name.slice(4)) - Number(a.name.slice(4)))
+      .map((entry) => join(extras, entry.name, 'queue.txt'));
+    const path = queues.find(existsSync);
+    const stuck = path ? isRookStale({ jsonlMtime, queueText: readFileSync(path, 'utf8'), queueMtime: statSync(path).mtimeMs, now }) : false;
+    return { stuck, since: new Date(jsonlMtime).toISOString() };
+  } catch (e) {
+    if (e.code !== 'ENOENT') log(`Rook check ERROR: ${e.message}`);
+    return { stuck: false, since: jsonlMtime == null ? null : new Date(jsonlMtime).toISOString() };
+  }
+}
+
+export async function alertRook(rook, statePath, log = console.error, powershell = run) {
+  try {
+    let previous = {};
+    try { previous = JSON.parse(readFileSync(statePath, 'utf8')) || {}; }
+    catch { /* missing, empty or corrupt: no previous state, rewritten below */ }
+    // Save before the toast: a failed notification must not repeat every hour.
+    writeFileSync(statePath, JSON.stringify(rook));
+    if (!rook.stuck || (previous.stuck && previous.since === rook.since)) return;
+    const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(rook.since));
+    const script = String.raw`
+$ErrorActionPreference = 'Stop'
+[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] > $null
+$xml = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText01)
+$xml.GetElementsByTagName('text').Item(0).InnerText = 'Rook stuck since ${time}'
+$toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
+[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe').Show($toast)
+`;
+    await powershell('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], { windowsHide: true, timeout: 15_000 });
+  } catch (e) { log(`Rook toast ERROR: ${e.message}`); }
+}
 
 export function parseTickets(text, log = console.error) {
   const rows = [], notes = new Map();
@@ -309,7 +358,10 @@ async function main() {
     async function refresh(requestedAt) {
       busy = true;
       nextRefresh = Date.now() + 3600_000;
+      const rook = collectRookStatus('E:/Project B/Claude/Project D extras', homedir(), Date.now(), log);
+      const rookWrite = { update: { name: `${database}/usage/rook`, fields: firestoreValue(rook).mapValue.fields } };
       try {
+        await alertRook(rook, join(home, 'usage-agent-rook.json'), log);
         const probe = await run(process.execPath, ['tools/rook.mjs', 'usage'], { cwd: repo, windowsHide: true, timeout: 180_000, maxBuffer: 1024 * 1024 });
         if (probe.stderr) log(`probe recovered: ${probe.stderr}`);
         const dataDir = join(repo, 'mockups', '_design', 'usage');
@@ -335,12 +387,13 @@ async function main() {
           return { update: { name: `${database}/usage/${name}`, fields } };
         });
         writes.push(statusWrite(['lastUpdate', 'agentHeartbeat'], { lastError: '', lastErrorAt: null }));
+        writes.push(rookWrite);
         await request(':commit', { writes });
         log('refresh OK');
       } catch (e) {
         log(`refresh ERROR: ${e.stack || e.message}\n${e.stdout || ''}\n${e.stderr || ''}`);
         try {
-          await request(':commit', { writes: [statusWrite(['lastErrorAt', 'agentHeartbeat'], { lastError: refreshFailure(e) })] });
+          await request(':commit', { writes: [rookWrite, statusWrite(['lastErrorAt', 'agentHeartbeat'], { lastError: refreshFailure(e) })] });
         } catch (error) { log(`error status ERROR: ${error.message}`); }
       } finally { lastHandled = requestedAt; busy = false; }
     }

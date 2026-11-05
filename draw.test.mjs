@@ -87,6 +87,16 @@ test('dynamicInputPlacement: Circle Radius / Diameter midpoint, clamps and short
   assert.equal(place([400, 300], [400, 300]), null);
 });
 
+test('dynamicInputPlacement: Measure tag sits 24 px off the line (near edge), flips at the canvas edge, null under 40 px', () => {
+  const place = (a, b) => DR.dynamicInputPlacement(a, b, { w: 800, h: 600 }, { length: [120, 30], angle: [120, 30] }, 'tag');
+  nearPt(place([300, 300], [500, 300]).length, [400, 261]);          // above the line: 24 + half the 30 px height
+  nearPt(place([500, 300], [300, 300]).length, [400, 339]);          // the normal follows the direction
+  nearPt(place([400, 100], [400, 300]).length, [484, 200]);          // a vertical line: 24 + half the 120 px width, so the tag clears the line
+  nearPt(place([300, 30], [500, 30]).length, [400, 69]);             // no room above: flips below
+  nearPt(place([760, 100], [760, 300]).length, [676, 200]);          // no room to the right: flips left
+  assert.equal(place([400, 300], [439.99, 300]), null);
+});
+
 test('parseInput: x,y, @dx,dy, polar, a length, words, Enter', () => {
   assert.deepEqual(DR.parseInput('10,20'), { kind: 'xy', rel: false, abs: false, x: 10, y: 20 });
   assert.deepEqual(DR.parseInput(' 10 , -20.5 '), { kind: 'xy', rel: false, abs: false, x: 10, y: -20.5 });

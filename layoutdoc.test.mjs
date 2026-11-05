@@ -426,6 +426,17 @@ test('layout objects (TODO 156b fixes): group and lock survive save and reopen; 
   assert.equal(piece.g, 'g1'); assert.equal(piece.lock, true); assert.equal(lay.parts.n1.name, 'a');
 });
 
+test('layout objects (TODO 97d fix): a join result (heir = the source object) keeps the source group, lock and place, not the top of the order', () => {
+  const lay = LD.newLayout('Join'), layers = LD.layersOf(lay);
+  const mk = (id, ent, extra) => { const o = LD.objectPart(id, id, ent, layers); lay.parts[id] = o; lay.placed.push({ ...LD.objectPlacement(o), ...extra }); };
+  mk('x', circle(200, 100, 15), {}); mk('a', line(0, 0, 10, 0), { g: 'g1', lock: true }); mk('b', line(10, 0, 20, 0)); mk('z', circle(300, 100, 15), {});
+  const v = LD.objectDoc(lay), [, a] = v.raw.entities;
+  LD.objectCommit(lay, v, [v.raw.entities[0], line(0, 0, 20, 0), v.raw.entities[3]], () => 'n1', a);
+  assert.equal(lay.placed.length, 3);
+  assert.deepEqual(lay.placed.map((p) => p.partId), ['x', 'n1', 'z'], 'the result sits where the source was');
+  assert.equal(lay.placed[1].g, 'g1'); assert.equal(lay.placed[1].lock, true);
+});
+
 test('layout objects (TODO 156b review): an outside entity count change drops positional group and lock metadata', () => {
   const lay = LD.newLayout('Outside edit'), layers = LD.layersOf(lay);
   const a = LD.objectPart('a', 'Note', TX.encode({ type: 'TEXT', x: 10, y: 10, h: 5, lines: ['NOTE'], angle: 0, ha: 0, font: 'Standard' }, { layer: '0' }), layers);

@@ -28,7 +28,13 @@ export function setRunLine(text, line, key) {
 
 // job = { queue, key, text: '<kind> <id> -> <key>:', review?: { dir, branch, base, brief, out, from? } } (JSON from the launcher); x = file / git / launch access.
 export function finish(job, code, x) {
-  if (job.queue) { try { x.write(job.queue, setRunLine(x.read(job.queue) || '', `${job.text} ended`, job.key)); } catch { /* queue.txt is a note, not the run */ } }
+  // `ended` goes in after the chained review wrote its `running`, so a refresh in between sees no gap
+  try { chainReview(job, code, x); } finally {
+    if (job.queue) { try { x.write(job.queue, setRunLine(x.read(job.queue) || '', `${job.text} ended`, job.key)); } catch { /* queue.txt is a note, not the run */ } }
+  }
+}
+
+function chainReview(job, code, x) {
   const r = job.review;
   if (!r) return;
   let why;

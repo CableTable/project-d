@@ -4,10 +4,13 @@ import { dropPart } from './dropin.js';
 import { relabelDims, DIM_BLOCK, LDR_BLOCK } from './edit.js';
 import { buildLayoutDoc } from './apply.js';
 import { explodeSelection } from './explode.js';
+import { remap } from './groups.js';
 
 export function copySnapshot(raw, selection, factor, name, source = name) {
   const entities = raw.entities.filter((_, i) => selection.has(i));
-  return structuredClone({ raw: { ...raw, entities, blocks: blocksUsed(raw.blocks, entities) }, factor, name, source });
+  const indexes = new Map();
+  raw.entities.forEach((_, i) => { if (selection.has(i)) indexes.set(i, [indexes.size]); });
+  return structuredClone({ raw: { ...raw, entities, groups: remap(raw.groups, indexes), blocks: blocksUsed(raw.blocks, entities) }, factor, name, source });
 }
 
 /** Selected placements keep their library ids and own their part geometry. */
@@ -49,5 +52,6 @@ export function pasteSnapshot(snapshot, target) {
     if (dims) r.blocks = { ...r.blocks, ...dims.blocks };
   }
   r.entities = r.entities.map((e, i) => i < r.from ? e : { ...e, ps: !!target.space });
+  r.groups = [...(target.raw.groups || []), ...remap(part.raw.groups, new Map(part.raw.entities.map((_, i) => [i, [r.from + i]])))];
   return r;
 }

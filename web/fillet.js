@@ -173,6 +173,127 @@ export function filletEntities(e1, p1, e2, p2, r, trim = true) {
 
 const isPolyline = (e) => ['LWPOLYLINE', 'POLYLINE'].includes(e?.type);
 
+/** The picked straight segment, in drawing coordinates; Chamfer never accepts arc segments. */
+export function chamferSegment(e, p) {
+  const error = 'Chamfer requires 2 lines (not arc segments). ';
+  if (!['LINE', 'LWPOLYLINE'].includes(e?.type)) return { error };
+  if (e.type === 'LINE') {
+    const s = shapeOf(e, 1);
+    return { a: s.a, b: s.b };
+  }
+  if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Chamfer needs a polyline in the drawing plane' };
+  const { vertices } = polyRecords(e), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+  const pts = vertices.map((v) => [flip * (get(v, 10) ?? 0), get(v, 20) ?? 0, flip * (get(v, 42) ?? 0)]);
+  const P = pathOf({ t: 'poly', pts, closed: !!((get(e.r, 70) ?? 0) & 1) });
+  const index = closest(P, p)?.index, seg = P.segs[index];
+  return !seg || seg.bulge ? { error } : { ...seg, index, flip };
+}
+
+/** Two picked LINEs / straight LWPOLYLINE segments; Angle measures the bevel from the first line. */
+export function chamferEntities(e1, p1, e2, p2, d1, d2, trim = true, current = { layer: '0' }, method = 'Distance') {
+  if (![d1, d2].every((v) => Number.isFinite(v) && v >= 0)) return { error: 'Chamfer distances must be 0 or more' };
+  const segs = [chamferSegment(e1, p1), chamferSegment(e2, p2)];
+  const bad = segs.find((s) => s.error); if (bad) return bad;
+  if (e1 === e2 && segs[0].index === segs[1].index) return { error: 'Pick two different lines or segments' };
+  const closed = (e) => e.type === 'LWPOLYLINE' && !!((get(e.r, 70) ?? 0) & 1), count = (e) => polyRecords(e).vertices.length;
+  if (e1 === e2) {
+    const [i, j] = [segs[0].index, segs[1].index], n = count(e1);
+    if (Math.abs(i - j) !== 1 && !(closed(e1) && ((i + 1) % n === j || (j + 1) % n === i))) return { error: 'Pick two adjacent segments of the same polyline' };
+  }
+  const [a, b] = segs, v1 = sub(a.b, a.a), v2 = sub(b.b, b.a), n1 = Math.hypot(...v1), n2 = Math.hypot(...v2);
+  if (n1 < EPS || n2 < EPS) return { error: 'A line has no length' };
+  const den = cross(v1, v2);
+  if (Math.abs(den) < EPS * n1 * n2) return { error: 'Lines are parallel' };
+  const X = along(a.a, v1, cross(sub(b.a, a.a), v2) / den);
+  const sides = segs.map((s, i) => {
+    const v = i ? v2 : v1, n = i ? n2 : n1, pick = i ? p2 : p1;
+    const sign = dot(sub(pick, X), v) >= 0 ? 1 : -1, u = v.map((x) => x * sign / n);
+    const far = dot(sub(s.a, X), u) > dot(sub(s.b, X), u) ? 0 : 1;
+    return { u, far, reach: dot(sub(far ? s.b : s.a, X), u) };
+  });
+  if (method === 'Angle' && d1) {
+    const theta = Math.acos(Math.max(-1, Math.min(1, dot(sides[0].u, sides[1].u)))), alpha = d2 / DEG;
+    if (!(alpha > 0 && theta + alpha < Math.PI - EPS)) return { error: 'Chamfer angle does not fit these lines' };
+    d2 = d1 * Math.sin(alpha) / Math.sin(theta + alpha);
+  } else if (method === 'Angle') d2 = 0;
+  if (trim && sides.some((s, i) => (i ? d2 : d1) >= s.reach - EPS)) return { error: 'Chamfer distance is too large' };
+  const tips = sides.map((s, i) => along(X, s.u, i ? d2 : d1).map((v) => +fmt(v)));
+  if (tips.flat().some((v) => !Number.isFinite(v)) || (d1 || d2) && dist(tips[0], tips[1]) < EPS ||
+      trim && tips.some((p, i) => dist(p, sides[i].far ? segs[i].b : segs[i].a) < EPS)) return { error: 'Chamfer distance is too small for drawing precision' };
+  const changes = segs.map((s, i) => ({ vertex: s.index == null ? null : (s.index + (sides[i].far ? 0 : 1)) % polyRecords(i ? e2 : e1).vertices.length, p: tips[i] }));
+  // Two objects: a polyline may only move the end vertex of an open polyline, else the next segment would bend.
+  if (trim && e1 !== e2 && [e1, e2].some((e, i) => e.type === 'LWPOLYLINE' && (closed(e) || ![0, count(e) - 1].includes(changes[i].vertex)))) return { error: 'Pick two adjacent segments of the same polyline; separate objects cannot be filleted to a polyline' };
+  const replace = (e, edits) => {
+    if (!trim) return e;
+    if (e.type === 'LINE') {
+      const i = e === e1 ? 0 : 1, code = sides[i].far ? 10 : 11;
+      if (dist(tips[i], sides[i].far ? segs[i].a : segs[i].b) < EPS) return e;
+      return { ...e, r: recordWith(e.r, [[code, tips[i][0]], [code + 10, tips[i][1]]]) };
+    }
+    const { header, vertices } = polyRecords(e), out = vertices.slice(), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+    if (edits.every(({ vertex, p }) => dist(p, [flip * (get(vertices[vertex], 10) ?? 0), get(vertices[vertex], 20) ?? 0]) < EPS)) return e;
+    for (const { vertex, p } of edits) out[vertex] = recordWith(out[vertex], [[10, flip * p[0]], [20, p[1]]]);
+    if (edits.length === 2 && edits[0].vertex === edits[1].vertex && dist(tips[0], tips[1]) > EPS) {
+      const j = edits[0].vertex, incoming = segs[0].index === (j + vertices.length - 1) % vertices.length ? 0 : 1;
+      out[j] = recordWith(vertices[j], [[10, flip * tips[incoming][0]], [20, tips[incoming][1]], [42, 0]]);
+      const next = recordWith(vertices[j], [[10, flip * tips[1 - incoming][0]], [20, tips[1 - incoming][1]]]);
+      const id = next.c.indexOf(91); if (id >= 0) { next.c.splice(id, 1); next.v.splice(id, 1); }
+      out.splice(j + 1, 0, next);
+    }
+    const r = recordWith(header, [[90, out.length]]);
+    for (const v of out) { r.c.push(...v.c); r.v.push(...v.v); }
+    return { ...e, r };
+  };
+  const same = e1 === e2, integrated = trim && same && changes[0].vertex === changes[1].vertex;
+  const ents = same ? [replace(e1, changes)] : [replace(e1, [changes[0]]), replace(e2, [changes[1]])];
+  if (!integrated && dist(tips[0], tips[1]) > EPS) ents.push(rebuilt({ t: 'line', a: tips[0], b: tips[1] }, e1.layer.toLowerCase() === e2.layer.toLowerCase() ? e1 : current));
+  return { ents };
+}
+
+/** Indexes of the vertices that start a real segment: a zero-length segment (repeated vertex, closing vertex = first) is not one, so its neighbours meet at one corner. */
+const realVertices = (pts, closed) => pts.map((_, i) => i).filter((i) =>
+  !((closed || i < pts.length - 1) && Math.hypot(pts[i][0] - pts[(i + 1) % pts.length][0], pts[i][1] - pts[(i + 1) % pts.length][1]) < EPS));
+
+/** P: reserve each accepted setback so neighbouring chamfers cannot overlap, also in No trim. */
+export function chamferAllPolyline(e, d1, d2, trim = true, method = 'Distance') {
+  if (e?.type !== 'LWPOLYLINE') return { error: 'Select a 2D LWPOLYLINE' };
+  if (![d1, d2].every((v) => Number.isFinite(v) && v >= 0)) return { error: 'Chamfer distances must be 0 or more' };
+  if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Chamfer needs a polyline in the drawing plane' };
+  const { header, vertices: all } = polyRecords(e), whole = filletPolylineShape(e), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+  const keep = realVertices(whole.pts, whole.closed), vertices = keep.map((i) => all[i]);
+  const shape = { closed: whole.closed, pts: keep.map((i) => whole.pts[i]) };
+  const segs = shape.pts.slice(0, shape.closed ? shape.pts.length : -1).map((p, i) => ({
+    a: p.slice(0, 2), b: shape.pts[(i + 1) % shape.pts.length].slice(0, 2), bulge: p[2], record: vertices[i],
+  }));
+  let count = 0, short = 0;
+  const lines = [];
+  for (let i = 0; i < segs.length; i++) {
+    const a = segs[i], b = segs[shape.closed ? (i + 1) % segs.length : i + 1];
+    if (!b || a === b || a.bulge || b.bulge) continue;
+    const first = rebuilt({ t: 'line', a: a.a, b: a.b }, e), second = rebuilt({ t: 'line', a: b.a, b: b.b }, e);
+    const r = chamferEntities(first, a.a, second, b.b, d1, d2, true, e, method);
+    if (r.error) { if (r.error !== 'Lines are parallel') short++; continue; }
+    a.b = shapeOf(r.ents[0], 1).b; b.a = shapeOf(r.ents[1], 1).a;
+    count++;
+    if (r.ents[2]) { a.corner = true; lines.push(r.ents[2]); }
+  }
+  if (!trim) return { ents: [e, ...lines], count, short };
+  if (!lines.length) return { ents: [e], count, short };
+  const out = [];
+  for (const seg of segs) {
+    out.push(recordWith(seg.record, [[10, flip * seg.a[0]], [20, seg.a[1]]]));
+    if (seg.corner) {
+      const v = recordWith(seg.record, [[10, flip * seg.b[0]], [20, seg.b[1]], [42, 0]]);
+      const id = v.c.indexOf(91); if (id >= 0) { v.c.splice(id, 1); v.v.splice(id, 1); }
+      out.push(v);
+    }
+  }
+  if (!shape.closed) out.push(vertices.at(-1));
+  const next = recordWith(header, [[90, out.length]]);
+  for (const v of out) { next.c.push(...v.c); next.v.push(...v.v); }
+  return { ents: [{ ...e, r: next }], count, short };
+}
+
 // Keep raw vertex records so unrelated bulges, widths and vertex data survive the edit.
 function polyRecords(e) {
   if (e.type === 'POLYLINE') return { header: e.r, vertices: e.kids || [] };
@@ -208,7 +329,8 @@ export function filletAllPolyline(e, r, trim = true) {
   if (e?.type !== 'LWPOLYLINE') return { error: 'Select a 2D LWPOLYLINE' };
   if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
   if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Fillet needs a plain 2D polyline in the drawing plane' };
-  const { header, vertices } = polyRecords(e), closed = !!((get(e.r, 70) ?? 0) & 1);
+  const { header, vertices: all } = polyRecords(e), closed = !!((get(e.r, 70) ?? 0) & 1);
+  const keep = realVertices(all.map((v) => [get(v, 10) ?? 0, get(v, 20) ?? 0]), closed), vertices = keep.map((i) => all[i]);
   const pts = vertices.map((v) => [get(v, 10) ?? 0, get(v, 20) ?? 0]);
   const segs = vertices.slice(0, closed ? vertices.length : -1).map((v, i) => ({
     a: pts[i], b: pts[(i + 1) % pts.length], bulge: get(v, 42) ?? 0, record: v,

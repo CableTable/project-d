@@ -54,7 +54,7 @@ export function geo(s) {
   const c = [(s.a[0] + s.b[0]) / 2 + nx * h, (s.a[1] + s.b[1]) / 2 + ny * h];
   return { line: false, c, r, a0: Math.atan2(s.a[1] - c[1], s.a[0] - c[0]), sw: th };
 }
-const pointAt = (g, f) => (g.line ? [g.a[0] + (g.b[0] - g.a[0]) * f, g.a[1] + (g.b[1] - g.a[1]) * f] : [g.c[0] + g.r * Math.cos(g.a0 + g.sw * f), g.c[1] + g.r * Math.sin(g.a0 + g.sw * f)]);
+export const pointAt = (g, f) => (g.line ? [g.a[0] + (g.b[0] - g.a[0]) * f, g.a[1] + (g.b[1] - g.a[1]) * f] : [g.c[0] + g.r * Math.cos(g.a0 + g.sw * f), g.c[1] + g.r * Math.sin(g.a0 + g.sw * f)]);
 /** The part of a segment from fraction f0 to f1 (of its length). */
 export function subSeg(s, f0, f1) {
   if (f0 <= 1e-9 && f1 >= 1 - 1e-9) return s;
@@ -433,7 +433,7 @@ function offsetPath(P, dd) {
 }
 
 /** Is the path a polyline shape again: points with bulges. */
-function polyOf(segs, closed) {
+export function polyOf(segs, closed) {
   const pts = segs.map((s) => (s.a.length > 3 || s.bulge ? [s.a[0], s.a[1], s.bulge || 0, ...s.a.slice(3)] : [s.a[0], s.a[1]]));
   if (!closed) pts.push(segs[segs.length - 1].b.slice());
   return { t: 'poly', pts, closed };

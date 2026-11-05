@@ -2,7 +2,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-auth.js';
 import { getFirestore, doc, onSnapshot, setDoc, serverTimestamp, getDocFromServer } from 'https://www.gstatic.com/firebasejs/12.3.0/firebase-firestore.js';
-import { codexWindow, resetLabel, weeklyForecast } from './usage-window.js';
+import { resetLabel, weeklyForecast, windowReading } from './usage-window.js';
 import { firebaseConfig } from './firebase-config.js';
 import { cumulativeTokens, resetTimes, tokenEndLabels } from './token-chart.js';
 
@@ -68,7 +68,7 @@ function drawAgents(limits, pace) {
     card.append(head);
     ['5h', 'week'].forEach((w) => {
       const r = rows.find((x) => x.window === w); if (!r) return;
-      const [used, resets] = a === 'Rowan' ? codexWindow([Number(r.used_pct), r.resets ? Date.parse(r.resets) / 1000 : null]) : [Number(r.used_pct), Date.parse(r.resets) / 1000];
+      const [used, resets] = windowReading(a, r);
       const p = resets == null ? null : pk.get(a + '|' + w), cap = num(r.cap_pct);
       const m = el('div', 'ud-meter');
       const top = el('div', 'ud-mrow');
@@ -358,6 +358,14 @@ const refreshButton = document.getElementById('refresh'), dashboard = document.g
 const pageTabs = document.querySelector('.page-tabs');
 const lastUpdateLabel = document.getElementById('last-update'), offline = document.getElementById('offline');
 const lastErrorLabel = document.getElementById('last-error');
+const rookStuck = document.getElementById('rook-stuck');
+const IST_TIME = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+function drawRookStuck(rook) {
+  const since = new Date(rook?.since);
+  const show = rook?.stuck === true && !isNaN(since);
+  rookStuck.textContent = show ? 'Rook stuck since ' + IST_TIME.format(since) : '';
+  rookStuck.hidden = !show;
+}
 let currentStatus = {}, pending = null, allowed = false;
 
 function finishUpdate(text) {
@@ -412,11 +420,11 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
   onAuthStateChanged(auth, (user) => {
     stopListening(); allowed = false; currentStatus = {};
     data = { limits: [], history: [], runs: [], analysis: [], tickets: [], tokens: [] };
-    drawTodo([]); drawTickets();
+    drawTodo([]); drawTickets(); drawRookStuck();
     draw(); finishUpdate(user ? 'Loading…' : 'Sign in to see usage.');
     dashboard.hidden = pageTabs.hidden = true; signin.hidden = !!user; signout.hidden = !user; showStatus();
     if (!user) return;
-    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'tokens', 'status']) {
+    for (const name of ['limits', 'history', 'runs', 'analysis', 'todo', 'tickets', 'tokens', 'rook', 'status']) {
       subscriptions.push(onSnapshot(doc(db, 'usage', name), { includeMetadataChanges: true }, (snapshot) => {
         if (snapshot.metadata.fromCache) return;
         allowed = true; dashboard.hidden = pageTabs.hidden = false;
@@ -425,6 +433,7 @@ if (Object.values(firebaseConfig).some((v) => v.includes('<'))) {
         const value = snapshot.data() || {};
         if (name === 'status') currentStatus = value;
         else if (name === 'todo') drawTodo(value.sections || []);
+        else if (name === 'rook') drawRookStuck(value);
         else data[name] = (value[name === 'analysis' ? 'items' : 'rows'] || []).map((r) => (r.agent === 'Pip' ? { ...r, agent: 'Bishop' } : r)); // rows uploaded before the rename
         if (name === 'tickets') drawTickets();
         showStatus(); draw();

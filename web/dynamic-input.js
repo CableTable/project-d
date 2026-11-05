@@ -8,7 +8,7 @@ const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Measure, Dimension, Set length and the Modify tools are shown by app.js as tools of mm points; Measure types only its first point, its second is a read-only length.
 // Move / Copy take a base point only (their target stays the prompt); Rotate then types an Angle, Scale a Factor: one number, no point.
 // Circle types its centre then one Radius; Ellipse its centre, Length + Angle of axis 1, then one Length (the other half-axis); Arc its first point, then Length + Angle from the previous point twice.
-const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'], move: ['xy'], copy: ['xy'], rotate: ['xy', 'angle'], scale: ['xy', 'factor'],
+const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'], move: ['xy'], copy: ['xy'], stretch: ['xy'], rotate: ['xy', 'angle'], scale: ['xy', 'factor'],
   circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
 export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length'].includes(mode);
 export const inputMode = (T) => STAGES[T.kind] ? STAGES[T.kind][T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)

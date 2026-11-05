@@ -5,7 +5,6 @@ import { h } from './dom.js';
 import * as CB from './cmdbar.js';
 
 const NS = 'http://www.w3.org/2000/svg';
-const VALUED = /^(distance|steps|height|justify|style)$/i;       // the option words that take a value
 const PATH = {
   term: 'M4 6l6 6-6 6M12 18h8', search: 'M5 11a6 6 0 1 0 12 0a6 6 0 1 0-12 0M16 16l4 4', close: 'M6 6l12 12M18 6L6 18',
   Draw: 'M4 20l4-1 11-11-3-3L5 16z', Annotate: 'M4 8v10M20 8v10M4 13h16', Edit: 'M20 12a8 8 0 1 1-3-6.2M20 4v5h-5',
@@ -172,7 +171,7 @@ export function buildCmdUI(hooks) {
       if (lastName) { addLine('Command:', '↵ (repeats ' + labelOf(lastName) + ')', 'cm', lastName); close(); hooks.runName(lastName); return; }
       close(); return;
     }
-    if (picked && VALUED.test(picked.word)) { chip(picked); return; }       // it needs a value: the bar waits for it, as the chip does
+    if (picked && CB.optionNeedsValue(picked.word, act.label)) { chip(picked); return; }       // it needs a value: the bar waits for it, as the chip does
     let send = text;
     if (picked) send = picked.word.toLowerCase();
     else if (!act && /^[a-z][a-z0-9]*$/i.test(text) && !resolve(text, tab)) { const s = suggest(text, tab); if (s.length && s[Math.min(hi, s.length - 1)].hit) send = s[Math.min(hi, s.length - 1)].cmd.name; }
@@ -183,7 +182,7 @@ export function buildCmdUI(hooks) {
   }
   /** A chip: a word that needs a value waits in the bar for it, any other goes at once. */
   function chip(o) {
-    if (VALUED.test(o.word)) { input.value = o.word.toLowerCase() + ' '; hi = 0; update(); input.focus(); return; }
+    if (CB.optionNeedsValue(o.word, hooks.active()?.label)) { input.value = o.word.toLowerCase() + ' '; hi = 0; update(); input.focus(); return; }
     go(o.word);
   }
 

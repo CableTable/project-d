@@ -70,7 +70,11 @@ export function dynamicInputPlacement(a, b, { w, h }, boxes, kind = 'segment') {
   const normal = [dy / len, -dx / len];
   const inside = (p, size) => p[0] - size[0] / 2 >= 4 && p[0] + size[0] / 2 <= w - 4 && p[1] - size[1] / 2 >= 4 && p[1] + size[1] / 2 <= h - 4;
   const offset = (p, n) => [p[0] + normal[0] * n, p[1] + normal[1] * n];
-  const side = [a, b].every((p) => inside(offset(p, 24), [0, 0])) && inside(offset(mid, 24), boxes.length) ? 1 : -1;
+  if (kind === 'tag') {                                      // Measure tag: its near edge 24 px off the line (the box reaches half its extent along the normal further), on the side with room
+    const gap = 24 + (Math.abs(normal[0]) * boxes.length[0] + Math.abs(normal[1]) * boxes.length[1]) / 2;
+    return { length: clamp(offset(mid, inside(offset(mid, gap), boxes.length) ? gap : -gap), boxes.length) };
+  }
+  const side =[a, b].every((p) => inside(offset(p, 24), [0, 0])) && inside(offset(mid, 24), boxes.length) ? 1 : -1;
   const radius = Math.max(30, Math.min(120, len * .4)), angle = angleOf([0, 0], [dx, -dy]) / DEG;
   const length = clamp(offset(mid, 24 * side), boxes.length);
   let at = clamp([a[0] + radius * Math.cos(angle / 2), a[1] - radius * Math.sin(angle / 2)], boxes.angle);

@@ -2,3 +2,4 @@
 tools/hooks/* text eol=lf
 DECISIONS.md merge=union
 HISTORY.md merge=union
+browser.test.mjs merge=union

@@ -11,6 +11,18 @@ const field = (e, c) => e.r.v[e.r.c.indexOf(c)];
 const target = (raw = newDoc(4), factor = 1, space = 0) => ({ raw, factor, space, dp: 2, names: Object.keys(raw.layers), hidden: [], locked: [], cur: '0' });
 const copyAll = (raw, factor = 1) => copySnapshot(raw, new Set(raw.entities.map((_, i) => i)), factor, 'source.dxf');
 
+test('TODO 97b: clipboard remaps selected group members and pastes a separate group', () => {
+  const raw = newDoc(4);
+  addEntities(raw, line(0, 0, 10, 0), line(0, 10, 10, 10), line(0, 20, 10, 20));
+  raw.groups = [{ members: [1, 2], unnamed: true, selectable: true }];
+  const snapshot = copySnapshot(raw, new Set([1, 2]), 1, 'group');
+  assert.deepEqual(snapshot.raw.groups[0].members, [0, 1]);
+  const r = pasteSnapshot(snapshot, target(raw));
+  assert.deepEqual(r.groups.map((g) => g.members), [[1, 2], [3, 4]]);
+  assert.deepEqual(raw.groups[0].members, [1, 2]);
+  assert.equal(copySnapshot(raw, new Set([1]), 1, 'partial').raw.groups.length, 0);
+});
+
 test('placed snapshot keeps only selected linked parts and survives source edits; drawing paste applies units, rotation and mirrors', () => {
   const raw = newDoc(1); addEntities(raw, line(1, 2, 3, 2), line(3, 2, 3, 3));
   const part = makePart('linked', 'Bracket', raw, 25.4, 'Bracket');

@@ -47,6 +47,56 @@ export async function setDoc() {
 export const getDocFromServer = async () => ({data: () => ({requestedAt: stamp(window.__requestedAt)})});
 `;
 
+test('TODO 198b: Rook stuck line shown in IST and hidden on recovery or sign-out', async (t) => {
+  const shotDir = process.env.SHOTS_DIR || 'shots-198b';
+  mkdirSync(shotDir, { recursive: true });
+  const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+  t.after(() => browser.close());
+  for (const colorScheme of ['light', 'dark']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, colorScheme });
+    try {
+      await context.addInitScript(() => { window.__docs = {}; });
+      await context.route('**/*', (route) => {
+        const url = new URL(route.request().url());
+        if (url.hostname === 'usage.test') {
+          const name = url.pathname === '/' ? 'index.html' : url.pathname.slice(1);
+          assert.ok(['index.html', 'app.js', 'app.css', 'firebase-config.js', 'token-chart.js', 'usage-window.js'].includes(name));
+          return route.fulfill({ body: readFileSync(new URL('../usage-site/public/' + name, import.meta.url)), contentType: name.endsWith('.html') ? 'text/html' : name.endsWith('.css') ? 'text/css' : 'text/javascript' });
+        }
+        const body = url.pathname.endsWith('firebase-app.js') ? 'export const initializeApp = () => ({});'
+          : url.pathname.endsWith('firebase-auth.js') ? authModule : url.pathname.endsWith('firebase-firestore.js') ? storeModule : '';
+        return route.fulfill({ body, contentType: body ? 'text/javascript' : 'text/css' });
+      });
+      const page = await context.newPage(), errors = [];
+      page.on('pageerror', (e) => errors.push(e.message));
+      await page.goto('http://usage.test/');
+      await page.locator('#dashboard').waitFor();
+      assert.equal(await page.locator('#rook-stuck').count(), 1);
+      assert.equal(await page.locator('#rook-stuck').isVisible(), false); // No uploaded rook doc yet.
+      for (const width of [390, 1280]) {
+        await page.setViewportSize({ width, height: 900 });
+        await page.evaluate(() => window.__emit('rook', { stuck: true, since: '2026-11-05T18:45:00.000Z' }));
+        assert.equal(await page.locator('#rook-stuck').isVisible(), true);
+        assert.equal(await page.locator('#rook-stuck').textContent(), 'Rook stuck since 00:15');
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        await page.screenshot({ path: `${shotDir}/rook-stuck-${width}-${colorScheme}.png`, fullPage: true });
+        await page.evaluate(() => window.__emit('rook', { stuck: false, since: '2026-11-05T18:45:00.000Z' }));
+        assert.equal(await page.locator('#rook-stuck').isVisible(), false);
+        assert.equal(await page.locator('#rook-stuck').textContent(), '');
+        await page.screenshot({ path: `${shotDir}/rook-clear-${width}-${colorScheme}.png`, fullPage: true });
+      }
+      await page.evaluate(() => window.__emit('rook', { stuck: true, since: '<img src=x>' }));
+      assert.equal(await page.locator('#rook-stuck').isVisible(), false);
+      assert.equal(await page.locator('#rook-stuck img').count(), 0);
+      await page.evaluate(() => window.__emit('rook', { stuck: true, since: '2026-11-05T18:45:00.000Z' }));
+      await page.locator('#signout').click();
+      const cleared = await (await page.waitForFunction(() => { const el = document.getElementById('rook-stuck'); return el.hidden ? { text: el.textContent } : null; })).jsonValue();
+      assert.equal(cleared.text, '');
+      assert.deepEqual(errors, []);
+    } finally { await context.close(); }
+  }
+});
+
 test('Usage site: remembered TODO sub-steps, tabs, tickets, forecasts and safe refresh failures on phone and desktop', async (t) => {
   const shotDir = process.env.SHOTS_DIR || 'shots';
   mkdirSync(shotDir, { recursive: true });

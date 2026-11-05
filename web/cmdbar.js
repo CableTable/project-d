@@ -31,6 +31,7 @@ const TABLE = [
   ['measure', 'Edit', 'Distance between two points', ['m', 'mea'], ''],
   ['pan', 'View', 'Drag the view around', [], ''],
   ['move', 'Edit', 'Move objects from a base point to a target', ['mv'], 'draw'],
+  ['stretch', 'Edit', 'Stretch points inside crossing boxes', ['str'], 'draw'],
   ['array', 'Edit', 'Copies of the selection in columns and rows', ['ar'], 'draw'],
   ['nudge', 'Edit', 'Set the arrow-key Nudge step in mm', ['nu'], ''],
   ['offset', 'Edit', 'A parallel copy at a distance', ['o'], 'draw'],
@@ -54,11 +55,20 @@ const TABLE = [
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
   ['scale', 'Edit', 'Scale drawing objects uniformly about a base point', ['sc'], 'draw'],
   ['fillet', 'Edit', 'Round the corner between two lines with a radius', ['f'], 'draw'],
+  ['chamfer', 'Edit', 'Bevel two lines by distances or a length and angle', ['cha'], 'draw'],
+  ['break', 'Edit', 'Remove the part between two points on an object', ['br'], 'draw'],
+  ['breakatpoint', 'Edit', 'Split an open object at one point without a gap', [], 'draw'],
+  ['lengthen', 'Edit', 'Change the length of the picked end of a line, arc or open polyline', ['len'], 'draw'],
+  ['join', 'Edit', 'Merge lines, arcs and polylines that meet end to end into one object', ['j'], 'draw'],
+  ['reverse', 'Edit', 'Turn lines, polylines and splines round: the start becomes the end', [], 'draw'],
+  ['divide', 'Draw', 'Place points at equal divisions along an object', ['div'], 'draw'],
+  ['measurepoints', 'Draw', 'Place points every given length along an object', ['me'], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
+  ['align', 'Edit', 'Move, turn and scale objects so source points meet destination points', ['al'], 'draw'],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
-  ['group', 'Layout', 'Group the selected parts', ['g'], 'layout', 'Ctrl+G'],
-  ['ungroup', 'Layout', 'Split a group', ['u'], 'layout', 'Ctrl+Shift+G'],
+  ['group', 'Layout', 'Group the selected objects or parts', ['g'], '', 'Ctrl+G'],
+  ['ungroup', 'Layout', 'Split a group', ['u'], '', 'Ctrl+Shift+G'],
   ['lock', 'Layout', 'Lock the selected parts', [], 'layout'],
   ['unlock', 'Layout', 'Unlock the selected parts', [], 'layout'],
   ['mx', 'Layout', 'Mirror the selected part left to right', [], 'layout'],
@@ -154,6 +164,8 @@ export function parseOptions(prompt) {
 }
 
 /** The option a typed text picks: its key (the underlined letters) or the whole word, any case. → an option or null */
+export const optionNeedsValue = (word, label = '') => label !== 'CHAMFER' && /^(distance|steps|height|justify|style)$/i.test(word);
+
 export function matchOption(options, text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;
