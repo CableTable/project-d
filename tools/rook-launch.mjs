@@ -1,13 +1,14 @@
 // `node tools/rook.mjs review ...`, `build ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { existsSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gateOps, tickIds } from './handover-gate.mjs';
 import { setRunLine } from './rook-end.mjs';
 import { parseCsv } from './usage-agent.mjs';
+import { retroSessions } from './retro-brief.mjs';
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const EXTRAS = 'E:/Project B/Claude/Project D extras';
@@ -192,6 +193,9 @@ const io = {
   has(dir, sha) { try { execFileSync('git', ['-C', dir, 'cat-file', '-e', `${sha}^{commit}`], { stdio: 'pipe' }); return true; } catch { return false; } },
   need(path, what) { if (!existsSync(path)) throw new Error(`${what} not found: ${path}`); },
   read: (path) => readFileSync(path, 'utf8'),
+  exists: existsSync,
+  list: (path) => readdirSync(path, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name),
+  write: (path, text) => writeFileSync(path, text, { flag: 'wx' }),
   open: (path, mode) => openSync(path, mode),
   locked: (dir, lock = lockFile(dir)) => existsSync(lock),
   npmCi(dir) {
@@ -407,15 +411,35 @@ export function suite(args, x = io) {
   plainRun(x, { kind: 'suite', id: sha, bin: process.execPath, args: [SUITE], cwd: REPO, out: `${runsDir(x)}/suite-${sha}.log` });
 }
 
-// `retro`: the three retro runs of runs<N>/ (retro<N>, retro<N>king, retro<N>rook), each from its .txt into its .out; none starts when a .txt is missing.
+// `retro`: fill missing briefs, then launch the three retros from their .txt into their .out.
 export function retro(args, x = io) {
-  const over = args.includes('--over');
-  if (args.length > +over) throw new Error('usage: retro [--over]');
+  const usage = 'usage: retro [--over] [--events "<text>"]';
+  const { pos, flags } = parseFlags(args, { '--over': 0, '--events': 1 }, usage);
+  if (pos.length) throw new Error(usage);
+  const over = !!flags['--over'];
+  const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1], names = [`retro${n}`, `retro${n}king`, `retro${n}rook`];
+  const missing = names.filter((name) => !x.exists(`${dir}/${name}.txt`));
+  if (missing.length) {
+    const transcripts = [], sessions = new Set();
+    const project = 'C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D';
+    for (const file of x.list(project).filter((f) => f.endsWith('.jsonl')).sort()) {
+      const found = retroSessions(x.read(`${project}/${file}`), n);
+      if (found === null) continue;
+      transcripts.push(`${project}/${file}`);
+      for (const session of found) sessions.add(session);
+    }
+    if (!transcripts.length) throw new Error(`no Rook transcripts for session ${n}`);
+    const values = { N: n, SESSIONS: [...sessions].join(', '), TRANSCRIPTS: transcripts.join(', '), EVENTS: flags['--events']?.[0] ?? 'none given.' };
+    for (const name of missing) {
+      const suffix = name.slice(`retro${n}`.length);
+      const template = x.read(join(REPO, 'tools', 'briefs', `retro${suffix ? `-${suffix}` : ''}.txt`));
+      x.write(`${dir}/${name}.txt`, template.replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]));
+    }
+  }
   if (!over) { // TODO 196a: three Opus retros took Bishop from 61% to 100% (S36)
     const h5 = cachedH5(x, ['Pip', 'Bishop'], 'Bishop', 'retro');
     if (h5 > 40) throw new Error(`Bishop 5h ${h5}%: the three retros need room; wait for the reset, or --over`);
   }
-  const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1], names = [`retro${n}`, `retro${n}king`, `retro${n}rook`];
   for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');
   x.need(claude('bishop'), ACCOUNTS.bishop.bin);
   for (const name of names) if (x.locked(dir, `${dir}/.run-lock-${name}`)) throw new Error(`${name} is in use by a running launch (${dir}/.run-lock-${name}); if that run is dead, delete the lock file`);
