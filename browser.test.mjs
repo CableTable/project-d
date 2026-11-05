@@ -23824,6 +23824,123 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  const doc97i1 = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100), dxfLine(100, 220, 180, 220));
+    return raw;
+  };
+  const alignBtn97i1 = () => page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Align', exact: true });
+  const near97i1 = (raw, expected) => pickedLines97c(lineEnds97c(raw), expected);
+
+  await step('TODO 97i1: Drawings one pair moves; Enter at the second source point; prompts; rubber line; one Undo', async () => {
+    await open97c(doc97i1(), 'align97i1.dxf');
+    await typeCmd('al'); assert.equal(await prompt(), 'Select objects:');
+    await click(150, 100); await key97c('Enter'); assert.equal(await prompt(), 'Specify first source point:');
+    await click(100, 100); assert.equal(await prompt(), 'Specify first destination point:');
+    const p = await at(130, 130); await page.mouse.move(p.x, p.y, { steps: 4 }); await frames();
+    assert.ok(await t('align-line').count() >= 1, 'the rubber line from the source point follows the cursor');
+    await click(150, 150); assert.equal(await prompt(), 'Specify second source point:');
+    await key97c('Enter');
+    near97i1(await savedDoc(), [[150, 150, 250, 150], [100, 220, 180, 220]]);
+    assert.equal((await histLabels()).at(-1), 'Align');
+    await key97c('Control+z'); near97i1(await savedDoc(), [[100, 100, 200, 100], [100, 220, 180, 220]]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i1: Drawings two pairs move and turn the line onto a sloped line; Scale Yes also scales; typed points', async () => {
+    await open97c(doc97i1(), 'align97i1-two.dxf');
+    await click(150, 100); await typeCmd('align'); assert.equal(await prompt(), 'Specify first source point:', 'a selection made first runs at once');
+    await click(100, 100); assert.equal(await prompt(), 'Specify first destination point:');
+    await click(120, 150); assert.equal(await prompt(), 'Specify second source point:');
+    await click(180, 100); assert.equal(await prompt(), 'Specify second destination point:');
+    await click(170, 200); assert.equal(await prompt(), 'Specify third source point or <continue>:');
+    await key97c('Enter'); assert.equal(await prompt(), 'Scale objects based on alignment points? [Yes/No] <N>:');
+    await key97c('Enter');
+    near97i1(await savedDoc(), [[120, 150, 190.71, 220.71], [100, 220, 180, 220]]);
+    await key97c('Control+z');
+    await click(150, 100); await typeCmd('align');
+    await typeCmd('100,100'); await typeCmd('120,150'); await typeCmd('180,100'); await typeCmd('120,200'); await key97c('Enter');
+    assert.equal(await prompt(), 'Scale objects based on alignment points? [Yes/No] <N>:');
+    await typeCmd('maybe'); assert.equal(await prompt(), 'Scale objects based on alignment points? [Yes/No] <N>:', 'a wrong answer asks again');
+    await typeCmd('yes');
+    near97i1(await savedDoc(), [[120, 150, 120, 212.5], [100, 220, 180, 220]]);
+    assert.equal((await histLabels()).at(-1), 'Align');
+    await key97c('Control+z'); near97i1(await savedDoc(), [[100, 100, 200, 100], [100, 220, 180, 220]]);
+    await click(150, 100); await typeCmd('align'); await click(100, 100); await click(150, 150); await click(100, 100);
+    assert.equal(await prompt(), 'Specify second source point:', 'the same source point twice is refused');
+    assert.match(await t('cmd-hist').textContent(), /two source points are the same/);
+    await key97c('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i1: Drawings a line on a locked layer is not picked and stays', async () => {
+    const raw = doc97i1(); addLayer(raw, 'Locked'); addEntities(raw, dxfLine(100, 300, 180, 300, { layer: 'Locked' }));
+    await open97c(raw, 'align97i1-lock.dxf'); await t('ptab-objects').click();
+    await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Locked"] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await typeCmd('align'); await drag97d(210, 310, 90, 90); assert.equal(await selCount(), '2 selected', 'a crossing box leaves the locked line out'); await key97c('Enter');
+    assert.equal(await prompt(), 'Specify first source point:');
+    await click(100, 100); await click(150, 150); await key97c('Enter');
+    near97i1(await savedDoc(), [[150, 150, 250, 150], [150, 270, 230, 270], [100, 300, 180, 300]]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i1: Layouts a placed part moves and turns, Scale Yes scales loose objects only, one Undo', async () => {
+    const lay = newLayout('Align 97i1'), layers = newDoc(4).layers, plate = newDoc(4);
+    addEntities(plate, dxfPoly([[0, 0], [50, 0], [50, 30]]));
+    lay.parts.a = objectPart('a', 'Line', dxfLine(100, 100, 200, 100), layers);
+    lay.parts.plate = makePart('plate', 'Plate', plate);
+    lay.placed = [objectPlacement(lay.parts.a), { partId: 'plate', x: 100, y: 250, rot: 0 }];
+    const plateAt = async () => { const p = layoutFromRaw(await savedDoc()).placed.find((x) => x.partId === 'plate'); return [p.x, p.y, p.rot]; };
+    const lineEnd = async () => { const l = layoutFromRaw(await savedDoc()), p = Object.values(l.parts).find((x) => x.obj); return JSON.stringify([p.raw.entities[0].r.v, l.placed.find((x) => x.partId === p.id)]); };
+    await open97c(layoutRaw(lay), 'align97i1-layout.dxf');
+    const before = await plateAt(), line0 = await lineEnd();
+    await key97c('Control+a'); await typeCmd('align');
+    await click(100, 100); await click(300, 100); await click(200, 100); await click(400, 200); await key97c('Enter'); await key97c('Enter');
+    const moved = await plateAt();
+    assert.ok(Math.abs(((moved[2] - before[2]) % 360 + 360) % 360 - 45) < 0.01, `the plate turned 45 degrees: ${moved}`);
+    assert.notDeepEqual([moved[0], moved[1]], [before[0], before[1]]);
+    assert.equal((await histLabels()).at(-1), 'Align 2 parts');
+    await key97c('Control+z'); assert.deepEqual(await plateAt(), before); assert.equal(await lineEnd(), line0);
+    await key97c('Control+a'); await typeCmd('align');
+    await click(100, 100); await click(300, 100); await click(200, 100); await click(300, 300); await key97c('Enter'); await typeCmd('yes');
+    assert.match(await prompt(), /Placed parts are not scaled/);
+    assert.notEqual(await lineEnd(), line0, 'the loose object was scaled');
+    assert.equal((await plateAt())[2] % 360, 90, 'the plate turned 90 and kept its size');
+    await key97c('Control+z'); assert.deepEqual(await plateAt(), before); assert.equal(await lineEnd(), line0);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i1: Compare Align changes the source, one Undo; the menu, autocomplete, ribbon dropdown and tooltip know it', async () => {
+    await open97c(doc97i1(), 'compare97i1.dxf'); await typeCmd('compare');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await alignBtn97i1().getAttribute('title'), 'Align (AL)');
+    await alignBtn97i1().click(); await click(150, 100); await key97c('Enter');
+    await click(100, 100); await click(150, 150); await key97c('Enter'); await key97c('Escape');
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97i1(?:-edited)*\.dxf$/ }) });
+    await source.click(); near97i1(await savedDoc(), [[150, 150, 250, 150], [100, 220, 180, 220]]);
+    await key97c('Control+z'); near97i1(await savedDoc(), [[100, 100, 200, 100], [100, 220, 180, 220]]);
+    await page.locator('[data-menu=Modify]').click(); assert.ok((await page.getByRole('menuitem').allTextContents()).some((s) => /^Align/.test(s))); await key97c('Escape');
+    await cmdLine().fill('al'); assert.match((await t('cmd-sugg').allTextContents()).join(' '), /align/i); await key97c('Escape');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i1: light and dark prompt, the Rotate / Align dropdown, the top bar at 1024', async () => {
+    await open97c(doc97i1(), 'screens97i1.dxf');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Home]').click();
+      await click(150, 100); await typeCmd('align'); await click(100, 100);
+      const p = await at(170, 150); await page.mouse.move(p.x, p.y, { steps: 4 }); await frames();
+      await page.screenshot({ path: `${shotDir}/todo97i1-align-${theme}.png` }); await key97c('Escape');
+      await page.locator('.ribbon-body [data-panel=Modify] [data-testid=rotate-flyout]').click();
+      assert.equal(await page.getByRole('menuitem', { name: /^Align/ }).count(), 1);
+      await page.screenshot({ path: `${shotDir}/todo97i1-dropdown-${theme}.png` }); await key97c('Escape');
+    }
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(250);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'the page is wider than 1024');
+    assert.ok(await page.locator('.tabsrow').evaluate((n) => { const r = n.getBoundingClientRect(); return [...n.children].every((c) => c.getBoundingClientRect().right <= r.right + 1); }), 'the tab bar overflows at 1024');
+    await page.screenshot({ path: `${shotDir}/todo97i1-align-1024.png` }); await page.setViewportSize({ width: 1440, height: 900 });
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {
