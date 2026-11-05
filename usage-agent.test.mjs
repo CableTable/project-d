@@ -8,7 +8,7 @@ import { claudeUsage, usageProbe, limitedLine, limitedRows } from './tools/rook.
 
 test('TODO 198b: Rook stale needs over 30 minutes and a later queue with an ended line', () => {
   const jsonlMtime = Date.parse('2026-11-05T10:00:00Z');
-  const input = { jsonlMtime, queueText: 'build a -> a.jsonl: ended\r\nbuild b -> b.jsonl: running\r\n', queueMtime: jsonlMtime + 1, now: jsonlMtime + 31 * 60_000 };
+  const input = { jsonlMtime, queueText: 'build a -> a.jsonl: ended\r\n', queueMtime: jsonlMtime + 1, now: jsonlMtime + 31 * 60_000 };
   assert.equal(isRookStale(input), true);
   assert.equal(isRookStale({ ...input, now: jsonlMtime + 29 * 60_000 }), false);
   assert.equal(isRookStale({ ...input, now: jsonlMtime + 30 * 60_000 }), false);
@@ -19,6 +19,13 @@ test('TODO 198b: Rook stale needs over 30 minutes and a later queue with an ende
     for (const missing of [null, undefined]) assert.equal(isRookStale({ ...input, [key]: missing }), false);
   }
   assert.equal(isRookStale(), false);
+});
+
+test('TODO 198b: ended + running = not stuck', () => {
+  const jsonlMtime = Date.parse('2026-11-05T10:00:00Z');
+  const input = { jsonlMtime, queueMtime: jsonlMtime + 1, now: jsonlMtime + 31 * 60_000 };
+  for (const queueText of ['a: ended\r\nb: running\r\n', 'b: running\r\na: ended\r\n', 'a: ended\nb: running']) assert.equal(isRookStale({ ...input, queueText }), false);
+  assert.equal(isRookStale({ ...input, queueText: 'a: ended\r\nb: ended\r\n' }), true);
 });
 
 test('TODO 198b: collector reads line 1 and highest numbered queue, tolerating missing files', () => {
@@ -72,9 +79,14 @@ test('TODO 198b: one PowerShell toast per persisted episode, failures logged wit
     await alert(rook, async () => { throw new Error('toast unavailable'); });
     await alert(); assert.equal(calls.length, 2);
     assert.deepEqual(logs, ['Rook toast ERROR: toast unavailable']);
-    writeFileSync(path, 'invalid JSON');
-    await alert(); assert.equal(calls.length, 2);
-    assert.match(logs.at(-1), /^Rook toast ERROR:/);
+    await alert({ ...rook, since: '2026-11-05T20:45:00.000Z' }); assert.equal(calls.length, 3); // second episode: different since
+    await alert({ ...rook, since: '2026-11-05T20:45:00.000Z' }); assert.equal(calls.length, 3);
+    for (const bad of ['invalid JSON', '']) { // bad state file = no previous state, rewritten
+      writeFileSync(path, bad);
+      await alert(); assert.equal(calls.length, 3 + (bad ? 1 : 2));
+      await alert(); assert.equal(calls.length, 3 + (bad ? 1 : 2));
+    }
+    assert.deepEqual(logs, ['Rook toast ERROR: toast unavailable']);
   } finally { rmSync(folder, { recursive: true, force: true }); }
 });
 

@@ -90,7 +90,7 @@ test('TODO 198b: Rook stuck line shown in IST and hidden on recovery or sign-out
       assert.equal(await page.locator('#rook-stuck img').count(), 0);
       await page.evaluate(() => window.__emit('rook', { stuck: true, since: '2026-11-05T18:45:00.000Z' }));
       await page.locator('#signout').click();
-      assert.equal(await page.locator('#rook-stuck').isVisible(), false);
+      await page.locator('#rook-stuck').waitFor({ state: 'hidden' });
       assert.equal(await page.locator('#rook-stuck').textContent(), '');
       assert.deepEqual(errors, []);
     } finally { await context.close(); }

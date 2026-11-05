@@ -17,7 +17,7 @@ const run = promisify(execFile);
 export function isRookStale({ jsonlMtime, queueText, queueMtime, now } = {}) {
   return [jsonlMtime, queueMtime, now].every(Number.isFinite)
     && now - jsonlMtime > 30 * 60_000 && queueMtime > jsonlMtime
-    && typeof queueText === 'string' && /: ended\s*$/m.test(queueText);
+    && typeof queueText === 'string' && /: ended\s*$/m.test(queueText) && !/: running\s*$/m.test(queueText);
 }
 
 export function collectRookStatus(extras, home = homedir(), now = Date.now(), log = console.error) {
@@ -42,11 +42,11 @@ export function collectRookStatus(extras, home = homedir(), now = Date.now(), lo
 export async function alertRook(rook, statePath, log = console.error, powershell = run) {
   try {
     let previous = {};
-    try { previous = JSON.parse(readFileSync(statePath, 'utf8')); }
-    catch (e) { if (e.code !== 'ENOENT') throw e; }
+    try { previous = JSON.parse(readFileSync(statePath, 'utf8')) || {}; }
+    catch { /* missing, empty or corrupt: no previous state, rewritten below */ }
     // Save before the toast: a failed notification must not repeat every hour.
     writeFileSync(statePath, JSON.stringify(rook));
-    if (!rook.stuck || previous.stuck) return;
+    if (!rook.stuck || (previous.stuck && previous.since === rook.since)) return;
     const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(rook.since));
     const script = String.raw`
 $ErrorActionPreference = 'Stop'
