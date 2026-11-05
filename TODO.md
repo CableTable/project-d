@@ -394,7 +394,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 4. Place by hand.
 5. Import parts from DXF, DWG, CorelDRAW and PDF (mock-up "Import parts").
 6. **Next: session 38's first item.** DWG open through LibreDWG's `dwg2dxf` as a separate helper beside the exe; the repo stays public (DECISIONS 2026-11-06, which replaces the 2026-10-19 go-private plan).
-7. .cdr open through libcdr. For now (his call, 2026-10-17): CorelDRAW → Export PDF, then open the PDF. He'll send a few .cdr files with their exported PDFs after PR #5; test libcdr on them first, and if it can't read them, write our own .cdr reader for what his files use (outlines, curves, text), checked against the PDFs. 2026-11-06: test DXFs made (`Project D extras/cdr-test/cdrtest1_shapes.dxf`, `cdrtest2_outline.dxf`); he imports them into CorelDRAW, saves as .cdr and sends them back with 2-3 of his real .cdr files + PDF exports and his CorelDRAW version (due 2026-11-07).
+7. .cdr open through libcdr. For now (his call, 2026-10-17): CorelDRAW → Export PDF, then open the PDF. He'll send a few .cdr files with their exported PDFs after PR #5; test libcdr on them first, and if it can't read them, write our own .cdr reader for what his files use (outlines, curves, text), checked against the PDFs. 2026-11-06: test DXFs made (`Project D extras/cdr-test/cdrtest1_shapes.dxf`, `cdrtest2_outline.dxf`); he imports them into CorelDRAW, saves as .cdr and sends them back with 2-3 of his real .cdr files + PDF exports (due 2026-11-07). Target: CorelDRAW version 26 files (his call); check first that libcdr reads v26, else our own reader as above.
 8. Layers panel editing.
 9. Title block with the revision table.
 10. The 3D viewer ported from Project R (mock-up "3D viewer").
