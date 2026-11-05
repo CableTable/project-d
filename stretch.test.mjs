@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { stretchEntities, stretchGrips } from './web/stretch.js';
 import * as GR from './web/grips.js';
-import { entity, line, arc, circle, ellipse, lwpoly, text, mtext, insert } from './web/dxf-write.js';
+import { entity, line, arc, circle, ellipse, lwpoly, text, mtext, insert, newDoc, addEntities, writeDxf } from './web/dxf-write.js';
+import { readDxf } from './web/drawing.js';
 import { geometry as leaderGeometry } from './web/leader.js';
 
 const pair = (e, code = 10, n = 0) => [GR.get(e.r, code, n), GR.get(e.r, code + 10, n)];
@@ -133,4 +134,36 @@ test('Stretch: a native dimension moves whole with its block, or stays when a bo
   assert.deepEqual([...picked.next.keys()], [0]); assert.equal(picked.moved, 1);
   nearPoints([blockLine(picked)], [[3, 4]], 'picked: block moved');
   assert.deepEqual(raw, before, 'source drawing untouched');
+});
+
+test('Stretch: flipped objects are tested where they are drawn; objects without defining grips move whole inside one box', () => {
+  const flipped = (e) => { e.r.c.push(230); e.r.v.push('-1'); return e; };
+  const doc = (ents) => { const d = newDoc(4); addEntities(d, ents); return readDxf(writeDxf(d)); };
+  const x0 = (e) => GR.get(e.r, 10);
+  // stored at -10, drawn at 10 (extrusion 230 = -1 mirrors x); a flipped polyline's vertex drags the other way in stored x
+  const flippedPoly = flipped(lwpoly([[-10, 0], [-30, 0]]));
+  for (const [name, ent] of [['CIRCLE', flipped(circle(-10, 0, 3))], ['TEXT', flipped(text(-10, 0, 2, 'hi'))]]) {
+    const raw = doc([ent]);
+    assert.equal(raw.entities[0].flip, true, `${name}: read as flipped`);
+    const at = stretchEntities(raw, [around([10, 0])], 5, 2);
+    assert.equal(at.moved, 1, `${name}: a box around where it is drawn moves it`);
+    nearPoints([pair(at.next.get(0))], [[-15, 2]], `${name}: stored x moves the other way`);
+    assert.equal(stretchEntities(raw, [around([-10, 0])], 5, 2).next.size, 0, `${name}: a box around the stored point does not`);
+  }
+  const poly = doc([flippedPoly]), part = stretchEntities(poly, [around([10, 0])], 5, 2);
+  assert.equal(part.stretched, 1); nearPoints(vertices(part.next.get(0)), [[-15, 2], [-30, 0]], 'flipped polyline: the vertex drawn at 10 follows the mouse');
+  assert.equal(stretchEntities(poly, [around([-10, 0])], 5, 2).next.size, 0, 'flipped polyline: stored point is not where it is drawn');
+  // no defining grips: hatch with 71 = 1, SOLID, MULTILEADER
+  const assoc = entity('HATCH', hatch.r.c.map((c, i) => [c, c === 71 ? '1' : hatch.r.v[i]]));
+  const solid = entity('SOLID', [[10, 0], [20, 0], [11, 20], [21, 0], [12, 0], [22, 20], [13, 20], [23, 20]]);
+  const ml = entity('MULTILEADER', [[300, 'CONTEXT_DATA{'], [10, 30], [20, 20], [304, 'NOTE'], [12, 31], [22, 22], [13, 1], [23, 0], [302, 'LEADER{'], [10, 30], [20, 20], [11, 1], [21, 0], [304, 'LEADER_LINE{'], [10, 10], [20, 5], [305, '}'], [303, '}'], [301, '}']]);
+  for (const [name, ent, whole, cut] of [['associative HATCH', assoc, box(-1, -1, 21, 21), around([0, 0])], ['SOLID', solid, box(-1, -1, 21, 21), around([0, 0])], ['MULTILEADER', ml, box(0, 0, 40, 40), box(0, 0, 20, 20)]]) {
+    assert.equal(GR.gripsOf(ent).filter((g) => g.kind === 'end' || g.kind === 'vertex').length, 0, `${name}: no defining grips`);
+    const raw = name === 'MULTILEADER' ? { ...newDoc(4), entities: [ent] } : doc([ent]);
+    const r = stretchEntities(raw, [whole], 3, 4);
+    assert.equal(r.moved, 1, `${name}: extents inside one box moves it whole`); assert.equal(r.stretched, 0);
+    assert.notDeepEqual(r.next.get(0), raw.entities[0], `${name}: changed`);
+    assert.equal(stretchEntities(raw, [cut], 3, 4).next.size, 0, `${name}: a box that cuts it leaves it unchanged`);
+    assert.equal(stretchEntities(raw, [box(-1, -1, 15, 21), box(15, -1, 41, 21)], 3, 4).next.size, 0, `${name}: extents split over two boxes are not inside one`);
+  }
 });

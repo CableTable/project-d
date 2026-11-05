@@ -1,7 +1,8 @@
 // Crossing-box Stretch, pure (drawing units); the hot-grip editor shares the same drag loop.
 import * as GR from './grips.js';
 import { lwpoly } from './dxf-write.js';
-import { moveEntities } from './edit.js';
+import { moveEntities, makeIndex, inBox, OCS } from './edit.js';
+import { flatten } from './drawing.js';
 
 /** Stretch one object's hot grips; label and part also drive the grip editor's preview. */
 export function stretchGrips(ent, hots, dx, dy, shift = false, whole = GR.wholeHot(ent, new Set(hots.map((x) => x.id)))) {
@@ -80,6 +81,9 @@ export function stretchEntities(raw, boxes, dx, dy, picked = new Set()) {
   if (!dx && !dy) return { next, blocks: raw.blocks, moved, stretched };
   const inside = (p) => boxes.some((b) => p.x >= Math.min(b.x0, b.x1) && p.x <= Math.max(b.x0, b.x1)
     && p.y >= Math.min(b.y0, b.y1) && p.y <= Math.max(b.y0, b.y1));
+  // Objects without defining grips (associative hatch, SOLID, MULTILEADER…) move whole when their extents lie inside one box (the window-select test).
+  let boxed = null;
+  const extentsInside = () => boxed ||= (ed => new Set(boxes.flatMap((b) => inBox(ed, [b.x0, b.y0, b.x1, b.y1]))))(makeIndex(raw, flatten(raw)));
   const wholeSet = new Set();
   raw.entities.forEach((ent, i) => {
     if (ent.type === 'DIMENSION') {
@@ -88,13 +92,15 @@ export function stretchEntities(raw, boxes, dx, dy, picked = new Set()) {
       return;
     }
     const adapter = vertexAdapter(ent), source = adapter?.poly || ent;
-    const all = definingGrips(source), hots = all.filter(inside);
-    const whole = picked.has(i) || all.length > 0 && hots.length === all.length;
+    // A flipped object (extrusion 230 = -1) is drawn with x mirrored: test the point as drawn, drag the stored x the other way.
+    const flip = ent.flip && OCS.has(ent.type) ? -1 : 1;
+    const all = definingGrips(source), hots = all.filter((g) => inside({ x: g.x * flip, y: g.y }));
+    const whole = picked.has(i) || (all.length ? hots.length === all.length : extentsInside().has(i));
     if (!whole && !hots.length) return;
     // A model-only leader has no record for moveEntities; the grip path translates it.
     if (whole && ent.r) { wholeSet.add(i); return; }
     const target = whole && !(ent.type === 'LEADER' && adapter) ? ent : source;
-    const result = stretchGrips(target, hots, dx, dy, false, whole);
+    const result = stretchGrips(target, hots, whole ? dx : dx * flip, dy, false, whole);
     if (result.ent === target) return;
     next.set(i, adapter && target === source ? adapter.restore(result.ent) : result.ent);
     if (whole) moved++; else stretched++;
