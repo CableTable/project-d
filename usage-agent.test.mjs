@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo, isRookStale, collectRookStatus, alertRook } from './tools/usage-agent.mjs';
+import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo, isRookStale, LONGEST_RUN_MS, collectRookStatus, alertRook } from './tools/usage-agent.mjs';
 import { claudeUsage, usageProbe, limitedLine, limitedRows } from './tools/rook.mjs';
 
 test('TODO 198b: Rook stale needs over 30 minutes and a later queue with an ended line', () => {
@@ -26,6 +26,14 @@ test('TODO 198b: ended + running = not stuck', () => {
   const input = { jsonlMtime, queueMtime: jsonlMtime + 1, now: jsonlMtime + 31 * 60_000 };
   for (const queueText of ['a: ended\r\nb: running\r\n', 'b: running\r\na: ended\r\n', 'a: ended\nb: running']) assert.equal(isRookStale({ ...input, queueText }), false);
   assert.equal(isRookStale({ ...input, queueText: 'a: ended\r\nb: ended\r\n' }), true);
+});
+
+test('TODO 198b Low: a running line in a queue unchanged longer than the longest run stops silencing the alert', () => {
+  const jsonlMtime = Date.parse('2026-11-05T10:00:00Z'), queueText = 'a: ended\r\nb: running\r\n';
+  const input = { jsonlMtime, queueText, queueMtime: jsonlMtime + 1 };
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 1 + LONGEST_RUN_MS }), false); // exactly the longest run: still running
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 2 + LONGEST_RUN_MS }), true);
+  assert.equal(isRookStale({ ...input, queueText: 'b: running\r\n', now: jsonlMtime + 2 + LONGEST_RUN_MS }), false); // no ended line: still not stuck
 });
 
 test('TODO 198b: collector reads line 1 and highest numbered queue, tolerating missing files', () => {

@@ -14,10 +14,13 @@ import { isLockStale, shouldRefresh } from './usage-agent-policy.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
 
+export const LONGEST_RUN_MS = 3 * 3600_000; // shortcut: a guess at the longest build / review run, raise it if a real run outlasts it
+
 export function isRookStale({ jsonlMtime, queueText, queueMtime, now } = {}) {
   return [jsonlMtime, queueMtime, now].every(Number.isFinite)
     && now - jsonlMtime > 30 * 60_000 && queueMtime > jsonlMtime
-    && typeof queueText === 'string' && /: ended\s*$/m.test(queueText) && !/: running\s*$/m.test(queueText);
+    // a `running` line in a queue.txt unchanged for longer than any run never ended: it stops silencing the alert
+    && typeof queueText === 'string' && /: ended\s*$/m.test(queueText) && (now - queueMtime > LONGEST_RUN_MS || !/: running\s*$/m.test(queueText));
 }
 
 export function collectRookStatus(extras, home = homedir(), now = Date.now(), log = console.error) {

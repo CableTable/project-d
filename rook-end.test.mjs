@@ -73,6 +73,17 @@ test('TODO 167d: finish writes NO REVIEW and launches nothing for an error exit,
   }
 });
 
+test('TODO 198b Low: the queue line turns ended only after the review launch (and after NO REVIEW is written)', () => {
+  const w = world(), order = [], review = w.x.review, write = w.x.write;
+  w.x.review = (a) => { order.push('review: ' + w.files['q.txt'].split('\n')[2]); review(a); };
+  w.x.write = (p, t) => { order.push('write ' + p); write(p, t); };
+  finish(job(), 0, w.x);
+  assert.deepEqual(order, ['review: build br -> o.jsonl: running', 'write q.txt']);
+  order.length = 0;
+  finish(job(), 3, w.x);
+  assert.deepEqual(order, ['write /r.jsonl', 'write q.txt']);
+});
+
 test('TODO 167d: finish without a review job only updates the queue; a queue.txt that cannot be written does not stop the chain', () => {
   const w = world();
   finish({ queue: 'q.txt', key: 'o.jsonl', text: 'build br -> o.jsonl:' }, 0, w.x);

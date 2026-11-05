@@ -302,11 +302,12 @@ try {
       await p.keyboard.press('Control+a');
       await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
       await p.locator('.tabs .dtab').filter({ hasText: /Compare/ }).first().waitFor();
-      const seen = {};
+      const seen = {}, tabNames = {};
       for (const [kind, tabText] of [['drawing', /./], ['layout', /panels198/], ['compare', /Compare/]]) {
         await p.locator('.tabs .dtab').filter({ hasText: tabText }).first().click(); // the first tab is the drawing
         if (kind === 'layout') await p.keyboard.press('Control+a');
         const names = await p.locator('[data-ribbon-tab]').evaluateAll((els) => els.map((e) => e.dataset.ribbonTab));
+        tabNames[kind] = names;
         for (const name of names) {
           await p.locator(`[data-ribbon-tab="${name}"]`).click();
           const panels = await p.locator('.ribbon-body [data-panel]').evaluateAll((els) => els.map((e) => e.dataset.panel));
@@ -315,7 +316,10 @@ try {
           seen[kind] = (seen[kind] || 0) + 1;
         }
       }
-      assert.ok(seen.drawing >= 3 && seen.layout >= 4 && seen.compare >= 3, JSON.stringify(seen));    } finally { await context.close(); }
+      assert.ok(seen.drawing >= 3 && seen.compare >= 3, JSON.stringify(seen));
+      assert.ok(tabNames.layout.includes('Part'), 'layout: the Part tab shows with a part selected: ' + tabNames.layout);
+      assert.ok(tabNames.compare.includes('Compare'), 'compare: the Compare tab: ' + tabNames.compare);
+    } finally { await context.close(); }
   });
   await step('TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });

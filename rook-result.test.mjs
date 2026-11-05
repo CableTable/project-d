@@ -411,7 +411,8 @@ test('TODO 196g: handover refuses a missing resume file or a line 2 without both
     const skills = 'First action: the Skill tool for mattpocock-skills:grilling AND mattpocock-skills:domain-modeling';
     const good = join(dir, 'runs37', 'resume-rook.txt');
     mkdirSync(join(dir, 'runs37'));
-    writeFileSync(good, `Rook S37\r\n${skills}\r\nread merge-due.log\r\n`);
+    const needs = 'read merge-due.log\r\nload select:Monitor,TaskStop\r\none ci-watch per push\r\n'; // the lines `next` requires too
+    writeFileSync(good, `Rook S37\r\n${skills}\r\n${needs}`);
     assert.throws(() => handover(join(dir, 'none.txt'), 'Rook S37d', dir), /missing/);
     for (const line2 of ['mattpocock-skills:grilling only', 'mattpocock-skills:domain-modeling only', '']) {
       const bad = join(dir, 'bad.txt');
@@ -420,7 +421,12 @@ test('TODO 196g: handover refuses a missing resume file or a line 2 without both
     }
     assert.throws(() => handover(good, '', dir), /usage/);
     const noRuns = join(dir, 'resume.txt'), noLog = join(dir, 'runs37', 'resume-nolog.txt');
-    writeFileSync(noRuns, `Rook S37\n${skills}\nread merge-due.log\n`);
+    writeFileSync(noRuns, `Rook S37\n${skills}\n${needs}`);
+    for (const need of ['select:Monitor,TaskStop', 'one ci-watch per push']) { // refused before rook-next.txt is written, with the message `next` gives
+      const part = join(dir, 'runs37', 'resume-part.txt');
+      writeFileSync(part, `Rook S37\n${skills}\n${needs.replace(need, 'x')}`);
+      assert.throws(() => handover(part, 'Rook S37d', dir), (e) => e.message === `refused: ${part} has no line containing "${need}"`);
+    }
     writeFileSync(noLog, `Rook S37\n${skills}\nnothing else\n`);
     assert.throws(() => handover(noRuns, 'Rook S37d', dir), /no runs<N> folder/);
     assert.throws(() => handover(noLog, 'Rook S37d', dir), /no merge-due\.log line/);

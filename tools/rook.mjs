@@ -16,7 +16,7 @@
 //   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
 //   node tools/rook.mjs board <brief> <out>   Bishop board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
-//   node tools/rook.mjs handover <resume file> <name>   write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
+//   node tools/rook.mjs handover <resume file> <name>   write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty and runs<N>/retro<N>.applied exists (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
@@ -124,6 +124,10 @@ export function startWatched([bin, args, opts], onFail, spawnFn = spawn) {
   spawnFn(bin, args, opts).on('error', (e) => onFail(`spawn error: ${e.message}`)).on('exit', (c) => { if (c) onFail(`${bin} exit ${c}`); }).unref();
 }
 
+// The resume lines besides merge-due.log that `handover` and `next` both require (TODO 198c); `handover` refuses what `next` would.
+const RESUME_NEEDS = ['select:Monitor,TaskStop', 'one ci-watch per push'];
+const checkResumeNeeds = (text, resume) => { for (const need of RESUME_NEEDS) if (!text.includes(need)) throw new Error(`refused: ${resume} has no line containing "${need}"`); };
+
 // `why` (optional) returns the spawn's error / exit code, appended to the "not started" line.
 // The resume file named on rook-next.txt line 3 must have a line mentioning merge-due.log (TODO 193b); shortcut: no line 3 = no check.
 export async function nextRook({ read, exists, start, sleep, now, projects, own, why = () => '', readFile = (p) => readFileSync(p, 'utf8') }) {
@@ -134,7 +138,7 @@ export async function nextRook({ read, exists, start, sleep, now, projects, own,
     let text = '';
     try { text = readFile(resolve(EXTRAS, resume)); } catch { /* reported below */ }
     if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} is missing or has no line "read the last line of ../Project D extras/merge-due.log first"`);
-    for (const need of ['select:Monitor,TaskStop', 'one ci-watch per push']) if (!text.includes(need)) throw new Error(`refused: ${resume} has no line containing "${need}"`); // TODO 198c
+    checkResumeNeeds(text, resume);
   }
   const seen = () => exists(`${projects}/${uuid}.jsonl`);
   if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} already running` };
@@ -223,7 +227,7 @@ export function failLines(text, log) {
   const summary = lines.findIndex((l) => /^\s*✖ failing tests:/.test(l)); // the spec reporter repeats every failure under it, now with its error: read those, not the inline ✖ lines
   for (const [i, line] of lines.entries()) {
     if (i === summary) { left = 0; continue; }
-    const name = /^(?:\[shard \d+\/\d+\] )?FAIL (.+?)\s*$/.exec(line) || (i > summary && /^\s*✖ (.+?)(?: \(\d[\d.]*ms\))?\s*$/.exec(line));
+    const name = /^FAIL (.+?)\s*$/.exec(line) || (i > summary && /^\s*✖ (.+?)(?: \(\d[\d.]*ms\))?\s*$/.exec(line));
     if (name) { out.push(name[1]); left = 3; } else if (left && /^\s*[+-] (?!actual - expected)\S/.test(line)) { out.push(line.trim()); left--; }
   }
   if (out.length) return out.slice(0, 40);
@@ -240,6 +244,7 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID()) {
   if (!line2.includes('mattpocock-skills:grilling') || !line2.includes('mattpocock-skills:domain-modeling')) throw new Error(`refused: line 2 of ${resume} lacks mattpocock-skills:grilling and mattpocock-skills:domain-modeling`);
   if (!/runs\d+/.test(resolve(resume))) throw new Error(`refused: ${resume} has no runs<N> folder (the handover gate needs runs<N>/resume-rook.txt)`);
   if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} has no merge-due.log line (next needs it)`);
+  checkResumeNeeds(text, resume);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];
   writeFileSync(`${extras}/rook-next.txt`, lines.join('\n') + '\n');
   return lines.join('\n');
