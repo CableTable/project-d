@@ -46,6 +46,14 @@ test('every name and alias is lower case, and no command repeats a word on the s
   }
 });
 
+test('TODO 97j2: Divide and Measure points aliases keep distance Measure in every tab', () => {
+  for (const tab of ['draw', 'layout', 'compare']) {
+    for (const word of ['divide', 'div']) assert.equal(CB.resolve(word, tab).name, 'divide');
+    for (const word of ['measurepoints', 'me']) assert.equal(CB.resolve(word, tab).name, 'measurepoints');
+    for (const word of ['measure', 'm', 'mea']) assert.equal(CB.resolve(word, tab).name, 'measure');
+  }
+});
+
 test('resolve: name or alias, any case, the open tab first', () => {
   assert.equal(CB.resolve('L').name, 'line');
   assert.equal(CB.resolve(' Offset ').name, 'offset');

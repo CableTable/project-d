@@ -61,6 +61,8 @@ const TABLE = [
   ['lengthen', 'Edit', 'Change the length of the picked end of a line, arc or open polyline', ['len'], 'draw'],
   ['join', 'Edit', 'Merge lines, arcs and polylines that meet end to end into one object', ['j'], 'draw'],
   ['reverse', 'Edit', 'Turn lines, polylines and splines round: the start becomes the end', [], 'draw'],
+  ['divide', 'Draw', 'Place points at equal divisions along an object', ['div'], 'draw'],
+  ['measurepoints', 'Draw', 'Place points every given length along an object', ['me'], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['align', 'Edit', 'Move, turn and scale objects so source points meet destination points', ['al'], 'draw'],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],

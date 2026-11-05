@@ -20132,7 +20132,7 @@ try {
 
   await step('TODO 84: menu and tooltip command hints match COMMANDS, light then dark', async () => {
     await closeTabs(/./); await t('new-tab').click();
-    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Zoom Window': 'zoomwindow', 'Zoom Selection': 'zoomselection', 'Zoom Previous': 'zoomprevious', 'Save As…': 'saveas', 'Select all': 'selectall' };
+    const names = { rect: 'rectangle', 'Rounded rectangle': 'rrect', 'Measure points': 'measurepoints', 'Text to outlines': 'textoutlines', 'Break Apart': 'breakapart', 'Fit to window': 'fit', 'Zoom Window': 'zoomwindow', 'Zoom Selection': 'zoomselection', 'Zoom Previous': 'zoomprevious', 'Save As…': 'saveas', 'Select all': 'selectall' };
     const dimNames = { Linear: 'dimlinear', Radius: 'dimradius', Diameter: 'dimdiameter', Angle: 'dimangular' };
     for (const th of ['light', 'dark']) {
       await page.evaluate((x) => { document.documentElement.dataset.theme = x; }, th);
@@ -24170,6 +24170,155 @@ try {
     await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(doc97i2()));
     await t('arrange-rel').selectOption('selection'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
+
+  const doc97j2 = () => {
+    const raw = newDoc(4);
+    addLayer(raw, 'Marks', { tc: 0x257abd });
+    raw.header.$PDMODE = 0; raw.header.$PDSIZE = 9;
+    addEntities(raw, dxfLine(100, 100, 300, 100), dxfPoly([[100, 180], [200, 180], [200, 240]]), dxfCircle(300, 220, 30), dxfText(100, 280, 10, 'Text'));
+    return raw;
+  };
+  const points97j2 = (raw) => raw.entities.filter((e) => e.type === 'POINT').map((e) => [fieldOf(e, 10), fieldOf(e, 20)]);
+  const pointsNear97j2 = (raw, expected) => {
+    const pts = points97j2(raw); assert.equal(pts.length, expected.length);
+    pts.forEach((p, i) => p.forEach((v, j) => assert.ok(Math.abs(v - expected[i][j]) < 0.5, `${p} near ${expected[i]}`)));
+  };
+  const divideBtn97j2 = () => page.locator('.ribbon-body [data-panel=Draw]').getByRole('button', { name: 'Divide / Measure points', exact: true });
+
+  await step('TODO 97j2: Divide line in four, preselection, current layer, Esc, one Undo and source edit', async () => {
+    await open97c(doc97j2(), 'divide97j2.dxf');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await page.getByRole('combobox', { name: 'Current layer', exact: true }).selectOption('Marks');
+    const before = await savedDoc(), labels = await histLabels();
+    await typeCmd('div'); assert.equal(await prompt(), 'Select object to divide:');
+    await click(160, 100); assert.equal(await prompt(), 'Enter the number of segments:');
+    await key97c('Escape'); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await click(160, 100); await typeCmd('divide'); assert.equal(await prompt(), 'Enter the number of segments:');
+    await typeCmd('4'); assert.equal(await prompt(), 'Divide: 3 points created.');
+    const raw = await savedDoc(); pointsNear97j2(raw, [[150, 100], [200, 100], [250, 100]]);
+    assert.deepEqual(raw.entities.slice(0, before.entities.length), before.entities, 'source objects stay');
+    assert.ok(raw.entities.slice(before.entities.length).every((e) => e.layer === 'Marks' && e.aci === 256));
+    assert.equal(raw.header.$PDMODE, before.header.$PDMODE); assert.equal(raw.header.$PDSIZE, before.header.$PDSIZE);
+    assert.equal(await page.locator('.grip').count(), 0, 'new points are not selected');
+    assert.deepEqual((await histLabels()).slice(labels.length), ['Divide']);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await click(160, 100); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,20'); await key97c('Escape');
+    assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 120, 300, 120]], 'the unchanged source still edits');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97j2: Measure points polyline from picked end, typed and picked length, Esc, one Undo and source edit', async () => {
+    await open97c(doc97j2(), 'measurepoints97j2.dxf');
+    const before = await savedDoc(), labels = await histLabels();
+    await typeCmd('me'); assert.equal(await prompt(), 'Select object to measure:');
+    await click(200, 235); assert.equal(await prompt(), 'Specify length of segment:');
+    await typeCmd('50'); assert.equal(await prompt(), 'Measure points: 3 points created.');
+    pointsNear97j2(await savedDoc(), [[200, 190], [160, 180], [110, 180]]);
+    assert.deepEqual((await savedDoc()).entities.slice(0, 4), before.entities);
+    assert.deepEqual((await histLabels()).slice(labels.length), ['Measure points']);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await typeCmd('measurepoints'); await click(200, 235); await click(100, 100);
+    assert.equal(await prompt(), 'Specify second point:'); await key97c('Escape');
+    assert.deepEqual((await savedDoc()).entities, before.entities);
+    await menuItem('Draw', 'Measure points'); await click(200, 235); await click(100, 100); await click(150, 100);
+    pointsNear97j2(await savedDoc(), [[200, 190], [160, 180], [110, 180]]);
+    await key97c('Control+z');
+    await click(150, 180); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('10,0'); await key97c('Escape');
+    assert.equal(fieldOf((await savedDoc()).entities[1], 10), 110, 'polyline edits after Measure points');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97j2: Divide circle in four, text block and locked layer refusals, invalid values, distance Measure', async () => {
+    const fixture = doc97j2(); addLayer(fixture, 'Locked'); addEntities(fixture, dxfLine(100, 340, 300, 340, { layer: 'Locked' }));
+    addBlock(fixture, 'Block', [dxfLine(0, 0, 50, 0)]); addEntities(fixture, dxfInsert('Block', 100, 400));
+    await open97c(fixture, 'divide97j2-refusals.dxf');
+    await menuItem('Draw', 'Divide'); await click(330, 220); await typeCmd('4');
+    pointsNear97j2(await savedDoc(), [[330, 220], [300, 250], [270, 220], [300, 190]]);
+    await key97c('Control+z');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click(); await t('ptab-drawing').click();
+    const before = writeDxf(await savedDoc()), labels = await histLabels();
+    for (const command of ['divide', 'measurepoints']) {
+      await typeCmd(command); await click(110, 285); assert.match(await message97e(), /Cannot divide or measure this object/);
+      await click(125, 400); assert.match(await message97e(), /Cannot divide or measure this object/);
+      await click(150, 340); assert.match(await message97e(), /Object is on a locked layer/);
+      await click(160, 100);
+      for (const value of command === 'divide' ? ['1', '2.5', '32768'] : ['0', '-1', '0.0001']) {
+        await typeCmd(value); assert.match(await message97e(), /Number of segments must be|Segment length must be|more than 32767 points/);
+      }
+      await key97c('Escape');
+    }
+    assert.equal(writeDxf(await savedDoc()), before); assert.deepEqual(await histLabels(), labels);
+    await typeCmd('measure'); assert.match(await prompt(), /^Measure: click the first point/); await key97c('Escape');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97j2: Layouts loose object dropdown, placed part and lock refusal, one Undo', async () => {
+    const lay = newLayout('Divide 97j2'), layers = newDoc(4).layers, plate = newDoc(4);
+    addEntities(plate, dxfPoly([[0, 0], [50, 0], [50, 30]], { closed: true }));
+    lay.parts.a = objectPart('a', 'Line', dxfLine(100, 100, 300, 100), layers);
+    lay.parts.b = objectPart('b', 'Locked', dxfLine(100, 180, 300, 180), layers);
+    lay.parts.plate = makePart('plate', 'Plate', plate);
+    lay.placed = [objectPlacement(lay.parts.a), { ...objectPlacement(lay.parts.b), lock: true }, { partId: 'plate', x: 100, y: 250, rot: 0 }];
+    await open97c(layoutRaw(lay), 'divide97j2-layout.dxf'); await key97c('Escape');
+    await page.locator('[data-ribbon-tab=Home]').click(); assert.equal(await divideBtn97j2().isEnabled(), true);
+    await page.locator('[data-testid=divide-flyout]').click(); await page.getByRole('menuitem', { name: /^Divide/ }).click();
+    const layoutState = async () => { const saved = layoutFromRaw(await savedDoc()); saved.name = ''; return saved; };
+    const before = await layoutState(), labels = await histLabels();
+    await click(120, 260); assert.match(await message97e(), /Placed part cannot be divided/);
+    await click(150, 180); assert.match(await message97e(), /locked layer/);
+    assert.deepEqual(await layoutState(), before); assert.deepEqual(await histLabels(), labels);
+    await click(160, 100); await typeCmd('4');
+    const saved = layoutFromRaw(await savedDoc()); pointsNear97j2(objectDoc(saved).raw, [[150, 100], [200, 100], [250, 100]]);
+    assert.equal(saved.placed.length, 6); assert.deepEqual(saved.placed.filter((p) => p.lock), before.placed.filter((p) => p.lock));
+    assert.deepEqual((await histLabels()).slice(labels.length), ['Divide']);
+    await key97c('Control+z'); assert.deepEqual(await layoutState(), before);
+    await key97c('Escape'); await divideBtn97j2().focus(); await page.keyboard.press('ArrowDown');
+    await page.getByRole('menuitem', { name: /^Measure points/ }).click(); await click(160, 100); await typeCmd('50');
+    pointsNear97j2(objectDoc(layoutFromRaw(await savedDoc())).raw, [[150, 100], [200, 100], [250, 100], [300, 100]]);
+    await key97c('Control+z'); assert.deepEqual(await layoutState(), before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97j2: Compare commands and Home Draw dropdown change the source, one Undo', async () => {
+    await open97c(doc97j2(), 'compare97j2.dxf'); const before = (await savedDoc()).entities;
+    await typeCmd('compare'); await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await divideBtn97j2().isEnabled(), true); await divideBtn97j2().click();
+    await click(160, 100); await typeCmd('4');
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97j2(?:-edited)*\.dxf$/ }) });
+    await source.click(); pointsNear97j2(await savedDoc(), [[150, 100], [200, 100], [250, 100]]);
+    assert.equal((await histLabels()).at(-1), 'Divide'); await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await typeCmd('compare'); await menuItem('Draw', 'Measure points'); await click(200, 235); await typeCmd('50');
+    await source.click(); pointsNear97j2(await savedDoc(), [[200, 190], [160, 180], [110, 180]]);
+    assert.equal((await histLabels()).at(-1), 'Measure points'); await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97j2: POINT crosses stay three screen pixels in layer colour at zoom and DPR, light and dark points and open dropdown', async () => {
+    const samples = await page.evaluate(async () => {
+      const { paintDrawing } = await import('./render.js'), { flatten } = await import('./drawing.js'), { newDoc, addLayer, addEntities, point } = await import('./dxf-write.js');
+      const raw = newDoc(4); addLayer(raw, 'Marks', { tc: 0x257abd }); addEntities(raw, point(20, 20, { layer: 'Marks' }));
+      const fl = flatten(raw), results = [];
+      for (const dpr of [1, 2]) for (const scale of [1, 4]) for (const dark of [false, true]) for (const wireframe of [false, true]) {
+        const canvas = document.createElement('canvas'); canvas.width = canvas.height = 200 * dpr;
+        paintDrawing(canvas, { fl, off: new Set(), factor: 1, sheetH: 40, ox: 0, oy: 0, scale, w: 200, h: 200, dpr, dark, wireframe });
+        const c = canvas.getContext('2d'), x = 20 * scale * dpr, y = x, pixel = (dx, dy) => [...c.getImageData(x + dx * dpr, y + dy * dpr, 1, 1).data];
+        results.push({ arms: [[2, 0], [-3, 0], [0, 2], [0, -3]].map(([dx, dy]) => pixel(dx, dy)[3] > 0), outside: [[5, 0], [0, 5], [2, 2]].map(([dx, dy]) => pixel(dx, dy)[3]), colour: pixel(0, 0).slice(0, 3) });
+      }
+      return results;
+    });
+    for (const sample of samples) { assert.deepEqual(sample.arms, [true, true, true, true]); assert.deepEqual(sample.outside, [0, 0, 0]); sample.colour.forEach((v, i) => assert.ok(Math.abs(v - [37, 122, 189][i]) <= 1, 'layer colour (antialiased)')); }
+    await open97c(doc97j2(), 'points97j2-screens.dxf'); await page.locator('[data-ribbon-tab=Home]').click();
+    await page.getByRole('combobox', { name: 'Current layer', exact: true }).selectOption('Marks');
+    await typeCmd('divide'); await click(160, 100); await typeCmd('4');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.mouse.move(700, 700); await frames();
+      await page.screenshot({ path: `${shotDir}/todo97j2-points-${theme}.png` });
+      await page.locator('[data-testid=divide-flyout]').click();
+      assert.deepEqual(await page.getByRole('menuitem').allTextContents(), ['DivideDIV', 'Measure pointsME']);
+      await page.screenshot({ path: `${shotDir}/todo97j2-dropdown-${theme}.png` }); await key97c('Escape');
+    }
+    for (const theme of ['light', 'dark']) for (const name of ['points', 'dropdown']) assert.ok(readFileSync(`${shotDir}/todo97j2-${name}-${theme}.png`).length > 1000);
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);  });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
