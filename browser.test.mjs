@@ -24138,6 +24138,26 @@ try {
     await waitSel('3 selected');                                                 // Esc closed the bar only
     await typeCmd('l');
     await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Line');
+    await page.keyboard.press('Escape'); await waitSel('3 selected');
+    await t('cmd-echo').click(); await page.keyboard.press('Enter');             // Enter on the empty bar repeats the last command (LINE)
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Line');
+    assert.equal(await barOn(), false);
+    await page.keyboard.press('Escape'); await waitSel('3 selected');
+    await menuItem('Tools', 'Preflight…'); assert.equal(await t('preflight').isVisible(), true);
+    await key97c('Escape'); assert.equal(await t('preflight').isVisible(), false, 'Esc closes Preflight with 3 selected');
+    await waitSel('3 selected'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: with 3 selected, H typed at the Linear Dimension location prompt forces the dimension and arranges nothing', async () => {
+    await open97c(doc97i2(), 'dim97i2.dxf');
+    const before = lineEnds97c(await savedDoc());
+    await key97c('Control+a'); await waitSel('3 selected');
+    await typeCmd('dli'); await click(100, 100); await click(260, 220);
+    assert.match(await prompt(), /\[Horizontal\/Vertical\]/);
+    await typeCmd('h'); assert.match(await prompt(), /Linear: horizontal/);
+    await click(300, 150);
+    assert.match(await prompt(), /Dimension placed: 160\.\d+ mm/, 'forced horizontal (160) although the pointer is right of both points (vertical would be 120)');
+    assert.deepEqual(lineEnds97c(await savedDoc()), before, 'H did not distribute the three lines');
     await page.keyboard.press('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

@@ -3953,7 +3953,7 @@ function cmdEnter(raw) {
     if (c === 'copy' || c === 'c') { state.rotCopy = !state.rotCopy; renderCommand(); note(state.rotCopy ? 'Copy on: the angle you type now turns a copy, and the part stays' : 'Copy off'); return; }
     if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
   }
-  if ((curLay() ? selIdxs().length : editable()?.sel.size) > 1) {    // several selected: the words in the prompt
+  if ((curLay() ? selIdxs().length : state.tool === 'select' && editable()?.sel.size) > 1) {    // several selected, no command running: the words in the prompt
     const w = { left: 'left', centre: 'centre', center: 'centre', right: 'right', top: 'top', middle: 'middle', bottom: 'bottom', horizontal: 'horizontal', vertical: 'vertical' }[c]
       || (curLay() ? { l: 'left', c: 'centre', r: 'right', t: 'top', m: 'middle', b: 'bottom', h: 'horizontal', v: 'vertical' }[c] : null);   // single letters keep starting Line, Rectangle... on the drawing tabs
     if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
