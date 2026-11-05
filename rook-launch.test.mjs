@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { acad, acadArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
+import { acad, acadArgs, board, boardArgs, pawn, pawnArgs, queueLineOf, retro, retroArgs, suite, launchFailed, launchRun, runningNote, parseReview, parseBuild, parseKnight, reviewerArgs, buildArgs, knightArgs, commandLine, review, build, knight, lintBrief, isFixBrief, fixRoundRefusal } from './tools/rook-launch.mjs';
 
 const X = 'E:/Project B/Claude/Project D extras';
 const REVIEWER = 'claude2.cmd -p --agent reviewer --model claude-opus-5-5 --effort medium --permission-mode dontAsk --max-budget-usd 6 '
@@ -855,6 +855,26 @@ test('TODO 167e: pawn adds the house sentence, runs in ~/agy-research with a jso
   pawn(['b.json', 'Q2?'], two.x);
   assert.match(launched(two.calls)[9], /agy-research[\\/]\.run-lock-b\.json$/);
   assert.throws(() => pawn(['a.json', 'Q1?'], two.x), /in use/);
+});
+
+test('TODO 196g: board runs Bishop on <brief> into <out> as WORKFLOW line 194; missing brief or bad usage launches nothing', (t) => {
+  t.mock.method(console, 'log', () => {});
+  assert.deepEqual(boardArgs('E'), ['-p', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--permission-mode', 'dontAsk', '--max-budget-usd', '4', '--output-format', 'text',
+    '--add-dir', 'E', '--add-dir', 'E:/Project B/Claude/Project D', '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(node:*)', '--disallowedTools', 'Agent']);
+  const r = recorder();
+  board(['b-ab1.txt', 'b-ab1.out'], r.x);
+  const l = launched(r.calls);
+  assert.match(l[1], /claude2\.cmd$/);
+  assert.equal(l[3], `${X}/runs33`);
+  assert.equal(l[4], `fd:${resolve('b-ab1.txt')}`);
+  assert.equal(l[7], resolve('b-ab1.out'));
+  assert.equal(l[9], `${X}/runs33/.run-lock-b-ab1.out`);
+  assert.deepEqual(r.calls.find((c) => c[0] === 'queueOpen').slice(1), ['board', 'b-ab1.out', resolve('b-ab1.out')]);
+  const missing = recorder();
+  missing.x.need = (path) => { if (path.endsWith('b-ab1.txt')) throw new Error('board brief not found'); };
+  assert.throws(() => board(['b-ab1.txt', 'b-ab1.out'], missing.x), /board brief not found/);
+  for (const bad of [[], ['a.txt'], ['a', 'b', 'c']]) assert.throws(() => board(bad, r.x), /usage/);
+  assert.equal(r.calls.filter((c) => c[0] === 'launch').length, 1);
 });
 
 test('TODO 196b: Pawn refuses a second numbered question before opening files or launching', () => {

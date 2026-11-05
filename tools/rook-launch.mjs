@@ -466,3 +466,16 @@ export function pawn(args, x = io) {
   x.need(dirname(resolve(out)), 'output folder');
   plainRun(x, { kind: 'pawn', id: 'agy', bin: AGY, args: cmdArgs, cwd: AGY_DIR, out: resolve(out), lock: `${AGY_DIR}/.run-lock-${basename(out)}` }); // one lock per out file: parallel Pawn runs
 }
+
+// TODO 196g: WORKFLOW.md line 194's Bishop board / look flags.
+export const boardArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-5', '--effort', 'high', '--permission-mode', 'dontAsk', '--max-budget-usd', '4', '--output-format', 'text',
+  '--add-dir', extras, '--add-dir', MAIN_GIT.replace(/\/\.git$/, ''), '--allowedTools', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'Bash(node:*)', '--disallowedTools', 'Agent'];
+
+// `board <brief> <out>`: Bishop on <brief> (stdin) -> <out>, from runs<N>.
+export function board(args, x = io) {
+  const [brief, out, ...rest] = args;
+  if (!brief || !out || rest.length) throw new Error('usage: board <brief> <out>');
+  x.need(resolve(brief), 'board brief');
+  x.need(claude('bishop'), ACCOUNTS.bishop.bin);
+  plainRun(x, { kind: 'board', id: basename(out), bin: claude('bishop'), args: boardArgs(), cwd: runsDir(x), inPath: resolve(brief), out: resolve(out), lock: `${runsDir(x)}/.run-lock-${basename(out)}` });
+}
