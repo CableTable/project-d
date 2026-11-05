@@ -608,7 +608,7 @@ test('TODO 169: build and knight require tools/hooks in the target folder before
     [build, ['b.txt', 'o.jsonl', 'br', 'abc1234', '--as', 'bishop'], 'ProjectD-s15fix'],
     [knight, ['b.txt', 'k.txt', 'br', 'abc1234'], 'ProjectD-rowan'],
   ]) {
-    for (const value of ['tools/hooks', resolve(X, folder, 'tools/hooks'), '', 'other/hooks', resolve(X, 'other/hooks'), null]) {
+    for (const value of ['tools/hooks', resolve(X, folder, 'tools/hooks'), 'E:/Project B/Claude/Project D/tools/hooks', '', 'other/hooks', resolve(X, 'other/hooks'), 'E:/Project B/Claude/Project D/other/hooks', null]) {
       const { calls, x } = recorder();
       const git = x.git;
       x.git = (...a) => {
@@ -617,7 +617,7 @@ test('TODO 169: build and knight require tools/hooks in the target folder before
         if (value === null) throw new Error('config unset');
         return value;
       };
-      if (value && resolve(X, folder, value) === resolve(X, folder, 'tools/hooks')) {
+      if (value && [resolve(X, folder, 'tools/hooks'), resolve('E:/Project B/Claude/Project D/tools/hooks')].includes(resolve(X, folder, value))) {
         run(args, x);
         assert.ok(launched(calls));
       } else {

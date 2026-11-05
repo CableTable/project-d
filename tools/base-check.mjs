@@ -17,7 +17,12 @@ export function modulesDir(repo, commonDir, exists = existsSync) {
 }
 
 const git = (...a) => execFileSync('git', ['-C', REPO, ...a], { encoding: 'utf8', stdio: 'pipe' }).trim();
-const linkModules = (dir) => symlinkSync(modulesDir(REPO, git('rev-parse', '--git-common-dir')), join(dir, 'node_modules'), 'junction');
+const linkModules = (dir) => {
+  const target = modulesDir(REPO, git('rev-parse', '--git-common-dir'));
+  // A missing target also covers a main checkout without modules (the link would point at itself).
+  if (!existsSync(target) || resolve(target) === resolve(dir, 'node_modules')) throw new Error(`no node_modules at ${target}: run npm ci`);
+  symlinkSync(target, join(dir, 'node_modules'), 'junction');
+};
 
 // The command that runs the file: browser.test.mjs takes a port and an optional step regex, any other test file runs under node --test.
 export function testCommand(file, step) {

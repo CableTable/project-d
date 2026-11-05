@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { chmodSync, copyFileSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
@@ -32,6 +32,29 @@ test('Retro 37: --link shares the common repo modules in the cwd worktree and ca
     }
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('Retro 37 fix: --link and a check refuse with "run npm ci" when the repo has no node_modules (no link to itself)', () => {
+  const repo = mkdtempSync(join(tmpdir(), 'base-check-nomod-'));
+  const git = (...a) => execFileSync('git', ['-C', repo, '-c', `core.hooksPath=${join(repo, '.git/hooks')}`, '-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], { encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    writeFileSync(join(repo, 'a.test.mjs'), '');
+    git('add', '.');
+    git('commit', '-qm', 'base');
+    mkdirSync(join(repo, 'tools'));
+    copyFileSync('tools/base-check.mjs', join(repo, 'tools/base-check.mjs'));
+    for (const args of [['--link'], [git('rev-parse', 'HEAD').trim(), 'a.test.mjs']]) {
+      const r = spawnSync(process.execPath, ['tools/base-check.mjs', ...args], { cwd: repo, encoding: 'utf8', timeout: 20000 });
+      assert.equal(r.status, 1, r.stdout + r.stderr);
+      assert.match(r.stderr, /^no node_modules at .*node_modules: run npm ci/m);
+      assert.doesNotMatch(r.stdout, /node_modules ready/);
+    }
+    assert.equal(existsSync(join(repo, 'node_modules')), false);
+    assert.equal(git('worktree', 'list').trim().split('\n').length, 1);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
   }
 });
 
