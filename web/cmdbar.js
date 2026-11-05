@@ -60,6 +60,7 @@ const TABLE = [
   ['breakatpoint', 'Edit', 'Split an open object at one point without a gap', [], 'draw'],
   ['lengthen', 'Edit', 'Change the length of the picked end of a line, arc or open polyline', ['len'], 'draw'],
   ['join', 'Edit', 'Merge lines, arcs and polylines that meet end to end into one object', ['j'], 'draw'],
+  ['reverse', 'Edit', 'Turn lines, polylines and splines round: the start becomes the end', [], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],

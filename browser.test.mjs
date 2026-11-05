@@ -23729,6 +23729,85 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  const doc97h = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[100, 100], [200, 100], [200, 160]], { aci: 3 }), dxfCircle(300, 100, 20), dxfLine(100, 220, 180, 220));
+    return raw;
+  };
+  const start97h = (raw) => [fieldOf(raw.entities[0], 10), fieldOf(raw.entities[0], 20)];
+  const reverseBtn97h = () => page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Reverse', exact: true });
+
+  await step('TODO 97h: Drawings Reverse turns a polyline round and counts the circle as filtered out, one Undo step; nothing reversible changes nothing', async () => {
+    await open97c(doc97h(), 'reverse97h.dxf');
+    await typeCmd('reverse'); assert.equal(await prompt(), 'Select objects:');
+    await click(150, 100); await click(320, 100); await key97c('Enter');
+    assert.equal(await prompt(), '2 found, 1 were filtered out. 1 object(s) direction has been reversed.');
+    assert.deepEqual(start97h(await savedDoc()), [200, 160], 'the start is the old end');
+    assert.equal((await histLabels()).at(-1), 'Reverse');
+    await key97c('Control+z'); assert.deepEqual(start97h(await savedDoc()), [100, 100]);
+    const steps = (await histLabels()).length;
+    await typeCmd('reverse'); await click(320, 100); await key97c('Enter');
+    assert.equal(await prompt(), '1 found, 1 were filtered out.'); assert.equal((await histLabels()).length, steps, 'nothing reversible makes no undo step');
+    await key97c('Control+a'); await typeCmd('reverse');
+    assert.equal(await prompt(), '3 found, 1 were filtered out. 2 object(s) direction has been reversed.', 'a selection made first runs at once');
+    let raw = await savedDoc();
+    assert.deepEqual(start97h(raw), [200, 160]); assert.deepEqual(lineEnds97c(raw)[0], [180, 220, 100, 220]);
+    assert.equal((await histLabels()).length, steps + 1, 'one step for the whole selection');
+    await key97c('Control+z'); raw = await savedDoc();
+    assert.deepEqual(start97h(raw), [100, 100]); assert.deepEqual(lineEnds97c(raw)[0], [100, 220, 180, 220]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97h: Layouts Reverse turns loose objects round, a placed part stays, one Undo', async () => {
+    const lay = newLayout('Reverse 97h'), layers = newDoc(4).layers, plate = newDoc(4);
+    addEntities(plate, dxfPoly([[0, 0], [50, 0], [50, 30]]));
+    lay.parts.a = objectPart('a', 'Path', dxfPoly([[100, 100], [200, 100], [200, 160]]), layers);
+    lay.parts.c = objectPart('c', 'Ring', dxfCircle(300, 100, 20), layers);
+    lay.parts.plate = makePart('plate', 'Plate', plate);
+    lay.placed = [objectPlacement(lay.parts.a), objectPlacement(lay.parts.c), { partId: 'plate', x: 100, y: 250, rot: 0 }];
+    const goesRight = async () => {       // the polyline object runs left to right (its start is left of its end), read back from the saved layout
+      const l = layoutFromRaw(await savedDoc()), vs = GR.lwVertices(Object.values(l.parts).find((p) => p.raw.entities[0]?.type === 'LWPOLYLINE' && p.obj).raw.entities[0].r);
+      return vs[0].x < vs.at(-1).x;
+    };
+    await open97c(layoutRaw(lay), 'reverse97h-layout.dxf');
+    assert.equal(await goesRight(), true);
+    await page.locator('[data-ribbon-tab=Home]').click(); assert.equal(await reverseBtn97h().isEnabled(), true);
+    await key97c('Escape'); await reverseBtn97h().click(); assert.equal(await prompt(), 'Select objects:');
+    await click(150, 100); await click(320, 100); await key97c('Enter');
+    assert.equal(await prompt(), '2 found, 1 were filtered out. 1 object(s) direction has been reversed.');
+    assert.equal(await goesRight(), false); assert.equal(layoutFromRaw(await savedDoc()).placed.length, 3);
+    await key97c('Control+z'); assert.equal(await goesRight(), true);
+    await key97c('Control+a'); await typeCmd('reverse');
+    assert.equal(await prompt(), '2 found, 1 were filtered out. 1 object(s) direction has been reversed.', 'the placed part is not counted: it is not an object');
+    assert.equal(await goesRight(), false);
+    await key97c('Control+z'); assert.equal(await goesRight(), true);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97h: Compare Reverse changes the source, one Undo; the Modify menu and autocomplete know it', async () => {
+    await open97c(doc97h(), 'compare97h.dxf'); await typeCmd('compare');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await reverseBtn97h().getAttribute('title'), 'Reverse');
+    await reverseBtn97h().click(); await click(150, 100); await key97c('Enter'); await key97c('Escape');
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97h(?:-edited)*\.dxf$/ }) });
+    await source.click(); assert.deepEqual(start97h(await savedDoc()), [200, 160]);
+    await key97c('Control+z'); assert.deepEqual(start97h(await savedDoc()), [100, 100]);
+    await page.locator('[data-menu=Modify]').click(); assert.ok((await page.getByRole('menuitem').allTextContents()).some((s) => /^Reverse/.test(s))); await key97c('Escape');
+    await cmdLine().fill('rev'); assert.match((await t('cmd-sugg').allTextContents()).join(' '), /reverse/i); await key97c('Escape');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97h: light and dark command line after Reverse and the ribbon button', async () => {
+    await open97c(doc97h(), 'screens97h.dxf');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Home]').click(); await reverseBtn97h().waitFor();
+      await key97c('Control+a'); await typeCmd('reverse'); await cmdLine().focus();
+      assert.match(await prompt(), /direction has been reversed/);
+      await page.screenshot({ path: `${shotDir}/todo97h-reverse-${theme}.png` }); await key97c('Control+z');
+    }
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {

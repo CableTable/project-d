@@ -167,15 +167,15 @@ function extendEllipse(ent, shapes, pick) {
 
 const txt = (n) => String(+Number(n).toPrecision(15));
 /** A SPLINE record's numbers: degree p, knots U, control points P and fit points F ([x, y, z]), weights W (null when none). */
-function splineOf(r) {
+export function splineOf(r) {
   const P = [], F = [], U = [], W = [], pt = (k) => [0, 1, 2].map((i) => (r.c[k + i] === r.c[k] + 10 * i ? num(r.v[k + i]) : 0));
   r.c.forEach((c, k) => { if (c === 10) P.push(pt(k)); else if (c === 11) F.push(pt(k)); else if (c === 40) U.push(num(r.v[k])); else if (c === 41) W.push(num(r.v[k])); });
   return { p: get(r, 71) ?? 3, U, P, F, W: W.length && W.length === P.length ? W : null };
 }
 /** The same spline run the other way (so a start is extended as an end). */
-const spReverse = (s) => ({ ...s, U: s.U.map((_, i) => s.U[0] + s.U.at(-1) - s.U[s.U.length - 1 - i]), P: s.P.slice().reverse(), F: s.F.slice().reverse(), W: s.W && s.W.slice().reverse() });
+export const spReverse = (s) => ({ ...s, U: s.U.map((_, i) => s.U[0] + s.U.at(-1) - s.U[s.U.length - 1 - i]), P: s.P.slice().reverse(), F: s.F.slice().reverse(), W: s.W && s.W.slice().reverse() });
 /** The record with sp's knots, weights, control and fit points swapped in at the first of them (counts 72 / 73 / 74 updated); the rest stays as it was. */
-function spRecord(ent, sp) {
+export function spRecord(ent, sp) {
   const c = [], v = [], put = (code, val) => { c.push(code); v.push(txt(val)); };
   let done = false;
   ent.r.c.forEach((code, k) => {
