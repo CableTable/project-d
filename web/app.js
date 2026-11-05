@@ -7105,7 +7105,7 @@ function modSync(d) {
   if (m.kind === 'offset' && m.offsetRaw && (m.offsetRaw !== d.raw.entities || m.offsetRevision !== historyOf(d.vlay || d).revision)) {
     m.offsetSteps = []; m.offsetRaw = null; m.offsetSource = null; m.multiple = false; m.ent = null; m.stage = 'obj';
   }
-  if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side' || m.stage === 'second') m.stage = 'obj'; }
+  if (m.ent && !have.has(m.ent)) { m.ent = null; if (m.stage === 'side' || m.stage === 'second' || m.stage === 'point') m.stage = 'obj'; }
   // an undone Trim brings the original entity back, not the pieces it made: an edge that is gone is swapped for the object it was cut from
   const back = (e) => { for (let k = 0; e && !have.has(e) && k < 1000; k++) e = m.was.get(e); return e; };
   m.edges = [...new Set(m.edges.map(back).filter(Boolean))];
@@ -8208,7 +8208,7 @@ function chamferPolyDo(d, ent) {
   if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))))) { ui.cmdUI.message(state.msg); paintOverlay(); return; }
   m.stage = 'obj'; m.ent = null;
   if (!m.multiple) setTool('select');
-  note(`${r.count} lines were chamfered` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
+  note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} chamfered` + (r.short ? `. ${r.short} ${r.short === 1 ? 'was' : 'were'} too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
 function filletCommit(d, entities, groups) {
@@ -8230,7 +8230,7 @@ function filletPolyDo(d, ent) {
   if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
   m.stage = 'obj'; m.ent = null;
   if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))))) { ui.cmdUI.message(state.msg); paintOverlay(); return; }       // too nested: commit showed why; No trim adds new arcs, which join no group
-  note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
+  note(`${r.count} ${r.count === 1 ? 'line was' : 'lines were'} filleted` + (r.short ? `. ${r.short} ${r.short === 1 ? 'was' : 'were'} too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Fillet repeats after each pair; No trim keeps the sources, Shift uses radius 0 once. */
 function filletDo(d, ent, p, sharp) {

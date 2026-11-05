@@ -23067,6 +23067,7 @@ try {
     const original = lineEnds97c(doc97e());
     await click(195, 100); assert.equal(await prompt(), 'Specify new end point:');
     await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), original);
+    assert.equal(await prompt(), 'Select an object to change or [Undo]:', 'the prompt resets at once, before the next pick');
     const steps = (await histLabels()).length;
     await click(240, 100); assert.equal(await prompt(), 'Select an object to change or [Undo]:'); assert.doesNotMatch(await message97e(), /Cannot LENGTHEN/);
     assert.deepEqual(lineEnds97c(await savedDoc()), original); assert.equal((await histLabels()).length, steps, 'a click after the undo adds no step');
@@ -23502,6 +23503,18 @@ try {
     const pts = GR.lwVertices((await savedDoc()).entities[0].r);
     assert.equal(pts.length, 6); assert.deepEqual(pts.slice(0, 2).map(({ x, y, b }) => [x, y, b]), [[100, 100, .5], [200, 100, 0]]);
     assert.equal(pts[2].y, 190); assert.ok(Math.abs(pts[3].x - (200 - 10 * Math.tan(Math.PI / 6))) < 1e-6);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97 Lows 2: one corner says 1 line was chamfered; a duplicate closing vertex is not a short segment', async () => {
+    const one = dxfPoly([[100, 100], [200, 100], [200, 200]]), dup = dxfPoly([[300, 100], [400, 100], [400, 200], [300, 200], [300, 100]], { closed: true });
+    await open97f1(doc97f2(one, dup), 'lows2-97f2.dxf'); const before = (await savedDoc()).entities;
+    await start97f2(); await click(150, 100);
+    assert.equal(await prompt(), '1 line was chamfered'); assert.equal(GR.shapeOf((await savedDoc()).entities[0]).pts.length, 4);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await start97f2(); await click(350, 100);
+    assert.equal(await prompt(), '4 lines were chamfered'); assert.equal(GR.shapeOf((await savedDoc()).entities[1]).pts.length, 8);
     await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
     await closeTabs(/./); assert.deepEqual(errors, []);
   });

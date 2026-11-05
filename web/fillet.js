@@ -250,12 +250,18 @@ export function chamferEntities(e1, p1, e2, p2, d1, d2, trim = true, current = {
   return { ents };
 }
 
+/** Indexes of the vertices that start a real segment: a zero-length segment (repeated vertex, closing vertex = first) is not one, so its neighbours meet at one corner. */
+const realVertices = (pts, closed) => pts.map((_, i) => i).filter((i) =>
+  !((closed || i < pts.length - 1) && Math.hypot(pts[i][0] - pts[(i + 1) % pts.length][0], pts[i][1] - pts[(i + 1) % pts.length][1]) < EPS));
+
 /** P: reserve each accepted setback so neighbouring chamfers cannot overlap, also in No trim. */
 export function chamferAllPolyline(e, d1, d2, trim = true, method = 'Distance') {
   if (e?.type !== 'LWPOLYLINE') return { error: 'Select a 2D LWPOLYLINE' };
   if (![d1, d2].every((v) => Number.isFinite(v) && v >= 0)) return { error: 'Chamfer distances must be 0 or more' };
   if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Chamfer needs a polyline in the drawing plane' };
-  const { header, vertices } = polyRecords(e), shape = filletPolylineShape(e), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+  const { header, vertices: all } = polyRecords(e), whole = filletPolylineShape(e), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+  const keep = realVertices(whole.pts, whole.closed), vertices = keep.map((i) => all[i]);
+  const shape = { closed: whole.closed, pts: keep.map((i) => whole.pts[i]) };
   const segs = shape.pts.slice(0, shape.closed ? shape.pts.length : -1).map((p, i) => ({
     a: p.slice(0, 2), b: shape.pts[(i + 1) % shape.pts.length].slice(0, 2), bulge: p[2], record: vertices[i],
   }));
@@ -323,7 +329,8 @@ export function filletAllPolyline(e, r, trim = true) {
   if (e?.type !== 'LWPOLYLINE') return { error: 'Select a 2D LWPOLYLINE' };
   if (!(r >= 0) || !Number.isFinite(r)) return { error: 'The radius must be 0 or more' };
   if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Fillet needs a plain 2D polyline in the drawing plane' };
-  const { header, vertices } = polyRecords(e), closed = !!((get(e.r, 70) ?? 0) & 1);
+  const { header, vertices: all } = polyRecords(e), closed = !!((get(e.r, 70) ?? 0) & 1);
+  const keep = realVertices(all.map((v) => [get(v, 10) ?? 0, get(v, 20) ?? 0]), closed), vertices = keep.map((i) => all[i]);
   const pts = vertices.map((v) => [get(v, 10) ?? 0, get(v, 20) ?? 0]);
   const segs = vertices.slice(0, closed ? vertices.length : -1).map((v, i) => ({
     a: pts[i], b: pts[(i + 1) % pts.length], bulge: get(v, 42) ?? 0, record: v,

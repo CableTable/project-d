@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chamferEntities, chamferSegment, chamferAllPolyline } from './web/fillet.js';
+import { chamferEntities, chamferSegment, chamferAllPolyline, filletAllPolyline } from './web/fillet.js';
 import { line, lwpoly, arc, newDoc, addEntities, writeDxf } from './web/dxf-write.js';
 import { shapeOf, get, lwVertices } from './web/grips.js';
 import { readDxf } from './web/drawing.js';
@@ -173,4 +173,23 @@ test('Polyline zero distances and unchamferable objects do not change geometry; 
   assert.deepEqual(vertices(chamferAllPolyline(flipped, 5, 5).ents[0]), vertices(chamferAllPolyline(e, 5, 5).ents[0]));
   const tilted = { ...e, r: { ...e.r, c: [...e.r.c, 210], v: [...e.r.v, '1'] } };
   assert.match(chamferAllPolyline(tilted, 5, 5).error, /drawing plane/);
+});
+
+test('Polyline: a zero-length segment is skipped, its neighbours meet at one corner (Chamfer and Fillet, open and closed)', () => {
+  const open = [[0, 0], [100, 0], [100, 100]], square = [[0, 0], [100, 0], [100, 100], [0, 100]];
+  const cases = [
+    ['open', open, { start: [[0, 0], ...open], inside: [open[0], open[1], open[1], open[2]], end: [...open, open[2]] }],
+    ['closed', square, { start: [[0, 0], ...square], inside: [square[0], square[1], square[1], square[2], square[3]], end: [...square, square[0]] }],
+  ];
+  for (const [name, clean, dups] of cases) {
+    const closed = name === 'closed', ref = [chamferAllPolyline(lwpoly(clean, { closed }), 5, 5), filletAllPolyline(lwpoly(clean, { closed }), 5)];
+    for (const [where, pts] of Object.entries(dups)) {
+      const got = [chamferAllPolyline(lwpoly(pts, { closed }), 5, 5), filletAllPolyline(lwpoly(pts, { closed }), 5)];
+      got.forEach((r, k) => {
+        const label = `${name} ${where} ${k ? 'fillet' : 'chamfer'}`;
+        assert.equal(r.count, closed ? 4 : 1, label); assert.equal(r.short, 0, label);
+        assert.deepEqual(vertices(r.ents[0]), vertices(ref[k].ents[0]), label);
+      });
+    }
+  }
 });
