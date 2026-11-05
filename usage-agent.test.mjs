@@ -33,7 +33,8 @@ test('TODO 198b Low: a running line in a queue unchanged longer than the longest
   const input = { jsonlMtime, queueText, queueMtime: jsonlMtime + 1 };
   assert.equal(isRookStale({ ...input, now: jsonlMtime + 1 + LONGEST_RUN_MS }), false); // exactly the longest run: still running
   assert.equal(isRookStale({ ...input, now: jsonlMtime + 2 + LONGEST_RUN_MS }), true);
-  assert.equal(isRookStale({ ...input, queueText: 'b: running\r\n', now: jsonlMtime + 2 + LONGEST_RUN_MS }), false); // no ended line: still not stuck
+  assert.equal(isRookStale({ ...input, queueText: 'b: running\r\n', now: jsonlMtime + 2 + LONGEST_RUN_MS }), true); // running only, 5h: a dead run line alerts
+  assert.equal(isRookStale({ ...input, queueText: 'b: running\r\n', now: jsonlMtime + 31 * 60_000 }), false); // running only, fresh: live
 });
 
 test('TODO 198b: collector reads line 1 and highest numbered queue, tolerating missing files', () => {

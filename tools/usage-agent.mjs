@@ -19,8 +19,8 @@ export const LONGEST_RUN_MS = 3 * 3600_000; // shortcut: a guess at the longest 
 export function isRookStale({ jsonlMtime, queueText, queueMtime, now } = {}) {
   return [jsonlMtime, queueMtime, now].every(Number.isFinite)
     && now - jsonlMtime > 30 * 60_000 && queueMtime > jsonlMtime
-    // a `running` line in a queue.txt unchanged for longer than any run never ended: it stops silencing the alert
-    && typeof queueText === 'string' && /: ended\s*$/m.test(queueText) && (now - queueMtime > LONGEST_RUN_MS || !/: running\s*$/m.test(queueText));
+    // a `running` line in a queue.txt unchanged for longer than any run is dead: it counts as no live run, and as a run that ended
+    && typeof queueText === 'string' && /: (?:ended|running)\s*$/m.test(queueText) && (now - queueMtime > LONGEST_RUN_MS || !/: running\s*$/m.test(queueText));
 }
 
 export function collectRookStatus(extras, home = homedir(), now = Date.now(), log = console.error) {
