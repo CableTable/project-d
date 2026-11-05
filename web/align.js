@@ -1,62 +1,37 @@
-// Alignment guides: sheet mm, y up; span is the target's extent along the line. See align.test.mjs.
-import { gripOf } from './layout.js';
-import { snapBoxToGuides } from './guides.js';
-import { placedBox } from './apply.js';
+// ALIGN's maths: one pair of points moves, two pairs also turn (and, if asked, scale) about the first destination point. No DOM.
+import { moveEntities } from './edit.js';
+import { rotateEntities } from './rotate.js';
+import { scaleEntities } from './scale.js';
 
-/** Sheet edges / centres and the inner edges of nonzero gripper margins. */
-export function sheetAlignmentLines(o) {
-  const W = o.sheetW, H = o.sheetH;
-  const lines = [
-    ...[0, W / 2, W].map((mm) => ({ axis: 'x', mm, span: [0, H] })),
-    ...[0, H / 2, H].map((mm) => ({ axis: 'y', mm, span: [0, W] })),
-  ];
-  const left = gripOf(o, 'left'), right = gripOf(o, 'right'), bottom = gripOf(o, 'bottom'), top = gripOf(o, 'top');
-  if (left) lines.push({ axis: 'x', mm: left, span: [bottom, H - top] });
-  if (right) lines.push({ axis: 'x', mm: W - right, span: [bottom, H - top] });
-  if (bottom) lines.push({ axis: 'y', mm: bottom, span: [left, W - right] });
-  if (top) lines.push({ axis: 'y', mm: H - top, span: [left, W - right] });
-  return lines;
+export const SAME_SRC = 'The two source points are the same: pick a different second source point';
+export const SAME_DST = 'The two destination points are the same: pick a different second destination point';
+
+/**
+ * The move / turn / scale that takes source point 1 to destination 1 and the line source 1 → 2 onto destination 1 → 2.
+ * → { dx, dy, angle (degrees, ccw), factor (1 unless `scale`), pivot (= dst1), src1 } or { error } when a pair of points coincides.
+ */
+export function alignTransform(src1, dst1, src2 = null, dst2 = null, scale = false) {
+  const t = { dx: dst1[0] - src1[0], dy: dst1[1] - src1[1], angle: 0, factor: 1, pivot: dst1.slice(0, 2), src1: src1.slice(0, 2) };
+  if (!src2 || !dst2) return t;
+  const sx = src2[0] - src1[0], sy = src2[1] - src1[1], ex = dst2[0] - dst1[0], ey = dst2[1] - dst1[1], sl = Math.hypot(sx, sy), el = Math.hypot(ex, ey);
+  if (sl < 1e-9) return { error: SAME_SRC };
+  if (el < 1e-9) return { error: SAME_DST };
+  t.angle = (Math.atan2(ey, ex) - Math.atan2(sy, sx)) * 180 / Math.PI;
+  if (t.angle > 180) t.angle -= 360; else if (t.angle <= -180) t.angle += 360;
+  if (scale) t.factor = el / sl;
+  return t;
 }
 
-/** Eligible parts' upright edges / centres, in layout order; the caller excludes the dragged originals. */
-export function partAlignmentLines(parts, placed, eligible) {
-  const lines = [];
-  placed.forEach((p, i) => {
-    if (!eligible(p, i)) return;
-    const [left, bottom, right, top] = placedBox(parts[p.partId], p);
-    for (const mm of [left, (left + right) / 2, right]) lines.push({ axis: 'x', mm, span: [bottom, top], part: true });
-    for (const mm of [bottom, (bottom + top) / 2, top]) lines.push({ axis: 'y', mm, span: [left, right], part: true });
-  });
-  return lines;
+/** The same transform as a canvas matrix [a, b, c, d, e, f] (the preview of the drawing tab). */
+export function alignMatrix(t) {
+  const a = t.angle * Math.PI / 180, k = t.factor, c = k * Math.cos(a), s = k * Math.sin(a), [x, y] = t.src1;
+  return [c, s, -s, c, t.pivot[0] - c * x + s * y, t.pivot[1] - s * x - c * y];
 }
 
-/** Nearest per axis; ties keep the order: Guidelines, sheet / grippers, then parts in layout order. */
-export function snapBoxToAlignment(box, lines, guidelines, tol, options) {
-  return snapBoxToGuides(box, [...guidelines, ...lines], tol, options);
-}
-
-/** Finite Alignment guide segments across the moved box and target; Guidelines draw separately. */
-export function alignmentSegments(box, hits) {
-  return hits.filter((hit) => hit.span).map(({ axis, mm, span }) => axis === 'x'
-    ? [mm, Math.min(box[1], span[0]), mm, Math.max(box[3], span[1])]
-    : [Math.min(box[0], span[0]), mm, Math.max(box[2], span[1]), mm]);
-}
-
-/** Nearest part along each active part guide; touching / overlapping spans have no label. */
-export function alignmentGaps(box, hits, lines) {
-  const gaps = [];
-  for (const hit of hits) {
-    if (!hit.part) continue;
-    const lo = hit.axis === 'x' ? box[1] : box[0], hi = hit.axis === 'x' ? box[3] : box[2];
-    let nearest = null;
-    for (const line of lines) {
-      if (!line.part || line.axis !== hit.axis || Math.abs(line.mm - hit.mm) > 1e-6) continue;
-      const [a, b] = line.span;
-      const start = hi <= a ? hi : b, end = hi <= a ? a : lo;
-      const gap = Math.max(0, end - start);
-      if (!nearest || gap < nearest.gap) nearest = { axis: hit.axis, mm: hit.mm, gap, mid: (start + end) / 2 };
-    }
-    if (nearest && nearest.gap > 0) gaps.push(nearest);
-  }
-  return gaps;
+/** The selection moved, then turned and scaled about the first destination point: Move's, Rotate's and Scale's own entity code. */
+export function alignEntities(raw, selection, t) {
+  let next = moveEntities(raw, selection, t.dx, t.dy);
+  if (t.angle) next = rotateEntities(next, selection, t.pivot, t.angle);
+  if (t.factor !== 1) next = scaleEntities(next, selection, t.pivot, t.factor);
+  return next;
 }

@@ -62,6 +62,7 @@ const TABLE = [
   ['join', 'Edit', 'Merge lines, arcs and polylines that meet end to end into one object', ['j'], 'draw'],
   ['reverse', 'Edit', 'Turn lines, polylines and splines round: the start becomes the end', [], 'draw'],
   ['rotate', 'Edit', 'Turn selected objects or a layout part about a pivot', ['r', 'ro'], ''],
+  ['align', 'Edit', 'Move, turn and scale objects so source points meet destination points', ['al'], 'draw'],
   ['nest', 'Layout', 'Auto-nest mixed parts', ['n'], ''],
   ['step', 'Layout', 'Step and repeat the chosen part', ['sr'], 'layout'],
   ['group', 'Layout', 'Group the selected objects or parts', ['g'], '', 'Ctrl+G'],
