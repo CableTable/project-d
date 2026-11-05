@@ -1,6 +1,7 @@
 // Crossing-box Stretch, pure (drawing units); the hot-grip editor shares the same drag loop.
 import * as GR from './grips.js';
 import { lwpoly } from './dxf-write.js';
+import { moveEntities } from './edit.js';
 
 /** Stretch one object's hot grips; label and part also drive the grip editor's preview. */
 export function stretchGrips(ent, hots, dx, dy, shift = false, whole = GR.wholeHot(ent, new Set(hots.map((x) => x.id)))) {
@@ -33,8 +34,6 @@ function vertexAdapter(ent) {
     if ((GR.get(ent.r, 70) ?? 0) & (16 | 32 | 64)) return null;
     (ent.kids || []).forEach((r, i) => { if (r.type === 'VERTEX') scan(r, [10], i); });
   } else if (ent.type === 'SPLINE') scan(ent.r, [10, 11]);
-  // shortcut: native dimension graphics live in document blocks; rebuild those when the command applies these definition points.
-  else if (ent.type === 'DIMENSION') scan(ent.r, [10, 11, 12, 13, 14, 15, 16]);
   else if (ent.type === 'LEADER' && !ent.model) scan(ent.r, [10]);
   else return null;
   const poly = lwpoly(points.map(({ r, kx, ky }) => [GR.num(r.v[kx]), GR.num(r.v[ky])]));
@@ -62,24 +61,49 @@ function definingGrips(ent) {
   return GR.gripsOf(ent).filter((g) => g.kind === 'end' || g.kind === 'vertex');
 }
 
-/** Points in any box are hot; picked indices move whole. Counts are changed objects, never points. */
-export function stretchEntities(entities, boxes, dx, dy, picked = new Set()) {
+/** A native dimension's definition points (code 12 is only the clone insertion point). */
+function dimensionPoints(ent) {
+  return [10, 11, 13, 14, 15, 16].flatMap((code) => {
+    const x = GR.get(ent.r, code), y = GR.get(ent.r, code + 10);
+    return x == null || y == null ? [] : [{ x, y }];
+  });
+}
+
+/**
+ * Points in any box are hot; picked indices move whole. Objects that move whole go through one moveEntities call
+ * (a native dimension takes its *D block with it); one cut by a box is left unchanged. Counts are changed objects, never points.
+ */
+export function stretchEntities(raw, boxes, dx, dy, picked = new Set()) {
   if (![dx, dy].every(Number.isFinite)) throw new Error('Stretch needs finite distances');
   const next = new Map();
   let moved = 0, stretched = 0;
-  if (!dx && !dy) return { next, moved, stretched };
+  if (!dx && !dy) return { next, blocks: raw.blocks, moved, stretched };
   const inside = (p) => boxes.some((b) => p.x >= Math.min(b.x0, b.x1) && p.x <= Math.max(b.x0, b.x1)
     && p.y >= Math.min(b.y0, b.y1) && p.y <= Math.max(b.y0, b.y1));
-  entities.forEach((ent, i) => {
+  const wholeSet = new Set();
+  raw.entities.forEach((ent, i) => {
+    if (ent.type === 'DIMENSION') {
+      const pts = dimensionPoints(ent);
+      if (picked.has(i) || pts.length > 0 && pts.every(inside)) wholeSet.add(i);
+      return;
+    }
     const adapter = vertexAdapter(ent), source = adapter?.poly || ent;
     const all = definingGrips(source), hots = all.filter(inside);
     const whole = picked.has(i) || all.length > 0 && hots.length === all.length;
     if (!whole && !hots.length) return;
+    // A model-only leader has no record for moveEntities; the grip path translates it.
+    if (whole && ent.r) { wholeSet.add(i); return; }
     const target = whole && !(ent.type === 'LEADER' && adapter) ? ent : source;
     const result = stretchGrips(target, hots, dx, dy, false, whole);
     if (result.ent === target) return;
     next.set(i, adapter && target === source ? adapter.restore(result.ent) : result.ent);
     if (whole) moved++; else stretched++;
   });
-  return { next, moved, stretched };
+  let blocks = raw.blocks;
+  if (wholeSet.size) {
+    const m = moveEntities(raw, wholeSet, dx, dy);
+    blocks = m.blocks;
+    for (const i of wholeSet) { next.set(i, m.entities[i]); moved++; }
+  }
+  return { next, blocks, moved, stretched };
 }

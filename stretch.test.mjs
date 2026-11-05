@@ -65,9 +65,11 @@ test('Stretch case grid: every defining-point type, union of boxes, picks, zero,
       ['picked', [], ps.map((_, i) => i), new Set([0])],
       ['zero displacement', [bounds], [], new Set([0]), 0, 0],
     ];
-    for (const [scenario, boxes, hot, picked = new Set(), dx = 3, dy = 4] of scenarios) {
+    for (const [scenario, boxes, hotIn, picked = new Set(), dx = 3, dy = 4] of scenarios) {
       const msg = `${name}: ${scenario}`, input = structuredClone(boxes);
-      const { next, moved, stretched } = stretchEntities([ent], boxes, dx, dy, picked);
+      // A native dimension never stretches: a box that cuts it leaves it unchanged.
+      const hot = name === 'DIMENSION' && hotIn.length < ps.length ? [] : hotIn;
+      const { next, moved, stretched } = stretchEntities({ entities: [ent], blocks: {} }, boxes, dx, dy, picked);
       const changed = hot.length > 0, whole = changed && hot.length === ps.length;
       assert.equal(next.size, +changed, msg);
       assert.equal(moved, +whole, msg); assert.equal(stretched, +(changed && !whole), msg);
@@ -93,25 +95,42 @@ test('Stretch case grid: every defining-point type, union of boxes, picks, zero,
     }
   }
   const p = lwpoly(coords, { closed: true });
-  const union = stretchEntities([p], [box(-1, -1, 21, 1), box(-1, 19, 21, 21)], 20, 0);
+  const union = stretchEntities({ entities: [p], blocks: {} }, [box(-1, -1, 21, 1), box(-1, 19, 21, 21)], 20, 0);
   assert.equal(union.moved, 1); assert.equal(union.stretched, 0);
   nearPoints(vertices(union.next.get(0)), coords.map(([x, y]) => [x + 20, y]), 'two boxes cover all; no coincident intermediate drags');
   const raw = { entities: [line(0, 0, 20, 0), line(100, 0, 120, 0)], groups: [{ name: 'G', members: [0, 1], selectable: true }] };
   const before = structuredClone(raw), selected = new Set([0]);
-  const group = stretchEntities(raw.entities, [around([0, 0])], 3, 4);
+  const group = stretchEntities(raw, [around([0, 0])], 3, 4);
   assert.deepEqual([...group.next.keys()], [0], 'the group mate outside stays');
   const nextEntities = raw.entities.map((e, i) => group.next.get(i) || e);
   assert.equal(nextEntities[1], raw.entities[1], 'the outside group mate retains its identity');
   assert.deepEqual(raw, before, 'group membership and source stay untouched');
-  const picked = stretchEntities(raw.entities, [], 3, 4, selected);
+  const picked = stretchEntities(raw, [], 3, 4, selected);
   assert.deepEqual([...picked.next.keys()], [0]); assert.equal(picked.moved, 1);
   assert.deepEqual([...selected], [0]);
-  const mixed = stretchEntities(raw.entities, [around([0, 0])], 3, 4, new Set([1]));
+  const mixed = stretchEntities(raw, [around([0, 0])], 3, 4, new Set([1]));
   assert.equal(mixed.moved, 1); assert.equal(mixed.stretched, 1); assert.equal(mixed.next.size, 2);
   const l = raw.entities[0], grips = GR.gripsOf(l).filter((g) => g.id !== 'm');
   const shared = stretchGrips(l, grips, 20, 0);
   assert.equal(shared.label, 'Move'); assert.equal(shared.part, false);
   nearPoints(ends(shared.ent), [[20, 0], [40, 0]], 'the existing all-hot rule moves whole');
-  assert.throws(() => stretchEntities([l], [], NaN, 0), /finite/);
+  assert.throws(() => stretchEntities({ entities: [l], blocks: {} }, [], NaN, 0), /finite/);
   console.log(`Stretch grid: ${cases} type/scenario cases plus union, groups, mixed counts and shared-loop checks`);
+});
+
+test('Stretch: a native dimension moves whole with its block, or stays when a box cuts it', () => {
+  const dim = entity('DIMENSION', [[2, '*D1'], [70, 1], [10, 20], [20, 20], [11, 0], [21, 20], [13, 0], [23, 0], [14, 20], [24, 0]]);
+  const raw = { entities: [dim, line(0, 0, 20, 0)], blocks: { '*D1': { entities: [line(0, 0, 20, 0)] } } };
+  const before = structuredClone(raw), blockLine = (r) => [GR.get(r.blocks['*D1'].entities[0].r, 10), GR.get(r.blocks['*D1'].entities[0].r, 20)];
+  const cut = stretchEntities(raw, [around([0, 0])], 3, 4);
+  assert.deepEqual([...cut.next.keys()], [1], 'cut by a box: the dimension is not in next');
+  assert.equal(cut.blocks, raw.blocks, 'nothing moved whole in its block');
+  const inside = stretchEntities(raw, [enclosing([[0, 0], [20, 20]])], 3, 4);
+  assert.equal(inside.moved, 2); assert.equal(inside.stretched, 0);
+  nearPoints([10, 11, 13, 14].map((c) => pair(inside.next.get(0), c)), [[23, 24], [3, 24], [3, 4], [23, 4]], 'definition points moved');
+  nearPoints([blockLine(inside)], [[3, 4]], 'the *D block moved with it');
+  const picked = stretchEntities(raw, [], 3, 4, new Set([0]));
+  assert.deepEqual([...picked.next.keys()], [0]); assert.equal(picked.moved, 1);
+  nearPoints([blockLine(picked)], [[3, 4]], 'picked: block moved');
+  assert.deepEqual(raw, before, 'source drawing untouched');
 });
