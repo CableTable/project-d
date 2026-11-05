@@ -14,7 +14,7 @@ import { readOverride } from './web/dimension-text.js';
 import { stepRepeat } from './web/layout.js';
 import { readDxf, decodeDxf, flatten, mapply } from './web/drawing.js';
 import { readMeta, newLayout, makePart, layoutRaw, layoutFromRaw, gridOf, objectPart, objectPlacement, objectDoc } from './web/layoutdoc.js';
-import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, writeDxf } from './web/dxf-write.js';
+import { newDoc, addEntities, addLayer, addBlock, entity, insert as dxfInsert, text as dxfText, mtext as dxfMtext, roundRect, circle as dxfCircle, line as dxfLine, arc as dxfArc, ellipse as dxfEllipse, lwpoly as dxfPoly, point, writeDxf } from './web/dxf-write.js';
 import { placedBox, placedMat } from './web/apply.js';
 import * as GR from './web/grips.js';
 import { rotateEntities } from './web/rotate.js';
@@ -24293,6 +24293,44 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  await step('TODO 97j2: Measure points with a typed two-point length', async () => {
+    await open97c(doc97j2(), 'measure-typed97j2.dxf'); const before = await savedDoc();
+    await typeCmd('me'); await click(160, 100); assert.equal(await prompt(), 'Specify length of segment:');
+    await typeCmd('100,100'); assert.equal(await prompt(), 'Specify second point:');
+    await typeCmd('@50,0'); assert.equal(await prompt(), 'Measure points: 4 points created.');   // the far end counts: 200 is a whole number of 50s
+    pointsNear97j2(await savedDoc(), [[150, 100], [200, 100], [250, 100], [300, 100]]);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before.entities);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97j2: Layouts preselected placed part is refused by Divide and Measure points', async () => {
+    const lay = newLayout('Preselect 97j2'), plate = newDoc(4);
+    addEntities(plate, dxfPoly([[0, 0], [50, 0], [50, 30]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', plate); lay.placed = [{ partId: 'plate', x: 100, y: 250, rot: 0 }];
+    await open97c(layoutRaw(lay), 'preselect97j2-layout.dxf'); await key97c('Escape');
+    const layoutState = async () => { const saved = layoutFromRaw(await savedDoc()); saved.name = ''; return saved; };
+    const before = await layoutState(), labels = await histLabels();
+    for (const command of ['divide', 'measurepoints']) {
+      await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true }); await page.getByText('Selected part', { exact: true }).waitFor();
+      await typeCmd(command);
+      assert.match(await message97e(), /Placed part cannot be divided/);
+      assert.match(await prompt(), /^Select object to (divide|measure):$/); await key97c('Escape');
+    }
+    assert.deepEqual(await layoutState(), before); assert.deepEqual(await histLabels(), labels);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97j2: Select picks a POINT on Drawings and on Layouts', async () => {
+    const raw = doc97j2(); addEntities(raw, point(250, 300));
+    await open97c(raw, 'point-click97j2.dxf'); await click(250, 300); await waitSel('1 selected');
+    await closeTabs(/./);
+    const lay = newLayout('Point 97j2'), layers = newDoc(4).layers;
+    lay.parts.a = objectPart('a', 'Point', point(200, 150), layers); lay.placed = [objectPlacement(lay.parts.a)];
+    await open97c(layoutRaw(lay), 'point-click97j2-layout.dxf'); await key97c('Escape');
+    await click(200, 150); await waitSel('1 selected');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97j2: POINT crosses stay three screen pixels in layer colour at zoom and DPR, light and dark points and open dropdown', async () => {
     const samples = await page.evaluate(async () => {
       const { paintDrawing } = await import('./render.js'), { flatten } = await import('./drawing.js'), { newDoc, addLayer, addEntities, point } = await import('./dxf-write.js');
@@ -24318,7 +24356,8 @@ try {
       await page.screenshot({ path: `${shotDir}/todo97j2-dropdown-${theme}.png` }); await key97c('Escape');
     }
     for (const theme of ['light', 'dark']) for (const name of ['points', 'dropdown']) assert.ok(readFileSync(`${shotDir}/todo97j2-${name}-${theme}.png`).length > 1000);
-    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);  });
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
