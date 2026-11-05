@@ -285,10 +285,10 @@ export function nurbsAt(cp, knots, deg, w, t) {
 }
 
 /** Points on a NURBS curve (de Boor, rational when weights are given); else its fit points or control polygon. */
-export function nurbs(cp, knots, deg, weights, fit) {
+export function nurbs(cp, knots, deg, weights, fit, fine) {
   const n = cp.length;
   if (nurbsOk(cp, knots, deg)) {
-    const w = weights && weights.length === n ? weights : null, out = [], steps = Math.min(Math.max(n * 12, 48), 2000);
+    const w = weights && weights.length === n ? weights : null, out = [], steps = fine || Math.min(Math.max(n * 12, 48), 2000);
     for (let i = 0; i <= steps; i++) out.push(nurbsAt(cp, knots, deg, w, knots[deg] + (knots[n] - knots[deg]) * i / steps));
     return out;
   }

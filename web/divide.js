@@ -1,10 +1,10 @@
 // Divide / Measure points (TODO 97j): where the POINTs go along one curve; pure, drawing units, y up: divide.test.mjs.
-//   divideAt(ent, pick, n)    → n - 1 points [x, y] splitting the curve in n equal parts, or a refusal reason (string)
+//   divideAt(ent, pick, n)    → n - 1 points [x, y] splitting the curve in n equal parts (n for a closed curve: its start too), or a refusal reason (string)
 //   measureAt(ent, pick, len) → a point every len along the curve, none at the far end unless it lands there within 1e-6, or a refusal reason
 // Start: the end nearest `pick`; a closed polyline / spline from its first vertex; a circle from angle 0 anticlockwise; a full ellipse from its major axis end.
 import { shapeOf, get } from './grips.js';
 import { pathOf, geo, pointAt } from './modify.js';
-import { curveShape } from './extend.js';
+import { curveShape, splineShape } from './extend.js';
 
 const TAU = 2 * Math.PI, EPS = 1e-6, MAX_POINTS = 32767;
 export const CANNOT_DIVIDE = 'Cannot divide or measure this object.';
@@ -33,18 +33,22 @@ function route(ent, pick) {
   if (!ent?.r || !Array.isArray(pick) || pick.length < 2 || !pick.slice(0, 2).every(Number.isFinite)) return CANNOT_DIVIDE;
   const T = ent.type, ocs = ['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE'].includes(T);
   if (ocs && (Math.abs(get(ent.r, 210) ?? 0) > 1e-9 || Math.abs(get(ent.r, 220) ?? 0) > 1e-9)) return CANNOT_DIVIDE;       // a tilted plane
-  const flip = ocs && (get(ent.r, 230) ?? 1) < 0, local = (p) => (flip ? [-p[0], p[1]] : p);       // drawn from below: OCS x runs the other way
-  let sh = T === 'POLYLINE' ? polylineShape(ent) : T === 'ELLIPSE' || T === 'SPLINE' ? curveShape(ent) : ['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE'].includes(T) ? shapeOf(ent) : null;
+  let flip = ocs && (get(ent.r, 230) ?? 1) < 0;       // drawn from below: OCS x runs the other way
+  const local = (p) => (flip ? [-p[0], p[1]] : p);
+  let sh = T === 'POLYLINE' ? polylineShape(ent) : T === 'ELLIPSE' ? curveShape(ent) : T === 'SPLINE' ? splineShape(ent, 32768) : ['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE'].includes(T) ? shapeOf(ent) : null;
   if (sh?.q) sh = ellipseShape(sh);
   if (!sh) return CANNOT_DIVIDE;
+  if (flip && sh.t === 'circle') { sh = { ...sh, c: [-sh.c[0], sh.c[1]] }; flip = false; }       // a mirrored circle still starts at world angle 0, anticlockwise as seen
   const path = pathOf(sh);
-  let segs = path.segs;
+  let segs = path.segs, closed = path.closed;
+  if (sh.t === 'poly' && sh.closed && sh.pts.length === 2) { const [p, q] = sh.pts; segs.push({ a: q, b: p, bulge: q[2] || 0 }); closed = true; }       // pathOf wants 3 vertices; a DONUT is 2
+  segs = segs.filter((s) => dist(s.a, s.b) > 1e-9);       // a zero chord with a bulge has no arc
   if (!segs.length) return CANNOT_DIVIDE;
   pick = local(pick);
-  if (!path.closed && dist(pick, segs[0].a) > dist(pick, segs.at(-1).b)) segs = segs.map((s) => ({ a: s.b, b: s.a, bulge: -s.bulge })).reverse();
+  if (!closed && dist(pick, segs[0].a) > dist(pick, segs.at(-1).b)) segs = segs.map((s) => ({ a: s.b, b: s.a, bulge: -s.bulge })).reverse();
   const lens = segs.map((s) => { const g = geo(s); return g.line ? g.len : Math.abs(g.sw) * g.r; });
   const total = lens.reduce((a, b) => a + b, 0);
-  return Number.isFinite(total) && total > 1e-9 ? { segs, lens, total, out: local } : CANNOT_DIVIDE;
+  return Number.isFinite(total) && total > 1e-9 ? { segs, lens, total, closed, out: local } : CANNOT_DIVIDE;
 }
 
 /** The points at the ascending distances `ds` along the route. */
@@ -59,7 +63,9 @@ function along(rt, ds) {
 export function divideAt(ent, pick, n) {
   if (!Number.isInteger(n) || n < 2 || n > MAX_POINTS) return BAD_COUNT;
   const rt = route(ent, pick);
-  return typeof rt === 'string' ? rt : along(rt, Array.from({ length: n - 1 }, (_, k) => rt.total * (k + 1) / n));
+  if (typeof rt === 'string') return rt;
+  const first = rt.closed ? 0 : 1;       // a closed curve's start is a division mark too: n points, not n - 1
+  return along(rt, Array.from({ length: n - first }, (_, k) => rt.total * (k + first) / n));
 }
 
 export function measureAt(ent, pick, len) {

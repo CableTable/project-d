@@ -32,19 +32,21 @@ export function curveShape(ent) {
   if (ent.type === 'ELLIPSE') {
     const q = ellipseOf(ent), full = q.t1 - q.t0 > TAU - 1e-6, n = Math.max(16, Math.ceil(512 * (q.t1 - q.t0) / TAU));
     sh = { t: 'poly', pts: Array.from({ length: full ? n : n + 1 }, (_, i) => ellAt(q, q.t0 + (q.t1 - q.t0) * i / n)), closed: full, q };
-  } else {
-    const r = ent.r, cp = [], fit = [], knots = [], w = [];
-    r.c.forEach((c, k) => {
-      const v = Number(r.v[k]), y = r.c[k + 1] === c + 10 ? Number(r.v[k + 1]) : 0;
-      if (c === 10) cp.push([v, y]); else if (c === 11) fit.push([v, y]); else if (c === 40) knots.push(v); else if (c === 41) w.push(v);
-    });
-    const pts = nurbs(cp, knots, get(r, 71) ?? 3, w, fit);
-    const closed = ((get(r, 70) ?? 0) & 1) === 1;
-    if (closed && pts === fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts.pop();   // fit points that repeat the first one (AutoCAD's closed form)
-    if (pts.length > 1) sh = { t: 'poly', pts, closed };
-  }
+  } else sh = splineShape(ent);
   curves.set(ent, sh);
   return sh;
+}
+/** A SPLINE as a polyline shape; `fine` = the chord count to flatten a NURBS with (default about n*12), for lengths. Not cached. */
+export function splineShape(ent, fine) {
+  const r = ent.r, cp = [], fit = [], knots = [], w = [];
+  r.c.forEach((c, k) => {
+    const v = Number(r.v[k]), y = r.c[k + 1] === c + 10 ? Number(r.v[k + 1]) : 0;
+    if (c === 10) cp.push([v, y]); else if (c === 11) fit.push([v, y]); else if (c === 40) knots.push(v); else if (c === 41) w.push(v);
+  });
+  const pts = nurbs(cp, knots, get(r, 71) ?? 3, w, fit, fine);
+  const closed = ((get(r, 70) ?? 0) & 1) === 1;
+  if (closed && pts === fit && pts.length > 2 && Math.hypot(pts[0][0] - pts.at(-1)[0], pts[0][1] - pts.at(-1)[1]) < 1e-9) pts.pop();   // fit points that repeat the first one (AutoCAD's closed form)
+  return pts.length > 1 ? { t: 'poly', pts, closed } : null;
 }
 /**
  * A chord hit `p` on shape `sh` moved onto the true curve when `sh` is an ellipse: Newton on the ellipse parameter t until
