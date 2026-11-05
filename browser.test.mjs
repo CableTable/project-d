@@ -23752,9 +23752,21 @@ try {
     assert.equal(await prompt(), '3 found, 1 were filtered out. 2 object(s) direction has been reversed.', 'a selection made first runs at once');
     let raw = await savedDoc();
     assert.deepEqual(start97h(raw), [200, 160]); assert.deepEqual(lineEnds97c(raw)[0], [180, 220, 100, 220]);
-    assert.equal((await histLabels()).length, steps + 1, 'one step for the whole selection');
+    assert.deepEqual((await histLabels()).slice(steps - 1), ['Reverse'], 'one step for the whole selection (it takes the place of the one taken back)');
     await key97c('Control+z'); raw = await savedDoc();
     assert.deepEqual(start97h(raw), [100, 100]); assert.deepEqual(lineEnds97c(raw)[0], [100, 220, 180, 220]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97h: Drawings a line on a locked layer is counted as filtered out and stays', async () => {
+    const raw = doc97h(); addLayer(raw, 'Locked'); addEntities(raw, dxfLine(100, 300, 180, 300, { layer: 'Locked' }));
+    await open97c(raw, 'reverse97h-lock.dxf'); await t('ptab-objects').click();
+    await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Locked"] [data-act=lock]').click(); await t('ptab-drawing').click();
+    await key97c('Control+a'); await typeCmd('reverse');
+    assert.equal(await prompt(), '3 found, 1 were filtered out. 2 object(s) direction has been reversed.', 'Select all leaves a locked layer out of the selection');
+    await key97c('Control+z'); await typeCmd('reverse'); await click(150, 100); await drag97d(80, 280, 200, 320); await key97c('Enter');
+    assert.equal(await prompt(), '2 found, 1 were filtered out. 1 object(s) direction has been reversed.', 'a window round the locked line counts it as filtered out');
+    assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 220, 180, 220], [100, 300, 180, 300]], 'the locked line did not turn');
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
@@ -23801,10 +23813,14 @@ try {
     await open97c(doc97h(), 'screens97h.dxf');
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Home]').click(); await reverseBtn97h().waitFor();
-      await key97c('Control+a'); await typeCmd('reverse'); await cmdLine().focus();
-      assert.match(await prompt(), /direction has been reversed/);
+      await key97c('Control+a'); await typeCmd('reverse');
+      assert.match(await prompt(), /direction has been reversed/); await page.waitForTimeout(700);       // the answer becomes a line of the command history after 350 ms
       await page.screenshot({ path: `${shotDir}/todo97h-reverse-${theme}.png` }); await key97c('Control+z');
     }
+    await page.setViewportSize({ width: 1024, height: 700 }); await page.waitForTimeout(250);       // the top bar still fits the smallest window with the extra ribbon button (the ribbon itself scrolls sideways)
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'the page is wider than 1024');
+    assert.ok(await page.locator('.tabsrow').evaluate((n) => { const r = n.getBoundingClientRect(); return [...n.children].every((c) => c.getBoundingClientRect().right <= r.right + 1); }), 'the tab bar overflows at 1024');
+    await page.screenshot({ path: `${shotDir}/todo97h-reverse-1024.png` }); await page.setViewportSize({ width: 1440, height: 900 });
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
