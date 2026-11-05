@@ -51,7 +51,7 @@ import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
-import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
+import { filletEntities, filletPolylineShape, filletAllPolyline, chamferEntities, chamferSegment } from './fillet.js';
 import { breakEntity, breakAtPoint, breakWhy } from './break.js';
 import { lengthenEntity, lengthenInfo, lengthenWhy, CANNOT_LENGTHEN } from './lengthen.js';
 import { joinEntities, NO_TOUCH } from './join.js';
@@ -161,6 +161,7 @@ const TOOLS = [
   { id: 'rotate', label: 'Rotate', svg: '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>' },
   { id: 'scale', label: 'Scale', svg: '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>' },
   { id: 'fillet', label: 'Fillet', svg: '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>' },
+  { id: 'chamfer', label: 'Chamfer', svg: '<path d="M4 4v10l6 6h10"/>' },
   { id: 'break', label: 'Break', svg: '<path d="M3 17l6-6M15 9l6-6M9 5v6h6M9 13v6h6"/>' },
   { id: 'lengthen', label: 'Lengthen', svg: '<path d="M3 17h12M15 17h6M17 13l4 4-4 4M3 7h10M3 4v6M13 4v6"/>' },
   { id: 'breakatpoint', label: 'Break at point', svg: '<path d="M3 21l7-7M14 10l7-7M8 8l8 8M12 5v3M5 12h3"/>' },
@@ -175,7 +176,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', description: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['auto', 'Automatic', 'DIM', '<path d="M3 15L11 7M3 15l3-1M3 15l1-3M11 7l-3 1M11 7l1 3"/><circle cx="14.5" cy="13.5" r="3.5"/>', 'DIM'],
@@ -652,6 +653,13 @@ function ribbonTool(id, small = false) {
     b.addEventListener('click', (e) => { if (e.target.closest('.flyout')) { e.stopPropagation(); open(); } }, true);
     b.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); open(); } });
   }
+  if (id === 'fillet') {
+    b.append(h('span', { class: 'flyout', title: 'Fillet options', 'aria-label': 'Fillet options', 'data-testid': 'fillet-flyout' }, '▾'));
+    b.setAttribute('aria-haspopup', 'menu');
+    const open = () => { const r = b.getBoundingClientRect(); popMenu(r.left, r.bottom, [['Chamfer', () => setTool('chamfer'), 'CHA']]); };
+    b.addEventListener('click', (e) => { if (e.target.closest('.flyout')) { e.stopPropagation(); open(); } }, true);
+    b.addEventListener('keydown', (e) => { if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); open(); } });
+  }
   return b;
 }
 const ribbonStack = (...kids) => h('div', { class: 'ribbon-stack' }, kids);
@@ -730,13 +738,13 @@ function ribbonContents(kind) {
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen'))];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen'))];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
   }
-  if (kind === 'compare') groups.push(group('Modify', ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
+  if (kind === 'compare') groups.push(group('Modify', ribbonTool('fillet', true), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
   groups.push(group('Groups', btn('Group', ICONS.group, groupSel, { command: 'group', enabled: () => !!editable() && editable().sel.size > 1 && !wholeDrawingGroup(editable().raw.groups, editable().sel) }),
     btn('Ungroup', ICONS.ungroup, ungroupSel, { command: 'ungroup', enabled: () => !!editable() && [...editable().sel].some((i) => groupOf(editable().raw.groups, i)) })));
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
@@ -1290,7 +1298,7 @@ function buildSelbar() {
 
 function buildRail() {
   ui.toolBtns = {};
-  const items = TOOLS.filter((t) => !['copy', 'array', 'rotate', 'scale', 'fillet', 'extend', 'break', 'breakatpoint', 'lengthen', 'join'].includes(t.id)).map((t) => {
+  const items = TOOLS.filter((t) => !['copy', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'extend', 'break', 'breakatpoint', 'lengthen', 'join'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id, t.description), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
@@ -7036,11 +7044,12 @@ function cursorKey(e) {
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
-const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
+const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
 const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
 const FILLET_TRIM_SAVED = 'pd-fillet-trim';
-const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset', 'break', 'breakatpoint', 'lengthen', 'join'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
+const CHAMFER_SAVED = 'pd-chamfer';
+const OBJ_MODS = ['trim', 'extend', 'fillet', 'chamfer', 'offset', 'break', 'breakatpoint', 'lengthen', 'join'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
 const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
@@ -7073,10 +7082,20 @@ let copyMode = 'Multiple';
 const lengthenValues = { Delta: 0, Percent: 100, Total: 1, DeltaAngle: 0, TotalAngle: 1 };
 let lengthenMode = 'Total';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
+const loadFilletTrim = () => { try { return localStorage.getItem(FILLET_TRIM_SAVED) !== 'no-trim'; } catch { return true; } };
+const loadChamfer = () => {
+  const values = { d1: 5, d2: 5, length: 5, angle: 45, method: 'Distance' };
+  try {
+    const saved = JSON.parse(localStorage.getItem(CHAMFER_SAVED));
+    for (const key of ['d1', 'd2', 'length', 'angle']) if (Number.isFinite(saved?.[key]) && saved[key] >= 0 && (key !== 'angle' || saved[key] > 0 && saved[key] < 180)) values[key] = saved[key];
+    if (saved?.method === 'Angle') values.method = 'Angle';
+  } catch { /* default values */ }
+  return values;
+};
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
 /** A fresh tool: Offset asks distance first; Trim picks cutting edges then parts; Mirror picks objects, then two points, then Erase Yes / No. */
-const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: kind === 'offset' ? 'distance' : quick ? 'cut' : kind === 'fillet' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ent: null, edges: [], was: new Map(), all: quick, quick, base: historyOf(editable() || curDoc())?.labels().past.length ?? 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
+const newMod = (kind) => { const quick = (kind === 'trim' || kind === 'extend') && loadTrimQuick(); return { kind, stage: kind === 'offset' ? 'distance' : quick ? 'cut' : kind === 'fillet' || kind === 'chamfer' ? 'obj' : kind === 'trim' || kind === 'extend' ? 'edges' : 'pick', ...(kind === 'chamfer' ? { values: loadChamfer(), trim: loadFilletTrim() } : {}), ent: null, edges: [], was: new Map(), all: quick, quick, base: historyOf(editable() || curDoc())?.labels().past.length ?? 0, askMode: false, fence: null, cross: null, erase: null, objs: [], p1: null, p2: null, p: null, cur: null }; };
 const modLive = () => !!(state.mod && state.modDoc === editable() && editable());
 const offDistU = (d) => state.mod.through ? null : state.offDist / d.factor;
 const mmText = (v) => String(+Number(v).toFixed(3));
@@ -7128,6 +7147,9 @@ function modStart(id) {
   const m = state.mod, d = editable() || curDoc();
   if (d.lay && !OBJ_MODS.includes(id)) { layModStart(id); return; }
   if (id === 'lengthen') { m.stage = 'measure'; m.mode = lengthenMode; state.msg = null; return; }
+  if (id === 'chamfer') {
+    state.msg = chamferSettings(m); ui.cmdUI.message(state.msg); return;
+  }
   if (id === 'break' || id === 'breakatpoint') { m.stage = 'obj'; state.msg = 'Select object:'; return; }
   if (id === 'join') {
     const v = d.lay ? layObjSelDoc(d) : d;
@@ -7138,8 +7160,7 @@ function modStart(id) {
   if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
   else if (id === 'fillet') {
-    state.filR = loadFilletR(); m.trim = true;
-    try { m.trim = localStorage.getItem(FILLET_TRIM_SAVED) !== 'no-trim'; } catch { /* default Trim */ }
+    state.filR = loadFilletR(); m.trim = loadFilletTrim();
     state.msg = filletSettings(m); ui.cmdUI.message(state.msg);
   }
   else if (id === 'offset') {
@@ -7168,6 +7189,7 @@ function modPrompt(d) {
 
   const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
   if (m.kind === 'lengthen') return { status: 'Command: LENGTHEN', prompt: lengthenPrompt(m) };
+  if (m.kind === 'chamfer') return { status: 'Command: CHAMFER', prompt: chamferPrompt(m) };
   if (m.kind === 'break' || m.kind === 'breakatpoint') return { status: `Command: ${m.kind.toUpperCase()}`, prompt: m.stage === 'obj' ? 'Select object:' : m.kind === 'breakatpoint' ? 'Specify break point:' : m.stage === 'first' ? 'Specify first break point:' : m.first ? 'Specify second break point:' : 'Specify second break point or [First point]:' };
   if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: m.stage === 'src' ? 'Select source object or multiple objects to join at once:' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}:` };
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
@@ -7203,6 +7225,7 @@ function modEsc(d) {
   if (d.lay && !(state.mod.kind === 'array' && state.mod.ask)) { const was = state.mod; setTool('select'); note(modLabel(was.kind) + (was.kind === 'array' && was.stage !== 'pick' ? ' cancelled: nothing added' : ' ended')); return; }
   const m = state.mod;
   const ext = m.kind === 'extend', again = ext ? 'Click near the end to extend' : 'Click the part to cut away';
+  if (m.kind === 'chamfer' && (m.ask || m.stage !== 'obj')) { m.ask = null; m.stage = 'obj'; m.ent = null; note(chamferPrompt(m)); paintOverlay(); return; }
   if (m.askMode) { m.askMode = false; note(`${ext ? 'Extend' : 'Trim'} mode unchanged`); renderCommand(); return; }
   if (m.fence || m.cross || m.erase) { m.fence = m.cross = m.erase = null; note(`${ext ? 'Extend' : 'Trim'}: cancelled. ${again}`); renderCommand(); paintOverlay(); return; }
   if (m.kind === 'fillet' && (m.askR || m.askTrim || m.stage !== 'obj')) { m.askR = m.askTrim = false; m.stage = 'obj'; m.ent = null; note(modPrompt(d).prompt); paintOverlay(); return; }
@@ -7216,6 +7239,11 @@ function modEnter(d) {
   d = mdoc(d);
   if (d.lay && state.mod.stage === 'pick') { layTake(d); return; }
   const m = state.mod;
+  if (m.kind === 'chamfer') {
+    if (m.ask) chamferTyped(d, '');
+    else { setTool('select'); note('Chamfer ended'); }
+    return;
+  }
   if (m.kind === 'lengthen') {
     if (m.stage === 'measure') lengthenChoose(d, lengthenMode);
     else if (m.stage === 'value' && !m.p1) lengthenValue(d, lengthenValues[m.mode]);
@@ -7277,6 +7305,7 @@ function modTakes(c) {
   if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
   if (dimAutoLive() && state.dim.askText) return true;              // Automatic DIM's "Enter dimension text" takes any text
   const m = state.mod;
+  if ((modLive() || layModLive()) && m.kind === 'chamfer') return true;
   if ((modLive() || layModLive()) && m.kind === 'lengthen') return true;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
   if ((modLive() || layModLive()) && (m.kind === 'break' || m.kind === 'breakatpoint')) return m.stage !== 'obj';
@@ -7293,6 +7322,7 @@ function modTyped(d, raw) {
   d = mdoc(d);
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (m.kind === 'chamfer') return chamferTyped(d, c);
   if (m.kind === 'lengthen') return lengthenTyped(d, raw, c);
   if (m.kind === 'break' || m.kind === 'breakatpoint') {
     if (m.kind === 'break' && m.stage === 'second' && /^(f|first|first point)$/.test(c)) { m.first = true; m.stage = 'first'; note(modPrompt(d).prompt); paintOverlay(); return true; }
@@ -7494,6 +7524,14 @@ function modUp(d, was, p, shift, crossing) {
       if (!MD.canOffset(ent)) { note('Offset takes a line, arc, circle, ellipse, spline or polyline'); return; }
       m.ent = m.src = ent; m.sideSig = null; m.stage = 'side'; m.p = was.p; note(offsetPrompt(m)); paintOverlay();
     } else if (m.stage === 'side') offsetDo(d, was.p);
+  } else if (m.kind === 'chamfer') {
+    if (m.ask) return;
+    const ent = modEntAt(d, was.p);
+    if (!ent) { note('Chamfer: nothing there. Select a line or straight polyline segment'); return; }
+    const segment = chamferSegment(ent, was.p);
+    if (segment.error) { note(segment.error); return; }
+    if (m.stage === 'obj') { m.ent = ent; m.p0 = was.p; m.stage = 'second'; note(chamferPrompt(m)); paintOverlay(); }
+    else chamferDo(d, ent, was.p, shift || was.shift);
   } else if (m.kind === 'fillet') {
     if (m.askR || m.askTrim) return;
     const ent = modEntAt(d, was.p);
@@ -8091,20 +8129,89 @@ function breakDo(d, p) {
   if (!commit(d, { entities: d.raw.entities.flatMap((e, i) => i === idx ? pieces : [e]), groups: spliceGroups(d.raw.groups, d.raw.entities.length, idx, pieces.length), blocks: d.raw.blocks }, label)) return;
   setTool('select'); note(`${label}: ${pieces.length} piece${pieces.length === 1 ? '' : 's'}. Ctrl+Z takes it back`);
 }
+const chamferNumber = (v) => v.toFixed(4);
+const chamferSettings = (m) => `(${m.trim ? 'TRIM' : 'NOTRIM'} mode) Current chamfer ` + (m.values.method === 'Angle'
+  ? `Length = ${chamferNumber(m.values.length)}, Angle = ${chamferNumber(m.values.angle)}`
+  : `Dist1 = ${chamferNumber(m.values.d1)}, Dist2 = ${chamferNumber(m.values.d2)}`);
+function chamferPrompt(m) {
+  const v = m.values, f = chamferNumber;
+  if (m.ask === 'd1') return `Specify first chamfer distance <${f(v.d1)}>:`;
+  if (m.ask === 'd2') return `Specify second chamfer distance <${f(m.firstDistance)}>:`;
+  if (m.ask === 'length') return `Specify chamfer length on the first line <${f(v.length)}>:`;
+  if (m.ask === 'angle') return `Specify chamfer angle from the first line <${f(v.angle)}>:`;
+  if (m.ask === 'method') return `Enter method [Distance/Angle] <${v.method}>:`;
+  if (m.ask === 'trim') return `Enter Trim mode option [Trim/No trim] <${m.trim ? 'Trim' : 'No trim'}>:`;
+  return m.stage === 'second' ? 'Select second line or shift-select to apply corner or [Distance/Angle/Method]:'
+    : 'Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]:';
+}
+function chamferTyped(d, c) {
+  const m = state.mod, v = m.values;
+  if (m.ask === 'trim') {
+    if (c && !/^(t|trim|n|no|no trim)$/.test(c)) { note(chamferPrompt(m)); return true; }
+    if (c) m.trim = c === 't' || c === 'trim';
+    try { localStorage.setItem(FILLET_TRIM_SAVED, m.trim ? 'trim' : 'no-trim'); } catch { /* applies this session */ }
+    m.ask = null;
+  } else if (m.ask === 'method') {
+    if (c && !/^(d|distance|a|angle)$/.test(c)) { note(chamferPrompt(m)); return true; }
+    if (c) v.method = c === 'd' || c === 'distance' ? 'Distance' : 'Angle';
+    m.ask = null;
+  } else if (m.ask) {
+    const key = m.ask, value = c ? Number(c) : key === 'd2' ? m.firstDistance : v[key];
+    if (!Number.isFinite(value) || value < 0 || key === 'angle' && !(value > 0 && value < 180)) { note(key === 'angle' ? 'Angle must be above 0 and below 180 degrees' : 'Chamfer distances must be 0 or more'); return true; }
+    if (key === 'd1') { m.firstDistance = value; m.ask = 'd2'; }
+    else if (key === 'length') { m.firstLength = value; m.ask = 'angle'; }
+    else {
+      v[key] = value;
+      if (key === 'd2') { v.d1 = m.firstDistance; v.method = 'Distance'; }
+      else { v.length = m.firstLength; v.method = 'Angle'; }
+      m.ask = null;
+    }
+  } else if (/^(d|distance)$/.test(c)) m.ask = 'd1';
+  else if (/^(a|angle)$/.test(c)) m.ask = 'length';
+  else if (/^(e|method)$/.test(c)) m.ask = 'method';
+  else if (m.stage === 'obj' && /^(t|trim)$/.test(c)) m.ask = 'trim';
+  else if (m.stage === 'obj' && /^(m|multiple)$/.test(c)) { m.multiple = true; note('Multiple is on'); return true; }
+  else if (m.stage === 'obj' && /^(u|undo)$/.test(c)) { filletUndo(d); return true; }
+  else if (m.stage === 'obj' && /^(p|polyline)$/.test(c)) { note('Polyline comes in a later build'); return true; }
+  else { note(chamferPrompt(m)); return true; }
+  if (!m.ask) { try { localStorage.setItem(CHAMFER_SAVED, JSON.stringify(v)); } catch { /* applies this session */ } }
+  note(m.ask ? chamferPrompt(m) : chamferSettings(m)); ui.cmdUI.message(state.msg); paintOverlay(); return true;
+}
+function chamferResult(d, ent, p, sharp) {
+  const m = state.mod, v = m.values;
+  const attrs = { layer: curLayerName(d.vlay || d) };
+  return chamferEntities(m.ent, m.p0, ent, p, sharp ? 0 : (v.method === 'Angle' ? v.length : v.d1) / d.factor,
+    sharp ? 0 : v.method === 'Angle' ? v.angle : v.d2 / d.factor, m.trim, attrs, sharp ? 'Distance' : v.method);
+}
+function chamferDo(d, ent, p, sharp) {
+  const m = state.mod, r = chamferResult(d, ent, p, sharp);
+  if (r.error) {
+    if (r.error === 'Lines are parallel' || r.error === 'Chamfer distance is too large') { setTool('select'); note(r.error); }
+    else note(r.error);
+    return;
+  }
+  const i1 = d.raw.entities.indexOf(m.ent), i2 = d.raw.entities.indexOf(ent);
+  const unchanged = r.ents.length === (i1 === i2 ? 1 : 2) && r.ents.every((e, i) => e === (i ? ent : m.ent));
+  const ok = unchanged || filletCommit(d, [...d.raw.entities.map((e, i) => i === i1 ? r.ents[0] : i === i2 ? r.ents[1] : e), ...r.ents.slice(i1 === i2 ? 1 : 2)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))));
+  m.stage = 'obj'; m.ent = null;
+  if (!ok) { ui.cmdUI.message(state.msg); paintOverlay(); return; }
+  if (!m.multiple) setTool('select');
+  note(unchanged ? 'Already a sharp corner' : sharp ? 'Corner made' : 'Chamfered'); paintOverlay();
+}
 /** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
 function filletCommit(d, entities, groups) {
   const m = state.mod, hist = historyOf(d.vlay || d), n = hist.labels().past.length;
   m.base = Math.min(m.base, n);
   view.fitted = false;
-  if (!commit(d, { entities, groups, blocks: d.raw.blocks }, 'Fillet')) return false;
+  if (!commit(d, { entities, groups, blocks: d.raw.blocks }, modLabel(m.kind))) return false;
   m.base -= n + 1 - hist.labels().past.length;
   return true;
 }
 function filletUndo(d) {
-  const m = state.mod, past = historyOf(d.vlay || d).labels().past;
-  if (past.length <= m.base || past.at(-1) !== 'Fillet') { note('Nothing to undo in this Fillet'); ui.cmdUI.message(state.msg); return; }
+  const m = state.mod, past = historyOf(d.vlay || d).labels().past, label = modLabel(m.kind);
+  if (past.length <= m.base || past.at(-1) !== label) { note('Nothing to undo in this ' + label); ui.cmdUI.message(state.msg); return; }
   m.stage = 'obj'; m.ent = null;
-  undo(d); note('Last fillet undone'); ui.cmdUI.message(state.msg); paintOverlay();
+  undo(d); note('Last ' + label.toLowerCase() + ' undone'); ui.cmdUI.message(state.msg); paintOverlay();
 }
 function filletPolyDo(d, ent) {
   const m = state.mod, r = filletAllPolyline(ent, state.filR / d.factor, m.trim);
@@ -8325,6 +8432,11 @@ function modOvl(d, out, paint) {
     if (m.ent) addEnt(m.ent, 'dr-guide');
     const pieces = m.ent && m.stage !== 'first' && m.cur ? (m.kind === 'break' ? breakEntity(m.ent, m.p0, m.cur) : breakAtPoint(m.ent, m.cur)) : null;
     if (pieces) for (const e of pieces) addEnt(e, 'dr-shape', 'mod-preview');
+  } else if (m.kind === 'chamfer') {
+    if (m.ent) addEnt(m.ent, 'dr-guide');
+    const e = !m.ask && m.stage === 'second' && m.p ? modEntAt(d, m.p) : null;
+    const r = e && chamferResult(d, e, m.p, m.shift);
+    if (r?.ents) for (const ent of r.ents) addEnt(ent, 'dr-shape', 'mod-preview');
   } else if (m.kind === 'fillet') {
     if (m.ent) addEnt(m.ent, 'dr-guide');
     const e = m.stage === 'second' && m.p ? modEntAt(d, m.p) : null, r = e ? filletEntities(m.ent, m.p0, e, m.p, m.shift ? 0 : state.filR / f, m.trim) : null;

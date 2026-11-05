@@ -54,6 +54,7 @@ const TABLE = [
   ['apply', 'Layout', 'Turn the step and repeat into placed parts', ['a', 'ap'], 'layout'],
   ['scale', 'Edit', 'Scale drawing objects uniformly about a base point', ['sc'], 'draw'],
   ['fillet', 'Edit', 'Round the corner between two lines with a radius', ['f'], 'draw'],
+  ['chamfer', 'Edit', 'Bevel two lines by distances or a length and angle', ['cha'], 'draw'],
   ['break', 'Edit', 'Remove the part between two points on an object', ['br'], 'draw'],
   ['breakatpoint', 'Edit', 'Split an open object at one point without a gap', [], 'draw'],
   ['lengthen', 'Edit', 'Change the length of the picked end of a line, arc or open polyline', ['len'], 'draw'],
@@ -158,6 +159,8 @@ export function parseOptions(prompt) {
 }
 
 /** The option a typed text picks: its key (the underlined letters) or the whole word, any case. → an option or null */
+export const optionNeedsValue = (word, label = '') => label !== 'CHAMFER' && /^(distance|steps|height|justify|style)$/i.test(word);
+
 export function matchOption(options, text) {
   const t = String(text || '').trim().toLowerCase();
   if (!t) return null;

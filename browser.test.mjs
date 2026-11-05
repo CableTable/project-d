@@ -23323,6 +23323,132 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  const doc97f1 = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100, { aci: 3, lt: 'CONTINUOUS' }), dxfLine(200, 100, 200, 200),
+      dxfLine(300, 100, 400, 100), dxfLine(400, 100, 400, 200), dxfLine(100, 250, 200, 250), dxfArc(300, 300, 30, 0, 180));
+    raw.groups = [{ members: [0, 1], name: '', description: '', unnamed: true, selectable: true }];
+    return raw;
+  };
+  const first97f1 = 'Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]:';
+  const second97f1 = 'Select second line or shift-select to apply corner or [Distance/Angle/Method]:';
+  const message97f1 = () => t('cmd-hist').textContent();
+  const open97f1 = async (raw = doc97f1(), name = 'chamfer97f1.dxf') => {
+    await key97c('Escape'); await key97c('Escape');
+    await open97c(raw, name);
+    await page.evaluate(() => { localStorage.removeItem('pd-chamfer'); localStorage.removeItem('pd-fillet-trim'); });
+  };
+  const distance97f1 = async (a = 10, b = 10) => { await typeCmd('d'); await typeCmd(String(a)); await typeCmd(String(b)); };
+  const dropdown97f1 = async () => {
+    await page.locator(await page.locator('[data-ribbon-tab=Modify]').count() ? '[data-ribbon-tab=Modify]' : '[data-ribbon-tab=Home]').click(); await page.locator('.ribbon-body').getByTestId('fillet-flyout').click();
+    await page.getByRole('menuitem', { name: 'Chamfer', exact: true }).click();
+  };
+
+  await step('TODO 97f1: Distance prompts, Trim geometry, Esc, one Undo, source edit and remembered values', async () => {
+    await open97f1(); const before = (await savedDoc()).entities;
+    await typeCmd('cha'); assert.match(await message97f1(), /\(TRIM mode\) Current chamfer Dist1 = 5\.0000, Dist2 = 5\.0000/);
+    assert.equal(await prompt(), first97f1); await typeCmd('p'); assert.match(await message97f1(), /Polyline comes in a later build/);
+    await typeCmd('d'); assert.equal(await prompt(), 'Specify first chamfer distance <5.0000>:');
+    await typeCmd('10'); assert.equal(await prompt(), 'Specify second chamfer distance <10.0000>:'); await key97c('Enter');
+    assert.equal(await prompt(), first97f1);
+    await click(150, 100); assert.equal(await prompt(), second97f1); await key97c('Escape');
+    assert.equal(await prompt(), first97f1); assert.deepEqual((await savedDoc()).entities, before, 'Esc at second pick changes nothing');
+    await click(150, 100); await click(200, 150);
+    let doc = await savedDoc();
+    assert.deepEqual(lineEnds97c(doc).slice(0, 2), [[100, 100, 190, 100], [200, 110, 200, 200]]);
+    assert.deepEqual(lineEnds97c(doc).at(-1), [190, 100, 200, 110]);
+    assert.equal(doc.entities.at(-1).aci, 3); assert.deepEqual(doc.groups.map((g) => g.members), [[0, 1]]);
+    assert.equal((await histLabels()).at(-1), 'Chamfer');
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before, 'one Undo restores both sources and removes the bevel');
+    await typeCmd('chamfer'); assert.match(await message97f1(), /Dist1 = 10\.0000, Dist2 = 10\.0000/);
+    await click(150, 100); await click(200, 150); await key97c('Control+a');
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,20'); await key97c('Escape');
+    doc = await savedDoc(); assert.deepEqual(lineEnds97c(doc)[0], [100, 120, 190, 120], 'source remains editable');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97f1: No trim, shared Fillet mode, refusals, Angle, Method and Shift corner', async () => {
+    await open97f1(); const before = (await savedDoc()).entities;
+    await typeCmd('cha'); await typeCmd('t'); assert.equal(await prompt(), 'Enter Trim mode option [Trim/No trim] <Trim>:');
+    await typeCmd('no trim'); await distance97f1(200, 200); await click(150, 100); await click(200, 150);
+    let doc = await savedDoc(); assert.deepEqual(doc.entities.slice(0, before.length), before);
+    assert.deepEqual(lineEnds97c(doc).at(-1), [0, 100, 200, 300]); await key97c('Control+z');
+    await typeCmd('f'); assert.match(await message97f1(), /Mode = NO TRIM/); await typeCmd('t'); await typeCmd('trim'); await key97c('Escape');
+    await typeCmd('cha'); assert.match(await message97f1(), /\(TRIM mode\)/);
+    await click(150, 100); await click(200, 150); assert.match(await prompt(), /Chamfer distance is too large/);
+    assert.deepEqual((await savedDoc()).entities, before);
+    await typeCmd('cha'); await distance97f1(); await click(300, 330); assert.match(await message97f1(), /Chamfer requires 2 lines \(not arc segments\)\. /);
+    assert.equal(await prompt(), first97f1); await click(150, 100); await click(150, 250); assert.match(await prompt(), /Lines are parallel/);
+    assert.deepEqual((await savedDoc()).entities, before);
+    await typeCmd('cha'); await typeCmd('a'); assert.equal(await prompt(), 'Specify chamfer length on the first line <5.0000>:');
+    await typeCmd('20'); assert.equal(await prompt(), 'Specify chamfer angle from the first line <45.0000>:'); await typeCmd('45');
+    await click(150, 100); await typeCmd('e'); assert.equal(await prompt(), 'Enter method [Distance/Angle] <Angle>:');
+    await typeCmd('Distance'); await typeCmd('Method'); await typeCmd('Angle'); assert.equal(await prompt(), second97f1);
+    await click(200, 150); assert.deepEqual(lineEnds97c(await savedDoc()).at(-1), [180, 100, 200, 120]); await key97c('Control+z');
+    assert.deepEqual(await page.evaluate(() => JSON.parse(localStorage.getItem('pd-chamfer'))), { d1: 10, d2: 10, length: 20, angle: 45, method: 'Angle' });
+    const sharp = newDoc(4); addEntities(sharp, dxfLine(100, 100, 180, 100), dxfLine(200, 120, 200, 200));
+    await open97f1(sharp); await typeCmd('cha'); await click(150, 100); await click(200, 150, { shift: true });
+    assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 100, 200, 100], [200, 100, 200, 200]]);
+    await typeCmd('cha'); assert.match(await message97f1(), /Dist1 = 5\.0000, Dist2 = 5\.0000/, 'Shift leaves saved distances alone');
+    await key97c('Escape'); await closeTabs(/./);
+  });
+
+  await step('TODO 97f1: Multiple twice, command Undo, Enter and one global Undo', async () => {
+    await open97f1(); const before = (await savedDoc()).entities;
+    await typeCmd('cha'); await distance97f1(); await typeCmd('m');
+    await click(150, 100); await click(200, 150); assert.equal(await prompt(), first97f1); const once = (await savedDoc()).entities;
+    await click(350, 100); await click(400, 150); assert.equal((await savedDoc()).entities.length, before.length + 2);
+    await typeCmd('u'); assert.deepEqual((await savedDoc()).entities, once);
+    await click(350, 100); await click(400, 150); await key97c('Enter'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, once);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await typeCmd('cha'); await typeCmd('u'); assert.match(await message97f1(), /Nothing to undo in this Chamfer/);
+    await key97c('Escape'); await closeTabs(/./);
+  });
+
+  await step('TODO 97f1: Layout dropdown, locked objects, polyline segments and one Undo', async () => {
+    const lay = newLayout('Chamfer layout'), layers = newDoc(4).layers;
+    lay.parts.a = objectPart('a', 'Corner', dxfPoly([[100, 100], [200, 100], [200, 200]]), layers);
+    lay.parts.b = objectPart('b', 'Locked', dxfLine(100, 250, 200, 250), layers);
+    lay.placed = [objectPlacement(lay.parts.a), { ...objectPlacement(lay.parts.b), lock: true }];
+    await open97f1(layoutRaw(lay), 'layout97f1.dxf'); const before = (await savedDoc()).entities;
+    await dropdown97f1(); await distance97f1(); await click(150, 250); assert.equal(await prompt(), first97f1);
+    assert.deepEqual((await savedDoc()).entities, before); await click(150, 100); await key97c('Escape');
+    assert.deepEqual((await savedDoc()).entities, before); await click(150, 100); await click(200, 150);
+    const doc = objectDoc(layoutFromRaw(await savedDoc())).raw;
+    assert.deepEqual(GR.shapeOf(doc.entities[0]).pts, [[100, 100], [190, 100], [200, 110], [200, 200]]);
+    assert.deepEqual(GR.shapeOf(doc.entities[1]), GR.shapeOf(lay.parts.b.raw.entities[0]));
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before); await closeTabs(/./);
+  });
+
+  await step('TODO 97f1: Compare dropdown edits its linked drawing and refuses locked layers', async () => {
+    const raw = doc97f1(); addLayer(raw, 'Locked'); addEntities(raw, dxfLine(100, 280, 200, 280, { layer: 'Locked' }));
+    await open97f1(raw, 'compare97f1.dxf'); await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    const before = (await savedDoc()).entities;
+    await typeCmd('compare'); await dropdown97f1(); await distance97f1(); await click(150, 280); assert.equal(await prompt(), first97f1);
+    await click(150, 100); await click(200, 150);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97f1(?:-edited)*\.dxf$/ }) }).click();
+    assert.deepEqual(lineEnds97c(await savedDoc()).slice(0, 2), [[100, 100, 190, 100], [200, 110, 200, 200]]);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before); await closeTabs(/./);
+  });
+
+  await step('TODO 97f1: light and dark Fillet dropdown and Chamfer mid-command screenshots', async () => {
+    await open97f1(); mkdirSync('shots-97f1', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Modify]').click();
+      await page.locator('.ribbon-body').getByTestId('fillet-flyout').click();
+      await page.getByRole('menuitem', { name: 'Chamfer', exact: true }).waitFor();
+      await page.screenshot({ path: `shots-97f1/fillet-dropdown-${theme}.png` }); await key97c('Escape');
+      await dropdown97f1(); await distance97f1(); await typeCmd('m'); await click(150, 100); await click(200, 150);
+      await click(350, 100); const aim = await at(400, 150); await page.mouse.move(aim.x, aim.y); await frames();
+      assert.equal(await t('mod-preview').count(), 3); await cmdLine().focus(); assert.equal(await prompt(), second97f1);
+      await page.screenshot({ path: `shots-97f1/chamfer-command-${theme}.png` });
+      await key97c('Escape'); await key97c('Escape'); await key97c('Control+z');
+    }
+    for (const theme of ['light', 'dark']) for (const name of ['fillet-dropdown', 'chamfer-command']) assert.ok(readFileSync(`shots-97f1/${name}-${theme}.png`).length > 1000);
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {
