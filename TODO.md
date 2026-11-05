@@ -233,7 +233,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     129b. ✅ Radius, diameter and angle dimensions follow their circle, arc or lines (exact centre + radius, or exact lines through the vertex; Move, Scale, grip drag).
     129c. ✅ Links come back when a drawing opens: matching is good to 2e-6 drawing units (the DXF holds 6 decimals), tested by save → reopen → follow (`linked-dimensions.test.mjs`). AutoCAD-made DIMENSION entities are not Project D dimensions and stay as they are.
 130. ✅ **Line width in the Home ribbon and still in Properties** (T40, R19 Option A; built with 110b / 110c).
-131. **Measure: Keep stores all 3 values; keep / preview next to the measured line; unkept measure vanishes** (M, ask, T41): see T41 in support/tickets.md. Grill first.
+131. **Measure: Keep stores all 3 values; keep / preview next to the measured line; unkept measure vanishes** (M, ask, T41): see T41 in support/tickets.md. Grilled `runs37/grill-131.md` (DECISIONS "Measure tag"): a Measure tag with the readout and Keep beside the measured line; the 3 values are TODO 194's callout.
 132. ✅ (built, Knight; session 21) **Parts library sits at the bottom of the right panel: scroll to reach it** (S, ask, T42): see T42 in support/tickets.md. Grill first.
 133. ✅ (built, King, Rook S36d full control, 2026-11-04) **Dotted crosshair: thin dotted lines through the pointer across the canvas, a View toggle** (S, T43): grilled `runs36/grill-133.md` (Rook S36d, full control); DECISIONS "Dotted crosshair (TODO 133, T43)".
 134. **Extra Alt shortcuts for locked / fixed ones (Delete, Save, Save as)** (M, ask, T44): see T44 in support/tickets.md. Grill first.

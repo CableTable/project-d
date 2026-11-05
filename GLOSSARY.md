@@ -139,6 +139,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Measure**: Picks points or geometry to report a distance, size or angle without adding a saved callout unless it is kept. Where: `DECISIONS.md`, Measure and Dimensions; `web/drawing.js`. Avoid: Dimension, Measure points.
 
+**Measure tag**: The small label beside a measured line showing its distance, ΔX, ΔY and angle, with the Keep button where keeping is allowed; it goes when the measure clears. Where: `DECISIONS.md`, Measure tag. Avoid: Cursor tag, Dynamic input.
+
 **Measure points**: Places point objects along a curve every given length from its start, leaving the curve unchanged; AutoCAD's MEASURE command. Divide is the same with a count of equal parts. Where: `DECISIONS.md`, Divide and Measure points. Avoid: Measure (that is the distance tool).
 
 **Micro piece**: An entity whose own path length is at most the Join gaps tolerance and whose end is within that tolerance of an entity longer than the tolerance. Join gaps removes these pieces before joining, reports the count and restores them with the joins in one Undo. A lone tiny entity stays. Where: `web/edit.js`; `DECISIONS.md`, Join gaps: micro pieces.
