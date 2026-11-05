@@ -38,8 +38,8 @@ function route(ent, pick) {
   let sh = T === 'POLYLINE' ? polylineShape(ent) : T === 'ELLIPSE' ? curveShape(ent) : T === 'SPLINE' ? splineShape(ent, 32768) : ['LINE', 'ARC', 'CIRCLE', 'LWPOLYLINE'].includes(T) ? shapeOf(ent) : null;
   if (sh?.q) sh = ellipseShape(sh);
   if (!sh) return CANNOT_DIVIDE;
-  if (flip && sh.t === 'circle') { sh = { ...sh, c: [-sh.c[0], sh.c[1]] }; flip = false; }       // a mirrored circle still starts at world angle 0, anticlockwise as seen
-  const path = pathOf(sh);
+  let path = pathOf(sh);
+  if (flip && path.type === 'circle') { path = pathOf({ t: 'circle', c: [-sh.c[0], sh.c[1]], r: sh.r }); flip = false; }       // includes zero-sweep ARCs: world angle 0, anticlockwise as seen
   let segs = path.segs, closed = path.closed;
   if (sh.t === 'poly' && sh.closed && sh.pts.length === 2) { const [p, q] = sh.pts; segs.push({ a: q, b: p, bulge: q[2] || 0 }); closed = true; }       // pathOf wants 3 vertices; a DONUT is 2
   segs = segs.filter((s) => dist(s.a, s.b) > 1e-9);       // a zero chord with a bulge has no arc

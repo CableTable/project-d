@@ -2,6 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { divideAt, measureAt, CANNOT_DIVIDE, BAD_COUNT, BAD_LENGTH, TOO_MANY } from './web/divide.js';
 import { line, arc, circle, lwpoly, ellipse, entity, point } from './web/dxf-write.js';
+import { shapeOf } from './web/grips.js';
+import { pathOf } from './web/modify.js';
 
 const PI = Math.PI;
 const near = (got, want, tol = 1e-6) => {
@@ -46,6 +48,12 @@ test('mirrored (extrusion -1) ARC and CIRCLE are walked in drawing coordinates',
   assert.equal(divideAt(flipped(lwpoly([[0, 0], [10, 0], [10, 10]])), [-11, 11], 4)[0][1], 5);       // picked at the far end: walks back from (-10, 10)
 });
 
+test('mirrored zero-sweep ARC: circle path starts at world angle 0', () => {
+  const a = flipped(arc(5, 5, 10, 45, 45));
+  assert.equal(pathOf(shapeOf(a)).type, 'circle');
+  near(divideAt(a, [-15, 5], 4), [[5, 5], [-5, 15], [-15, 5], [-5, -5]]);
+});
+
 test('CIRCLE: from angle 0 anticlockwise, whatever the pick', () => {
   const c = circle(5, 5, 10);
   near(divideAt(c, [-5, 5], 4), [[15, 5], [5, 15], [-5, 5], [5, -5]]);       // 4 marks: the start counts
@@ -66,7 +74,7 @@ test('LWPOLYLINE: open from the nearest end, closed from its first vertex, bulge
   near(divideAt(donut, [3, 3], 4), [[0, 0], [5, -5], [10, 0], [5, 5]]);
   near(measureAt(donut, [3, 3], 5 * PI), [[10, 0], [0, 0]]);
   const zero = lwpoly([[0, 0], [10, 0], [0, 0, 1]], { closed: true });       // the closing chord is zero: no arc, no NaN
-  near(measureAt(zero, [0, 0], 10), [[10, 0], [0, 0]]);
+  near(measureAt(zero, [0, 0], 10 + 2.5e-7), [[10, 0], [0, 0]]);
   near(measureAt(sq, [0, 10], 15), [[10, 5], [0, 10]]);
 });
 
@@ -99,8 +107,9 @@ test('ELLIPSE: a full one starts at its major axis end, a partial one at the nea
   const r1 = ellipse(0, 0, 10, 0, 1, 0, PI);
   near(measureAt(r1, [-10, 0], 10 * PI / 2.5), [polar(0, 0, 10, 108), polar(0, 0, 10, 36)], 1e-4);       // 36° steps from the (-10, 0) end
   near(divideAt(flipped(ellipse(0, 0, 10, 0, 0.5)), [0, 0], 4), [[10, 0], [0, -5], [-10, 0], [0, 5]], 1e-4);       // extrusion -1 turns the sweep clockwise
-  near(divideAt(flipped(ellipse(0, 0, 10, 0, 0.5, 0, PI)), [10, 0], 2), [[0, -5]], 1e-4);       // a mirrored partial one: clockwise from the (10, 0) end
-  near(divideAt(flipped(ellipse(0, 0, 10, 0, 0.5, 0, PI)), [-10, 0], 2), [[0, -5]], 1e-4);
+  const x = 5.944718914840568, y = -4.020581954877204;       // equal arc-length quarters, not equal parameter steps
+  near(divideAt(flipped(ellipse(0, 0, 10, 0, 0.5, 0, PI)), [10, 0], 4), [[x, y], [0, -5], [-x, y]], 1e-4);       // a mirrored partial one: clockwise from the (10, 0) end
+  near(divideAt(flipped(ellipse(0, 0, 10, 0, 0.5, 0, PI)), [-10, 0], 4), [[-x, y], [0, -5], [x, y]], 1e-4);
 });
 
 test('SPLINE: along its flattened shape', () => {
@@ -112,6 +121,10 @@ test('SPLINE: along its flattened shape', () => {
   const quarter = entity('SPLINE', [[70, 12], [71, 2], [72, 6], [73, 3], [74, 0], ...[0, 0, 0, 1, 1, 1].map((v) => [40, v]), ...[1, k, 1].map((v) => [41, v]), ...[[r, 0], [r, r], [0, r]].flatMap(([x, y]) => [[10, x], [20, y], [30, 0]])]);
   near(measureAt(quarter, [r, 0], 50), [22.5, 45, 67.5, 90].map((d) => polar(0, 0, r, d)), 1e-4);
   near(divideAt(quarter, [r, 0], 4), [22.5, 45, 67.5].map((d) => polar(0, 0, r, d)), 1e-4);
+  const cubic = entity('SPLINE', [[70, 8], [71, 3], [72, 8], [73, 4], [74, 0], ...[0, 0, 0, 0, 1, 1, 1, 1].map((v) => [40, v]), ...[[0, 0], [0, 100], [100, 100], [100, 0]].flatMap(([x, y]) => [[10, x], [20, y], [30, 0]])]);
+  // This cubic has length 100 * (2t^3 - 3t^2 + 3t), hence total length 200.
+  near(divideAt(cubic, [0, 0], 4), [[10.589254302501772, 48.35239517939101], [50, 75], [89.41074569749823, 48.35239517939101]], 1e-4);
+  near(measureAt(cubic, [0, 0], 100), [[50, 75], [100, 0]], 1e-4);
   const closedSpline = entity('SPLINE', [[70, 11], [71, 1], [72, 6], [73, 4], [74, 0], ...[0, 1, 2, 3, 4, 4].map((v) => [40, v]), ...[[0, 0], [10, 0], [10, 10], [0, 10]].flatMap(([x, y]) => [[10, x], [20, y], [30, 0]])]);
   assert.equal(divideAt(closedSpline, [0, 0], 5).length, 5);       // closed: n marks (this one is unclamped; only the count matters)
 });
