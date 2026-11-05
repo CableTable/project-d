@@ -5658,12 +5658,16 @@ try {
     assert.match(await t('meas-tag-text').textContent(), /^Distance 139\.8 mm   ΔX 139\.8 /);
     assert.equal(await t('meas-keep').isVisible(), false, 'no Keep on a layout');
     await page.screenshot({ path: shotDir + '/todo131-measure-tag-layout.png' });
-    await page.locator('.tabs .dtab', { hasText: 'outline.dxf' }).click();
+    await page.locator('.tabs .dtab', { hasText: 'outline.dxf' }).last().click();   // the one this step opened (an earlier step may leave another)
     await tag.waitFor({ state: 'hidden', timeout: 5000 });                // a tab switch hides it
     await page.locator('.tabs .dtab.on .x').click();
     await page.locator('.tabs .dtab', { hasText: 'measure-tag-layout.dxf' }).locator('.x').click();
     if (await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).count()) await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
     await page.locator('[data-tool=step]').click();
+    await t('panel-library').click();                                    // opening the layout file put its part "Plate" in the Parts library: take it out again
+    page.once('dialog', (d) => d.accept());
+    await page.locator('[data-testid=lib-list] .card[data-name="Plate"] [data-testid=lib-menu]').click(); await page.getByRole('menuitem', { name: 'Delete from library' }).click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-testid=lib-list] .card[data-name="Plate"]').length === 0);
   });
 
   await step('Dimension tool, AutoCAD way: first point, second point, move the callout, third click places it (undoable, saved); select + drag moves it, the panel resizes its text', async () => {

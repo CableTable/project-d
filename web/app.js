@@ -1496,7 +1496,7 @@ function buildCanvas() {
   ui.tip = h('div', { class: 'drawtip', hidden: true, 'data-testid': 'draw-tip' });
   ui.keepMeas = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
   ui.measText = h('span', { 'data-testid': 'meas-tag-text' });
-  ui.measTag = h('div', { class: 'drawtip dynamic-input meas-tag', hidden: true, 'data-testid': 'meas-tag' }, ui.measText, ui.keepMeas);
+  ui.measTag = h('div', { class: 'meas-tag', hidden: true, 'data-testid': 'meas-tag' }, ui.measText, ui.keepMeas);
   ui.dynamicTrack = h('div', { class: 'dynamic-track', hidden: true });
   ui.cursorFields = {};
   ui.dynamicFields = h('div', { class: 'cursor-fields' }, [['length', 'Length'], ['angle', 'Angle'], ['dx', 'Δx'], ['dy', 'Δy']].map(([key, label]) => {
