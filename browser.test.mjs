@@ -3266,6 +3266,13 @@ try {
     return { name: dl.suggestedFilename(), text: readFileSync(await dl.path(), 'latin1') };
   };
   const menuItem = async (menu, item) => { await page.locator(`[data-menu=${menu}]`).click(); await page.getByRole(item.startsWith('Theme:') ? 'menuitemcheckbox' : 'menuitem', { name: item.startsWith('Theme:') ? new RegExp(item + '\\b') : item, exact: true }).click(); };
+  const menuItems = async (menu) => {
+    await page.locator(`[data-menu=${menu}]`).click();
+    return page.locator('.dropdown button').evaluateAll((bs) => Object.fromEntries(bs.map((b) => {
+      const label = b.firstChild.textContent.trim();
+      return [label.replace(/^✓\s*/, ''), { checked: label.startsWith('✓'), disabled: b.disabled }];
+    })));
+  };
   const grip = (side) => panelControl(page, page.locator(`[data-key=grip${side}]`));
   await step('gripper per side, no margin: four fields, every side with a gripper is shaded; rail and panel fit at 900 px', async () => {
     assert.equal(await panelControl(page, page.locator('[data-key=margin]')).count(), 0, 'no margin field');
@@ -7407,9 +7414,27 @@ try {
     assert.equal(await ribbonToggle('Show rulers').isChecked(), true);
     assert.equal(await t('rulers-panel').count(), 0, 'ruler switch moved to View');
     // View → Rulers
-    await page.locator('[data-menu=View]').click();
-    assert.deepEqual(await page.locator('.dropdown button').evaluateAll((bs) => bs.map((b) => [b.firstChild.textContent, b.disabled])),
-      [['Fit to window', false], ['Zoom Window', false], ['Zoom Selection', false], ['Zoom Previous', true], ['✓ Properties', false], ['✓ Rulers', false], ['  Wireframe', false], ['  Dotted crosshair', false], ['✓ Guides', false], ['  Lock guides', false], ['✓ Snap to guides', false], ['Clear all guides', true], ['✓ Tool rail', false], ['✓ Swatch strip', false], ['✓ Work area: Follow app', false], ['  Work area: Light', false], ['  Work area: Dark', false], ...[['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']].map(([mode, label]) => [(theme === mode ? '✓ ' : '  ') + 'Theme: ' + label, false])]);
+    const view = await menuItems('View');
+    assert.deepEqual(view['Fit to window'], { checked: false, disabled: false });
+    assert.deepEqual(view['Zoom Window'], { checked: false, disabled: false });
+    assert.deepEqual(view['Zoom Selection'], { checked: false, disabled: false });
+    assert.deepEqual(view['Zoom Previous'], { checked: false, disabled: true });
+    assert.deepEqual(view.Properties, { checked: true, disabled: false });
+    assert.deepEqual(view.Rulers, { checked: true, disabled: false });
+    assert.deepEqual(view.Wireframe, { checked: false, disabled: false });
+    assert.deepEqual(view['Dotted crosshair'], { checked: false, disabled: false });
+    assert.deepEqual(view.Guides, { checked: true, disabled: false });
+    assert.deepEqual(view['Lock guides'], { checked: false, disabled: false });
+    assert.deepEqual(view['Snap to guides'], { checked: true, disabled: false });
+    assert.deepEqual(view['Clear all guides'], { checked: false, disabled: true });
+    assert.deepEqual(view['Tool rail'], { checked: true, disabled: false });
+    assert.deepEqual(view['Swatch strip'], { checked: true, disabled: false });
+    assert.deepEqual(view['Work area: Follow app'], { checked: true, disabled: false });
+    assert.deepEqual(view['Work area: Light'], { checked: false, disabled: false });
+    assert.deepEqual(view['Work area: Dark'], { checked: false, disabled: false });
+    for (const [mode, label] of [['system', 'follow system'], ['light', 'light (CorelDRAW-like)'], ['dark', 'dark (AutoCAD-like)']]) {
+      assert.deepEqual(view['Theme: ' + label], { checked: theme === mode, disabled: false });
+    }
     await page.getByRole('menuitem', { name: /Rulers/ }).click();
     assert.equal(await t('ruler-top').isVisible(), false); assert.equal(await t('ruler-left').isVisible(), false);
     assert.equal(await ribbonToggle('Show rulers').isChecked(), false);
@@ -12329,8 +12354,8 @@ try {
     await propsOpen(); await propsOnNow();
     assert.equal(await t('prop-empty').isVisible(), true);
     assert.match(await t('prop-empty').textContent(), /Select something/);
-    await page.locator('[data-menu=View]').click();
-    assert.equal(await page.locator('.dropdown button').nth(4).evaluate((b) => b.firstChild.textContent), '✓ Properties');
+    const view = await menuItems('View');
+    assert.deepEqual(view.Properties, { checked: true, disabled: false });
     await page.getByRole('menuitem', { name: /Properties/ }).click();
     assert.equal(await t('panel-show').isVisible(), true);
     await page.keyboard.press('Control+1'); await t('props-panel').waitFor();
