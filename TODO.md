@@ -388,6 +388,8 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 
 ## Next sessions (2D, for screen-printing layouts; screen A is built)
 
+**Order (his call, 2026-11-06):** open bugs first as always; then DWG (item 6, S38); then the biggest open items of his list (76 driving dimensions, 106 dynamic input, 109 export system, 148 colour tools, 156 same tools in every tab); then 3D starts (item 10, the 3D viewer, then "Later" 1-5 including the adhesive profile). .cdr (item 7) whenever CorelDRAW is installed.
+
 1. ✅ (built, PR #10) Drawing tools: line, polyline, rectangle, rounded rectangle, circle, ellipse, arc, text and dimension, with snaps, ortho and polar tracking, and typed coordinates. (Text: TODO 17. Polar tracking: TODO 21, built in PR #12.)
 2. Edit tools: offset, trim, mirror, move, copy, rotate, scale, and undo and redo.
 3. ✅ (built, session 6, option B of mock-up R10) Auto-nest of mixed parts.
