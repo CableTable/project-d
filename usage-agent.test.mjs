@@ -3,8 +3,80 @@ import { test } from 'node:test';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo } from './tools/usage-agent.mjs';
+import { parseTodo, parseCsv, parseTickets, tallyTokens, collectTokens, refreshFailure, firestoreValue, assertKeyOutsideRepo, isRookStale, collectRookStatus, alertRook } from './tools/usage-agent.mjs';
 import { claudeUsage, usageProbe, limitedLine, limitedRows } from './tools/rook.mjs';
+
+test('TODO 198b: Rook stale needs over 30 minutes and a later queue with an ended line', () => {
+  const jsonlMtime = Date.parse('2026-11-05T10:00:00Z');
+  const input = { jsonlMtime, queueText: 'build a -> a.jsonl: ended\r\nbuild b -> b.jsonl: running\r\n', queueMtime: jsonlMtime + 1, now: jsonlMtime + 31 * 60_000 };
+  assert.equal(isRookStale(input), true);
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 29 * 60_000 }), false);
+  assert.equal(isRookStale({ ...input, now: jsonlMtime + 30 * 60_000 }), false);
+  assert.equal(isRookStale({ ...input, queueMtime: jsonlMtime }), false);
+  assert.equal(isRookStale({ ...input, queueMtime: jsonlMtime - 1 }), false);
+  for (const queueText of ['', 'build a: running', 'build a: ended badly', 'not ended']) assert.equal(isRookStale({ ...input, queueText }), false);
+  for (const key of Object.keys(input)) {
+    for (const missing of [null, undefined]) assert.equal(isRookStale({ ...input, [key]: missing }), false);
+  }
+  assert.equal(isRookStale(), false);
+});
+
+test('TODO 198b: collector reads line 1 and highest numbered queue, tolerating missing files', () => {
+  const folder = mkdtempSync(join(tmpdir(), 'projectd-rook-'));
+  const now = Date.parse('2026-11-05T11:00:00Z'), mtime = new Date(now - 3600_000);
+  const uuid = '12345678-1234-1234-1234-123456789abc';
+  const transcript = join(folder, '.claude', 'projects', 'E--Project-B-Claude-Project-D', uuid + '.jsonl');
+  const check = () => collectRookStatus(folder, folder, now);
+  try {
+    assert.deepEqual(check(), { stuck: false, since: null });
+    writeFileSync(join(folder, 'rook-next.txt'), uuid + '\r\nRook\r\nresume.txt\r\n');
+    assert.deepEqual(check(), { stuck: false, since: null });
+    mkdirSync(join(folder, '.claude', 'projects', 'E--Project-B-Claude-Project-D'), { recursive: true });
+    writeFileSync(transcript, ''); utimesSync(transcript, mtime, mtime);
+    assert.deepEqual(check(), { stuck: false, since: mtime.toISOString() });
+    for (const n of [9, 10, 11]) mkdirSync(join(folder, 'runs' + n));
+    const queue = join(folder, 'runs10', 'queue.txt');
+    writeFileSync(join(folder, 'runs9', 'queue.txt'), 'build old: ended\n');
+    writeFileSync(queue, 'build new: running\n');
+    utimesSync(queue, new Date(now), new Date(now));
+    assert.equal(check().stuck, false); // runs9 cannot override runs10; runs11 has no queue yet.
+    writeFileSync(queue, 'build new: ended\n'); utimesSync(queue, new Date(now), new Date(now));
+    assert.deepEqual(check(), { stuck: true, since: mtime.toISOString() });
+    utimesSync(transcript, new Date(now), new Date(now));
+    assert.equal(check().stuck, false);
+    writeFileSync(join(folder, 'rook-next.txt'), '../private\n');
+    assert.deepEqual(check(), { stuck: false, since: null });
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
+
+test('TODO 198b: one PowerShell toast per persisted episode, failures logged without retry', async () => {
+  const folder = mkdtempSync(join(tmpdir(), 'projectd-rook-toast-'));
+  const path = join(folder, 'state.json'), logs = [], calls = [];
+  const rook = { stuck: true, since: '2026-11-05T18:45:00.000Z' };
+  const shell = async (...args) => { calls.push(args); };
+  const alert = (status = rook, run = shell) => alertRook(status, path, (line) => logs.push(line), run);
+  try {
+    await alert(); await alert();
+    assert.equal(calls.length, 1);
+    const [exe, args, options] = calls[0];
+    assert.equal(exe, 'powershell.exe');
+    assert.deepEqual(args.slice(0, 3), ['-NoProfile', '-NonInteractive', '-EncodedCommand']);
+    const script = Buffer.from(args[3], 'base64').toString('utf16le');
+    assert.match(script, /Rook stuck since 00:15/);
+    assert.match(script, /Windows\.UI\.Notifications/);
+    assert.match(script, /CreateToastNotifier/);
+    assert.equal(options.windowsHide, true);
+    await alert({ ...rook, stuck: false });
+    await alert(); assert.equal(calls.length, 2);
+    await alert({ ...rook, stuck: false });
+    await alert(rook, async () => { throw new Error('toast unavailable'); });
+    await alert(); assert.equal(calls.length, 2);
+    assert.deepEqual(logs, ['Rook toast ERROR: toast unavailable']);
+    writeFileSync(path, 'invalid JSON');
+    await alert(); assert.equal(calls.length, 2);
+    assert.match(logs.at(-1), /^Rook toast ERROR:/);
+  } finally { rmSync(folder, { recursive: true, force: true }); }
+});
 
 test('tickets keep the eight columns, comma tags, escaped pipes and full note text as plain data', () => {
   const text = `# Tickets
