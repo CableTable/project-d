@@ -393,7 +393,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 3. ✅ (built, session 6, option B of mock-up R10) Auto-nest of mixed parts.
 4. Place by hand.
 5. Import parts from DXF, DWG, CorelDRAW and PDF (mock-up "Import parts").
-6. **Before starting: switch the repo back to private and bring back the CI diet (DECISIONS 2026-10-19).** DWG open through LibreDWG, in its own module.
+6. **Next: session 38's first item.** DWG open through LibreDWG's `dwg2dxf` as a separate helper beside the exe; the repo stays public (DECISIONS 2026-11-06, which replaces the 2026-10-19 go-private plan).
 7. .cdr open through libcdr. For now (his call, 2026-10-17): CorelDRAW → Export PDF, then open the PDF. He'll send a few .cdr files with their exported PDFs after PR #5; test libcdr on them first, and if it can't read them, write our own .cdr reader for what his files use (outlines, curves, text), checked against the PDFs.
 8. Layers panel editing.
 9. Title block with the revision table.
