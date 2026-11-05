@@ -22978,6 +22978,134 @@ try {
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  const doc97e = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100, { aci: 3, tc: 0x257abd, lt: 'CONTINUOUS', lw: 35 }), dxfLine(100, 180, 200, 180),
+      dxfArc(300, 200, 50, 0, 90), dxfPoly([[100, 300], [200, 300], [200, 400]]), dxfCircle(400, 400, 40));
+    raw.groups = [{ members: [0, 1], name: '', description: '', unnamed: true, selectable: true }];
+    return raw;
+  };
+  const message97e = () => t('cmd-hist').textContent();
+  const start97e = async (option, value) => { await typeCmd('len'); await typeCmd(option); if (value != null) await typeCmd(String(value)); };
+  const ribbon97e = () => page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Lengthen', exact: true });
+
+  await step('TODO 97e: measure messages, exact prompts, DE nearest end, group unchanged, U and one Undo', async () => {
+    await open97c(doc97e(), 'lengthen97e.dxf');
+    await typeCmd('lengthen'); assert.equal(await prompt(), 'Select an object to measure or [DElta/Percent/Total/DYnamic] <Total>:');
+    await click(150, 100); assert.match(await message97e(), /Current length: 100\.0000/);
+    await click(335.355, 235.355); assert.match(await message97e(), /Current length: 78\.5398, included angle: 90/);
+    await typeCmd('DE'); assert.equal(await prompt(), 'Enter delta length or [Angle] <0.0000>:');
+    await typeCmd('10'); assert.equal(await prompt(), 'Select an object to change or [Undo]:'); await click(195, 100);
+    let raw = await savedDoc();
+    assert.deepEqual(lineEnds97c(raw), [[100, 100, 210, 100], [100, 180, 200, 180]]);
+    assert.deepEqual(raw.groups.map((g) => g.members), [[0, 1]]); assert.equal(raw.entities[0].tc, 0x257abd); assert.equal(raw.entities[0].lw, 35);
+    assert.equal((await histLabels()).at(-1), 'Lengthen');
+    await click(105, 180); assert.deepEqual(lineEnds97c(await savedDoc())[1], [90, 180, 200, 180]);
+    await typeCmd('U'); assert.deepEqual(lineEnds97c(await savedDoc())[1], [100, 180, 200, 180]);
+    await key97c('Enter'); assert.doesNotMatch(await prompt(), /Select an object to change/);
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(doc97e()));
+    await typeCmd('len'); assert.equal(await prompt(), 'Select an object to measure or [DElta/Percent/Total/DYnamic] <DElta>:');
+    await key97c('Enter'); assert.equal(await prompt(), 'Enter delta length or [Angle] <10.0000>:');
+    await key97c('Enter'); await click(195, 100); await key97c('Escape');
+    await key97c('Control+a'); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,20'); await key97c('Escape');
+    raw = await savedDoc(); assert.deepEqual(lineEnds97c(raw)[0], [100, 120, 210, 120], 'source edits after Lengthen');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97e: P 50 arc, T polyline end, invalid percentage, negative delta and circle refusal', async () => {
+    await open97c(doc97e(), 'options97e.dxf');
+    await start97e('P'); assert.equal(await prompt(), 'Enter percentage length <100.0000>:');
+    await typeCmd('0'); assert.match(await message97e(), /Value must be positive and nonzero\./); assert.equal(await prompt(), 'Enter percentage length <100.0000>:');
+    await typeCmd('-1'); assert.match(await message97e(), /Value must be positive and nonzero\./);
+    await typeCmd('50'); await click(302, 250); await key97c('Enter');
+    let raw = await savedDoc(); assert.ok(Math.abs(fieldOf(raw.entities[2], 51) - 45) < .001); assert.equal(fieldOf(raw.entities[2], 50), 0);
+    await start97e('T'); assert.equal(await prompt(), 'Specify total length or [Angle] <1.0000>:');
+    await typeCmd('250'); await click(200, 395); await key97c('Enter');
+    raw = await savedDoc(); assert.deepEqual(GR.shapeOf(raw.entities[3]).pts, [[100, 300], [200, 300], [200, 450]]);
+    await start97e('DE', -150); const before = writeDxf(await savedDoc()), labels = await histLabels();
+    await click(195, 100); assert.match(await message97e(), /Results in zero length geometry\./); assert.equal(await prompt(), 'Select an object to change or [Undo]:');
+    assert.equal(writeDxf(await savedDoc()), before); assert.deepEqual(await histLabels(), labels);
+    await click(440, 400); assert.match(await message97e(), /Cannot LENGTHEN this object\./); assert.equal(writeDxf(await savedDoc()), before);
+    await typeCmd('U'); assert.match(await message97e(), /Nothing to undo in this Lengthen/); assert.equal(writeDxf(await savedDoc()), before);
+    await key97c('Enter'); await key97c('Control+z'); assert.deepEqual(GR.shapeOf((await savedDoc()).entities[3]).pts, GR.shapeOf(doc97e().entities[3]).pts);
+    await start97e('P'); assert.equal(await prompt(), 'Enter percentage length <50.0000>:'); await key97c('Escape');
+    await start97e('T'); assert.equal(await prompt(), 'Specify total length or [Angle] <250.0000>:'); await key97c('Escape');
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97e: Dynamic drag preview, snapped endpoint, Esc, one Undo, Angle and two-point total', async () => {
+    const raw = doc97e(); addEntities(raw, dxfLine(240, 100, 240, 130));
+    await open97c(raw, 'dynamic97e.dxf');
+    await start97e('DY'); await click(195, 100); assert.equal(await prompt(), 'Specify new end point:');
+    const aim = await at(230, 100); await page.mouse.move(aim.x, aim.y); await frames(); assert.equal(await t('mod-preview').count(), 1);
+    await key97c('Escape'); assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 200, 100]);
+    await t('tog-snap').click(); await start97e('DY'); await click(195, 100);
+    await page.evaluate(() => {
+      window.__snap97e = []; window.__fill97e = CanvasRenderingContext2D.prototype.fillText;
+      CanvasRenderingContext2D.prototype.fillText = function (text, ...args) { window.__snap97e.push(text); return window.__fill97e.call(this, text, ...args); };
+    });
+    const target = await at(240, 100); await page.mouse.move(target.x + 2, target.y + 2); await frames();
+    const names = await page.evaluate(() => { CanvasRenderingContext2D.prototype.fillText = window.__fill97e; return window.__snap97e; });
+    assert.ok(names.includes('end'), 'point prompt paints the endpoint snap marker and name');
+    await page.mouse.click(target.x + 2, target.y + 2); await key97c('Enter');
+    assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 240, 100]); await key97c('Control+z');
+    await t('tog-snap').click(); await start97e('DY');
+    const a = await at(195, 100), b = await at(220, 100);
+    await page.mouse.move(a.x, a.y); await page.mouse.down(); await page.mouse.move(b.x, b.y, { steps: 5 }); await frames();
+    assert.equal(await t('mod-preview').count(), 1); await page.mouse.up(); await key97c('Enter');
+    assert.ok(Math.abs(lineEnds97c(await savedDoc())[0][2] - 220) < 1); await key97c('Control+z');
+    await start97e('T'); await typeCmd('Angle'); await typeCmd('45'); await click(302, 250); await key97c('Enter');
+    assert.ok(Math.abs(fieldOf((await savedDoc()).entities[2], 51) - 45) < .001); await key97c('Control+z');
+    await start97e('T'); await typeCmd('0,0'); assert.equal(await prompt(), 'Specify second point:'); await typeCmd('150,0'); await click(195, 100); await key97c('Enter');
+    assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 250, 100]);
+    await key97c('Control+z'); await closeTabs(/./);
+  });
+
+  await step('TODO 97e: Layout Modify ribbon, single group member, locked object, U and Undo', async () => {
+    const lay = newLayout('Lengthen layout');
+    lay.parts.a = objectPart('a', 'Source', dxfLine(100, 100, 200, 100), newDoc(4).layers);
+    lay.parts.b = objectPart('b', 'Other', dxfLine(100, 180, 200, 180), newDoc(4).layers);
+    lay.parts.c = objectPart('c', 'Locked', dxfLine(100, 250, 200, 250), newDoc(4).layers);
+    lay.placed = [{ ...objectPlacement(lay.parts.a), g: 'g1' }, { ...objectPlacement(lay.parts.b), g: 'g1' }, { ...objectPlacement(lay.parts.c), lock: true }];
+    await open97c(layoutRaw(lay), 'layout97e.dxf'); await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await ribbon97e().isEnabled(), true); await ribbon97e().click(); await typeCmd('DE'); await typeCmd('10');
+    await click(195, 250); assert.match(await message97e(), /locked layer/);
+    await click(195, 100); await key97c('Enter');
+    let saved = layoutFromRaw(await savedDoc()), shapes = objectDoc(saved).raw;
+    assert.deepEqual(lineEnds97c(shapes), [[100, 100, 210, 100], [100, 180, 200, 180], [100, 250, 200, 250]]);
+    assert.deepEqual(saved.placed.map((p) => p.g), ['g1', 'g1', undefined]); assert.equal(saved.placed[2].lock, true);
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(objectDoc(layoutFromRaw(await savedDoc())).raw)[0], [100, 100, 200, 100]);
+    await start97e('DE', 10); await click(195, 100); await typeCmd('U'); await key97c('Enter');
+    assert.deepEqual(lineEnds97c(objectDoc(layoutFromRaw(await savedDoc())).raw)[0], [100, 100, 200, 100]);
+    await closeTabs(/./);
+  });
+
+  await step('TODO 97e: Compare Modify ribbon changes the source, one Undo and locked drawing layer', async () => {
+    const raw = doc97e(); addLayer(raw, 'Locked'); addEntities(raw, dxfLine(100, 240, 200, 240, { layer: 'Locked' }));
+    await open97c(raw, 'compare97e.dxf'); await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    await typeCmd('compare'); await page.locator('[data-ribbon-tab=Home]').click();
+    assert.equal(await ribbon97e().isEnabled(), true); await ribbon97e().click(); await typeCmd('DE'); await typeCmd('10');
+    await click(195, 240); assert.match(await message97e(), /locked layer/);
+    await click(195, 100); await key97c('Enter');
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97e(?:-edited)*\.dxf$/ }) });
+    await source.click(); assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 210, 100]);
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 200, 100]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97e: light and dark Modify panel and command line mid-command screenshots', async () => {
+    await open97c(doc97e(), 'screens97e.dxf'); mkdirSync('shots-97e', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Modify]').click(); assert.equal(await ribbon97e().isVisible(), true);
+      await page.screenshot({ path: `shots-97e/modify-panel-${theme}.png` });
+      await ribbon97e().click(); await typeCmd('DE'); await typeCmd('10'); await click(195, 100);
+      await cmdLine().focus(); assert.equal(await prompt(), 'Select an object to change or [Undo]:');
+      await page.screenshot({ path: `shots-97e/command-line-${theme}.png` }); await key97c('Escape'); await key97c('Control+z');
+    }
+    for (const theme of ['light', 'dark']) for (const name of ['modify-panel', 'command-line']) assert.ok(readFileSync(`shots-97e/${name}-${theme}.png`).length > 1000);
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   const gapDoc97d = () => {
     const raw = newDoc(4);
     addEntities(raw, dxfLine(100, 100, 180, 100, { layer: '0', aci: 3, tc: 0x257abd, lt: 'CONTINUOUS', lw: 35 }), dxfLine(300, 100, 220, 100), dxfLine(100, 180, 300, 180));

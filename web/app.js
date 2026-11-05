@@ -53,6 +53,7 @@ import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, refer
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
 import { filletEntities, filletPolylineShape, filletAllPolyline } from './fillet.js';
 import { breakEntity, breakAtPoint, breakWhy } from './break.js';
+import { lengthenEntity, lengthenInfo, lengthenWhy, CANNOT_LENGTHEN } from './lengthen.js';
 import { joinEntities, NO_TOUCH } from './join.js';
 import * as PR from './props.js';
 import { openQuickSelect } from './qselectdlg.js';
@@ -161,6 +162,7 @@ const TOOLS = [
   { id: 'scale', label: 'Scale', svg: '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>' },
   { id: 'fillet', label: 'Fillet', svg: '<path d="M4 4v10a6 6 0 0 0 6 6h10"/>' },
   { id: 'break', label: 'Break', svg: '<path d="M3 17l6-6M15 9l6-6M9 5v6h6M9 13v6h6"/>' },
+  { id: 'lengthen', label: 'Lengthen', svg: '<path d="M3 17h12M15 17h6M17 13l4 4-4 4M3 7h10M3 4v6M13 4v6"/>' },
   { id: 'breakatpoint', label: 'Break at point', svg: '<path d="M3 21l7-7M14 10l7-7M8 8l8 8M12 5v3M5 12h3"/>' },
   { id: 'join', label: 'Join', svg: '<path d="M3 19l6-9h6l6-7"/><circle cx="9" cy="10" r="1.6"/><circle cx="15" cy="10" r="1.6"/>' },
   { id: 'offset', label: 'Offset', svg: '<rect x="3" y="3" width="18" height="18" rx="4"/><rect x="7.5" y="7.5" width="9" height="9" rx="1.5"/>' },
@@ -173,7 +175,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', description: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'join', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['auto', 'Automatic', 'DIM', '<path d="M3 15L11 7M3 15l3-1M3 15l1-3M11 7l-3 1M11 7l1 3"/><circle cx="14.5" cy="13.5" r="3.5"/>', 'DIM'],
@@ -693,7 +695,7 @@ function ribbonContents(kind) {
   if (ribbon.tab === 'Modify') return [
     group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
-      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join')),
+      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>', false, undefined, true),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
     group('Shaping', ...['weld', 'trim', 'intersect', 'simplify', 'boundary'].map((op) => convert(SH.OPS[op].label, () => shapeSelection(op),
@@ -728,13 +730,13 @@ function ribbonContents(kind) {
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'))];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen'))];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
       stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
-      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join')));
+      stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
   }
-  if (kind === 'compare') groups.push(group('Modify', ribbonTool('break'), ribbonTool('join')));
+  if (kind === 'compare') groups.push(group('Modify', ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
   groups.push(group('Groups', btn('Group', ICONS.group, groupSel, { command: 'group', enabled: () => !!editable() && editable().sel.size > 1 && !wholeDrawingGroup(editable().raw.groups, editable().sel) }),
     btn('Ungroup', ICONS.ungroup, ungroupSel, { command: 'ungroup', enabled: () => !!editable() && [...editable().sel].some((i) => groupOf(editable().raw.groups, i)) })));
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
@@ -1288,7 +1290,7 @@ function buildSelbar() {
 
 function buildRail() {
   ui.toolBtns = {};
-  const items = TOOLS.filter((t) => !['copy', 'array', 'rotate', 'scale', 'fillet', 'extend', 'break', 'breakatpoint', 'join'].includes(t.id)).map((t) => {
+  const items = TOOLS.filter((t) => !['copy', 'array', 'rotate', 'scale', 'fillet', 'extend', 'break', 'breakatpoint', 'lengthen', 'join'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id, t.description), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
@@ -4422,7 +4424,7 @@ function paintOverlay(gesture = false) {
     const d = curDoc();
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
-    const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'rotate', 'scale'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
+    const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'rotate', 'scale', 'lengthen'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
@@ -4634,6 +4636,7 @@ function attachCanvasEvents() {
       const d = pointTarget();
       if (d && (state.tool === 'select' || state.tool === 'contour' || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon' || state.setlen || modLive())) {
         drag = { x: e.clientX, y: e.clientY, p: toDrawing(d, e.clientX, e.clientY), moved: false, shift: e.shiftKey };
+        lengthenDown(d, drag);
         if ((state.tool === 'select' || state.tool === 'contour') && !state.setlen) drag.dim = dimGrab(d, drag.p);
         if (state.tool === 'select' && !state.setlen && !state.match && !drag.dim && d.sel?.has(hitAt(d, drag.p))) {
           const sel = new Set(d.sel), ed = edIndex(d);
@@ -4645,7 +4648,7 @@ function attachCanvasEvents() {
       if (curLay() && (state.tool === 'select' || state.tool === 'step' || state.tool === 'contour' || (layModLive() && state.mod.stage === 'pick'))) {
         if (placedDown(e)) { capture(c, e); }
         else if (!gh) { lrub = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; capture(c, e); }
-      } else if (layModLive()) { lmod = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; capture(c, e); }
+      } else if (layModLive()) { lmod = { x: e.clientX, y: e.clientY, shift: e.shiftKey, moved: false }; lengthenDown(mdoc(curDoc()), lmod); capture(c, e); }
     }
   });
   c.addEventListener('pointermove', (e) => {
@@ -4668,6 +4671,7 @@ function attachCanvasEvents() {
     if (d && modLive()) modHover(d, e.clientX, e.clientY, e.shiftKey);
     else if (layModLive() && state.mod.stage !== 'pick') modHover(curDoc(), e.clientX, e.clientY, e.shiftKey);
     if (lmod && !lmod.moved && Math.hypot(e.clientX - lmod.x, e.clientY - lmod.y) > 4) lmod.moved = true;
+    if (drag && state.mod?.kind === 'lengthen' && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
     if (drag && modLive()) trimPathMove(drag, mdoc(d), e); else if (lmod && layModLive()) trimPathMove(lmod, mdoc(curDoc()), e);
     if (state.text.drag) textDragMove(e);
     if (state.grip) gripMove(e); else gripHoverAt(e);
@@ -4702,7 +4706,7 @@ function attachCanvasEvents() {
     if (state.grip) gripUp(e);
     if (state.balDrag) balUp();
     if (pdrag) placedUp();
-    if (lmod) { const r = lmod; lmod = null; if (r.path) trimPathUp(mdoc(curDoc()), e); else if (!r.moved && e.button === 0 && layModLive()) { const ld = curDoc(); modUp(ld, { p: toDrawing(ld, r.x, r.y), moved: false, shift: r.shift }, toDrawing(ld, e.clientX, e.clientY), e.shiftKey, false); } }
+    if (lmod) { const r = lmod; lmod = null; if (r.path) trimPathUp(mdoc(curDoc()), e); else if ((!r.moved || state.mod?.kind === 'lengthen') && e.button === 0 && layModLive()) { const ld = curDoc(); modUp(ld, { ...r, p: toDrawing(ld, r.x, r.y) }, toDrawing(ld, e.clientX, e.clientY), e.shiftKey, false); } }
     if (state.drawingRotate?.drag) drawingRotateUp(e);
     if (lrub) { const r = lrub; lrub = null; hideRubber(); if (r.zoom) zoomWindowUp(r, e); else layoutBoxSelect(r, e); }
     const was = drag; drag = null;
@@ -7032,11 +7036,11 @@ function cursorKey(e) {
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
-const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'join', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
+const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
 const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
 const FILLET_TRIM_SAVED = 'pd-fillet-trim';
-const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset', 'break', 'breakatpoint', 'join'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
+const OBJ_MODS = ['trim', 'extend', 'fillet', 'offset', 'break', 'breakatpoint', 'lengthen', 'join'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
 const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
@@ -7066,6 +7070,8 @@ function partRefused(v, m, p) {
   return true;
 }
 let copyMode = 'Multiple';
+const lengthenValues = { Delta: 0, Percent: 100, Total: 1, DeltaAngle: 0, TotalAngle: 1 };
+let lengthenMode = 'Total';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
 const loadTrimQuick = () => { try { return localStorage.getItem(TRIM_MODE_SAVED) !== 'standard'; } catch { return true; } };      // Quick unless he chose Standard
 const loadOffsetDist = () => { try { const v = Number(localStorage.getItem(OFFSET_SAVED)); return v > 0 && Number.isFinite(v) ? v : 10; } catch { return 10; } };
@@ -7121,6 +7127,7 @@ function trimRegionPreview(d, m, paint) {
 function modStart(id) {
   const m = state.mod, d = editable() || curDoc();
   if (d.lay && !OBJ_MODS.includes(id)) { layModStart(id); return; }
+  if (id === 'lengthen') { m.stage = 'measure'; m.mode = lengthenMode; state.msg = null; return; }
   if (id === 'break' || id === 'breakatpoint') { m.stage = 'obj'; state.msg = 'Select object:'; return; }
   if (id === 'join') {
     const v = d.lay ? layObjSelDoc(d) : d;
@@ -7160,6 +7167,7 @@ function modPrompt(d) {
   if (d.lay) d = { sel: new Set(selIdxs()) };               // a layout: only how many are selected is read
 
   const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
+  if (m.kind === 'lengthen') return { status: 'Command: LENGTHEN', prompt: lengthenPrompt(m) };
   if (m.kind === 'break' || m.kind === 'breakatpoint') return { status: `Command: ${m.kind.toUpperCase()}`, prompt: m.stage === 'obj' ? 'Select object:' : m.kind === 'breakatpoint' ? 'Specify break point:' : m.stage === 'first' ? 'Specify first break point:' : m.first ? 'Specify second break point:' : 'Specify second break point or [First point]:' };
   if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: m.stage === 'src' ? 'Select source object or multiple objects to join at once:' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}:` };
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
@@ -7208,6 +7216,12 @@ function modEnter(d) {
   d = mdoc(d);
   if (d.lay && state.mod.stage === 'pick') { layTake(d); return; }
   const m = state.mod;
+  if (m.kind === 'lengthen') {
+    if (m.stage === 'measure') lengthenChoose(d, lengthenMode);
+    else if (m.stage === 'value' && !m.p1) lengthenValue(d, lengthenValues[m.mode]);
+    else modEsc(d);
+    return;
+  }
   if (m.kind === 'break' || m.kind === 'breakatpoint') { note(modPrompt(d).prompt); return; }
   if (m.kind === 'join') { joinRun(d); return; }
   if (['move', 'copy'].includes(m.kind)) {
@@ -7263,6 +7277,7 @@ function modTakes(c) {
   if (state.grip) return true;                                      // a hot grip takes every word (B, C, U, X ...) as its own option, not as a command
   if (dimAutoLive() && state.dim.askText) return true;              // Automatic DIM's "Enter dimension text" takes any text
   const m = state.mod;
+  if ((modLive() || layModLive()) && m.kind === 'lengthen') return true;
   if ((modLive() || layModLive()) && m.kind === 'offset') return true;
   if ((modLive() || layModLive()) && (m.kind === 'break' || m.kind === 'breakatpoint')) return m.stage !== 'obj';
   if ((modLive() || layModLive()) && m.kind === 'join') return JOIN_CLOSE.test(c) && m.objs[0]?.type === 'ARC';
@@ -7278,6 +7293,7 @@ function modTyped(d, raw) {
   d = mdoc(d);
   const m = state.mod, c = raw.trim().toLowerCase();
   if (!c) { modEnter(d); return true; }
+  if (m.kind === 'lengthen') return lengthenTyped(d, raw, c);
   if (m.kind === 'break' || m.kind === 'breakatpoint') {
     if (m.kind === 'break' && m.stage === 'second' && /^(f|first|first point)$/.test(c)) { m.first = true; m.stage = 'first'; note(modPrompt(d).prompt); paintOverlay(); return true; }
     if (m.stage === 'second' && c === '@') { breakDo(d, m.p0); return true; }
@@ -7414,6 +7430,7 @@ function modHover(d, cx, cy, shift) {
   d = mdoc(d);
   const m = state.mod, p = toDrawing(d, cx, cy);
   m.p = p; m.shift = shift;
+  if (m.kind === 'lengthen' && (m.stage === 'point' || m.stage === 'value')) m.cur = snapPoint(d, p, m.ent ? d.raw.entities.indexOf(m.ent) : -1);
   if ((m.kind === 'break' || m.kind === 'breakatpoint') && m.stage !== 'obj') m.cur = snapPoint(d, p);
   if (m.kind === 'trim' || m.kind === 'extend') m.client = [cx, cy];
   if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
@@ -7446,6 +7463,14 @@ function modUp(d, was, p, shift, crossing) {
   d = mdoc(d);
   const m = state.mod;
   if (!d.lay) modSync(d);
+  if (m.kind === 'lengthen') {
+    if (was.lengthenStart && !was.moved) return;
+    if (d.vlay && partRefused(d, m, was.p)) return;
+    if (!was.moved) lengthenPick(d, was.p);
+    else if (m.mode === 'Dynamic' && m.stage === 'obj') { lengthenPick(d, was.p); if (m.stage === 'point') lengthenPick(d, p); }
+    else if (m.stage === 'point') lengthenPick(d, p);
+    return;
+  }
   if (['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (m.kind === 'join') {
     const hits = was.moved ? (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [was.p[0], was.p[1], p[0], p[1]]).filter((e) => !lockedEnt(d, e)).map((e) => d.raw.entities[e]) : [modEntAt(d, was.p)];
@@ -7943,6 +7968,90 @@ function offsetUndo(d) {
   note(offsetPrompt(m)); paintOverlay();
 }
 const filletSettings = (m) => `Current settings: Mode = ${m.trim ? 'TRIM' : 'NO TRIM'}, Radius = ${mmText(state.filR)} mm`;
+const lengthenOption = (mode) => ({ Delta: 'DElta', Percent: 'Percent', Total: 'Total', Dynamic: 'DYnamic' }[mode]);
+function lengthenPrompt(m) {
+  if (m.stage === 'measure') return `Select an object to measure or [DElta/Percent/Total/DYnamic] <${lengthenOption(lengthenMode)}>:`;
+  if (m.stage === 'point') return 'Specify new end point:';
+  if (m.stage !== 'value') return 'Select an object to change or [Undo]:';
+  if (m.p1) return 'Specify second point:';
+  const value = lengthenValues[m.mode].toFixed(4);
+  return m.mode === 'Delta' ? `Enter delta length or [Angle] <${value}>:`
+    : m.mode === 'Total' ? `Specify total length or [Angle] <${value}>:`
+    : m.mode === 'Percent' ? `Enter percentage length <${value}>:`
+    : m.mode === 'DeltaAngle' ? `Enter delta angle <${value}>:` : `Specify total angle <${value}>:`;
+}
+function lengthenChoose(d, mode) {
+  const m = state.mod;
+  lengthenMode = m.mode = mode; m.stage = mode === 'Dynamic' ? 'obj' : 'value'; m.p1 = null;
+  note(lengthenPrompt(m)); paintOverlay();
+}
+function lengthenValue(d, value) {
+  const m = state.mod;
+  if (!Number.isFinite(value)) { note('Requires numeric value.'); return; }
+  if (m.mode !== 'Delta' && m.mode !== 'DeltaAngle' && value <= 0) { note('Value must be positive and nonzero.'); return; }
+  lengthenValues[m.mode] = value; m.stage = 'obj'; m.p1 = null;
+  note(lengthenPrompt(m)); paintOverlay();
+}
+function lengthenTyped(d, raw, c) {
+  const m = state.mod;
+  if (m.stage === 'measure') {
+    const mode = /^(de|delta)$/.test(c) ? 'Delta' : /^(p|percent)$/.test(c) ? 'Percent' : /^(t|total)$/.test(c) ? 'Total' : /^(dy|dynamic)$/.test(c) ? 'Dynamic' : null;
+    if (mode) { lengthenChoose(d, mode); return true; }
+  }
+  if (m.stage === 'obj' && /^(u|undo)$/.test(c)) {
+    const past = historyOf(d.vlay || d).labels().past;
+    if (past.length <= m.base || past.at(-1) !== 'Lengthen') note('Nothing to undo in this Lengthen');
+    else { undo(d); note('Last lengthen undone'); }
+    return true;
+  }
+  if (m.stage === 'value' && /^(a|angle)$/.test(c) && ['Delta', 'Total'].includes(m.mode)) { m.mode += 'Angle'; m.p1 = null; note(lengthenPrompt(m)); return true; }
+  if (m.stage === 'value' && Number.isFinite(Number(c))) { lengthenValue(d, Number(c)); return true; }
+  const point = DR.typedPoint(DR.parseInput(raw), (m.p1 || m.p0)?.map((v) => v * d.factor));
+  if (point) lengthenPick(d, point.map((v) => v / d.factor), true);
+  else note(m.stage === 'value' ? 'Requires numeric value.' : lengthenPrompt(m));
+  return true;
+}
+/** Dynamic accepts either a drag or a pick followed by a new endpoint. */
+function lengthenDown(d, was) {
+  if (state.mod?.kind !== 'lengthen' || state.mod.mode !== 'Dynamic' || state.mod.stage !== 'obj') return;
+  lengthenPick(d, was.p || toDrawing(d, was.x, was.y));
+  was.lengthenStart = state.mod.stage === 'point';
+}
+function lengthenPick(d, p, typed = false) {
+  const m = state.mod;
+  if (m.stage === 'value') {
+    if (m.mode !== 'Delta' && m.mode !== 'Total') { note('Requires numeric value.'); return; }
+    const q = typed ? p : snapPoint(d, p);
+    if (!m.p1) { m.p1 = q; note(lengthenPrompt(m)); }
+    else lengthenValue(d, Math.hypot(q[0] - m.p1[0], q[1] - m.p1[1]) * d.factor);
+    return;
+  }
+  if (m.stage === 'point') {
+    lengthenDo(d, m.ent, m.p0, typed ? p : snapPoint(d, p, d.raw.entities.indexOf(m.ent)));
+    return;
+  }
+  const i = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d));
+  if (i < 0) { note(lengthenPrompt(m)); return; }
+  if (lockedEnt(d, i)) { note('Object is on a locked layer.'); return; }
+  const ent = d.raw.entities[i], info = lengthenInfo(ent);
+  if (!info) { note(CANNOT_LENGTHEN); return; }
+  if (m.stage === 'measure') { note(`Current length: ${(info.length * d.factor).toFixed(4)}${info.angle == null ? '' : `, included angle: ${+info.angle.toFixed(4)}`}`); ui.cmdUI.message(state.msg); return; }
+  if (m.mode === 'Dynamic') { m.ent = ent; m.p0 = p; m.stage = 'point'; m.cur = null; note(lengthenPrompt(m)); paintOverlay(); }
+  else lengthenDo(d, ent, p);
+}
+function lengthenDo(d, ent, pick, point) {
+  const m = state.mod, value = m.mode === 'Dynamic' ? point : lengthenValues[m.mode] / (m.mode === 'Delta' || m.mode === 'Total' ? d.factor : 1);
+  const result = lengthenEntity(ent, pick, m.mode, value);
+  if (!result) { note(lengthenWhy(ent)); return; }
+  if (result !== ent) {
+    const hist = historyOf(d.vlay || d), n = hist.labels().past.length;
+    m.base = Math.min(m.base, n); view.fitted = false;
+    if (!commit(d, { entities: d.raw.entities.map((e) => e === ent ? result : e), groups: d.raw.groups, blocks: d.raw.blocks }, 'Lengthen')) return;
+    m.base -= n + 1 - hist.labels().past.length;
+  }
+  m.stage = 'obj'; m.ent = m.cur = null;
+  note(lengthenPrompt(m)); paintOverlay();
+}
 /** Click or box: the objects join the picks (the first one is the source); Enter runs. */
 function joinPick(d, ents) {
   const m = state.mod;
@@ -8206,6 +8315,10 @@ function modOvl(d, out, paint) {
     else if (m.ent) { const pick = m.p ? offsetPick(d, m.p) : null; addEnt(pick?.target ?? m.ent, 'dr-guide'); if (pick?.r.ent) addEnt(pick.r.ent, 'dr-shape', 'mod-preview'); }
   } else if (m.kind === 'join') {
     for (const e of m.objs) addEnt(e, 'dr-guide');
+  } else if (m.kind === 'lengthen') {
+    if (m.ent) addEnt(m.ent, 'dr-guide');
+    const result = m.stage === 'point' && m.cur && lengthenEntity(m.ent, m.p0, 'Dynamic', m.cur);
+    if (result) addEnt(result, 'dr-shape', 'mod-preview');
   } else if (m.kind === 'break' || m.kind === 'breakatpoint') {
     if (m.ent) addEnt(m.ent, 'dr-guide');
     const pieces = m.ent && m.stage !== 'first' && m.cur ? (m.kind === 'break' ? breakEntity(m.ent, m.p0, m.cur) : breakAtPoint(m.ent, m.cur)) : null;
