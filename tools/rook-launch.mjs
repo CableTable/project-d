@@ -332,7 +332,7 @@ export const gate = (x = io) => x.gate.report();
 function needHooks(x, dir) {
   let hooks;
   try { hooks = x.git(dir, 'config', 'core.hooksPath'); } catch { /* Missing config also refuses the launch. */ }
-  if (hooks !== 'tools/hooks') throw new Error(`hooksPath required: git -C "${dir}" config core.hooksPath tools/hooks`);
+  if (!hooks || resolve(dir, hooks) !== resolve(dir, 'tools/hooks')) throw new Error(`hooksPath required: git -C "${dir}" config core.hooksPath tools/hooks`);
 }
 
 export function knight(args, x = io) {

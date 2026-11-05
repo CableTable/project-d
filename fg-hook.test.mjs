@@ -51,7 +51,7 @@ for (const dir of [K, 'C:\\Users\\raksh\\.claude', 'C:\\Users\\raksh\\.claude-ac
         r = run({ agent_type, tool_name: 'Monitor', tool_input: { command } }, dir);
         assert.equal(r.status, 0, 'Monitor wait passes, including King builder');
       }
-      for (const command of ['node tools/rook.mjs waiter', 'node tools/rook.mjs retro', 'npm.cmd test']) {
+      for (const command of ['node tools/rook.mjs waiter', 'node tools/rook.mjs retro', 'npm.cmd test', 'git grep -n "rook.mjs wait" WORKFLOW.md']) {
         assert.equal(run({ agent_type, tool_name, tool_input: { command } }, dir).status, 0, command);
       }
     }

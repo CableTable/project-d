@@ -608,7 +608,7 @@ test('TODO 169: build and knight require tools/hooks in the target folder before
     [build, ['b.txt', 'o.jsonl', 'br', 'abc1234', '--as', 'bishop'], 'ProjectD-s15fix'],
     [knight, ['b.txt', 'k.txt', 'br', 'abc1234'], 'ProjectD-rowan'],
   ]) {
-    for (const value of ['', 'other/hooks', null]) {
+    for (const value of ['tools/hooks', resolve(X, folder, 'tools/hooks'), '', 'other/hooks', resolve(X, 'other/hooks'), null]) {
       const { calls, x } = recorder();
       const git = x.git;
       x.git = (...a) => {
@@ -617,8 +617,13 @@ test('TODO 169: build and knight require tools/hooks in the target folder before
         if (value === null) throw new Error('config unset');
         return value;
       };
-      assert.throws(() => run(args, x), { message: `hooksPath required: git -C "${X}/${folder}" config core.hooksPath tools/hooks` });
-      assert.equal(calls.some((c) => c[0] === 'open' || isSwitch(c) || c[0] === 'launch' || c[0] === 'gateRecord'), false);
+      if (value && resolve(X, folder, value) === resolve(X, folder, 'tools/hooks')) {
+        run(args, x);
+        assert.ok(launched(calls));
+      } else {
+        assert.throws(() => run(args, x), { message: `hooksPath required: git -C "${X}/${folder}" config core.hooksPath tools/hooks` });
+        assert.equal(calls.some((c) => c[0] === 'open' || isSwitch(c) || c[0] === 'launch' || c[0] === 'gateRecord'), false);
+      }
     }
   }
 });

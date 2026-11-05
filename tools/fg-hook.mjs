@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 
 let input = {};
 try { input = JSON.parse(readFileSync(0, 'utf8') || '{}'); } catch {}
-if (['Bash', 'PowerShell', 'Monitor'].includes(input?.tool_name) && /rook\.mjs["']?\s+wait\b/.test(input.tool_input?.command ?? '')) {
+if (['Bash', 'PowerShell', 'Monitor'].includes(input?.tool_name) && /\bnode\s+(?:"[^"]*|\S*)rook\.mjs["']?\s+wait\b/.test(input.tool_input?.command ?? '')) {
   if (input.tool_name !== 'Monitor' && input.tool_input?.run_in_background !== true) {
     process.stderr.write('rook.mjs wait prints only at the end: run it in the background or as a Monitor\n');
     process.exit(2);

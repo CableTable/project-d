@@ -20,6 +20,6 @@ if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.m
   const all = readdirSync('.').filter((f) => f.endsWith('.test.mjs') && f !== 'browser.test.mjs').sort();
   let files;
   try { files = unitFiles(all, process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(1); }
-  const r = spawnSync(process.execPath, ['--test', ...files], { stdio: 'inherit' });
+  const r = spawnSync(process.execPath, ['--test', '--test-timeout=120000', ...files], { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
