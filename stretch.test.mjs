@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { stretchEntities, stretchGrips } from './web/stretch.js';
+import { stretchEntities, stretchGrips, stretchSelection, stretchPlacements } from './web/stretch.js';
+import { makeIndex } from './web/edit.js';
+import { flatten } from './web/drawing.js';
 import * as GR from './web/grips.js';
 import { entity, line, arc, circle, ellipse, lwpoly, text, mtext, insert, newDoc, addEntities, writeDxf } from './web/dxf-write.js';
 import { readDxf } from './web/drawing.js';
@@ -10,6 +12,31 @@ const pair = (e, code = 10, n = 0) => [GR.get(e.r, code, n), GR.get(e.r, code + 
 const vertices = (e) => GR.lwVertices(e.r).map((v) => [v.x, v.y]);
 const ends = (e) => GR.gripsOf(e).filter((g) => g.kind === 'end').map((g) => [g.x, g.y]);
 const box = (x0, y0, x1 = x0, y1 = y0) => ({ x0, y0, x1, y1 });
+
+test('Stretch selection retains all crossing boxes and whole picks, replacing clears the old regions', () => {
+  const a = box(1, 2, 3, 4), b = box(5, 6, 7, 8);
+  let s = stretchSelection(null, false, [], a);
+  s = stretchSelection(s, true, [2]); s = stretchSelection(s, true, [], b);
+  assert.deepEqual(s, { boxes: [a, b], picked: new Set([2]) });
+  assert.deepEqual(stretchSelection(s, false, [3]), { boxes: [], picked: new Set([3]) });
+});
+
+test('Stretch placements: insertion-only, picked, locked, zero, and placement metadata kept', () => {
+  const items = [0, 1, 2, 3].map((i) => ({ i, orig: { partId: 'p', x: i * 10, y: 5, rot: 30, sc: 2, mirrorX: true, g: 'g1', ...(i === 3 ? { lock: true } : {}) } }));
+  const r = stretchPlacements(items, [box(1, 6, -1, 4)], 10, 5, new Set([2, 3]));
+  assert.deepEqual(r.map(([x]) => x.i), [0, 2]);
+  assert.deepEqual(r.map(([, p]) => p), [0, 2].map((i) => ({ ...items[i].orig, x: items[i].orig.x + 10, y: 10 })));
+  assert.deepEqual(stretchPlacements(items, [], 0, 0, new Set([0])), []);
+});
+
+test('Stretch uses a supplied extents index and limits changes to selected entities', () => {
+  const raw = newDoc(4); addEntities(raw, entity('SOLID', [[10, 0], [20, 0], [11, 10], [21, 0], [12, 10], [22, 10], [13, 0], [23, 10]]), line(0, 0, 10, 0));
+  const ix = makeIndex(raw, flatten(raw));
+  const r = stretchEntities(raw, [box(-1, -1, 11, 11)], 2, 3, new Set(), ix, new Set([0]));
+  assert.deepEqual([...r.next.keys()], [0]); assert.equal(r.moved, 1);
+  const supplied = { ...ix, box: ix.box.map(() => Infinity) };
+  assert.equal(stretchEntities(raw, [box(-1, -1, 11, 11)], 2, 3, new Set(), supplied, new Set([0])).next.size, 0);
+});
 const around = ([x, y]) => box(x - .1, y - .1, x + .1, y + .1);
 const enclosing = (ps) => box(Math.min(...ps.map((p) => p[0])) - .1, Math.min(...ps.map((p) => p[1])) - .1,
   Math.max(...ps.map((p) => p[0])) + .1, Math.max(...ps.map((p) => p[1])) + .1);

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
 import { RUNNING_PROMPT } from './tools/running-prompt.mjs';
 import { chromium } from 'playwright';
-import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim } from './web/edit.js';
+import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim, dimOfEntity } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
@@ -23545,6 +23545,168 @@ try {
     const doc = await savedDoc(); assert.equal(GR.shapeOf(doc.entities[0]).pts.length, 8); assert.deepEqual(doc.entities[1], before[1]);
     await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
     await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  const base97g2 = 'Specify base point or [Displacement] <Displacement>:';
+  const second97g2 = 'Specify second point or <use first point as displacement>:';
+  const doc97g2 = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 200, 100), dxfPoly([[100, 180], [200, 180], [200, 230], [100, 230]], { closed: true }), dxfCircle(350, 100, 20), dxfLine(100, 300, 200, 300));
+    raw.groups = [{ members: [0, 3], name: '', description: '', unnamed: true, selectable: true }];
+    return raw;
+  };
+  const vertices97g2 = (raw) => GR.lwVertices(raw.entities.find((e) => e.type === 'LWPOLYLINE').r).map(({ x, y }) => [x, y]);
+  const ribbon97g2 = () => page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Stretch', exact: true });
+  const clear97g2 = async () => { await key97c('Escape'); await key97c('Escape'); await key97c('Escape'); };
+  const displacement97g2 = async (label = '') => { await key97c('Enter'); assert.equal(await prompt(), base97g2, label); await typeCmd('D'); await typeCmd('10,5'); };
+
+  await step('TODO 97g2: Drawings crossing line and two polyline vertices, multiple boxes, groups, preview, Esc, Undo and source edit', async () => {
+    await open97c(doc97g2(), 'stretch97g2.dxf'); const before = (await savedDoc()).entities;
+    await typeCmd('STRETCH'); assert.equal(await prompt(), 'Select objects:');
+    assert.match(await t('cmd-hist').textContent(), /Select objects to stretch by crossing-window or crossing-polygon\.\.\./);
+    await drag97d(210, 110, 190, 90); await drag97d(210, 240, 190, 170);
+    await key97c('Enter'); assert.equal(await prompt(), base97g2);
+    await typeCmd('100,100'); assert.equal(await prompt(), second97g2);
+    const q = await at(110, 105); await page.mouse.move(q.x, q.y); await frames();
+    assert.ok(Number(await t('drawing').getAttribute('data-preview')) > 0, 'live geometry preview');
+    await key97c('Escape'); assert.deepEqual((await savedDoc()).entities, before, 'Esc before apply changes nothing');
+    await key97c('Escape'); await typeCmd('STR'); await drag97d(210, 110, 190, 90); await drag97d(210, 240, 190, 170);
+    await displacement97g2(); let raw = await savedDoc();
+    assert.deepEqual(lineEnds97c(raw), [[100, 100, 210, 105], [100, 300, 200, 300]], 'only the crossed end moves; the group mate outside stays');
+    assert.deepEqual(vertices97g2(raw), [[100, 180], [210, 185], [210, 235], [100, 230]]);
+    assert.deepEqual(raw.groups.map((g) => g.members), [[0, 3]]); assert.equal((await histLabels()).at(-1), 'Stretch');
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before, 'one Undo restores both objects');
+    await key97c('Escape'); await typeCmd('stretch'); await click(370, 100); await key97c('Enter'); await typeCmd('0,0'); await typeCmd('10,5');
+    raw = await savedDoc(); assert.deepEqual([fieldOf(raw.entities[2], 10), fieldOf(raw.entities[2], 20), fieldOf(raw.entities[2], 40)], [360, 105, 20], 'click-picked circle moves whole');
+    await key97c('Escape'); await typeCmd('move'); await click(380, 105); await key97c('Enter'); await typeCmd('0,0'); await typeCmd('0,10');
+    assert.equal(fieldOf((await savedDoc()).entities[2], 20), 115, 'source remains editable after Stretch');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97g2: Drawings crossing preselection, ordinary window, Enter second point, displacement default and locked layer skipped', async () => {
+    const input = doc97g2(); addLayer(input, 'Locked'); addEntities(input, dxfLine(100, 140, 200, 140, { layer: 'Locked' }));
+    await open97c(input, 'stretch97g2-pre.dxf');
+    await drag97d(210, 110, 190, 90); await typeCmd('STR'); assert.equal(await prompt(), base97g2);
+    await typeCmd('10,5'); await key97c('Enter');
+    assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 210, 105], 'Enter uses first point as displacement from origin');
+    await key97c('Control+z'); await clear97g2();
+    await drag97d(90, 90, 210, 310); await typeCmd('stretch'); assert.equal(await prompt(), base97g2); await key97c('Enter');
+    assert.equal(await prompt(), 'Specify displacement <10.0000, 5.0000>:'); await key97c('Enter');
+    assert.deepEqual(lineEnds97c(await savedDoc())[0], [110, 105, 210, 105], 'ordinary window moves whole with remembered displacement');
+    await key97c('Control+z'); await clear97g2();
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    await clear97g2(); await typeCmd('stretch'); assert.equal(await prompt(), 'Select objects:'); await drag97d(210, 150, 190, 90); await displacement97g2();
+    assert.match(await prompt(), /Layer Locked is locked: unlock it in the Objects tab to move this/);
+    const out = await savedDoc(); assert.deepEqual(lineEnds97c(out)[0], [100, 100, 210, 105]); assert.deepEqual(lineEnds97c(out).at(-1), [100, 140, 200, 140]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97g2: Layouts crossing line and polyline, preselection, circle, placed insertion, locks, Enter rule, one Undo and source edit', async () => {
+    const input = doc97g2(), lay = newLayout('Stretch layout');
+    input.entities.forEach((e, i) => { lay.parts['o' + i] = objectPart('o' + i, 'Object ' + i, e, input.layers); });
+    lay.placed = Object.values(lay.parts).map(objectPlacement); lay.placed[0].g = 'g1'; lay.placed[3].g = 'g1';
+    const partRaw = newDoc(4); addEntities(partRaw, dxfPoly([[0, 0], [40, 0], [40, 40], [0, 40]], { closed: true }));
+    lay.parts.part = makePart('part', 'Placed part', partRaw, 1); lay.placed.push({ partId: 'part', x: 450, y: 100, rot: 0, mirrorX: false, mirrorY: false });
+    lay.placed.push({ ...objectPlacement(lay.parts.o0), partId: 'o0', x: 100, y: 140, lock: true });
+    await open97c(layoutRaw(lay), 'layout97g2.dxf'); const saved = await savedDoc(), before = saved.entities, initial = layoutFromRaw(saved);
+    const placedPart = (layout) => layout.placed.find((p) => !layout.parts[p.partId].obj);
+    const clearLayout = async () => { await typeCmd('select'); await click(370, 100); await clear97g2(); };
+    await clear97g2(); await page.locator('[data-ribbon-tab=Home]').click(); assert.equal(await ribbon97g2().isEnabled(), true); await ribbon97g2().click(); assert.equal(await prompt(), 'Select objects:');
+    await drag97d(210, 110, 190, 90); await drag97d(210, 240, 190, 170); await displacement97g2('layout line and polyline');
+    let out = layoutFromRaw(await savedDoc()), raw = objectDoc(out).raw;
+    assert.deepEqual(lineEnds97c(raw).slice(0, 2), [[100, 100, 210, 105], [100, 300, 200, 300]]);
+    assert.deepEqual(vertices97g2(raw), [[100, 180], [210, 185], [210, 235], [100, 230]]); assert.deepEqual(out.placed.map((p) => p.g), initial.placed.map((p) => p.g));
+    assert.equal((await histLabels()).at(-1), 'Stretch'); await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    lay.placed.forEach((p) => { delete p.g; }); await open97c(layoutRaw(lay), 'layout97g2-picks.dxf');
+    await clear97g2(); await drag97d(210, 110, 190, 90); await typeCmd('str'); assert.equal(await prompt(), base97g2); await typeCmd('10,5'); await key97c('Enter');
+    assert.deepEqual(lineEnds97c(objectDoc(layoutFromRaw(await savedDoc())).raw)[0], [100, 100, 210, 105]); await key97c('Control+z'); await clearLayout();
+    await typeCmd('stretch'); assert.equal(await prompt(), 'Select objects:'); await click(370, 100); await click(470, 120); await key97c('Enter'); assert.equal(await prompt(), base97g2); await typeCmd('D'); await typeCmd('10,5');
+    out = layoutFromRaw(await savedDoc()); raw = objectDoc(out).raw;
+    assert.deepEqual([fieldOf(raw.entities.find((e) => e.type === 'CIRCLE'), 10), fieldOf(raw.entities.find((e) => e.type === 'CIRCLE'), 20)], [360, 105]);
+    assert.deepEqual([placedPart(out).x, placedPart(out).y], [460, 105]); assert.deepEqual(out.parts[placedPart(out).partId].raw.entities, initial.parts[placedPart(initial).partId].raw.entities, 'placed part never reshapes');
+    await key97c('Control+z'); await clear97g2(); await typeCmd('stretch'); assert.equal(await prompt(), 'Select objects:', 'part insertion test starts with selection'); await drag97d(460, 90, 440, 110); await displacement97g2('part insertion');
+    out = layoutFromRaw(await savedDoc()); assert.deepEqual([placedPart(out).x, placedPart(out).y], [460, 105], 'box containing insertion moves part'); await key97c('Control+z'); await clear97g2();
+    await typeCmd('stretch'); assert.equal(await prompt(), 'Select objects:', 'part cut test starts with selection'); await drag97d(500, 130, 480, 110); await displacement97g2('part cut');
+    out = layoutFromRaw(await savedDoc()); assert.deepEqual([placedPart(out).x, placedPart(out).y], [450, 100], 'box cutting the part away from insertion leaves it');
+    await clear97g2(); await key97c('Control+a'); await typeCmd('stretch'); await typeCmd('D'); await typeCmd('10,5');
+    out = layoutFromRaw(await savedDoc()); const locked = out.placed.find((p) => p.lock); assert.ok(locked); assert.deepEqual([locked.x, locked.y], [100, 140]);
+    await clear97g2(); await typeCmd('move'); await click(380, 105); await key97c('Enter'); await typeCmd('0,0'); await typeCmd('0,10');
+    raw = objectDoc(layoutFromRaw(await savedDoc())).raw; const circle = raw.entities.find((e) => e.type === 'CIRCLE');
+    assert.deepEqual([fieldOf(circle, 10), fieldOf(circle, 20)], [360, 115], 'stretched source remains editable'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97g2: Compare crossing line and polyline, circle, displacement, locked layer, Undo and source edit', async () => {
+    const input = doc97g2(); addLayer(input, 'Locked'); addEntities(input, dxfLine(100, 140, 200, 140, { layer: 'Locked' }));
+    await open97c(input, 'compare97g2.dxf'); const before = (await savedDoc()).entities;
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    await typeCmd('compare'); await page.locator('[data-ribbon-tab=Home]').click(); await ribbon97g2().click();
+    await drag97d(210, 150, 190, 90); await drag97d(210, 240, 190, 170); await click(370, 100); await displacement97g2();
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97g2(?:-edited)*\.dxf$/ }) });
+    await source.click(); let raw = await savedDoc();
+    assert.deepEqual(lineEnds97c(raw), [[100, 100, 210, 105], [100, 300, 200, 300], [100, 140, 200, 140]]);
+    assert.deepEqual(vertices97g2(raw), [[100, 180], [210, 185], [210, 235], [100, 230]]); assert.equal(fieldOf(raw.entities[2], 10), 360);
+    assert.equal((await histLabels()).at(-1), 'Stretch'); await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await key97c('Escape'); await typeCmd('compare'); await typeCmd('str'); await drag97d(210, 110, 190, 90); await key97c('Enter'); await typeCmd('10,5'); await key97c('Enter');
+    await source.click(); assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 210, 105]);
+    await key97c('Escape'); await typeCmd('move'); await click(155, 102.5); await key97c('Enter'); await typeCmd('0,0'); await typeCmd('0,10');
+    raw = await savedDoc(); assert.deepEqual(lineEnds97c(raw)[0], [100, 110, 210, 115]); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  for (const tab of ['Drawings', 'Layouts', 'Compare']) await step(`TODO 97g2: ${tab} linked PD dimension follows stretched line and one Undo restores both`, async () => {
+    const raw = newDoc(4); addEntities(raw, dxfLine(100, 100, 200, 100));
+    Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [100, 100], b: [200, 100], offset: 25, textH: 3 }, 1, 'PD_DIM_1', 2)));
+    let input = raw;
+    if (tab === 'Layouts') {
+      const lay = newLayout('Linked Stretch');
+      raw.entities.forEach((e, i) => { const part = objectPart('o' + i, 'Object ' + i, e, raw.layers, raw.header, raw.blocks); lay.parts[part.id] = part; lay.placed.push(objectPlacement(part)); });
+      input = layoutRaw(lay);
+    }
+    await open97c(input, 'linked97g2.dxf'); const before = await savedDoc(); await clear97g2();
+    if (tab === 'Compare') await typeCmd('compare');
+    await typeCmd('stretch'); await drag97d(210, 110, 190, 90); await displacement97g2();
+    if (tab === 'Compare') await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^linked97g2(?:-edited)*\.dxf$/ }) }).click();
+    const next = await savedDoc(), dim = next.entities.map((_, i) => dimOfEntity(next, i)).find(Boolean);
+    assert.ok(Math.hypot(dim.params.a[0] - 100, dim.params.a[1] - 100) < 1e-5); assert.ok(Math.hypot(dim.params.b[0] - 210, dim.params.b[1] - 105) < 1e-5);
+    const text = next.blocks[dim.name].entities.find((e) => e.type === 'TEXT'); assert.equal(text.r.v[text.r.c.indexOf(1)], Math.hypot(110, 5).toFixed(2));
+    await key97c('Control+z'); const restored = await savedDoc(); assert.deepEqual(restored.entities, before.entities); assert.deepEqual(restored.blocks.PD_DIM_1, before.blocks.PD_DIM_1);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97g2: Move point entry reuse with Dynamic input, snaps, Ortho, direct distance and Polar', async () => {
+    await open97c(doc97g2(), 'points97g2.dxf');
+    for (const id of ['tog-dyn', 'tog-ortho']) if (await t(id).getAttribute('aria-pressed') !== 'true') await t(id).click();
+    await typeCmd('stretch'); await drag97d(210, 110, 190, 90); await key97c('Enter');
+    const base = await at(100, 100); await page.mouse.move(base.x, base.y); await frames(); await key97c('1'); await page.keyboard.type('00,100'); await key97c('Enter');
+    assert.equal(await prompt(), second97g2, 'cursor fields commit the base point');
+    const target = await at(150, 120); await page.mouse.move(target.x, target.y); await frames(); await typeCmd('10');
+    assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 210, 100], 'Ortho and direct distance share Move');
+    await key97c('Control+z'); await clear97g2(); await t('tog-ortho').click(); await t('tog-snap').click();
+    await typeCmd('stretch'); await drag97d(210, 110, 190, 90); await key97c('Enter'); await click(100.1, 100.1); await typeCmd('10,5');
+    assert.deepEqual(lineEnds97c(await savedDoc())[0], [100, 100, 210, 105], 'snapped base uses the Move pick path');
+    await key97c('Control+z'); await clear97g2(); await t('tog-snap').click();
+    if (await t('tog-polar').getAttribute('aria-pressed') !== 'true') await t('tog-polar').click();
+    await typeCmd('stretch'); await drag97d(210, 110, 190, 90); await key97c('Enter'); await typeCmd('100,100');
+    const ray = await at(150, 100.2); await page.mouse.move(ray.x, ray.y); await frames(); await typeCmd('10');
+    pickedLines97c([lineEnds97c(await savedDoc())[0]], [[100, 100, 210, 100]]);
+    await t('tog-polar').click(); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97g2: light and dark prompt and ribbon screenshots, Modify menu, autocomplete and Select alias', async () => {
+    await open97c(doc97g2(), 'screens97g2.dxf'); mkdirSync('shots-97g2', { recursive: true });
+    assert.equal(await page.locator('nav.rail [data-tool=stretch]').count(), 0);
+    await cmdLine().fill('STR'); assert.match((await t('cmd-sugg').allTextContents()).join(' '), /stretch/i); await key97c('Escape');
+    await typeCmd('S'); assert.equal(await t('tool-chip').textContent(), 'Tool: Select');
+    await page.locator('[data-menu=Modify]').click(); const items = await page.getByRole('menuitem').allTextContents();
+    assert.ok(items.findIndex((s) => /Stretch/.test(s)) === items.findIndex((s) => /^Copy/.test(s)) + 1); await key97c('Escape');
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Home]').click();
+      assert.equal(await ribbon97g2().getAttribute('title'), 'Stretch (STR)');
+      await ribbon97g2().click(); await cmdLine().focus(); assert.equal(await prompt(), 'Select objects:');
+      await page.screenshot({ path: `shots-97g2/prompt-ribbon-${theme}.png` }); await key97c('Escape');
+      await page.locator('[data-ribbon-tab=Modify]').click(); await ribbon97g2().waitFor(); await page.screenshot({ path: `shots-97g2/modify-ribbon-${theme}.png` });
+    }
+    for (const theme of ['light', 'dark']) for (const name of ['prompt-ribbon', 'modify-ribbon']) assert.ok(readFileSync(`shots-97g2/${name}-${theme}.png`).length > 1000);
+    await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

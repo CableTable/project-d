@@ -3,6 +3,21 @@ import * as GR from './grips.js';
 import { lwpoly } from './dxf-write.js';
 import { moveEntities, makeIndex, inBox, OCS } from './edit.js';
 import { flatten } from './drawing.js';
+import { translate } from './place.js';
+
+/** Selection provenance: crossing boxes accumulate; clicks and ordinary windows mark whole objects. */
+export function stretchSelection(previous, add, whole = [], box = null) {
+  return { boxes: [...(add ? previous?.boxes || [] : []), ...(box ? [box] : [])],
+    picked: new Set([...(add ? previous?.picked || [] : []), ...whole]) };
+}
+
+/** A placed part is rigid: only its insertion point, or an explicit pick, can move it. */
+export function stretchPlacements(items, boxes, dx, dy, picked) {
+  if (!dx && !dy) return [];
+  return items.filter(({ i, orig: p }) => !p.lock && (picked.has(i) || boxes.some((b) =>
+    p.x >= Math.min(b.x0, b.x1) && p.x <= Math.max(b.x0, b.x1) && p.y >= Math.min(b.y0, b.y1) && p.y <= Math.max(b.y0, b.y1))))
+    .map((x) => [x, translate(x.orig, dx, dy)]);
+}
 
 /** Stretch one object's hot grips; label and part also drive the grip editor's preview. */
 export function stretchGrips(ent, hots, dx, dy, shift = false, whole = GR.wholeHot(ent, new Set(hots.map((x) => x.id)))) {
@@ -74,7 +89,7 @@ function dimensionPoints(ent) {
  * Points in any box are hot; picked indices move whole. Objects that move whole go through one moveEntities call
  * (a native dimension takes its *D block with it); one cut by a box is left unchanged. Counts are changed objects, never points.
  */
-export function stretchEntities(raw, boxes, dx, dy, picked = new Set()) {
+export function stretchEntities(raw, boxes, dx, dy, picked = new Set(), index = null, selected = null) {
   if (![dx, dy].every(Number.isFinite)) throw new Error('Stretch needs finite distances');
   const next = new Map();
   let moved = 0, stretched = 0;
@@ -83,9 +98,10 @@ export function stretchEntities(raw, boxes, dx, dy, picked = new Set()) {
     && p.y >= Math.min(b.y0, b.y1) && p.y <= Math.max(b.y0, b.y1));
   // Objects without defining grips (associative hatch, SOLID, MULTILEADER…) move whole when their extents lie inside one box (the window-select test).
   let boxed = null;
-  const extentsInside = () => boxed ||= (ed => new Set(boxes.flatMap((b) => inBox(ed, [b.x0, b.y0, b.x1, b.y1]))))(makeIndex(raw, flatten(raw)));
+  const extentsInside = () => boxed ||= (ed => new Set(boxes.flatMap((b) => inBox(ed, [b.x0, b.y0, b.x1, b.y1]))))(index || makeIndex(raw, flatten(raw)));
   const wholeSet = new Set();
   raw.entities.forEach((ent, i) => {
+    if (selected && !selected.has(i)) return;
     if (ent.type === 'DIMENSION') {
       const pts = dimensionPoints(ent);
       if (picked.has(i) || pts.length > 0 && pts.every(inside)) wholeSet.add(i);

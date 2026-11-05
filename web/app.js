@@ -44,7 +44,7 @@ import { attributeRows } from './attribute-edit.js';
 import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText, measureOverride, readOverride } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
-import { stretchGrips } from './stretch.js';
+import { stretchGrips, stretchEntities, stretchSelection, stretchPlacements } from './stretch.js';
 import * as GM from './gripmode.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
@@ -158,6 +158,7 @@ const TOOLS = [
 
   { id: 'move', label: 'Move', svg: '<path d="M12 2v20M2 12h20M8 6l4-4 4 4M8 18l4 4 4-4M6 8l-4 4 4 4M18 8l4 4-4 4"/>' },
   { id: 'copy', label: 'Copy', svg: '<rect x="4" y="8" width="11" height="12" rx="1.5"/><path d="M9 8V4h11v12h-5"/>' },
+  { id: 'stretch', label: 'Stretch', svg: '<path d="M3 5h8v14H3zM11 5h10v14H11M15 12h8m-3-3 3 3-3 3"/>' },
   { id: 'array', label: 'Array', svg: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1" stroke-dasharray="2 1.5"/><rect x="3" y="14" width="7" height="7" rx="1" stroke-dasharray="2 1.5"/><rect x="14" y="14" width="7" height="7" rx="1" stroke-dasharray="2 1.5"/>' },
   { id: 'rotate', label: 'Rotate', svg: '<path d="M20 12a8 8 0 1 1-3-6.2M20 4v5h-5"/>' },
   { id: 'scale', label: 'Scale', svg: '<rect x="3" y="11" width="9" height="9"/><path d="M12 12l8-8M14 4h6v6"/>' },
@@ -177,7 +178,7 @@ const TOOLS = [
   { id: 'nest', label: 'Auto-nest', description: 'Auto-nest mixed parts', svg: '<rect x="3" y="3" width="10" height="8" rx="1"/><circle cx="18" cy="7" r="3.5"/><rect x="3" y="14" width="6" height="7" rx="1"/><rect x="11.5" y="14" width="9.5" height="7" rx="1"/>' },
   { id: 'measure', label: 'Measure', join: 'round', svg: '<path d="M3 17L17 3l4 4L7 21z"/><path d="M7 13l2 2M10 10l2 2M13 7l2 2"/>' },
 ];
-const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
+const BUILT = new Set(['select', 'pan', 'step', 'measure', 'dimension', 'leader', 'balloon', 'contour', 'text', 'move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror', 'nest', ...DR.KINDS]);
 // the Dimension button's flyout (mock-up R8a, Option A): [type, name, typed command, icon (20 px box), the command line's name]
 const DIM_TYPES = [
   ['auto', 'Automatic', 'DIM', '<path d="M3 15L11 7M3 15l3-1M3 15l1-3M11 7l-3 1M11 7l1 3"/><circle cx="14.5" cy="13.5" r="3.5"/>', 'DIM'],
@@ -188,7 +189,7 @@ const DIM_TYPES = [
   ['angle', 'Angle', 'DAN', '<path d="M3 16h14M3 16L13 5M9 16a6 6 0 0 0-1.4-3.8"/>', 'DIMANGULAR'],
 ];
 const dimTypeRow = (type) => DIM_TYPES.find((x) => x[0] === type) || DIM_TYPES[0];
-const MOD_ALIAS = { mv: 'move', move: 'move', co: 'copy', copy: 'copy', o: 'offset', offset: 'offset', tr: 'trim', trim: 'trim', mi: 'mirror', mirror: 'mirror' };       // typed in the command line
+const MOD_ALIAS = { mv: 'move', move: 'move', co: 'copy', copy: 'copy', str: 'stretch', stretch: 'stretch', o: 'offset', offset: 'offset', tr: 'trim', trim: 'trim', mi: 'mirror', mirror: 'mirror' };       // typed in the command line
 const DIM_ALIAS = { dli: 'linear', dra: 'radius', ddi: 'diameter', dan: 'angle' };       // typed in the command line (D is Aligned)
 
 const EYE = '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>';
@@ -459,7 +460,7 @@ function buildMenus() {
   };
   menus.Draw = [['Line', 'line', 'L'], ['Polyline', 'polyline', 'P'], ['Rectangle', 'rect', 'R'], ['Rounded rectangle', 'rrect', 'RR'], ['Circle', 'circle', 'C'],
     ['Ellipse', 'ellipse', 'EL'], ['Arc', 'arc', 'A'], ['Text', 'text', 'T']].map(([text, id, key]) => [text, () => setTool(id), key]);       // every draw tool works on a layout too (156b2)
-  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
+  menus.Modify = [['Move', 'move', 'MV'], ['Copy', 'copy', 'CO'], ['Stretch', 'stretch', 'STR'], ['Array', 'array', 'AR'], ['Rotate', 'rotate', 'RO'], ['Scale', 'scale', 'SC'], ['Fillet', 'fillet', 'F'], ['Offset', 'offset', 'O'], ['Trim', 'trim', 'TR'], ['Extend', 'extend', 'EX'], ['Mirror', 'mirror', 'MI']].map(([text, id, key]) => [text, () => id === 'rotate' ? DO.rotate() : setTool(id), key, () => !curLay() || LAY_MODS.includes(id) || id === 'rotate' && !!selectedPlaced()]);
   menus.Modify.push(['Text to outlines', () => textToOutlines(), 'TXO']);
   menus.Modify.push(['Burst', burstSelected]);
   menus.Modify.push(['Explode', explodeSelected, 'X']);
@@ -703,7 +704,7 @@ function ribbonContents(kind) {
     group('Tools', ribbonTool('select'), ribbonTool('pan'))];
   if (ribbon.tab === 'Modify') return [
     group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
-      stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
+      stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')),
     group('Convert', convert('Explode', explodeSelected, '<path d="M12 4v4M12 16v4M4 12h4M16 12h4M6.5 6.5l2.5 2.5M15 15l2.5 2.5M17.5 6.5L15 9M9 15l-2.5 2.5"/>', false, undefined, true),
       convert('Break Apart', breakApartSelected, '<rect x="3" y="4" width="8" height="8"/><rect x="13" y="12" width="8" height="8"/>'), ribbonTool('contour'), convert('Text to outlines', textToOutlines, outlinesIcon, false, undefined, true)),
@@ -739,13 +740,13 @@ function ribbonContents(kind) {
     group('Parts', btn('Add to layout', '<rect x="3" y="5" width="12" height="14"/><path d="M18 9v8M14 13h8"/>', addToLayout),
       btn('Parts library', '<rect x="3" y="4" width="5" height="16"/><rect x="10" y="4" width="5" height="16"/><path d="M17 5l4 1-3 15-4-1z"/>', showLibrary, { command: 'library' }),
       btn('Extract part…', '<rect x="3" y="3" width="10" height="10" stroke-dasharray="2 2"/><path d="M10 10l10 10M14 20h6v-6"/>', extractPart, { command: 'extract' })),
-    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen'))];
+    group('Step and repeat', ribbonTool('step'), ribbonTool('nest')), group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('rotate'), ribbonTool('fillet', true), ribbonTool('contour'), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen'))];
   if (kind === 'drawing') {
     groups.push(group('Modify', stack(ribbonTool('move', true), ribbonTool('rotate', true), ribbonTool('mirror', true)),
-      stack(ribbonTool('copy', true), ribbonTool('scale', true), ribbonTool('offset', true)),
+      stack(ribbonTool('copy', true), ribbonTool('stretch', true), ribbonTool('scale', true)), stack(ribbonTool('offset', true)),
       stack(ribbonTool('fillet', true), ribbonTool('extend', true), ribbonTool('trim', true)), stack(ribbonTool('array', true)), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
   }
-  if (kind === 'compare') groups.push(group('Modify', ribbonTool('fillet', true), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
+  if (kind === 'compare') groups.push(group('Modify', stack(ribbonTool('copy', true), ribbonTool('stretch', true)), ribbonTool('fillet', true), ribbonTool('break'), ribbonTool('join'), ribbonTool('lengthen')));
   groups.push(group('Groups', btn('Group', ICONS.group, groupSel, { command: 'group', enabled: () => !!editable() && editable().sel.size > 1 && !wholeDrawingGroup(editable().raw.groups, editable().sel) }),
     btn('Ungroup', ICONS.ungroup, ungroupSel, { command: 'ungroup', enabled: () => !!editable() && [...editable().sel].some((i) => groupOf(editable().raw.groups, i)) })));
   ui.ribbonLayer = h('select', { 'aria-label': 'Current layer', onchange: (e) => {
@@ -1021,6 +1022,7 @@ function showDoc() {
   ui.fontNote.hidden = true;
   state.entityDrag = null; state.drawingRotate = null;
   state.sel = 0;                          // a tab opens with its first part selected; an explicit deselection stays empty
+  if (curLay()) curDoc().stretchSelection = null;
   ribbon.context = null;
   state.gapSel = null; gapSig = ''; hideMenu();
   if (state.eatteditAsk || state.attdispAsk || state.orthoAsk) { state.eatteditAsk = state.attdispAsk = null; state.orthoAsk = false; ui.cmdUI.escape(); } // a tab switch ends a pending command wait like Esc
@@ -1299,7 +1301,7 @@ function buildSelbar() {
 
 function buildRail() {
   ui.toolBtns = {};
-  const items = TOOLS.filter((t) => !['copy', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'extend', 'break', 'breakatpoint', 'lengthen', 'join'].includes(t.id)).map((t) => {
+  const items = TOOLS.filter((t) => !['copy', 'stretch', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'extend', 'break', 'breakatpoint', 'lengthen', 'join'].includes(t.id)).map((t) => {
     if (t.sep) return h('div', { class: 'sep', 'aria-hidden': 'true' });
     const off = !BUILT.has(t.id);                                  // not built yet: greyed, with its name in the tooltip, and a click only says so
     const b = h('button', { class: 'tool' + (off ? ' off' : ''), type: 'button', 'aria-label': t.label, title: off ? t.label + ' · Not built yet' : commandTooltip(t.label, t.id, t.description), 'aria-disabled': off ? 'true' : null, 'data-tool': t.id }, icon(t.svg, { cap: t.cap, join: t.join }));
@@ -1837,6 +1839,7 @@ function addPlaced(lay, part, at) {
 }
 /** Selects a loose placed part of the open layout (by its index in lay.placed) and shows it. */
 function selectLoose(i) {
+  curDoc().stretchSelection = null;
   state.sel = placedNow.findIndex((p) => p.src === 'loose' && p.i === i);
   state.mode = 'select'; state.pivot = centrePivot();
   renderProps(); renderLayers(); drawSheet(); paintOverlay();
@@ -1991,7 +1994,7 @@ function layRestore(d, st, dirty = true) {
   if (sized) { d.lay.s.sheetW = st.sw; d.lay.s.sheetH = st.sh; syncFields(); }
   d.lay.placed = st.placed; d.lay.parts = st.parts; if (st.layers) d.lay.layers = st.layers; Object.assign(d.lay.s, structuredClone(st.s));       // every setting (grippers, gaps, rows, marks, grid part, guides) comes back with the parts
   gapSig = ''; syncFields();                                           // the extra-gap rows hold the old gap objects: rebuilt
-  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; }
+  state.mode = 'select'; state.pivot = centrePivot(); state.rotCopy = false; pdrag = null; lastPush = { key: '', t: 0, d: null }; if (before !== JSON.stringify(LD.placedAll(d.lay))) { picksArr = []; state.sel = -1; d.stretchSelection = null; }
   linkBase.delete(d.lay);                                              // an undo is not an edit the dimensions follow
   d.dirty = dirty; renderTabs(); update(sized && view.fitted);
 }
@@ -2115,8 +2118,9 @@ const wholeGroup = () => A.isWholeGroup(selItems().map((x) => ({ g: x.p.g })), g
 const LOCKED = 'Locked: Unlock to move it';
 const newGroupId = () => 'g' + uid();
 /** Select these placed parts (indexes into placedNow, in pick order); `main` (default the last) is the one the single-part fields follow. */
-function selectMany(list, main) {
+function selectMany(list, main, stretchSelection = null) {
   const l = [...new Set(list)];
+  if (curDoc()) curDoc().stretchSelection = stretchSelection || { boxes: [], picked: new Set(l) };
   ribbon.context = null;
   state.sel = l.length ? (main != null ? main : l[l.length - 1]) : -1;
   picksArr = l.length > 1 ? l : [];
@@ -2439,14 +2443,15 @@ function layoutBoxSelect(r, e) {
   const eligible = partSelectable;
   const seen = new Set(), hits = [];
   placedNow.forEach((p, i) => {
+    if (state.mod?.kind === 'stretch' && p.lock && PL.boxHit(lay.parts[p.partId], p, box, crossing)) state.mod.lockMessage = LOCKED;
     if (seen.has(i) || !eligible(p) || !PL.boxHit(lay.parts[p.partId], p, box, crossing)) return;
     const grp = groupIdxs(i).filter((k) => eligible(placedNow[k]));
     grp.forEach((k) => seen.add(k));
     hits.push(...grp);
   });
   if (!hits.length) { note(crossing ? 'No part touches that box' : 'No part lies fully inside that box'); return; }
-  const cur = r.shift || e.shiftKey ? selIdxs() : [];
-  selectMany([...cur, ...hits.filter((k) => !cur.includes(k))]);
+  const add = r.shift || e.shiftKey || state.mod?.kind === 'stretch' && state.mod.stage === 'pick', cur = add ? selIdxs() : [];
+  selectMany([...cur, ...hits.filter((k) => !cur.includes(k))], null, stretchSelection(curDoc().stretchSelection, add, crossing ? [] : hits, crossing ? { x0: a[0], y0: a[1], x1: b[0], y1: b[1] } : null));
   update();
   const n = selIdxs().length;
   note(`${n} part${n === 1 ? '' : 's'} selected` + (n > 1 ? ' (the numbers show the order they were picked)' : ''));
@@ -2749,13 +2754,19 @@ function placedDown(e, cycled = false) {
   if (s && pivEl) { pdrag = { kind: 'pivot' }; return true; }
   if (hit) {
     const i = Number(hit.dataset.i), cur = selIdxs(), inSel = cur.includes(i);
+    if (state.mod?.kind === 'stretch' && state.mod.stage === 'pick') {
+      if (placedNow[i].lock) { state.mod.lockMessage = LOCKED; note(LOCKED); return true; }
+      const grp = groupIdxs(i), meta = stretchSelection(curDoc().stretchSelection, true, grp);
+      selectMany([...cur, ...grp], i, meta); update(); return true;
+    }
     const add = !cycled && e.shiftKey && !e.ctrlKey && !e.metaKey;            // Shift-click adds a part or takes it out (a Shift-drag still moves them straight)
     const grp = groupIdxs(i);
     let toggle = null, was = cur.length === 1 && cur[0] === i && grp.length === 1;
+    const meta = stretchSelection(curDoc().stretchSelection, add, grp);
     if (add) {
       if (inSel) toggle = i;
-      else { selectMany([...cur, ...grp.filter((k) => !cur.includes(k))], i); update(); }
-    } else if (!cycled && (!inSel || !grp.every((k) => cur.includes(k)))) { selectMany(grp, i); update(); }
+      else { selectMany([...cur, ...grp.filter((k) => !cur.includes(k))], i, meta); update(); }
+    } else if (!cycled && (!inSel || !grp.every((k) => cur.includes(k)))) { selectMany(grp, i, meta); update(); }
     s = selectedPlaced();
     if (!s) return true;
     const items = selItems();
@@ -4433,7 +4444,7 @@ function paintOverlay(gesture = false) {
     const d = curDoc();
     // Layout artwork still contrasts with its sheet paper; drawing tabs use the work area.
     const base = { sheetH: state.sheetH, ox: view.ox, oy: view.oy, scale: view.scale, w, h: ch, dpr, dark: d && d.lay ? isDark() : workDark(), wireframe: state.wireframe };
-    const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'rotate', 'scale', 'lengthen'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
+    const L2 = state.setlen || state.meas || state.dim || state.ldr || ((modLive() || layModLive()) && ['move', 'copy', 'stretch', 'rotate', 'scale', 'lengthen'].includes(state.mod.kind) ? { pts: state.mod.ref && state.mod.ref.step !== 'new' ? state.mod.ref.pts : state.mod.p1 ? [state.mod.p1] : [], hover: state.mod.cur }
       : (modLive() || layModLive()) && state.mod.kind === 'array' && state.mod.type === 'polar' ? { pts: state.mod.center ? [state.mod.center] : [], hover: state.mod.stage === 'center' ? state.mod.cur : null } : null);
     const hv = L2 && (typedAt() || L2.hover);                       // typed cursor fields: the rubber line goes to the typed point
     const marks = L2 && d ? [...L2.pts.map((q) => [q[0], q[1], q[2], false]), ...(L2.pts.length < 2 && hv ? [[hv[0], hv[1], hv[2], true]] : [])] : null;
@@ -4499,7 +4510,7 @@ function paintEditable(c, d, base, marks) {
     markCol: cssVar('--mark', '#c2410c'),
     accent: cssVar('--selection', '#4f46e5'), snapCol: cssVar('--snap-mark', '#00c000'),
     dimCol: cssVar('--dim', '#0f766e'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } });
-  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
+  const move = state.drawingRotate?.drag || state.entityDrag || (state.grip?.d === d && state.grip.move) || (modLive() && ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) ? state.mod.move : null);
   c.dataset.preview = move?.items ? paintDrawing(c, { ...base, ox: base.ox - move.dx * d.factor, oy: base.oy + move.dy * d.factor, keep: true, fl: move.preview, off: d.off, factor: d.factor, slots: (!state.entityDrag && !state.grip && modTypedSlots(d)) || move.slots, tint: cssVar('--selection', '#4f46e5'), previewBounds: (box) => { canvasPreviewBounds = unionBox(canvasPreviewBounds, box); } }) : 0;
   return drawn;
 }
@@ -4685,7 +4696,7 @@ function attachCanvasEvents() {
     if (state.text.drag) textDragMove(e);
     if (state.grip) gripMove(e); else gripHoverAt(e);
     if (state.balDrag) balMove(e);
-    const picking = (modLive() && state.mod.kind !== 'join' && !(['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
+    const picking = (modLive() && state.mod.kind !== 'join' && !(['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror'].includes(state.mod.kind) && state.mod.stage === 'pick')) || state.setlen || state.tool === 'measure' || state.tool === 'dimension' || state.tool === 'leader' || state.tool === 'balloon';
     if (drag && !picking && !drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 4) drag.moved = true;
     if (drag && drag.moved && drag.dim) { if (!drag.dim.cancelled) dimDragTo(d, drag.dim, toDrawing(d, e.clientX, e.clientY)); }
     else if (drag?.moved && drag.move) {
@@ -5318,7 +5329,7 @@ function hitAt(d, p) { const e = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d)
 const lockedEnt = (d, e) => (!!d.locked && d.locked.size > 0 && d.locked.has(d.raw.entities[e].layer)) || (!!d.lockedEnts && d.lockedEnts.has(d.raw.entities[e]));      // lockedEnts: a layout's locked objects
 /** Builds the index once the page has painted, so the first click is quick. */
 function warm(d) { requestAnimationFrame(() => setTimeout(() => { if (state.docs.includes(d) && d.fl && !d.ed) { edIndex(d); d.outl = null; if (curDoc() === d) renderEdit(); } }, 0)); }
-function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
+function layersChanged(d) { state.drawingRotate = null; selectionCycle = null; d.ed = null; d.outl = null; d.sel = new Set(); d.stretchSelection = null; d.hl = []; if (cmpDoc()) cmpRefresh(d); warm(d); renderEdit(); }
 
 /** A pointer position → drawing units (y up), and the pick distance (7 px) in them. */
 function toDrawing(d, cx, cy) {
@@ -5437,9 +5448,10 @@ function pickPoint(d, p, pts, shift, hover = false) {
   return tq ? [tq[0], tq[1]] : straight && q.length === 2 ? Ed.orthoLock(base, q) : q;
 }
 
-function setSel(d, sel) {
+function setSel(d, sel, stretchSelection = null) {
   if (d.raw.groups?.length) sel = selectionOf(d.raw.groups, sel, true, (i) => !lockedEnt(d, i));
   state.drawingRotate = null;
+  d.stretchSelection = stretchSelection || { boxes: [], picked: new Set(sel) };
   d.sel = sel; d.lastPick = -1;       // lastPick: the entity just clicked (Shaping's target); a box or any other selection has none
   if (sel.size) state.balSel = null;
   const ed = edIndex(d);
@@ -5545,8 +5557,13 @@ function nudgeDrawing(d, dir, big) {
 
 /** A click picks an unselected object or toggles rotate arrows for the selection; Shift / Ctrl toggles just that object. */
 function clickSelect(d, p, shift) {
+  shift ||= state.mod?.kind === 'stretch' && state.mod.stage === 'pick';
   const ed = edIndex(d), e = Ed.hitEntity(ed, p[0], p[1], pickTol(d));
-  if (e >= 0 && lockedEnt(d, e)) { note(`Layer ${d.raw.entities[e].layer} is locked: unlock it in the Objects tab to pick this`); return; }
+  if (e >= 0 && lockedEnt(d, e)) {
+    if (state.mod?.kind === 'stretch') { moveLocked(d, [e]); state.mod.lockMessage = state.msg; }
+    else note(`Layer ${d.raw.entities[e].layer} is locked: unlock it in the Objects tab to pick this`);
+    return;
+  }
   if (e < 0) { if (!shift && d.sel.size) setSel(d, new Set()); return; }
   if (!shift && state.tool === 'select' && d.sel.has(e) && !groupOf(d.raw.groups, e)) {
     const box = OB.boxOf(d.fl, [...d.sel]);
@@ -5559,7 +5576,7 @@ function clickSelect(d, p, shift) {
   }
   const next = new Set(shift ? d.sel : []);
   for (const i of selectionOf(d.raw.groups, [e])) { if (shift && d.sel.has(e)) next.delete(i); else next.add(i); }
-  setSel(d, next);
+  setSel(d, next, stretchSelection(d.stretchSelection, shift, selectionOf(d.raw.groups, [e])));
   if (moveLocked(d, next, 'pick')) return;
   if (next.has(e)) d.lastPick = e;
   note(`${next.size} ${next.size === 1 ? 'entity' : 'entities'} selected`);
@@ -5574,10 +5591,12 @@ function selectConnected(d) {
 }
 /** A dragged window or crossing box, chosen by the screen drag direction. */
 function boxSelect(d, a, b, add, crossing) {
+  add ||= state.mod?.kind === 'stretch' && state.mod.stage === 'pick';
   const hit = (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [a[0], a[1], b[0], b[1]]), free = (e) => !lockedEnt(d, e), got = new Set(hit);
   const inside = [...selectionOf(d.raw.groups, hit.filter(free), crossing, free)], next = new Set(add ? d.sel : []);
   for (const e of inside) next.add(e);
-  setSel(d, next);
+  setSel(d, next, stretchSelection(d.stretchSelection, add, crossing ? [] : inside, crossing ? { x0: a[0], y0: a[1], x1: b[0], y1: b[1] } : null));
+  if (state.mod?.kind === 'stretch' && moveLocked(d, hit)) { state.mod.lockMessage = state.msg; return; }
   const held = d.raw.groups?.find((g) => g.selectable !== false && g.members.some((i) => !free(i)) && (crossing ? g.members.some((i) => got.has(i)) : g.members.every((i) => got.has(i))));       // a group with a member on a locked layer is not picked, as on a click
   if (held && moveLocked(d, held.members, 'pick')) return;
   note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + (crossing ? ' touching the box' : ' inside the box'));
@@ -5669,7 +5688,7 @@ function restore(d, st, drawn) {
   }
   restoreBg(d, st);
   d.off = new Set(fl.layers.map((l, i) => (names.includes(l.name) ? i : -1)).filter((i) => i >= 0));      // layer numbers can shift: keep them by name
-  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), hl: [] });
+  Object.assign(d, { fl, counts: layerCounts(d.raw, fl), entities: entityCount(d.raw, fl), box: drawingBoxMm(fl, d.factor), dirty: true, ed: null, outl: null, sel: new Set(), stretchSelection: null, hl: [] });
   if (cmpDoc()) cmpRefresh(d);
   showDoc();
   warm(d);
@@ -6377,7 +6396,7 @@ async function balSheet(d, n) {
     PS.keepPage(d);
     if (P.picture) d.bg?.bitmap?.close();
     Object.assign(d, PS.pageFields(next));
-    d.sel = new Set(); d.hl = []; d.ed = d.outl = d.hidC = d.txtMemo = d.gripCache = d.cAn = d.cRes = d.gaps = d.duplicates = d.txoSel = d.lastPick = d.newLayer = null;
+    d.sel = new Set(); d.stretchSelection = null; d.hl = []; d.ed = d.outl = d.hidC = d.txtMemo = d.gripCache = d.cAn = d.cRes = d.gaps = d.duplicates = d.txoSel = d.lastPick = d.newLayer = null;
     P.page = n;
   } catch (err) { note(`Sheet ${n}: could not read this page (${err && err.message ? err.message : err})`); return false; }
   finally { P.busy = false; }
@@ -6958,7 +6977,7 @@ function cursorTool() {
   if (!state.dynamicInput) return null;
   if (state.draw) return drawLive() ? state.draw : null;
   const m = state.mod;
-  if (modLive() && ['move', 'copy', 'rotate', 'scale'].includes(m.kind) && !(m.ref && (m.kind === 'scale' || m.ref.step !== 'new')) && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
+  if (modLive() && ['move', 'copy', 'stretch', 'rotate', 'scale'].includes(m.kind) && !(m.ref && (m.kind === 'scale' || m.ref.step !== 'new')) && !['pick', 'mode', 'displacement'].includes(m.stage)) {       // base point, then Rotate's angle / Scale's factor
     const d = editable(), f = d.lay ? 1 : d.factor, mm = (q) => q && [q[0] * f, q[1] * f];
     return { kind: m.kind, A: m, mod: true, d, f, pts: m.p1 ? [mm(m.p1)] : [], hover: mm(m.cur) };
   }
@@ -6995,7 +7014,7 @@ function cursorCommit(shift = false) {
 /** Enter on the cursor fields of Move / Copy / Rotate / Scale: the base point, or Rotate's angle / Scale's factor. */
 function modCursorCommit(T, result) {
   const m = T.A, to = result.point?.map((v) => v / T.f);
-  if (!m.p1) (['move', 'copy'].includes(m.kind) ? moveTo : transformBase)(T.d, to);
+  if (!m.p1) (['move', 'copy', 'stretch'].includes(m.kind) ? moveTo : transformBase)(T.d, to);
   else transformDo(T.d, result.value);
 }
 /** The typed Rotate angle or Scale factor; null when nothing valid is typed (the mouse's value stays). */
@@ -7045,13 +7064,13 @@ function cursorKey(e) {
 }
 
 // ---- Offset, Trim and Mirror (modify.js) ----
-const MOD_KINDS = ['move', 'copy', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
+const MOD_KINDS = ['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'fillet', 'chamfer', 'break', 'breakatpoint', 'lengthen', 'join', 'offset', 'trim', 'extend', 'mirror'], OFFSET_SAVED = 'pd-offset', FILLET_SAVED = 'pd-fillet', TRIM_MODE_SAVED = 'pd-trim-mode';
 const COPY_MODE_SAVED = 'pd-copy-mode';
 const OFFSET_OPTIONS_SAVED = 'pd-offset-options';
 const FILLET_TRIM_SAVED = 'pd-fillet-trim';
 const CHAMFER_SAVED = 'pd-chamfer';
 const OBJ_MODS = ['trim', 'extend', 'fillet', 'chamfer', 'offset', 'break', 'breakatpoint', 'lengthen', 'join'];      // the modify commands that work on a layout's objects, not its placed parts (TODO 156b3a)
-const LAY_MODS = ['move', 'copy', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
+const LAY_MODS = ['move', 'copy', 'stretch', 'array', 'scale', 'mirror', ...OBJ_MODS];      // the modify commands that also work on a layout (TODO 156b1, 156b3a)
 const objViews = new WeakMap();
 /** The layout's objects as a drawing (layoutdoc.js objectDoc) for the drawing tab's Trim / Extend / Fillet / Offset code; kept while the objects stay as they are. */
 function layObjDoc(d) {
@@ -7080,6 +7099,7 @@ function partRefused(v, m, p) {
   return true;
 }
 let copyMode = 'Multiple';
+let stretchDisplacement = [0, 0];
 const lengthenValues = { Delta: 0, Percent: 100, Total: 1, DeltaAngle: 0, TotalAngle: 1 };
 let lengthenMode = 'Total';
 const loadFilletR = () => { try { const v = Number(localStorage.getItem(FILLET_SAVED) ?? 5); return v >= 0 && Number.isFinite(v) ? v : 5; } catch { return 5; } };
@@ -7158,7 +7178,7 @@ function modStart(id) {
     if (m.objs.length > 1) joinRun(mdoc(d)); else state.msg = m.objs.length ? '1 selected' : null;       // two or more selected before the command: it runs at once
     return;
   }
-  if (['move', 'copy', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
+  if (['move', 'copy', 'stretch', 'rotate', 'scale'].includes(id)) { if (d.sel.size) moveTake(d); else if (id === 'stretch') stretchSelectPrompt(); else state.msg = `${TOOLS.find((t) => t.id === id).label}: select the objects, then press Enter`; }
   else if (id === 'array') { if (d.sel.size) arrayTake(d); else state.msg = 'Array: select the objects, then press Enter'; }
   else if (id === 'fillet') {
     state.filR = loadFilletR(); m.trim = loadFilletTrim();
@@ -7195,7 +7215,7 @@ function modPrompt(d) {
   if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: m.stage === 'src' ? 'Select source object or multiple objects to join at once:' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}:` };
   if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
   if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
-  if (['move', 'copy'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode) };
+  if (['move', 'copy', 'stretch'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode, stretchDisplacement) };
   if (m.kind === 'array') return arrayPrompt(d, m);
   if (m.kind === 'fillet') return { status: 'Command: FILLET', prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:`
     : m.askTrim ? `Enter Trim mode option [Trim/No trim] <${m.trim ? 'Trim' : 'No trim'}>:`
@@ -7253,11 +7273,11 @@ function modEnter(d) {
   }
   if (m.kind === 'break' || m.kind === 'breakatpoint') { note(modPrompt(d).prompt); return; }
   if (m.kind === 'join') { joinRun(d); return; }
-  if (['move', 'copy'].includes(m.kind)) {
+  if (['move', 'copy', 'stretch'].includes(m.kind)) {
     if (m.stage === 'pick') moveTake(d);
     else if (m.stage === 'mode') { m.stage = 'p1'; note(modPrompt(d).prompt); }
     else if (m.stage === 'p1') { moveTo(d, [0, 0]); m.stage = 'displacement'; note(modPrompt(d).prompt); }
-    else if (m.stage === 'displacement') moveTo(d, [0, 0]);
+    else if (m.stage === 'displacement') moveTo(d, m.kind === 'stretch' ? stretchDisplacement.map((v) => v / d.factor) : [0, 0]);
     else if (!m.placed) { m.stage = 'displacement'; moveTo(d, m.p1.map((v) => v * 2)); }      // <use first point as displacement> places once and ends, even in Multiple
     else modEsc(d);
     return;
@@ -7312,7 +7332,7 @@ function modTakes(c) {
   if ((modLive() || layModLive()) && (m.kind === 'break' || m.kind === 'breakatpoint')) return m.stage !== 'obj';
   if ((modLive() || layModLive()) && m.kind === 'join') return JOIN_CLOSE.test(c) && m.objs[0]?.type === 'ARC';
   if ((modLive() || layModLive()) && m.kind === 'fillet') return m.askR || m.askTrim || /^(r|radius)$/.test(c) || (m.stage === 'obj' && /^(u|undo|p|polyline|t|trim|m|multiple)$/.test(c));
-  if ((modLive() || layModLive()) && ['move', 'copy'].includes(m.kind) && m.stage !== 'pick') return true;
+  if ((modLive() || layModLive()) && ['move', 'copy', 'stretch'].includes(m.kind) && m.stage !== 'pick') return true;
   if ((modLive() || layModLive()) && m.kind === 'array') return m.stage === 'type' ? /^(r|re|rect|rectangular|po|pol|polar)$/.test(c) : m.stage === 'opts';
   if (!(modLive() || layModLive()) || !['trim', 'extend'].includes(m.kind)) return false;
   if (m.askMode || m.fence || m.cross || m.erase) return true;
@@ -7341,7 +7361,7 @@ function modTyped(d, raw) {
     joinRun(d, true); return true;
   }
   if (m.kind === 'offset') return offsetTyped(d, raw, c);
-  if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
+  if (['move', 'copy', 'stretch'].includes(m.kind) && m.stage !== 'pick') {
     m.cursorInput = null;
     if (m.stage === 'mode') {
       const mode = /^(s|single)$/.test(c) ? 'Single' : /^(m|multiple)$/.test(c) ? 'Multiple' : null;
@@ -7417,7 +7437,7 @@ function modTyped(d, raw) {
     if (DR.parseInput(raw).kind === 'word') return false;
     note(`I do not understand "${raw.trim()}". Type ${m.stage === 'p1' ? 'x,y' : 'degrees'}`); return true;
   }
-  if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
+  if (['move', 'copy', 'stretch'].includes(m.kind) && m.stage !== 'pick') {
     const mm = (p) => p && p.slice(0, 2).map((v) => v * d.factor);
     const q = movePoint(raw, mm(m.p1), mm(m.cur), mm(state.pointLast));
     if (q) moveTo(d, q.map((v) => v / d.factor));
@@ -7464,7 +7484,7 @@ function modHover(d, cx, cy, shift) {
   if (m.kind === 'lengthen' && (m.stage === 'point' || m.stage === 'value')) m.cur = snapPoint(d, p, m.ent ? d.raw.entities.indexOf(m.ent) : -1);
   if ((m.kind === 'break' || m.kind === 'breakatpoint') && m.stage !== 'obj') m.cur = snapPoint(d, p);
   if (m.kind === 'trim' || m.kind === 'extend') m.client = [cx, cy];
-  if (['move', 'copy'].includes(m.kind) && m.stage !== 'pick') {
+  if (['move', 'copy', 'stretch'].includes(m.kind) && m.stage !== 'pick') {
     m.cur = movePick(d, p, shift, true);
     if (m.move) { m.move.dx = m.cur[0] - m.p1[0]; m.move.dy = m.cur[1] - m.p1[1]; }
   }
@@ -7502,7 +7522,7 @@ function modUp(d, was, p, shift, crossing) {
     else if (m.stage === 'point') lengthenPick(d, p);
     return;
   }
-  if (['move', 'copy', 'array', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
+  if (['move', 'copy', 'stretch', 'array', 'rotate', 'scale', 'mirror'].includes(m.kind) && m.stage === 'pick') { if (was.moved) boxSelect(d, was.p, p, shift || was.shift, crossing); else clickSelect(d, was.p, shift || was.shift); renderCommand(); return; }
   if (m.kind === 'join') {
     const hits = was.moved ? (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [was.p[0], was.p[1], p[0], p[1]]).filter((e) => !lockedEnt(d, e)).map((e) => d.raw.entities[e]) : [modEntAt(d, was.p)];
     joinPick(d, hits.filter((e) => e && !m.objs.includes(e)));
@@ -7555,7 +7575,7 @@ function modUp(d, was, p, shift, crossing) {
     else if (m.erase) trimErasePick(d, was.p);
     else if (m.fence) trimFencePoint(d, was.p);
     else editDo(d, was.p, shift || was.shift);
-  } else if (['move', 'copy'].includes(m.kind)) {
+  } else if (['move', 'copy', 'stretch'].includes(m.kind)) {
     if (m.stage === 'mode') return;
     moveTo(d, movePick(d, was.p, shift || was.shift));
   } else if (m.kind === 'scale') {
@@ -7687,9 +7707,14 @@ function arrayDo(d) {
 function moveTake(d) {
   const label = TOOLS.find((t) => t.id === state.mod.kind).label;
   if (!d.sel.size) { note(`${label}: pick at least one object first`); return; }
-  if (moveLocked(d, d.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
+  if (state.mod.kind !== 'stretch' && moveLocked(d, d.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   const m = state.mod;
   m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = 'p1';
+  if (m.kind === 'stretch') {
+    m.boxes = d.stretchSelection?.boxes || []; m.picked = d.stretchSelection?.picked || new Set(d.sel);
+    if (moveLocked(d, m.sel)) m.lockMessage = state.msg;
+    m.sel = new Set([...m.sel].filter((i) => !lockedEnt(d, i)));
+  }
   if (m.kind === 'copy') ui.cmdUI.message(`Current settings:  Copy mode = ${copyMode}`);
   state.msg = `${label}: ${m.kind === 'rotate' ? 'pivot' : 'base point'} or x,y`; renderCommand(); paintOverlay();
 }
@@ -7767,28 +7792,42 @@ function transformDo(d, value) {
   } catch (err) { note(err.message); }
 }
 function moveTo(d, q) {
-  const m = state.mod, copy = m.kind === 'copy', label = copy ? 'Copy' : 'Move';
+  const m = state.mod, copy = m.kind === 'copy', label = modLabel(m.kind);
   if (d.lay) { layMoveTo(d, q); return; }
   if (m.raw !== d.raw.entities) { setTool('select'); note(`Drawing changed: start ${label} again`); return; }
-  if (moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
+  if (m.kind !== 'stretch' && moveLocked(d, m.sel)) { const msg = state.msg; setTool('select'); note(msg); return; }
   if (m.stage === 'p1') {
     m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2';
     state.pointLast = m.p1;
     const preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) });
     m.move = { preview, items: preview.items, dx: 0, dy: 0 };
-    note(movePrompt(m.kind, m.stage, copyMode)); paintOverlay(); return;
+    note(movePrompt(m.kind, m.stage, copyMode, stretchDisplacement)); paintOverlay(); return;
   }
   const dx = q[0] - m.p1[0], dy = q[1] - m.p1[1];
   try {
-    const next = (copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, m.sel, dx, dy);
+    const next = m.kind === 'stretch' ? stretchResult(d, dx, dy) : (copy ? Ed.copyEntities : Ed.moveEntities)(d.raw, m.sel, dx, dy);
     view.fitted = false;
-    if ((copy || dx || dy) && !commit(d, copy ? next : followDimensions(d.raw, next, d.factor), label)) { const msg = state.msg; setTool('select'); note(msg); return; }
+    const changed = m.kind === 'stretch' ? next.entities.some((e, i) => e !== d.raw.entities[i]) || next.blocks !== d.raw.blocks : copy || dx || dy;
+    if (changed && !commit(d, copy || m.kind === 'stretch' ? next : followDimensions(d.raw, next, d.factor), label)) { const msg = state.msg; setTool('select'); note(msg); return; }
     state.pointLast = q.slice(0, 2);
+    if (m.kind === 'stretch' && m.stage === 'displacement') stretchDisplacement = [dx * d.factor, dy * d.factor];
     const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
     if (again) { m.raw = d.raw.entities; m.placed = true; } else setTool('select');
     setSel(d, m.sel);
-    note(copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
+    note(m.kind === 'stretch' ? m.lockMessage || 'Selection stretched. Ctrl+Z takes it back' : copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
   } catch (err) { note(err.message); }
+}
+
+function stretchSelectPrompt() {
+  state.msg = 'Select objects to stretch by crossing-window or crossing-polygon...';
+  ui.cmdUI.message(state.msg);
+}
+/** The cached drawing index supplies extents; unselected and locked objects never enter the result. */
+function stretchResult(d, dx, dy, sel = state.mod.sel, picked = state.mod.picked) {
+  const m = state.mod, free = new Set([...sel].filter((i) => !lockedEnt(d, i)));
+  const r = stretchEntities(d.raw, m.boxes, dx, dy, new Set([...picked].filter((i) => free.has(i))), edIndex(d), free);
+  const entities = d.raw.entities.map((e, i) => free.has(i) ? r.next.get(i) || e : e);
+  return followDimensions(d.raw, { entities, blocks: r.blocks }, d.factor);
 }
 
 // ---- Move, Copy, Scale, Mirror and Array on a layout (TODO 156b1): the drawing tab's commands, applied to the selected placed parts ----
@@ -7809,6 +7848,17 @@ function layTake(d) {
   if (m.kind === 'move' && now.some((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
   m.items = now.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) }));
   m.sel = new Set(m.items.map((x) => x.i)); m.keep = selIdxs(); m.main = state.sel; m.objs = m.items;
+  if (m.kind === 'stretch') {
+    m.boxes = d.stretchSelection?.boxes || []; m.picked = d.stretchSelection?.picked || new Set(m.sel);
+    m.stretchView = layObjDoc(d); m.stretchSel = new Set(); m.stretchPicked = new Set();
+    m.stretchView.raw.entities.forEach((e, k) => {
+      const item = m.items.find((x) => placedNow[x.i].src === 'loose' && placedNow[x.i].i === m.stretchView.at.get(e));
+      if (!item) return;
+      m.stretchSel.add(k); if (m.picked.has(item.i)) m.stretchPicked.add(k);
+    });
+    if (now.some((x) => x.p.lock)) m.lockMessage = LOCKED;
+    else if (moveLocked(m.stretchView, m.stretchSel)) m.lockMessage = state.msg;
+  }
   if (m.kind === 'array') {
     const b = selBox();
     m.stage = 'type'; m.ask = null; m.type = 'rect'; m.center = null; m.move = null;
@@ -7823,7 +7873,7 @@ function layTake(d) {
 }
 function layModStart(id) {
   curDoc().factor = 1;
-  if (selIdxs().length) layTake(curDoc()); else state.msg = `${modLabel(id)}: select the objects, then press Enter`;
+  if (selIdxs().length) layTake(curDoc()); else if (id === 'stretch') stretchSelectPrompt(); else state.msg = `${modLabel(id)}: select the objects, then press Enter`;
 }
 /**
  * The placements the running command would make: one list for each result (a placement per taken part). Move / Copy: arg = the target point;
@@ -7840,8 +7890,16 @@ function layResults(m, arg) {
 /** The outlines drawn while the command waits for its next click (at most 400, so a big Array stays quick). */
 function layGhosts(m) {
   if (!m.items || m.stage === 'pick') return null;
+  if (m.kind === 'stretch') {
+    if (!m.p1 || !m.cur) return null;
+    const r = layStretchResult(m.cur);
+    return [...r.objects.map(([e, next]) => {
+      const part = LD.objectPart('preview', '', next, r.view.raw.layers, {}, r.view.raw.blocks);
+      return part && { part, pl: LD.objectPlacement(part) };
+    }).filter(Boolean), ...r.parts.map(([x, pl]) => ({ part: x.part, pl }))];
+  }
   let res = null;
-  if (['move', 'copy'].includes(m.kind) && m.p1 && m.cur) res = layResults(m, m.cur);
+  if (['move', 'copy', 'stretch'].includes(m.kind) && m.p1 && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'scale' && m.p1 && m.hoverK > 0) res = layResults(m, m.hoverK);
   else if (m.kind === 'mirror' && m.stage === 'p2' && m.cur) res = layResults(m, m.cur);
   else if (m.kind === 'mirror' && m.stage === 'erase') res = layResults(m, m.p2);
@@ -7852,6 +7910,19 @@ function layMoveTo(d, q) {
   const m = state.mod, copy = m.kind === 'copy', label = modLabel(m.kind);
   if (!layStill()) { layStale(); return; }
   if (m.stage === 'p1') { m.p1 = q.slice(0, 2); m.cur = m.p1; m.stage = 'p2'; state.pointLast = m.p1; note(movePrompt(m.kind, m.stage, copyMode)); paintOverlay(); return; }
+  if (m.kind === 'stretch') {
+    const r = layStretchResult(q), lay = d.lay, next = { ...lay, parts: { ...lay.parts }, placed: lay.placed.map((p) => ({ ...p })) };
+    for (const [e, ent] of r.objects) if (!LD.objectReplace(next, r.view, e, ent, () => 'o' + uid())) { note('Stretch: object has no extents'); return; }
+    if (r.objects.length || r.parts.length) {
+      const g = startGesture(d, 'Stretch'); gMark(g);
+      lay.parts = next.parts; lay.placed = next.placed;
+      const idxs = gLooseMany(g, r.parts.map(([x]) => x.i));
+      r.parts.forEach(([, pl], k) => { lay.placed[idxs[k]] = pl; });
+      gCommit(g);
+    }
+    if (m.stage === 'displacement') stretchDisplacement = [q[0] - m.p1[0], q[1] - m.p1[1]];
+    state.pointLast = q.slice(0, 2); d.stretchSelection = null; setTool('select'); update(); note(m.lockMessage || 'Selection stretched. Ctrl+Z takes it back'); return;
+  }
   const to = layResults(m, q)[0], r = editSelected((part, pl, c) => to[c.k], { copy, label });
   state.pointLast = q.slice(0, 2);
   const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
@@ -7859,6 +7930,14 @@ function layMoveTo(d, q) {
   if (again) m.placed = true; else setTool('select');
   const text = copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back';
   if (r) afterEdit(r, text); else note(text);
+}
+/** Loose objects stretch in sheet coordinates; every other placement is an insertion-only move. */
+function layStretchResult(q) {
+  const m = state.mod, v = m.stretchView, dx = q[0] - m.p1[0], dy = q[1] - m.p1[1];
+  const result = stretchResult(v, dx, dy, m.stretchSel, m.stretchPicked), view = { ...v, raw: { ...v.raw, blocks: result.blocks } };
+  const objects = v.raw.entities.flatMap((e, k) => result.entities[k] !== e ? [[e, result.entities[k]]] : []), at = new Set(v.at.values());
+  const parts = stretchPlacements(m.items.filter((x) => { const p = placedNow[x.i]; return !(p.src === 'loose' && at.has(p.i)); }), m.boxes, dx, dy, m.picked);
+  return { objects, parts, view };
 }
 function layScaleDo(d, k) {
   const m = state.mod;
@@ -8425,7 +8504,17 @@ function modOvl(d, out, paint) {
   modSync(d);
   const add = (shape, cls, tid) => out.push(s('path', { class: cls, transform: drawingTransform(d), d: DR.svgPath(shape, H), 'data-testid': tid || null }));
   const addEnt = (ent, cls, tid) => { const sh = previewShape(ent, f, m.kind === 'fillet'); if (sh) { if (cls === 'dr-trim-fade') add(sh, 'dr-trim-under'); add(sh, cls, tid); } };
-  if (['move', 'copy', 'rotate', 'scale'].includes(m.kind)) {
+  if (['move', 'copy', 'stretch', 'rotate', 'scale'].includes(m.kind)) {
+    if (m.kind === 'stretch' && m.p1 && m.cur && m.raw === d.raw.entities) {
+      const dx = m.cur[0] - m.p1[0], dy = m.cur[1] - m.p1[1], cached = m.stretchPreview;
+      if (!cached || cached.dx !== dx || cached.dy !== dy) {
+        const next = stretchResult(d, dx, dy), entities = next.entities.filter((e, k) => e !== d.raw.entities[k]);
+        const preview = flatten({ ...d.raw, ...next, entities });
+        m.stretchPreview = { dx, dy, preview };
+      }
+      const preview = m.stretchPreview.preview;
+      m.move = { preview, items: preview.items, dx: 0, dy: 0 };
+    }
     if (m.p1 && m.cur) {
       const R = m.ref, typed = m.kind === 'rotate' && !R ? modTypedValue() : null, len = Math.hypot(m.cur[0] - m.p1[0], m.cur[1] - m.p1[1]);      // a typed angle turns the guide too
       const end = typed == null ? m.cur.slice(0, 2) : [m.p1[0] + len * Math.cos(typed * Math.PI / 180), m.p1[1] + len * Math.sin(typed * Math.PI / 180)];
