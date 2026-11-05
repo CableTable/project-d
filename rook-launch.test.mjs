@@ -519,6 +519,10 @@ test('TODO 196b: the third fix round needs a re-grill file in the current runs f
       run([...args, '--fix'], r.x);
       assert.ok(launched(r.calls));
     }
+    rmSync(queue);
+    const none = make();
+    run([...args, '--fix'], none.x);
+    assert.ok(launched(none.calls), 'no queue.txt counts as empty');
     writeFileSync(queue, `${first}\r\n${second}\r\n${other}`);
     const normal = make();
     run(args, normal.x);
@@ -792,7 +796,7 @@ test('TODO 196b: Pawn refuses a second numbered question before opening files or
     assert.throws(() => pawn(['out.json', question], r.x), { message: 'pawn: one question per Pawn run' });
     assert.deepEqual(r.calls, []);
   }
-  for (const question of ['1. First?', 'Q2?', 'What does x2) mean?', 'What about (12)?']) assert.equal(pawnArgs(question)[1].startsWith(question), true);
+  for (const question of ['1. First?', 'Q2?', 'What does x2) mean?', 'What about (12)?', 'Is Tauri 2.5 out?', 'Windows 2.0?', 'Is 2027 the year?']) assert.equal(pawnArgs(question)[1].startsWith(question), true);
 });
 
 test('TODO 167e lows: a missing queue.txt gives no queue line; launchRun with its own lock writes and removes that one', () => {

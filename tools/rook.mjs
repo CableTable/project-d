@@ -3,11 +3,11 @@
 //   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
 //   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over]   launch the reviewer on a commit, detached; without --as: Bishop, or King when Bishop's reviewer folder is locked
-//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Claude build on a new branch in its worktree, detached
-//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Knight build on a new branch in its clone, detached
+//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Claude build on a new branch in its worktree, detached
+//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Knight build on a new branch in its clone, detached
 //     --review: when the build ends, tools/rook-end.mjs launches `review <branch tip> <review brief> <review out>`; no chain (and `NO REVIEW: <why>` in the review out file) when the branch has no new commit or the build ended in error
 //     every launch writes `<kind> <branch|sha> -> <out file>: running` into runs<N>/queue.txt (lines 1-2 stay) and the run's end rewrites it to `ended`
-//     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (always allowed; a brief whose line 1 starts `King fix`, `Knight fix` or `Fix round` counts as one without it),
+//     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (allowed up to the 2nd fix round of an item, the 3rd needs --regrilled after a re-grill file runs<N>/grill-<id>-regrill.md; a brief whose line 1 starts `King fix`, `Knight fix` or `Fix round` counts as one without it),
 //     --tool = a tool ticket (passes the gate, not counted as an item; the gate line adds `, <k> tool`), --over = a 3rd item with his OK
 //   node tools/rook.mjs suite <sha>   full suite (`npm.cmd test`, then `npm.cmd run test:browser`) in this checkout, detached; <sha> must be HEAD; log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`
 //   node tools/rook.mjs retro [--over]   the three retros of runs<N>/ (retro<N>, retro<N>king, retro<N>rook: .txt in, .out out) on Bishop, detached; refused when a .txt is missing or cached Bishop 5h is above 40% (--over passes)
@@ -323,7 +323,7 @@ if (cmd === 'result') {
     projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro [--over] | pawn <out.json> "<question>" | acad <item>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro [--over] | pawn <out.json> "<question>" | acad <item>');
 }
 }
 

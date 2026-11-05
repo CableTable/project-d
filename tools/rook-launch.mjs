@@ -87,7 +87,7 @@ function checkFixRound(x, branch, regrilled) {
   const queue = x.gate.queueFile(), id = branch.replace(/^(king|knight)\//, '').replace(/fix\d*$/, '');
   if (regrilled) x.need(join(dirname(queue), `grill-${id}-regrill.md`), 're-grill file');
   else {
-    const refusal = fixRoundRefusal(id, x.read(queue));
+    const refusal = fixRoundRefusal(id, existsSync(queue) ? x.read(queue) : '');
     if (refusal) throw new Error(refusal);
   }
 }
@@ -380,7 +380,7 @@ export const acadArgs = (extras = EXTRAS) => ['-p', '--model', 'claude-sonnet-5-
 // WORKFLOW.md lines 248-250: one question, the house sentence added here; a newline would end the cmd.exe line.
 export const pawnArgs = (question) => {
   if (/[\r\n]/.test(question)) throw new Error('pawn: the question must be one line');
-  if (/\(2\)|(?:^|\s)2[.)]/.test(question)) throw new Error('pawn: one question per Pawn run');
+  if (/\(2\)|(?:^|\s)2(?:\.(?!\d)|\))/.test(question)) throw new Error('pawn: one question per Pawn run');
   if (/[%"]/.test(question)) throw new Error('pawn: the question may not hold % or " (cmd.exe expands %NAME% inside quotes); use single quotes / spell it out');
   return ['-p', `${question} Open https links only, skip http ones, run no commands; read at most 3 pages; cite URLs.`, '--output-format', 'json', '--print-timeout', '10m'];
 };
