@@ -24362,6 +24362,121 @@ try {
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
+  const shapingDoc97k = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfPoly([[100, 100], [160, 100], [160, 160], [100, 160]], { closed: true }),
+      dxfPoly([[130, 130], [190, 130], [190, 190], [130, 190]], { closed: true }));
+    return raw;
+  };
+  const shapingLayout97k = () => {
+    const lay = newLayout('Shaping 97k'), raw = shapingDoc97k();
+    raw.entities.forEach((e, i) => {
+      const id = 'shape' + i;
+      lay.parts[id] = objectPart(id, 'Outline ' + i, e, raw.layers);
+      lay.placed.push(objectPlacement(lay.parts[id]));
+    });
+    const plate = newDoc(4); addEntities(plate, dxfPoly([[0, 0], [50, 0], [50, 30]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', plate);
+    lay.placed.push({ partId: 'plate', x: 300, y: 100, rot: 0 });
+    return lay;
+  };
+  const shapingGroup97k = () => page.locator('.ribbon-body [data-panel=Shaping]');
+  const layoutState97k = async () => { const lay = layoutFromRaw(await savedDoc()); lay.name = ''; return lay; };
+  const shapeEntities97k = (ents) => ents.map((e) => ({ ...e, r: { c: e.r.c.filter((c) => c !== 5), v: e.r.v.filter((_, i) => e.r.c[i] !== 5) } }));
+
+  for (const [label, area, count] of [['Trim', '2700.00', 3], ['Intersect', '900.00', 2]]) await step(`TODO 97k: Layouts ${label} on loose objects, one Undo restores`, async () => {
+    await open97c(layoutRaw(shapingLayout97k()), 'shaping97k-layout.dxf');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    const before = await layoutState97k(), labels = await histLabels();
+    await click(100, 130); await click(190, 160, { shift: true });
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await shapingGroup97k().getByRole('button', { name: label, exact: true }).click();
+    assert.match(await prompt(), new RegExp(`^${label}: 2 outlines → 1 outline, area ${area.replace('.', '\\.')} mm²`));
+    if (label === 'Trim') assert.match(await prompt(), /The cutters stay/);
+    const after = await layoutState97k();
+    assert.equal(after.placed.length, count);
+    assert.deepEqual(after.placed.filter((p) => p.partId === 'plate'), before.placed.filter((p) => p.partId === 'plate'));
+    assert.deepEqual(shapeEntities97k(after.parts.plate.raw.entities), shapeEntities97k(before.parts.plate.raw.entities), 'the placed part stays whole');
+    if (label === 'Trim') {
+      assert.deepEqual(shapeEntities97k(objectDoc(after).raw.entities).find((e) => fieldOf(e, 90) === 4), shapeEntities97k(objectDoc(before).raw.entities)[1], 'the four-corner cutter stays whole');
+    }
+    assert.deepEqual((await histLabels()).slice(labels.length), [label]);
+    await key97c('Control+z'); assert.deepEqual(await layoutState97k(), before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  for (const [label, area, count] of [['Weld', '6300.00', 1], ['Trim', '2700.00', 2], ['Intersect', '900.00', 1]]) await step(`TODO 97k: Compare ${label} changes only the selected visible source, one Undo restores`, async () => {
+    await open97c(shapingDoc97k(), 'shaping97k.dxf'); const before = (await savedDoc()).entities, labels = await histLabels();
+    const other = newDoc(4); addEntities(other, dxfCircle(100, 100, 20));
+    await t('picker').setInputFiles({ name: 'other97k.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(other)) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'other97k.dxf');
+    const otherBefore = (await savedDoc()).entities;
+    await typeCmd('compare');
+    const target = t('cmp-item').filter({ hasText: 'shaping97k' });
+    await target.locator('.cmpname').click();
+    assert.equal(await target.locator('[data-testid=cmp-eye]').getAttribute('aria-pressed'), 'true');
+    await page.locator('[data-ribbon-tab=Home]').click(); await key97c('Control+a'); await waitSel('2 selected');
+    await shapingGroup97k().getByRole('button', { name: label, exact: true }).click();
+    assert.match(await prompt(), new RegExp(`^${label}: 2 outlines → 1 outline, area ${area.replace('.', '\\.')} mm²`));
+    const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^shaping97k(?:-edited)*\.dxf$/ }) });
+    await source.click(); const after = (await savedDoc()).entities;
+    assert.equal(after.length, count); assert.ok(after.every((e) => e.type === 'LWPOLYLINE'));
+    if (label === 'Trim') assert.deepEqual(shapeEntities97k([after[0]]), shapeEntities97k([before[1]]), 'Ctrl+A targets the first largest outline and keeps the other cutter');
+    assert.deepEqual((await histLabels()).slice(labels.length), [label]);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^Compare$/ }) }).click(); await key97c('Control+z');
+    await source.click(); assert.deepEqual((await savedDoc()).entities, before);
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^other97k(?:-edited)*\.dxf$/ }) }).click();
+    assert.deepEqual((await savedDoc()).entities, otherBefore, 'the other source is untouched');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97k: Layouts Trim refuses a placed part without an edit or Undo step', async () => {
+    await open97c(layoutRaw(shapingLayout97k()), 'shaping97k-refused.dxf');
+    const before = await layoutState97k(), labels = await histLabels();
+    await key97c('Control+a');
+    await menuItem('Modify', 'Shaping: Trim');
+    assert.equal(await prompt(), 'Trim works on layout objects, not placed parts');
+    assert.deepEqual(await layoutState97k(), before); assert.deepEqual(await histLabels(), labels);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97k: every tab has identical Shaping buttons and Modify items; Compare and Layouts ribbons light and dark', async () => {
+    await open97c(shapingDoc97k(), 'shaping97k-ribbon.dxf');
+    await page.locator('[data-ribbon-tab=Modify]').click();
+    const buttons = () => shapingGroup97k().getByRole('button').evaluateAll((bs) => bs.map((b) => ({ label: b.getAttribute('aria-label'), icon: b.querySelector('svg').outerHTML, size: b.className })));
+    const expected = await buttons();
+    assert.deepEqual(expected.map((b) => b.label), ['Weld', 'Trim', 'Intersect', 'Simplify', 'Create boundary', 'Front minus back', 'Back minus front', 'Keep originals']);
+    const menu = async () => {
+      await page.locator('[data-menu=Modify]').click();
+      assert.deepEqual(await page.getByRole('menuitem').allTextContents().then((a) => a.filter((x) => /^Shaping/.test(x)).map((x) => x.trim())),
+        ['Shaping: Weld', 'Shaping: Trim', 'Shaping: Intersect', 'Shaping: Simplify', 'Shaping: Front minus back', 'Shaping: Back minus front', 'Shaping: Create boundary']);
+      assert.equal(await page.getByRole('menuitemcheckbox', { name: /Shaping: Keep originals$/ }).count(), 1);
+      await key97c('Escape');
+    };
+    await menu(); await typeCmd('compare');
+    for (const kind of ['Compare', 'Layouts']) {
+      if (kind === 'Layouts') await open97c(layoutRaw(shapingLayout97k()), 'shaping97k-ribbon-layout.dxf');
+      await menu();
+      for (const tab of ['Home', kind === 'Layouts' ? 'Layout' : 'Compare']) {
+        await page.locator(`[data-ribbon-tab=${tab}]`).click();
+        assert.deepEqual(await buttons(), expected, `${kind} ${tab} matches Drawings`);
+        assert.equal(await shapingGroup97k().locator('button:disabled').count(), 0);
+      }
+      await shapingGroup97k().scrollIntoViewIfNeeded();
+      for (const theme of ['light', 'dark']) {
+        await menuItem('View', 'Theme: ' + theme); await frames();
+        const path = `${shotDir}/todo97k-${kind.toLowerCase()}-ribbon-${theme}.png`;
+        await page.screenshot({ path }); assert.ok(readFileSync(path).length > 1000);
+      }
+      await menuItem('View', 'Theme: light');
+      if (kind === 'Compare') {
+        await t('cmp-eye').click();
+        assert.equal(await shapingGroup97k().getByRole('button', { name: 'Weld', exact: true }).isEnabled(), false, 'a hidden source cannot be shaped');
+      }
+    }
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {
   failed++;
