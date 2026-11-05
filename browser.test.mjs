@@ -24220,6 +24220,14 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  // The prompt text matching `re` (waited for, so a label that lands a frame after typeCmd is not missed); `fade` instead waits for a visible row of the command line's fading history.
+  const label97 = async (re, fade) => (await page.waitForFunction(([s, f, fd]) => {
+    const rx = new RegExp(s, f), vis = (el) => el.getClientRects().length && getComputedStyle(el).opacity !== '0';
+    if (!fd) { const x = document.querySelector('[data-testid=cmd-prompt]').textContent; return rx.test(x) && x; }
+    const box = document.querySelector('[data-testid=cmd-fade] .cb-fade-rows'), row = [...box.children].find((r) => rx.test(r.textContent));
+    return !!row && vis(box) && vis(row) && row.textContent;
+  }, [re.source, re.flags, !!fade], { timeout: 8000 })).jsonValue();
+
   await step('TODO 97 Lows 3: a full arrange word goes to the running Zoom Window / Fill command, not to the 3 selected', async () => {
     await open97c(doc97i2(), 'running97lows3.dxf'); await key97c('Control+a'); await waitSel('3 selected');
     const before = lineEnds97c(await savedDoc()), steps = (await histLabels()).length;
@@ -24229,11 +24237,11 @@ try {
       assert.deepEqual(lineEnds97c(await savedDoc()), before, start); assert.equal((await histLabels()).length, steps, start);
       await key97c('Escape'); await waitSel('3 selected');
     }
-    await typeCmd('left'); assert.equal(await prompt(), '3 objects aligned left to the selection', 'idle: the word still arranges');
+    await typeCmd('left'); assert.equal(await label97(/^3 objects aligned left to the selection$/), '3 objects aligned left to the selection', 'idle: the word still arranges');
     await closeTabs(/./); assert.deepEqual(errors, []);
     await open97c(layoutRaw(layout97i2()), 'running97lows3-rotate.dxf'); await key97c('Control+a');
     const parts = await selBoxes(), layoutSteps = (await histLabels()).length; assert.equal(parts.length, 3);
-    await typeCmd('rotate'); assert.match(await prompt(), /^Angle </, 'rotate mode is on');
+    await typeCmd('rotate'); assert.match(await label97(/^Angle </), /^Angle </, 'rotate mode is on');
     await typeCmd('left');
     assert.doesNotMatch(await prompt(), /aligned/, 'layout rotate mode');
     assert.deepEqual(await selBoxes(), parts, 'layout rotate mode'); assert.equal((await histLabels()).length, layoutSteps, 'layout rotate mode');
@@ -24257,11 +24265,21 @@ try {
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
     await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
     const before = lineEnds97c(await savedDoc());
-    await typeCmd('align'); assert.match(await t('cmd-fade').textContent(), /Layer Locked is locked: unlock it in the Objects tab to align this/, 'the locked note is on the visible command line at once');
+    const note = /Layer Locked is locked: unlock it in the Objects tab to align this/;
+    await typeCmd('align'); await label97(note, true);                          // on the visible command line at once
     await click(100, 100); await click(150, 150); await key97c('Enter');
-    assert.match(await prompt(), /Layer Locked is locked: unlock it in the Objects tab to align this\. Selection aligned/);
+    assert.match(await label97(/Selection aligned/), /Layer Locked is locked: unlock it in the Objects tab to align this\. Selection aligned/);
     const after = lineEnds97c(await savedDoc());
     assert.notDeepEqual(after[0], before[0], 'the unlocked line was aligned'); assert.deepEqual(after[1], before[1], 'the locked line did not move');
+    await key97c('Control+z'); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await typeCmd('align'); await key97c('Escape'); await label97(note, true);   // Esc ends the command, the note stays on the visible line
+    await closeTabs(/./); assert.deepEqual(errors, []);
+    // a layout: the third part is locked, the note is on the command line when Align starts
+    const lay = layout97i2(); lay.placed[2].lock = true;
+    await open97c(layoutRaw(lay), 'align97lows3-locked-layout.dxf'); await key97c('Control+a');
+    await typeCmd('align'); await label97(/Locked: Unlock to move it/, true);
+    assert.match(await label97(/^Specify first source point/), /first source point/, 'Align goes on with the two free parts');
+    await key97c('Escape'); await label97(/Locked: Unlock to move it/, true);
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

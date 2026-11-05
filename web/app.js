@@ -8008,7 +8008,7 @@ function layTake(d) {
   if (!now.length) { note(`${label}: pick at least one object first`); return; }
   if (m.kind === 'move' && now.some((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
   if (m.kind === 'align' && now.every((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
-  if (m.kind === 'align' && now.some((x) => x.p.lock)) { selectMany(now.filter((x) => !x.p.lock).map((x) => x.i)); now = selItems(); m.lockMessage = LOCKED; }       // Align leaves the locked parts out and goes on with the rest
+  if (m.kind === 'align' && now.some((x) => x.p.lock)) { selectMany(now.filter((x) => !x.p.lock).map((x) => x.i)); now = selItems(); m.lockMessage = LOCKED; ui.cmdUI.message(LOCKED); }       // Align leaves the locked parts out and goes on with the rest
   m.items = now.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) }));
   m.sel = new Set(m.items.map((x) => x.i)); m.keep = selIdxs(); m.main = state.sel; m.objs = m.items;
   if (m.kind === 'stretch') {
