@@ -24202,6 +24202,13 @@ try {
     }
     await typeCmd('left'); assert.equal(await prompt(), '3 objects aligned left to the selection', 'idle: the word still arranges');
     await closeTabs(/./); assert.deepEqual(errors, []);
+    await open97c(layoutRaw(layout97i2()), 'running97lows3-rotate.dxf'); await key97c('Control+a');
+    const parts = await selBoxes(), layoutSteps = (await histLabels()).length; assert.equal(parts.length, 3);
+    await typeCmd('rotate'); assert.match(await prompt(), /^Angle </, 'rotate mode is on');
+    await typeCmd('left');
+    assert.doesNotMatch(await prompt(), /aligned/, 'layout rotate mode');
+    assert.deepEqual(await selBoxes(), parts, 'layout rotate mode'); assert.equal((await histLabels()).length, layoutSteps, 'layout rotate mode');
+    await key97c('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
   await step('TODO 97 Lows 3: on a layout with 3 parts selected, H at the Linear Dimension prompt forces the dimension and distributes nothing', async () => {
@@ -24220,8 +24227,12 @@ try {
     await open97c(raw, 'align97lows3-locked.dxf');
     await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
     await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
-    await typeCmd('align'); await click(100, 100); await click(150, 150); await key97c('Enter');
+    const before = lineEnds97c(await savedDoc());
+    await typeCmd('align'); assert.match(await t('cmd-fade').textContent(), /Layer Locked is locked: unlock it in the Objects tab to align this/, 'the locked note is on the visible command line at once');
+    await click(100, 100); await click(150, 150); await key97c('Enter');
     assert.match(await prompt(), /Layer Locked is locked: unlock it in the Objects tab to align this\. Selection aligned/);
+    const after = lineEnds97c(await savedDoc());
+    assert.notDeepEqual(after[0], before[0], 'the unlocked line was aligned'); assert.deepEqual(after[1], before[1], 'the locked line did not move');
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

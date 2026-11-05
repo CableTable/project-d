@@ -7794,6 +7794,7 @@ function moveTake(d) {
   if (align) {
     m.sel = new Set(free); m.preview = flatten({ ...d.raw, entities: free.map((i) => m.raw[i]) });
     m.lockMessage = free.length < d.sel.size && moveLocked(d, [...d.sel].filter((i) => lockedEnt(d, i)), 'align') ? state.msg : null;
+    if (m.lockMessage) ui.cmdUI.message(m.lockMessage);       // on the visible line at once, so Esc does not hide it
     state.msg = m.lockMessage; renderCommand(); paintOverlay(); return;
   }
   if (m.kind === 'stretch') {
