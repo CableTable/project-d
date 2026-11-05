@@ -24313,7 +24313,7 @@ try {
     for (const command of ['divide', 'measurepoints']) {
       await page.locator('[data-group=parts] [data-i="0"] .part-hit').click({ force: true }); await page.getByText('Selected part', { exact: true }).waitFor();
       await typeCmd(command);
-      assert.match(await message97e(), /Placed part cannot be divided/);
+      assert.match(await message97e(), new RegExp('^Command: ' + command.toUpperCase() + '\\s+Placed part cannot be divided'));   // anchored: the divide pass's line must not satisfy the measurepoints pass
       assert.match(await prompt(), /^Select object to (divide|measure):$/); await key97c('Escape');
     }
     assert.deepEqual(await layoutState(), before); assert.deepEqual(await histLabels(), labels);
@@ -24327,7 +24327,9 @@ try {
     const lay = newLayout('Point 97j2'), layers = newDoc(4).layers;
     lay.parts.a = objectPart('a', 'Point', point(200, 150), layers); lay.placed = [objectPlacement(lay.parts.a)];
     await open97c(layoutRaw(lay), 'point-click97j2-layout.dxf'); await key97c('Escape');
-    await click(200, 150); await waitSel('1 selected');
+    await t('ptab-objects').click(); await t('objects-panel').waitFor();
+    await click(400, 300); assert.equal(await t('obj-selected').textContent(), '0 selected');   // control: a miss selects nothing (sel-count keeps the Drawings text on a layout)
+    await click(200, 150); await page.waitForFunction(() => document.querySelector('[data-testid=obj-selected]').textContent === '1 selected');
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
