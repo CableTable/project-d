@@ -37,7 +37,7 @@ h1 { font-size: 28px; letter-spacing: -.03em; } h2 { font-size: 20px; } h3 { fon
 .ud-tick { position: absolute; top: -4px; bottom: -4px; width: 2px; background: var(--color-fg); }
 .ud-tick.cap { background: var(--color-bad); }
 .ud-chip { display: inline-block; font-size: 12px; padding: 2px 8px; border: 1px solid currentColor; border-radius: 9px; }
-.ud-chip.ok { color: var(--color-ok); } .ud-chip.warn { color: var(--color-warn); } .ud-chip.bad, .ud-hit, #last-error { color: var(--color-bad); }
+.ud-chip.ok { color: var(--color-ok); } .ud-chip.warn { color: var(--color-warn); } .ud-chip.bad, .ud-hit, #last-error, #rook-stuck { color: var(--color-bad); }
 .ud-chip.info { color: var(--ud-rowan); }
 .ud-tabs, .tag-filters, .legend { display: flex; flex-wrap: wrap; gap: 8px; }
 .ud-tabs button, .tag-filters button { font-size: 13px; padding: 4px 10px; background: transparent; border-radius: 9px; }
