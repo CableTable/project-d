@@ -1,7 +1,7 @@
 // `node tools/rook.mjs review ...`, `build ...` and `knight ...`: the hand-typed launch commands of WORKFLOW.md in one call each (S28 retro).
 // Every check that fails throws an Error whose message says why; nothing is launched after one.
 import { execFileSync, execSync, spawn } from 'node:child_process';
-import { existsSync, openSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, openSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -194,6 +194,7 @@ const io = {
   need(path, what) { if (!existsSync(path)) throw new Error(`${what} not found: ${path}`); },
   read: (path) => readFileSync(path, 'utf8'),
   exists: existsSync,
+  mtime: (path) => statSync(path).mtimeMs,
   list: (path) => readdirSync(path, { withFileTypes: true }).filter((e) => e.isFile()).map((e) => e.name),
   write: (path, text) => writeFileSync(path, text, { flag: 'wx' }),
   open: (path, mode) => openSync(path, mode),
@@ -418,11 +419,18 @@ export function retro(args, x = io) {
   if (pos.length) throw new Error(usage);
   const over = !!flags['--over'];
   const dir = runsDir(x), n = /runs(\d+)$/.exec(dir)[1], names = [`retro${n}`, `retro${n}king`, `retro${n}rook`];
-  const missing = names.filter((name) => !x.exists(`${dir}/${name}.txt`));
+  if (!over) { // TODO 196a: three Opus retros took Bishop from 61% to 100% (S36)
+    const h5 = cachedH5(x, ['Pip', 'Bishop'], 'Bishop', 'retro');
+    if (h5 > 40) throw new Error(`Bishop 5h ${h5}%: the three retros need room; wait for the reset, or --over`);
+  }
+  x.need(claude('bishop'), ACCOUNTS.bishop.bin);
+  for (const name of names) if (x.locked(dir, `${dir}/.run-lock-${name}`)) throw new Error(`${name} is in use by a running launch (${dir}/.run-lock-${name}); if that run is dead, delete the lock file`);
+  const missing = names.filter((name) => !x.exists(`${dir}/${name}.txt`)); // filled last: a refused run writes nothing
   if (missing.length) {
     const transcripts = [], sessions = new Set();
     const project = 'C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D';
-    for (const file of x.list(project).filter((f) => f.endsWith('.jsonl')).sort()) {
+    const files = x.list(project).filter((f) => f.endsWith('.jsonl')).sort().map((f) => [f, x.mtime(`${project}/${f}`)]).sort((a, b) => a[1] - b[1]); // oldest first: S37, S37b, S37c
+    for (const [file] of files) {
       const found = retroSessions(x.read(`${project}/${file}`), n);
       if (found === null) continue;
       transcripts.push(`${project}/${file}`);
@@ -436,13 +444,7 @@ export function retro(args, x = io) {
       x.write(`${dir}/${name}.txt`, template.replace(/\{(N|SESSIONS|TRANSCRIPTS|EVENTS)\}/g, (_, key) => values[key]));
     }
   }
-  if (!over) { // TODO 196a: three Opus retros took Bishop from 61% to 100% (S36)
-    const h5 = cachedH5(x, ['Pip', 'Bishop'], 'Bishop', 'retro');
-    if (h5 > 40) throw new Error(`Bishop 5h ${h5}%: the three retros need room; wait for the reset, or --over`);
-  }
   for (const name of names) x.need(`${dir}/${name}.txt`, 'retro brief');
-  x.need(claude('bishop'), ACCOUNTS.bishop.bin);
-  for (const name of names) if (x.locked(dir, `${dir}/.run-lock-${name}`)) throw new Error(`${name} is in use by a running launch (${dir}/.run-lock-${name}); if that run is dead, delete the lock file`);
   for (const name of names) plainRun(x, { kind: 'retro', id: name, bin: claude('bishop'), args: retroArgs(), cwd: dir, inPath: `${dir}/${name}.txt`, out: `${dir}/${name}.out`, lock: `${dir}/.run-lock-${name}` });
 }
 

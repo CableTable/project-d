@@ -381,12 +381,20 @@ test('result prints peak context and warns strictly above 150k; Codex logs skip 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('TODO 196g: fails lists the browser FAIL and node:test not ok steps with their first 3 +/- lines, ANSI stripped, max 40', () => {
-  const browser = ['ok step A', 'FAIL TODO 5: second step ', '   \x1b[31mExpected values to be strictly equal:\x1b[39m', '+ actual - expected', '', '\x1b[32m+ 1\x1b[39m', '\x1b[31m- 2\x1b[39m', '+ 3', '- 4', '  at browser.test.mjs:9', 'ok step B'].join('\r\n');
-  assert.deepEqual(failLines(browser, 'b.log'), ['TODO 5: second step', '+ 1', '- 2', '+ 3']);
-  const tap = ['ok 1 - fine', 'not ok 2 - unit one', '  ---', '  error: |-', '    + actual - expected', '    + \'a\'', '    - \'b\'', '  ...', 'not ok 3 - unit two', '  ---'].join('\n');
-  assert.deepEqual(failLines(tap, 't.log'), ['unit one', "+ 'a'", "- 'b'", 'unit two']);
-  assert.deepEqual(failLines('ok 1\nok step\n', 'x.log'), ['no failures in x.log']);
+test('TODO 196g fix: fails reads the real suite-log lines (browser [shard n/m] FAIL, node:test spec ✖ + summary), with the first 3 +/- lines, max 40', () => {
+  const E = '\x1b';
+  // Copied from runs35/suite-da8a469.log (lines 1173, 1622-1628) and runs36/suite-b6de1a7.log (1821, 2295, 2444).
+  const slow = 'cached usage shares live summaries, avoids processes and writes, and falls back when missing or stale';
+  const spec = [`${E}[32m✔ some passing test ${E}[90m(2.0039ms)${E}[39m${E}[39m`, `${E}[31m✖ ${slow} ${E}[90m(256.7319ms)${E}[39m${E}[39m`, `${E}[32m✔ later test ${E}[90m(0.3ms)${E}[39m${E}[39m`,
+    `${E}[31m✖ failing tests:${E}[39m`, '', 'test at rook-cache.test.mjs:21:1', `${E}[31m✖ ${slow} ${E}[90m(256.7319ms)${E}[39m${E}[39m`,
+    '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:', '  + actual - expected', '', "  + 'x'", "  - 'y'", '  + 1', '  - 2'].join('\n');
+  assert.deepEqual(failLines(spec, 'u.log'), [slow, "+ 'x'", "- 'y'", '+ 1']); // the inline line and its summary repeat count once
+  const browser = ['[shard 1/4] FAIL part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged ', '[shard 2/4] FAIL TODO 146: an up-left Line and its readout leave a clear, stationary command box ', 'SUITE unit=0 browser=1'].join('\r\n');
+  assert.deepEqual(failLines(browser, 'b.log'), ['part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged', 'TODO 146: an up-left Line and its readout leave a clear, stationary command box']);
+  assert.deepEqual(failLines(`FAIL bare step\n${E}[31m- 1${E}[39m\n${E}[32m+ 2${E}[39m`, 'a.log'), ['bare step', '- 1', '+ 2']);
+  assert.deepEqual(failLines('ok 1\nok step\nSUITE unit=0 browser=0\n', 'x.log'), ['no failures in x.log']);
+  assert.deepEqual(failLines('lots of output\nSUITE unit=1 browser=0\n', 'r.log'), ['red (unit=1 browser=0) but no failing step lines found in r.log']);
+  assert.deepEqual(failLines('SUITE unit=0 browser=2', 'r.log'), ['red (unit=0 browser=2) but no failing step lines found in r.log']);
   const many = Array.from({ length: 30 }, (_, i) => `FAIL step ${i}\n+ a\n- b`).join('\n');
   assert.equal(failLines(many, 'm.log').length, 40);
 });
@@ -405,6 +413,12 @@ test('TODO 196g: handover refuses a missing resume file or a line 2 without both
       assert.throws(() => handover(bad, 'Rook S37d', dir), /line 2 .* lacks/);
     }
     assert.throws(() => handover(good, '', dir), /usage/);
+    const noRuns = join(dir, 'resume.txt'), noLog = join(dir, 'runs37', 'resume-nolog.txt');
+    writeFileSync(noRuns, `Rook S37\n${skills}\nread merge-due.log\n`);
+    writeFileSync(noLog, `Rook S37\n${skills}\nnothing else\n`);
+    assert.throws(() => handover(noRuns, 'Rook S37d', dir), /no runs<N> folder/);
+    assert.throws(() => handover(noLog, 'Rook S37d', dir), /no merge-due\.log line/);
+    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'handover', good, 'Rook', 'S37d'], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && /2 arguments/.test(e.stderr)); // an unquoted name
     assert.ok(!existsSync(join(dir, 'rook-next.txt')));
     const printed = handover(good, 'Rook S37d', dir, '11111111-2222-3333-4444-555555555555');
     const lines = readFileSync(join(dir, 'rook-next.txt'), 'utf8').split('\n');

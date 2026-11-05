@@ -7,8 +7,8 @@ test('TODO 196e: only the first user message selects a Rook transcript and its d
   for (const eol of ['\n', '\r\n']) {
     for (const [first, expected] of [
       ['Read resume-rook-S33a.txt; S33, S33a, S33b, S33b', ['S33a', 'S33', 'S33b']],
-      [[{ type: 'text', text: 'Read runs33/resume-rook.txt' }, { type: 'text', text: 'Rook S33c' }], ['S33c']],
-      ['Read runs33/resume-rook.txt', []],
+      [[{ type: 'text', text: 'Read runs33/resume-rook.txt' }, { type: 'text', text: 'Rook S33c' }], ['S33', 'S33c']],
+      ['Read runs33/resume-rook.txt', ['S33']],
       ['Read resume-rook-S330a.txt or runs330/resume-rook.txt', null],
       ['Read an unrelated brief', null],
       [null, null],

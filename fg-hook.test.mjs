@@ -42,7 +42,7 @@ assert.equal(r.status, 0, 'null stdin is allowed');
 for (const dir of [K, 'C:\\Users\\raksh\\.claude', 'C:\\Users\\raksh\\.claude-account2']) {
   for (const agent_type of [undefined, 'builder', 'reviewer']) {
     for (const tool_name of ['Bash', 'PowerShell']) {
-      for (const command of ['node tools/rook.mjs wait run.log', 'node "E:/Project B/tools/rook.mjs" wait run.log']) {
+      for (const command of ['node tools/rook.mjs wait run.log', 'node "E:/Project B/tools/rook.mjs" wait run.log', "& node 'E:/x/tools/rook.mjs' wait a.log"]) {
         for (const run_in_background of [undefined, false, 'true', true]) {
           r = run({ agent_type, tool_name, tool_input: { command, run_in_background } }, dir);
           assert.equal(r.status, run_in_background === true ? 0 : 2, JSON.stringify({ dir, agent_type, tool_name, command, run_in_background }));

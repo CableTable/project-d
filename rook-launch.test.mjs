@@ -23,7 +23,7 @@ function recorder(fail = '') {
   const rec = (name, ret) => (...a) => { calls.push([name, ...a]); if (fail === name) throw new Error(`${name} failed`); return ret; };
   const open = (path, mode) => { calls.push(['open', path, mode]); if (fail === 'open') throw new Error('open failed'); return `fd:${path}`; };
   const git = (...a) => rec('git', a[1] === 'config' ? 'tools/hooks' : '')(...a);
-  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), exists: () => true, locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), truncate: rec('truncate'), queue: { open: rec('queueOpen', { queue: 'q.txt', key: 'k', text: 'kind id -> k:' }), set: rec('queueSet') }, gate: { context: rec('gateContext'), check: rec('gateCheck'), record: rec('gateRecord'), queueFile: () => `${X}/runs33/queue.txt` } } };
+  return { calls, x: { git, has: rec('has', true), need: rec('need'), read: rec('read', ''), exists: () => true, mtime: () => 0, locked: rec('locked', false), open, npmCi: rec('npmCi'), launch: (...a) => calls.push(['launch', ...a]), truncate: rec('truncate'), queue: { open: rec('queueOpen', { queue: 'q.txt', key: 'k', text: 'kind id -> k:' }), set: rec('queueSet') }, gate: { context: rec('gateContext'), check: rec('gateCheck'), record: rec('gateRecord'), queueFile: () => `${X}/runs33/queue.txt` } } };
 }
 const launched = (calls) => calls.find((c) => c[0] === 'launch');
 const isSwitch = (c) => c[0] === 'git' && c[2] === 'switch';
@@ -204,6 +204,17 @@ test('TODO 196a: retro is refused above 40% Bishop 5h, naming the percent; 40%, 
   const refused = withUsage(`Pip,5h,41,${future}\n`);
   assert.throws(() => retro([], refused.x), /^Error: Bishop 5h 41%: .*--over$/);
   assert.equal(refused.calls.some((c) => ['open', 'launch'].includes(c[0])), false);
+  for (const gate of ['bin', 'lock']) { // TODO 196g fix: a refused run writes no brief
+    const r = withUsage(`Pip,5h,40,${future}\n`);
+    r.x.exists = () => false;
+    r.x.write = () => assert.fail('a refused retro must not write a brief');
+    if (gate === 'bin') r.x.need = () => { throw new Error('bin missing'); }; else r.x.locked = () => true;
+    assert.throws(() => retro([], r.x), gate === 'bin' ? /bin missing/ : /in use/);
+  }
+  const high = withUsage(`Pip,5h,41,${future}\n`);
+  high.x.exists = () => false;
+  high.x.write = () => assert.fail('a refused retro must not write a brief');
+  assert.throws(() => retro([], high.x), /Bishop 5h 41%/);
   for (const agent of ['Pip', 'Bishop']) {
     const ok = withUsage(`${agent},5h,40,${future}\n`);
     retro([], ok.x);
@@ -724,8 +735,8 @@ test('TODO 196e: retro fills all missing templates from matching transcripts, wi
   const project = 'C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D';
   const user = (text) => JSON.stringify({ type: 'user', message: { content: text } });
   const sources = {
-    'a.jsonl': user('Read resume-rook-S33a.txt; Rook S33a'),
-    'b.jsonl': user([{ type: 'text', text: 'Read runs33/resume-rook.txt; Rook S33b and S33a' }]),
+    'a.jsonl': user('Read resume-rook-S33c.txt; Rook S33c'),
+    'b.jsonl': user([{ type: 'text', text: 'Read runs33/resume-rook.txt' }]),
     'c.jsonl': user('resume-rook-S330a.txt'),
     'd.jsonl': `${user('Other work')}\n${user('resume-rook-S33z.txt')}`,
     'notes.txt': 'not a transcript',
@@ -734,6 +745,7 @@ test('TODO 196e: retro fills all missing templates from matching transcripts, wi
     const r = recorder(), written = new Map();
     r.x.exists = () => false;
     r.x.list = (path) => { assert.equal(path, project); return Object.keys(sources).reverse(); };
+    r.x.mtime = (path) => (path.endsWith('/b.jsonl') ? 1 : 2); // b is older than a, though it sorts after it by name
     r.x.read = (path) => {
       if (path.startsWith(`${project}/`)) { assert.ok(path.endsWith('.jsonl')); return sources[basename(path)]; }
       return readFileSync(path, 'utf8');
@@ -742,8 +754,8 @@ test('TODO 196e: retro fills all missing templates from matching transcripts, wi
     retro(['--over', ...(events === undefined ? [] : ['--events', events])], r.x);
     assert.deepEqual([...written.keys()], ['', 'king', 'rook'].map((s) => `${X}/runs33/retro33${s}.txt`));
     const main = written.get(`${X}/runs33/retro33.txt`);
-    assert.match(main, /session 33 \(Rook = lead; Rook sessions S33a, S33b\)/);
-    assert.ok(main.includes(`Rook transcripts: ${project}/a.jsonl, ${project}/b.jsonl (large:`));
+    assert.match(main, /session 33 \(Rook = lead; Rook sessions S33, S33c\)/);
+    assert.ok(main.includes(`Rook transcripts: ${project}/b.jsonl, ${project}/a.jsonl (large:`));
     assert.ok(main.includes(`Known events: ${events ?? 'none given.'} Change nothing.`));
     assert.match(written.get(`${X}/runs33/retro33king.txt`), /King's runs in session 33/);
     assert.match(written.get(`${X}/runs33/retro33rook.txt`), /Rook's own work in session 33/);

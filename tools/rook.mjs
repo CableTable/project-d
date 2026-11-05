@@ -16,7 +16,7 @@
 //   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
 //   node tools/rook.mjs board <brief> <out>   Bishop board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
-//   node tools/rook.mjs handover <resume file> <name>   write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing or its line 2 lacks the grilling + domain-modeling skills; does not start Rook.lnk
+//   node tools/rook.mjs handover <resume file> <name>   write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty and runs<N>/retro<N>.applied exists (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
@@ -214,15 +214,20 @@ export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf
   return line;
 }
 
-// `fails <log>` (TODO 196g): the failing steps of a test log (browser test `FAIL <step>`, node:test `not ok N - <name>`), each with its first 3 `+` / `-` assertion lines; ANSI stripped, at most 40 lines.
+// `fails <log>` (TODO 196g): the failing steps of a test log (browser test `[shard n/m] FAIL <step>`, node:test spec `✖ <name> (<ms>)`), each with its first 3 `+` / `-` assertion lines; ANSI stripped, at most 40 lines.
 export function failLines(text, log) {
   const out = [];
   let left = 0;
-  for (const line of text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/)) {
-    const name = /^\s*FAIL (.+?)\s*$/.exec(line) || /^\s*not ok \d+ - (.+?)\s*$/.exec(line);
+  const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/);
+  const summary = lines.findIndex((l) => /^\s*✖ failing tests:/.test(l)); // the spec reporter repeats every failure under it, now with its error: read those, not the inline ✖ lines
+  for (const [i, line] of lines.entries()) {
+    if (i === summary) { left = 0; continue; }
+    const name = /^(?:\[shard \d+\/\d+\] )?FAIL (.+?)\s*$/.exec(line) || (i > summary && /^\s*✖ (.+?)(?: \(\d[\d.]*ms\))?\s*$/.exec(line));
     if (name) { out.push(name[1]); left = 3; } else if (left && /^\s*[+-] (?!actual - expected)\S/.test(line)) { out.push(line.trim()); left--; }
   }
-  return out.length ? out.slice(0, 40) : [`no failures in ${log}`];
+  if (out.length) return out.slice(0, 40);
+  const red = /^SUITE unit=(\d+) browser=(\d+)\s*$/m.exec(text);
+  return [red && (red[1] !== '0' || red[2] !== '0') ? `red (unit=${red[1]} browser=${red[2]}) but no failing step lines found in ${log}` : `no failures in ${log}`];
 }
 
 // `handover <resume file> <name>` (TODO 196g): writes rook-next.txt (uuid, name, resume file) for `next`; refused when the resume file is missing or its line 2 lacks the grilling + domain-modeling rule. Returns the 3 lines.
@@ -232,6 +237,8 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID()) {
   try { text = readFileSync(resume, 'utf8'); } catch { throw new Error(`refused: ${resume} is missing`); }
   const line2 = text.split(/\r?\n/)[1] || '';
   if (!line2.includes('mattpocock-skills:grilling') || !line2.includes('mattpocock-skills:domain-modeling')) throw new Error(`refused: line 2 of ${resume} lacks mattpocock-skills:grilling and mattpocock-skills:domain-modeling`);
+  if (!/runs\d+/.test(resume)) throw new Error(`refused: ${resume} has no runs<N> folder (the handover gate needs runs<N>/resume-rook.txt)`);
+  if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} has no merge-due.log line (next needs it)`);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];
   writeFileSync(`${extras}/rook-next.txt`, lines.join('\n') + '\n');
   return lines.join('\n');
@@ -336,7 +343,10 @@ if (cmd === 'result') {
   try { console.log(failLines(readFileSync(arg, 'utf8'), arg).join('\n')); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'handover') {
-  try { console.log(handover(...process.argv.slice(3))); }
+  try {
+    if (process.argv.length > 5) throw new Error('usage: node tools/rook.mjs handover <resume file> <name> (2 arguments; quote a name with spaces)');
+    console.log(handover(process.argv[3], process.argv[4]));
+  }
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'wait') {
   wait(process.argv.slice(3));
