@@ -30,6 +30,10 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Join**: Merges several selected objects whose ends touch, or collinear lines / same-circle arcs, into one object, which takes the first object's properties. Where: `DECISIONS.md`, Break and Join. Avoid: Join gaps, which only moves nearby ends together and leaves the objects separate.
 
+**Lengthen**: Changes the length of one open line, arc or polyline at the end nearest the pick, by an amount, a percent, a total or a drag; the far end stays. Where: `DECISIONS.md`, Lengthen and Chamfer. Avoid: Extend (grows to a boundary edge); the grip option Lengthen (one grip, same result).
+
+**Chamfer**: Joins two straight lines (or every straight corner of a polyline) with a straight bevel set back by two distances, or a length and an angle, trimming or extending the lines to it. Where: `DECISIONS.md`, Lengthen and Chamfer. Avoid: Fillet (a round corner); Join gaps' Chamfer method (bridges tiny gaps only).
+
 **Break Apart**: Separates one selected layout group into ungrouped outlines, or an outline-only drawing block into its members one level down, keeping their placement and layers. Results stay selected; one Undo restores the object and selection. Modify menu, Ctrl+K or `BREAKAPART`. Where: `web/breakapart.js`, `web/app.js`. Avoid: Explode, which also splits polylines into lines and arcs.
 
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
