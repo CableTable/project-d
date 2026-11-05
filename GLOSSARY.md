@@ -166,6 +166,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Properties**: The panel for inspecting or changing selected objects' layer, colour, line type, outline width and supported shape values. Where: `TODO.md`, item 24; `DECISIONS.md`, Line width.
 
 **Ribbon**: The grouped commands below the menu and document tabs. Its tabs follow the active document kind. Full shows icons and labels; Panel titles shows group names; Tab names shows only tabs. Folded commands open over the canvas. Where: `web/ribbon.js`, `web/app.js`; `DECISIONS.md`, R19 pick: Option A.
+**Ribbon panel**: One titled group of commands on a ribbon tab, such as Draw or Modify on Home; each panel appears at most once per ribbon tab. Where: `web/app.js`. Avoid: Properties panel (the side panel).
 
 **Recovery**: Offers local copies of unsaved tabs after an interrupted run, with copies removed after a successful save or clean close. Where: `DECISIONS.md`, Autosave and recovery and Recovery after a clean close. Avoid: A backup of original files.
 
