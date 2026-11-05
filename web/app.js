@@ -1494,6 +1494,9 @@ function buildCanvas() {
   ui.grips = s('svg', { 'aria-hidden': 'true', style: 'position:absolute;inset:0', preserveAspectRatio: 'none' });
   ui.ovlWrap = h('div', { class: 'ovl' }, ui.ovl, ui.grips);
   ui.tip = h('div', { class: 'drawtip', hidden: true, 'data-testid': 'draw-tip' });
+  ui.keepMeas = h('button', { class: 'btn sm', type: 'button', 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
+  ui.measText = h('span', { 'data-testid': 'meas-tag-text' });
+  ui.measTag = h('div', { class: 'drawtip dynamic-input meas-tag', hidden: true, 'data-testid': 'meas-tag' }, ui.measText, ui.keepMeas);
   ui.dynamicTrack = h('div', { class: 'dynamic-track', hidden: true });
   ui.cursorFields = {};
   ui.dynamicFields = h('div', { class: 'cursor-fields' }, [['length', 'Length'], ['angle', 'Angle'], ['dx', 'Δx'], ['dy', 'Δy']].map(([key, label]) => {
@@ -1519,7 +1522,7 @@ function buildCanvas() {
     placeTextEditor();
   });
   ui.textArea.addEventListener('blur', () => { if (state.text.ed) textCommit(); });
-  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
+  ui.canvas = h('div', { class: 'canvas', 'data-testid': 'canvas' }, ui.svg, ui.gridDisplay, ui.dcanvas, ui.ovlWrap, ui.tip, ui.measTag,ui.textHint, ui.textEd, ui.rubber, ui.dropHint, ui.picker, ui.bgPicker, ui.rulerTop, ui.rulerLeft, ui.rulerCorner, ui.guideTip, ui.contourPanel = buildContourPanel(), ui.balPic, ui.balSheets,
     h('div', { class: 'canvas-notices' }, ui.cmdUI.fade, ui.gripHint, ui.matchHint, ui.hintPill), ui.cmdUI.drawer, ui.cmdUI.bar,
     h('div', { class: 'zoombox' },
       h('button', { class: 'tog', type: 'button', 'aria-label': 'Zoom out', onclick: () => zoomBy(1 / 1.25) }, domIcon('minus', 12)),
@@ -3881,9 +3884,8 @@ function objMenu(e) {
 function buildCommand() {
   ui.cmdUI = buildCmdUI({ commands: () => ownCommands, tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(ownCommands.find((x) => x.name === name)), canvas: () => ui.canvas, previewBounds, say: note });
   ui.hist = ui.cmdUI.hist; ui.prompt = ui.cmdUI.prompt; ui.cmd = ui.cmdUI.input;
-  ui.keepMeas = h('button', { class: 'btn sm', type: 'button', hidden: true, 'data-testid': 'meas-keep', title: 'Keep this measure as a dimension (Enter)', onclick: keepMeasure }, 'Keep');
   ui.modAsk = h('span', { hidden: true, class: 'modask' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-yes', onclick: () => { if (modLive() || layModLive()) modAnswer(editable() || curDoc(), true); } }, 'Yes'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-no', onclick: () => { if (modLive() || layModLive()) modAnswer(editable() || curDoc(), false); } }, 'No'));
-  ui.cmdUI.acts.append(ui.keepMeas, ui.modAsk);
+  ui.cmdUI.acts.append(ui.modAsk);
   return ui.cmdUI.log;
 }
 /** A command is on (a tool, a grip, a rotate, …): its name and what it asks for, for the bar. Null when nothing is running. */
@@ -4438,7 +4440,7 @@ function previewBounds() {
     if (r.width || r.height) bounds = unionBox(bounds, [r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
   const boxes = bounds ? [bounds] : [];
-  for (const el of [ui.tip, ...ui.tip.querySelectorAll('label.on-drawing')]) {       // the cursor tag and its Length / Angle boxes lying on the drawing
+  for (const el of [ui.tip, ui.measTag, ...ui.tip.querySelectorAll('label.on-drawing')]) {       // the cursor tag, the Measure tag and the Length / Angle boxes lying on the drawing
     const r = el.getBoundingClientRect();
     if (r.width || r.height) boxes.push([r.left - canvas.left, r.top - canvas.top, r.right - canvas.left, r.bottom - canvas.top]);
   }
@@ -4648,7 +4650,7 @@ function attachCanvasEvents() {
     zoomAt(Math.exp(-e.deltaY * 0.0015), p.x, p.y, true);
   }, { passive: false });
   c.addEventListener('pointerdown', (e) => {
-    if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic')) return;
+    if (e.target.closest('.zoombox, .contourpanel, .preflightpanel, .balsheets, .balpic, .meas-tag')) return;
     if (state.eatteditAsk && e.button === 0) { attributePick(e, true); e.preventDefault(); return; }
     if (state.orthoAsk || state.attdispAsk) return;
     if (e.button === 0 && state.zwin) { lrub = { x: e.clientX, y: e.clientY, moved: false, zoom: true }; capture(c, e); return; }       // Zoom Window: the left button drags the box
@@ -4833,7 +4835,7 @@ function renderCommand() {
   if (state.orthoAsk) { ui.hist.textContent = 'Command: ORTHO'; ui.prompt.textContent = activeCmd().prompt; return; }
   const cycling = selectionCycle && state.msg === `${selectionCycle.index + 1} of ${selectionCycle.hits.length} objects here`;
   ui.cmdUI.status(cycling ? state.msg : '');
-  if (ui.keepMeas) ui.keepMeas.hidden = !(state.meas && state.meas.pts.length === 2 && !cmpDoc() && editable());
+  measTagPlace();
   if (ui.modAsk) ui.modAsk.hidden = !((modLive() || layModLive()) && (state.mod.kind === 'mirror' && state.mod.stage === 'erase' || state.mod.kind === 'align' && state.mod.stage === 'scale'));
   const cm = cmpDoc();
   if (cm && state.tool === 'select' && !state.grip && !state.drawingRotate && !state.guideDrag) { cmpCommand(cm.cmp); return; }
@@ -5874,7 +5876,7 @@ function measurePoint(d, p, shift = false, typed = false) {
     M.result = Ed.measureTwo(M.pts[0], M.pts[1], d.lay ? 1 : d.factor);
     note(Ed.formatMeasure(M.result));
   }
-  paintOverlay();
+  measTagPlace(); paintOverlay();                           // the tag at once, not a frame later
 }
 /** Keeps the measure on screen as a dimension on the layer "Dimensions" (line, arrowheads, the length in mm). */
 function keepMeasure() {
@@ -6863,6 +6865,20 @@ function drawTyped(raw) {
   return true;
 }
 
+/** The Measure tag: the readout and Keep beside the middle of the measured line (by the second point when the line is under 40 px); hidden when the measure is clear. */
+function measTagPlace() {
+  const M = state.tool === 'measure' && state.meas, d = M && M.pts.length === 2 && measureTarget(), t = ui.measTag;
+  t.hidden = !d;
+  if (!d) return;
+  ui.keepMeas.hidden = !!cmpDoc() || !editable();
+  ui.measText.textContent = Ed.formatMeasure(M.result);
+  const f = d.lay ? 1 : d.factor, [a, b] = M.pts.map((p) => [(p[0] * f - view.ox) * view.scale, (state.sheetH - p[1] * f - view.oy) * view.scale]);
+  const r = canvasSize(), size = [t.offsetWidth, t.offsetHeight], at = DR.dynamicInputPlacement(a, b, r, { length: size, angle: size }, 'tag');
+  let x = at ? at.length[0] - size[0] / 2 : b[0] + 16, y = at ? at.length[1] - size[1] / 2 : b[1] + 16;
+  if (!at) { if (x + size[0] > r.w - 4) x = b[0] - 16 - size[0]; if (y + size[1] > r.h - 4) y = b[1] - 16 - size[1]; }
+  t.style.left = Math.max(4, Math.min(x, r.w - size[0] - 4)) + 'px'; t.style.top = Math.max(4, Math.min(y, r.h - size[1] - 4)) + 'px';
+}
+
 /** The overlay over the drawing: the shape being drawn, its helper lines and the readout. */
 function drawOvl(paint = false) {
   if (!ui.ovl) return;
@@ -6918,6 +6934,7 @@ function drawOvl(paint = false) {
   if (tip && item && !state.grip && !state.text.drag) { tip.x += item.offset[0]; tip.y += item.offset[1]; }
   ui.ovl.replaceChildren(...out);
   ui.grips.replaceChildren(...grips);
+  measTagPlace();
   if (ui.gripHint) {
     const gh = d && (d.lay ? gd : d), grips = gh && gripOn(gh) ? gripList(gh) : [];
     ui.gripHint.hidden = !grips.length;

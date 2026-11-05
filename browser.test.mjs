@@ -5597,6 +5597,75 @@ try {
     await page.locator('[data-tool=step]').click();
   });
 
+  await step('TODO 131: Measure tag beside the line', async () => {
+    const tag = t('meas-tag'), entities = () => t('entities').textContent();
+    const gapToTag = async (a, b) => {                                   // pixels from the measured line to the nearest corner of the tag, across the line
+      const r = await tag.boundingBox(), len = Math.hypot(b.x - a.x, b.y - a.y);
+      const side = [[r.x, r.y], [r.x + r.width, r.y], [r.x, r.y + r.height], [r.x + r.width, r.y + r.height]].map(([x, y]) => ((b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x)) / len);
+      return side.every((v) => v > 0) || side.every((v) => v < 0) ? Math.min(...side.map(Math.abs)) : -1;
+    };
+    await t('picker').setInputFiles('fixtures/outline.dxf');
+    await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
+    await page.locator('[data-tool=measure]').click();
+    assert.equal(await tag.isVisible(), false, 'no tag before two points');
+    await click(50, 20);
+    assert.equal(await tag.isVisible(), false, 'no tag after one point');
+    await click(80, 40);
+    await tag.waitFor({ state: 'visible', timeout: 5000 });
+    assert.match(await t('meas-tag-text').textContent(), /Distance 36\.06 mm   ΔX 30   ΔY 20   Angle 33\.69°/);
+    await page.waitForFunction(() => /Distance 36\.06 mm/.test(document.querySelector('[data-testid=cmd-prompt]').textContent));   // the command bar keeps the readout
+    const a = await at(50, 20), b = await at(80, 40), gap = await gapToTag(a, b);    assert.ok(gap >= 20 && gap <= 60, 'the tag sits about 24 px off the line middle, it is ' + gap);
+    assert.equal(await tag.evaluate((el) => getComputedStyle(el).pointerEvents), 'none');
+    assert.equal(await t('meas-keep').evaluate((el) => getComputedStyle(el).pointerEvents), 'auto');
+    await page.screenshot({ path: shotDir + '/todo131-measure-tag-light.png' });
+    await menuItem('View', 'Theme: dark'); await page.waitForTimeout(150);
+    await page.screenshot({ path: shotDir + '/todo131-measure-tag-dark.png' });
+    await menuItem('View', 'Theme: light');
+    const before = await tag.boundingBox(), box = await t('canvas').boundingBox();
+    await page.mouse.move(box.x + 100, box.y + 100); await page.mouse.wheel(0, -300);   // zoom in about a corner: the line moves
+    await page.waitForFunction(([x, y]) => { const r = document.querySelector('[data-testid=meas-tag]').getBoundingClientRect(); return Math.abs(r.x - x) > 1 || Math.abs(r.y - y) > 1; }, [before.x, before.y]);
+    const a2 = await at(50, 20), b2 = await at(80, 40), gap2 = await gapToTag(a2, b2);
+    assert.ok(gap2 >= 20 && gap2 <= 60, 'the tag follows a zoom, it is ' + gap2);
+    await tag.locator('[data-testid=meas-keep]').click();
+    await page.waitForFunction(() => document.querySelector('[data-testid=entities]').textContent.trim() === 'Entities 16');
+    await tag.waitFor({ state: 'hidden', timeout: 5000 });                // Keep hides the tag
+    await click(50, 20); await click(80, 40);                              // still zoomed in: these two are on screen
+    await tag.waitFor({ state: 'visible', timeout: 5000 });
+    await page.keyboard.press('Escape');
+    await tag.waitFor({ state: 'hidden', timeout: 5000 });                // Esc hides it
+    await click(50, 20); await click(80, 40);
+    await tag.waitFor({ state: 'visible', timeout: 5000 });
+    await page.locator('[data-tool=select]').click();
+    await tag.waitFor({ state: 'hidden', timeout: 5000 });                // a tool switch hides it
+    assert.equal((await entities()).trim(), 'Entities 16', 'only one dimension was kept');
+    // a layout: the readout, no Keep
+    const raw = newDoc(4);
+    addEntities(raw, [dxfPoly([[10, 20], [50, 20], [50, 40], [10, 40]], true), dxfCircle(30, 30, 4)]);
+    const lay = newLayout('Measure tag layout');
+    Object.assign(lay.s, { sheetW: 400, sheetH: 300 });
+    lay.parts.p = makePart('p', 'Plate', raw, 1);
+    lay.placed = [{ partId: 'p', x: 80, y: 80, rot: 90, lock: true }];
+    await t('picker').setInputFiles({ name: 'measure-tag-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+    await page.waitForFunction(() => document.querySelector('.dtab.on').dataset.kind === 'layout');
+    const point = (x, y) => page.evaluate(([x, y]) => {
+      const sheet = document.querySelector('rect.sheet'), r = sheet.getBoundingClientRect();
+      const sc = r.width / +sheet.getAttribute('width'), H = +sheet.getAttribute('height');
+      return { x: r.x + x * sc, y: r.y + (H - y) * sc };
+    }, [x, y]);
+    await page.locator('[data-tool=measure]').click();
+    for (const [x, y] of [[60.2, 120.2], [199.8, 120.2]]) { const pt = await point(x, y); await page.mouse.click(pt.x, pt.y); }
+    await tag.waitFor({ state: 'visible', timeout: 5000 });
+    assert.match(await t('meas-tag-text').textContent(), /^Distance 139\.8 mm   ΔX 139\.8 /);
+    assert.equal(await t('meas-keep').isVisible(), false, 'no Keep on a layout');
+    await page.screenshot({ path: shotDir + '/todo131-measure-tag-layout.png' });
+    await page.locator('.tabs .dtab', { hasText: 'outline.dxf' }).click();
+    await tag.waitFor({ state: 'hidden', timeout: 5000 });                // a tab switch hides it
+    await page.locator('.tabs .dtab.on .x').click();
+    await page.locator('.tabs .dtab', { hasText: 'measure-tag-layout.dxf' }).locator('.x').click();
+    if (await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).count()) await page.locator('.tabs .dtab', { hasText: 'sample-copy.dxf' }).click();
+    await page.locator('[data-tool=step]').click();
+  });
+
   await step('Dimension tool, AutoCAD way: first point, second point, move the callout, third click places it (undoable, saved); select + drag moves it, the panel resizes its text', async () => {
     await t('picker').setInputFiles('fixtures/outline.dxf');
     await page.waitForFunction(() => document.querySelector('.tabs .dtab.on').textContent.startsWith('outline.dxf'));
