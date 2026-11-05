@@ -727,7 +727,7 @@ function ribbonContents(kind) {
     group('Dimensions', ribbonTool('dimension'), ribbonTool('leader'), ribbonTool('balloon'),
       stack(btn('Dimension style…', toolIcon('dimension'), showDimStyle, { small: true }))),
     group('Inspect', ribbonTool('measure'))];
-  if (ribbon.tab === 'Layout') return [ui.sheetSec, group('Inspect', ribbonTool('measure')), shaping()];
+  if (ribbon.tab === 'Layout') return [ui.sheetSec, group('Inspect', ribbonTool('measure'))];
   if (ribbon.tab === 'Part') return [ui.partRibbon];
   if (ribbon.tab === 'Compare') return [
     group('Snapshots · max 5', btn('Add tab', '<path d="M6 3h8l4 4v14H6zM14 3v4h4"/>', (e) => cmpChoose(e), { enabled: () => cmpDoc().cmp.items.length < CMP.MAX_ITEMS }),
@@ -740,7 +740,7 @@ function ribbonContents(kind) {
       onchange: (e) => { ui.cmpTol.value = e.target.value; ui.cmpTol.dispatchEvent(new Event('change')); e.target.value = ui.cmpTol.value; },
       onkeydown: (e) => { if (e.key === 'Enter') e.target.blur(); } })),
       btn('Show differences', EYE, () => { cmpDoc().cmp.show = !cmpDoc().cmp.show; update(); }, { small: true, pressed: () => cmpDoc().cmp.show }),
-      btn('Compare', '<rect x="3" y="6" width="12" height="13"/><rect x="9" y="5" width="12" height="13" stroke-dasharray="2 2"/>', () => cmpRun(cmpDoc()), { enabled: () => cmpDoc().cmp.items.filter((x) => x.checked).length >= 2 })), shaping()];
+      btn('Compare', '<rect x="3" y="6" width="12" height="13"/><rect x="9" y="5" width="12" height="13" stroke-dasharray="2 2"/>', () => cmpRun(cmpDoc()), { enabled: () => cmpDoc().cmp.items.filter((x) => x.checked).length >= 2 }))];
   const groups = [group('Clipboard', btn('Paste', paste, pasteSelection, { enabled: () => !!clipboard && (!!editable() || !!curLay()) }),
     stack(btn('Cut', TOOLS.find((t) => t.id === 'trim').svg, cutSelection, { small: true, enabled: () => !!editable()?.sel.size }),
       btn('Copy', copy, copySelection, { small: true, enabled: () => curLay() ? !!selItems().length : !!editable()?.sel.size }),

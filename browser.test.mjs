@@ -24457,11 +24457,9 @@ try {
     for (const kind of ['Compare', 'Layouts']) {
       if (kind === 'Layouts') await open97c(layoutRaw(shapingLayout97k()), 'shaping97k-ribbon-layout.dxf');
       await menu();
-      for (const tab of ['Home', kind === 'Layouts' ? 'Layout' : 'Compare']) {
-        await page.locator(`[data-ribbon-tab=${tab}]`).click();
-        assert.deepEqual(await buttons(), expected, `${kind} ${tab} matches Drawings`);
-        assert.equal(await shapingGroup97k().locator('button:disabled').count(), 0);
-      }
+      await page.locator('[data-ribbon-tab=Home]').click();
+      assert.deepEqual(await buttons(), expected, `${kind} Home matches Drawings`);
+      assert.equal(await shapingGroup97k().locator('button:disabled').count(), 0);
       await shapingGroup97k().scrollIntoViewIfNeeded();
       for (const theme of ['light', 'dark']) {
         await menuItem('View', 'Theme: ' + theme); await frames();
