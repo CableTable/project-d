@@ -4921,7 +4921,8 @@ function update(refit = false, dimNames) {
   placedNow = lay ? LD.placedAll(lay, layout) : [];
   for (const p of placedNow) p.off = PL.offSheet(lay.parts[p.partId], p, lay.s.sheetW, lay.s.sheetH);       // off the sheet: drawn in orange
   if (selLooseMany) {
-    const l = selLooseMany.map((i) => placedNow.findIndex((p) => p.src === 'loose' && p.i === i)).filter((k) => k >= 0);
+    curDoc().stretchSelection = null;
+    const l =selLooseMany.map((i) => placedNow.findIndex((p) => p.src === 'loose' && p.i === i)).filter((k) => k >= 0);
     selLooseMany = null;
     if (l.length) { state.sel = l[l.length - 1]; picksArr = l.length > 1 ? l : []; }
   }
@@ -7814,7 +7815,7 @@ function moveTo(d, q) {
     const again = copy && copyMode === 'Multiple' && m.stage !== 'displacement';
     if (again) { m.raw = d.raw.entities; m.placed = true; } else setTool('select');
     setSel(d, m.sel);
-    note(m.kind === 'stretch' ? m.lockMessage || 'Selection stretched. Ctrl+Z takes it back' : copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
+    note(m.kind === 'stretch' ? m.lockMessage || (changed ? 'Selection stretched. Ctrl+Z takes it back' : 'Nothing to stretch') : copy ? `Copy placed.${again ? ' Next target from the same base; Enter or Esc ends.' : ''} Ctrl+Z removes the last copy` : 'Selection moved. Ctrl+Z takes it back');
   } catch (err) { note(err.message); }
 }
 
@@ -7913,7 +7914,8 @@ function layMoveTo(d, q) {
   if (m.kind === 'stretch') {
     const r = layStretchResult(q), lay = d.lay, next = { ...lay, parts: { ...lay.parts }, placed: lay.placed.map((p) => ({ ...p })) };
     for (const [e, ent] of r.objects) if (!LD.objectReplace(next, r.view, e, ent, () => 'o' + uid())) { note('Stretch: object has no extents'); return; }
-    if (r.objects.length || r.parts.length) {
+    const changed = r.objects.length || r.parts.length;
+    if (changed) {
       const g = startGesture(d, 'Stretch'); gMark(g);
       lay.parts = next.parts; lay.placed = next.placed;
       const idxs = gLooseMany(g, r.parts.map(([x]) => x.i));
@@ -7921,7 +7923,7 @@ function layMoveTo(d, q) {
       gCommit(g);
     }
     if (m.stage === 'displacement') stretchDisplacement = [q[0] - m.p1[0], q[1] - m.p1[1]];
-    state.pointLast = q.slice(0, 2); d.stretchSelection = null; setTool('select'); update(); note(m.lockMessage || 'Selection stretched. Ctrl+Z takes it back'); return;
+    state.pointLast = q.slice(0, 2); d.stretchSelection = null; setTool('select'); update(); note(m.lockMessage || (changed ? 'Selection stretched. Ctrl+Z takes it back' : 'Nothing to stretch')); return;
   }
   const to = layResults(m, q)[0], r = editSelected((part, pl, c) => to[c.k], { copy, label });
   state.pointLast = q.slice(0, 2);

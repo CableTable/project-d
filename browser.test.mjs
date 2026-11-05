@@ -23635,6 +23635,26 @@ try {
     assert.deepEqual([fieldOf(circle, 10), fieldOf(circle, 20)], [360, 115], 'stretched source remains editable'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  await step('TODO 97g2: Layouts a moved selection drops its crossing box and a box that changes nothing says Nothing to stretch', async () => {
+    const input = doc97g2(), lay = newLayout('Stretch layout');
+    input.entities.forEach((e, i) => { lay.parts['o' + i] = objectPart('o' + i, 'Object ' + i, e, input.layers); });
+    lay.placed = Object.values(lay.parts).map(objectPlacement);
+    const partRaw = newDoc(4); addEntities(partRaw, dxfPoly([[0, 0], [40, 0], [40, 40], [0, 40]], { closed: true }));
+    lay.parts.part = makePart('part', 'Placed part', partRaw, 1); lay.placed.push({ partId: 'part', x: 450, y: 100, rot: 0, mirrorX: false, mirrorY: false });
+    await open97c(layoutRaw(lay), 'layout97g2-copy.dxf'); await clear97g2();
+    await drag97d(210, 110, 190, 90); await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,300');
+    const lines = async () => lineEnds97c(objectDoc(layoutFromRaw(await savedDoc())).raw);
+    const moved = await lines(); assert.ok(moved.map(String).includes('100,400,200,400'), 'the line is 300 mm up');
+    await typeCmd('str'); assert.equal(await prompt(), base97g2); await typeCmd('D'); await typeCmd('10,5');
+    const key = (l) => l.map(String).sort(), want = moved.map((l) => l.join() === '100,400,200,400' ? [110, 405, 210, 405] : l);
+    assert.deepEqual(key(await lines()), key(want), 'the moved line stretches whole: its old crossing box is gone');
+    await key97c('Control+z'); await clear97g2();
+    const hist = (await histLabels()).length;
+    await typeCmd('stretch'); await drag97d(500, 130, 480, 110); await displacement97g2('box cutting the part');
+    assert.match(await prompt(), /Nothing to stretch/); assert.equal((await histLabels()).length, hist, 'no undo step');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97g2: Compare crossing line and polyline, circle, displacement, locked layer, Undo and source edit', async () => {
     const input = doc97g2(); addLayer(input, 'Locked'); addEntities(input, dxfLine(100, 140, 200, 140, { layer: 'Locked' }));
     await open97c(input, 'compare97g2.dxf'); const before = (await savedDoc()).entities;
