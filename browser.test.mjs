@@ -22717,6 +22717,10 @@ try {
       await page.screenshot({ path: `${shotDir}/97b-locked-${theme}.png` });
     }
     await menuItem('View', 'Theme: light');
+    const locked = 'Layer Locked member is locked: unlock it in the Objects tab to pick this';
+    await drag97b([210, 120], [150, 90]); await waitSel('0 selected'); assert.equal(await prompt(), locked, 'crossing a group with a locked member says why');
+    await drag97b([215, 125], [240, 145]); assert.match(await prompt(), /^0 entities inside the box/);
+    await drag97b([90, 170], [210, 90]); await waitSel('0 selected'); assert.equal(await prompt(), locked, 'a window round it says so too');
     assert.deepEqual(geometry97b(await savedDoc()), geometry97b(raw));
     await closeTabs(/./);
   });
@@ -23086,7 +23090,9 @@ try {
     await page.locator('.ribbon-body [data-panel=Modify]').getByRole('button', { name: 'Join', exact: true }).click();
     await click(140, 100); await click(260, 100); await key97c('Enter'); await key97c('Escape');
     const source = page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97d(?:-edited)*\.dxf$/ }) });
-    await source.click(); assert.equal((await savedDoc()).entities.length, 2); await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 3);
+    await source.click(); const joined = await savedDoc(); assert.equal(joined.entities.length, 2);
+    pickedLines97c(lineEnds97c(joined), [[100, 100, 300, 100], [100, 180, 300, 180]]);       // the source file holds the joined line once; the two pieces are gone
+    await key97c('Control+z'); assert.equal((await savedDoc()).entities.length, 3);
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
@@ -23103,6 +23109,20 @@ try {
     const placed = layoutFromRaw(await savedDoc()).placed;
     assert.equal(placed.length, 3, 'the locked line stayed');
     assert.deepEqual(placed.map((p) => [p.g || null, !!p.lock]), [['g1', false], [null, true], [null, false]], 'the result in the source place with its group, the locked line, the pad');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97d: on a layout the joined result is selected, not what the old picks now point at', async () => {
+    const lay = newLayout('Join sel'), layers = newDoc(4).layers;
+    lay.parts.p = objectPart('p', 'Pad', dxfLine(100, 300, 180, 300), layers);
+    lay.parts.a = objectPart('a', 'Left', dxfLine(100, 100, 180, 100), layers);
+    lay.parts.b = objectPart('b', 'Right', dxfLine(180, 100, 260, 100), layers);
+    lay.placed = [objectPlacement(lay.parts.p), objectPlacement(lay.parts.a), objectPlacement(lay.parts.b)];
+    await open97c(layoutRaw(lay), 'layout97d-sel.dxf');
+    await key97c('Escape'); await click(220, 100);       // Escape: the selection the step before left behind would take this click as a grip
+    await typeCmd('join'); await click(140, 100); await key97c('Enter');       // Right (placed third) is picked first, so it is the source
+    assert.match(await prompt(), /Joined 2 objects into 1 line/);
+    assert.equal(await t('pp-name').textContent(), 'Object 3', 'the result (placed second, named from its source) is the selection; the Pad (Object 1) is not');
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

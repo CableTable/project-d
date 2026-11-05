@@ -5561,9 +5561,12 @@ function selectConnected(d) {
 }
 /** A dragged window or crossing box, chosen by the screen drag direction. */
 function boxSelect(d, a, b, add, crossing) {
-  const inside = [...selectionOf(d.raw.groups, (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [a[0], a[1], b[0], b[1]]).filter((e) => !lockedEnt(d, e)), crossing)], next = new Set(add ? d.sel : []);
+  const hit = (crossing ? Ed.crossBox : Ed.inBox)(edIndex(d), [a[0], a[1], b[0], b[1]]), free = (e) => !lockedEnt(d, e), got = new Set(hit);
+  const inside = [...selectionOf(d.raw.groups, hit.filter(free), crossing, free)], next = new Set(add ? d.sel : []);
   for (const e of inside) next.add(e);
   setSel(d, next);
+  const held = d.raw.groups?.find((g) => g.selectable !== false && g.members.some((i) => !free(i)) && (crossing ? g.members.some((i) => got.has(i)) : g.members.every((i) => got.has(i))));       // a group with a member on a locked layer is not picked, as on a click
+  if (held && moveLocked(d, held.members, 'pick')) return;
   note(inside.length + (inside.length === 1 ? ' entity' : ' entities') + (crossing ? ' touching the box' : ' inside the box'));
 }
 function showRubber(drag, e) {
@@ -7959,7 +7962,8 @@ function joinRun(d, close = false) {
   view.fitted = false;
   if (!commit(d, { entities, groups: remapGroups(d.raw.groups, keep), blocks: d.raw.blocks, heir: source }, `Join ${gone.size}`)) return;       // heir: a layout's result takes the source's group, lock and place
   setTool('select');
-  if (!d.vlay) setSel(d, new Set([keep.get(at)[0]]));
+  if (d.vlay) { const i = layObjDoc(d.vlay).at.get(result); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && q.i === i ? [k] : []))); update(); }       // the old picks' indexes would point at other objects
+  else setSel(d, new Set([keep.get(at)[0]]));
   note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);
 }
 function breakPoint(d, p) {

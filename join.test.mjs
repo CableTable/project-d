@@ -87,6 +87,12 @@ test('TODO 97d fix: a hat profile joins all 5 lines (the chain beats the 2-line 
   assert.deepEqual(shapeOf(joinEntities([line(0, 0, 10, 0), line(20, 0, 30, 0)]).result), { t: 'line', a: [0, 0], b: [30, 0] });
 });
 
+test('TODO 97 Lows: an arc source also takes the chain when it joins more (2 same-circle arcs + a touching line = one polyline)', () => {
+  const { result, skipped } = joinEntities([arc(0, 0, 10, 0, 90), arc(0, 0, 10, 90, 180), line(-10, 0, -20, 0)]);
+  assert.equal(result.type, 'LWPOLYLINE'); assert.equal(skipped.length, 0);
+  assert.equal(joinEntities([arc(0, 0, 10, 0, 90), arc(0, 0, 10, 90, 180)]).result.type, 'ARC');       // a tie goes to the merge
+});
+
 test('TODO 97d fix: a line + arc D-shape is an open 3-vertex polyline (a closed 2-vertex one is not drawn by Offset), and Offset keeps both parts', () => {
   const d = joinEntities([line(0, 0, 10, 0), arc(5, 0, 5, 0, 180)]).result, s = shapeOf(d);
   assert.deepEqual([s.closed, s.pts.length], [false, 3]);
