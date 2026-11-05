@@ -1,8 +1,19 @@
-// arrange.js — pure: Align and Distribute for placed parts, and the groups they travel in (no DOM) — arrange.test.mjs.
+// arrange.js — pure: Align and Distribute for drawing objects, placed parts and their groups (no DOM) — arrange.test.mjs.
 //
 // Boxes are [x0, y0, x1, y1] in sheet mm, y up (what apply.js placedBox gives). A group is one object: its parts share a
 // `g` (a string) on their placements, and align and distribute move the group's parts together by the same amount.
 // Every function returns new numbers; nothing is changed in place.
+import { moveEntities } from './edit.js';
+
+/** Move drawing entities by their individual deltas, preserving Move's handling of blocks and dimensions. */
+export function moveByDeltas(raw, indexes, deltas) {
+  let next = raw;
+  indexes.forEach((i, k) => {
+    const { dx, dy } = deltas[k];
+    if (dx !== 0 || dy !== 0) next = { ...next, ...moveEntities(next, new Set([i]), dx, dy) };
+  });
+  return next;
+}
 
 export const ALIGN_HOW = ['left', 'centre', 'right', 'top', 'middle', 'bottom'];
 export const REL = ['selection', 'sheet', 'first'];

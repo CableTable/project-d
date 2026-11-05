@@ -3,10 +3,36 @@ import assert from 'node:assert/strict';
 import * as A from './web/arrange.js';
 import * as P from './web/place.js';
 import { placedBox, placement1 } from './web/apply.js';
+import { newDoc, addEntities, addBlock, entity, line } from './web/dxf-write.js';
 
 const near = (a, b, t = 1e-6) => assert.ok(Math.abs(a - b) <= t, a + ' != ' + b);
 let n = 0;
 function test(name, fn) { fn(); n++; console.log('ok', name); }
+
+test('drawing deltas move each object once, leave unselected objects and the source alone, and skip zero moves', () => {
+  const raw = newDoc(4);
+  addEntities(raw, line(10, 20, 30, 40), line(50, 60, 70, 80), line(90, 100, 110, 120));
+  const before = structuredClone(raw), zero = { dx: 0, dy: 0 };
+  assert.equal(A.moveByDeltas(raw, [0, 1], [zero, zero]), raw);
+  const next = A.moveByDeltas(raw, [1, 0], [{ dx: -40, dy: 5 }, { dx: 3, dy: -2 }]);
+  const point = (e) => [10, 20].map((c) => Number(e.r.v[e.r.c.indexOf(c)]));
+  assert.deepEqual(next.entities.map(point), [[13, 18], [10, 65], [90, 100]]);
+  assert.equal(next.entities[2], raw.entities[2]);
+  assert.deepEqual(raw, before);
+  assert.throws(() => A.moveByDeltas(raw, [0], [{ dx: NaN, dy: 0 }]), /finite/);
+});
+
+test('drawing deltas preserve successive edits to shared native dimension blocks', () => {
+  const raw = newDoc(4);
+  addBlock(raw, '*D1', [line(0, 0, 10, 0)]);
+  addEntities(raw, ...[0, 1].map(() => entity('DIMENSION', [[2, '*D1'], [10, 0], [20, 0], [11, 5], [21, 5], [13, 0], [23, 0], [14, 10], [24, 0]])));
+  const next = A.moveByDeltas(raw, [0, 1], [{ dx: 20, dy: 0 }, { dx: 40, dy: 0 }]);
+  const names = next.entities.map((e) => e.r.v[e.r.c.indexOf(2)]);
+  assert.notEqual(names[0], names[1]);
+  assert.deepEqual(names.map((name) => Number(next.blocks[name].entities[0].r.v[next.blocks[name].entities[0].r.c.indexOf(10)])), [20, 40]);
+  const original = raw.blocks['*D1'].entities[0].r;
+  assert.equal(Number(original.v[original.c.indexOf(10)]), 0);
+});
 
 // three boxes at different heights, as on the mock-up
 const B = [[90, 90, 390, 210], [480, 70, 590, 180], [740, 120, 900, 220]];

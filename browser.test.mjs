@@ -23981,6 +23981,148 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  const doc97i2 = () => {
+    const raw = newDoc(4);
+    addEntities(raw, dxfLine(100, 100, 180, 100), dxfLine(220, 180, 260, 220), dxfLine(320, 300, 380, 340));
+    return raw;
+  };
+  const layout97i2 = () => {
+    const lay = newLayout('Arrange 97i2'), raw = doc97i2();
+    raw.entities.forEach((e, i) => { const id = 'line' + i; lay.parts[id] = objectPart(id, 'Line ' + i, e, raw.layers); lay.placed.push(objectPlacement(lay.parts[id])); });
+    return lay;
+  };
+  const boxes97i2 = (raw) => raw.entities.filter((e) => e.type === 'LINE').map((e) => {
+    const [x, y, xx, yy] = [10, 20, 11, 21].map((c) => fieldOf(e, c));
+    return [Math.min(x, xx), Math.min(y, yy), Math.max(x, xx), Math.max(y, yy)];
+  });
+  await step('TODO 97i2: Drawings align left three lines, one Undo restores, no-op note and light/dark panel', async () => {
+    await open97c(doc97i2(), 'arrange97i2.dxf'); await key97c('Control+a');
+    assert.equal(await t('sec-arrange').isVisible(), true);
+    assert.deepEqual(await t('sec-arrange').locator('.section-body button').evaluateAll((bs) => bs.map((b) => b.getAttribute('aria-label'))),
+      ['Align left', 'Align centre', 'Align right', 'Align top', 'Align middle', 'Align bottom', 'Distribute horizontally', 'Distribute vertically']);
+    await t('arrange-rel').selectOption('selection');
+    mkdirSync('shots-97i2', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await t('arrange-rel').scrollIntoViewIfNeeded(); await frames();
+      await page.screenshot({ path: `shots-97i2/drawings-arrange-${theme}.png` });
+      assert.ok(readFileSync(`shots-97i2/drawings-arrange-${theme}.png`).length > 1000);
+    }
+    await menuItem('View', 'Theme: light');
+    const before = lineEnds97c(await savedDoc()), count = (await histLabels()).length;
+    await t('align-left').click();
+    assert.equal(await prompt(), '3 objects aligned left to the selection');
+    assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 100, 180, 100], [100, 180, 140, 220], [100, 300, 160, 340]]);
+    assert.equal((await histLabels()).at(-1), 'Align left');
+    assert.equal((await histLabels()).length, count + 1);
+    await t('align-left').click(); assert.equal(await prompt(), 'Already aligned (nothing moved)');
+    assert.equal((await histLabels()).length, count + 1);
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), before);
+    await key97c('Escape'); assert.equal(await t('sec-arrange').isVisible(), false);
+    await click(140, 100); await typeCmd('mv'); await click(100, 100); await click(110, 110);
+    pickedLines97c([lineEnds97c(await savedDoc())[0]], [[110, 110, 190, 110]]);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: Drawings distribute three circles horizontally, one Undo restores', async () => {
+    const raw = newDoc(4); addEntities(raw, dxfCircle(100, 100, 10), dxfCircle(150, 200, 20), dxfCircle(350, 300, 30));
+    await open97c(raw, 'distribute97i2.dxf'); await key97c('Control+a');
+    await t('arrange-rel').selectOption('selection');
+    const circles = async () => (await savedDoc()).entities.map((e) => [10, 20, 40].map((c) => fieldOf(e, c))), before = await circles();
+    await t('distribute-horizontal').click();
+    assert.equal(await prompt(), '3 objects distributed horizontally with equal gaps, gaps of 85.00 mm (the selection)');
+    const after = await circles();
+    assert.deepEqual(after, [[100, 100, 10], [215, 200, 20], [350, 300, 30]]);
+    assert.equal(after[1][0] - after[1][2] - after[0][0] - after[0][2], after[2][0] - after[2][2] - after[1][0] - after[1][2]);
+    assert.equal((await histLabels()).at(-1), 'Distribute horizontal');
+    await t('distribute-horizontal').click(); assert.equal(await prompt(), 'Already evenly spaced (nothing moved)');
+    await key97c('Control+z'); assert.deepEqual(await circles(), before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: Compare align top changes the source, one Undo restores', async () => {
+    await open97c(doc97i2(), 'compare97i2.dxf'); await typeCmd('compare'); await key97c('Control+a');
+    await t('arrange-rel').selectOption('selection'); await t('align-top').click();
+    assert.equal(await prompt(), '3 objects aligned top to the selection');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97i2(?:-edited)*\.dxf$/ }) }).click();
+    assert.deepEqual(boxes97i2(await savedDoc()).map((b) => b[3]), [340, 340, 340]);
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(doc97i2()));
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: Layouts align loose objects alone and with a placed part, one Undo restores', async () => {
+    const lay = layout97i2();
+    await open97c(layoutRaw(lay), 'layout97i2.dxf'); await key97c('Control+a');
+    await t('arrange-rel').selectOption('selection');
+    const before = await selBoxes(); await t('align-left').click();
+    assert.deepEqual((await selBoxes()).map((b) => b[0]), [100, 100, 100]);
+    await key97c('Control+z'); assert.deepEqual(await selBoxes(), before);
+    const plate = newDoc(4); addEntities(plate, dxfPoly([[0, 0], [50, 0], [50, 30], [0, 30]], { closed: true }));
+    lay.parts.plate = makePart('plate', 'Plate', plate); lay.placed.push({ partId: 'plate', x: 450, y: 400, rot: 0 });
+    await open97c(layoutRaw(lay), 'mixed97i2.dxf'); await key97c('Control+a');
+    const mixed = await selBoxes(); await t('align-left').click();
+    assert.deepEqual((await selBoxes()).map((b) => b[0]), [100, 100, 100, 100]);
+    assert.match(await prompt(), /^4 parts aligned left to the selection/);
+    await key97c('Control+z'); assert.deepEqual(await selBoxes(), mixed);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: Drawings Relative to has no Sheet and remembered Sheet falls back to Selection', async () => {
+    await open97c(layoutRaw(layout97i2()), 'relative97i2-layout.dxf'); await key97c('Control+a');
+    await t('arrange-rel').selectOption('sheet');
+    await open97c(doc97i2(), 'relative97i2.dxf'); await key97c('Control+a');
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected']);
+    assert.equal(await t('arrange-rel').inputValue(), 'selection');
+    await t('align-left').click();
+    assert.equal(await prompt(), '3 objects aligned left to the selection');
+    assert.deepEqual(boxes97i2(await savedDoc()).map((b) => b[0]), [100, 100, 100]);
+    await key97c('Control+z'); await t('arrange-rel').selectOption('first'); await t('align-right').click();
+    assert.equal(await prompt(), '3 objects aligned right to the first selected');
+    assert.deepEqual(lineEnds97c(await savedDoc()), [[100, 100, 180, 100], [140, 180, 180, 220], [120, 300, 180, 340]]);
+    await key97c('Control+z'); await typeCmd('compare'); await key97c('Control+a');
+    assert.deepEqual(await t('arrange-rel').locator('option').allTextContents(), ['Selection', 'First selected']);
+    await t('arrange-rel').selectOption('selection'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: a selected locked-layer object refuses the entire arrangement with Moves locked note', async () => {
+    const raw = newDoc(4); addLayer(raw, 'Locked');
+    addEntities(raw, dxfLine(100, 100, 200, 100), dxfLine(200, 100, 200, 200, { layer: 'Locked' }), dxfLine(200, 200, 100, 200), dxfLine(100, 200, 100, 100));
+    await open97c(raw, 'locked97i2.dxf');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    const before = lineEnds97c(await savedDoc()), history = await histLabels();
+    for (const button of ['align-left', 'distribute-horizontal']) {
+      await t(button).click(); assert.equal(await prompt(), 'Layer Locked is locked: unlock it in the Objects tab to align this');
+      assert.deepEqual(lineEnds97c(await savedDoc()), before); assert.deepEqual(await histLabels(), history);
+    }
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: drawing groups count as one object; full words and first letters arrange drawing selections', async () => {
+    const raw = doc97i2(); raw.entities[1] = dxfLine(220, 160, 260, 200);
+    await open97c(raw, 'words97i2.dxf'); await key97c('Control+a'); await t('arrange-rel').selectOption('selection');
+    const before = lineEnds97c(await savedDoc());
+    for (const [how, index, target] of [['left', 0, 100], ['centre', 0, 240], ['right', 2, 380], ['top', 3, 340], ['middle', 1, 220], ['bottom', 1, 100]]) {
+      for (const word of [how, how[0]]) {
+        await typeCmd(word);
+        assert.equal(await prompt(), `3 objects aligned ${how} to the selection`, word);
+        for (const b of boxes97i2(await savedDoc())) approx(how === 'centre' ? (b[0] + b[2]) / 2 : how === 'middle' ? (b[1] + b[3]) / 2 : b[index], target, .001, word);
+        await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), before);
+      }
+    }
+    for (const [how, axis] of [['horizontal', 0], ['vertical', 1]]) for (const word of [how, how[0]]) {
+      await typeCmd(word); assert.match(await prompt(), new RegExp(`^3 objects distributed ${how}ly`), word);
+      const b = boxes97i2(await savedDoc()).sort((a, b) => a[axis] - b[axis]);
+      approx(b[1][axis] - b[0][axis + 2], b[2][axis] - b[1][axis + 2], .001, word);
+      await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), before);
+    }
+    const grouped = doc97i2(); grouped.groups = [{ members: [0, 1], name: '', description: '', unnamed: true, selectable: true }];
+    await open97c(grouped, 'group97i2.dxf'); await key97c('Control+a'); await t('align-right').click();
+    assert.deepEqual(lineEnds97c(await savedDoc()), [[220, 100, 300, 100], [340, 180, 380, 220], [320, 300, 380, 340]]);
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(grouped));
+    await t('distribute-horizontal').click(); assert.equal(await prompt(), 'Distribute needs three or more objects (a group counts as one)');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
   for (const entry of expandNeeds(steps, only || '.*').filter(({ name }) => selectStep(name))) await runStep(page, entry, shotDir);
 } catch (e) {

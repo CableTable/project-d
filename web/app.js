@@ -2358,18 +2358,21 @@ function setPivotText(axis, text) {
   return '';
 }
 
-// ---- Arrange (TODO 36): align and distribute the selected parts; a group is one object ----
-/** Align (how: left, centre, right, top, middle, bottom) or distribute ('horizontal' / 'vertical': equal gaps) the selected parts, relative to the selection, the sheet or the first selected. */
+// ---- Arrange (TODO 36, TODO 97i2): a group is one object in every tab ----
+const ARRANGE_PROMPT = 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:';
+/** Align or distribute the selected objects, relative to the selection, the sheet or the first selected. */
 function arrange(kind, how) {
-  const items = selItems(), lay = curLay();
-  if (items.length < 2) { note('Arrange: select two or more parts first (Shift-click, or drag a box round them)'); return; }
-  if (items.some((x) => x.p.lock)) { note(LOCKED); return; }
-  const rel = state.arrangeRel, sheet = [0, 0, lay.s.sheetW, lay.s.sheetH];
-  const objs = A.objectsOf(items.map((x) => ({ g: x.p.g, box: boxOf(x) })));
+  const lay = curLay(), d = !lay && editable();
+  if (d && moveLocked(d, d.sel, 'align')) return;
+  const items = lay ? selItems().map((x) => ({ ...x, g: x.p.g, box: boxOf(x) })) : d ? [...d.sel].map((i) => ({ i, g: groupOf(d.raw.groups, i), box: OB.boxOf(d.fl, [i])?.map((v) => v * d.factor) })).filter((x) => x.box) : [];
+  if (items.length < 2) { note(lay ? 'Arrange: select two or more parts first (Shift-click, or drag a box round them)' : 'Arrange: select two or more objects first (Shift-click, or drag a box round them)'); return; }
+  if (lay && items.some((x) => x.p.lock)) { note(LOCKED); return; }
+  const rel = !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel, sheet = lay ? [0, 0, lay.s.sheetW, lay.s.sheetH] : null;
+  const objs = A.objectsOf(items);
   const boxes = objs.map((o) => o.box), relName = { selection: 'the selection', sheet: 'the sheet', first: 'the first selected' }[rel];
   let deltas, extra = '';
   if (kind === 'align') {
-    if (objs.length < 2 && rel !== 'sheet') { note('Align: that is one object (a group). Pick Relative to: Sheet, or select another part'); return; }
+    if (objs.length < 2 && rel !== 'sheet') { note(lay ? 'Align: that is one object (a group). Pick Relative to: Sheet, or select another part' : 'Align: that is one object (a group). Select another object'); return; }
     deltas = A.alignDeltas(boxes, how, rel, sheet, 0);
   } else {
     if (objs.length < 3) { note('Distribute needs three or more objects (a group counts as one)'); return; }
@@ -2377,12 +2380,26 @@ function arrange(kind, how) {
     deltas = r.deltas; extra = `, gaps of ${fmt(r.gap)} mm`;
   }
   const per = A.spreadToItems(objs, deltas, items.length);
-  const r = editSelected((part, pl, c) => PL.translate(pl, per[c.k].dx, per[c.k].dy), { label: kind === 'align' ? 'Align ' + how : 'Distribute ' + how });
+  const label = (kind === 'align' ? 'Align ' : 'Distribute ') + how;
+  const message = (name) => kind === 'align' ? `${name} aligned ${how} to ${relName}` : `${name} distributed ${how}ly with equal gaps${extra} (${relName})`;
+  if (d) {
+    try {
+      const next = A.moveByDeltas(d.raw, items.map((x) => x.i), per.map(({ dx, dy }) => ({ dx: dx / d.factor, dy: dy / d.factor })));
+      if (next === d.raw) { note('Already ' + (kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)'); return; }
+      const sel = new Set(d.sel);
+      view.fitted = false;
+      if (!commit(d, followDimensions(d.raw, next, d.factor), label, sel)) return;
+      setSel(d, sel);
+      note(message(`${objs.length} objects`));
+    } catch (err) { note(err.message); }
+    return;
+  }
+  const r = editSelected((part, pl, c) => PL.translate(pl, per[c.k].dx, per[c.k].dy), { label });
   if (!r) { note('Already ' + (kind === 'align' ? 'aligned' : 'evenly spaced') + ' (nothing moved)'); return; }
-  afterEdit(r, kind === 'align' ? `${r.name} aligned ${how} to ${relName}` : `${r.name} distributed ${how}ly with equal gaps${extra} (${relName})`);
+  afterEdit(r, message(r.name));
 }
 /** The Relative to select: Selection, Sheet or First selected (remembered for the session). */
-function setArrangeRel(v) { state.arrangeRel = A.REL.includes(v) ? v : 'selection'; renderProps(); }
+function setArrangeRel(v) { state.arrangeRel = A.REL.includes(v) ? v : 'selection'; renderProps(); renderEdit(); }
 
 // ---- Group, Ungroup, Lock, Unlock (TODO 37) ----
 /** Changes the flags (group, lock) of the selected parts, in one undo step: fn(placement) → the new placement. */
@@ -3873,6 +3890,7 @@ function activeCmd() {
   }
   if (state.orthoAsk) return { label: 'ORTHO', prompt: `Enter mode [ON/OFF] <${state.ortho ? 'ON' : 'OFF'}>:`, takes: (c) => ['on', 'off'].includes(c) };
   const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
+  if (!on && !curLay() && state.tool === 'select' && editable()?.sel.size > 1) return { label: 'SELECT', prompt: ARRANGE_PROMPT };
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
   return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes, endsOnSpace: dimAutoLive() };
@@ -3936,7 +3954,7 @@ function cmdEnter(raw) {
     if (c === 'copy' || c === 'c') { state.rotCopy = !state.rotCopy; renderCommand(); note(state.rotCopy ? 'Copy on: the angle you type now turns a copy, and the part stays' : 'Copy off'); return; }
     if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
   }
-  if (curLay() && selIdxs().length > 1) {                           // several selected: the words in the prompt
+  if ((curLay() ? selIdxs().length : editable()?.sel.size) > 1) {    // several selected: the words in the prompt
     const w = { left: 'left', l: 'left', centre: 'centre', center: 'centre', c: 'centre', right: 'right', r: 'right', top: 'top', t: 'top', middle: 'middle', m: 'middle', bottom: 'bottom', b: 'bottom', horizontal: 'horizontal', h: 'horizontal', vertical: 'vertical', v: 'vertical' }[c];
     if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
   }
@@ -4853,7 +4871,7 @@ function renderCommand() {
     : rs && state.lref ? `Angle: Specify the ${state.lref.step === 'ref' ? 'reference' : 'new'} angle <0>: (degrees)`
     : rs ? `Angle <${fmt(rs.p.rot)}>: ${state.rotCopy ? 'Copy on. ' : ''}[Pivot / Copy / Reference / Esc]:`
     : state.tool === 'contour' && (ed || lay) ? 'Option [Inside / Outside / Distance / Steps / Sharp / Rounded / Apply]:'
-    : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : 'Align or distribute [Left / Centre / Right / Top / Middle / Bottom / Horizontal / Vertical]:')
+    : nSel > 1 ? (wholeGroup() ? 'Command [Group / Ungroup / Lock / Unlock]:' : ARRANGE_PROMPT)
     : lay ? (gp
       ? (layout.count ? `${layout.count} ${word}${gridCellNote(layout) ? ' copies' : ` (${layout.cols} × ${layout.rows})`}, ${Math.round(layout.usedPct)}% of sheet${layout.fits ? '' : '. Does not fit the usable area'}. ${gridCellNote(layout) ? gridCellNote(layout) + '. ' : ''}[Apply / Rotate / Nest]:`
         : `${gridCellNote(layout) || (layout.taken ? 'All grid cells are already placed' : '0 fit: the part is larger than the usable area')}. [Apply / Rotate / Nest]:`)
@@ -10091,6 +10109,8 @@ function setSelect(sel, options, current) {
 }
 function renderPropsPanel(d) {
   const lay = curLay(), show = !!d || !!lay;
+  ui.placedSecs[1].hidden = state.panel === 'library' || (lay ? selIdxs().length : d?.sel.size || 0) < 2;
+  setSelect(ui.relSel, [['selection', 'Selection'], ...(lay ? [['sheet', 'Sheet']] : []), ['first', 'First selected']], !lay && state.arrangeRel === 'sheet' ? 'selection' : state.arrangeRel);
   ui.propSec.hidden = !show;
   if (!show) return;
   if (lay) d = propDoc();
