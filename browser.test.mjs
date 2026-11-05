@@ -24161,6 +24161,40 @@ try {
     await page.keyboard.press('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
+  await step('TODO 97 Lows 3: a full arrange word goes to the running Zoom Window / Fill command, not to the 3 selected', async () => {
+    await open97c(doc97i2(), 'running97lows3.dxf'); await key97c('Control+a'); await waitSel('3 selected');
+    const before = lineEnds97c(await savedDoc()), steps = (await histLabels()).length;
+    for (const start of ['zw', 'fill']) {
+      await typeCmd(start); await typeCmd('left');
+      assert.doesNotMatch(await prompt(), /aligned/, start);
+      assert.deepEqual(lineEnds97c(await savedDoc()), before, start); assert.equal((await histLabels()).length, steps, start);
+      await key97c('Escape'); await waitSel('3 selected');
+    }
+    await typeCmd('left'); assert.equal(await prompt(), '3 objects aligned left to the selection', 'idle: the word still arranges');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97 Lows 3: on a layout with 3 parts selected, H at the Linear Dimension prompt forces the dimension and distributes nothing', async () => {
+    await open97c(layoutRaw(layout97i2()), 'running97lows3-layout.dxf'); await key97c('Control+a');
+    const parts = await selBoxes(); assert.equal(parts.length, 3);
+    await typeCmd('dli'); await typeCmd('100,150'); await typeCmd('300,150');
+    assert.match(await prompt(), /\[Horizontal\/Vertical\]/);
+    await typeCmd('h'); assert.match(await prompt(), /Linear: horizontal/);
+    assert.deepEqual(await selBoxes(), parts, 'H did not distribute the three parts');
+    await key97c('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97 Lows 3: Align with part of the selection on a locked layer shows the locked note and goes on with the rest', async () => {
+    const raw = newDoc(4); addLayer(raw, 'Locked');
+    addEntities(raw, dxfLine(100, 100, 200, 100), dxfLine(200, 100, 200, 200, { layer: 'Locked' }), dxfLine(200, 200, 100, 200), dxfLine(100, 200, 100, 100));
+    await open97c(raw, 'align97lows3-locked.dxf');
+    await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    await t('ptab-drawing').click(); await t('outlines').locator('[data-outline="1"]').click(); await waitSel('4 selected');
+    await typeCmd('align'); await click(100, 100); await click(150, 150); await key97c('Enter');
+    assert.match(await prompt(), /Layer Locked is locked: unlock it in the Objects tab to align this\. Selection aligned/);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97i2: First selected aligns to the first picked when picked by Shift-click', async () => {
     await open97c(doc97i2(), 'first97i2.dxf');
     await click(350, 320); await click(140, 100, { shift: true }); await click(240, 200, { shift: true }); await waitSel('3 selected');
@@ -24434,7 +24468,8 @@ try {
     await open97c(layoutRaw(shapingLayout97k()), 'shaping97k-refused.dxf');
     const before = await layoutState97k(), labels = await histLabels();
     await key97c('Control+a');
-    await menuItem('Modify', 'Shaping: Trim');
+    await page.locator('[data-ribbon-tab=Home]').click();
+    await shapingGroup97k().getByRole('button', { name: 'Trim', exact: true }).click();
     assert.equal(await prompt(), 'Trim works on layout objects, not placed parts');
     assert.deepEqual(await layoutState97k(), before); assert.deepEqual(await histLabels(), labels);
     await closeTabs(/./); assert.deepEqual(errors, []);
