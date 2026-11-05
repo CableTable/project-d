@@ -23927,7 +23927,7 @@ try {
     await open97c(doc97i1(), 'screens97i1.dxf');
     for (const theme of ['light', 'dark']) {
       await menuItem('View', 'Theme: ' + theme); await page.locator('[data-ribbon-tab=Home]').click();
-      await click(150, 100); await typeCmd('align'); await click(100, 100);
+      await key97c('Control+a'); await typeCmd('align'); assert.equal(await prompt(), 'Specify first source point:'); await click(100, 100);
       const p = await at(170, 150); await page.mouse.move(p.x, p.y, { steps: 4 }); await frames();
       await page.screenshot({ path: `${shotDir}/todo97i1-align-${theme}.png` }); await key97c('Escape');
       await page.locator('.ribbon-body [data-panel=Modify] [data-testid=rotate-flyout]').click();
