@@ -57,7 +57,7 @@ import { breakEntity, breakAtPoint, breakWhy } from './break.js';
 import { lengthenEntity, lengthenInfo, lengthenWhy, CANNOT_LENGTHEN } from './lengthen.js';
 import { joinEntities, NO_TOUCH } from './join.js';
 import { reverse } from './reverse.js';
-import { alignTransform, alignMatrix, alignEntities, SAME_SRC, SAME_DST } from './align.js';
+import { alignTransform, alignMatrix, alignEntities, SAME_SRC, SAME_DST } from './align-points.js';
 import * as PR from './props.js';
 import { openQuickSelect } from './qselectdlg.js';
 import * as FI from './fill.js';
