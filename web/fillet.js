@@ -195,6 +195,11 @@ export function chamferEntities(e1, p1, e2, p2, d1, d2, trim = true, current = {
   const segs = [chamferSegment(e1, p1), chamferSegment(e2, p2)];
   const bad = segs.find((s) => s.error); if (bad) return bad;
   if (e1 === e2 && segs[0].index === segs[1].index) return { error: 'Pick two different lines or segments' };
+  const closed = (e) => e.type === 'LWPOLYLINE' && !!((get(e.r, 70) ?? 0) & 1), count = (e) => polyRecords(e).vertices.length;
+  if (e1 === e2) {
+    const [i, j] = [segs[0].index, segs[1].index], n = count(e1);
+    if (Math.abs(i - j) !== 1 && !(closed(e1) && ((i + 1) % n === j || (j + 1) % n === i))) return { error: 'Pick two adjacent segments of the same polyline' };
+  }
   const [a, b] = segs, v1 = sub(a.b, a.a), v2 = sub(b.b, b.a), n1 = Math.hypot(...v1), n2 = Math.hypot(...v2);
   if (n1 < EPS || n2 < EPS) return { error: 'A line has no length' };
   const den = cross(v1, v2);
@@ -216,6 +221,8 @@ export function chamferEntities(e1, p1, e2, p2, d1, d2, trim = true, current = {
   if (tips.flat().some((v) => !Number.isFinite(v)) || (d1 || d2) && dist(tips[0], tips[1]) < EPS ||
       trim && tips.some((p, i) => dist(p, sides[i].far ? segs[i].b : segs[i].a) < EPS)) return { error: 'Chamfer distance is too small for drawing precision' };
   const changes = segs.map((s, i) => ({ vertex: s.index == null ? null : (s.index + (sides[i].far ? 0 : 1)) % polyRecords(i ? e2 : e1).vertices.length, p: tips[i] }));
+  // Two objects: a polyline may only move the end vertex of an open polyline, else the next segment would bend.
+  if (trim && e1 !== e2 && [e1, e2].some((e, i) => e.type === 'LWPOLYLINE' && (closed(e) || ![0, count(e) - 1].includes(changes[i].vertex)))) return { error: 'Pick two adjacent segments of the same polyline; separate objects cannot be filleted to a polyline' };
   const replace = (e, edits) => {
     if (!trim) return e;
     if (e.type === 'LINE') {

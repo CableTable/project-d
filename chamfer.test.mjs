@@ -89,3 +89,16 @@ test('two picks on an open or closed polyline insert a straight bevel, including
     assert.equal(r.ents[0], e); assert.equal(r.ents[1].type, 'LINE');
   }
 });
+
+test('non-adjacent segments of one polyline and inner polyline vertices are refused, an open end works', () => {
+  const zig = lwpoly([[0, 0], [100, 0], [100, 10], [200, -50]]);
+  assert.equal(chamferEntities(zig, [50, 0], zig, [150, -20], 10, 10).error, 'Pick two adjacent segments of the same polyline');
+  const sq = lwpoly([[0, 0], [100, 0], [100, 100]], { closed: true });
+  assert.equal(chamferEntities(sq, [50, 0], sq, [50, 50], 10, 10).error, undefined, 'a closed polyline\'s last and first segments are neighbours');
+  const l = lwpoly([[0, 0], [100, 0], [100, 100]]), cut = line(120, -50, 120, 50);
+  const bad = chamferEntities(l, [50, 0], cut, [120, 0], 10, 10);
+  assert.match(bad.error, /separate objects/); assert.equal(bad.ents, undefined);
+  const end = lwpoly([[0, 0], [100, 0], [100, 100]]), c2 = line(-20, -50, -20, 50);
+  const ok = chamferEntities(end, [20, 0], c2, [-20, 20], 10, 10);
+  assert.deepEqual(lwVertices(ok.ents[0].r).map((v) => [v.x, v.y]), [[-10, 0], [100, 0], [100, 100]]);
+});
