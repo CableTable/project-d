@@ -51,7 +51,7 @@ import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
 import { rotateEntities, rotationAngle, rotationDragAngle, rotationMatrix, referenceTurn } from './rotate.js';
 import { scaleEntities, scaleFactor, scaleDistance, scaleMatrix, referenceFactor } from './scale.js';
-import { filletEntities, filletPolylineShape, filletAllPolyline, chamferEntities, chamferSegment } from './fillet.js';
+import { filletEntities, filletPolylineShape, filletAllPolyline, chamferEntities, chamferSegment, chamferAllPolyline } from './fillet.js';
 import { breakEntity, breakAtPoint, breakWhy } from './break.js';
 import { lengthenEntity, lengthenInfo, lengthenWhy, CANNOT_LENGTHEN } from './lengthen.js';
 import { joinEntities, NO_TOUCH } from './join.js';
@@ -7527,6 +7527,7 @@ function modUp(d, was, p, shift, crossing) {
   } else if (m.kind === 'chamfer') {
     if (m.ask) return;
     const ent = modEntAt(d, was.p);
+    if (m.stage === 'poly') { chamferPolyDo(d, ent); return; }
     if (!ent) { note('Chamfer: nothing there. Select a line or straight polyline segment'); return; }
     const segment = chamferSegment(ent, was.p);
     if (segment.error) { note(segment.error); return; }
@@ -8141,6 +8142,7 @@ function chamferPrompt(m) {
   if (m.ask === 'angle') return `Specify chamfer angle from the first line <${f(v.angle)}>:`;
   if (m.ask === 'method') return `Enter method [Distance/Angle] <${v.method}>:`;
   if (m.ask === 'trim') return `Enter Trim mode option [Trim/No trim] <${m.trim ? 'Trim' : 'No trim'}>:`;
+  if (m.stage === 'poly') return 'Select 2D polyline or [Distance/Angle/Method]:';
   return m.stage === 'second' ? 'Select second line or shift-select to apply corner or [Distance/Angle/Method]:'
     : 'Select first line or [Undo/Polyline/Distance/Angle/Trim/mEthod/Multiple]:';
 }
@@ -8168,11 +8170,11 @@ function chamferTyped(d, c) {
     }
   } else if (/^(d|distance)$/.test(c)) m.ask = 'd1';
   else if (/^(a|angle)$/.test(c)) m.ask = 'length';
-  else if (/^(e|method)$/.test(c)) m.ask = 'method';
+  else if (/^(e|method)$/.test(c) || m.stage === 'poly' && c === 'm') m.ask = 'method';
   else if (m.stage === 'obj' && /^(t|trim)$/.test(c)) m.ask = 'trim';
   else if (m.stage === 'obj' && /^(m|multiple)$/.test(c)) { m.multiple = true; note('Multiple is on'); return true; }
   else if (m.stage === 'obj' && /^(u|undo)$/.test(c)) { filletUndo(d); return true; }
-  else if (m.stage === 'obj' && /^(p|polyline)$/.test(c)) { note('Polyline comes in a later build'); return true; }
+  else if (m.stage === 'obj' && /^(p|polyline)$/.test(c)) m.stage = 'poly';
   else { note(chamferPrompt(m)); return true; }
   if (!m.ask) { try { localStorage.setItem(CHAMFER_SAVED, JSON.stringify(v)); } catch { /* applies this session */ } }
   note(m.ask ? chamferPrompt(m) : chamferSettings(m)); ui.cmdUI.message(state.msg); paintOverlay(); return true;
@@ -8197,6 +8199,16 @@ function chamferDo(d, ent, p, sharp) {
   if (!ok) { ui.cmdUI.message(state.msg); paintOverlay(); return; }
   if (!m.multiple) setTool('select');
   note(unchanged ? 'Already a sharp corner' : sharp ? 'Corner made' : 'Chamfered'); paintOverlay();
+}
+function chamferPolyDo(d, ent) {
+  const m = state.mod, v = m.values;
+  const r = chamferAllPolyline(ent, (v.method === 'Angle' ? v.length : v.d1) / d.factor,
+    v.method === 'Angle' ? v.angle : v.d2 / d.factor, m.trim, v.method);
+  if (r.error) { note(r.error); ui.cmdUI.message(state.msg); return; }
+  if ((r.ents[0] !== ent || r.ents.length > 1) && !filletCommit(d, [...d.raw.entities.map((e) => e === ent ? r.ents[0] : e), ...r.ents.slice(1)], remapGroups(d.raw.groups, new Map(d.raw.entities.map((_, i) => [i, [i]]))))) { ui.cmdUI.message(state.msg); paintOverlay(); return; }
+  m.stage = 'obj'; m.ent = null;
+  if (!m.multiple) setTool('select');
+  note(`${r.count} lines were chamfered` + (r.short ? `. ${r.short} were too short` : '')); ui.cmdUI.message(state.msg); paintOverlay();
 }
 /** Each pair or whole polyline is one history step, including when the history cap drops an older step. */
 function filletCommit(d, entities, groups) {

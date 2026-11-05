@@ -23347,7 +23347,7 @@ try {
   await step('TODO 97f1: Distance prompts, Trim geometry, Esc, one Undo, source edit and remembered values', async () => {
     await open97f1(); const before = (await savedDoc()).entities;
     await typeCmd('cha'); assert.match(await message97f1(), /\(TRIM mode\) Current chamfer Dist1 = 5\.0000, Dist2 = 5\.0000/);
-    assert.equal(await prompt(), first97f1); await typeCmd('p'); assert.match(await message97f1(), /Polyline comes in a later build/);
+    assert.equal(await prompt(), first97f1); await typeCmd('p'); assert.equal(await prompt(), 'Select 2D polyline or [Distance/Angle/Method]:'); await key97c('Escape');
     await typeCmd('d'); assert.equal(await prompt(), 'Specify first chamfer distance <5.0000>:');
     await typeCmd('10'); assert.equal(await prompt(), 'Specify second chamfer distance <10.0000>:'); await key97c('Enter');
     assert.equal(await prompt(), first97f1);
@@ -23447,6 +23447,91 @@ try {
     }
     for (const theme of ['light', 'dark']) for (const name of ['fillet-dropdown', 'chamfer-command']) assert.ok(readFileSync(`shots-97f1/${name}-${theme}.png`).length > 1000);
     await menuItem('View', 'Theme: light'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  const polyPrompt97f2 = 'Select 2D polyline or [Distance/Angle/Method]:';
+  const rect97f2 = (bulge = 0, attrs = {}) => dxfPoly([[100, 100, bulge], [200, 100], [200, 200], [100, 200]], { closed: true, ...attrs });
+  const doc97f2 = (...ents) => { const raw = newDoc(4); addEntities(raw, ...ents); return raw; };
+  const start97f2 = async (a = 5, b = 5) => { await typeCmd('cha'); await distance97f1(a, b); await typeCmd('p'); assert.equal(await prompt(), polyPrompt97f2); };
+
+  await step('TODO 97f2: closed rectangle, Esc, refusal, message screenshot, one Undo and source edit', async () => {
+    await open97f1(doc97f2(rect97f2(), dxfLine(300, 100, 400, 100), dxfPoly([[300, 200], [400, 200]])), 'poly97f2.dxf');
+    const before = (await savedDoc()).entities;
+    await start97f2(); await key97c('Escape'); assert.equal(await prompt(), first97f1);
+    assert.deepEqual((await savedDoc()).entities, before, 'Esc in Polyline mode changes nothing');
+    await typeCmd('p'); await click(350, 100); assert.match(await message97f1(), /Select a 2D LWPOLYLINE/);
+    assert.equal(await prompt(), polyPrompt97f2); await click(350, 200);
+    assert.equal(await prompt(), '0 lines were chamfered'); assert.deepEqual((await savedDoc()).entities, before);
+    await start97f2(); await click(150, 100);
+    assert.equal(await prompt(), '4 lines were chamfered');
+    assert.deepEqual(GR.shapeOf((await savedDoc()).entities[0]).pts, [[105, 100], [195, 100], [200, 105], [200, 195], [195, 200], [105, 200], [100, 195], [100, 105]]);
+    assert.equal((await histLabels()).at(-1), 'Chamfer');
+    await menuItem('View', 'Theme: light'); mkdirSync('shots-97f2', { recursive: true });
+    await page.screenshot({ path: 'shots-97f2/chamfer-polyline-message-light.png' });
+    assert.ok(readFileSync('shots-97f2/chamfer-polyline-message-light.png').length > 1000);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await start97f2(); await click(150, 100); await click(150, 100);
+    await typeCmd('move'); await typeCmd('0,0'); await typeCmd('0,20'); await key97c('Escape');
+    assert.deepEqual(GR.shapeOf((await savedDoc()).entities[0]).pts[0], [105, 120], 'chamfered source remains editable');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97f2: overlapping setbacks report two too short, No trim adds four LINEs', async () => {
+    const raw = doc97f2(rect97f2(0, { aci: 3, lt: 'CONTINUOUS' }));
+    await open97f1(raw, 'short97f2.dxf'); const before = (await savedDoc()).entities;
+    await start97f2(80, 80); await click(150, 100);
+    assert.equal(await prompt(), '2 lines were chamfered. 2 were too short');
+    assert.equal(GR.shapeOf((await savedDoc()).entities[0]).pts.length, 6);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await typeCmd('cha'); await typeCmd('t'); await typeCmd('no trim'); await distance97f1(5, 5); await typeCmd('p'); await click(150, 100);
+    assert.equal(await prompt(), '4 lines were chamfered');
+    const doc = await savedDoc(); assert.deepEqual(doc.entities[0], before[0]); assert.equal(doc.entities.length, 5);
+    for (const e of doc.entities.slice(1)) { assert.equal(e.type, 'LINE'); assert.equal(e.layer, before[0].layer); assert.equal(e.aci, 3); assert.equal(e.lt, 'CONTINUOUS'); }
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97f2: arc-side vertices skipped, Polyline Distance Angle and Method options', async () => {
+    await open97f1(doc97f2(rect97f2(.5)), 'arc97f2.dxf'); const before = (await savedDoc()).entities;
+    await typeCmd('cha'); await typeCmd('p'); await distance97f1(5, 5); assert.equal(await prompt(), polyPrompt97f2);
+    await typeCmd('a'); await typeCmd('10'); await typeCmd('30'); assert.equal(await prompt(), polyPrompt97f2);
+    await typeCmd('m'); assert.equal(await prompt(), 'Enter method [Distance/Angle] <Angle>:'); await typeCmd('Distance');
+    assert.equal(await prompt(), polyPrompt97f2); await typeCmd('Method'); await typeCmd('Angle');
+    assert.equal(await prompt(), polyPrompt97f2); await click(200, 150);
+    assert.equal(await prompt(), '2 lines were chamfered');
+    const pts = GR.lwVertices((await savedDoc()).entities[0].r);
+    assert.equal(pts.length, 6); assert.deepEqual(pts.slice(0, 2).map(({ x, y, b }) => [x, y, b]), [[100, 100, .5], [200, 100, 0]]);
+    assert.equal(pts[2].y, 190); assert.ok(Math.abs(pts[3].x - (200 - 10 * Math.tan(Math.PI / 6))) < 1e-6);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97f2: Layout Polyline uses Chamfer dropdown, refuses locked objects and undoes once', async () => {
+    const lay = newLayout('Polyline chamfer'), layers = newDoc(4).layers;
+    lay.parts.a = objectPart('a', 'Rectangle', rect97f2(), layers);
+    lay.parts.b = objectPart('b', 'Locked', dxfPoly([[300, 100], [400, 100], [400, 200], [300, 200]], { closed: true }), layers);
+    lay.placed = [objectPlacement(lay.parts.a), { ...objectPlacement(lay.parts.b), lock: true }];
+    await open97f1(layoutRaw(lay), 'layout97f2.dxf'); const before = (await savedDoc()).entities;
+    await dropdown97f1(); await distance97f1(5, 5); await typeCmd('p'); await click(350, 100);
+    assert.equal(await prompt(), polyPrompt97f2); assert.deepEqual((await savedDoc()).entities, before);
+    await click(150, 100); assert.equal(await prompt(), '4 lines were chamfered');
+    const doc = objectDoc(layoutFromRaw(await savedDoc())).raw;
+    assert.equal(GR.shapeOf(doc.entities[0]).pts.length, 8); assert.deepEqual(GR.shapeOf(doc.entities[1]), GR.shapeOf(lay.parts.b.raw.entities[0]));
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97f2: Compare Polyline edits its linked drawing and refuses locked layers', async () => {
+    const raw = doc97f2(rect97f2()); addLayer(raw, 'Locked');
+    addEntities(raw, dxfPoly([[300, 100], [400, 100], [400, 200], [300, 200]], { closed: true, layer: 'Locked' }));
+    await open97f1(raw, 'compare97f2.dxf'); await t('ptab-objects').click(); await page.locator('.or.layer[data-layer=Locked] [data-act=lock]').click();
+    const before = (await savedDoc()).entities;
+    await typeCmd('compare'); await dropdown97f1(); await distance97f1(5, 5); await typeCmd('p'); await click(350, 100);
+    assert.equal(await prompt(), polyPrompt97f2); await click(150, 100); assert.equal(await prompt(), '4 lines were chamfered');
+    await page.locator('.dtab').filter({ has: page.locator('.tname', { hasText: /^compare97f2(?:-edited)*\.dxf$/ }) }).click();
+    const doc = await savedDoc(); assert.equal(GR.shapeOf(doc.entities[0]).pts.length, 8); assert.deepEqual(doc.entities[1], before[1]);
+    await key97c('Control+z'); assert.deepEqual((await savedDoc()).entities, before);
+    await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });

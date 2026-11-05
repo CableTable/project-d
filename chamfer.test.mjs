@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chamferEntities, chamferSegment } from './web/fillet.js';
+import { chamferEntities, chamferSegment, chamferAllPolyline } from './web/fillet.js';
 import { line, lwpoly, arc, newDoc, addEntities, writeDxf } from './web/dxf-write.js';
 import { shapeOf, get, lwVertices } from './web/grips.js';
 import { readDxf } from './web/drawing.js';
@@ -101,4 +101,76 @@ test('non-adjacent segments of one polyline and inner polyline vertices are refu
   const end = lwpoly([[0, 0], [100, 0], [100, 100]]), c2 = line(-20, -50, -20, 50);
   const ok = chamferEntities(end, [20, 0], c2, [-20, 20], 10, 10);
   assert.deepEqual(lwVertices(ok.ents[0].r).map((v) => [v.x, v.y]), [[-10, 0], [100, 0], [100, 100]]);
+});
+
+const rect = (extra = {}) => lwpoly([[0, 0], [100, 0], [100, 100], [0, 100]], { closed: true, layer: 'Cut', aci: 3, lt: 'DASHED', width: 2, ...extra });
+const vertices = (e) => lwVertices(e.r).map((v) => [v.x, v.y, v.b]);
+
+test('Polyline chamfers open inner corners and preserves the end vertices', () => {
+  const e = rect({ closed: false }), before = structuredClone(e);
+  const r = chamferAllPolyline(e, 5, 10);
+  assert.equal(r.count, 2); assert.equal(r.short, 0); assert.equal(r.ents.length, 1);
+  assert.deepEqual(vertices(r.ents[0]), [[0, 0, 0], [95, 0, 0], [100, 10, 0], [100, 95, 0], [90, 100, 0], [0, 100, 0]]);
+  assert.deepEqual(e, before, 'source is unchanged');
+});
+
+test('Polyline includes the closing corner, preserves properties and round-trips eight straight vertices', () => {
+  const e = rect(), r = chamferAllPolyline(e, 5, 5), out = r.ents[0];
+  assert.equal(r.count, 4); assert.equal(r.short, 0);
+  assert.deepEqual(vertices(out), [[5, 0, 0], [95, 0, 0], [100, 5, 0], [100, 95, 0], [95, 100, 0], [5, 100, 0], [0, 95, 0], [0, 5, 0]]);
+  assert.equal(get(out.r, 70), 1); assert.equal(get(out.r, 90), 8); assert.equal(get(out.r, 43), 2);
+  assert.equal(out.layer, 'Cut'); assert.equal(out.aci, 3); assert.equal(out.lt, 'DASHED');
+  const raw = newDoc(4); addEntities(raw, out);
+  assert.deepEqual(vertices(readDxf(writeDxf(raw)).entities[0]), vertices(out));
+});
+
+test('Polyline skips both vertices next to an arc and preserves its bulge', () => {
+  const e = lwpoly([[0, 0, .5], [100, 0], [100, 100], [0, 100]], { closed: true });
+  const r = chamferAllPolyline(e, 5, 5);
+  assert.equal(r.count, 2); assert.equal(r.short, 0);
+  assert.deepEqual(vertices(r.ents[0]), [[0, 0, .5], [100, 0, 0], [100, 95, 0], [95, 100, 0], [5, 100, 0], [0, 95, 0]]);
+});
+
+test('Polyline reserves setbacks, counts overlaps and skips setbacks at or beyond an end', () => {
+  for (const trim of [true, false]) {
+    const r = chamferAllPolyline(rect(), 80, 80, trim);
+    assert.equal(r.count, 2); assert.equal(r.short, 2);
+    assert.equal(trim ? vertices(r.ents[0]).length : r.ents.length, trim ? 6 : 3);
+    for (const distance of [100, 101]) {
+      const e = rect(), tooBig = chamferAllPolyline(e, distance, 5, trim);
+      assert.equal(tooBig.count, 0); assert.equal(tooBig.short, 4); assert.deepEqual(tooBig.ents, [e]);
+    }
+  }
+});
+
+test('Polyline Angle measures from each incoming segment', () => {
+  const r = chamferAllPolyline(rect({ closed: false }), 10, 30, true, 'Angle');
+  assert.equal(r.count, 2); assert.equal(r.short, 0);
+  const pts = vertices(r.ents[0]);
+  point(pts[1].slice(0, 2), [90, 0]); point(pts[2].slice(0, 2), [100, 10 * Math.tan(Math.PI / 6)]);
+  point(pts[3].slice(0, 2), [100, 90]); point(pts[4].slice(0, 2), [100 - 10 * Math.tan(Math.PI / 6), 100]);
+});
+
+test('Polyline No trim keeps the source and adds LINEs with its layer and properties', () => {
+  const e = rect(), r = chamferAllPolyline(e, 5, 5, false);
+  assert.equal(r.count, 4); assert.equal(r.short, 0); assert.equal(r.ents[0], e); assert.equal(r.ents.length, 5);
+  for (const line of r.ents.slice(1)) {
+    assert.equal(line.type, 'LINE'); assert.equal(line.layer, 'Cut'); assert.equal(line.aci, 3); assert.equal(line.lt, 'DASHED');
+  }
+  point(shapeOf(r.ents.at(-1)).a, [0, 5]); point(shapeOf(r.ents.at(-1)).b, [5, 0]);
+});
+
+test('Polyline zero distances and unchamferable objects do not change geometry; invalid inputs refuse', () => {
+  const e = rect(), zero = chamferAllPolyline(e, 0, 0);
+  assert.equal(zero.count, 4); assert.deepEqual(zero.ents, [e]);
+  for (const poly of [lwpoly([[0, 0], [100, 0], [200, 0]]), lwpoly([[0, 0, 1], [100, 0, 1]], { closed: true })]) {
+    const r = chamferAllPolyline(poly, 5, 5);
+    assert.equal(r.count, 0); assert.equal(r.short, 0); assert.deepEqual(r.ents, [poly]);
+  }
+  assert.equal(chamferAllPolyline(a, 5, 5).error, 'Select a 2D LWPOLYLINE');
+  assert.match(chamferAllPolyline(e, NaN, 5).error, /0 or more/);
+  const flipped = { ...e, r: { ...e.r, c: [...e.r.c, 230], v: [...e.r.v, '-1'] } };
+  assert.deepEqual(vertices(chamferAllPolyline(flipped, 5, 5).ents[0]), vertices(chamferAllPolyline(e, 5, 5).ents[0]));
+  const tilted = { ...e, r: { ...e.r, c: [...e.r.c, 210], v: [...e.r.v, '1'] } };
+  assert.match(chamferAllPolyline(tilted, 5, 5).error, /drawing plane/);
 });

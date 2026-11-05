@@ -250,6 +250,44 @@ export function chamferEntities(e1, p1, e2, p2, d1, d2, trim = true, current = {
   return { ents };
 }
 
+/** P: reserve each accepted setback so neighbouring chamfers cannot overlap, also in No trim. */
+export function chamferAllPolyline(e, d1, d2, trim = true, method = 'Distance') {
+  if (e?.type !== 'LWPOLYLINE') return { error: 'Select a 2D LWPOLYLINE' };
+  if (![d1, d2].every((v) => Number.isFinite(v) && v >= 0)) return { error: 'Chamfer distances must be 0 or more' };
+  if (Math.abs(get(e.r, 210) ?? 0) > EPS || Math.abs(get(e.r, 220) ?? 0) > EPS) return { error: 'Chamfer needs a polyline in the drawing plane' };
+  const { header, vertices } = polyRecords(e), shape = filletPolylineShape(e), flip = (get(e.r, 230) ?? 1) < 0 ? -1 : 1;
+  const segs = shape.pts.slice(0, shape.closed ? shape.pts.length : -1).map((p, i) => ({
+    a: p.slice(0, 2), b: shape.pts[(i + 1) % shape.pts.length].slice(0, 2), bulge: p[2], record: vertices[i],
+  }));
+  let count = 0, short = 0;
+  const lines = [];
+  for (let i = 0; i < segs.length; i++) {
+    const a = segs[i], b = segs[shape.closed ? (i + 1) % segs.length : i + 1];
+    if (!b || a === b || a.bulge || b.bulge) continue;
+    const first = rebuilt({ t: 'line', a: a.a, b: a.b }, e), second = rebuilt({ t: 'line', a: b.a, b: b.b }, e);
+    const r = chamferEntities(first, a.a, second, b.b, d1, d2, true, e, method);
+    if (r.error) { if (r.error !== 'Lines are parallel') short++; continue; }
+    a.b = shapeOf(r.ents[0], 1).b; b.a = shapeOf(r.ents[1], 1).a;
+    count++;
+    if (r.ents[2]) { a.corner = true; lines.push(r.ents[2]); }
+  }
+  if (!trim) return { ents: [e, ...lines], count, short };
+  if (!lines.length) return { ents: [e], count, short };
+  const out = [];
+  for (const seg of segs) {
+    out.push(recordWith(seg.record, [[10, flip * seg.a[0]], [20, seg.a[1]]]));
+    if (seg.corner) {
+      const v = recordWith(seg.record, [[10, flip * seg.b[0]], [20, seg.b[1]], [42, 0]]);
+      const id = v.c.indexOf(91); if (id >= 0) { v.c.splice(id, 1); v.v.splice(id, 1); }
+      out.push(v);
+    }
+  }
+  if (!shape.closed) out.push(vertices.at(-1));
+  const next = recordWith(header, [[90, out.length]]);
+  for (const v of out) { next.c.push(...v.c); next.v.push(...v.v); }
+  return { ents: [{ ...e, r: next }], count, short };
+}
+
 // Keep raw vertex records so unrelated bulges, widths and vertex data survive the edit.
 function polyRecords(e) {
   if (e.type === 'POLYLINE') return { header: e.r, vertices: e.kids || [] };
