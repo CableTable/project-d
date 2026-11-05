@@ -405,6 +405,7 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
 2. 3D parts on OpenCascade: extrude, revolve, cut, hole, fillet and chamfer, with a feature history.
 3. Drawings from the model, saved as DXF and PDF.
 4. Assemblies, sheet metal and a bill of materials.
+5. **Adhesive profile from a 3D part** (his ask, 2026-11-06, after the N1 finisher pads were done by hand with Inventor + Python, scripts kept in `Project D extras/adhesive-profiles/tools/`). Open a STEP part, pick its bonding face, get a 2D DXF: pad outline (layer `PAD_OUTLINE`) + a closed adhesive line an offset inside it (layer `ADHESIVE`, default 3 mm), long side horizontal, in mm. Two ways to flatten, chosen by the face: (a) near-flat face (curved up to ~10°): grow the face set from the picked face through faces facing the same way, project its boundary square onto the picked face's plane; (b) curved sheet (e.g. a V-shaped swing-arm pad): unwrap (unfold) the bonding faces to their true flat size. The inward offset is our own (true distance, corners round off, splits into several loops at a neck narrower than 2x the offset; Inventor's sketch offset and thicken both failed inward on the frame pad). Self-checks: every adhesive point is the offset from the outline, a LH / RH mirror pair gives the same size and area. Opens in the Drawings tab for checking. Needs the 3D viewer (item 10 above) and OpenCascade (item 2).
 
 ## Small things noticed
 
