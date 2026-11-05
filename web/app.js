@@ -3890,7 +3890,6 @@ function activeCmd() {
   }
   if (state.orthoAsk) return { label: 'ORTHO', prompt: `Enter mode [ON/OFF] <${state.ortho ? 'ON' : 'OFF'}>:`, takes: (c) => ['on', 'off'].includes(c) };
   const on = !['select', 'pan', 'step'].includes(state.tool) || state.colourTool || state.setlen || state.grip || state.match || state.dsOpen || state.txoWait || state.zwin || (curLay() && state.mode === 'rotate');
-  if (!on && !curLay() && state.tool === 'select' && editable()?.sel.size > 1) return { label: 'SELECT', prompt: ARRANGE_PROMPT };
   if (!on) return null;
   const m = /^Command:\s*(\S+)/.exec(ui.hist.textContent);
   return { label: state.setlen ? 'SET LENGTH' : m ? m[1] : state.tool.toUpperCase(), prompt: ui.prompt.textContent.trim(), takes: modTakes, endsOnSpace: dimAutoLive() };
@@ -3955,7 +3954,8 @@ function cmdEnter(raw) {
     if (PL.parseAngle(c) != null) { const copy = state.rotCopy; state.rotCopy = false; const why = setAngleText(c, copy); if (why) note(why); return; }
   }
   if ((curLay() ? selIdxs().length : editable()?.sel.size) > 1) {    // several selected: the words in the prompt
-    const w = { left: 'left', l: 'left', centre: 'centre', center: 'centre', c: 'centre', right: 'right', r: 'right', top: 'top', t: 'top', middle: 'middle', m: 'middle', bottom: 'bottom', b: 'bottom', horizontal: 'horizontal', h: 'horizontal', vertical: 'vertical', v: 'vertical' }[c];
+    const w = { left: 'left', centre: 'centre', center: 'centre', right: 'right', top: 'top', middle: 'middle', bottom: 'bottom', horizontal: 'horizontal', vertical: 'vertical' }[c]
+      || (curLay() ? { l: 'left', c: 'centre', r: 'right', t: 'top', m: 'middle', b: 'bottom', h: 'horizontal', v: 'vertical' }[c] : null);   // single letters keep starting Line, Rectangle... on the drawing tabs
     if (w) { arrange(['horizontal', 'vertical'].includes(w) ? 'distribute' : 'align', w); return; }
   }
   if (state.tool === 'contour' && (editable() || curLay())) {           // the words in the Contour prompt

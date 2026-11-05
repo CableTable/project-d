@@ -24097,19 +24097,19 @@ try {
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
-  await step('TODO 97i2: drawing groups count as one object; full words and first letters arrange drawing selections', async () => {
+  await step('TODO 97i2: drawing groups count as one object; full words arrange drawing selections', async () => {
     const raw = doc97i2(); raw.entities[1] = dxfLine(220, 160, 260, 200);
     await open97c(raw, 'words97i2.dxf'); await key97c('Control+a'); await t('arrange-rel').selectOption('selection');
     const before = lineEnds97c(await savedDoc());
     for (const [how, index, target] of [['left', 0, 100], ['centre', 0, 240], ['right', 2, 380], ['top', 3, 340], ['middle', 1, 220], ['bottom', 1, 100]]) {
-      for (const word of [how, how[0]]) {
+      for (const word of [how]) {
         await typeCmd(word);
         assert.equal(await prompt(), `3 objects aligned ${how} to the selection`, word);
         for (const b of boxes97i2(await savedDoc())) approx(how === 'centre' ? (b[0] + b[2]) / 2 : how === 'middle' ? (b[1] + b[3]) / 2 : b[index], target, .001, word);
         await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), before);
       }
     }
-    for (const [how, axis] of [['horizontal', 0], ['vertical', 1]]) for (const word of [how, how[0]]) {
+    for (const [how, axis] of [['horizontal', 0], ['vertical', 1]]) for (const word of [how]) {
       await typeCmd(word); assert.match(await prompt(), new RegExp(`^3 objects distributed ${how}ly`), word);
       const b = boxes97i2(await savedDoc()).sort((a, b) => a[axis] - b[axis]);
       approx(b[1][axis] - b[0][axis + 2], b[2][axis] - b[1][axis + 2], .001, word);
@@ -24121,6 +24121,34 @@ try {
     await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(grouped));
     await t('distribute-horizontal').click(); assert.equal(await prompt(), 'Distribute needs three or more objects (a group counts as one)');
     await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: 2+ selected on Drawings is not a running command: Space repeats, Esc clears only the bar, l starts Line', async () => {
+    await open97c(doc97i2(), 'idle97i2.dxf');
+    await key97c('Control+a'); await waitSel('3 selected');
+    await typeCmd('circle'); await page.keyboard.press('Escape'); assert.equal(await toolChip(), 'Tool: Select');
+    await waitSel('3 selected');
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Circle');
+    assert.match(await t('cmd-fade').textContent(), /repeats CIRCLE/);
+    await page.keyboard.press('Escape'); assert.equal(await toolChip(), 'Tool: Select');
+    await key97c('Control+a'); await waitSel('3 selected');
+    await t('cmd-echo').click(); assert.equal(await barOn(), true);
+    await page.keyboard.press('Escape'); assert.equal(await barOn(), false);
+    await waitSel('3 selected');                                                 // Esc closed the bar only
+    await typeCmd('l');
+    await page.waitForFunction(() => document.querySelector('[data-testid=tool-chip]').textContent.trim() === 'Tool: Line');
+    await page.keyboard.press('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97i2: First selected aligns to the first picked when picked by Shift-click', async () => {
+    await open97c(doc97i2(), 'first97i2.dxf');
+    await click(350, 320); await click(140, 100, { shift: true }); await click(240, 200, { shift: true }); await waitSel('3 selected');
+    await t('arrange-rel').selectOption('first'); await t('align-left').click();
+    assert.equal(await prompt(), '3 objects aligned left to the first selected');
+    assert.deepEqual(boxes97i2(await savedDoc()).map((b) => b[0]), [320, 320, 320]);
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), lineEnds97c(doc97i2()));
+    await t('arrange-rel').selectOption('selection'); await closeTabs(/./); assert.deepEqual(errors, []);
   });
 
   await step('no console errors', async () => { assert.deepEqual(errors, []); });
