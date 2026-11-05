@@ -134,6 +134,7 @@ export async function nextRook({ read, exists, start, sleep, now, projects, own,
     let text = '';
     try { text = readFile(resolve(EXTRAS, resume)); } catch { /* reported below */ }
     if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} is missing or has no line "read the last line of ../Project D extras/merge-due.log first"`);
+    for (const need of ['select:Monitor,TaskStop', 'one ci-watch per push']) if (!text.includes(need)) throw new Error(`refused: ${resume} has no line containing "${need}"`); // TODO 198c
   }
   const seen = () => exists(`${projects}/${uuid}.jsonl`);
   if (seen()) return { code: 0, line: `NEXT ROOK ${uuid} already running` };
@@ -218,7 +219,7 @@ export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf
 export function failLines(text, log) {
   const out = [];
   let left = 0;
-  const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/);
+  const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map((l) => l.replace(/^\[shard \d+\/\d+\] /, '')); // the browser runner prefixes its error lines too
   const summary = lines.findIndex((l) => /^\s*✖ failing tests:/.test(l)); // the spec reporter repeats every failure under it, now with its error: read those, not the inline ✖ lines
   for (const [i, line] of lines.entries()) {
     if (i === summary) { left = 0; continue; }
@@ -237,12 +238,15 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID()) {
   try { text = readFileSync(resume, 'utf8'); } catch { throw new Error(`refused: ${resume} is missing`); }
   const line2 = text.split(/\r?\n/)[1] || '';
   if (!line2.includes('mattpocock-skills:grilling') || !line2.includes('mattpocock-skills:domain-modeling')) throw new Error(`refused: line 2 of ${resume} lacks mattpocock-skills:grilling and mattpocock-skills:domain-modeling`);
-  if (!/runs\d+/.test(resume)) throw new Error(`refused: ${resume} has no runs<N> folder (the handover gate needs runs<N>/resume-rook.txt)`);
+  if (!/runs\d+/.test(resolve(resume))) throw new Error(`refused: ${resume} has no runs<N> folder (the handover gate needs runs<N>/resume-rook.txt)`);
   if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} has no merge-due.log line (next needs it)`);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];
   writeFileSync(`${extras}/rook-next.txt`, lines.join('\n') + '\n');
   return lines.join('\n');
 }
+
+// The CLI guard of `handover`: '' for `node rook.mjs handover <resume> <name>`, else the usage line (an unquoted name makes 3 arguments).
+export const handoverArgsError = (argv) => argv.length > 5 ? 'usage: node tools/rook.mjs handover <resume file> <name> (2 arguments; quote a name with spaces)' : '';
 
 function main() {
 if (cmd === 'result') {
@@ -344,7 +348,8 @@ if (cmd === 'result') {
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'handover') {
   try {
-    if (process.argv.length > 5) throw new Error('usage: node tools/rook.mjs handover <resume file> <name> (2 arguments; quote a name with spaces)');
+    const bad = handoverArgsError(process.argv);
+    if (bad) throw new Error(bad);
     console.log(handover(process.argv[3], process.argv[4]));
   }
   catch (e) { console.error(e.message); process.exit(1); }

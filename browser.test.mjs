@@ -287,6 +287,36 @@ try {
       }
     } finally { await context.close(); }
   });
+  await step('ribbon: each panel once per tab', async () => { // TODO 198a: the tabs follow the active document kind, so a drawing, a layout (a part selected: Part tab) and a compare tab each get a pass
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' }); await q('new-tab').click();
+      const lay = newLayout('Panels 198'), raw = newDoc(4);
+      addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      lay.parts.plate = makePart('plate', 'Plate', raw);
+      lay.placed = [{ partId: 'plate', x: 200, y: 200, rot: 0 }];
+      await q('picker').setInputFiles({ name: 'panels198.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await p.locator('.dtab.on .tname').filter({ hasText: 'panels198.dxf' }).waitFor();
+      await p.keyboard.press('Control+a');
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await p.locator('.tabs .dtab').filter({ hasText: /Compare/ }).first().waitFor();
+      const seen = {};
+      for (const [kind, tabText] of [['drawing', /./], ['layout', /panels198/], ['compare', /Compare/]]) {
+        await p.locator('.tabs .dtab').filter({ hasText: tabText }).first().click(); // the first tab is the drawing
+        if (kind === 'layout') await p.keyboard.press('Control+a');
+        const names = await p.locator('[data-ribbon-tab]').evaluateAll((els) => els.map((e) => e.dataset.ribbonTab));
+        for (const name of names) {
+          await p.locator(`[data-ribbon-tab="${name}"]`).click();
+          const panels = await p.locator('.ribbon-body [data-panel]').evaluateAll((els) => els.map((e) => e.dataset.panel));
+          assert.ok(panels.length, `${kind} / ${name}: has panels`);
+          assert.deepEqual(panels.filter((x, i) => panels.indexOf(x) !== i), [], `${kind} / ${name}: a panel repeats`);
+          seen[kind] = (seen[kind] || 0) + 1;
+        }
+      }
+      assert.ok(seen.drawing >= 3 && seen.layout >= 4 && seen.compare >= 3, JSON.stringify(seen));    } finally { await context.close(); }
+  });
   await step('TODO 67a: sheet and gripper Alignment guides, SNAP, Alt, Shift, Esc and one-step undo', async () => {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
     try {
