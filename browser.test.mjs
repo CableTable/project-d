@@ -23061,6 +23061,22 @@ try {
     await key97c('Control+z'); await closeTabs(/./);
   });
 
+  await step('TODO 97 Lows: Ctrl+Z at Dynamic new end point goes back to the pick, a click or typed point adds no step', async () => {
+    await open97c(doc97e(), 'undo97lows.dxf');
+    await start97e('DY'); await click(195, 100); await click(230, 100); assert.equal(await prompt(), 'Select an object to change or [Undo]:');
+    const original = lineEnds97c(doc97e());
+    await click(195, 100); assert.equal(await prompt(), 'Specify new end point:');
+    await key97c('Control+z'); assert.deepEqual(lineEnds97c(await savedDoc()), original);
+    const steps = (await histLabels()).length;
+    await click(240, 100); assert.equal(await prompt(), 'Select an object to change or [Undo]:'); assert.doesNotMatch(await message97e(), /Cannot LENGTHEN/);
+    assert.deepEqual(lineEnds97c(await savedDoc()), original); assert.equal((await histLabels()).length, steps, 'a click after the undo adds no step');
+    await click(195, 100); await click(230, 100); await click(195, 100);
+    await key97c('Control+z'); const steps2 = (await histLabels()).length; await typeCmd('240,100');
+    assert.equal(await prompt(), 'Select an object to change or [Undo]:'); assert.deepEqual(lineEnds97c(await savedDoc()), original);
+    assert.equal((await histLabels()).length, steps2, 'a typed point after the undo adds no step');
+    await key97c('Escape'); await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
   await step('TODO 97e: Layout Modify ribbon, single group member, locked object, U and Undo', async () => {
     const lay = newLayout('Lengthen layout');
     lay.parts.a = objectPart('a', 'Source', dxfLine(100, 100, 200, 100), newDoc(4).layers);
@@ -23251,6 +23267,38 @@ try {
     await typeCmd('join'); await click(140, 100); await key97c('Enter');       // Right (placed third) is picked first, so it is the source
     assert.match(await prompt(), /Joined 2 objects into 1 line/);
     assert.equal(await t('pp-name').textContent(), 'Object 3', 'the result (placed second, named from its source) is the selection; the Pad (Object 1) is not');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97 Lows: layout Join undo selection, a grouped source selects its whole group', async () => {
+    const lay = newLayout('Join lows'), layers = newDoc(4).layers;
+    lay.parts.p = objectPart('p', 'Pad', dxfLine(100, 300, 180, 300), layers);
+    lay.parts.a = objectPart('a', 'Left', dxfLine(100, 100, 180, 100), layers);
+    lay.parts.b = objectPart('b', 'Right', dxfLine(180, 100, 260, 100), layers);
+    lay.placed = [{ ...objectPlacement(lay.parts.a), g: 'g1' }, objectPlacement(lay.parts.b), { ...objectPlacement(lay.parts.p), g: 'g1' }];
+    await open97c(layoutRaw(lay), 'layout97-lows.dxf');
+    await key97c('Escape'); await typeCmd('join'); await click(140, 100); await click(220, 100); await key97c('Enter');
+    assert.match(await prompt(), /Joined 2 objects into 1 line/);
+    assert.equal(await t('pp-name').textContent(), 'Group of 2', 'the grouped source selects the result and its group mate (the Pad)');
+    assert.equal(layoutFromRaw(await savedDoc()).placed.length, 2);
+    await key97c('Control+z'); assert.equal(layoutFromRaw(await savedDoc()).placed.length, 3);
+    assert.equal(await t('pp-name').isVisible(), false, 'after the Undo nothing is selected: the old picks no longer point at anything');
+    await closeTabs(/./); assert.deepEqual(errors, []);
+  });
+
+  await step('TODO 97 Lows: a Join box over a locked group and free lines picks only the free lines', async () => {
+    const raw = newDoc(4); addLayer(raw, 'Locked');
+    addEntities(raw, dxfLine(100, 100, 200, 100), dxfLine(200, 100, 200, 160), dxfLine(100, 200, 200, 200, { layer: 'Locked' }), dxfLine(200, 200, 260, 200, { layer: 'Locked' }));
+    raw.groups = [{ members: [2, 3], name: '', description: '', unnamed: true, selectable: true }];
+    await open97c(raw, 'join97-lowlock.dxf');
+    await t('ptab-objects').click();
+    await page.locator('[data-testid=obj-tree] .or.layer[data-layer="Locked"] [data-act=lock]').click();
+    await t('ptab-drawing').click();
+    await typeCmd('join'); await drag97d(80, 80, 280, 220);
+    assert.match(await hist97d(), /2 selected/, 'the locked group is not picked'); await key97c('Enter');
+    const doc = await savedDoc();
+    assert.deepEqual(types97d(doc), ['LWPOLYLINE', 'LINE', 'LINE']);
+    assert.deepEqual(lineEnds97c(doc), [[100, 200, 200, 200], [200, 200, 260, 200]]); assert.deepEqual(doc.groups.map((g) => g.members), [[1, 2]]);
     await closeTabs(/./); assert.deepEqual(errors, []);
   });
 

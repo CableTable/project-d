@@ -8027,7 +8027,9 @@ function lengthenPick(d, p, typed = false) {
     return;
   }
   if (m.stage === 'point') {
-    lengthenDo(d, m.ent, m.p0, typed ? p : snapPoint(d, p, d.raw.entities.indexOf(m.ent)));
+    const idx = d.raw.entities.indexOf(m.ent);
+    if (idx < 0) { m.stage = 'obj'; m.ent = m.cur = null; note(lengthenPrompt(m)); paintOverlay(); return; }       // Ctrl+Z replaced the object: back to the pick, no empty step
+    lengthenDo(d, m.ent, m.p0, typed ? p : snapPoint(d, p, idx));
     return;
   }
   const i = Ed.hitEntity(edIndex(d), p[0], p[1], pickTol(d));
@@ -8042,7 +8044,7 @@ function lengthenPick(d, p, typed = false) {
 function lengthenDo(d, ent, pick, point) {
   const m = state.mod, value = m.mode === 'Dynamic' ? point : lengthenValues[m.mode] / (m.mode === 'Delta' || m.mode === 'Total' ? d.factor : 1);
   const result = lengthenEntity(ent, pick, m.mode, value);
-  if (!result) { note(lengthenWhy(ent)); return; }
+  if (!result) { note(lengthenWhy(ent, pick, m.mode, value)); return; }
   if (result !== ent) {
     const hist = historyOf(d.vlay || d), n = hist.labels().past.length;
     m.base = Math.min(m.base, n); view.fitted = false;
@@ -8071,7 +8073,7 @@ function joinRun(d, close = false) {
   view.fitted = false;
   if (!commit(d, { entities, groups: remapGroups(d.raw.groups, keep), blocks: d.raw.blocks, heir: source }, `Join ${gone.size}`)) return;       // heir: a layout's result takes the source's group, lock and place
   setTool('select');
-  if (d.vlay) { const i = layObjDoc(d.vlay).at.get(result); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && q.i === i ? [k] : []))); update(); }       // the old picks' indexes would point at other objects
+  if (d.vlay) { const i = layObjDoc(d.vlay).at.get(result); selectMany(placedNow.flatMap((q, k) => (q.src === 'loose' && q.i === i ? [k] : [])).flatMap(groupIdxs)); update(); }       // the old picks' indexes would point at other objects
   else setSel(d, new Set([keep.get(at)[0]]));
   note(`Joined ${gone.size} objects into 1 ${{ LINE: 'line', ARC: 'arc', CIRCLE: 'circle' }[result.type] || 'polyline'}.${left ? ' ' + left + '.' : ''} Ctrl+Z takes it back`);
 }

@@ -64,10 +64,20 @@ test('invalid types, closed objects, zero / negative end length and full sweeps 
   }
   for (const e of [line(0, 0, 100, 0), arc(0, 0, 10, 0, 90), lwpoly([[0, 0], [100, 0], [100, 100]])]) {
     const before = structuredClone(e);
-    for (const [mode, v] of [['Delta', -1000], ['Percent', 0], ['Percent', -50], ['Total', 0], ['Total', -10], ['Delta', NaN]]) assert.equal(lengthenEntity(e, [100, 100], mode, v), null);
-    assert.equal(lengthenWhy(e), ZERO_LENGTH); assert.deepEqual(e, before);
+    for (const [mode, v, why] of [['Delta', -1000, ZERO_LENGTH], ['Percent', 0, ZERO_LENGTH], ['Percent', -50, ZERO_LENGTH], ['Total', 0, ZERO_LENGTH], ['Total', -10, ZERO_LENGTH], ['Delta', NaN, CANNOT_LENGTHEN]]) {
+      assert.equal(lengthenEntity(e, [100, 100], mode, v), null); assert.equal(lengthenWhy(e, [100, 100], mode, v), why);
+    }
+    assert.deepEqual(e, before);
   }
   assert.equal(lengthenEntity(arc(0, 0, 10, 0, 90), [0, 10], 'TotalAngle', 360), null);
+  assert.equal(lengthenWhy(arc(0, 0, 10, 0, 90), [0, 10], 'TotalAngle', 360), CANNOT_LENGTHEN);       // past a full turn: no zero-length text
+  const l = line(0, 0, 100, 0);
+  for (const mode of ['DeltaAngle', 'TotalAngle']) { assert.equal(lengthenEntity(l, [100, 0], mode, 30), null); assert.equal(lengthenWhy(l, [100, 0], mode, 30), CANNOT_LENGTHEN); }
+  const tilted = line(0, 0, 100, 0); tilted.r.c.push(210, 220, 230); tilted.r.v.push('0.5', '0', '1');
+  assert.equal(lengthenEntity(tilted, [100, 0], 'Delta', 10), null); assert.equal(lengthenWhy(tilted, [100, 0], 'Delta', 10), CANNOT_LENGTHEN);
+  const dup = lwpoly([[0, 0], [50, 0], [50, 0], [100, 0]]), grown = lengthenEntity(dup, [100, 0], 'Delta', 10);
+  near(lengthenInfo(dup).length, 100); assert.ok(grown && Math.abs(lengthenInfo(grown).length - 110) < 1e-9);
+  assert.equal(lengthenInfo(lwpoly([[0, 0], [0, 0], [100, 0]])), null);       // a zero END segment still refuses
   const e = line(0, 0, 100, 0); assert.equal(lengthenEntity(e, [100, 0], 'Delta', 0), e);
 });
 
