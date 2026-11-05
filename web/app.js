@@ -7733,10 +7733,15 @@ function arrayDo(d) {
 function moveTake(d) {
   const label = TOOLS.find((t) => t.id === state.mod.kind).label;
   if (!d.sel.size) { note(`${label}: pick at least one object first`); return; }
-  if (state.mod.kind !== 'stretch' && moveLocked(d, d.sel, state.mod.kind === 'align' ? 'align' : 'move')) { const msg = state.msg; setTool('select'); note(msg); return; }
+  const align = state.mod.kind === 'align', free = [...d.sel].filter((i) => !lockedEnt(d, i));       // Align skips locked objects and goes on with the rest
+  if (state.mod.kind !== 'stretch' && (align ? !free.length : true) && moveLocked(d, d.sel, align ? 'align' : 'move')) { const msg = state.msg; setTool('select'); note(msg); return; }
   const m = state.mod;
-  m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = m.kind === 'align' ? 's1' : 'p1';
-  if (m.kind === 'align') { m.preview = flatten({ ...d.raw, entities: [...m.sel].map((i) => m.raw[i]) }); state.msg = ALIGN_PROMPT.s1; renderCommand(); paintOverlay(); return; }
+  m.sel = new Set(d.sel); m.raw = d.raw.entities; m.stage = align ? 's1' : 'p1';
+  if (align) {
+    m.sel = new Set(free); m.preview = flatten({ ...d.raw, entities: free.map((i) => m.raw[i]) });
+    m.lockMessage = free.length < d.sel.size && moveLocked(d, [...d.sel].filter((i) => lockedEnt(d, i))) ? state.msg : null;
+    state.msg = m.lockMessage; renderCommand(); paintOverlay(); return;
+  }
   if (m.kind === 'stretch') {
     m.boxes = d.stretchSelection?.boxes || []; m.picked = d.stretchSelection?.picked || new Set(d.sel);
     if (moveLocked(d, m.sel)) m.lockMessage = state.msg;
@@ -7899,7 +7904,7 @@ function alignDo(d, scale) {
     view.fitted = false;
     if (!commit(d, followDimensions(d.raw, next, d.factor), 'Align')) { const msg = state.msg; setTool('select'); note(msg); return; }
     setTool('select'); setSel(d, sel);
-    note('Selection aligned. Ctrl+Z takes it back');
+    note(`${m.lockMessage ? m.lockMessage + '. ' : ''}Selection aligned. Ctrl+Z takes it back`);
   } catch (err) { note(err.message); }
 }
 /** Placed parts move and turn; Scale Yes scales the loose objects only (a part keeps its size, its drawing is 1:1). */
@@ -7915,7 +7920,7 @@ function layAlignDo(d, t, scale) {
   if (!layStill()) { layStale(); return; }
   const to = layAlignPlacements(m, t), r = editSelected((part, pl, c) => to[c.k], { label: 'Align' }), parts = scale && m.items.some((x) => !x.part.obj);
   setTool('select');
-  const text = `Selection aligned.${parts ? ' Placed parts are not scaled.' : ''} Ctrl+Z takes it back`;
+  const text = `${m.lockMessage ? m.lockMessage + '. ' : ''}Selection aligned.${parts ?' Placed parts are not scaled.' : ''} Ctrl+Z takes it back`;
   if (r) afterEdit(r, text); else note('Align: the source points are already on the destination points, nothing changed');
 }
 
@@ -7943,10 +7948,12 @@ function layStill() {
 function layStale() { const label = modLabel(state.mod.kind); setTool('select'); note(`Layout changed: start ${label} again`); }
 /** Enter on the selection: the parts the command works on are taken (Move refuses a locked part; copies are allowed). */
 function layTake(d) {
-  const m = state.mod, label = modLabel(m.kind), now = selItems();
-  d.factor = 1;                                                    // the commands above read d.factor: a layout is in mm
+  const m = state.mod, label = modLabel(m.kind); let now = selItems();
+  d.factor = 1;                                                 // the commands above read d.factor: a layout is in mm
   if (!now.length) { note(`${label}: pick at least one object first`); return; }
-  if ((m.kind === 'move' || m.kind === 'align') && now.some((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
+  if (m.kind === 'move' && now.some((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
+  if (m.kind === 'align' && now.every((x) => x.p.lock)) { setTool('select'); note(LOCKED); return; }
+  if (m.kind === 'align' && now.some((x) => x.p.lock)) { selectMany(now.filter((x) => !x.p.lock).map((x) => x.i)); now = selItems(); m.lockMessage = LOCKED; }       // Align leaves the locked parts out and goes on with the rest
   m.items = now.map((x) => ({ i: x.i, part: x.part, orig: placementOf(x.p) }));
   m.sel = new Set(m.items.map((x) => x.i)); m.keep = selIdxs(); m.main = state.sel; m.objs = m.items;
   if (m.kind === 'stretch') {
