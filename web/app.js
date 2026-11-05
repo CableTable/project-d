@@ -44,6 +44,7 @@ import { attributeRows } from './attribute-edit.js';
 import { dimensionEditor, changeDimensionEditor, dimensionEditorOverride, measuredText, overrideText, measureOverride, readOverride } from './dimension-text.js';
 import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
+import { stretchGrips } from './stretch.js';
 import * as GM from './gripmode.js';
 import { followDimensions } from './linked-dimensions.js';
 import * as MD from './modify.js';
@@ -9052,11 +9053,9 @@ function gripStretchHots(g, q, shift) {
   g.label = null;
   for (const [e, ent] of g.ents) {
     const mine = g.hots.filter((x) => x.e === e);
-    let cur = ent;
-    // whole (Grill Q2: all grips hot = the object moves): never grip by grip, the first grip would land on the next one's old spot
-    if (GR.wholeHot(ent, new Set(mine.map((x) => x.id)))) { if (v[0] || v[1]) cur = GR.translate(ent, v[0], v[1]); g.label = g.label || 'Move'; }
-    else { for (const x of GR.stretchHots(ent, mine)) { const r = GR.dragGrip(cur, x.id, [x.x + v[0], x.y + v[1]], shift); if (r) { cur = r.ent; g.label = g.label || r.label; } } if ((ent.type === 'MTEXT' || ent.type === 'INSERT' || ent.type === 'HATCH') && mine.some((x) => !GR.movesWhole(ent, x.id))) part = true; }
-    if (cur !== ent) nexts.set(e, cur);
+    const r = stretchGrips(ent, mine, v[0], v[1], shift);
+    g.label = g.label || r.label; part = part || r.part;
+    if (r.ent !== ent) nexts.set(e, r.ent);
   }
   g.nexts = nexts; g.next = nexts.values().next().value || null; g.left = g.ents.size - nexts.size;
   // a text, hatch or block moved whole has no outline to draw: the canvas shows it moved by the same vector (as a single grip does)

@@ -34,6 +34,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Chamfer**: Joins two straight lines (or every straight corner of a polyline) with a straight bevel set back by two distances, or a length and an angle, trimming or extending the lines to it. Where: `DECISIONS.md`, Lengthen and Chamfer. Avoid: Fillet (a round corner); Join gaps' Chamfer method (bridges tiny gaps only).
 
+**Stretch**: Moves the points inside a crossing box; objects wholly inside move. Several boxes count together; an individually picked object moves whole. Where: `web/stretch.js`; `DECISIONS.md`, Stretch (TODO 97g). The pure function is built; the command is TODO 97g2.
+
 **Break Apart**: Separates one selected layout group into ungrouped outlines, or an outline-only drawing block into its members one level down, keeping their placement and layers. Results stay selected; one Undo restores the object and selection. Modify menu, Ctrl+K or `BREAKAPART`. Where: `web/breakapart.js`, `web/app.js`. Avoid: Explode, which also splits polylines into lines and arcs.
 
 **Command alias**: A short word such as `tb` for Trace that is typed and accepted in the command bar. Where: `DECISIONS.md`, Command bar and Shortcuts. Avoid: Single-key shortcut.
