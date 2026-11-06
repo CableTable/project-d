@@ -23698,6 +23698,95 @@ try {
     console.log('TODO 106c screenshots: shots-106c/line-end-light.png and shots-106c/line-end-dark.png');
   });
 
+  await step('TODO 106d: Dynamic input on layouts', async () => {
+    const setup = async (ent = null) => {
+      await closeTabs(/./);
+      const lay = newLayout('Dynamic input layout'), raw = newDoc(4);
+      if (ent) {
+        lay.parts.o = objectPart('o', 'Line', ent, raw.layers);
+        lay.placed = [objectPlacement(lay.parts.o)];
+      } else {
+        addEntities(raw, dxfPoly([[0, 0], [80, 0], [80, 40], [0, 40]], { closed: true }));
+        lay.parts.p = makePart('p', 'Plate', raw, 1);
+        lay.placed = [{ partId: 'p', x: 100, y: 100, rot: 0, mirrorX: false, mirrorY: false }];
+      }
+      await t('picker').setInputFiles({ name: 'dynamic-layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay)), 'latin1') });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname')?.textContent === 'dynamic-layout.dxf');
+      if (!(await chipOn('tog-dyn'))) await t('tog-dyn').click();
+      for (const id of ['tog-snap', 'tog-polar', 'tog-otrack', 'tog-ortho']) if (await chipOn(id)) await t(id).click();
+      await page.locator('[data-tool=select]').click();
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await page.evaluate(() => document.activeElement?.blur()); await frames();
+    };
+    const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x - 1, p.y); await page.mouse.move(p.x, p.y); await frames(); };
+    const labels = async (...names) => assert.deepEqual(await page.locator('.cursor-field:visible').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label'))), names);
+    const polar = async (length, angle) => { await page.keyboard.type(String(length)); await page.keyboard.press('Tab'); await page.keyboard.type(String(angle)); await frames(); };
+    const enter = async (text) => { if (text != null) await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
+    const saved = async () => layoutFromRaw(await savedDoc());
+    const placement = async () => (await saved()).placed[0];
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); await frames(); };
+    const ghosts = async () => page.locator('[data-group=tools] polygon.ghost').evaluateAll((els) => els.map((el) => el.getAttribute('points').split(' ').map((p) => p.split(',').map(Number))));
+    await setup(); const initial = await placement();
+    await typeCmd('move'); await move(200, 150); await labels('X', 'Y', 'Δx', 'Δy');
+    await t('cursor-length').focus(); await polar(100, 100); await enter();
+    await move(200, 150); await labels('Length', 'Angle', 'Δx', 'Δy'); await polar(20, 0);
+    assert.equal(Math.min(...(await ghosts())[0].map((p) => p[0])), 120, 'typed Move previews 20 mm right');
+    mkdirSync('shots-106d', { recursive: true });
+    for (const theme of ['light', 'dark']) {
+      await menuItem('View', 'Theme: ' + theme); await frames();
+      await page.screenshot({ path: `shots-106d/layout-move-${theme}.png` });
+      assert.ok(readFileSync(`shots-106d/layout-move-${theme}.png`).length > 1000);
+    }
+    await menuItem('View', 'Theme: light'); await page.evaluate(() => document.activeElement?.blur());
+    await enter(); let pl = await placement(); assert.deepEqual([pl.x, pl.y], [120, 100], 'Length 20 + Angle 0 moves the part 20 mm right');
+    await undo(); assert.deepEqual(await placement(), initial, 'one Undo restores Move');
+    for (const kind of ['copy', 'stretch']) {
+      await typeCmd(kind); await enter('100,100'); await move(200, 150); await labels('Length', 'Angle', 'Δx', 'Δy'); await polar(20, 0);
+      assert.equal(Math.min(...(await ghosts())[0].map((p) => p[0])), 120, kind + ' preview follows typing');
+      await enter(); const out = await saved(); pl = out.placed.at(-1); assert.deepEqual([pl.x, pl.y], [120, 100]);
+      if (kind === 'copy') { assert.equal(out.placed.length, 2); assert.notEqual(await t('cursor-length').inputValue(), '20', 'Copy Multiple clears typing'); await page.keyboard.press('Escape'); }
+      await undo(); assert.deepEqual(await placement(), initial);
+    }
+    await typeCmd('rotate'); await move(220, 150); await labels('Angle'); await page.keyboard.type('90'); await frames();
+    let box = (await ghosts())[0]; assert.equal(Math.max(...box.map((p) => p[0])) - Math.min(...box.map((p) => p[0])), 40, 'typed Rotate swaps preview width');
+    await enter(); assert.equal((await placement()).rot, 90); await page.keyboard.press('Escape'); await undo(); assert.deepEqual(await placement(), initial);
+    await typeCmd('scale'); await enter('100,100'); await move(200, 150); await labels('Factor');
+    await enter('0'); assert.match(await histLine(), /Factor must be more than 0/); await page.keyboard.press('Escape');
+    await page.keyboard.type('2'); await frames(); box = (await ghosts())[0];
+    assert.equal(Math.max(...box.map((p) => p[0])) - Math.min(...box.map((p) => p[0])), 160, 'typed Scale doubles preview width');
+    await enter(); assert.equal((await placement()).sc, 2); await undo(); assert.deepEqual(await placement(), initial);
+    await typeCmd('move'); await enter('100,100'); await move(200, 150); await page.keyboard.type('12'); await page.keyboard.press('Escape'); await frames();
+    assert.ok(await t('cursor-length').isVisible()); assert.notEqual(await t('cursor-length').inputValue(), '12');
+    await page.keyboard.press('Escape'); await frames(); assert.equal(await t('cursor-length').isVisible(), false); assert.deepEqual(await placement(), initial);
+    await typeCmd('move'); await move(200, 150); await page.keyboard.press('F12'); await frames(); assert.equal(await page.locator('.cursor-field:visible').count(), 0);
+    await page.keyboard.press('Escape'); await page.keyboard.press('F12');
+    await typeCmd('move'); await enter('100,100'); await polar(10, 0); const target = await at(250, 180); await page.mouse.click(target.x, target.y); await frames();
+    assert.equal((await placement()).x, 110, 'click also commits the typed layout values'); await undo();
+    const line = () => dxfLine(300, 100, 340, 100);
+    const hot = async () => { const id = await page.locator('[data-testid=grip][data-grip$=":b"]').getAttribute('data-grip'), p = await gripBox(id); await page.mouse.click(p.x, p.y); await move(380, 100); };
+    const lineNow = async () => line70(objectDoc(await saved()).raw.entities[0]);
+    await setup(line()); await hot(); await labels('Length', 'Angle', 'Δx', 'Δy'); await polar(60, 0);
+    assert.equal(await page.locator('.gr-new[data-testid=grip-preview]').getAttribute('d'), svgPath({ t: 'line', a: [300, 100], b: [360, 100] }, 700));
+    await enter(); near70(await lineNow(), [300, 100, 360, 100]); await undo(); near70(await lineNow(), [300, 100, 340, 100]);
+    await hot(); await enter('50<0'); near70(await lineNow(), [300, 100, 350, 100]);
+    await hot(); await page.keyboard.type('12'); await page.keyboard.press('Escape'); await frames();
+    assert.ok(await t('cursor-length').isVisible()); assert.notEqual(await t('cursor-length').inputValue(), '12');
+    await page.keyboard.press('Escape'); await frames(); assert.equal(await t('cursor-length').isVisible(), false);
+    await hot(); await page.keyboard.press('F12'); await frames(); assert.equal(await page.locator('.cursor-field:visible').count(), 0);
+    await page.keyboard.press('Escape'); await page.keyboard.press('F12'); near70(await lineNow(), [300, 100, 350, 100]);
+    for (const [spaces, label, value, expected] of [[1, 'Length', '10<90', [300, 110, 340, 110]], [2, 'Angle', '90', [340, 60, 340, 100]], [3, 'Factor', '2', [260, 100, 340, 100]]]) {
+      await setup(line()); await hot(); for (let i = 0; i < spaces; i++) await page.keyboard.press('Space'); await frames();
+      assert.equal(await t('cursor-length').getAttribute('aria-label'), label); await enter(value); near70(await lineNow(), expected);
+      await undo(); near70(await lineNow(), [300, 100, 340, 100]);
+    }
+    await setup(dxfCircle(300, 100, 20));
+    const q = await page.locator('[data-testid=grip][data-grip$=":q0"]').getAttribute('data-grip'), qp = await gripBox(q);
+    await page.mouse.click(qp.x, qp.y); await move(360, 100); await labels('Radius'); await enter('30');
+    assert.equal(fieldOf(objectDoc(await saved()).raw.entities[0], 40), 30);
+    await closeTabs(/./); assert.deepEqual(errors, []);
+    console.log('TODO 106d screenshots: shots-106d/layout-move-light.png and shots-106d/layout-move-dark.png');
+  });
+
   // Lengthen remembers its mode and values across tabs (as AutoCAD does): the 106 steps put them back so the 97e steps still find <Total> and <0.0000>.
   const resetLengthen106 = async () => {
     await typeCmd('lengthen'); await typeCmd('delta'); await typeCmd('0'); await page.keyboard.press('Escape');
