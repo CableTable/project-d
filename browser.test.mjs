@@ -23719,7 +23719,11 @@ try {
       await page.evaluate(() => document.activeElement?.blur()); await frames();
     };
     const move = async (x, y) => { const p = await at(x, y); await page.mouse.move(p.x - 1, p.y); await page.mouse.move(p.x, p.y); await frames(); };
-    const labels = async (...names) => assert.deepEqual(await page.locator('.cursor-field:visible').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label'))), names);
+    const shownLabels = () => page.locator('.cursor-field:visible').evaluateAll((els) => els.map((el) => el.getAttribute('aria-label')));
+    const labels = async (...names) => {
+      await page.waitForFunction((n) => JSON.stringify([...document.querySelectorAll('.cursor-field')].filter((el) => el.offsetParent).map((el) => el.getAttribute('aria-label'))) === JSON.stringify(n), names).catch(() => null);
+      assert.deepEqual(await shownLabels(), names);
+    };
     const polar = async (length, angle) => { await page.keyboard.type(String(length)); await page.keyboard.press('Tab'); await page.keyboard.type(String(angle)); await frames(); };
     const enter = async (text) => { if (text != null) await page.keyboard.type(text); await page.keyboard.press('Enter'); await frames(); };
     const saved = async () => layoutFromRaw(await savedDoc());
@@ -23750,8 +23754,12 @@ try {
     await typeCmd('rotate'); await move(220, 150); await labels('Angle'); await page.keyboard.type('90'); await frames();
     let box = (await ghosts())[0]; assert.equal(Math.max(...box.map((p) => p[0])) - Math.min(...box.map((p) => p[0])), 40, 'typed Rotate swaps preview width');
     await enter(); assert.equal((await placement()).rot, 90); await page.keyboard.press('Escape'); await undo(); assert.deepEqual(await placement(), initial);
+    const onPart = await at(140, 120); await page.mouse.click(onPart.x, onPart.y); await frames();       // the selected part: turn arrows on (Rotate mode)
+    await move(220, 150); await labels('Angle'); await page.keyboard.type('90'); await frames();
+    const offPivot = await at(115, 110); await page.mouse.click(offPivot.x, offPivot.y); await frames();       // not the centre: that is the pivot handle
+    assert.equal((await placement()).rot, 90, 'a click on the part applies the typed Rotate angle'); await page.keyboard.press('Escape'); await undo(); assert.deepEqual(await placement(), initial);
     await typeCmd('scale'); await enter('100,100'); await move(200, 150); await labels('Factor');
-    await enter('0'); assert.match(await histLine(), /Factor must be more than 0/); await page.keyboard.press('Escape');
+    await enter('0'); await page.waitForFunction(() => /Factor must be more than 0/.test(document.querySelector('[data-testid=cmd-hist]')?.textContent || '')); assert.match(await histLine(), /Factor must be more than 0/); await page.keyboard.press('Escape');
     await page.keyboard.type('2'); await frames(); box = (await ghosts())[0];
     assert.equal(Math.max(...box.map((p) => p[0])) - Math.min(...box.map((p) => p[0])), 160, 'typed Scale doubles preview width');
     await enter(); assert.equal((await placement()).sc, 2); await undo(); assert.deepEqual(await placement(), initial);

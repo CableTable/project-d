@@ -2916,6 +2916,7 @@ function placedUp() {
     if (p.add) return;                                             // Shift-click added it: that is all
     if (!p.copy && selIdxs().length > 1) { selectMany(groupIdxs(p.hitI), p.hitI); update(); return; }
     if (p.wasSel && !p.copy) {
+      if (cursorTool()?.layoutRotate && DI.hasTyped(cursorInput())) { cursorCommit(); return; }   // a typed Rotate angle: the click applies it
       if (selectedPlaced().p.lock) { note(LOCKED); return; }
       state.mode = state.mode === 'rotate' ? 'select' : 'rotate'; state.pivot = centrePivot(); state.rotCopy = false; state.lref = null;
       update();
@@ -7752,7 +7753,7 @@ function modHover(d, cx, cy, shift) {
   }
   if (m.kind === 'array' && m.stage === 'center') m.cur = snapPoint(d, p);
   if (m.kind === 'mirror' && (m.stage === 'p1' || m.stage === 'p2')) m.cur = pickPoint(d, p, m.stage === 'p2' ? [m.p1] : [], shift, true);
-  if (d.lay) { m.ghosts = layGhosts(m); drawTools(); }
+  if (d.lay) drawTools();
   paintOverlay();
 }
 function modUp(d, was, p, shift, crossing) {
@@ -7902,7 +7903,7 @@ function arrayPreview(d) {
   if (checked.error) { m.move = null; note(checked.error); renderCommand(); paintOverlay(); return; }
   const slots = m.type === 'polar' ? AR.polarPlacements(m.center, m.base, m.cfg).map(({ deg, dx, dy }) => mmul(base, m.cfg.rotate ? rotationMatrix(m.center, deg) : [1, 0, 0, 1, dx, dy]))
     : AR.rectOffsets(m.cfg).map(([x, y]) => mmul(base, [1, 0, 0, 1, x / d.factor, y / d.factor]));
-  if (d.lay) { m.ghosts = layGhosts(m); m.move = null; drawTools(); renderCommand(); return; }
+  if (d.lay) { m.move = null; drawTools(); renderCommand(); return; }
   m.move = slots.length ? { preview: m.preview, items: m.preview.items, dx: 0, dy: 0, slots } : null;
   renderCommand(); paintOverlay();
 }
@@ -8097,7 +8098,7 @@ function alignPreview(m) {
 }
 function alignSync(d, m = state.mod) {
   const t = alignPreview(m);
-  if (d.lay) { m.ghosts = layGhosts(m); drawTools(); }
+  if (d.lay) drawTools();
   else m.move = t ? { preview: m.preview, items: m.preview.items, dx: 0, dy: 0, slots: [mmul([d.factor, 0, 0, -d.factor, 0, state.sheetH], alignMatrix(t))] } : null;
 }
 function alignPoint(d, q) {
