@@ -977,24 +977,42 @@ export const dimText = (v, dp = 2) => { const s = Number(v).toFixed(dp); return 
 export const dimLabel = (mm, dp = 2, units = 'mm', prefix = '') => prefix + (units === 'inch' ? dimText(mm / 25.4, dp) + '"' : dimText(mm, dp));
 const unesc = (s) => String(s).replace(/\\U\+([0-9A-Fa-f]{4})/g, (_, h) => String.fromCharCode(parseInt(h, 16)));     // a saved file writes Ø and ° as \U+00D8
 /** Scale cached dimension labels, or replace their measurement from geometry on unit conversion; keep formatting and overrides. */
-export function relabel(ents, s, target = null) {
+export function relabel(ents, s, target = null, unread = null) {
   const record = textRecord(ents), override = readOverride(ents), measured = measuredText(ents);
   const scaled = (t) => {
-    const m = /^((?:[{}]|\\[A-Za-z][^;]*;)*(?:[RØ∅]|\\U\+2205|%%[cC])?)(-?\d+(?:\.\d+)?)(\s*(?:"|mm|in|°)?)((?:[{}]|\\[A-Za-z][^;]*;|\s*(?:%%[pP]|±)\d*\.?\d+|\s*\[[^\]]*\])*)$/.exec(t);
-    if (!m || m[3].trim() === '°') return t;
-    const dp = (m[2].split('.')[1] || '').length, more = Math.max(0, Math.ceil(-Math.log10(s)));
-    // every number of a tail by its own decimals (+ more when they shrink: 0.1 mm → 0.004 in), a no-zero ".1" staying ".1"; capped, toFixed throws above 100
-    const conv = (str, k, extra) => str.replace(/\d*\.?\d+/g, (n) => { const out = dimText(+n * k, Math.min(100, (n.split('.')[1] || '').length + extra)); return n[0] === '.' ? out.replace(/^(-?)0\./, '$1.') : out; });
-    // tolerances (\S+0.1^-0.1; %%p0.1 ±0.1) follow the label's full factor; an alternate unit [1.00] only the scale part (target.scale), as it is in the other unit already
-    const tail = m[4].replace(/\\S[^;]*;|(?:%%[pP]|±)\d*\.?\d+|\[[^\]]*\]/g, (a) => a[0] === '[' ? conv(a, target?.scale ?? s, 0) : a.startsWith('\\S') && !a.includes('^') ? a : conv(a, s, more));
-    return m[1] + dimText(target?.value ?? +m[2] * s, dp) + (target ? (target.units === 'in' ? '"' : '') + (tail[0] === '[' && !m[3].trim() ? ' ' : '') : m[3]) + tail;
+    if (/°|%%[dD]|\\U\+00[Bb]0/.test(t)) return t;
+    let alternate = false, stack = false, tolerance = false, main = false, converted = false, bad = false;
+    const more = Math.max(0, Math.ceil(-Math.log10(s) - 1e-12));
+    // One scan: formatting parameters are opaque; stacked/tolerance lengths use s, alternate units use only scale.
+    const out = t.replace(/\\U\+[0-9A-Fa-f]{4}|\\[ACFHQTWacfhqtw][^;]*;|\\[LlOoKkPp~{}\\]|\\S|\\.|%%[a-zA-Z]|±|\[|\]|;|\d*\.?\d+(?:\s*(?:"|mm\b|in\b))?/g, (token, at) => {
+      if (token === '[') { if (alternate) bad = true; alternate = true; return token; }
+      if (token === ']') { if (!alternate) bad = true; alternate = false; return token; }
+      if (token === '\\S') { stack = true; return token; }
+      if (token === ';') { stack = false; return token; }
+      if (token === '±' || /^%%[pP]$/.test(token)) { tolerance = true; return token; }
+      if (token[0] === '\\') { if (token.length === 2 && !/[LlOoKkPp~{}\\]/.test(token[1])) bad = true; return token; }
+      if (!/^\d|^\./.test(token)) return token;
+      if (/^[xX×]\s/.test(t.slice(at + token.length))) return token;
+      const n = /^\d*\.?\d+/.exec(token)[0], suffix = token.slice(n.length), length = !alternate && !stack && !tolerance, primary = !main && length;
+      if (/^[,/\.]\d/.test(t.slice(at + n.length))) bad = true;
+      const dp = (n.split('.')[1] || '').length, extra = alternate || length && !target ? 0 : more;
+      const value = primary ? target?.value ?? +n * s : +n * (alternate ? target?.scale ?? s : s);
+      if (!Number.isFinite(value)) { bad = true; return token; }
+      let fixed = dimText(value, Math.min(100, dp + extra));
+      if (!primary && n[0] === '.') fixed = fixed.replace(/^(-?)0\./, '$1.');
+      if (primary) main = true;
+      converted = true;
+      return fixed + (primary && target ? (target.units === 'in' ? '"' : '') : suffix);
+    });
+    if (bad || alternate || stack || !converted) { unread?.(t); return t; }
+    return unesc(out);
   };
   return ents.map((e) => {
     if (e === record) return overrideRecord(override, scaled(measured));
     if (e.type !== 'TEXT' && e.type !== 'MTEXT') return e;
     const k = e.r.c.indexOf(1);
     if (k < 0) return e;
-    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(scaled(measured), override) : scaled(unesc(vv[k]));
+    const vv = e.r.v.slice(); vv[k] = record ? dimensionText(scaled(measured), override) : scaled(vv[k]);
     if (vv[k] === unesc(e.r.v[k])) return e;
     return { ...e, r: { ...e.r, v: vv } };
   });

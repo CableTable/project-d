@@ -7,6 +7,7 @@ import { readDxf, decodeDxf, flatten } from './web/drawing.js';
 import { newLayout, layoutRaw, readMeta } from './web/layoutdoc.js';
 import { addDimension, buildDim } from './web/edit.js';
 import { nativeDimensionOverrides } from './web/dimension-dxf.js';
+import { measuredText, readOverride, measureOverride } from './web/dimension-text.js';
 
 const get = (e, c) => +e.r.v[e.r.c.indexOf(c)];
 const back = (doc, opts) => readDxf(W.writeDxf(doc, opts));
@@ -40,7 +41,7 @@ test('TODO 109a: mm to inches scales each entity and block once, keeps ratios an
   const native = saved.entities.find((e) => e.type === 'DIMENSION'); near(get(native, 42), 2);
   assert.equal(native.r.v[native.r.c.indexOf(1)], 'override'); near(get(saved.blocks.native.entities[0], 11), 2);
   const dimText = Object.entries(saved.blocks).find(([n]) => /^PD_DIM_/.test(n))[1].entities.filter((e) => e.type === 'TEXT');
-  assert.ok(dimText.some((e) => e.r.v.includes('custom 2.00"')));
+  assert.ok(dimText.some((e) => e.r.v.includes('custom 2.0000"')));
   assert.deepEqual(flatten(saved).boxes.model?.map(Number.isFinite), [true, true, true, true]);
 });
 
@@ -105,7 +106,7 @@ test('TODO 109a: default writer options are byte-identical to dc04385', () => {
   assert.equal(W.fmt(1.23456789), '1.234568');
 });
 
-for (const [source, target, length, factor, expected] of [[1, 'mm', 1, 25.4, '25.40'], [4, 'in', 25.4, 1, '1.00"']]) {
+for (const [source, target, length, factor, expected] of [[1, 'mm', 1, 25.4, '25.40'], [4, 'in', 25.4, 1, '1.0000"']]) {
   test(`TODO 109a fix: kept dimension labels from geometry, ${source === 1 ? 'in to mm' : 'mm to in'}`, () => {
     for (const units of ['mm', 'inch']) for (const native of [false, true]) {
       let doc = W.newDoc(source);
@@ -132,7 +133,7 @@ test('TODO 109a fix: native MTEXT scales at 2, preserving formatting, suffix and
   assert.ok(saved.blocks['*D1'].entities[1].r.v.includes('{\\A1;\\H0.7x;50.80 mm}'));
   assert.ok(saved.entities[0].r.v.includes('{\\A1;<> mm}'));
   const inches = back(doc, { units: 'in' });
-  assert.ok(inches.blocks['*D1'].entities[1].r.v.includes('{\\A1;\\H0.7x;1.00"}'));
+  assert.ok(inches.blocks['*D1'].entities[1].r.v.includes('{\\A1;\\H0.7x;1.0000"}'));
 });
 
 test('TODO 109a fix 2: %%c diameter labels and stacked tolerances convert, alternate units follow the scale', () => {
@@ -141,32 +142,82 @@ test('TODO 109a fix 2: %%c diameter labels and stacked tolerances convert, alter
   W.addBlock(doc, '*D1', texts.map((t, i) => W.mtext(0, i, 2.5, t)));
   W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [13, 0], [23, 0], [14, 25.4], [24, 0], [42, 25.4]]));
   const before = structuredClone(doc), got = (opts) => back(doc, opts).blocks['*D1'].entities.map((e) => e.r.v[e.r.c.indexOf(1)]);
-  assert.deepEqual(got({ units: 'in' }), ['%%c1.00"', '{\\A1;%%C1.00"}', '1.00"\\S+0.004^-0.004;', '1.00" [1.00]', '1.00" [1.00]']);
+  assert.deepEqual(got({ units: 'in' }), ['%%c1.0000"', '{\\A1;%%C1.0000"}', '1.0000"\\S+0.004^-0.004;', '1.0000" [1.00]', '1.0000" [1.00]']);
   assert.deepEqual(got({ scale: 2 }), ['%%c50.80', '{\\A1;%%C50.80}', '50.80\\S+0.2^-0.2;', '50.80 [2.00]', '50.80 mm [2.00]']);
   assert.deepEqual(doc, before);
 });
 
-test('TODO 109a fix 3: one row per dimension label form, through Export', () => {
-  const rows = [      // [label, export options, label saved]
-    ['25.40\\S+.1^-.1;', { units: 'in' }, '1.00"\\S+.004^-.004;'],
+test('TODO 109a fix 4: one number scan, one row per dimension label form through Export', async (t) => {
+  const rows = [      // [label, export options, label saved, geometry length, source units]
+    ['25.40\\S+.1^-.1;', { units: 'in' }, '1.0000"\\S+.004^-.004;'],
     ['25.40\\S+.1^-.1;', { scale: 2 }, '50.80\\S+.2^-.2;'],
-    ['∅25.40', { units: 'in' }, '∅1.00"'],
-    ['\\U+220525.40', { units: 'in' }, '∅1.00"'],
-    ['25.40%%p0.1', { units: 'in' }, '1.00"%%p0.004'],
-    ['25.40±0.1', { units: 'in' }, '1.00"±0.004'],
+    ['∅25.40', { units: 'in' }, '∅1.0000"'],
+    ['\\U+220525.40', { units: 'in' }, '∅1.0000"'],
+    ['25.40%%p0.1', { units: 'in' }, '1.0000"%%p0.004'],
+    ['25.40±0.1', { units: 'in' }, '1.0000"±0.004'],
     ['%%c25.40%%p0.1', { scale: 2 }, '%%c50.80%%p0.2'],
     ['25.40 [1.00]', { scale: 2 }, '50.80 [2.00]'],
-    ['25.40 [1.00]', { units: 'in', scale: 2 }, '2.00" [2.00]'],
-    ['25.40 [1.00]', { units: 'in' }, '1.00" [1.00]'],
+    ['25.40 [1.00]', { units: 'in', scale: 2 }, '2.0000" [2.00]'],
+    ['25.40 [1.00]', { units: 'in' }, '1.0000" [1.00]'],
     ['25.40\\S+0.1^-0.1;', { scale: 1e-101 }, '0.00\\S+0.' + '0'.repeat(100) + '^-0.' + '0'.repeat(100) + ';'],      // 100 decimals: the toFixed limit
+    ['(25.40)', { units: 'in' }, '(1.0000")'],
+    ['25.40 TYP', { units: 'in' }, '1.0000" TYP'],
+    ['2X 25.40', { units: 'in' }, '2X 1.0000"'],
+    ['{\\L25.40\\l}', { units: 'in' }, '{\\L1.0000"\\l}'],
+    ['25.40\\P', { units: 'in' }, '1.0000"\\P'],
+    ['\\S25.50^25.30;', { units: 'in' }, '\\S1.0039^0.9961;'],
+    ['25.40\\S+0.1#-0.1;', { units: 'in' }, '1.0000"\\S+0.004#-0.004;'],
+    ['.50"', { units: 'mm' }, '12.70', .5, 1],
+    ['R.25"', { scale: 2 }, 'R0.50"', .25, 1],
+    ['%%c.50', { scale: 2 }, '%%c1.00'],
+    ['{\\H2.5;\\A1;\\L25.40\\l\\P}', { units: 'in' }, '{\\H2.5;\\A1;\\L1.0000"\\l\\P}'],
+    ['\\U+0032 25.40', { units: 'in' }, '2 1.0000"'],
+    ['25.40 50.80', { units: 'in' }, '1.0000" 2.0000'],
+    ['5', { units: 'in' }, '0.20"', 5],
+    ['12', { units: 'in' }, '0.47"', 12],
+    ['100', { units: 'in' }, '3.94"', 100],
+    ['5', { units: 'in' }, '0.20"', null],      // no native measurement: convert the number itself
+    ['60.00°', { units: 'in' }, '60.00°'],
+    ['60.00°', { scale: 2 }, '60.00°'],
   ];
-  for (const [label, opts, expected] of rows) {
-    const doc = W.newDoc();
-    W.addBlock(doc, '*D1', [W.line(0, 0, 25.4, 0), W.mtext(0, 0, 2.5, label)]);
-    W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [13, 0], [23, 0], [14, 25.4], [24, 0], [42, 25.4]]));
+  for (const [label, opts, expected, length = 25.4, source = 4] of rows) await t.test(`${label} ${JSON.stringify(opts)}`, () => {
+    const doc = W.newDoc(source);
+    W.addBlock(doc, '*D1', [W.line(0, 0, length ?? 5, 0), W.mtext(0, 0, 2.5, label)]);
+    W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], ...(length == null ? [] : [[13, 0], [23, 0], [14, length], [24, 0], [42, length]])]));
+    const before = structuredClone(doc);
     const e = back(doc, opts).blocks['*D1'].entities[1];
     assert.equal(e.r.v[e.r.c.indexOf(1)], expected, `${label} ${JSON.stringify(opts)}`);
-  }
+    assert.deepEqual(doc, before, 'Export never changes the source');
+  });
+});
+
+test('TODO 109a fix 4: unreadable labels stay unchanged and are listed in the Export report note', async (t) => {
+  for (const label of ['25,40', 'unreadable', '25.40\\S+0.1#-0.1', '{\\H2.5 25.40}']) await t.test(label, () => {
+    const doc = W.newDoc();
+    W.addBlock(doc, '*D1', [W.mtext(0, 0, 2.5, label)]);
+    W.addEntities(doc, W.entity('DIMENSION', [[2, '*D1'], [70, 1], [42, 25.4]]));
+    const before = structuredClone(doc), report = W.writeDxfWithReport(doc, { units: 'in' });
+    assert.equal(readDxf(report.text).blocks['*D1'].entities[0].r.v.slice(-1)[0], label);
+    assert.deepEqual(report.unreadLabels, [label]);
+    assert.ok(W.saveReportNote(report).includes(label));
+    assert.deepEqual(doc, before);
+  });
+});
+
+test('TODO 109a fix 4: kept Measure deltas are recomputed after relabel, including native overrides', async (t) => {
+  for (const [opts, measured, dx, dy] of [[{ units: 'in' }, '1.0000"', '1.0000', '0.0000'], [{ scale: 2 }, '50.80', '50.80', '0.00']]) for (const native of [false, true]) await t.test(`${JSON.stringify(opts)} native ${native}`, () => {
+    let doc = W.newDoc();
+    const override = measureOverride([0, 0], [25.4, 0], 1, 2);
+    Object.assign(doc, addDimension(doc, buildDim('aligned', { a: [0, 0], b: [25.4, 0], offset: 0, override }, 1, 'PD_DIM_1')));
+    if (native) doc = nativeDimensionOverrides(doc);
+    const before = structuredClone(doc), text = W.writeDxf(doc, opts), saved = readDxf(text), ents = saved.blocks.PD_DIM_1.entities;
+    const expected = `<>  (ΔX ${dx}, ΔY ${dy})`;
+    assert.equal(readOverride(ents), expected);
+    assert.equal(measuredText(ents), measured);
+    assert.ok(ents.some((e) => e.type === 'TEXT' && e.r.v.includes(expected.replace('<>', measured))));
+    if (native) assert.ok(text.split('  0\r\nDIMENSION\r\n')[1].split('  0\r\n')[0].includes('  1\r\n' + expected + '\r\n'));
+    assert.deepEqual(doc, before);
+  });
 });
 
 test('TODO 109a fix: DIMSTYLE lengths and DIMLFAC follow scale and target units, including PD_DIM styles', () => {

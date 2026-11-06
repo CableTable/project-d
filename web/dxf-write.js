@@ -19,6 +19,7 @@ import { nearestAci, unpack420 } from './colour.js';
 import { fillHatch, fillHoles } from './fill.js';
 import { remap } from './groups.js';
 import { scaleRecord, SPEC, relabel, DIM_BLOCK, readDim, dimGeom } from './edit.js';
+import { measuredText, readOverride, textRecord, overrideRecord, dimensionText, measureOverride } from './dimension-text.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
@@ -129,11 +130,12 @@ export function unwritable(doc) {
 }
 
 /** The same conversion and loss note for Save and the Parts library. */
-export function saveReportNote({ tables, skipped }) {
+export function saveReportNote({ tables, skipped, unreadLabels = [] }) {
   const changes = [];
   if (tables) changes.push(tables === 1 ? '1 table saved as a block (AutoCAD sees it as a block, not a table)' : `${tables} tables saved as blocks (AutoCAD sees them as blocks, not tables)`);
   const dropped = skipped.reduce((sum, b) => sum + b.count, 0);
   if (dropped) changes.push(`${dropped} ${dropped === 1 ? 'object' : 'objects'} not saved: ` + skipped.map((b) => b.type + ' x' + b.count).join(', '));
+  if (unreadLabels.length) changes.push('Dimension labels kept unchanged (could not read): ' + unreadLabels.join(', '));
   return changes.length ? '. ' + changes.join('; ') : '';
 }
 
@@ -307,6 +309,7 @@ export function writeDxfWithReport(doc, opts = {}) {
   // Only export options need a deep copy; ordinary Save keeps its existing fast path.
   if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined) doc = structuredClone(doc);
   const prepared = prepareSave(doc);
+  const unreadLabels = new Set();
   doc = prepared.doc;
   if (factor !== 1 || unitChange) {
     const dimensions = new Map();
@@ -333,13 +336,25 @@ export function writeDxfWithReport(doc, opts = {}) {
       if (e.type === 'DIMENSION') dimensions.set(e.r.v[e.r.c.indexOf(2)]?.trim(), e);
     }
     for (const [name, b] of Object.entries(doc.blocks)) if (DIM_BLOCK.test(name) || dimensions.has(name)) {
-      let target = null;
+      const target = unitChange ? { units, scale } : null;
       if (unitChange) {
         const dim = readDim(name, b), native = dimensions.get(name);
         const value = dim ? dimGeom(dim.kind, dim.params, 1)?.mm : +native?.r.v[native.r.c.indexOf(42)];
-        if (Number.isFinite(value)) target = { value, units, scale };
+        if (Number.isFinite(value)) target.value = value;
       }
-      b.entities = relabel(b.entities, factor, target);
+      b.entities = relabel(b.entities, factor, target, (label) => unreadLabels.add(label));
+      const dim = readDim(name, b), measured = measuredText(b.entities), override = readOverride(b.entities);
+      if (dim) {
+        const dp = (/\.(\d+)/.exec(measured)?.[1] || '').length;
+        const next = measureOverride(dim.params.a, dim.params.b, 1, dp, override);
+        if (next !== override) {
+          const record = textRecord(b.entities);
+          b.entities = b.entities.map((e) => e === record ? overrideRecord(next, measured) : e.type === 'TEXT'
+            ? { ...e, r: { ...e.r, v: e.r.v.map((v, i) => e.r.c[i] === 1 ? dimensionText(measured, next) : v) } } : e);
+          const native = dimensions.get(name);
+          if (native) native.r.v = native.r.v.map((v, i) => native.r.c[i] === 1 ? next : v);
+        }
+      }
     }
     for (const key of ['$DIMTXT', '$DIMASZ', '$DIMEXE', '$DIMEXO', '$DIMGAP', '$LTSCALE', '$PDSIZE', '$TEXTSIZE']) {
       const n = +doc.header?.[key];
@@ -361,7 +376,8 @@ export function writeDxfWithReport(doc, opts = {}) {
     doc.header.$MEASUREMENT = units === 'in' ? '0' : '1';
   }
   const ext = factor !== 1 && opts.extents ? opts.extents.map((n) => n * factor) : opts.extents;
-  return { text: writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped };
+  return { text: writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped,
+    ...(unreadLabels.size ? { unreadLabels: [...unreadLabels] } : {}) };
 }
 
 function writePreparedDxf(doc, opts) {
