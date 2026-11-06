@@ -2230,8 +2230,7 @@ try {
       await q('name-dialog').waitFor({ state: 'detached' }); await fold('outlines-panel').click();
       await q('panel-library').click();
       assert.deepEqual(await q('lib-list').locator('.cname').allTextContents(), ['<R19 bracket>'], 'part names stay literal text');
-      assert.deepEqual(await p.locator('[data-docker=library] > section').evaluateAll((els) => els.map((e) => e.querySelector('.section-title').textContent)), ['Parts', 'Drawing scale', 'Tiny gaps', 'Duplicates']);
-      for (const id of ['drawing-panel', 'tiny-panel', 'duplicates-panel']) assert.equal(await fold(id).getAttribute('aria-expanded'), 'false');
+      assert.deepEqual(await p.locator('[data-docker=library] > section').evaluateAll((els) => els.map((e) => e.querySelector('.section-title').textContent)), ['Parts']);
       await capture('library');
       await q('ptab-drawing').click(); await capture('drawing');
       await dragTo(380); assert.equal(await width(), 380);
@@ -2259,8 +2258,7 @@ try {
       await q('picker').setInputFiles({ name: 'R19 layout.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
       await p.locator('[data-ribbon-tab=Part]').waitFor(); await capture('layout');
       await q('panel-library').click();
-      assert.deepEqual(await p.locator('[data-docker=library] > section:visible .section-title').allTextContents(), ['Parts', 'Drawing scale', 'Tiny gaps', 'Duplicates']);
-      assert.equal(await fold('drawing-panel').isDisabled(), true, 'scale needs an active drawing');
+      assert.deepEqual(await p.locator('[data-docker=library] > section:visible .section-title').allTextContents(), ['Parts']);
       await q('ptab-drawing').click();
       await q('ptab-step').click(); await capture('step'); await q('ptab-drawing').click();
       await q('new-layout').click(); await fold('guides-panel').click();
@@ -2293,6 +2291,87 @@ try {
       await p.locator('[data-ribbon-tab=View]').click(); await p.locator('.ribbon-body').getByRole('button', { name: 'Properties panel', exact: true }).click();
       assert.equal(await q('panel-show').isVisible(), true); await p.keyboard.press('Control+1');
       assert.equal(await q('panel-hide').isVisible(), true);
+    } finally { await context.close(); }
+  });
+  await step('TODO 205: each panel tab shows only its own sections on Drawings, Layouts and Compare', async () => {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const p = await context.newPage(), q = (id) => p.getByTestId(id);
+    p.on('pageerror', (e) => errors.push(String(e)));
+    const titles = () => p.locator('.docker-pane .sec:visible').allTextContents();
+    const command = async (text) => {
+      if (!await q('cmd-input').isVisible()) await q('cmd-echo').click();
+      await q('cmd-input').fill(text); await q('cmd-input').press('Enter');
+    };
+    const open = async (name, raw) => {
+      await q('picker').setInputFiles({ name, mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw)) });
+      await p.waitForFunction((name) => document.querySelector('.dtab.on .tname').textContent === name, name);
+    };
+    const expected = {
+      Drawing: { drawing: ['Properties', 'Guides', 'Drawing scale', 'Tiny gaps', 'Duplicates', 'Outlines in this drawing'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
+      Layout: { drawing: ['Properties', 'Parts on this layout', 'Guides'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat', 'Extra gaps'] },
+      'Layout selected': { drawing: ['Selected part', 'Properties', 'Parts on this layout', 'Guides', 'Group and lock', 'Rotate', 'Mirror', 'Duplicate', 'Nudge'], objects: [], layers: ['Layers'], library: ['Parts'], step: ['Step and repeat', 'Extra gaps'] },
+      Compare: { drawing: ['Properties', 'Guides', 'Compare', 'Differences'], objects: [], layers: ['Layers'], library: ['Parts'], step: null },
+    };
+    const audit = async (kind) => {
+      for (const [tab, sections] of Object.entries(expected[kind])) {
+        const button = tab === 'library' ? q('panel-library') : q('ptab-' + tab);
+        assert.equal(await button.isDisabled(), sections === null, `${kind}/${tab}: availability`);
+        if (sections === null) continue;
+        await button.click();
+        assert.deepEqual(await titles(), sections, `${kind}/${tab}: all visible section titles`);
+        if (tab === 'objects' || tab === 'layers') {
+          assert.deepEqual(await p.locator(`[data-docker=${tab}] .sec`).allTextContents(), sections, `${kind}/${tab}: no foreign sections, even hidden`);
+          assert.equal(await q(tab === 'objects' ? 'obj-tree' : 'layer-search').isVisible(), true);
+        }
+      }
+      console.log(`205: ${kind} all five panel tabs match the section table`);
+    };
+    try {
+      await p.goto(URL_); await q('count').waitFor({ state: 'attached' });
+      const raw = newDoc(4); addEntities(raw, dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }));
+      await open('panel-205.dxf', raw);
+      await audit('Drawing');
+      await q('ptab-drawing').click(); await q('drawing-panel').locator('.section-toggle').click();
+      await q('set-length').click(); await command('0,0');
+      assert.match(await q('cmd-prompt').textContent(), /second point/i);
+      await q('panel-library').click();
+      assert.doesNotMatch(await q('cmd-prompt').textContent(), /Set length|second point/i);
+      await q('ptab-drawing').click();
+      assert.equal(await q('set-length').evaluate((el) => el.classList.contains('on')), false);
+      assert.equal(await q('real-length').isVisible(), false);
+      assert.equal(await q('undo').isDisabled(), true, 'cancelling Set length makes no edit');
+      assert.equal(await q('redo').isDisabled(), true);
+      await p.keyboard.press('Control+a'); await q('bar-extract').click();
+      await q('name-input').fill('Panel 205 part'); await q('name-ok').click(); await q('name-dialog').waitFor({ state: 'detached' });
+      await p.keyboard.press('Escape');
+      await p.locator('[data-menu=File]').click(); await p.getByRole('menuitem', { name: 'Compare drawings…', exact: true }).click();
+      await q('cmp-name-1').click();
+      await audit('Compare');
+      await q('ptab-drawing').click();
+      await q('cmp-add-library').click(); await p.getByRole('menuitem', { name: 'Panel 205 part', exact: true }).click();
+      await q('cmp-name-2').click();
+      console.log('205 F2: Compare library part selected:', JSON.stringify(await titles()));
+      await q('cmp-name-1').click(); await command('balloon');
+      assert.match(await q('cmd-prompt').textContent(), /Click the feature to balloon/);
+      await command('20,20'); await command('40,40');
+      await q('balloon').waitFor();
+      console.log('205 F2: Compare linked drawing balloon selected:', JSON.stringify(await titles()));
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      const lay = newLayout('Panel 205 layout'); lay.parts.plate = makePart('plate', 'Panel 205 part', raw);
+      Object.assign(lay.s, { sheetW: 420, sheetH: 297, gridPart: null });
+      lay.placed.push({ partId: 'plate', x: 50, y: 50, rot: 0 });
+      await open('layout-205.dxf', layoutRaw(lay));
+      await p.keyboard.press('Escape'); await p.keyboard.press('Escape');
+      await audit('Layout');
+      await p.locator('[data-tool=select]').click(); await p.keyboard.press('Control+a');
+      await audit('Layout selected');
+      await q('panel-library').click();
+      for (const theme of ['light', 'dark']) {
+        await p.locator('[data-ribbon-tab=View]').click();
+        await p.locator('.ribbon-body').getByRole('button', { name: theme === 'light' ? 'Light' : 'Dark', exact: true }).click();
+        await p.mouse.move(750, 700); await p.screenshot({ path: `${shotDir}/todo205-layout-library-${theme}.png` });
+      }
+      console.log(`205: layout Parts library light/dark screenshots saved in ${shotDir}`);
     } finally { await context.close(); }
   });
   await step('TODO 110c: Draw, Modify, Annotate, Layout, Compare and the automatic Part tab; sr', async () => {

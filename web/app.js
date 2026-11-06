@@ -1708,12 +1708,10 @@ function foldableSection(section) {
 }
 
 function applySectionFold(section) {
-  const available = !['drawing-panel', 'tiny-panel', 'duplicates-panel'].includes(section.dataset.section) || !!editable();
-  const folded = !available || (docker.folds[section.dataset.section] ?? ['drawing-panel', 'tiny-panel', 'duplicates-panel', 'outlines-panel', 'guides-panel', 'sec-group', 'sec-rotate', 'sec-mirror', 'sec-duplicate', 'sec-nudge'].includes(section.dataset.section));
+  const folded = docker.folds[section.dataset.section] ?? ['drawing-panel', 'tiny-panel', 'duplicates-panel', 'outlines-panel', 'guides-panel', 'sec-group', 'sec-rotate', 'sec-mirror', 'sec-duplicate', 'sec-nudge'].includes(section.dataset.section);
   section.classList.toggle('docker-folded', folded);
   const button = section.querySelector('.section-toggle');
-  button.setAttribute('aria-expanded', String(!folded)); button.disabled = !available;
-  button.title = available ? '' : 'Open a drawing tab to use this section';
+  button.setAttribute('aria-expanded', String(!folded));
   section.querySelector('.section-body').inert = folded;
 }
 
@@ -1752,8 +1750,6 @@ function renderDocker() {
   }
   for (const [id, pane] of Object.entries(ui.dockerPanes)) pane.hidden = id !== state.ptab;
   ui.panelScroll.setAttribute('aria-labelledby', 'docker-tab-' + state.ptab);
-  const scalePane = state.ptab === 'library' ? ui.dockerPanes.library : ui.dockerPanes.drawing;
-  for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) if (section.parentElement !== scalePane) scalePane.insertBefore(section, state.ptab === 'library' ? null : ui.outSec);
 }
 
 /**
@@ -3674,6 +3670,7 @@ function buildObjects() {
 }
 
 function setPtab(tab) {
+  if (tab === 'library' && state.setlen) cancelSetlen();
   state.ptab = tab;
   state.panel = tab === 'library' ? 'library' : 'main';
   state.propsOn = true;
@@ -11018,7 +11015,7 @@ function renderEdit() {
   renderRibbon();
   renderStatus();                                          // the status bar's layer follows the selection
   renderBalloons();
-  const d = editable() || curDoc(), on = !!editable(), L = state.setlen, lib = state.panel === 'library';
+  const d = editable() || curDoc(), on = !!editable(), L = state.setlen;
   if (ui.preflight) {
     ui.preflight.hidden = !on || !d.preflightOpen;
     if (!ui.preflight.hidden) {
@@ -11026,7 +11023,7 @@ function renderEdit() {
       else if (ui.preflightSource !== d.raw.entities) ui.preflightNote.textContent = 'Drawing changed · Recheck for current counts. Cut layer: name contains “cut” (any case).';
     }
   }
-  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = (!!cmpDoc() || !on) && !lib; ui.outSec.hidden = !!cmpDoc() || !on || lib;
+  ui.drawSec.hidden = ui.tinySec.hidden = ui.dupsSec.hidden = ui.outSec.hidden = !!cmpDoc() || !on;
   for (const section of [ui.drawSec, ui.tinySec, ui.dupsSec]) applySectionFold(section);
   if (state.colourTool && (!on || state.colourTool.d !== d)) state.colourTool = null;
   if (state.match?.d.vlay === curDoc()) state.match.d = propDoc();
