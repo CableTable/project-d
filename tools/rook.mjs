@@ -12,7 +12,7 @@
 //     --tool = a tool ticket (passes the gate, not counted as an item; the gate line adds `, <k> tool`), --over = a 3rd item with his OK
 //   node tools/rook.mjs suite <sha>   full suite (`npm.cmd test`, then `npm.cmd run test:browser`) in this checkout, detached; <sha> must be HEAD; log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`
 //   node tools/rook.mjs retro [--over] [--events "<text>"] [--as king|bishop]   fill missing briefs from tools/briefs/retro*.txt, then the three retros of runs<N>/, detached; chosen account's cached 5h above 40% is refused (--over passes)
-//   node tools/rook.mjs retro --handover [--uuid <id> --name "Rook S<N><x>"] [--as king|bishop] [--over]   ONE retro over the outgoing Rook's transcript (uuid + name default to rook-next.txt lines 1-2) -> runs<N>/retro<N><x>.out (x empty: retro<N>h); refused above 70% cached 5h
+//   node tools/rook.mjs retro --handover [--uuid <id> --name "Rook S<N><x>"] [--as king|bishop] [--over]   ONE retro over the outgoing Rook's transcript (uuid + name default to rook-next.txt lines 1-2) -> runs<N>/retro<N><x>.out (x empty: retro<N>-0); refused above 70% cached 5h
 //     review / build --as king (and review falling back to King) are refused above 85% cached King 5h (--over passes); `usage` prints `<name>: 100%` for an account at its limit
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
 //   node tools/rook.mjs acad <item> [--as king|bishop]   acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
@@ -35,7 +35,7 @@ import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 import { randomUUID } from 'node:crypto';
-import { review, build, knight, suite, retro, pawn, acad, board, gate, runningNote, printRookContext, dedupePath, EXTRAS } from './rook-launch.mjs';
+import { review, build, knight, suite, retro, pawn, acad, board, gate, handoverRetroName, runningNote, printRookContext, dedupePath, EXTRAS } from './rook-launch.mjs';
 
 dedupePath(process.env); // TODO 206: every child below (and Rook.lnk's) inherits a PATH cmd.exe keeps
 
@@ -243,6 +243,7 @@ export function failLines(text, log) {
 // `handover <resume file> <name>` (TODO 196g): writes rook-next.txt (uuid, name, resume file) for `next`; refused when the resume file is missing or its line 2 lacks the grilling + domain-modeling rule. Returns the 3 lines.
 export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noRetro = false) {
   if (!resume || !name || /[\r\n]/.test(name)) throw new Error('usage: node tools/rook.mjs handover <resume file> <name> [--no-retro]');
+  if (!handoverRetroName(name)) throw new Error(`refused: name "${name}" must end in S<N> (like "Rook S38j"): the next handover's retro check needs it`);
   let text = '';
   try { text = readFileSync(resume, 'utf8'); } catch { throw new Error(`refused: ${resume} is missing`); }
   const line2 = text.split(/\r?\n/)[1] || '';
@@ -253,8 +254,8 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noR
   // TODO 206: rook-next.txt line 2 names the outgoing Rook; its handover retro must have been launched (its .out exists), or --no-retro.
   let prev = '';
   try { prev = readFileSync(`${extras}/rook-next.txt`, 'utf8').split(/\r?\n/)[1] || ''; } catch { /* first ever handover: no check */ }
-  const m = /S(\d+)([a-z]*)$/.exec(prev);
-  const retroOut = m && `runs${m[1]}/retro${m[1]}${m[2] || 'h'}.out`;
+  const m = handoverRetroName(prev);
+  const retroOut = m && `runs${m.n}/${m.id}.out`;
   if (retroOut && !noRetro && !existsSync(`${extras}/${retroOut}`)) throw new Error(`refused: ${retroOut} is missing (run \`node tools/rook.mjs retro --handover\` for ${prev}, or pass --no-retro)`);
   if (retroOut && existsSync(`${extras}/${retroOut}`)) appendFileSync(resume, `${text.endsWith('\n') ? '' : '\n'}Handover retro: read ${retroOut} first and apply what it recommends.\n`);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];

@@ -433,6 +433,11 @@ export function dedupePath(env) {
   return env;
 }
 
+// TODO 206: "Rook S38j" -> {n: '38', id: 'retro38j'}; no letter -> 'retro38-0' (so it cannot collide with "Rook S38h"); null when the name has no S<N>.
+export function handoverRetroName(name) {
+  const m = /S(\d+)([a-z]*)$/.exec(name || '');
+  return m && { n: m[1], id: `retro${m[1]}${m[2] || '-0'}` };
+}
 // `retro`: fill missing briefs, then launch the three retros from their .txt into their .out.
 // TODO 206 `--handover`: one retro over the outgoing Rook's transcript (uuid + name default to rook-next.txt lines 1-2).
 export function retro(args, x = io) {
@@ -446,10 +451,10 @@ export function retro(args, x = io) {
   let names = [`retro${n}`, `retro${n}king`, `retro${n}rook`], hUuid, hName;
   if (ho) {
     [hUuid, hName] = flags['--uuid'] ? [flags['--uuid'][0], flags['--name'][0]] : x.read(`${dirname(dir)}/rook-next.txt`).split(/\r?\n/);
-    const m = /S(\d+)([a-z]*)$/.exec(hName || '');
+    const m = handoverRetroName(hName);
     if (!/^[\w-]+$/.test(hUuid || '') || !m) throw new Error(`${usage}\nneed a uuid and a name like "Rook S${n}j" (rook-next.txt lines 1-2, or --uuid and --name)`);
-    if (m[1] !== n) throw new Error(`refused: ${hName} is session ${m[1]} but this is runs${n}`);
-    names = [`retro${n}${m[2] || 'h'}`];
+    if (m.n !== n) throw new Error(`refused: ${hName} is session ${m.n} but this is runs${n}`);
+    names = [m.id];
   }
   const transcript = `C:/Users/raksh/.claude/projects/E--Project-B-Claude-Project-D/${hUuid}.jsonl`;
   if (ho && !x.exists(transcript)) throw new Error(`refused: no transcript ${transcript}`);

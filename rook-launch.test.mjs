@@ -267,9 +267,9 @@ test('TODO 206: retro --handover launches one run over the named Rook transcript
   const brief = a.written.get(`${X}/runs33/retro33j.txt`);
   assert.ok(brief.startsWith(`N=33 S=Rook S33j T=${T}/aaaa-1111.jsonl`) && brief.includes('Handover retro: only this Rook; short (top 5 fixes)'));
   const b = mk();
-  retro(['--handover', '--uuid', 'bbbb-2', '--name', 'Rook S33'], b.r.x); // no letter: retro33h
-  assert.equal(b.r.calls.find((c) => c[0] === 'launch')[7], `${X}/runs33/retro33h.out`);
-  assert.ok(b.written.get(`${X}/runs33/retro33h.txt`).includes(`${T}/bbbb-2.jsonl`));
+  retro(['--handover', '--uuid', 'bbbb-2', '--name', 'Rook S33'], b.r.x); // no letter: retro33-0 (retro33h is "Rook S33h")
+  assert.equal(b.r.calls.find((c) => c[0] === 'launch')[7], `${X}/runs33/retro33-0.out`);
+  assert.ok(b.written.get(`${X}/runs33/retro33-0.txt`).includes(`${T}/bbbb-2.jsonl`));
   const bad = [[['--handover', '--uuid', 'u'], /usage/], [['--handover', '--name', 'Rook S33j'], /usage/], [['--uuid', 'u', '--name', 'Rook S33j'], /usage/],
     [['--handover', '--uuid', 'u', '--name', 'Rook'], /need a uuid and a name/], [['--handover', '--uuid', 'u', '--name', 'Rook S32j'], /session 32 but this is runs33/]];
   for (const [args, re] of bad) { const c = mk(); assert.throws(() => retro(args, c.r.x), re); assert.equal(launched(c.r.calls), undefined); }

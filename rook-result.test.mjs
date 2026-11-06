@@ -439,19 +439,24 @@ test('TODO 196g: handover refuses a missing resume file or a line 2 without both
     assert.deepEqual(lines, ['11111111-2222-3333-4444-555555555555', 'Rook S37d', resolve(good).replaceAll('\\', '/'), '']);
     assert.equal(printed, lines.slice(0, 3).join('\n'));
     // TODO 206: rook-next.txt now names "Rook S37d"; its handover retro (runs37/retro37d.out) must exist, or --no-retro
-    assert.throws(() => handover(good, 'x', dir), /refused: runs37\/retro37d\.out is missing/);
+    assert.throws(() => handover(good, 'x', dir), /must end in S<N>/); // TODO 206 fix: a name without S<N> is refused
+    assert.throws(() => handover(good, 'Rook S37f', dir), /refused: runs37\/retro37d\.out is missing/);
     assert.equal(readFileSync(good, 'utf8').includes('Handover retro:'), false);
-    assert.match(handover(good, 'x', dir, undefined, true).split('\n')[0], /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/); // a new random uuid by default
+    assert.match(handover(good, 'Rook S37f', dir, undefined, true).split('\n')[0], /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/); // a new random uuid by default
     assert.equal(readFileSync(good, 'utf8').includes('Handover retro:'), false); // --no-retro and no .out: no line
     assert.equal(handoverArgsError([...argv, '--no-retro']), '');
     writeFileSync(join(dir, 'rook-next.txt'), 'u\nRook S37d\nr\n');
     writeFileSync(join(dir, 'runs37', 'retro37d.out'), 'x');
     handover(good, 'Rook S37e', dir);
     assert.ok(readFileSync(good, 'utf8').endsWith('Handover retro: read runs37/retro37d.out first and apply what it recommends.\n'));
-    writeFileSync(join(dir, 'rook-next.txt'), 'u\nRook S37\nr\n'); // no letter: retro37h
-    assert.throws(() => handover(good, 'x', dir), /runs37\/retro37h\.out is missing/);
+    writeFileSync(join(dir, 'rook-next.txt'), 'u\nRook S37\nr\n'); // no letter: retro37-0, not retro37h
+    writeFileSync(join(dir, 'runs37', 'retro37h.out'), 'x');
+    assert.throws(() => handover(good, 'Rook S37f', dir), /runs37\/retro37-0\.out is missing/);
+    writeFileSync(join(dir, 'rook-next.txt'), 'u\nRook S37h\nr\n');
+    rmSync(join(dir, 'runs37', 'retro37h.out'));
+    assert.throws(() => handover(good, 'Rook S37f', dir), /runs37\/retro37h\.out is missing/);
     const cwd = process.cwd(); // TODO 196g Low 3: a bare file name run from inside runs37 passes the runs<N> check
     process.chdir(join(dir, 'runs37'));
-    try { assert.equal(handover('resume-rook.txt', 'x', dir, undefined, true).split('\n')[2], resolve(good).replaceAll('\\', '/')); } finally { process.chdir(cwd); }
+    try { assert.equal(handover('resume-rook.txt', 'Rook S37f', dir, undefined, true).split('\n')[2], resolve(good).replaceAll('\\', '/')); } finally { process.chdir(cwd); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
