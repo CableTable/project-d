@@ -20,6 +20,7 @@ import { line, arc, circle } from './dxf-write.js';
 import { chainAt, DIM_LAYER } from './edit.js';
 
 const TAU = Math.PI * 2;
+const VERTEX_TOL = 1e-4;
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
 const mul = (a, k) => [a[0] * k, a[1] * k];
@@ -112,7 +113,12 @@ export function segmentsFromItems(ed, ents, skip = () => false) {
       for (let k = 0; k < ops.length;) {
         const op = ops[k];
         if (op === 0) { cur = P(ops[k + 1], ops[k + 2]); start = cur; k += 3; }
-        else if (op === 1) { const q = P(ops[k + 1], ops[k + 2]); if (cur && dist(cur, q) > 1e-12) out.push(seg(cur, q)); cur = q; if (!start) start = q; k += 3; }
+        else if (op === 1) {
+          const q = P(ops[k + 1], ops[k + 2]);
+          if (!cur || dist(cur, q) >= VERTEX_TOL) { if (cur) out.push(seg(cur, q)); cur = q; }
+          if (!start) start = q;
+          k += 3;
+        }
         else if (op === 2) {
           const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweepOp(a0, a1, ops[k + 6] === 1);
           const n = Math.max(1, Math.ceil(Math.abs(sw) / (TAU / 3) - 1e-9)), at = (a) => P(cx + r * Math.cos(a), cy + r * Math.sin(a));
@@ -125,7 +131,11 @@ export function segmentsFromItems(ed, ents, skip = () => false) {
             S = E;
           }
           cur = S; k += 7;
-        } else { if (cur && start && dist(cur, start) > 1e-12) out.push(seg(cur, start)); cur = start; k++; }
+        } else {
+          if (cur && start && dist(cur, start) >= VERTEX_TOL) out.push(seg(cur, start));
+          else if (out.length && out[out.length - 1].p1 === cur) out[out.length - 1].p1 = start;
+          cur = start; k++;
+        }
       }
     }
   }

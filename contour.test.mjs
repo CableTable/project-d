@@ -43,6 +43,31 @@ const lShape = poly([[0, 0], [100, 0], [100, 40], [40, 40], [40, 100], [0, 100]]
 const closed = (loop) => loop.every((s, i) => { const p = loop[(i + loop.length - 1) % loop.length]; return Math.hypot(s.p0[0] - p.p1[0], s.p0[1] - p.p1[1]) < 1e-6; });
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
 
+test('TODO 199: near-repeated closing and middle vertices, Inside and Outside, both corners and clockwise', () => {
+  const cw = [[-100, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40]];
+  assert.ok(C.loopArea(poly(cw)) < 0, 'the repro is clockwise');
+  for (const pts of [[...cw, [-100 + 1e-5, 0]], [cw[0], cw[1], [-50 + 1e-5, 40], ...cw.slice(2)], cw]) {
+    const doc = W.newDoc(4);
+    W.addEntities(doc, W.lwpoly(pts, { closed: true }));
+    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+    const segs = C.segmentsFromItems(ed, [0]), b = C.buildLoops(segs, 1e-6);
+    assert.equal(segs.length, 6, 'near-repeated vertices add no tiny segment');
+    assert.equal(b.open, 0);
+    assert.equal(b.loops.length, 1);
+    near(C.loopArea(b.loops[0]), Math.abs(C.loopArea(poly(cw))), 'the original hexagon is preserved');
+    for (const corners of ['rounded', 'sharp']) for (const outward of [true, false]) {
+      const r = C.contour(b.loops, { dist: 5, steps: 1, outward, corners });
+      assert.equal(r.stopped, null);
+      assert.equal(r.made, 1);
+      assert.equal(r.steps.length, 1);
+      assert.equal(r.steps[0].length, 1);
+      const loop = r.steps[0][0], area = C.loopArea(loop);
+      assert.ok(closed(loop));
+      assert.ok(outward ? area > C.loopArea(b.loops[0]) : area > 0 && area < C.loopArea(b.loops[0]));
+    }
+  }
+});
+
 test('areas: a rectangle, a circle, a rounded rectangle, an L; anticlockwise is positive', () => {
   near(C.loopArea(rect(0, 0, 100, 60)), 6000);
   near(C.loopArea(C.reverseLoop(rect(0, 0, 100, 60))), -6000);

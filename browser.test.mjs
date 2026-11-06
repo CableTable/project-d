@@ -7921,6 +7921,53 @@ try {
   const ctCfg = () => page.evaluate(() => JSON.parse(localStorage.getItem('pd-contour')));
   const ctPanel = (id) => page.locator(`[data-testid=contour-panel] [data-testid=${id}]`);
   const entCount = async () => Number((await t('entities').textContent()).replace(/\D+/g, ''));
+  await step('TODO 199: contour outside a hexagon with a near-repeated point', async () => {
+    await closeTabs(/./);
+    const doc = newDoc(4);
+    addEntities(doc, dxfPoly([[-100, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40], [-100 + 1e-5, 0]], { closed: true }));
+    const open = async (name, raw) => {
+      await t('picker').setInputFiles({ name, mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+      await page.waitForFunction((nm) => document.querySelector('.dtab.on .tname').textContent === nm, name);
+      await page.keyboard.press('Escape'); await page.keyboard.press('Control+a');
+      await page.locator('[data-tool=contour]').click();
+      await ctPanel('contour-outside').click(); await ctPanel('contour-rounded').click();
+      await t('contour-dist').fill('5'); await t('contour-dist').press('Enter');
+      await t('contour-steps').fill('1'); await t('contour-steps').press('Enter');
+      assert.equal(await t('contour-warn').isVisible(), false);
+      assert.equal(await t('contour-preview').locator('.ct-out').count(), 1);
+      assert.equal(await t('contour-apply').isEnabled(), true);
+    };
+    await open('hex199.dxf', doc);
+    assert.equal(await t('contour-hint').textContent(), 'Apply makes 1 new outline on the layer Contour. The part itself is not changed.');
+    await shotBoth('todo199-drawing');
+    await t('contour-apply').click();
+    assert.match(await prompt(), /^Contour: 1 new outline \(12 lines and arcs\)/);
+    const drawing = await savedDoc();
+    assert.equal(drawing.entities.filter((e) => e.layer === 'Contour').length, 12);
+    assert.deepEqual(drawing.entities[0].r.c.map((c, i) => [c, drawing.entities[0].r.v[i]]).filter(([c]) => c === 10 || c === 20),
+      doc.entities[0].r.c.map((c, i) => [c, doc.entities[0].r.v[i]]).filter(([c]) => c === 10 || c === 20), 'the source vertices stay unchanged');
+    await t('contour-close').click(); await page.keyboard.press('Control+z');
+    assert.equal(await entCount(), 1, 'one Undo removes the contour');
+    await closeTabs(/./);
+    const src = newLayout('199 source');
+    src.parts['hex199'] = makePart('hex199', 'Hexagon', doc, 1);
+    src.placed = [{ partId: 'hex199', x: 100, y: 300, rot: 0, mirrorX: false, mirrorY: false }];
+    await open('hex199-layout.dxf', layoutRaw(src));
+    assert.match(await t('contour-hint').textContent(), /^Apply adds a contour \(1 outline\) to 1 part/);
+    await shotBoth('todo199-layout');
+    await t('contour-apply').click();
+    const lay = layoutFromRaw(await savedDoc()), contours = lay.placed.filter((p) => p.ct);
+    assert.equal(lay.placed.length, 2);
+    assert.equal(contours.length, 1);
+    assert.equal(lay.parts[contours[0].partId].raw.entities.length, 12);
+    await ctPanel('contour-sharp').click();
+    await t('contour-close').click(); await page.keyboard.press('Control+z');
+    assert.equal(await nParts(), 1, 'one Undo removes the attached contour');
+    for (const name of ['drawing', 'layout']) for (const theme of ['light', 'dark'])
+      assert.ok(readFileSync(`${shotDir}/s12-todo199-${name}-${theme}.png`).length > 1000);
+    await closeTabs(/./);
+  });
+
   await step('TODO 35: the Contour tool (rail, after Offset): a floating panel with a small preview; pick a closed outline; live preview on the sheet; Close; not on a layout', async () => {
     await page.evaluate(() => localStorage.removeItem('pd-contour'));
     await closeTabs(/./);

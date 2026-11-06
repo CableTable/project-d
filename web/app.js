@@ -10784,7 +10784,7 @@ function renderContour() {
     : cc.an.partial ? 'Only part of an outline is selected: right-click → Select connected.'
     : cc.kind === 'open' ? `That is not a closed outline (${cc.an.open} piece${cc.an.open === 1 ? '' : 's'} left open). Join the tiny gaps, or pick a closed one.`
     : made ? `Apply makes ${made} new outline${made === 1 ? '' : 's'} on the layer Contour. The part itself is not changed.` : 'Nothing to make with these values.';
-  const warn = lay ? (cc.warn || '') : res && res.stopped ? `Step ${res.stopped.step} would close up: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '';
+  const warn = lay ? (cc.warn || '') : res && res.stopped ? `Step ${res.stopped.step} ${res.stopped.why.slice(3)}: made ${made}.` : res && res.dropped ? `${res.dropped} hole${res.dropped === 1 ? '' : 's'} closed up on the way.` : '';
   ui.ctWarn.hidden = !warn; ui.ctWarn.textContent = warn;
   // Reduced opacity distinguishes preview contours from applied geometry.
   ui.ctPreview.style.setProperty('--ct-colour', contourColour(d || curDoc()));
@@ -10823,7 +10823,7 @@ function applyContour() {
   setSel(d, keep);
   renderLayers();
   usedColour(contourKey(d));
-  note(`Contour: ${res.made} new outline${res.made === 1 ? '' : 's'} (${ents.length} line${ents.length === 1 ? '' : 's'} and arcs) on the layer ${CONTOUR_LAYER}` + (res.stopped ? `. Step ${res.stopped.step} would close up` : '') + '. Ctrl+Z takes them away');
+  note(`Contour: ${res.made} new outline${res.made === 1 ? '' : 's'} (${ents.length} line${ents.length === 1 ? '' : 's'} and arcs) on the layer ${CONTOUR_LAYER}` + (res.stopped ? `. Step ${res.stopped.step} ${res.stopped.why.slice(3)}` : '') + '. Ctrl+Z takes them away');
 }
 
 /** Apply on a layout: each selected placed part gets a contour (a new part on the layer Contour) placed on it and grouped with it, so they move, turn and copy together; one undo step.
