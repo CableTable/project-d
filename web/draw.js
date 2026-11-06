@@ -477,7 +477,7 @@ export function toolPreview(T) {
 export function toolPrompt(T, layer = '0') {
   const k = T.kind, n = T.pts.length, head = LABELS[k].toUpperCase();
   const st = (extra) => `Command: ${head}   ${extra}`;
-  if (T.stage === 'radius') return { status: st(`Corner radius ${n2(T.radius)} mm · layer ${layer}`), prompt: `Corner radius <${n2(T.radius)}>:` };
+  if (T.stage === 'radius') return { status: st(`Corner radius ${n2(T.radius)} mm · layer ${layer}`), input: 'number', prompt: `Corner radius <${n2(T.radius)}>:` };
   if (k === 'line') {
     if (!n) return { status: st(`layer ${layer}`), prompt: 'Specify first point (x,y):' };
     const g = T.trail.length;

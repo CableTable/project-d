@@ -240,7 +240,7 @@ test('Rook retries once, keeps full diagnostics local, and exports only fixed su
   const success = JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: .25, resetsAt: 123 }, seven_day: { utilization: .5, resetsAt: 456 } } } });
   let calls = 0;
   assert.deepEqual(claudeUsage('claude', () => { if (++calls === 1) throw failure; return success; }, (s) => logs.push(s)), { h5: [25, 123], wk: [50, 456] });
-  assert.equal(calls, 2); assert.match(logs[0], /hook_started secret/);
+  assert.equal(calls, 2); assert.match(logs[0], /private hook JSON/); assert.doesNotMatch(logs[0], /hook_started secret/); // retro38i: the report is the short message, not the stream
   calls = 0;
   assert.throws(() => claudeUsage('claude', () => { calls++; throw failure; }, () => {}), /^Error: Rook usage probe failed, exit 1$/);
   assert.equal(calls, 2);

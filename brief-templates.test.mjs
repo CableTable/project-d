@@ -7,9 +7,10 @@ const dir = new URL('./tools/briefs/', import.meta.url);
 const values = {
   'King|Knight': 'King', item: '170', summary: 'brief templates', branch: 'knight/170', sha: '943c3e1',
   'base sha': '9572997', 'spec path': '../runs32/grill-170.md', 'brief path': '../runs32/b-170.txt',
+  'base-sha': '9572997', 'test-file': 'browser.test.mjs', step: 'TODO 170',
   N: '32', file: 'rev-170.jsonl','preserved behaviour': 'existing brief linting',
   'Do list': '1. Check the brief templates.\n2. `npm.cmd test` passes.\n3. Tick TODO 170 in TODO.md.',
-  'commit title': 'TODO 170: brief templates', 'report size': '5',
+  'commit title': 'TODO 170: brief templates', 'report size': '5', 'area words': 'brief template|brief lint', 'test file': 'x.test.mjs', step: 'TODO 170', img: '<img>', // board.txt names the HTML tag
 };
 
 for (const file of readdirSync(dir).filter((name) => name.endsWith('.txt')).sort()) {

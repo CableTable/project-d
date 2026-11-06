@@ -50,7 +50,8 @@ const PATHS = {
   image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/>',
   table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
-  back: '<path d="M15 6l-6 6 6 6"/>'
+  back: '<path d="M15 6l-6 6 6 6"/>',
+  full: '<path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5"/>'
 };
 export function icon(name, size = 18) {
   const s = document.createElement('span');

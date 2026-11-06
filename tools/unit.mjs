@@ -1,4 +1,4 @@
-// Runs every *.test.mjs in the repo folder except browser.test.mjs (that one is `npm run test:browser`), so a new test file cannot be forgotten.
+// Runs every *.test.mjs in the repo folder except browser.test.mjs, plus tools/browser-lint.test.mjs (browser flows run separately).
 // `--skip <file>` leaves one unit file out (a sandbox where base-check.test.mjs stalls); an unknown name is an error.
 import { readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -17,7 +17,7 @@ export function unitFiles(all, argv) {
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  const all = readdirSync('.').filter((f) => f.endsWith('.test.mjs') && f !== 'browser.test.mjs').sort();
+  const all = readdirSync('.').filter((f) => f.endsWith('.test.mjs') && f !== 'browser.test.mjs').concat('tools/browser-lint.test.mjs').sort();
   let files;
   try { files = unitFiles(all, process.argv.slice(2)); } catch (e) { console.error(e.message); process.exit(1); }
   const r = spawnSync(process.execPath, ['--test', '--test-timeout=120000', ...files], { stdio: 'inherit' });

@@ -3,7 +3,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "npx eslint web && node tools/unit.mjs",
+    "test": "node node_modules/eslint/bin/eslint.js web && node tools/unit.mjs",
     "test:browser": "node tools/browser-parallel.mjs",
     "serve": "node serve.mjs",
     "vendor": "node tools/vendor.mjs",

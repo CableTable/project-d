@@ -347,6 +347,15 @@ test('result skips a half-written last line: no result yet for an unfinished run
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('retro38i fix: result of a LAUNCH DIED line (no usage) prints it and exits 1', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
+  try {
+    const run = join(dir, 'run.jsonl');
+    writeFileSync(run, '{"type":"result","is_error":true,"result":"LAUNCH DIED"}\n');
+    assert.throws(() => execFileSync(process.execPath, ['tools/rook.mjs', 'result', run], { encoding: 'utf8', stdio: 'pipe' }), (e) => e.status === 1 && e.stdout.trim() === 'LAUNCH DIED' && !/TypeError/.test(e.stderr));
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('TODO 193a: result ends its token line with the report line count (blank lines not counted)', () => {
   const dir = mkdtempSync(join(tmpdir(), 'projectd-result-'));
   try {
@@ -386,6 +395,22 @@ test('result prints peak context and warns strictly above 150k; Codex logs skip 
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('retro38ck: fails sees timestamped errors and SUITE results without inventing failing steps', () => {
+  for (const [body, expected] of [
+    ['##[error]Process completed with exit code 1.', 'no failing step lines found in ci.log'],
+    ['SUITE unit=1 browser=0', 'red (unit=1 browser=0) but no failing step lines found in ci.log'],
+    ['SUITE unit=0 browser=2', 'red (unit=0 browser=2) but no failing step lines found in ci.log'],
+    ['SUITE unit=0 browser=0', 'no failures in ci.log'],
+    ['FAIL real step\n##[error]Process completed with exit code 1.', 'real step'],
+    ['ok 1', 'no failures in ci.log'],
+  ]) {
+    for (const timestamp of ['', '2026-11-06T10:15:30.1234567Z ']) {
+      const text = body.split('\n').map((line) => timestamp + line).join('\r\n');
+      assert.deepEqual(failLines(text, 'ci.log'), [expected], text);
+    }
+  }
+});
+
 test('TODO 196g fix: fails reads the real suite-log lines (browser [shard n/m] FAIL, node:test spec ✖ + summary), with the first 3 +/- lines, max 40', () => {
   const E = '\x1b';
   // Copied from runs35/suite-da8a469.log (lines 1173, 1622-1628) and runs36/suite-b6de1a7.log (1821, 2295, 2444).
@@ -397,6 +422,7 @@ test('TODO 196g fix: fails reads the real suite-log lines (browser [shard n/m] F
   const browser = ['[shard 1/4] FAIL part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged ', '[shard 2/4] FAIL TODO 146: an up-left Line and its readout leave a clear, stationary command box ', 'SUITE unit=0 browser=1'].join('\r\n');
   assert.deepEqual(failLines(browser, 'b.log'), ['part PDF: tiled on A4, and scaled to fit A0 / A3 / A4 with its scale stated; the layout dialog is unchanged', 'TODO 146: an up-left Line and its readout leave a clear, stationary command box']);
   assert.deepEqual(failLines('[shard 2/4] FAIL a step\n[shard 2/4] - The input did not match the regular expression /\\(80\\.00\\) Tj/\n[shard 2/4] + 1', 's.log'), ['a step', '- The input did not match the regular expression /\\(80\\.00\\) Tj/', '+ 1']); // TODO 196g Low 1
+  assert.deepEqual(failLines('2026-11-06T10:15:30.1234567Z [shard 2/4] FAIL TODO 146: a step\n2026-11-06T10:15:30.2Z [shard 2/4] - 1\n2026-11-06T10:15:30.3Z FAIL bare', 't.log'), ['TODO 146: a step', '- 1', 'bare']); // CI job logs prefix every line with a timestamp
   assert.deepEqual(failLines(`FAIL bare step\n${E}[31m- 1${E}[39m\n${E}[32m+ 2${E}[39m`, 'a.log'), ['bare step', '- 1', '+ 2']);
   assert.deepEqual(failLines('ok 1\nok step\nSUITE unit=0 browser=0\n', 'x.log'), ['no failures in x.log']);
   assert.deepEqual(failLines('lots of output\nSUITE unit=1 browser=0\n', 'r.log'), ['red (unit=1 browser=0) but no failing step lines found in r.log']);
@@ -438,9 +464,25 @@ test('TODO 196g: handover refuses a missing resume file or a line 2 without both
     const lines = readFileSync(join(dir, 'rook-next.txt'), 'utf8').split('\n');
     assert.deepEqual(lines, ['11111111-2222-3333-4444-555555555555', 'Rook S37d', resolve(good).replaceAll('\\', '/'), '']);
     assert.equal(printed, lines.slice(0, 3).join('\n'));
-    assert.match(handover(good, 'x', dir).split('\n')[0], /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/); // a new random uuid by default
+    // TODO 206: rook-next.txt now names "Rook S37d"; its handover retro (runs37/retro37d.out) must exist, or --no-retro
+    assert.throws(() => handover(good, 'x', dir), /must end in S<N>/); // TODO 206 fix: a name without S<N> is refused
+    assert.throws(() => handover(good, 'Rook S37f', dir), /refused: runs37\/retro37d\.out is missing/);
+    assert.equal(readFileSync(good, 'utf8').includes('Handover retro:'), false);
+    assert.match(handover(good, 'Rook S37f', dir, undefined, true).split('\n')[0], /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/); // a new random uuid by default
+    assert.equal(readFileSync(good, 'utf8').includes('Handover retro:'), false); // --no-retro and no .out: no line
+    assert.equal(handoverArgsError([...argv, '--no-retro']), '');
+    writeFileSync(join(dir, 'rook-next.txt'), 'u\nRook S37d\nr\n');
+    writeFileSync(join(dir, 'runs37', 'retro37d.out'), 'x');
+    handover(good, 'Rook S37e', dir);
+    assert.ok(readFileSync(good, 'utf8').endsWith('Handover retro: read runs37/retro37d.out first and apply what it recommends.\n'));
+    writeFileSync(join(dir, 'rook-next.txt'), 'u\nRook S37\nr\n'); // no letter: retro37-0, not retro37h
+    writeFileSync(join(dir, 'runs37', 'retro37h.out'), 'x');
+    assert.throws(() => handover(good, 'Rook S37f', dir), /runs37\/retro37-0\.out is missing/);
+    writeFileSync(join(dir, 'rook-next.txt'), 'u\nRook S37h\nr\n');
+    rmSync(join(dir, 'runs37', 'retro37h.out'));
+    assert.throws(() => handover(good, 'Rook S37f', dir), /runs37\/retro37h\.out is missing/);
     const cwd = process.cwd(); // TODO 196g Low 3: a bare file name run from inside runs37 passes the runs<N> check
     process.chdir(join(dir, 'runs37'));
-    try { assert.equal(handover('resume-rook.txt', 'x', dir).split('\n')[2], resolve(good).replaceAll('\\', '/')); } finally { process.chdir(cwd); }
+    try { assert.equal(handover('resume-rook.txt', 'Rook S37f', dir, undefined, true).split('\n')[2], resolve(good).replaceAll('\\', '/')); } finally { process.chdir(cwd); }
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

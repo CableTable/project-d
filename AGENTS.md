@@ -27,7 +27,8 @@ in `web/` (no build step), a small Rust core. The spec is `Project-D-scope.md`; 
 - A build or fix round runs only what the brief names, never the full suite (Rook runs it; S29 retro: fix rounds took 18-19 min; S32: 172 lost 18 min to it).
 - While working and before committing: your new / changed steps, `node browser.test.mjs <port> '<step names>'`.
 - Stopping on a question or a red you can't settle: commit as `WIP TODO <id>: <why>` (hooks on, never `--no-verify`) and say so in the report's first line; the fix round starts from that sha.
-- If `npm.cmd test` stalls in base-check.test.mjs, run `node tools/unit.mjs --skip base-check.test.mjs` plus `npx eslint web`, quote the totals and list it under Not checked; this alone is not WIP. Skip process inspection (`Get-CimInstance` is denied).
+- In Knight's sandbox, base-check's `TODO 193a` always fails at 30 s (known; King and CI pass). In the clone always run `node tools/unit.mjs --skip base-check.test.mjs` plus `npx eslint web` instead of `npm.cmd test`, quote the totals and list it under Not checked; this alone is not WIP; no base re-run. Skip process inspection (`Get-CimInstance` is denied).
+- No cargo on this PC: Rust is checked only in CI; list it under Not checked.
 - A failing step you didn't touch (filtered or full): rerun it alone on the base; if it fails there too, note it as a
   filter artifact or old failure and go on.
 - `browser.test.mjs` starts and stops its own server: start no other, end no process (no taskkill / Stop-Process).

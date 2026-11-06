@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod balloons;
+mod dwg;
 mod launch;
 use std::{path::PathBuf, sync::Mutex};
 use tauri::{Emitter, Manager};
@@ -29,6 +30,31 @@ fn grant_balloon_sidecar(app: tauri::AppHandle, path: std::path::PathBuf) -> Res
     scope.allow_file(sidecar).map_err(|error| error.to_string())
 }
 
+#[tauri::command]
+async fn dwg_to_dxf(app: tauri::AppHandle, path: PathBuf) -> Result<tauri::ipc::Response, String> {
+    if !cfg!(dwg_helper) {
+        return Err(dwg::NOT_INCLUDED.into());
+    }
+    if !path.is_absolute() || !path.is_file() || !app.fs_scope().is_allowed(&path) {
+        return Err("The source file is outside the allowed scope or does not exist".into());
+    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || dwg::convert(&path))
+        .await.map_err(|error| error.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
+/// A dropped .dwg has no path: the web sends its bytes. `name` is the file's name, for the web's messages only.
+#[tauri::command]
+async fn dwg_bytes_to_dxf(name: String, bytes: Vec<u8>) -> Result<tauri::ipc::Response, String> {
+    let _ = name;
+    if !cfg!(dwg_helper) {
+        return Err(dwg::NOT_INCLUDED.into());
+    }
+    let bytes = tauri::async_runtime::spawn_blocking(move || dwg::convert_bytes(&bytes))
+        .await.map_err(|error| error.to_string())??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 fn main() {
     let cwd = std::env::current_dir().expect("could not read launch directory");
     tauri::Builder::default()
@@ -46,7 +72,7 @@ fn main() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .invoke_handler(tauri::generate_handler![grant_balloon_sidecar, take_launch_files])
+        .invoke_handler(tauri::generate_handler![grant_balloon_sidecar, take_launch_files, dwg_to_dxf, dwg_bytes_to_dxf])
         .run(tauri::generate_context!())
         .expect("error while running Project D");
 }

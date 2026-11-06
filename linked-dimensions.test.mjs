@@ -2,18 +2,21 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as W from './web/dxf-write.js';
 import * as E from './web/edit.js';
-import { dragGrip } from './web/grips.js';
+import { dragGrip, gripsOf } from './web/grips.js';
 import { flatten, readDxf } from './web/drawing.js';
-import { followDimensions } from './web/linked-dimensions.js';
+import { followDimensions, driveLine, driveDimension, linkedLine, typedLength, dimensionEntry } from './web/linked-dimensions.js';
+import { readOverride } from './web/dimension-text.js';
+import * as LD from './web/layoutdoc.js';
 import { labelOf } from './web/objects.js';
 import { explodeSelection } from './web/explode.js';
 import { rotateEntities } from './web/rotate.js';
+import { stretchEntities } from './web/stretch.js';
 import { mirrorEntity } from './web/modify.js';
 
 function drawing(shape, params, kind = 'aligned', factor = 1) {
   const raw = W.newDoc(4);
   W.addEntities(raw, shape);
-  Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { textH: 2, offset: 10, ...params }, factor, E.freeName({}, kind === 'linear' ? 'aligned' : kind), 3)));
+  Object.assign(raw, E.addDimension(raw, E.buildDim(kind, { textH: 2, offset: 10, ...params }, factor, E.freeName(raw.blocks, kind, params.axis), 3)));
   return raw;
 }
 const model = (raw) => E.dimOfEntity(raw, 1);
@@ -103,7 +106,7 @@ test('Linear axis tags survive DXF reopen and Copy: dragging off-axis keeps 100.
 test('old untagged Linear files keep geometry inference, including on-axis ambiguity', () => {
   for (const axis of ['h', 'v']) for (const offAxis of [false, true]) {
     const b = offAxis ? [100, 100] : axis === 'h' ? [100, 0] : [0, 100];
-    const back = readDxf(W.writeDxf(drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear')));
+    const back = readDxf(W.writeDxf(drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear')).replaceAll(`PD_DIM_${axis.toUpperCase()}1`, 'PD_DIM_1'));
     assert.equal(model(back).name, 'PD_DIM_1');
     assert.equal(model(back).kind, offAxis ? 'linear' : 'aligned');
     assert.equal(model(back).params.axis, offAxis ? axis : undefined);
@@ -363,4 +366,295 @@ test('Fix 129: a Linear dimension dragged off its axis keeps its axis and value 
     assert.equal(m.kind, 'linear'); assert.equal(m.params.axis, axis);
     assert.equal(label(back), label(next)); assert.equal(label(back), '100.000');
   }
+});
+
+test('TODO 76c: aligned, h, v and a rotated INSERT drive after writeDxf -> read', () => {
+  for (const [kind, axis, turn, end] of [['aligned', undefined, 0, [90, 120]], ['linear', 'h', 0, [150, 80]], ['linear', 'v', 0, [60, 150]], ['linear', 'h', 90, [-80, 150]]]) {
+    const raw = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], axis }, kind);
+    W.addEntities(raw, W.line(300, 300, 400, 300));
+    if (turn) Object.assign(raw, rotateEntities(raw, new Set([0, 1]), [0, 0], turn));
+    const back = reopen(raw), before = structuredClone(back), entry = dimensionEntry(back, 1, '150');
+    assert.equal(model(back).name, axis ? `PD_DIM_${axis.toUpperCase()}1` : 'PD_DIM_1');
+    assert.equal(entry.n, 150); assert.equal(entry.link.i, 0);
+    const next = driveDimension(back, 1, entry.n);
+    point(E.lineOf(next.entities[0]), [0, 0, ...end]);
+    assert.equal(label(next), '150.000'); assert.equal(model(next).kind, kind); assert.equal(model(next).params.axis, axis);
+    assert.deepEqual(next.entities[2], before.entities[2], 'unrelated LINE stays');
+    assert.deepEqual(back, before, 'input and Undo snapshot stay');
+    const history = E.createHistory(); history.push(back, 'Dimension length');
+    assert.deepEqual(history.undo(next), before); assert.equal(history.canUndo, false);
+  }
+});
+
+test('TODO 76c: a deleted or separately moved LINE after reopen makes a literal override without moving geometry', () => {
+  for (const kind of ['aligned', 'h', 'v']) for (const lost of ['deleted', 'moved', 'polyline', 'duplicates']) {
+    const raw = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], axis: kind === 'aligned' ? undefined : kind }, kind === 'aligned' ? kind : 'linear');
+    W.addEntities(raw, W.line(300, 300, 400, 300));
+    const saved = reopen(raw);
+    if (lost === 'deleted') saved.entities.splice(0, 1);
+    if (lost === 'moved') Object.assign(saved, E.moveEntities(saved, new Set([0]), 10, 20));
+    if (lost === 'polyline') saved.entities[0] = W.lwpoly([[0, 0], [60, 80]]);
+    if (lost === 'duplicates') W.addEntities(saved, W.line(60, 80, 0, 0));
+    const back = reopen(saved), e = lost === 'deleted' ? 0 : 1, dim = E.dimOfEntity(back, e), before = structuredClone(back);
+    for (const typed of ['150', '0', '-5']) {
+      assert.deepEqual(dimensionEntry(back, e, typed), { reason: lost === 'duplicates' ? 'multiple' : 'none' });
+      assert.equal(driveDimension(back, e, Number(typed)), null);
+      const next = E.replaceDimension(back, E.buildDim(dim.kind, { ...dim.params, override: typed }, 1, dim.name, dim.dp));
+      assert.equal(readOverride(next.blocks[dim.name].entities), typed); assert.equal(label(next, e), typed);
+      assert.deepEqual(next.entities, before.entities, 'all geometry stays');
+      const history = E.createHistory(); history.push(back, 'Dimension text');
+      assert.deepEqual(history.undo(next), before); assert.equal(history.canUndo, false);
+    }
+    assert.equal(dimensionEntry(back, e, '150 TYP'), null, 'ordinary text keeps its ordinary status');
+  }
+});
+
+test('TODO 76c: radius, diameter and angle never report a missing LINE; existing overrides stay text', () => {
+  const radial = drawing(W.circle(50, 40, 10), { c: [50, 40], r: 10, p: [70, 40] }, 'radius');
+  const diameter = drawing(W.circle(50, 40, 10), { a: [40, 40], b: [60, 40] }, 'diameter');
+  const angle = drawing(W.line(0, 0, 50, 0), { v: [0, 0], a0: 0, a1: 60, r: 20 }, 'angle');
+  for (const raw of [radial, diameter, angle]) assert.deepEqual(dimensionEntry(reopen(raw), 1, '150'), { reason: 'kind' });
+  for (const override of ['<> TYP', '150']) {
+    const back = reopen(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], override }));
+    assert.equal(dimensionEntry(back, 1, '200'), null);
+    const dim = model(back), cleared = { ...back, ...E.replaceDimension(back, E.buildDim(dim.kind, { ...dim.params, override: '' }, 1, dim.name, dim.dp)) };
+    assert.equal(dimensionEntry(cleared, 1, '200').link.i, 0, 'clearing restores driving');
+  }
+});
+
+test('TODO 76c: retyping the shown number on an unlinked dim in shown units makes no override or Undo step', () => {
+  for (const [units, factor, shown] of [['mm', 1, '100'], ['inch', 1, '3.937"'], ['mm', 25.4, '2540']]) {
+    const raw = reopen(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], units }, 'aligned', factor));
+    raw.entities.splice(0, 1);
+    const before = structuredClone(raw);
+    assert.deepEqual(dimensionEntry(raw, 0, shown), { unchanged: true });
+    assert.equal(readOverride(raw.blocks[E.dimOfEntity(raw, 0).name].entities), '');
+    assert.deepEqual(raw, before);
+  }
+});
+
+test('TODO 76c: unlinked same-value entry is exact; linked entry keeps rounding to shown decimals', () => {
+  for (const axis of [undefined, 'h', 'v']) for (const links of ['single', 'none', 'multiple']) {
+    const b = axis === 'v' ? [0, 100] : [100, 0];
+    const raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, axis ? 'linear' : 'aligned'), dim = model(raw);
+    Object.assign(raw, E.replaceDimension(raw, E.buildDim(dim.kind, dim.params, 1, dim.name, 2)));
+    if (links === 'none') raw.entities[0] = W.line(300, 300, 400, 300);
+    if (links === 'multiple') W.addEntities(raw, W.line(0, 0, ...b));
+    assert.equal(label(raw), '100.00');
+    const before = structuredClone(raw);
+    for (const typed of ['99.996', '100', '100.00', '100.004', '100.0049']) {
+      const unchanged = links === 'single' || Number(typed) === 100;
+      assert.deepEqual(dimensionEntry(raw, 1, typed), unchanged ? { unchanged: true } : { reason: links === 'none' ? 'none' : 'multiple' });
+      if (!unchanged) {
+        const next = E.replaceDimension(raw, E.buildDim(dim.kind, { ...dim.params, override: typed }, 1, dim.name, 2));
+        assert.equal(readOverride(next.blocks[dim.name].entities), typed); assert.equal(label(next), typed);
+        assert.deepEqual(next.entities, before.entities);
+      }
+      assert.deepEqual(raw, before);
+    }
+  }
+});
+
+test('TODO 76c: a layout dimension drives through replaceDim after writeDxf -> read -> layoutFromRaw', () => {
+  const raw = drawing(W.line(150, 150, 210, 230), { a: [150, 150], b: [210, 230], axis: 'h' }, 'linear');
+  W.addEntities(raw, W.line(350, 100, 400, 120));
+  const lay = LD.newLayout('Drive after reopen');
+  raw.entities.forEach((ent, i) => {
+    const part = LD.objectPart('o' + i, i === 1 ? 'Dimension' : 'Line ' + i, ent, raw.layers, raw.header, raw.blocks);
+    lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
+  });
+  const back = LD.layoutFromRaw(reopen(LD.layoutRaw(lay))), view = LD.linkView(back), source = { header: {}, ...view };
+  const entry = dimensionEntry(source, 1, '150'), hit = driveLine(source, 1, entry.n), old = view.entities[hit.i];
+  assert.equal(entry.link.i, 0);
+  assert.ok(LD.objectReplace(back, { at: new Map([[old, view.at[hit.i]]]), raw: { blocks: {} } }, old, hit.line, () => 'driven'));
+  assert.ok(LD.replaceDim(back, back.placed[view.at[1]], view.entities[1], { ...view.blocks, [hit.built.name]: hit.built.block }, () => 'dim', new Set(Object.values(back.parts).map((p) => p.name))));
+  const next = LD.linkView(LD.layoutFromRaw(reopen(LD.layoutRaw(back))));
+  point(E.lineOf(next.entities[0]), [150, 150, 300, 230]); assert.equal(label(next), '150.000');
+  assert.deepEqual(next.entities[2], view.entities[2], 'unrelated layout LINE stays');
+});
+
+test('TODO 76a: a dimension drives the one LINE whose ends are its points', () => {
+  const raw = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80] }), hit = driveLine(raw, 1, 150);
+  assert.equal(hit.i, 0);
+  const next = driveDimension(raw, 1, 150), l = E.lineOf(next.entities[0]);
+  point(l, [0, 0, 90, 120]); point(model(next).params.b, [90, 120]); point(model(next).params.a, [0, 0]);
+  assert.equal(label(next), '150.000');
+  point(E.lineOf(raw.entities[0]), [0, 0, 60, 80]);       // the input stays
+  const back = driveDimension(raw, 1, 150), reversed = drawing(W.line(60, 80, 0, 0), { a: [0, 0], b: [60, 80] });       // the end at the dimension's second point moves, whichever way the line was drawn
+  point(E.lineOf(driveDimension(reversed, 1, 150).entities[0]), [90, 120, 0, 0]); assert.equal(label(back), '150.000');
+});
+
+test('TODO 76a: no single LINE, nothing is driven', () => {
+  const apart = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [30, 40] });
+  assert.equal(driveLine(apart, 1, 150), null); assert.equal(linkedLine(apart, 1), null);
+  const stacked = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80] });
+  W.addEntities(stacked, W.line(0, 0, 60, 80));
+  assert.equal(driveLine(stacked, 1, 150), null, 'two stacked lines: text only');
+  const poly = drawing(W.lwpoly([[0, 0], [60, 80]]), { a: [0, 0], b: [60, 80] });
+  assert.equal(driveLine(poly, 1, 150), null, 'a polyline is not a LINE');
+  for (const bad of [0, -5, NaN]) assert.equal(driveLine(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80] }), 1, bad), null);
+});
+
+test('TODO 76a: shown units: an inch dimension, and the drawing factor', () => {
+  const inch = drawing(W.line(0, 0, 254, 0), { a: [0, 0], b: [254, 0], units: 'inch' });
+  assert.equal(label(inch), '10.000"');
+  const a = driveDimension(inch, 1, 20);
+  point(E.lineOf(a.entities[0]), [0, 0, 508, 0]); assert.equal(label(a), '20.000"');
+  const scaled = drawing(W.line(0, 0, 10, 0), { a: [0, 0], b: [10, 0] }, 'aligned', 25.4);       // drawing units are inches, the dimension shows mm
+  assert.equal(label(scaled), '254.000');
+  const b = driveDimension(scaled, 1, 508, 25.4);
+  point(E.lineOf(b.entities[0]), [0, 0, 20, 0]); assert.equal(label(b), '508.000');
+});
+
+test('TODO 76a: an inch dimension typed with its shown value is no change (the app.js same-value test, line for line)', () => {
+  const inch = drawing(W.line(0, 0, 254, 0), { a: [0, 0], b: [254, 0], units: 'inch' }), m = model(inch), shown = label(inch);
+  assert.equal(E.dimLabel(typedLength('10.000"', 'inch') * 25.4, m.dp, m.params.units), shown, 'typed with the unit mark');
+  assert.equal(E.dimLabel(typedLength('10', 'inch') * 25.4, m.dp, m.params.units), shown, 'and without it');
+  assert.notEqual(E.dimLabel(typedLength('10.5', 'inch') * 25.4, m.dp, m.params.units), shown, 'another value differs');
+});
+
+test('TODO 76a: a line touching the moved end stays and the driven dimension is rebuilt; a second dimension on the line follows', () => {
+  const touching = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  W.addEntities(touching, W.line(100, 0, 100, 50));
+  const t = driveDimension(touching, 1, 130);
+  point(E.lineOf(t.entities[0]), [0, 0, 130, 0]); point(E.lineOf(t.entities[2]), [100, 0, 100, 50]);
+  point(model(t).params.b, [130, 0]); assert.equal(label(t), '130.000', 'rebuilt directly');
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { textH: 2, offset: -10, a: [0, 0], b: [100, 0] }, 1, 'PD_DIM_2', 3)));
+  const next = driveDimension(raw, 1, 130);
+  assert.equal(label(next, 1), '130.000'); assert.equal(label(next, 2), '130.000', 'the other dimension on the line follows');
+});
+
+test('TODO 76a: typedLength reads one number', () => {
+  assert.equal(typedLength('150'), 150); assert.equal(typedLength(' 150,5 '), 150.5); assert.equal(typedLength('.5'), 0.5);
+  assert.equal(typedLength('-5'), -5); assert.equal(typedLength('7.5"', 'inch'), 7.5);
+  for (const t of ['7.5"', '120 TYP', '<> TYP', '1.2.3', '', 'abc', '1e3']) assert.equal(typedLength(t), null, t);
+});
+
+test('TODO 76b: h / v drive only the measured coordinate, keeping direction and the a end', () => {
+  for (const [axis, b, to] of [['h', [60, 80], [150, 80]], ['v', [60, 80], [60, 150]], ['h', [-60, 80], [-150, 80]], ['v', [60, -80], [60, -150]]]) {
+    for (const reversed of [false, true]) {
+      const a = [10, 20], end = [a[0] + b[0], a[1] + b[1]], target = [a[0] + to[0], a[1] + to[1]];
+      const raw = drawing(reversed ? W.line(...end, ...a) : W.line(...a, ...end), { a, b: end, axis }, 'linear');
+      delete raw.blocks[model(raw).name].dimAxis;
+      assert.equal(linkedLine(raw, 1).id, reversed ? 'a' : 'b');
+      const next = driveDimension(raw, 1, 150), m = model(next);
+      point(E.lineOf(next.entities[0]), reversed ? [...target, ...a] : [...a, ...target]);
+      point(m.params.a, a); point(m.params.b, target);
+      assert.equal(m.kind, 'linear'); assert.equal(m.params.axis, axis); close(m.params.offset, model(raw).params.offset);
+      assert.equal(next.blocks[m.name].dimAxis, axis, 'an old untagged dimension gains an axis tag');
+      assert.equal(label(next), '150.000');
+    }
+  }
+});
+
+test('TODO 76b: an h dimension rotated 90 degrees drives world y in its own frame', () => {
+  const raw = drawing(W.line(10, 20, 70, 100), { a: [10, 20], b: [70, 100], axis: 'h' }, 'linear');
+  Object.assign(raw, rotateEntities(raw, new Set([0, 1]), [0, 0], 90));
+  const next = driveDimension(raw, 1, 150);
+  point(E.lineOf(next.entities[0]), [-20, 10, -100, 160]);
+  point(model(next).params.a, [10, 20]); point(model(next).params.b, [160, 100]);
+  assert.equal(model(next).kind, 'linear'); assert.equal(model(next).params.axis, 'h'); assert.equal(label(next), '150.000');
+});
+
+test('TODO 76b: zero and sub-tolerance measured extents are refused, not made into text', () => {
+  for (const axis of ['h', 'v']) {
+    const b = axis === 'h' ? [1e-6, 80] : [60, 1e-6];
+    const raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis }, 'linear');
+    for (const extent of [1e-6, 0]) {
+      const end = axis === 'h' ? [extent, 80] : [60, extent];
+      raw.entities[0] = W.line(0, 0, ...end);
+      assert.equal(linkedLine(raw, 1).zeroExtent, true);
+      assert.equal(driveLine(raw, 1, 150), null); assert.equal(driveDimension(raw, 1, 150), null);
+    }
+  }
+});
+
+test('TODO 76b: a linear dimension with no LINE under it, or whose points are not one LINE, drives nothing', () => {
+  for (const axis of ['h', 'v']) {
+    const none = drawing(W.circle(50, 40, 10), { a: [0, 0], b: [60, 80], axis }, 'linear');
+    assert.equal(driveLine(none, 1, 150), null); assert.equal(driveDimension(none, 1, 150), null); assert.equal(linkedLine(none, 1), null);
+    const apart = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [30, 40], axis }, 'linear');
+    assert.equal(driveLine(apart, 1, 150), null); assert.equal(driveDimension(apart, 1, 150), null); assert.equal(linkedLine(apart, 1), null);
+  }
+});
+
+test('TODO 76b: h / v shown inches and drawing factor are both undone', () => {
+  for (const axis of ['h', 'v']) {
+    const b = axis === 'h' ? [10, 8] : [8, 10], target = axis === 'h' ? [20, 8] : [8, 20];
+    const raw = drawing(W.line(0, 0, ...b), { a: [0, 0], b, axis, units: 'inch' }, 'linear', 25.4);
+    assert.equal(label(raw), '10.000"');
+    const next = driveDimension(raw, 1, 20, 25.4);
+    point(E.lineOf(next.entities[0]), [0, 0, ...target]); assert.equal(label(next), '20.000"');
+    for (const bad of [0, -5, NaN]) assert.equal(driveLine(raw, 1, bad, 25.4), null);
+  }
+});
+
+const rectOf = (ent) => gripsOf(ent).filter((g) => g.id[0] === 'v').map((g) => [g.x, g.y]);
+
+test('TODO 76d: an h / v dimension across a rectangle moves its right / top side, points mid-side or reversed', () => {
+  for (const reversed of [false, true]) {
+    const raw = drawing(W.rect(10, 20, 100, 50), reversed ? { a: [110, 40], b: [10, 30], axis: 'h' } : { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear');
+    assert.equal(linkedLine(raw, 1).rect, true);
+    const next = driveDimension(raw, 1, 120), m = model(next);
+    assert.deepEqual(rectOf(next.entities[0]), [[10, 20], [130, 20], [130, 70], [10, 70]]);
+    assert.equal(label(next), '120.000'); point(m.params[reversed ? 'a' : 'b'], [130, 40]); point(m.params[reversed ? 'b' : 'a'], [10, 30]);
+    assert.deepEqual(rectOf(raw.entities[0]), [[10, 20], [110, 20], [110, 70], [10, 70]], 'the input stays');
+  }
+  const v = driveDimension(drawing(W.rect(10, 20, 100, 50), { a: [50, 20], b: [60, 70], axis: 'v' }, 'linear'), 1, 80);
+  assert.deepEqual(rectOf(v.entities[0]), [[10, 20], [110, 20], [110, 100], [10, 100]]); assert.equal(label(v), '80.000');
+  const shrink = driveDimension(drawing(W.rect(10, 20, 100, 50), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear'), 1, 40);
+  assert.deepEqual(rectOf(shrink.entities[0]), [[10, 20], [50, 20], [50, 70], [10, 70]]);
+});
+
+test('TODO 76d: an aligned dimension across a 30-degree rectangle; another dimension on the moved corners follows', () => {
+  const c = Math.cos(Math.PI / 6), s = 0.5, at = (x, y) => [10 + x * c - y * s, 20 + x * s + y * c];
+  const pts = [at(0, 0), at(100, 0), at(100, 50), at(0, 50)];
+  const raw = drawing(W.lwpoly(pts, { closed: true }), { a: at(30, 0), b: at(30, 50) });
+  Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { textH: 2, offset: 10, a: pts[1], b: pts[2] }, 1, 'PD_DIM_2', 3)));
+  const next = driveDimension(raw, 1, 80), g = rectOf(next.entities[0]);
+  point(g[0], pts[0]); point(g[1], pts[1]); point(g[2], [pts[2][0] - 30 * s, pts[2][1] + 30 * c]); point(g[3], [pts[3][0] - 30 * s, pts[3][1] + 30 * c]);
+  assert.equal(label(next), '80.000'); assert.equal(label(next, 2), '80.000', 'a dimension on the moved side follows');
+  const wide = driveDimension(drawing(W.lwpoly(pts, { closed: true }), { a: at(0, 20), b: at(100, 20) }), 1, 130);
+  point(rectOf(wide.entities[0])[1], at(130, 0)); point(rectOf(wide.entities[0])[2], at(130, 50));
+});
+
+test('TODO 76d: 90 / 135 / 180 degree and clockwise rectangles move the world right / top side; one side or adjacent sides are no hit', () => {
+  for (const [deg, lo, hi] of [[90, 0, 130], [135, 0, 130], [180, -30, 100]]) {
+    const c = Math.cos(deg * Math.PI / 180), s = Math.sin(deg * Math.PI / 180), at = (x, y) => [10 + x * c - y * s, 20 + x * s + y * c];
+    const pts = [at(0, 0), at(100, 0), at(100, 50), at(0, 50)];
+    const next = driveDimension(drawing(W.lwpoly(pts, { closed: true }), { a: at(0, 20), b: at(100, 20) }), 1, 130), g = rectOf(next.entities[0]);
+    [at(lo, 0), at(hi, 0), at(hi, 50), at(lo, 50)].forEach((p, k) => point(g[k], p));
+  }
+  const cw = driveDimension(drawing(W.lwpoly([[10, 20], [10, 70], [110, 70], [110, 20]], { closed: true }), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear'), 1, 120);
+  assert.deepEqual(rectOf(cw.entities[0]), [[10, 20], [10, 70], [130, 70], [130, 20]]);
+  for (const [a, b] of [[[10, 30], [10, 60]], [[10, 30], [60, 20]]]) {
+    const raw = drawing(W.rect(10, 20, 100, 50), { a, b });
+    assert.equal(linkedLine(raw, 1), null); assert.equal(driveLine(raw, 1, 120), null);
+  }
+});
+
+test('TODO 76e: a LINE end stretched by 20 moves its aligned dimension once; typing 150 still drives the LINE', () => {
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  const r = stretchEntities(raw, [{ x0: 90, y0: -5, x1: 130, y1: 5 }], 20, 0, new Set(), null, new Set([0]));
+  const entities = raw.entities.map((e, i) => i === 0 ? r.next.get(i) || e : e);
+  const out = followDimensions(raw, { entities, blocks: r.blocks }, 1);
+  assert.equal(label(out), '120.000'); point(model(out).params.b, [120, 0]);
+  const next = driveLine({ ...raw, ...out }, 1, 150);
+  assert.ok(next); point(E.lineOf(next.line), [0, 0, 150, 0]);
+});
+
+test('TODO 76d: not driven: a rounded rectangle, a slanted dimension, 0 / negative; a LINE and a rectangle at the ends is "multiple"', () => {
+  const rounded = drawing(W.roundRect(10, 20, 100, 50, 5), { a: [10, 40], b: [110, 40], axis: 'h' }, 'linear');
+  assert.equal(driveLine(rounded, 1, 120), null); assert.equal(dimensionEntry(rounded, 1, '120').reason, 'none');
+  const slant = drawing(W.rect(10, 20, 100, 50), { a: [10, 20], b: [110, 70] });
+  assert.equal(driveLine(slant, 1, 120), null);
+  const plain = drawing(W.rect(10, 20, 100, 50), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear');
+  for (const bad of [0, -5, NaN]) assert.equal(driveLine(plain, 1, bad), null);
+  const both = drawing(W.rect(10, 20, 100, 50), { a: [10, 20], b: [110, 20], axis: 'h' }, 'linear');
+  W.addEntities(both, W.line(10, 20, 110, 20));
+  assert.equal(dimensionEntry(both, 1, '120').reason, 'multiple'); assert.equal(driveLine(both, 1, 120), null);
+  const two = drawing(W.rect(10, 20, 100, 50), { a: [10, 30], b: [110, 40], axis: 'h' }, 'linear');
+  W.addEntities(two, W.rect(10, 20, 100, 50));
+  assert.equal(dimensionEntry(two, 1, '120').reason, 'multiple', 'two stacked rectangles');
 });

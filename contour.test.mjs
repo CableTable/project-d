@@ -39,9 +39,103 @@ function circ(cx, cy, r) {
   const at = (a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)], b = Math.tan(PI / 6);
   return [C.seg(at(0), at(2 * PI / 3), b), C.seg(at(2 * PI / 3), at(4 * PI / 3), b), C.seg(at(4 * PI / 3), at(2 * PI), b)];
 }
+test('TODO 200: a 10 m rectangle whose bottom edge dips 0.04 mm keeps the dip point', () => {
+  const loop = poly([[0, 0], [5000, -0.04], [10000, 0], [10000, 6000], [0, 6000]]);
+  const r = C.offsetLoop(loop, 1, { corners: 'sharp' });
+  assert.ok(r.ok);
+  assert.equal(r.loop.filter((s) => !s.b && s.p0[1] < -0.5 && s.p1[1] < -0.5).length, 2, 'two pieces on the bottom side');
+});
+
 const lShape = poly([[0, 0], [100, 0], [100, 40], [40, 40], [40, 100], [0, 100]]);
 const closed = (loop) => loop.every((s, i) => { const p = loop[(i + loop.length - 1) % loop.length]; return Math.hypot(s.p0[0] - p.p1[0], s.p0[1] - p.p1[1]) < 1e-6; });
 const off = (loop, t, corners = 'sharp') => { const r = C.offsetLoop(loop, t, { corners }); assert.ok(r.ok, 'offset ' + t + ' failed: ' + r.why); assert.ok(closed(r.loop), 'the result is closed'); return r.loop; };
+
+test('TODO 200: short in-line edges and a tiny step survive; a narrow slot still closes up', () => {
+  const failures = [];
+  const check = (loop, outward, corners, label) => {
+    const r = C.contour([loop], { dist: 2, steps: 1, outward, corners });
+    if (r.stopped) { failures.push(`${label}: ${r.stopped.why}`); return; }
+    assert.equal(r.made, 1, label);
+    assert.equal(r.steps.length, 1, label);
+    assert.equal(r.steps[0].length, 1, label);
+    const result = r.steps[0][0], area = C.loopArea(result);
+    assert.ok(closed(result), label);
+    assert.ok(outward ? area > C.loopArea(loop) : area > 0 && area < C.loopArea(loop), label);
+    return result;
+  };
+  for (const short of [.011, .1, 1]) {
+    const loop = poly([[0, 0], [short, 0], [100, 0], [100, 60], [0, 60]]);
+    for (let start = 0; start < loop.length; start++) for (const corners of ['sharp', 'rounded']) for (const outward of [false, true]) {
+      check([...loop.slice(start), ...loop.slice(0, start)], outward, corners, `${short} mm, start ${start}, ${corners}, outward ${outward}`);
+    }
+  }
+  const step = poly([[0, 0], [100, 0], [100, 40], [70, 40], [70, 40.011], [40, 40.011], [40, 100], [0, 100]]);
+  for (const corners of ['sharp', 'rounded']) {
+    const result = check(step, false, corners, `.011 mm step, ${corners}`);
+    if (result && corners === 'rounded') assert.equal(result.filter((s) => s.b).length, 1, 'the other concave corner stays rounded');
+  }
+  for (const corners of ['sharp', 'rounded']) {
+    const r = C.contour([rect(0, 0, 100, 2)], { dist: 2, steps: 1, outward: false, corners });
+    assert.equal(r.made, 0);
+    assert.deepEqual(r.stopped, { step: 1, why: 'it would close up' });
+  }
+  assert.deepEqual(failures, []);
+});
+
+test('TODO 199: caller tolerance drops near vertices at all seven hexagon positions, including tiny bulged arcs', () => {
+  const hex = [[-100, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40]];
+  for (const delta of [.00001, .001, .005, .009]) for (let pos = 0; pos < 7; pos++) for (const bulge of [null, 0, -.3]) {
+    const pts = hex.map((p) => [...p]), at = pos ? pos - 1 : 0;
+    pts.splice(pos, 0, [hex[at][0] + delta, hex[at][1]]);
+    const bs = new Array(7).fill(0), tiny = pos ? pos - 1 : 0;
+    bs[tiny] = bulge || 0;
+    bs[(tiny + 1) % 7] = bulge === null ? 0 : -.3; // test a tiny line or arc next to a full-sized bulge
+    const doc = W.newDoc(4);
+    W.addEntities(doc, W.lwpoly(pts.map((p, i) => [...p, bs[i]]), { closed: true }));
+    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+    const segs = C.segmentsFromItems(ed, [0], undefined, .01), b = C.buildLoops(segs, .01);
+    const label = `delta ${delta}, position ${pos}, bulge ${bulge}`;
+    assert.equal(segs.some((s) => s.b), bulge !== null, label + ': the adjacent bulge is preserved');
+    assert.equal(segs.length, 6, label + ': no tiny piece');
+    assert.equal(b.open, 0, label);
+    assert.equal(b.loops.length, 1, label);
+    assert.ok(segs.every((s) => Math.hypot(s.p1[0] - s.p0[0], s.p1[1] - s.p0[1]) >= .01), label);
+    for (const corners of ['rounded', 'sharp']) for (const outward of [true, false]) {
+      const r = C.contour(b.loops, { dist: 5, steps: 1, outward, corners });
+      assert.equal(r.stopped, null, `${label}, ${corners}, outward ${outward}`);
+      assert.equal(r.made, 1, label);
+      assert.equal(r.steps[0].length, 1, label);
+      const loop = r.steps[0][0], area = C.loopArea(loop), original = C.loopArea(b.loops[0]);
+      assert.ok(closed(loop), label);
+      assert.ok(outward ? area > original : area > 0 && area < original, label);
+    }
+  }
+});
+
+test('TODO 199: near-repeated closing and middle vertices, Inside and Outside, both corners and clockwise', () => {
+  const cw = [[-100, 0], [-50, 40], [50, 40], [100, 0], [50, -40], [-50, -40]];
+  assert.ok(C.loopArea(poly(cw)) < 0, 'the repro is clockwise');
+  for (const pts of [[...cw, [-100 + 1e-5, 0]], [cw[0], cw[1], [-50 + 1e-5, 40], ...cw.slice(2)], cw]) {
+    const doc = W.newDoc(4);
+    W.addEntities(doc, W.lwpoly(pts, { closed: true }));
+    const raw = D.readDxf(W.writeDxf(doc)), ed = E.makeIndex(raw, D.flatten(raw));
+    const segs = C.segmentsFromItems(ed, [0], undefined, .01), b = C.buildLoops(segs, .01);
+    assert.equal(segs.length, 6, 'near-repeated vertices add no tiny segment');
+    assert.equal(b.open, 0);
+    assert.equal(b.loops.length, 1);
+    near(C.loopArea(b.loops[0]), Math.abs(C.loopArea(poly(cw))), 'the original hexagon is preserved');
+    for (const corners of ['rounded', 'sharp']) for (const outward of [true, false]) {
+      const r = C.contour(b.loops, { dist: 5, steps: 1, outward, corners });
+      assert.equal(r.stopped, null);
+      assert.equal(r.made, 1);
+      assert.equal(r.steps.length, 1);
+      assert.equal(r.steps[0].length, 1);
+      const loop = r.steps[0][0], area = C.loopArea(loop);
+      assert.ok(closed(loop));
+      assert.ok(outward ? area > C.loopArea(b.loops[0]) : area > 0 && area < C.loopArea(b.loops[0]));
+    }
+  }
+});
 
 test('areas: a rectangle, a circle, a rounded rectangle, an L; anticlockwise is positive', () => {
   near(C.loopArea(rect(0, 0, 100, 60)), 6000);

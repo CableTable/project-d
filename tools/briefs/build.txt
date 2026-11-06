@@ -5,7 +5,10 @@ Spec: "<spec path>" (read it first). TODO.md row <item>. Leave TODO.md alone: Ro
 Do:
 <Do list>
 
-Old steps (grep -n each changed UI string in browser.test.mjs; their names, or none): . Run them too.
+Old steps (Rook fills in: grep -n "await step('" browser.test.mjs | grep -iE '<area words>' plus each changed UI string; every hit, or none; narrow words, `grip` alone hits 58 steps): . Run them too.
+
+Tests: tool runs use `node tools/unit.mjs`.
+New test proof: node tools/base-check.mjs <base-sha> <test-file> ['<step>'] prints FAIL; quote it in Tests.
 
 Commit "<commit title>".
 Report max <report size> lines: Result (commit id), Tests (quoted lines), Findings, Not checked.

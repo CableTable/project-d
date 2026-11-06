@@ -1,14 +1,67 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTool, toolType, toolHover, dynamicInput } from './web/draw.js';
-import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput, anchorOf, firstPoint, readOnlyLength } from './web/dynamic-input.js';
+import { createTool, toolType, toolHover, toolPrompt, dynamicInput } from './web/draw.js';
+import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput, anchorOf, firstPoint, readOnlyLength, modifyPoints, promptKind } from './web/dynamic-input.js';
 
-test('Move / Copy cursor fields stay at the base point', () => {
-  for (const kind of ['move', 'copy']) {
-    assert.equal(inputMode({ kind, pts: [] }), 'xy');
-    assert.equal(inputMode({ kind, pts: [[10, 5]] }), null);
-    assert.deepEqual(toolPointInput(keys('10,5', true), { kind, pts: [], hover: [99, 99] }).point, [10, 5]);
+test('TODO 106b: stage flags distinguish every number, option and point / object prompt', () => {
+  const check = (kind, states) => {
+    for (const [props, expected] of states) assert.equal(promptKind({ kind, ...props }), expected, `${kind} ${JSON.stringify(props)}`);
+  };
+  check('offset', [['distance', 'number'], ['erase', 'option'], ['layer', 'option'], ['obj', null], ['side', null]].map(([stage, mode]) => [{ stage }, mode]));
+  check('fillet', [[{ askR: true }, 'number'], [{ askTrim: true }, 'option'], [{ stage: 'obj' }, null], [{ stage: 'second' }, null], [{ stage: 'poly' }, null]]);
+  check('chamfer', ['d1', 'd2', 'length', 'angle', 'method', 'trim', null].map((ask) => [{ ask }, !ask ? null : ['method', 'trim'].includes(ask) ? 'option' : 'number']));
+  for (const kind of ['lengthen', 'divide', 'measurepoints']) {
+    check(kind, [[{ stage: 'obj' }, null], [{ stage: 'value' }, 'number'], [{ stage: 'value', p1: [1, 2] }, null], [{ stage: 'point' }, null]]);
   }
+  for (const mode of ['Delta', 'Total', 'Percent', 'DeltaAngle', 'TotalAngle']) check('lengthen', [[{ stage: 'value', mode }, 'number']]);
+  check('array', ['pick', 'center', 'type', 'opts'].map((stage) => [{ stage }, ['type', 'opts'].includes(stage) ? 'option' : null]));
+  for (const key of ['cols', 'rows', 'dx', 'dy', 'items', 'fill', 'rotate']) check('array', [[{ stage: 'opts', ask: [key] }, key === 'rotate' ? 'option' : 'number']]);
+  const rounded = createTool('rrect'); toolType(rounded, 'r'); assert.equal(toolPrompt(rounded).input, 'number');
+  check('mirror', ['pick', 'p1', 'p2', 'erase'].map((stage) => [{ stage }, stage === 'erase' ? 'option' : null]));
+  check('align', [[{ stage: 'scale' }, 'option'], [{ stage: 'd2' }, null]]);
+  check('copy', [[{ stage: 'mode' }, 'option'], [{ stage: 'p1' }, null]]);
+  for (const kind of ['trim', 'extend']) check(kind, [[{ askMode: true }, 'option'], [{ stage: 'cut' }, null]]);
+  for (const kind of ['rotate', 'scale']) check(kind, [[{ stage: 'pick' }, null], [{ stage: 'p1' }, null], [{ stage: 'p2' }, 'number'],
+    [{ ref: { step: 'ref', pts: [] } }, 'number'], [{ ref: { step: 'new', pts: [] } }, 'number'], [{ ref: { step: 'ref', pts: [[0, 0]] } }, null], [{ ref: { step: 'newpts', pts: [] } }, null]]);
+  for (const kind of ['break', 'join', 'reverse', 'step']) check(kind, [[{ stage: 'obj' }, null]]);
+});
+
+test('TODO 106a: every point prompt uses X / Y first, then polar from the previous point', () => {
+  for (const kind of ['move', 'copy', 'stretch', 'mirror', 'text', 'leader', 'balloon', 'break', 'offset', 'lengthen', 'array', 'measurepoints']) {
+    const T = { kind, point: true, pts: [], hover: [99, 99] };
+    assert.equal(inputMode(T), 'xy');
+    assert.deepEqual(toolPointInput(toolKeys(T, '10,5'), T).point, [10, 5]);
+    T.pts = [[10, 5]];
+    assert.equal(inputMode(T), 'polar');
+    near(toolPointInput(toolKeys(T, '20<90'), T).point, [10, 25]);
+    T.pts.push([10, 25]);
+    near(toolPointInput(toolKeys(T, '20<180'), T).point, [-10, 25]);
+  }
+});
+
+test('TODO 106a: modify prompts exclude picks and options; Align destinations anchor at their source', () => {
+  for (const kind of ['move', 'copy', 'stretch', 'mirror', 'rotate', 'scale']) {
+    assert.equal(modifyPoints({ kind, stage: 'pick' }), null);
+    assert.deepEqual(modifyPoints({ kind, stage: 'p1' }), []);
+    assert.deepEqual(modifyPoints({ kind, stage: 'p2', p1: [10, 5] }), [[10, 5]]);
+  }
+  for (const stage of ['erase', 'mode', 'displacement']) assert.equal(modifyPoints({ kind: 'mirror', stage, p1: [10, 5] }), null);
+  for (const kind of ['trim', 'extend']) assert.equal(modifyPoints({ kind, stage: 'cut', fence: [[10, 5]] }), null);
+  const m = { kind: 'align', s1: [10, 20], s2: [60, 70], last: [999, 999] };
+  for (const [stage, source] of [['d1', m.s1], ['d2', m.s2]]) {
+    const T = { kind: 'align', point: true, pts: modifyPoints({ ...m, stage }), hover: [0, 0] };
+    assert.equal(inputMode(T), 'polar'); assert.deepEqual(anchorOf(T), source);
+    near(toolPointInput(toolKeys(T, '25<90'), T).point, [source[0], source[1] + 25]);
+  }
+  assert.equal(modifyPoints({ ...m, stage: 'scale' }), null);
+  for (const m of [{ kind: 'break', stage: 'first' }, { kind: 'breakatpoint', stage: 'point' }, { kind: 'offset', stage: 'side', through: true },
+    { kind: 'lengthen', stage: 'point' }, { kind: 'array', stage: 'center' }]) assert.deepEqual(modifyPoints(m), []);
+  assert.deepEqual(modifyPoints({ kind: 'lengthen', stage: 'point', p0: [2, 3] }), [[2, 3]], 'Dynamic anchors at the pick');
+  for (const m of [{ kind: 'lengthen', stage: 'value', mode: 'Total' }, { kind: 'lengthen', stage: 'value', mode: 'Delta' }, { kind: 'measurepoints', stage: 'value' },
+    { kind: 'rotate', stage: 'p1', p1: [1, 2], ref: { step: 'ref', pts: [] } }, { kind: 'scale', stage: 'p1', p1: [1, 2], ref: { step: 'ref', pts: [] } }]) assert.equal(modifyPoints(m), null, 'number or point: no fields yet');
+  assert.deepEqual(modifyPoints({ kind: 'break', stage: 'second', p0: [4, 5] }), [[4, 5]]);
+  for (const kind of ['lengthen', 'measurepoints']) assert.deepEqual(modifyPoints({ kind, stage: 'value', mode: 'Delta', p1: [4, 5] }), [[4, 5]]);
+  for (const kind of ['rotate', 'scale']) assert.deepEqual(modifyPoints({ kind, stage: 'p2', p1: [1, 2], ref: { pts: [[4, 5]] } }).at(-1), [4, 5]);
 });
 
 test('Dynamic input: translated points, signed deltas and all angle quadrants', () => {
@@ -184,21 +237,21 @@ test('TODO 69d: Dimension: X / Y, then Distance + Angle from the first point, th
   near(toolPointInput(toolKeys(T, '25'), T).point, [25, 40]);
 });
 
-test('TODO 69e: Move / Copy type only the base point; Rotate then types one Angle, Scale one Factor', () => {
+test('TODO 69e / 106a: Move / Copy type both points; Rotate types one Angle, Scale one Factor', () => {
   for (const kind of ['move', 'copy']) {
-    const T = { kind, pts: [], hover: [30, 40] };
+    const T = { kind, point: true, pts: [], hover: [30, 40] };
     assert.equal(inputMode(T), 'xy'); near(toolPointInput(toolKeys(T, '10,20'), T).point, [10, 20]);
     T.pts = [[10, 20]];
-    assert.equal(inputMode(T), null, 'the target stays the prompt');
+    assert.equal(inputMode(T), 'polar');
   }
-  const R = { kind: 'rotate', pts: [[10, 20]], hover: [10, 50] };
+  const R = { kind: 'rotate', point: true, valueMode: 'angle', pts: [[10, 20]], hover: [10, 50] };
   assert.equal(inputMode(R), 'angle'); assert.equal(firstPoint(R), false);
   let r = toolPointInput(toolKeys(R, ''), R);
   assert.deepEqual(r.labels, ['Angle']); near([r.value], [90]);
   r = toolPointInput(toolKeys(R, '-30'), R); near([r.value], [-30]); assert.equal(r.point, null); assert.equal(r.why, '');
   assert.equal(toolPointInput(toolKeys(R, '1.2.3'), R).value, null);
   assert.match(toolPointInput(toolKeys(R, '1.2.3'), R).why, /Angle must be a finite number/);
-  const S = { kind: 'scale', pts: [[10, 20]], hover: [10, 70], f: 25.4 };
+  const S = { kind: 'scale', point: true, valueMode: 'factor', pts: [[10, 20]], hover: [10, 70], f: 25.4 };
   assert.equal(inputMode(S), 'factor');
   r = toolPointInput(toolKeys(S, ''), S); assert.deepEqual(r.labels, ['Factor']); near([r.live[0]], [50 / 25.4]);
   near([toolPointInput(toolKeys(S, '2'), S).value], [2]);
@@ -258,6 +311,15 @@ test('TODO 69f: Arc types its first point, then Length + Angle from the previous
   const made = toolType(T, toolPointInput(keys('10<90', false, createInput(false, 'polar')), T).text).made[0];
   assert.equal(made.t, 'arc'); near([made.r], [Math.hypot(5, 5)]);                 // (0,0) (10,0) (10,10) lie on a circle about (5,5)
   assert.equal(inputMode(T), 'xy', 'the next arc starts with X / Y again');
+});
+
+test('TODO 106c: Distance is one signed field, with Tab and clear-before-cancel Esc', () => {
+  const T = { kind: 'grip', point: true, valueMode: 'distance', pts: [[20, 30]], hover: [30, 30] };
+  const s = keys('-10', false, createInput(false, inputMode(T))), r = toolPointInput(s, T);
+  assert.deepEqual(r.labels, ['Distance']); assert.equal(r.value, -10); assert.equal(r.why, '');
+  assert.equal(inputKey(s, 'Tab', false).active, 0);
+  assert.equal(escapeInput(s, false).mode, 'distance'); assert.equal(escapeInput(createInput(false, 'distance'), false), null);
+  assert.match(toolPointInput(keys('--1', false, createInput(false, 'distance')), T).why, /finite number/);
 });
 
 test('TODO 69f: the one-number Circle / Ellipse fields ignore point text; Esc clears before cancelling', () => {

@@ -1,22 +1,26 @@
 // Rook's helpers: short output so the lead's context stays small (2026-10-20).
 //   node tools/rook.mjs usage           one line per agent (+ week forecast); refreshes mockups/_design/usage/limits.csv, history.csv
-//   node tools/rook.mjs usage --cached  read the CSVs if both are at most five minutes old; otherwise refresh live
+//   node tools/rook.mjs usage --cached  read the CSVs if both are at most 75 minutes old (the PC agent refreshes hourly); otherwise refresh live
 //   node tools/rook.mjs result <file>   (a RUNNING line first if the run has not ended) a run's final reply + tokens: claude2 stream-json (.jsonl), or a Codex -o file (tokens from its .log)
 //   node tools/rook.mjs review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over]   launch the reviewer on a commit, detached; without --as: Bishop, or King when Bishop's reviewer folder is locked
-//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Claude build on a new branch in its worktree, detached
-//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Knight build on a new branch in its clone, detached
+//   node tools/rook.mjs build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Claude build on a new branch in its worktree, detached
+//   node tools/rook.mjs knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>]   launch a Knight build on a new branch in its clone, detached
+//     New items naming grill-<id>.md require runs<N>/fresh-<id>.out; --fix / --tool are exempt; --no-fresh passes for an S item with no invariant.
 //     --review: when the build ends, tools/rook-end.mjs launches `review <branch tip> <review brief> <review out>`; no chain (and `NO REVIEW: <why>` in the review out file) when the branch has no new commit or the build ended in error
 //     every launch writes `<kind> <branch|sha> -> <out file>: running` into runs<N>/queue.txt (lines 1-2 stay) and the run's end rewrites it to `ended`
 //     build / knight count against the handover gate (2 new items per Rook, tools/handover-gate.mjs): --fix = a fix round (allowed up to the 2nd fix round of an item, the 3rd needs --regrilled after a re-grill file runs<N>/grill-<id>-regrill.md; a brief whose line 1 starts `King fix`, `Knight fix` or `Fix round` counts as one without it),
 //     --tool = a tool ticket (passes the gate, not counted as an item; the gate line adds `, <k> tool`), --over = a 3rd item with his OK
-//   node tools/rook.mjs suite <sha>   full suite (`npm.cmd test`, then `npm.cmd run test:browser`) in this checkout, detached; <sha> must be HEAD; log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`
-//   node tools/rook.mjs retro [--over] [--events "<text>"]   fill missing briefs from tools/briefs/retro*.txt, then the three retros of runs<N>/ on Bishop, detached; cached Bishop 5h above 40% is refused (--over passes)
+//   node tools/rook.mjs suite <sha> [--over]   full suite (`npm.cmd test`, then `npm.cmd run test:browser`) in this checkout, detached; <sha> must be HEAD; log runs<N>/suite-<sha>.log ends `SUITE unit=<code> browser=<code>`
+//   node tools/rook.mjs retro [--over] [--events "<text>"] [--as king|bishop]   fill missing briefs from tools/briefs/retro*.txt, then the three retros of runs<N>/, detached; chosen account's cached 5h above 40% is refused (--over passes)
+//   node tools/rook.mjs retro --handover [--uuid <id> --name "Rook S<N><x>"] [--as king|bishop] [--over]   ONE retro over the outgoing Rook's transcript (uuid + name default to rook-next.txt lines 1-2) -> runs<N>/retro<N><x>.out (x empty: retro<N>-0); refused above 70% cached 5h
 //     review / build --as king (and review falling back to King) are refused above 85% cached King 5h (--over passes); `usage` prints `<name>: 100%` for an account at its limit
 //   node tools/rook.mjs pawn <out.json> "<question>"   one Pawn (agy) lookup from ~/agy-research, detached; adds the https-only / no-commands / 3-pages / cite sentence
-//   node tools/rook.mjs acad <item>   Bishop-acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
-//   node tools/rook.mjs board <brief> <out>   Bishop board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
+//   node tools/rook.mjs acad <item> [--as king|bishop]   acad on runs<N>/acad<item>.txt -> acad<item>.out, detached
+//   node tools/rook.mjs fresh <id> [--as king]   WORKFLOW step 2b on grill-<id>.md -> fresh-<id>.out, detached with a queue line
+//   node tools/rook.mjs board <brief> <out> [--as king|bishop]   board / look (WORKFLOW.md line 194) on <brief> -> <out>, detached
+//     retro / acad / board default to King while ProjectD-s15fix/.run-lock exists, else Bishop.
 //   node tools/rook.mjs fails <log>   the failing steps of a browser-test or node:test log + the first 3 `+` / `-` lines after each, max 40 lines; `no failures in <log>`
-//   node tools/rook.mjs handover <resume file> <name>   write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
+//   node tools/rook.mjs handover <resume file> <name> [--no-retro]   refused unless the outgoing Rook's handover retro was launched (runs<N>/retro<N><x>.out named by rook-next.txt line 2; --no-retro passes), else appends a "Handover retro: read ..." line to the resume file; write rook-next.txt (new uuid, name, resume file) and print it; refused when the resume file is missing, has no runs<N> in its path, lacks the merge-due.log line, lacks the `select:Monitor,TaskStop` or `one ci-watch per push` line (the same lines `next` requires), or its line 2 lacks the grilling + domain-modeling skills; exactly 2 arguments; does not start Rook.lnk
 //   node tools/rook.mjs wait <run file>... [--ci <sha>]   exits 0 on the first run that finished (`DONE <file>`; a .log: at its `SUITE ` line) or when the CI run for <sha> ends (`CI RUN <id> <conclusion>`; exit 1 `CI RUN none <reason>` when no run was found or the watcher failed); polls every 20 s
 //   node tools/rook.mjs merge <n> <sha> [--no-retro]   merge PR <n> at the full <sha> if runs<N>/retro<N>.out is non-empty and runs<N>/retro<N>.applied exists (or --no-retro), <sha> is the PR head and its CI run succeeded; prints `MERGED #<n> <full sha>`
 //   node tools/rook.mjs merge --due   the 05:00 IST task: merges the one open claude/session<N> PR (same checks, retro required) while today IST <= the date in merge-ok-until.txt; `NOTHING DUE` when none; logs to merge-due.log
@@ -32,7 +36,9 @@ import { cacheAge } from './rook-cache.mjs';
 import { firstDone, peakContext } from './rook-result.mjs';
 import { codexWindow, resetLabel } from '../usage-site/public/usage-window.js';
 import { randomUUID } from 'node:crypto';
-import { review, build, knight, suite, retro, pawn, acad, board, gate, runningNote, printRookContext, EXTRAS } from './rook-launch.mjs';
+import { review, build, knight, suite, retro, pawn, acad, fresh, board, gate, handoverRetroName, runningNote, printRookContext, dedupePath, EXTRAS } from './rook-launch.mjs';
+
+dedupePath(process.env); // TODO 206: every child below (and Rook.lnk's) inherits a PATH cmd.exe keeps
 
 const U = join(dirname(fileURLToPath(import.meta.url)), '..', 'mockups', '_design', 'usage');
 const [cmd, arg] = process.argv.slice(2);
@@ -50,7 +56,7 @@ export function claudeUsage(bin, execute = execSync, report = console.error) {
       if (![w.five_hour.utilization, w.five_hour.resetsAt, w.seven_day.utilization, w.seven_day.resetsAt].every(Number.isFinite)) throw new Error('Invalid usage reading');
       return { h5: [w.five_hour.utilization * 100, w.five_hour.resetsAt], wk: [w.seven_day.utilization * 100, w.seven_day.resetsAt] };
     } catch (e) {
-      report(`${e.stack || e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`);
+      report(String(e.message).slice(0, 300)); // the stream stays out of Rook's context; `output` below keeps it for the limit check
       if (bin === 'claude' && attempt === 0) continue;
       const output = `${e.message}\n${out}\n${e.stdout || ''}\n${e.stderr || ''}`;
       const limited = /limit (?:has been |is )?reached|you[’']?ve hit your[^\n]*limit|rate_limit_error|usage_limit_reached/i.test(output);
@@ -223,7 +229,7 @@ export function mergeDue(run = (cmd, a) => execFileSync(cmd, a, { encoding: 'utf
 export function failLines(text, log) {
   const out = [];
   let left = 0;
-  const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map((l) => l.replace(/^\[shard \d+\/\d+\] /, '')); // the browser runner prefixes its error lines too
+  const lines = text.replace(/\x1b\[[0-9;]*m/g, '').split(/\r?\n/).map((l) => l.replace(/^\d{4}-\d\d-\d\dT[\d:.]+Z /, '').replace(/^\[shard \d+\/\d+\] /, '')); // the browser runner prefixes its error lines too
   const summary = lines.findIndex((l) => /^\s*✖ failing tests:/.test(l)); // the spec reporter repeats every failure under it, now with its error: read those, not the inline ✖ lines
   for (const [i, line] of lines.entries()) {
     if (i === summary) { left = 0; continue; }
@@ -231,13 +237,15 @@ export function failLines(text, log) {
     if (name) { out.push(name[1]); left = 3; } else if (left && /^\s*[+-] (?!actual - expected)\S/.test(line)) { out.push(line.trim()); left--; }
   }
   if (out.length) return out.slice(0, 40);
-  const red = /^SUITE unit=(\d+) browser=(\d+)\s*$/m.exec(text);
-  return [red && (red[1] !== '0' || red[2] !== '0') ? `red (unit=${red[1]} browser=${red[2]}) but no failing step lines found in ${log}` : `no failures in ${log}`];
+  const red = /^SUITE unit=(\d+) browser=(\d+)\s*$/m.exec(lines.join('\n'));
+  if (red && (red[1] !== '0' || red[2] !== '0')) return [`red (unit=${red[1]} browser=${red[2]}) but no failing step lines found in ${log}`];
+  return [lines.some((l) => /^##\[error\]/.test(l)) ? `no failing step lines found in ${log}` : `no failures in ${log}`];
 }
 
 // `handover <resume file> <name>` (TODO 196g): writes rook-next.txt (uuid, name, resume file) for `next`; refused when the resume file is missing or its line 2 lacks the grilling + domain-modeling rule. Returns the 3 lines.
-export function handover(resume, name, extras = EXTRAS, uuid = randomUUID()) {
-  if (!resume || !name || /[\r\n]/.test(name)) throw new Error('usage: node tools/rook.mjs handover <resume file> <name>');
+export function handover(resume, name, extras = EXTRAS, uuid = randomUUID(), noRetro = false) {
+  if (!resume || !name || /[\r\n]/.test(name)) throw new Error('usage: node tools/rook.mjs handover <resume file> <name> [--no-retro]');
+  if (!handoverRetroName(name)) throw new Error(`refused: name "${name}" must end in S<N> (like "Rook S38j"): the next handover's retro check needs it`);
   let text = '';
   try { text = readFileSync(resume, 'utf8'); } catch { throw new Error(`refused: ${resume} is missing`); }
   const line2 = text.split(/\r?\n/)[1] || '';
@@ -245,13 +253,20 @@ export function handover(resume, name, extras = EXTRAS, uuid = randomUUID()) {
   if (!/runs\d+/.test(resolve(resume))) throw new Error(`refused: ${resume} has no runs<N> folder (the handover gate needs runs<N>/resume-rook.txt)`);
   if (!text.includes('merge-due.log')) throw new Error(`refused: ${resume} has no merge-due.log line (next needs it)`);
   checkResumeNeeds(text, resume);
+  // TODO 206: rook-next.txt line 2 names the outgoing Rook; its handover retro must have been launched (its .out exists), or --no-retro.
+  let prev = '';
+  try { prev = readFileSync(`${extras}/rook-next.txt`, 'utf8').split(/\r?\n/)[1] || ''; } catch { /* first ever handover: no check */ }
+  const m = handoverRetroName(prev);
+  const retroOut = m && `runs${m.n}/${m.id}.out`;
+  if (retroOut && !noRetro && !existsSync(`${extras}/${retroOut}`)) throw new Error(`refused: ${retroOut} is missing (run \`node tools/rook.mjs retro --handover\` for ${prev}, or pass --no-retro)`);
+  if (retroOut && existsSync(`${extras}/${retroOut}`)) appendFileSync(resume, `${text.endsWith('\n') ? '' : '\n'}Handover retro: read ${retroOut} first and apply what it recommends.\n`);
   const lines = [uuid, name, resolve(resume).replaceAll('\\', '/')];
   writeFileSync(`${extras}/rook-next.txt`, lines.join('\n') + '\n');
   return lines.join('\n');
 }
 
 // The CLI guard of `handover`: '' for `node rook.mjs handover <resume> <name>`, else the usage line (an unquoted name makes 3 arguments).
-export const handoverArgsError = (argv) => argv.length > 5 ? 'usage: node tools/rook.mjs handover <resume file> <name> (2 arguments; quote a name with spaces)' : '';
+export const handoverArgsError = (argv) => argv.filter((a) => a !== '--no-retro').length > 5 ? 'usage: node tools/rook.mjs handover <resume file> <name> [--no-retro] (2 arguments; quote a name with spaces)' : '';
 
 function main() {
 if (cmd === 'result') {
@@ -265,6 +280,7 @@ if (cmd === 'result') {
     if (!r) { console.log('no result yet'); process.exit(1); }
     const u = r.usage;
     console.log(r.result);
+    if (!u) process.exit(1); // LAUNCH DIED: the result has no usage
     const fresh = u.input_tokens + u.cache_creation_input_tokens + u.output_tokens;
     console.log(`tokens ${k(fresh + u.cache_read_input_tokens)} (${k(fresh)} new) · denials ${r.permission_denials.length}` + (r.permission_denials.length ? ': ' + r.permission_denials.map((d) => String(d.tool_input.command || d.tool_name).slice(0, 60)).join(' | ') : '') + ` · report ${String(r.result ?? '').split(/\r?\n/).filter((l) => l.trim()).length} lines`); // TODO 193a: the cap counts physical lines, blanks not
     const peak = peakContext(events);
@@ -345,8 +361,8 @@ if (cmd === 'result') {
     appendFileSync(join(U, 'history.csv'), `${iso(now)},${a},5h,${Math.round(u.h5[0])}\n${iso(now)},${a},week,${Math.round(u.wk[0])}\n`);
   }
   if (!cached) writeFileSync(join(U, 'limits.csv'), rows.join('\n') + '\n');
-} else if (['review', 'build', 'knight', 'suite', 'retro', 'pawn', 'acad', 'board'].includes(cmd)) {
-  try { ({ review, build, knight, suite, retro, pawn, acad, board })[cmd](process.argv.slice(3)); }
+} else if (['review', 'build', 'knight', 'suite', 'retro', 'pawn', 'acad', 'fresh', 'board'].includes(cmd)) {
+  try { ({ review, build, knight, suite, retro, pawn, acad, fresh, board })[cmd](process.argv.slice(3)); }
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'fails') {
   try { console.log(failLines(readFileSync(arg, 'utf8'), arg).join('\n')); }
@@ -355,7 +371,8 @@ if (cmd === 'result') {
   try {
     const bad = handoverArgsError(process.argv);
     if (bad) throw new Error(bad);
-    console.log(handover(process.argv[3], process.argv[4]));
+    const [resume, hname] = process.argv.slice(3).filter((a) => a !== '--no-retro');
+    console.log(handover(resume, hname, EXTRAS, undefined, process.argv.includes('--no-retro')));
   }
   catch (e) { console.error(e.message); process.exit(1); }
 } else if (cmd === 'wait') {
@@ -376,7 +393,7 @@ if (cmd === 'result') {
     projects: join(homedir(), '.claude', 'projects', 'E--Project-B-Claude-Project-D'), own: process.env.CLAUDE_CODE_SESSION_ID,
   }).then(({ line, code }) => { console.log(line); process.exitCode = code; }, (e) => { console.error(e.message); process.exitCode = 1; });
 } else {
-  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> | retro [--over] [--events "<text>"] | pawn <out.json> "<question>" | acad <item> | board <brief> <out> | fails <log> | handover <resume file> <name>');
+  console.log('usage: node tools/rook.mjs usage [--cached] | result <file> | wait <run file>... [--ci <sha>] | merge <n> <sha> [--no-retro] | gate | next | review <sha> <brief> <out.jsonl> [--as bishop|king] [--from <clone> <branch>] [--over] | build <brief> <out.jsonl> <branch> <sha> [--as king|bishop] [--dir king2] [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | knight <brief> <report.txt> <branch> <sha> [--fix] [--regrilled] [--tool] [--no-fresh] [--over] [--big] [--review <review brief> <review out.jsonl>] | suite <sha> [--over] | retro [--over] [--events "<text>"] [--as king|bishop] | pawn <out.json> "<question>" | fresh <id> [--as king] | acad <item> [--as king|bishop] | board <brief> <out> [--as king|bishop] | fails <log> | handover <resume file> <name>');
 }
 }
 

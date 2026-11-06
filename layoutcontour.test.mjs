@@ -21,6 +21,15 @@ function plate(factor = 1) {
 }
 const grow = (b, k) => [b[0] - k, b[1] - k, b[2] + k, b[3] + k];
 
+test('TODO 199: layout part warnings keep the failed join reason', () => {
+  const joined = { stopped: { step: 2, why: 'it could not be joined' }, made: 1 };
+  const closed = { stopped: { step: 3, why: 'it would close up' }, made: 2 };
+  assert.equal(LC.stoppedWarning([joined]), '1 part could not be joined before the last step');
+  assert.equal(LC.stoppedWarning([closed]), '1 part would close up before the last step');
+  assert.equal(LC.stoppedWarning([joined, joined, closed, { stopped: null }]), '2 parts could not be joined before the last step. 1 part would close up before the last step');
+  assert.equal(LC.stoppedWarning([{ stopped: null }]), '');
+});
+
 test('the outer outline only: a hole is left alone, a part with no closed outline says so', () => {
   const r = LC.partContour(plate(), CFG);
   assert.equal(r.kind, 'ok');

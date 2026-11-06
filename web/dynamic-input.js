@@ -4,20 +4,49 @@ import { angleOf, dist, parseInput, typedPoint } from './draw.js';
 export const createInput = (first, mode = first ? 'xy' : 'polar') => ({ mode, prefix: '', values: ['', ''], locked: [false, false], active: 0 });
 export const hasTyped = (s) => !!(s.prefix || s.values.some(Boolean));
 
+// Explicit command stages, never inferred from the words displayed in a prompt.
+const PROMPTS = { offset: { distance: 'number', erase: 'option', layer: 'option' },
+  chamfer: { d1: 'number', d2: 'number', length: 'number', angle: 'number', method: 'option', trim: 'option' },
+  array: { type: 'option', opts: 'option' }, mirror: { erase: 'option' }, align: { scale: 'option' },
+  copy: { mode: 'option' } };
+export function promptKind(m) {
+  if (m.kind === 'fillet') return m.askR ? 'number' : m.askTrim ? 'option' : null;
+  if (['lengthen', 'divide', 'measurepoints'].includes(m.kind)) return m.stage === 'value' && !m.p1 ? 'number' : null;
+  if (m.kind === 'array' && m.ask) return m.ask[0] === 'rotate' ? 'option' : 'number';
+  if (['trim', 'extend'].includes(m.kind)) return m.askMode ? 'option' : null;
+  if (['rotate', 'scale'].includes(m.kind)) return m.ref ? ['ref', 'new'].includes(m.ref.step) && !m.ref.pts.length ? 'number' : null : m.stage === 'p2' ? 'number' : null;
+  return PROMPTS[m.kind]?.[m.kind === 'chamfer' ? m.ask : m.stage] || null;
+}
+
 const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Measure, Dimension, Set length and the Modify tools are shown by app.js as tools of mm points; Measure types only its first point, its second is a read-only length.
-// Move / Copy take a base point only (their target stays the prompt); Rotate then types an Angle, Scale a Factor: one number, no point.
+// Shape dimensions keep their existing fields; every other point uses the same first / later rule.
 // Circle types its centre then one Radius; Ellipse its centre, Length + Angle of axis 1, then one Length (the other half-axis); Arc its first point, then Length + Angle from the previous point twice.
-const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'], move: ['xy'], copy: ['xy'], stretch: ['xy'], rotate: ['xy', 'angle'], scale: ['xy', 'factor'],
+const STAGES = { measure: ['xy'], setlen: ['xy', 'polar'], dimension: ['xy', 'polar', 'xy'],
   circle: ['xy', 'radius'], ellipse: ['xy', 'polar', 'length'], arc: ['xy', 'polar', 'polar'] };
-export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length'].includes(mode);
-export const inputMode = (T) => STAGES[T.kind] ? STAGES[T.kind][T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
+export const isSingle = (mode) => ['angle', 'factor', 'radius', 'length', 'distance'].includes(mode);
+export const inputMode = (T) => T.point ? T.valueMode || (firstPoint(T) ? 'xy' : 'polar') : STAGES[T.kind] ? STAGES[T.kind][T.pts.length] ?? null : T.stage !== 'radius' && ['line', 'polyline', 'rect', 'rrect'].includes(T.kind)
   ? !T.pts.length ? 'xy' : rectangle(T) ? 'size' : 'polar' : null;
 export const readOnlyLength = (T) => T.kind === 'measure' && T.pts.length === 1;
 
 /** Rectangles anchor at the first corner, an ellipse's last half-axis at its centre, chains at their latest vertex, a dimension line's place at nothing (absolute X / Y). */
 export const anchorOf = (T) => rectangle(T) || (T.kind === 'ellipse' && T.pts.length === 2) ? T.pts[0] : T.kind === 'dimension' && T.pts.length === 2 ? undefined : T.pts.at(-1);
 export const firstPoint = (T) => !anchorOf(T);
+
+/** A modify prompt's preceding points, or null for object picks, options and fences. Align destinations start at their source. */
+export function modifyPoints(m, previous) {
+  const { kind, stage } = m, prior = (p) => p ? [p] : [];
+  if (m.ref?.step === 'ref' && !m.ref.pts.length) return null;                 // number or point: typed digits stay in the command box until a point is given
+  if (['move', 'copy', 'stretch', 'mirror', 'rotate', 'scale'].includes(kind) && ['p1', 'p2'].includes(stage)) return m.ref && m.ref.step !== 'new' ? [...prior(m.ref.pts.length ? m.p1 : previous || m.p1), ...m.ref.pts] : prior(m.p1);
+  if (kind === 'align' && ['s1', 'd1', 's2', 'd2', 's3'].includes(stage)) return prior(stage === 'd1' ? m.s1 : stage === 'd2' ? m.s2 : m.last);
+  if (['break', 'breakatpoint'].includes(kind) && ['first', 'second', 'point'].includes(stage)) return prior(stage === 'second' ? m.p0 : null);
+  if (kind === 'offset' && stage === 'side' && m.through) return [];
+  if (kind === 'lengthen' && stage === 'point') return prior(m.p1 || m.p0);
+  if (kind === 'lengthen' && stage === 'value' && ['Delta', 'Total'].includes(m.mode)) return m.p1 ? [m.p1] : null;   // length or point until the first point
+  if (kind === 'measurepoints' && stage === 'value') return m.p1 ? [m.p1] : null;
+  if (kind === 'array' && stage === 'center') return [];
+  return null;
+}
 export function toolPointInput(s, T) {
   const last = anchorOf(T);
   if (isSingle(s.mode)) return valueInput(s, last, T.hover || last, s.mode === 'factor' ? T.f || 1 : 1, T.dia);
@@ -59,6 +88,9 @@ export function inputKey(s, key, first) {
   return next;
 }
 
+/** A typed field that is not a plain finite number. */
+export const notFinite = (v) => !!v && (parseInput(v).kind !== 'len' || !Number.isFinite(+v));
+
 /** Untyped fields use full precision mouse values, never the rounded display text. */
 export function pointInput(s, last, mouse, lengthLabel = 'Length') {
   const origin = last || [0, 0], relative = s.prefix === '@' || (!!last && s.prefix !== '#');
@@ -66,7 +98,7 @@ export function pointInput(s, last, mouse, lengthLabel = 'Length') {
     : s.mode === 'polar' ? [dist(origin, mouse), angleOf(origin, mouse)]
     : mouse.map((v, i) => v - (relative ? origin[i] : 0));
   const labels = s.mode === 'size' ? ['Width', 'Height'] : s.mode === 'polar' ? [lengthLabel, 'Angle'] : relative ? ['Δx', 'Δy'] : ['X', 'Y'];
-  const errors = s.values.map((v, i) => v && (parseInput(v).kind !== 'len' || !Number.isFinite(+v)) ? `${labels[i]} must be a finite number`
+  const errors = s.values.map((v, i) => notFinite(v) ? `${labels[i]} must be a finite number`
     : s.mode === 'size' && +(v || live[i]) === 0 ? `${labels[i]} must not be zero` : '');
   // The typed-point grammar has no exponent notation (tiny mouse deltas can have it).
   const values = s.values.map((v, i) => {
@@ -78,14 +110,14 @@ export function pointInput(s, last, mouse, lengthLabel = 'Length') {
   return { text, point, live, labels, errors, why: errors.find(Boolean) || (point ? '' : 'Point coordinates must be finite') };
 }
 
-const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length' };
+const ONE = { angle: 'Angle', factor: 'Factor', radius: 'Radius', length: 'Length', distance: 'Distance' };
 /** The one number of Rotate (degrees from the pivot), Scale (a factor), Circle (radius, or diameter after D) or an ellipse's last half-axis (mm); untyped, it is the mouse's value. `unit` is mm per drawing unit: a factor is a ratio of drawing-unit distances. A length also gives `point`, along the mouse's way, so the tool's own preview follows it. */
 function valueInput(s, base, mouse, unit, dia) {
   const mode = s.mode, label = mode === 'radius' && dia ? 'Diameter' : ONE[mode], typed = s.values[0];
   const live = [mode === 'angle' ? angleOf(base, mouse) : dist(base, mouse) / unit];
-  const bad = typed && (parseInput(typed).kind !== 'len' || !Number.isFinite(+typed)) ? `${label} must be a finite number` : '';
+  const bad = notFinite(typed) ? `${label} must be a finite number` : '';
   const value = typed ? +typed : live[0];
-  const error = bad || (mode !== 'angle' && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
+  const error = bad || (!['angle', 'distance'].includes(mode) && !(value > 0) && (typed || mode === 'factor') ? `${label} must be more than 0` : '');
   const point = (mode === 'radius' || mode === 'length') && !error ? alongTo(base, mouse, value) : null;
   return { value: error ? null : value, point, live, labels: [label], errors: [error, ''], text: String(value), why: error };
 }

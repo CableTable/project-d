@@ -43,6 +43,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **Command bar**: The floating input near the cursor for commands, coordinates and clickable options, with full history available through F2. Where: `DECISIONS.md`, Command bar. Avoid: Fixed bottom command line.
 **Cursor field**: One editable or read-only box by the cursor or on the drawing beside the segment: Length and Angle take typing (Tab switches), Δx and Δy show live. Before the first point the editable fields are absolute X and Y; comma switches later chain points to coordinate entry. Rectangle and Rounded rectangle use Width and Height at the other corner, signed toward the cursor. Where: `DECISIONS.md`, Dynamic input (TODO 69), Dynamic input fields on the drawing (TODO 155t). Avoid: Command bar.
 **Dynamic input**: The tag beside the cursor during point prompts showing length, angle, Δx and Δy (absolute X and Y before the first point; Width and Height at a rectangle's other corner), where typed numbers go instead of the command bar; F12 or DYN turns it on and off. Where: `DECISIONS.md`, Dynamic input (TODO 69); `TODO.md`, item 69. Avoid: Cursor tag, Live numbers.
+**Dynamic prompt**: The command bar's current prompt for a number or option, shown in the Dynamic input tag. A number prompt has one entry field; an option-only prompt has text and no field. Enter there is the same as Enter in the command bar. Where: `DECISIONS.md`, Dynamic input for every tool (TODO 106). Avoid: Prompt box.
 
 **Compare**: Overlays up to five drawing snapshots in different colours and highlights each ticked item's outline differences from the reference beyond a chosen tolerance. The Compare button calculates the differences and a table of signed area, perimeter and width × height changes; a move afterwards marks the result "out of date". Where: `TODO.md`, items 41 and 114; `web/compare.js`, `web/compare-list.js`.
 
@@ -64,7 +65,11 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Cutter export (Export for cutter)**: Writes a separate DXF copy containing only LINE, ARC and LWPOLYLINE, flattening curves to a chosen tolerance and leaving out text, fills and other unsupported objects. Where: `DECISIONS.md`, Cutter-safe DXF. Avoid: Normal Save.
 
+**Export DXF**: Writes a separate DXF copy with chosen export settings (units, scale, precision, layers, text as text or curves); the open drawing and its saved state are unchanged. Where: `DECISIONS.md`, Export DXF settings; `TODO.md`, item 109. Avoid: Save, Save as.
+
 **Dimension**: A saved measurement callout with lines, arrows and a value that does not count toward a part's size. Where: `DECISIONS.md`, Kept dimensions and sizes and More dimension types. Avoid: Driving constraint.
+
+**Dimension length entry**: Typing a plain number into a dimension's text to set the length of the one LINE it measures end to end; the line's second end moves and nothing else changes. Aligned dimensions set the true length; horizontal and vertical ones set only the width or height. Where: `TODO.md`, items 76a-76c. Avoid: Driving dimension, Parametric constraint.
 
 **Dimension style**: A named preset for dimension appearance, including text height, arrow size, decimals and units. Where: `TODO.md`, item 27; `web/dims.js`.
 
@@ -190,7 +195,7 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Unit fix**: Multiplies or divides the whole drawing or background by 25.4 about 0,0 to correct an inch/mm size mistake without changing the unit header. Where: `DECISIONS.md`, Unit fix. Avoid: Changing display units.
 
-**Work area**: The background used to view and edit a drawing, independently set to Follow app, Light or Dark from the status bar or View menu. Its drawing colours and feedback adapt to the background; sheet paper and PDF / Print keep their appearance. Where: `web/workarea.js`, `DECISIONS.md`, Work area (TODO 96).
+**Work area**: The background used to view and edit a drawing, independently set to Follow app, Light or Dark from the status bar or View menu. Its drawing colours and feedback adapt to the background, on Drawings, Layouts (sheet paper included) and Compare alike; PDF / Print keeps its appearance. Where: `web/workarea.js`, `DECISIONS.md`, Work area (TODO 96).
 
 ## Drawing / CAD
 
@@ -380,6 +385,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 **R-boards**: The numbered local design rounds such as R11 or R14 used for proposed screens and their As-built records in the Project D Mockups canvas. Where: `WORKFLOW.md`, Mock-up and As built. Avoid: Files to commit.
 
 **Retro**: A session-end review of commits, briefs and worker reports that suggests rule or process changes for Rakshith to choose before merge. Where: `WORKFLOW.md`, Retro at session end. Avoid: A code-fix round.
+
+**Handover retro**: The one short retro over only the outgoing Rook's transcript, launched at each Rook handover; the next Rook applies what it recommends first. Where: `WORKFLOW.md` rule 4. Avoid: The session-end retros.
 
 **Rook**: The main-account Opus lead who plans, writes briefs, chooses UI, reads short reports and handles pushes and merges. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what.
 

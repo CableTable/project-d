@@ -1,0 +1,9 @@
+Task (mock-up only, no code, no git): make the As built board for TODO {ID} {TITLE}.
+Write ONE new file: "E:/Project B/Claude/Project D/mockups/R{ID}_AB_{NAME}.html". Touch no other file; never git add / commit.
+Follow the style of an existing board: read "E:/Project B/Claude/Project D/mockups/{REFBOARD}" first and copy its layout, tokens, light / dark handling.
+Embed these screenshots as <img> with relative paths (shots-{ID} is in the repo root; ls it); no hand-drawn SVG:
+  "{LIGHT_SHOT}"
+  "{DARK_SHOT}"
+Spec for labels and rules: the DECISIONS.md row "{ROW}" in "E:/Project B/Claude/Project D/DECISIONS.md" (grep for it; read only that row).
+Board content: {CONTENT}, light and dark artboards, and a short notes list of the differences from AutoCAD ({DIFFS}). {LAYOUT_NOTE}
+Done: read it back and check the img paths exist. Report max 4 lines: file path, what is on it, "not rendered", anything unclear.

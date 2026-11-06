@@ -4,7 +4,7 @@
 // An outline is a loop of segments { p0: [x, y], p1: [x, y], b }: from p0 to p1, b = the bulge (tan of a quarter of the sweep; 0 for a
 // line, > 0 turning anticlockwise, < 0 clockwise), as in an LWPOLYLINE. Everything is in one unit (drawing units); y is up.
 //
-//   segmentsFromItems(ed, ents)   the lines and arcs the entities draw, as segments
+//   segmentsFromItems(ed, ents, skip, tol)   the lines and arcs the entities draw, omitting pieces shorter than the joining tolerance
 //   buildLoops(segs, tol)         joins them end to end into closed loops (and counts what stays open)
 //   offsetLoop(loop, t, opts)     one loop moved by t (+ outward, − inward), or why not
 //   contour(loops, opts)          all the loops, `steps` times: { steps: [[loop, …], …], made, stopped, dropped }
@@ -41,7 +41,7 @@ export function partialOutline(ed, sel, tol) {
     const chain = chainAt(ed, e, tol);
     for (const c of chain) seen.add(c);
     if (chain.every((c) => sel.has(c))) continue;
-    const an = buildLoops(segmentsFromItems(ed, chain, (e) => e.layer === DIM_LAYER || e.type === 'DIMENSION'), tol);
+    const an = buildLoops(segmentsFromItems(ed, chain, (e) => e.layer === DIM_LAYER || e.type === 'DIMENSION', tol), tol);
     if (an.loops.length && !an.open) return true;
   }
   return false;
@@ -100,7 +100,7 @@ function arcSweepOp(a0, a1, acw) {
  * The lines and arcs the entities `ents` draw (ed: edit.js makeIndex's result; drawing units, y up), as segments. A closed path gets its closing
  * segment; an arc is cut into pieces of at most 120° so three points always describe it. Kept dimensions and text are left out.
  */
-export function segmentsFromItems(ed, ents, skip = () => false) {
+export function segmentsFromItems(ed, ents, skip = () => false, tol = 1e-4) {
   const { fl, items, raw } = ed, out = [];
   for (const e of ents) {
     if (!ed.byEnt[e] || skip(raw.entities[e])) continue;
@@ -112,20 +112,28 @@ export function segmentsFromItems(ed, ents, skip = () => false) {
       for (let k = 0; k < ops.length;) {
         const op = ops[k];
         if (op === 0) { cur = P(ops[k + 1], ops[k + 2]); start = cur; k += 3; }
-        else if (op === 1) { const q = P(ops[k + 1], ops[k + 2]); if (cur && dist(cur, q) > 1e-12) out.push(seg(cur, q)); cur = q; if (!start) start = q; k += 3; }
+        else if (op === 1) {
+          const q = P(ops[k + 1], ops[k + 2]);
+          if (!cur || dist(cur, q) >= tol) { if (cur) out.push(seg(cur, q)); cur = q; }
+          if (!start) start = q;
+          k += 3;
+        }
         else if (op === 2) {
           const [cx, cy, r, a0, a1] = [ops[k + 1], ops[k + 2], ops[k + 3], ops[k + 4], ops[k + 5]], sw = arcSweepOp(a0, a1, ops[k + 6] === 1);
           const n = Math.max(1, Math.ceil(Math.abs(sw) / (TAU / 3) - 1e-9)), at = (a) => P(cx + r * Math.cos(a), cy + r * Math.sin(a));
-          let S = at(a0);
-          if (cur && dist(cur, S) > 1e-9) out.push(seg(cur, S));
-          if (!start) start = S;
+          const S = at(a0);
+          if (!cur || dist(cur, S) >= tol) { if (cur) out.push(seg(cur, S)); cur = S; }
+          if (!start) start = cur;
           for (let j = 0; j < n; j++) {
             const E = at(a0 + sw * (j + 1) / n), M = at(a0 + sw * (j + 0.5) / n);
-            if (dist(S, E) > 1e-12) out.push(seg(S, E, bulgeOf3(S, M, E)));   // an arc with no radius or no sweep adds nothing
-            S = E;
+            if (dist(cur, E) >= tol) { out.push(seg(cur, E, bulgeOf3(cur, M, E))); cur = E; }
           }
-          cur = S; k += 7;
-        } else { if (cur && start && dist(cur, start) > 1e-12) out.push(seg(cur, start)); cur = start; k++; }
+          k += 7;
+        } else {
+          if (cur && start && dist(cur, start) >= tol) out.push(seg(cur, start));
+          else if (out.length && out[out.length - 1].p1 === cur) out[out.length - 1].p1 = start;
+          cur = start; k++;
+        }
       }
     }
   }
@@ -229,9 +237,24 @@ const extent = (s) => (s.b ? Math.abs(sweepOf(s)) : dist(s.p0, s.p1));
 export function offsetLoop(loop, t, opts = {}) {
   const rounded = opts.corners === 'rounded', limit = opts.miter || MITER_LIMIT, area0 = loopArea(loop), size = loop.reduce((m, s) => Math.max(m, dist(s.p0, s.p1)), Math.max(Math.abs(t), 1e-9));   // not Math.max(...): a dense loop overflows the stack
   const tolJ = 1e-9 * size + 1e-12;
+  const inLine = (a, b) => {
+    if (!a || a.b || b.b) return false;
+    const ua = endTan(a), ub = startTan(b);
+    const tol = 1e-6 * size + 3e-5 * Math.abs(t), w = sub(b.p1, a.p0), off = Math.abs(crs(w, sub(a.p1, a.p0))) / (Math.hypot(w[0], w[1]) || 1);   // the dropped point must lie on the merged line
+    return Math.abs(crs(ua, ub)) <= 2e-5 && dot(ua, ub) > 0 && dist(a.p1, b.p0) <= tol && off <= tol;
+  };
+  const joined = [];
+  for (const s of loop) {
+    const prev = joined[joined.length - 1];
+    if (inLine(prev, s)) joined[joined.length - 1] = seg(prev.p0, s.p1);
+    else joined.push(s);
+  }
+  if (joined.length > 1 && inLine(joined[joined.length - 1], joined[0])) {
+    joined[0] = seg(joined.pop().p0, joined[0].p1);
+  }
   // 1. every segment moved; an arc that runs out of radius is gone (its place is kept as a corner about its centre)
   const pieces = [];
-  loop.forEach((s) => {
+  joined.forEach((s) => {
     const o = offsetSeg(s, t);
     if (o) pieces.push({ ...o, src: s });
     else pieces.push({ gone: true, c: arcOf(s).c, src: s });
@@ -247,37 +270,45 @@ export function offsetLoop(loop, t, opts = {}) {
     while (pieces[j].gone && j !== i) { V = pieces[j].c; j = (j + 1) % pieces.length; }
     ring.push({ ...p, V });
   }
-  const n = ring.length, joins = new Array(n);
+  const n = ring.length;
   // 2. the corner after each piece
-  for (let i = 0; i < n; i++) {
+  const corner = (i, round) => {
     const A = ring[i], B = ring[(i + 1) % n], ua = endTan(A), ub = startTan(B), cr = crs(ua, ub), dt = dot(ua, ub);
     const P = A.p1, Q = B.p0;
-    if (Math.abs(cr) <= 2e-5 && dt > 0 && dist(P, Q) <= 1e-6 * size + 3e-5 * Math.abs(t)) { joins[i] = { kind: 'cont', X: mul(add(P, Q), 0.5) }; continue; }     // smooth: a file keeps 6 decimals
+    if (Math.abs(cr) <= 2e-5 && dt > 0 && dist(P, Q) <= 1e-6 * size + 3e-5 * Math.abs(t)) return { kind: 'cont', X: mul(add(P, Q), 0.5) };     // smooth: a file keeps 6 decimals
     const gap = cr * t > 1e-12 || (Math.abs(cr) <= 1e-12 && dt < 0);
     const mid = mul(add(P, Q), 0.5);
     const cands = carriersCross(A, B).sort((p, q) => dist(p, mid) - dist(q, mid));
     if (!gap) {                                                                            // the offsets overlap: cut where they cross
-      if (!cands.length) { joins[i] = { kind: 'bevel', P, Q }; continue; }
-      joins[i] = { kind: 'cut', X: cands[0] };
-      continue;
+      return cands.length ? { kind: 'cut', X: cands[0] } : { kind: 'bevel', P, Q };
     }
-    if (rounded || !cands.length) {
+    if (round || !cands.length) {
       const phi = Math.atan2(cr, dt);
-      joins[i] = rounded && Math.abs(phi) > 1e-9 ? { kind: 'round', P, Q, b: Math.tan(phi / 4) } : { kind: 'bevel', P, Q };
-      continue;
+      return round && Math.abs(phi) > 1e-9 ? { kind: 'round', P, Q, b: Math.tan(phi / 4) } : { kind: 'bevel', P, Q };
     }
     const X = cands[0], eA = grow(A, X, true), eB = grow(B, X, false);
-    joins[i] = eA >= -tolJ && eB >= -tolJ && dist(X, A.V) <= limit * Math.abs(t) ? { kind: 'miter', X } : { kind: 'bevel', P, Q };
+    return eA >= -tolJ && eB >= -tolJ && dist(X, A.V) <= limit * Math.abs(t) ? { kind: 'miter', X } : { kind: 'bevel', P, Q };
+  };
+  const joins = ring.map((_, i) => corner(i, rounded));
+  const growth = (i) => {
+    const s = ring[i], jin = joins[(i + n - 1) % n], jout = joins[i];
+    return (jin.X ? grow(s, jin.X, false) : 0) + (jout.X ? grow(s, jout.X, true) : 0);
+  };
+  // Retry only the two corners beside a piece lost to rounding, before emitting any neighbours.
+  for (let i = 0; i < n; i++) {
+    if (extent(ring[i]) + growth(i) > tolJ * 10) continue;
+    const prev = (i + n - 1) % n;
+    if (joins[prev].kind === 'round' || joins[i].kind === 'round') {
+      joins[prev] = corner(prev, false); joins[i] = corner(i, false);
+    }
+    if (extent(ring[i]) + growth(i) <= tolJ * 10) return { ok: false, why: 'it would close up' };
   }
   // 3. each piece with its ends moved to its corners; the pieces for round and bevel corners between
   const out = [];
   for (let i = 0; i < n; i++) {
     let s = { p0: ring[i].p0, p1: ring[i].p1, b: ring[i].b };
     const jin = joins[(i + n - 1) % n], jout = joins[i], orig = s;
-    let ext = 0;
-    if (jin.X) ext += grow(orig, jin.X, false);
-    if (jout.X) ext += grow(orig, jout.X, true);
-    if (extent(orig) + ext <= tolJ * 10) return { ok: false, why: 'it would close up' };            // a piece gone or turned round
+    const ext = growth(i);
     if (jin.X) s = { ...s, p0: jin.X };
     if (jout.X) s = { ...s, p1: jout.X };
     if (orig.b) s.b = Math.sign(orig.b) * Math.tan((extent(orig) + ext) / 4);

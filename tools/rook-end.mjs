@@ -28,6 +28,11 @@ export function setRunLine(text, line, key) {
 
 // job = { queue, key, text: '<kind> <id> -> <key>:', review?: { dir, branch, base, brief, out, from? } } (JSON from the launcher); x = file / git / launch access.
 export function finish(job, code, x) {
+  // A launch that died writes no result: give `wait` one (the out file sits beside queue.txt; a Knight .txt report is done once non-empty)
+  if (job.queue && code !== 0 && /\.(jsonl|txt)$/.test(job.key)) {
+    const out = job.out || join(dirname(job.queue), job.key), cur = x.read(out);
+    if (job.key.endsWith('.jsonl') ? !/"type":"result"/.test(cur) && !cur.startsWith('NO REVIEW:') : !cur.trim()) x.write(out, cur + (cur && !cur.endsWith('\n') ? '\n' : '') + '{"type":"result","is_error":true,"result":"LAUNCH DIED"}\n');
+  }
   // `ended` goes in after the chained review wrote its `running`, so a refresh in between sees no gap
   try { chainReview(job, code, x); } finally {
     if (job.queue) { try { x.write(job.queue, setRunLine(x.read(job.queue) || '', `${job.text} ended`, job.key)); } catch { /* queue.txt is a note, not the run */ } }

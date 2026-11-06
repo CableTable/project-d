@@ -180,8 +180,8 @@ select.fld { font-family: var(--sans); }
   --selection: #60a5fa; --alignment-guide: #60a5fa; --crossing: #00f434; --edge-opacity: .8; --hot: #ff6b5e; --mark: #fb923c; --dim: #59d2a0; --guide: #59d2a0;
   background: #212830;
 }
-.canvas[data-work-area='Light'] > .ovl, .canvas[data-work-area='Light'] > .rubber { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; }
-.canvas[data-work-area='Dark'] > .ovl, .canvas[data-work-area='Dark'] > .rubber { --muted: #9ba2ac; --partline: #eef1f4; --sheet: #212830; }
+.canvas[data-work-area='Light'] > svg, .canvas[data-work-area='Light'] > .ovl, .canvas[data-work-area='Light'] > .rubber { --muted: #6b6b6b; --partline: #1d1d1d; --sheet: #ffffff; --sheetline: #9a9a9a; --shadow: rgba(0, 0, 0, .16); --part: #ffffff; }
+.canvas[data-work-area='Dark'] > svg, .canvas[data-work-area='Dark'] > .ovl, .canvas[data-work-area='Dark'] > .rubber { --muted: #9ba2ac; --partline: #eef1f4; --sheet: #212830; --sheetline: #4b515b; --shadow: rgba(0, 0, 0, .16); --part: #212830; }
 .status .work-area { display: inline-flex; align-items: center; justify-content: center; }
 /* Drawing feedback has its own accent; panels and menus keep the UI accent. */
 .canvas > svg, .canvas > .ovl, .canvas > .rubber { --accent: var(--selection); }
@@ -397,6 +397,16 @@ select.fld { font-family: var(--sans); }
 .pd-pagebtns { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-height: 76px; overflow-y: auto; }
 .pd-pagebtns .btn { height: 32px; padding: 0 14px; }
 .pd-pagebtns .btn.on { border-color: var(--accent); }
+.pd-fs { position: absolute; top: 8px; right: 8px; width: 32px; height: 32px; padding: 0; justify-content: center; }
+.pd-fs .icon { display: inline-flex; }
+.pdfull { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #0b0f14; color: var(--text); }
+.pdfull-stage { flex: 1; min-height: 0; position: relative; overflow: hidden; cursor: grab; touch-action: none; }
+.pdfull-stage.drag { cursor: grabbing; }
+.pdfull-stage canvas { position: absolute; inset: 0; }
+.pdfull-bar { display: flex; align-items: center; gap: 8px; padding: 10px 16px; background: var(--panel); border-top: 1px solid var(--line); flex-shrink: 0; }
+.pdfull-bar .pd-pagebtns { flex: 0 1 auto; min-width: 0; }
+.pdfull-bar .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pdfull-gap { flex: 1; }
 .pd-footer { display: flex; align-items: center; gap: 10px; height: 60px; padding: 0 18px; border-top: 1px solid var(--line); flex-shrink: 0; }
 .pd-footer .btn { height: 32px; padding: 0 14px; }
 .pd-foot { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
