@@ -10927,7 +10927,7 @@ try {
     await hotGrip('0:a');
     await press(' ', 2); await mode('ROTATE');
     const r0 = await at(70, 70); await page.mouse.move(r0.x, r0.y); await frames();
-    await tipWhen(/^Rotate [\d.]+°$/);
+    await page.waitForFunction(() => /^[\d.]+°$/.test(document.querySelector('[data-testid=cursor-angle]')?.value || ''), null, { timeout: 8000 });       // 106c: with Dynamic input on the Rotate command shows the Angle field, no "Rotate N°" tip
     assert.equal(await page.locator('[data-testid=grip-line]').count(), 1, 'the rubber line base → pointer');
     await typeCmd('90'); await noHot();
     const [x0, y0, x1, y1] = await lineOf();
@@ -10994,7 +10994,7 @@ try {
     await openGrips();
     await pick(70, 30, 3);
     await hotGrip('0:a'); await press(' ', 2);
-    await shotBoth('grip-rotate', async () => { const p = await at(60, 80); await page.mouse.move(p.x, p.y, { steps: 3 }); await tipWhen(/^Rotate /); await wait(150); }, async () => {});
+    await shotBoth('grip-rotate', async () => { const p = await at(60, 80); await page.mouse.move(p.x, p.y, { steps: 3 }); await page.waitForFunction(() => /°$/.test(document.querySelector('[data-testid=cursor-angle]')?.value || ''), null, { timeout: 8000 }); await wait(150); }, async () => {});
     await press('Escape');
     // the same on a layout object
     await freshLayoutWithPlate();
@@ -11181,7 +11181,7 @@ try {
     // the (multiple) header in the screenshots, light and dark
     await rotating();
     await typeCmd('c'); await typeCmd('45');
-    await shotBoth('grip-multiple', async () => { const p = await at(60, 80); await page.mouse.move(p.x, p.y, { steps: 3 }); await tipWhen(/^Rotate /); await wait(150); }, async () => {});
+    await shotBoth('grip-multiple', async () => { const p = await at(60, 80); await page.mouse.move(p.x, p.y, { steps: 3 }); await page.waitForFunction(() => /°$/.test(document.querySelector('[data-testid=cursor-angle]')?.value || ''), null, { timeout: 8000 }); await wait(150); }, async () => {});
     await press('Escape'); await noHot();
     await undo();
     // the same on a layout object
