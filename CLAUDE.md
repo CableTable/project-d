@@ -11,10 +11,10 @@ Started 2026-10-16. Unrelated to Projects B, P, R and WF in the parent folder, b
 
 ## Status
 
-Built so far: sessions 1-34 (see HISTORY.md and git log): DXF / PDF drawings, layouts with Parts library and step and repeat,
+Built so far: see HISTORY.md and git log: DXF / PDF drawings, layouts with Parts library and step and repeat,
 AutoCAD-style draw / modify / dimension / snap / grip (with Grip options) / Fillet / Offset / Explode / Quick select tools in every tab, ribbon + panel UI in AutoCAD
 colours, CI that builds `ProjectD.exe` and publishes it to Releases on a merge to main (doc-only PR pushes skip the tests and build).
-Repo **CableTable/project-d** (public until LibreDWG work starts, DECISIONS.md). **Next:** `TODO.md` and the current `runs<N>/resume-rook*.txt`. A builder commits each finished item; Rook ticks it in TODO.md after the cherry-pick; push once per Rook handover (his call, 2026-10-31).
+Repo **CableTable/project-d** (public, DECISIONS.md "Repo stays public for DWG"). **Next:** `TODO.md` and the current `runs<N>/resume-rook*.txt`. A builder commits each finished item; Rook ticks it in TODO.md after the cherry-pick; push once per Rook handover (his call, 2026-10-31).
 
 ## The app
 
@@ -33,6 +33,7 @@ Set up in session 1, the same shape as Project R:
 - `npm run test:browser`: the UI in Chromium (Playwright) against the web code served locally.
 - The Tauri build in CI (`cargo tauri build`), and the exe started once.
 - **A UI change also gets looked at**: screenshots, light and dark.
+- No cargo or MSYS2 on this PC: Rust and `ci.yml` compile only in CI, so such a change gets its probe before the full suite.
 
 ## 1. How changes ship
 
