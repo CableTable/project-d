@@ -10366,12 +10366,16 @@ try {
       for (const mode of ['off', 'alt']) {
         await setChip('tog-snap', mode !== 'off');
         if (mode === 'alt') await page.keyboard.down('Alt');
-        await begin(); await land(); await marker(null, false); await page.mouse.up(); await page.keyboard.up('Alt');
+        await begin(); await land(); await marker(null, false);
         assert.equal(await page.locator('.alignment-guide').count(), 0);
+        await page.mouse.up(); await page.keyboard.up('Alt');
         const moved = await saved(); assert.ok(Math.abs(moved.placed[0].x - b[0]) > .05, mode + ' disables object and alignment snaps');
         await key('Control+z');
       }
-      await setChip('tog-snap', true); await begin(); await land(); await page.mouse.up();
+      await setChip('tog-snap', true); await setChip('tog-ortho', true);
+      await begin(); await land(); assert.ok(await page.evaluate(() => window.__drag201.includes('end')), 'endpoint tag stays with ORTHO on');
+      await key('Escape'); await page.mouse.up(); await setChip('tog-ortho', false);
+      await begin(); await land(); await page.mouse.up();
       await t('px').fill('600'); await t('px').press('Enter');
       assert.equal((await saved()).placed[0].x, 600, 'part remains editable after drag');
       assert.deepEqual((await saved()).parts.plate.raw.entities, before.parts.plate.raw.entities, 'part geometry stays unchanged');

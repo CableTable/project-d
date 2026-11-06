@@ -22,6 +22,6 @@ test('body drag keeps placed-part corner landing exact using the snapped grab', 
 
 test('body drag free deltas round in mm; Shift/ORTHO locks after the snap', () => {
   assert.deepEqual(dragTarget([0, 0], [.12345, .23456], 25.4, false), { to: [.12345, .23456], dx: 3.14 / 25.4, dy: 5.96 / 25.4 });
-  assert.deepEqual(dragTarget([1, 2], [100.12345, 20.98765, 'end'], 1, true), { to: [100.12345, 2], dx: 99.12345, dy: 0 });
+  assert.deepEqual(dragTarget([1, 2], [100.12345, 20.98765, 'end'], 1, true), { to: [100.12345, 2, 'end'], dx: 99.12345, dy: 0 });
   assert.deepEqual(dragTarget([1, 2], [1, 20.98765, 'end'], 1, true).to, [1, 20.98765, 'end']);
 });
