@@ -65,6 +65,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Cutter export (Export for cutter)**: Writes a separate DXF copy containing only LINE, ARC and LWPOLYLINE, flattening curves to a chosen tolerance and leaving out text, fills and other unsupported objects. Where: `DECISIONS.md`, Cutter-safe DXF. Avoid: Normal Save.
 
+**Export DXF**: Writes a separate DXF copy with chosen export settings (units, scale, precision, layers, text as text or curves); the open drawing and its saved state are unchanged. Where: `DECISIONS.md`, Export DXF settings; `TODO.md`, item 109. Avoid: Save, Save as.
+
 **Dimension**: A saved measurement callout with lines, arrows and a value that does not count toward a part's size. Where: `DECISIONS.md`, Kept dimensions and sizes and More dimension types. Avoid: Driving constraint.
 
 **Dimension length entry**: Typing a plain number into a dimension's text to set the length of the one LINE it measures end to end; the line's second end moves and nothing else changes. Aligned dimensions set the true length; horizontal and vertical ones set only the width or height. Where: `TODO.md`, items 76a-76c. Avoid: Driving dimension, Parametric constraint.

@@ -206,7 +206,11 @@ From the CAD forums research (Pip, 2026-10-20; page https://claude.ai/artifact/S
     106d. ✅ (built, S38j: Knight `b61c533` -> `6d89cea` + fix `9707d97`; CI test fix `4e244f2` for the 146 step) Layout fields: Move / Copy / Stretch / Rotate / Scale on a layout show the same fields (today gated off by `modLive` / `editable()`).
 107. ✅ (built, session 17) **Usage page TODO: show the sub-steps (66a, 66b...) of big items as a list** (S, ask, T24): “N of M done”, folded sub-step lists with done ticks, remembered on this browser. Knight role comes from the usage data; its forecast uses fresh window data immediately, or says “no data yet”.
 108. ✅ (built, session 16) **Knight shows 100% for the 5-hour window after it has already reset** (S, bug, T25): see T25 in support/tickets.md. Grill first.
-109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grill first.
+109. **In-depth export system like AutoCAD (formats, options, batch)** (L, ask, T26): see T26 in support/tickets.md. Grilled S38k (`runs38/grill-109.md`, DECISIONS "Export DXF settings").
+    109a. File -> Export DXF… dialog in every tab with Units (mm / in), Scale and Precision: pure writer options in `web/dxf-write.js` with unit tests (coordinates, sizes, radii, text heights, `$INSUNITS`, decimals), the open drawing unchanged; browser step.
+    109b. (after 109a) Layers (ticked, default visible) and Text as Text / Curves (Text to outlines maths) in the same dialog; unit tests and browser step.
+    109c. (later) SVG and PNG export.
+    109d. (later) Line weights, hidden objects, batch export.
 110. **Ribbon on top like AutoCAD** (L, ask, T27): see T27 in support/tickets.md. Grill first.
     110a. ✅ Theme: AutoCAD dark, CorelDRAW light (built, session 21).
     110b. ✅ Ribbon frame: Option A, per-kind tabs, remembered fold states, Home / View / Output (built, Knight).
