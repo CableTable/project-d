@@ -1,6 +1,7 @@
 // Exact matches (vertices; a circle's centre and radius; a line through an angle's vertex), inferred only for edits that keep the shape: grip drag, Move and Scale.
 import { flatten, pickIndex, mapply, mscale } from './drawing.js';
-import { dimOfEntity, buildDim, replaceDimension, lineOf, DIM_LAYER } from './edit.js';
+import { dimOfEntity, buildDim, replaceDimension, lineOf, dimLabel, DIM_LAYER } from './edit.js';
+import { overrideText, measuredText } from './dimension-text.js';
 import { dragGrip } from './grips.js';
 
 const DEG = Math.PI / 180;
@@ -162,8 +163,13 @@ export function typedLength(text, units = 'mm') {
 /** The one LINE whose two ends are the two points of an aligned or h / v dimension at entity `e` (our own PD_DIM only; none, or stacked duplicates → null).
  * → { i, A (the line end at the dimension's first point), B (at its second), id (the grip of B: 'a' | 'b'), dim, m (the dimension's matrix), zeroExtent (linear extent below LINK_TOL) } */
 export function linkedLine(raw, e) {
+  const hit = dimensionLine(raw, e);
+  return hit.reason ? null : hit;
+}
+
+function dimensionLine(raw, e) {
   const dim = dimOfEntity(raw, e), m = dim && (dim.kind === 'aligned' || (dim.kind === 'linear' && ['h', 'v'].includes(dim.params.axis))) && dimMatrix(raw, e);
-  if (!m) return null;
+  if (!m) return { reason: 'kind' };
   const p = mapply(m, ...dim.params.a), q = mapply(m, ...dim.params.b), ps = !!raw.entities[e].ps, hits = [];
   raw.entities.forEach((ent, i) => {
     const l = lineOf(ent);
@@ -172,10 +178,20 @@ export function linkedLine(raw, e) {
     if (fits(s, p) && fits(t, q)) hits.push({ i, A: s, B: t, id: 'b' });
     else if (fits(t, p) && fits(s, q)) hits.push({ i, A: t, B: s, id: 'a' });
   });
-  if (hits.length !== 1) return null;
+  if (hits.length !== 1) return { reason: hits.length ? 'multiple' : 'none' };
   const hit = hits[0], axis = dim.params.axis === 'h' ? 0 : 1;
   const zeroExtent = dim.kind === 'linear' && Math.abs(local(m, hit.B)[axis] - local(m, hit.A)[axis]) < LINK_TOL;
   return { ...hit, dim, m, zeroExtent };
+}
+
+/** Plain number entry: existing overrides stay text; the shown value is no change even without a LINE. */
+export function dimensionEntry(raw, e, typed) {
+  const dim = dimOfEntity(raw, e), n = dim && !overrideText(dim.params.override) ? typedLength(typed, dim.params.units) : null;
+  if (n == null) return null;
+  const link = dimensionLine(raw, e);
+  if (link.reason === 'kind') return link;
+  if (dimLabel(n * (dim.params.units === 'inch' ? 25.4 : 1), dim.dp, dim.params.units) === measuredText(raw.blocks[dim.name].entities)) return { unchanged: true };
+  return link.reason ? link : { n, link };
 }
 
 /** The LINE at `e` with the end at the dimension's second point moved until the dimension reads `shown`: along the line for aligned, only the measured local coordinate for h / v (shown units: inches for an inch dimension, times the factor otherwise).

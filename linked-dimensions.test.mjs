@@ -4,7 +4,9 @@ import * as W from './web/dxf-write.js';
 import * as E from './web/edit.js';
 import { dragGrip } from './web/grips.js';
 import { flatten, readDxf } from './web/drawing.js';
-import { followDimensions, driveLine, driveDimension, linkedLine, typedLength } from './web/linked-dimensions.js';
+import { followDimensions, driveLine, driveDimension, linkedLine, typedLength, dimensionEntry } from './web/linked-dimensions.js';
+import { readOverride } from './web/dimension-text.js';
+import * as LD from './web/layoutdoc.js';
 import { labelOf } from './web/objects.js';
 import { explodeSelection } from './web/explode.js';
 import { rotateEntities } from './web/rotate.js';
@@ -363,6 +365,88 @@ test('Fix 129: a Linear dimension dragged off its axis keeps its axis and value 
     assert.equal(m.kind, 'linear'); assert.equal(m.params.axis, axis);
     assert.equal(label(back), label(next)); assert.equal(label(back), '100.000');
   }
+});
+
+test('TODO 76c: aligned, h, v and a rotated INSERT drive after writeDxf -> read', () => {
+  for (const [kind, axis, turn, end] of [['aligned', undefined, 0, [90, 120]], ['linear', 'h', 0, [150, 80]], ['linear', 'v', 0, [60, 150]], ['linear', 'h', 90, [-80, 150]]]) {
+    const raw = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], axis }, kind);
+    W.addEntities(raw, W.line(300, 300, 400, 300));
+    if (turn) Object.assign(raw, rotateEntities(raw, new Set([0, 1]), [0, 0], turn));
+    const back = reopen(raw), before = structuredClone(back), entry = dimensionEntry(back, 1, '150');
+    assert.equal(entry.n, 150); assert.equal(entry.link.i, 0);
+    const next = driveDimension(back, 1, entry.n);
+    point(E.lineOf(next.entities[0]), [0, 0, ...end]);
+    assert.equal(label(next), '150.000'); assert.equal(model(next).kind, kind); assert.equal(model(next).params.axis, axis);
+    assert.deepEqual(next.entities[2], before.entities[2], 'unrelated LINE stays');
+    assert.deepEqual(back, before, 'input and Undo snapshot stay');
+    const history = E.createHistory(); history.push(back, 'Dimension length');
+    assert.deepEqual(history.undo(next), before); assert.equal(history.canUndo, false);
+  }
+});
+
+test('TODO 76c: a deleted or separately moved LINE after reopen makes a literal override without moving geometry', () => {
+  for (const kind of ['aligned', 'h', 'v']) for (const lost of ['deleted', 'moved', 'polyline', 'duplicates']) {
+    const raw = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], axis: kind === 'aligned' ? undefined : kind }, kind === 'aligned' ? kind : 'linear');
+    W.addEntities(raw, W.line(300, 300, 400, 300));
+    const saved = reopen(raw);
+    if (lost === 'deleted') saved.entities.splice(0, 1);
+    if (lost === 'moved') Object.assign(saved, E.moveEntities(saved, new Set([0]), 10, 20));
+    if (lost === 'polyline') saved.entities[0] = W.lwpoly([[0, 0], [60, 80]]);
+    if (lost === 'duplicates') W.addEntities(saved, W.line(60, 80, 0, 0));
+    const back = reopen(saved), e = lost === 'deleted' ? 0 : 1, dim = E.dimOfEntity(back, e), before = structuredClone(back);
+    for (const typed of ['150', '0', '-5']) {
+      assert.deepEqual(dimensionEntry(back, e, typed), { reason: lost === 'duplicates' ? 'multiple' : 'none' });
+      assert.equal(driveDimension(back, e, Number(typed)), null);
+      const next = E.replaceDimension(back, E.buildDim(dim.kind, { ...dim.params, override: typed }, 1, dim.name, dim.dp));
+      assert.equal(readOverride(next.blocks[dim.name].entities), typed); assert.equal(label(next, e), typed);
+      assert.deepEqual(next.entities, before.entities, 'all geometry stays');
+      const history = E.createHistory(); history.push(back, 'Dimension text');
+      assert.deepEqual(history.undo(next), before); assert.equal(history.canUndo, false);
+    }
+    assert.equal(dimensionEntry(back, e, '150 TYP'), null, 'ordinary text keeps its ordinary status');
+  }
+});
+
+test('TODO 76c: radius, diameter and angle never report a missing LINE; existing overrides stay text', () => {
+  const radial = drawing(W.circle(50, 40, 10), { c: [50, 40], r: 10, p: [70, 40] }, 'radius');
+  const diameter = drawing(W.circle(50, 40, 10), { a: [40, 40], b: [60, 40] }, 'diameter');
+  const angle = drawing(W.line(0, 0, 50, 0), { v: [0, 0], a0: 0, a1: 60, r: 20 }, 'angle');
+  for (const raw of [radial, diameter, angle]) assert.deepEqual(dimensionEntry(reopen(raw), 1, '150'), { reason: 'kind' });
+  for (const override of ['<> TYP', '150']) {
+    const back = reopen(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], override }));
+    assert.equal(dimensionEntry(back, 1, '200'), null);
+    const dim = model(back), cleared = { ...back, ...E.replaceDimension(back, E.buildDim(dim.kind, { ...dim.params, override: '' }, 1, dim.name, dim.dp)) };
+    assert.equal(dimensionEntry(cleared, 1, '200').link.i, 0, 'clearing restores driving');
+  }
+});
+
+test('TODO 76c: retyping the shown number on an unlinked dim in shown units makes no override or Undo step', () => {
+  for (const [units, factor, shown] of [['mm', 1, '100'], ['inch', 1, '3.937"'], ['mm', 25.4, '2540']]) {
+    const raw = reopen(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80], units }, 'aligned', factor));
+    raw.entities.splice(0, 1);
+    const before = structuredClone(raw), history = E.createHistory();
+    assert.deepEqual(dimensionEntry(raw, 0, shown), { unchanged: true });
+    assert.equal(readOverride(raw.blocks[E.dimOfEntity(raw, 0).name].entities), '');
+    assert.deepEqual(raw, before); assert.equal(history.canUndo, false);
+  }
+});
+
+test('TODO 76c: a layout dimension drives through replaceDim after writeDxf -> read -> layoutFromRaw', () => {
+  const raw = drawing(W.line(150, 150, 210, 230), { a: [150, 150], b: [210, 230], axis: 'h' }, 'linear');
+  W.addEntities(raw, W.line(350, 100, 400, 120));
+  const lay = LD.newLayout('Drive after reopen');
+  raw.entities.forEach((ent, i) => {
+    const part = LD.objectPart('o' + i, i === 1 ? 'Dimension' : 'Line ' + i, ent, raw.layers, raw.header, raw.blocks);
+    lay.parts[part.id] = part; lay.placed.push(LD.objectPlacement(part));
+  });
+  const back = LD.layoutFromRaw(reopen(LD.layoutRaw(lay))), view = LD.linkView(back), source = { header: {}, ...view };
+  const entry = dimensionEntry(source, 1, '150'), hit = driveLine(source, 1, entry.n), old = view.entities[hit.i];
+  assert.equal(entry.link.i, 0);
+  assert.ok(LD.objectReplace(back, { at: new Map([[old, view.at[hit.i]]]), raw: { blocks: {} } }, old, hit.line, () => 'driven'));
+  assert.ok(LD.replaceDim(back, back.placed[view.at[1]], view.entities[1], { ...view.blocks, [hit.built.name]: hit.built.block }, () => 'dim', new Set(Object.values(back.parts).map((p) => p.name))));
+  const next = LD.linkView(LD.layoutFromRaw(reopen(LD.layoutRaw(back))));
+  point(E.lineOf(next.entities[0]), [150, 150, 300, 230]); assert.equal(label(next), '150.000');
+  assert.deepEqual(next.entities[2], view.entities[2], 'unrelated layout LINE stays');
 });
 
 test('TODO 76a: a dimension drives the one LINE whose ends are its points', () => {

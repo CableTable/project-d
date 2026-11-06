@@ -21419,6 +21419,107 @@ try {
     }
   });
 
+  await step('TODO 76c: a dimension whose line is gone shows the number as text', async () => {
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const dimIn = (raw) => {
+      const [name, block] = Object.entries(raw.blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    const lines = (raw) => raw.entities.map(lineEnds).filter(Boolean);
+    const noLine = "No line at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.";
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('line'); await typeCmd('350,100'); await typeCmd('400,120'); await page.keyboard.press('Escape');
+        await typeCmd('d'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150), dxfLine(350, 100, 400, 120));
+        Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1', 2)));
+        await t('picker').setInputFiles({ name: 'gone-76c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'gone-76c.dxf');
+      }
+      await t('decimals').selectOption('2'); await page.locator('[data-tool=select]').click();
+      const a = await at(120, 120), b = await at(430, 240);
+      await typeCmd('zw'); await page.mouse.move(a.x, a.y); await page.mouse.down();
+      await page.mouse.move(b.x, b.y, { steps: 5 }); await page.mouse.up(); await frames();
+      const apply = async (text, expected = '150.00', cancel = false) => {
+        const p = await at(190, 200); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+        assert.equal(await t('text-editor').inputValue(), expected, tab);
+        await t('text-editor').fill(text); await page.keyboard.press(cancel ? 'Escape' : 'Enter');
+        assert.equal(await t('text-edit-box').isVisible(), false);
+      };
+      const start = await savedDoc();
+      await click(225, 150); await page.keyboard.press('Delete');
+      const deleted = await savedDoc(), history = await histLabels();
+      assert.deepEqual(lines(deleted), [[350, 100, 400, 120]], tab + ': only the measured LINE was deleted');
+      assert.deepEqual(dimIn(deleted), dimIn(start), tab + ': dimension keeps its points and last value');
+      await apply('150');
+      assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted)); assert.deepEqual(await histLabels(), history, tab + ': shown number is no step without a LINE');
+      await apply('200', '150.00', true);
+      assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted)); assert.deepEqual(await histLabels(), history, tab + ': Esc cancels');
+      await apply('200'); assert.equal(await prompt(), noLine, tab);
+      await shotBoth('todo76c-gone-' + tab);
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/s12-todo76c-gone-${tab}-${theme}.png`).length > 1000);
+      const changed = await savedDoc();
+      assert.equal(dimIn(changed).override, '200'); assert.equal(dimIn(changed).label, '200');
+      assert.deepEqual(dimIn(changed).params.a, dimIn(deleted).params.a); assert.deepEqual(dimIn(changed).params.b, dimIn(deleted).params.b);
+      assert.deepEqual(lines(changed), lines(deleted), tab + ': unrelated LINE stays');
+      assert.deepEqual((await histLabels()).slice(history.length), ['Dimension text'], tab + ': one step');
+      await undo();
+      assert.deepEqual(dimIn(await savedDoc()), dimIn(deleted), tab + ': one Ctrl+Z restores the old text');
+      assert.deepEqual(lines(await savedDoc()), lines(deleted), tab + ': the LINE stays deleted');
+      for (const text of ['0', '-5', '200 TYP']) {
+        await apply(text); assert.equal(await prompt(), text === '200 TYP' ? 'Dimension text changed. Ctrl+Z takes it back' : noLine);
+        const out = await savedDoc(); assert.equal(dimIn(out).override, text); assert.deepEqual(lines(out), lines(deleted)); await undo();
+      }
+      await undo(); assert.deepEqual(lines(await savedDoc()), lines(start), tab + ': restore the source for the override rule');
+      await apply('TYP');
+      await apply('250', 'TYP');
+      assert.equal(await prompt(), 'Dimension text changed. Ctrl+Z takes it back');
+      assert.equal(dimIn(await savedDoc()).override, '250'); assert.deepEqual(lines(await savedDoc()), lines(start), tab + ': a number over an override stays text');
+      await apply('', '250'); assert.equal(dimIn(await savedDoc()).override, ''); assert.equal(dimIn(await savedDoc()).label, '150.00');
+      await apply('200'); assert.equal(await prompt(), 'Dimension length changed. Ctrl+Z takes it back');
+      const driven = await savedDoc();
+      assert.deepEqual(lines(driven), [[150, 150, 350, 150], [350, 100, 400, 120]]); assert.equal(dimIn(driven).override, ''); assert.equal(dimIn(driven).label, '200.00');
+      await undo(); assert.deepEqual(lines(await savedDoc()), lines(start));
+    }
+    await closeTabs(/./);
+  });
+
+  await step('TODO 76c: h and v missing-line reasons, stacked LINEs and radius text status', async () => {
+    const geometry = (raw) => raw.entities.filter((e) => e.layer !== 'Dimensions').map((e) => [e.type, lineEnds(e) || [10, 20, 40].map((c) => fieldOf(e, c))]);
+    for (const [kind, axis, stacked] of [['linear', 'h', false], ['linear', 'v', false], ['aligned', undefined, true], ['radius', undefined, false]]) {
+      await closeTabs(/./);
+      const raw = newDoc(4), radial = kind === 'radius';
+      if (radial) addEntities(raw, dxfCircle(200, 150, 25));
+      if (stacked) addEntities(raw, dxfLine(150, 150, 300, 190), dxfLine(300, 190, 150, 150));
+      const params = radial ? { c: [200, 150], r: 25, p: [300, 150] } : { a: [150, 150], b: [300, 190], axis, offset: 50 };
+      Object.assign(raw, addDimension(raw, buildDim(kind, { ...params, textH: 5 }, 1, radial ? 'PD_DIM_R1' : axis ? `PD_DIM_${axis.toUpperCase()}1` : 'PD_DIM_1', 2)));
+      await t('picker').setInputFiles({ name: 'reason-76c.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'reason-76c.dxf');
+      await page.locator('[data-tool=select]').click();
+      const before = await savedDoc(), dim = dimOfEntity(before, before.entities.length - 1), tx = dimGeom(dim.kind, dim.params, 1, 2).text;
+      const p = await at(tx.x, tx.y + tx.h / 2); await page.mouse.dblclick(p.x, p.y); await t('text-editor').waitFor();
+      await t('text-editor').fill('200'); await page.keyboard.press('Enter');
+      assert.equal(await prompt(), radial ? 'Dimension text changed. Ctrl+Z takes it back' : `${stacked ? 'More than one line' : 'No line'} at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.`);
+      const after = await savedDoc(); assert.deepEqual(geometry(after), geometry(before));
+      const edited = dimOfEntity(after, after.entities.length - 1); assert.equal(readOverride(after.blocks[edited.name].entities), '200');
+      assert.equal(edited.kind, dim.kind);
+      for (const [key, value] of Object.entries(dim.params)) {
+        if (key === 'override') continue;
+        const actual = edited.params[key];
+        if (typeof value === 'number') assert.ok(Math.abs(actual - value) < 1e-5, key);
+        else if (Array.isArray(value)) value.forEach((v, i) => assert.ok(Math.abs(actual[i] - v) < 1e-5, key));
+        else assert.equal(actual, value, key);
+      }
+    }
+    await closeTabs(/./);
+  });
+
   await step('TODO 76b: an h dimension drives a sloped LINE on a drawing and layout, unrelated geometry stays, locks refuse and one Undo restores both; light and dark', async () => {
     const save = async () => readDxf((await downloaded(() => page.keyboard.press('Control+s'))).text);
     const dimIn = (raw) => {

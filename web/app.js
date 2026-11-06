@@ -46,7 +46,7 @@ import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import { stretchGrips, stretchEntities, stretchSelection, stretchPlacements } from './stretch.js';
 import * as GM from './gripmode.js';
-import { followDimensions, driveLine, driveDimension, linkedLine, typedLength } from './linked-dimensions.js';
+import { followDimensions, driveLine, driveDimension, dimensionEntry } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
@@ -8992,7 +8992,8 @@ function textCommit() {
   if (ed.dim) {
     const dim = ed.dim, override = dimensionEditorOverride(dim.editor).replace(/\r?\n/g, ' ');
     if (override === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); return; }
-    if (dimDrive(d, ed, override)) return;
+    const drive = dimDrive(d, ed, override);
+    if (drive === true) return;
     const built = Ed.buildDim(dim.kind, { ...dim.params, override }, d.factor || 1, dim.name, dim.dp);
     if (d.lay) {
       const kept = Ed.relabelDims({ entities: [], blocks: { [dim.name]: built.block } }, d.factor || 1, 0, true);       // as the drawing path: matching text settles back to what it was
@@ -9005,7 +9006,7 @@ function textCommit() {
       if (readOverride(next.blocks[dim.name].entities) === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); note('Dimension text unchanged: a kept Measure callout follows its points'); return; }       // typed text that still matches is rewritten back: no step, no "changed"
       if (!commit(d, next, 'Dimension text')) return; setSel(d, new Set([ed.e]));
     }
-    note('Dimension text changed. Ctrl+Z takes it back');
+    note(drive ? `${drive === 'none' ? 'No line' : 'More than one line'} at this dimension's ends: the number is shown as text. Ctrl+Z takes it back.` : 'Dimension text changed. Ctrl+Z takes it back');
     return;
   }
   if (ed.ldr) {                                                       // a leader's note
@@ -9022,16 +9023,17 @@ function textCommit() {
     note(`${TX.kindOf({ ...ed.m, lines })} changed. Ctrl+Z takes it back`);
   } else textAdd(d, { ...ed.m, lines });
 }
-/** A plain number typed over a plain `<>` aligned or h / v dimension on one LINE sets its measured length (the end at the dimension's second point moves). → true when handled (driven, refused or the same value); false: the text is an override as before. */
+/** A plain number over a plain `<>` drives one LINE. True: handled; 'none' / 'multiple': explain the text fallback; false: ordinary text. */
 function dimDrive(d, ed, typed) {
-  const dim = ed.dim, n = overrideText(dim.params.override) ? null : typedLength(typed, dim.params.units);
-  if (n == null) return false;
+  const dim = ed.dim;
   const view = d.lay && LD.linkView(d.lay), at = view ? view.at.findIndex((a) => d.lay.placed[a] === dim.placed) : ed.e;
-  const raw = view ? { header: {}, layers: view.layers, ltypes: {}, blocks: view.blocks, entities: view.entities } : d.raw, link = at >= 0 && linkedLine(raw, at);
-  if (!link) return false;
-  const done = () => { renderCommand(); renderEdit(); paintOverlay(); return true; }, inch = dim.params.units === 'inch';
+  const raw = view ? { header: {}, layers: view.layers, ltypes: {}, blocks: view.blocks, entities: view.entities } : d.raw, entry = at >= 0 && dimensionEntry(raw, at, typed);
+  if (!entry || entry.reason === 'kind') return false;
+  const done = () => { renderCommand(); renderEdit(); paintOverlay(); return true; };
+  if (entry.unchanged) return done();       // no step or note, even without a LINE or on a locked layer
+  if (entry.reason) return entry.reason;
+  const { n, link } = entry;
   const layer = raw.entities[link.i].layer, placed = view && d.lay.placed[view.at[link.i]];
-  if (Ed.dimLabel(n * (inch ? 25.4 : 1), dim.dp, dim.params.units) === dim.editor.measured) return done();       // the shown number again: no step, no note, even on a locked layer
   if (view ? placed.lock || LD.layersOf(d.lay)[layer]?.flags & 4 : lockedEnt(d, link.i)) { note((view ? placed.lock : d.lockedEnts?.has(raw.entities[link.i])) ? 'A locked object: unlock it to change its length' : `Layer ${layer} is locked`); return done(); }
   if (link.zeroExtent) { note(dim.params.axis === 'h' ? 'This line has no width to set' : 'This line has no height to set'); return done(); }
   if (!(n > 0)) { note('Length must be more than 0'); return done(); }
