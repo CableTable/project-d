@@ -384,6 +384,8 @@ Project D's own words, based on the project docs and names in `web/`; `DECISIONS
 
 **Retro**: A session-end review of commits, briefs and worker reports that suggests rule or process changes for Rakshith to choose before merge. Where: `WORKFLOW.md`, Retro at session end. Avoid: A code-fix round.
 
+**Handover retro**: The one short retro over only the outgoing Rook's transcript, launched at each Rook handover; the next Rook applies what it recommends first. Where: `WORKFLOW.md` rule 4. Avoid: The session-end retros.
+
 **Rook**: The main-account Opus lead who plans, writes briefs, chooses UI, reads short reports and handles pushes and merges. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what.
 
 **Knight**: The Codex worker for feature and fix builds and web research, which tests and commits builds without pushing and has no review role. Where: `CLAUDE.md`, House rules; `WORKFLOW.md`, Who does what. Avoid: Bishop-build; reviewer. Old name: Rowan (until 2026-10-21).
