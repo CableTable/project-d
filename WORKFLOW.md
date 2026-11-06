@@ -160,11 +160,12 @@ Two claude2 sessions may run at once only on separate files (e.g. a mock-up whil
 - Run ended: `node tools/rook.mjs result <run file>` (report, denials, peak context). Gate: `node tools/rook.mjs usage --cached`.
 - Board: `node tools/rook.mjs board <brief> <out>`, brief from `tools/briefs/board.txt` (fill its `{placeholders}`).
 - Pawn: `node tools/rook.mjs pawn <out.json> "<one question>"` (one question per call).
-- Full suite: `node tools/rook.mjs suite <sha>` (`<sha>` = HEAD), then `wait` on `runs<N>/suite-<sha>.log`
+- Full suite: `node tools/rook.mjs suite <sha>` (`<sha>` = HEAD), then `wait` on `runs<N>/suite-<sha>.log`; red: `node tools/rook.mjs fails <log>`
 - Wait: `node tools/rook.mjs wait <run file>... [--ci <sha>]` as a Monitor, never in the foreground
 - CI of a push: Monitor `bash tools/ci-watch.sh <sha>` (head sha)
 - CI red, run still going: `jid=$(gh run view <id> --json jobs --jq '.jobs[]|select(.conclusion=="failure")|.databaseId' | head -1); gh api --allow-escape-sequences repos/CableTable/project-d/actions/jobs/$jid/logs > f.log; node tools/rook.mjs fails f.log`
-- Cherry-pick: `git cherry-pick` the builder's commits, tick TODO.md (`grep -n <ticket> TODO.md`: tick every row of that ticket), commit; push once per handover; UI item: run the Board line now, or write "Board due: <id>" in the resume
+- Run ended, no major change: no text to Rakshith; the state is in queue.txt. Your own recommended answer: take it and note it. Fix rounds: King, or Knight when King's 5h is high or its build worktree is busy.
+- Cherry-pick: suite running: no pick in the repo until it ends. `git cherry-pick` the builder's commits, tick TODO.md (`grep -n <ticket> TODO.md`: tick every row of that ticket), commit; push once per handover; UI item: run the Board line now, or write "Board due: <id>" in the resume
 - Retro: `node tools/rook.mjs retro --as king` while Bishop is paused (briefs `tools/briefs/retro*.txt`); at a handover `node tools/rook.mjs retro --handover` first (`handover` refuses without it, or `--no-retro`); merge: `node tools/rook.mjs merge <n> <sha>`
 - Handover: write `runs<N+1>/resume-rook.txt` (with "Open bugs checked <time>: <ids or none>") + `rook-next.txt`, then `node tools/rook.mjs handover <resume> "Rook S<N>x"` and `node tools/rook.mjs next`
 - `gh ... --jq`: Bash only (PowerShell 5.1 strips the inner quotes)
@@ -454,7 +455,7 @@ For when Rook (main account) runs short of usage: Bishop leads and reviews, Knig
 - **Bug and flake briefs** (his call, 2026-11-01): a Claude builder (King / Bishop) runs the Skill tool for `mattpocock-skills:diagnosing-bugs` first and reproduces the failure before fixing (CI-only: the downloaded artifact, Linux timing, CPU throttling); Knight gets the same loop as a line pointing at that skill's SKILL.md. The report says "reproduced" or "not reproduced: likely cause".
 - **Fix briefs** (session 25 retro): each item names its source, a review finding number or an `acad-grill` item. Anything
   without a source is marked *Rook's idea*, and the brief says which behaviour must still work (e.g. Extension far past the end).
-  Each finding names its **case grid** (S29 retro: 155h2 and 155e3 each needed an extra round because only the repro was fixed): every input sharing the cause; the fix covers the grid and adds ONE table-driven unit test over it.
+  Each finding names its **case grid** (S29 retro: 155h2 and 155e3 each needed an extra round because only the repro was fixed): every input sharing the cause; the fix covers the grid and adds ONE table-driven unit test over it. A finding in the same function as the last round's: re-grill now; the brief names the whole input class and a table test, not one more case or regex. Base older than HEAD and HEAD added a lint: the brief quotes the rule.
   A reason naming other code gives its file, or says it is not built yet. The review brief copies the fix brief's rule line word for word, and takes its base sha from the fix brief (S32 retro).
   Ship as is with only Lows: one fix round, no re-review, for Lows he could see or a test that proves nothing; the rest go to `runs<N>/lows.txt`; at session end each becomes a TODO row or 'dropped: <why>'. Rook appends held Lows there on reading the review; the resume says "Held Lows: runs<N>/lows.txt".
   "Fix first" needs a Medium or High (`reviewer.md`). Rook overruling one says "overruled fix first: <why>" in its reply and the lows file; an unproven check goes in the lows file (S35 retro).
