@@ -99,7 +99,8 @@ usage-agent-install.ps1.
    each in its own folder (ProjectD-s15fix; a 2nd review at once: ProjectD-b68 once trusted).
 3. **PR body in the `pr` skill's shape**: a summary visual (file tree / call tree / diff), before / after evidence
    (tests, screenshots), and a merge-danger call: one-way or two-way door, plus blast radius.
-4. **Retro at session end** (three runs, all on Bishop, his call 2026-10-28): before the merge, a Bishop run of the
+4. **Handover retro** (his call 2026-11-06, TODO 206): at every Rook handover, one King retro over the outgoing Rook's transcript only (`rook.mjs retro --handover`); the next Rook reads its `.out` first and applies what it recommends. The session-end retros below stay.
+   **Retro at session end** (three runs, all on Bishop, his call 2026-10-28): before the merge, a Bishop run of the
    `retro` skill over the session's commits, briefs and run reports; a King retro (`runs<N>/retro<N>king.txt`, same
    skill, over King's `king-*.jsonl` runs: permissions, wasted tokens, navigation, brief gaps); and a Rook retro
    (`runs<N>/retro<N>rook.txt`, over Rook's own transcript: wasted tokens, wrong claims, briefs that caused rework, rules
