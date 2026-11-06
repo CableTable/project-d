@@ -4,6 +4,7 @@
 //   writeDxf(doc, opts) → string, CRLF lines.   opts: { escapeUnicode: true writes non-ASCII as \U+XXXX (R2000's own way); extents: [x0, y0, x1, y1] of model space, when the caller has them (flatten is slow on a big file) }
 //   unwritable(doc) → [{ type, count }]: what writeDxf leaves out (warn before overwriting a file)
 //   writeDxfWithReport(doc, opts) → { text, tables, skipped }: the same file and counts for the caller's Save note
+//   Export opts: units ('mm', 'in', 'unitless'), scale (> 0), precision (0–8); transforms a deep copy.
 //
 // The document (drawing.js): { header: { $NAME: string | [x, y] }, layers: { NAME: { aci, tc, off, frozen, lt, lw } },
 //   ltypes: { NAME: { pattern: [dash, gap, …] } }, blocks: { NAME: { base: [x, y], xref, entities } }, entities, groups (groups.js) }
@@ -17,17 +18,18 @@ import { flatten } from './drawing.js';
 import { nearestAci, unpack420 } from './colour.js';
 import { fillHatch, fillHoles } from './fill.js';
 import { remap } from './groups.js';
+import { scaleRecord, SPEC, relabel, DIM_BLOCK } from './edit.js';
 
 const SUPPORTED = new Set(['LINE', 'CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'ELLIPSE', 'SPLINE', 'POINT', 'TEXT', 'MTEXT',
   'INSERT', 'ATTDEF', 'HATCH', 'SOLID', 'TRACE', '3DFACE', 'DIMENSION', 'LEADER']);
 
 // ---------------------------------------------------------------- numbers and values
 
-/** A number as DXF text: up to 6 decimals, no exponent, no "-0". */
-export function fmt(n) {
+/** A number as DXF text: up to precision decimals (default 6), no exponent, no "-0". */
+export function fmt(n, precision = 6) {
   n = +n;
   if (!Number.isFinite(n)) return '0';
-  let s = n.toFixed(6);
+  let s = n.toFixed(precision);
   if (/e/i.test(s)) s = BigInt(Math.round(n)).toString();
   else if (s.includes('.')) s = s.replace(/0+$/, '').replace(/\.$/, '');
   return s === '-0' ? '0' : s;
@@ -42,8 +44,8 @@ const isDouble = (c) => (c >= 10 && c <= 59) || (c >= 110 && c <= 149) || (c >= 
 const isInt = (c) => (c >= 60 && c <= 99) || (c >= 160 && c <= 179) || (c >= 270 && c <= 299) || (c >= 370 && c <= 389) || (c >= 400 && c <= 409) ||
   (c >= 420 && c <= 459) || (c >= 1060 && c <= 1071);
 /** A value as the file wants it for its group code. */
-function value(c, v, esc) {
-  if (isDouble(c)) { const n = +v; return Number.isFinite(n) && String(v).trim() !== '' ? fmt(n) : String(v).trim(); }
+function value(c, v, esc, precision = 6) {
+  if (isDouble(c)) { const n = +v; return Number.isFinite(n) && String(v).trim() !== '' ? fmt(n, precision) : String(v).trim(); }
   if (isInt(c)) return intText(v);
   return line1(v, esc);
 }
@@ -293,12 +295,57 @@ export function writeDxf(doc, opts = {}) {
 }
 
 export function writeDxfWithReport(doc, opts = {}) {
+  const { units, scale = 1, precision = 6 } = opts;
+  if (units !== undefined && !['mm', 'in', 'unitless'].includes(units)) throw new Error('Units must be mm or in (unitless drawings do not convert)');
+  if (!Number.isFinite(scale) || scale <= 0) throw new Error('Scale must be a number above 0');
+  if (!Number.isInteger(precision) || precision < 0 || precision > 8) throw new Error('Precision must be a whole number from 0 to 8');
+  const source = +doc.header?.$INSUNITS || 0, mm = { 1: 25.4, 2: 304.8, 4: 1, 5: 10, 6: 1000 };
+  if (units === 'unitless' && source !== 0) throw new Error('This drawing has units');
+  const factor = (units && units !== 'unitless' && source ? mm[source] / (units === 'in' ? 25.4 : 1) : 1) * scale;
+  if (!Number.isFinite(factor) || factor <= 0) throw new Error('Cannot convert these drawing units or scale');
+  // Only export options need a deep copy; ordinary Save keeps its existing fast path.
+  if (units !== undefined || opts.scale !== undefined || opts.precision !== undefined) doc = structuredClone(doc);
   const prepared = prepareSave(doc);
-  return { text: writePreparedDxf(prepared.doc, opts), tables: prepared.tables, skipped: prepared.skipped };
+  doc = prepared.doc;
+  if (factor !== 1) {
+    const dimensions = new Set();
+    const one = (e) => {
+      if (e.type === 'DIMENSION') dimensions.add(e.r.v[e.r.c.indexOf(2)]?.trim());
+      const transform = (r) => {
+        const scaled = scaleRecord(r.type, r, factor, [0, 0], true) || r;
+        if (r.type === 'DIMENSION' && [2, 5].includes((+r.v[r.c.indexOf(70)] || 0) & 7)) {
+          const k = r.c.indexOf(42); if (k >= 0) scaled.v[k] = r.v[k];
+        }
+        if (scaled.v.some((v, i) => v !== r.v[i] && !Number.isFinite(+v))) throw new Error('Export scale result is too large');
+        return scaled;
+      };
+      return { ...e, r: transform(e.r), kids: e.kids?.map(transform) };
+    };
+    doc.entities = doc.entities.map(one);
+    delete doc.blocks.PD_LAYOUT;
+    for (const b of Object.values(doc.blocks)) {
+      b.base = b.base?.map((n) => n * factor);
+      b.entities = b.entities.map(one);
+    }
+    for (const [name, b] of Object.entries(doc.blocks)) if (DIM_BLOCK.test(name) || dimensions.has(name)) b.entities = relabel(b.entities, factor);
+    for (const key of ['$DIMTXT', '$DIMASZ', '$DIMEXE', '$DIMEXO', '$DIMGAP', '$LTSCALE', '$PDSIZE']) {
+      const n = +doc.header?.[key];
+      if (Number.isFinite(n) && (key !== '$PDSIZE' || n > 0) && doc.header[key] != null) doc.header[key] = String(n * factor);
+    }
+  }
+  if (units && units !== 'unitless' && source) {
+    doc.header.$INSUNITS = units === 'in' ? '1' : '4';
+    doc.header.$MEASUREMENT = units === 'in' ? '0' : '1';
+  } else if (units !== undefined && !source) {
+    doc.header = { ...doc.header, $INSUNITS: '0' };
+  }
+  const ext = factor !== 1 && opts.extents ? opts.extents.map((n) => n * factor) : opts.extents;
+  return { text: writePreparedDxf(doc, { ...opts, extents: ext }), tables: prepared.tables, skipped: prepared.skipped };
 }
 
 function writePreparedDxf(doc, opts) {
   const esc = !!opts.escapeUnicode;
+  const precision = opts.precision ?? 6;
   const colourFallbacks = new Map();
   const fallbackAci = (tc) => {
     if (!colourFallbacks.has(tc)) colourFallbacks.set(tc, nearestAci(unpack420(tc)));
@@ -307,7 +354,22 @@ function writePreparedDxf(doc, opts) {
   let hnext = 0x20;
   const handle = () => (hnext++).toString(16).toUpperCase();
   const H = { BLOCK_RECORD: '1', LAYER: '2', STYLE: '3', LTYPE: '5', VIEW: '6', UCS: '7', VPORT: '8', APPID: '9', DIMSTYLE: 'A', ROOT: 'C' };
-  const out = (a) => ({ a, p(c, v) { a.push(String(c).padStart(3) + '\r\n' + value(c, v, esc)); return this; }, s(c, v) { a.push(String(c).padStart(3) + '\r\n' + line1(v, esc)); return this; } });
+  const out = (a) => ({ a, p(c, v, dp = c >= 10 && c <= 38 ? precision : 6) { a.push(String(c).padStart(3) + '\r\n' + value(c, v, esc, dp)); return this; }, s(c, v) { a.push(String(c).padStart(3) + '\r\n' + line1(v, esc)); return this; } });
+  const record = (o, pairs, type) => {
+    let stage = 'head', flags = 0, edge = 0;
+    const spec = SPEC[type], points = [...(spec?.pts || []), ...(spec?.vec || [])];
+    const angular = type === 'DIMENSION' && [2, 5].includes((+pairs.find(([c]) => c === 70)?.[1] || 0) & 7);
+    for (const [c, v] of pairs) {
+      let length = c >= 10 && c <= 38 && points.includes(10 + c % 10) || (spec?.len || []).includes(c) || (spec?.z || []).includes(c);
+      if (angular && c === 42) length = false;
+      if (type === 'HATCH') {
+        if (c === 91) stage = 'paths'; else if (c === 75) stage = 'pattern'; else if (c === 98) stage = 'seed';
+        if (stage === 'paths') { if (c === 92) flags = +v; else if (c === 72 && !(flags & 2)) edge = +v; }
+        length = c >= 10 && c <= 38 || stage === 'paths' && edge === 2 && c === 40 || stage === 'pattern' && [43, 44, 45, 46, 47, 49].includes(c);
+      }
+      if (c === 100) o.s(c, v); else o.p(c, v, length ? precision : 6);
+    }
+  };
 
   // what the entities refer to, so the tables hold it
   const blocks = { ...(doc.blocks || {}) };
@@ -386,7 +448,7 @@ function writePreparedDxf(doc, opts) {
     let spec = specific(r, null);
     if (r.type === 'INSERT') { spec = spec.filter((q) => q[0] !== 66); if (kids.length) spec = insertAfterMarker(spec, [66, '1']); }
     if (r.type === 'POLYLINE') { spec = spec.filter((q) => q[0] !== 66); spec = insertAfterMarker(spec, [66, '1']); }
-    for (const [c, v] of spec) { if (c === 100) o.s(100, v); else o.p(c, v); }
+    record(o, spec, r.type);
     if (r.type === 'POLYLINE' || kids.length) {
       const flags = r.type === 'POLYLINE' ? (r.c.indexOf(70) >= 0 ? r.v[r.c.indexOf(70)] : '0') : null;
       for (const kid of kids) kidRec(o, kid, h, flags);
@@ -407,7 +469,7 @@ function writePreparedDxf(doc, opts) {
     else if (p.aci !== 256) o.p(62, p.aci);
     if (p.lw !== -1) o.p(370, p.lw);
     if (p.tc != null) o.p(420, p.tc);
-    for (const [c, v] of specific(kid, flags)) { if (c === 100) o.s(100, v); else o.p(c, v); }
+    record(o, specific(kid, flags), kid.type);
   };
 
   // BLOCKS
@@ -533,7 +595,7 @@ function writePreparedDxf(doc, opts) {
     pt('$EXTMAX', ext ? ext[2] : -1e20, ext ? ext[3] : -1e20, ext ? 0 : -1e20);
     for (const k of ['$LIMMIN', '$LIMMAX']) if (Array.isArray(hd[k])) o.s(9, k).p(10, hd[k][0]).p(20, hd[k][1]);
     if (Array.isArray(hd.$INSBASE)) pt('$INSBASE', hd.$INSBASE[0], hd.$INSBASE[1], 0);
-    for (const [k, kind, c] of HDR) if (hd[k] != null && !Array.isArray(hd[k]) && String(hd[k]).trim() !== '') { o.s(9, k); o.a.push(String(c).padStart(3) + '\r\n' + (kind === 'i' ? intText(hd[k]) : fmt(hd[k]))); }
+    for (const [k, kind, c] of HDR) if (hd[k] != null && !Array.isArray(hd[k]) && String(hd[k]).trim() !== '') { o.s(9, k); o.a.push(String(c).padStart(3) + '\r\n' + (kind === 'i' ? intText(hd[k]) : fmt(hd[k], ['$LTSCALE', '$CELTSCALE', '$DIMSCALE', '$ANGBASE'].includes(k) ? 6 : precision))); }
     o.s(9, '$INSUNITS').p(70, hd.$INSUNITS != null && !Array.isArray(hd.$INSUNITS) && String(hd.$INSUNITS).trim() !== '' ? hd.$INSUNITS : 4);
     if (hd.$DWGCODEPAGE) o.s(9, '$DWGCODEPAGE').s(3, hd.$DWGCODEPAGE);
     if (hd.$CLAYER && layerNames.has(String(hd.$CLAYER).trim())) o.s(9, '$CLAYER').s(8, String(hd.$CLAYER).trim());

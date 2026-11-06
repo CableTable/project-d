@@ -902,7 +902,7 @@ export const SPEC = {
 export const OCS = new Set(['CIRCLE', 'ARC', 'LWPOLYLINE', 'POLYLINE', 'TEXT', 'ATTRIB', 'INSERT', 'SOLID', 'TRACE', 'HATCH']);
 
 /** Scales one record's pairs (codes are shared, values are new). a: the anchor [x, y] in this record's own coordinates. */
-function scaleRecord(type, r, s, a) {
+export function scaleRecord(type, r, s, a, keepInsertScale = false) {
   const spec = SPEC[type];
   if (!spec) return null;
   if (type === 'HATCH') return scaleHatch(r, s, a);
@@ -917,7 +917,7 @@ function scaleRecord(type, r, s, a) {
     else if ((pts.has(c - 20) && c >= 30 && c <= 38) || zs.has(c) || len.has(c)) v[k] = text(n * s);
   }
   let c = r.c;
-  if (type === 'INSERT') {                                          // the block's contents scale through the insert's factors
+  if (type === 'INSERT' && !keepInsertScale) {                       // export scales block definitions instead
     let at = -1;
     const have = {};
     for (let k = 0; k < r.c.length; k++) { const code = r.c[k]; if ([10, 20, 30, 41, 42, 43].includes(code)) at = k; if ([41, 42, 43].includes(code) && !(code in have)) have[code] = k; }

@@ -18750,6 +18750,101 @@ try {
     } finally { await scCtx.close(); }
   });
 
+  await step('TODO 109a: File → Export DXF… writes a copy in inches, scaled, with 2 decimals; the drawing stays unchanged', async () => {
+    await closeTabs(/./); await menuItem('View', 'Theme: light');
+    const raw = newDoc(4); addEntities(raw, dxfLine(0, 0, 100, 0));
+    await page.evaluate((bytes) => {
+      localStorage.removeItem('pd-export-dxf-precision');
+      window.__exp109 = { asked: [], wrote: [], next: 'C:\\out\\plate-export.dxf' };
+      window.__TAURI__ = {
+        dialog: { open: async () => 'C:\\source\\plate.dxf', ask: async () => true,
+          save: async (opts) => { window.__exp109.asked.push(opts.defaultPath); return window.__exp109.next; } },
+        fs: { readFile: async () => new Uint8Array(bytes), exists: async () => false,
+          writeTextFile: async (path, text) => { window.__exp109.wrote.push({ path, text }); } },
+      };
+    }, [...Buffer.from(writeDxf(raw))]);
+    const dialog = t('export-dxf-dialog'), open = async () => { await menuItem('File', 'Export DXF…'); await dialog.waitFor(); };
+    const clean = async () => assert.equal(await page.locator('.tabs .dtab.on .dirty').count(), 0);
+    const written = () => page.evaluate(() => window.__exp109.wrote);
+    try {
+      await menuItem('File', 'Open…');
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'plate.dxf');
+      await clean(); await open();
+      assert.equal(await t('export-dxf-name').inputValue(), 'plate-export.dxf');
+      assert.equal(await t('export-dxf-units').inputValue(), 'mm');
+      assert.equal(await t('export-dxf-scale').inputValue(), '1');
+      assert.equal(await t('export-dxf-precision').inputValue(), '6');
+      for (const value of ['', 'abc', '0', '-2', 'Infinity']) {
+        await t('export-dxf-scale').fill(value); await t('export-dxf-go').click();
+        assert.equal(await dialog.isVisible(), true); assert.match(await t('export-dxf-err').textContent(), /Scale must be a number above 0/);
+        assert.match(await t('export-dxf-scale').getAttribute('class'), /invalid/);
+      }
+      await t('export-dxf-scale').fill('2');
+      for (const value of ['-1', '9', '2.5']) {
+        await t('export-dxf-precision').fill(value); await t('export-dxf-go').click();
+        assert.match(await t('export-dxf-err').textContent(), /whole number from 0 to 8/);
+      }
+      await t('export-dxf-precision').fill('2'); await t('export-dxf-units').selectOption('in');
+      await page.screenshot({ path: `${shotDir}/export-dxf-light.png` });
+      await t('export-dxf-cancel').click(); await dialog.waitFor({ state: 'detached' });
+      await menuItem('View', 'Theme: dark'); await open();
+      await t('export-dxf-units').selectOption('in'); await t('export-dxf-scale').fill('2'); await t('export-dxf-precision').fill('2');
+      await page.screenshot({ path: `${shotDir}/export-dxf-dark.png` });
+      await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' });
+      assert.deepEqual(await written(), []); assert.deepEqual(await page.evaluate(() => window.__exp109.asked), []);
+      await menuItem('View', 'Theme: light'); await open();
+      await t('export-dxf-units').selectOption('in'); await t('export-dxf-scale').fill('2'); await t('export-dxf-precision').fill('2');
+      await t('export-dxf-go').click(); await page.waitForFunction(() => window.__exp109.wrote.length === 1);
+      const exported = readDxf((await written())[0].text);
+      assert.equal(exported.header.$INSUNITS, '1'); assert.equal(+exported.entities[0].r.v[exported.entities[0].r.c.indexOf(11)], 7.87);
+      assert.deepEqual(await page.evaluate(() => window.__exp109.asked), ['C:\\source\\plate-export.dxf']);
+      assert.match(await prompt(), /Exported plate-export.dxf/); await clean(); assert.deepEqual(await tabNames(), ['plate.dxf']);
+      await open(); assert.equal(await t('export-dxf-scale').inputValue(), '1');
+      assert.equal(await t('export-dxf-precision').inputValue(), '2'); assert.equal(await t('export-dxf-units').inputValue(), 'mm');
+      await page.evaluate(() => { window.__exp109.next = null; }); await t('export-dxf-go').click();
+      await page.waitForFunction(() => window.__exp109.asked.length === 2); assert.equal((await written()).length, 1, 'native Cancel writes nothing');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\saved\\plate-edited.dxf'; });
+      await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 2);
+      const original = readDxf((await written())[1].text);
+      assert.equal(original.header.$INSUNITS, '4'); assert.equal(+original.entities[0].r.v[original.entities[0].r.c.indexOf(11)], 100);
+      assert.equal(await page.evaluate(() => window.__exp109.asked.at(-1)), 'C:\\source\\plate-edited.dxf', 'Export did not change the Save path');
+      await open(); await t('export-dxf-go').click(); await dialog.waitFor({ state: 'detached' });
+      assert.match(await prompt(), /Export never writes over it/); assert.equal((await written()).length, 2, 'saved drawing cannot be overwritten by Export');
+      await page.evaluate(() => { window.__exp109.next = 'C:\\out\\layout-export.dxf'; });
+      const lay = newLayout('Export layout');
+      await t('picker').setInputFiles({ name: 'export-layout.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(layoutRaw(lay))) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'export-layout.dxf');
+      await clean(); await open(); await t('export-dxf-scale').fill('2'); await t('export-dxf-go').click();
+      await page.waitForFunction(() => window.__exp109.wrote.length === 3);
+      assert.equal(readMeta(readDxf((await written())[2].text)), null); await clean();
+      await closeTabs(/export-layout/);
+      const unitless = newDoc(0); addEntities(unitless, dxfLine(0, 0, 100, 0));
+      await t('picker').setInputFiles({ name: 'unitless.dxf', mimeType: 'application/dxf', buffer: Buffer.from(writeDxf(unitless)) });
+      await page.waitForFunction(() => document.querySelector('.dtab.on .tname').textContent === 'unitless.dxf');
+      await open(); assert.deepEqual(await t('export-dxf-units').locator('option').allTextContents(), ['Unitless (no conversion)']);
+      await t('export-dxf-cancel').click(); await closeTabs(/unitless/);
+      await page.evaluate(() => { window.__exp109.next = 'C:\\out\\plate-copy.dxf'; });
+      await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 4);
+      assert.equal((await written())[3].path, 'C:\\saved\\plate-edited.dxf', 'later Save still uses its own path');
+      await page.locator('[data-tool=line]').click(); await typeCmd('20,20'); await typeCmd('40,20'); await page.keyboard.press('Escape');
+      await page.keyboard.press('Control+z');
+      await page.keyboard.press('Control+s'); await page.waitForFunction(() => window.__exp109.wrote.length === 5);
+      assert.equal(readDxf((await written())[4].text).entities.length, 1, 'source remains editable and one Undo removes the later edit');
+      await menuItem('File', 'Compare drawings…'); await t('cmp-name-1').waitFor();
+      await open(); assert.equal(await t('export-dxf-name').inputValue(), 'plate-edited-export.dxf');
+      await t('export-dxf-scale').fill('2'); await t('export-dxf-go').click();
+      await page.waitForFunction(() => window.__exp109.wrote.length === 6);
+      assert.equal(+readDxf((await written())[5].text).entities[0].r.v[readDxf((await written())[5].text).entities[0].r.c.indexOf(11)], 200);
+      assert.equal(await page.locator('.tabs .dtab.on .tname').textContent(), 'Compare'); await clean();
+      for (const theme of ['light', 'dark']) assert.ok(readFileSync(`${shotDir}/export-dxf-${theme}.png`).length > 1000);
+      console.log(`109a: copy 7.87 in; clean source 100 mm; Cancel/Esc, Save path, layout, Compare, unitless, remembered precision; screenshots ${shotDir}/export-dxf-{light,dark}.png`);
+    } finally {
+      await page.evaluate(() => { delete window.__TAURI__; delete window.__exp109; localStorage.removeItem('pd-export-dxf-precision'); });
+      await page.keyboard.press('Escape');
+      await closeTabs(/./);
+    }
+  });
+
   await step('TODO 52: File → Export for cutter… asks for the tolerance (bad values refused), cancels cleanly, then writes lines / arcs / polylines only; screenshots light and dark', async () => {
     await closeTabs(/./);
     const d = newDoc(4); addEntities(d, [dxfPoly([[0, 0], [100, 0], [100, 60], [0, 60]], { closed: true }), dxfCircle(50, 30, 15), dxfText(10, 10, 5, 'HELLO')]);
