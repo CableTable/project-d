@@ -4,7 +4,7 @@ import * as W from './web/dxf-write.js';
 import * as E from './web/edit.js';
 import { dragGrip } from './web/grips.js';
 import { flatten, readDxf } from './web/drawing.js';
-import { followDimensions } from './web/linked-dimensions.js';
+import { followDimensions, driveLine, driveDimension, linkedLine, typedLength } from './web/linked-dimensions.js';
 import { labelOf } from './web/objects.js';
 import { explodeSelection } from './web/explode.js';
 import { rotateEntities } from './web/rotate.js';
@@ -363,4 +363,57 @@ test('Fix 129: a Linear dimension dragged off its axis keeps its axis and value 
     assert.equal(m.kind, 'linear'); assert.equal(m.params.axis, axis);
     assert.equal(label(back), label(next)); assert.equal(label(back), '100.000');
   }
+});
+
+test('TODO 76a: a dimension drives the one LINE whose ends are its points', () => {
+  const raw = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80] }), hit = driveLine(raw, 1, 150);
+  assert.equal(hit.i, 0);
+  const next = driveDimension(raw, 1, 150), l = E.lineOf(next.entities[0]);
+  point(l, [0, 0, 90, 120]); point(model(next).params.b, [90, 120]); point(model(next).params.a, [0, 0]);
+  assert.equal(label(next), '150.000');
+  point(E.lineOf(raw.entities[0]), [0, 0, 60, 80]);       // the input stays
+  const back = driveDimension(raw, 1, 150), reversed = drawing(W.line(60, 80, 0, 0), { a: [0, 0], b: [60, 80] });       // the end at the dimension's second point moves, whichever way the line was drawn
+  point(E.lineOf(driveDimension(reversed, 1, 150).entities[0]), [90, 120, 0, 0]); assert.equal(label(back), '150.000');
+});
+
+test('TODO 76a: no single LINE, nothing is driven', () => {
+  const apart = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [30, 40] });
+  assert.equal(driveLine(apart, 1, 150), null); assert.equal(linkedLine(apart, 1), null);
+  const stacked = drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80] });
+  W.addEntities(stacked, W.line(0, 0, 60, 80));
+  assert.equal(driveLine(stacked, 1, 150), null, 'two stacked lines: text only');
+  const poly = drawing(W.lwpoly([[0, 0], [60, 80]]), { a: [0, 0], b: [60, 80] });
+  assert.equal(driveLine(poly, 1, 150), null, 'a polyline is not a LINE');
+  const linear = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0], axis: 'h' }, 'linear');
+  assert.equal(driveLine(linear, 1, 150), null, 'linear is 76b');
+  for (const bad of [0, -5, NaN]) assert.equal(driveLine(drawing(W.line(0, 0, 60, 80), { a: [0, 0], b: [60, 80] }), 1, bad), null);
+});
+
+test('TODO 76a: shown units: an inch dimension, and the drawing factor', () => {
+  const inch = drawing(W.line(0, 0, 254, 0), { a: [0, 0], b: [254, 0], units: 'inch' });
+  assert.equal(label(inch), '10.000"');
+  const a = driveDimension(inch, 1, 20);
+  point(E.lineOf(a.entities[0]), [0, 0, 508, 0]); assert.equal(label(a), '20.000"');
+  const scaled = drawing(W.line(0, 0, 10, 0), { a: [0, 0], b: [10, 0] }, 'aligned', 25.4);       // drawing units are inches, the dimension shows mm
+  assert.equal(label(scaled), '254.000');
+  const b = driveDimension(scaled, 1, 508, 25.4);
+  point(E.lineOf(b.entities[0]), [0, 0, 20, 0]); assert.equal(label(b), '508.000');
+});
+
+test('TODO 76a: a line touching the moved end stays and the driven dimension is rebuilt; a second dimension on the line follows', () => {
+  const touching = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  W.addEntities(touching, W.line(100, 0, 100, 50));
+  const t = driveDimension(touching, 1, 130);
+  point(E.lineOf(t.entities[0]), [0, 0, 130, 0]); point(E.lineOf(t.entities[2]), [100, 0, 100, 50]);
+  point(model(t).params.b, [130, 0]); assert.equal(label(t), '130.000', 'rebuilt directly');
+  const raw = drawing(W.line(0, 0, 100, 0), { a: [0, 0], b: [100, 0] });
+  Object.assign(raw, E.addDimension(raw, E.buildDim('aligned', { textH: 2, offset: -10, a: [0, 0], b: [100, 0] }, 1, 'PD_DIM_2', 3)));
+  const next = driveDimension(raw, 1, 130);
+  assert.equal(label(next, 1), '130.000'); assert.equal(label(next, 2), '130.000', 'the other dimension on the line follows');
+});
+
+test('TODO 76a: typedLength reads one number', () => {
+  assert.equal(typedLength('150'), 150); assert.equal(typedLength(' 150,5 '), 150.5); assert.equal(typedLength('.5'), 0.5);
+  assert.equal(typedLength('-5'), -5); assert.equal(typedLength('7.5"', 'inch'), 7.5);
+  for (const t of ['7.5"', '120 TYP', '<> TYP', '1.2.3', '', 'abc', '1e3']) assert.equal(typedLength(t), null, t);
 });

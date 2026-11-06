@@ -46,7 +46,7 @@ import { nativeDimensionOverrides } from './dimension-dxf.js';
 import * as GR from './grips.js';
 import { stretchGrips, stretchEntities, stretchSelection, stretchPlacements } from './stretch.js';
 import * as GM from './gripmode.js';
-import { followDimensions } from './linked-dimensions.js';
+import { followDimensions, driveLine, driveDimension, linkedLine, typedLength } from './linked-dimensions.js';
 import * as MD from './modify.js';
 import * as AR from './array.js';
 import { movePoint, movePrompt } from './move.js';
@@ -8992,6 +8992,7 @@ function textCommit() {
   if (ed.dim) {
     const dim = ed.dim, override = dimensionEditorOverride(dim.editor).replace(/\r?\n/g, ' ');
     if (override === (dim.params.override || '')) { renderCommand(); renderEdit(); paintOverlay(); return; }
+    if (dimDrive(d, ed, override)) return;
     const built = Ed.buildDim(dim.kind, { ...dim.params, override }, d.factor || 1, dim.name, dim.dp);
     if (d.lay) {
       const kept = Ed.relabelDims({ entities: [], blocks: { [dim.name]: built.block } }, d.factor || 1, 0, true);       // as the drawing path: matching text settles back to what it was
@@ -9020,6 +9021,34 @@ function textCommit() {
     if (!textReplace(d, ed.e, { ...ed.m, lines }, 'Edit text')) return;
     note(`${TX.kindOf({ ...ed.m, lines })} changed. Ctrl+Z takes it back`);
   } else textAdd(d, { ...ed.m, lines });
+}
+/** TODO 76a: a plain number typed over a plain `<>` aligned dimension that sits on one LINE sets that LINE's length (the end at the dimension's second point moves). → true when handled (driven, refused or the same value); false: the text is an override as before. */
+function dimDrive(d, ed, typed) {
+  const dim = ed.dim, n = overrideText(dim.params.override) || dim.kind !== 'aligned' ? null : typedLength(typed, dim.params.units);
+  if (n == null) return false;
+  const view = d.lay && LD.linkView(d.lay), at = view ? view.at.findIndex((a) => d.lay.placed[a] === dim.placed) : ed.e;
+  const raw = view ? { header: {}, layers: view.layers, ltypes: {}, blocks: view.blocks, entities: view.entities } : d.raw, link = at >= 0 && linkedLine(raw, at);
+  if (!link) return false;
+  const done = () => { renderCommand(); renderEdit(); paintOverlay(); return true; }, inch = dim.params.units === 'inch';
+  if (!(n > 0)) { note('Length must be more than 0'); return done(); }
+  if (Ed.dimLabel(n * (inch ? 25.4 : 1), dim.dp, dim.params.units) === dim.editor.measured) return done();       // the shown number again: no step
+  const layer = raw.entities[link.i].layer, placed = view && d.lay.placed[view.at[link.i]];
+  if (view ? placed.lock || LD.layersOf(d.lay)[layer]?.flags & 4 : lockedEnt(d, link.i)) { note(placed?.lock ? 'A locked object: unlock it to change its length' : `Layer ${layer} is locked`); return done(); }
+  const factor = d.factor || 1;
+  if (!view) {
+    const next = driveDimension(raw, at, n, factor);
+    if (!next) return done();
+    if (commit(d, next, 'Dimension length')) { setSel(d, new Set([ed.e])); note('Dimension length changed. Ctrl+Z takes it back'); }
+    return true;
+  }
+  const hit = driveLine(raw, at, n, factor), snap = laySnap(d.lay);
+  if (!hit) return done();
+  const old = view.entities[hit.i], names = new Set(Object.values(d.lay.parts).map((p) => p.name));
+  if (!LD.objectReplace(d.lay, { at: new Map([[old, view.at[hit.i]]]), raw: { blocks: {} } }, old, hit.line, () => 'o' + uid())
+    || !LD.replaceDim(d.lay, dim.placed, dim.raw.entities[ed.e], { ...dim.raw.blocks, [dim.name]: hit.built.block }, () => 'o' + uid(), names)) { layRestore(d, snap, d.dirty); return done(); }
+  pushLay(d, snap, '', 'Dimension length'); touch(); update();
+  note('Dimension length changed. Ctrl+Z takes it back');
+  return true;
 }
 function textCancel() {
   if (!state.text.ed) return;

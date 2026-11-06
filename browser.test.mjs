@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { browserArgs, expandNeeds, shardSelector } from './tools/browser-shards.mjs';
 import { RUNNING_PROMPT } from './tools/running-prompt.mjs';
 import { chromium } from 'playwright';
-import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim, dimOfEntity } from './web/edit.js';
+import { dimParams, readDim, dimGeom, GAP_MARK_CAP, addDimension, buildDim, dimOfEntity, lineOf as lineEnds } from './web/edit.js';
 import { read as readLeader, build as buildLeader } from './web/leader.js';
 import { decode as decodeText } from './web/text.js';
 import { readOverride } from './web/dimension-text.js';
@@ -21341,6 +21341,65 @@ try {
     assert.deepEqual(undone.entities, before.entities, 'one Undo restores the rectangle');
     assert.deepEqual(undone.blocks.PD_DIM_1, before.blocks.PD_DIM_1, 'and its dimension');
     await closeTabs(/./);
+  });
+
+  await step('TODO 76a: a dimension drives its LINE (drawing and layout): a new length moves the line end, Undo restores, -5 and a same value change nothing, an override stays text; light and dark', async () => {
+    const save = async () => (await downloaded(() => page.keyboard.press('Control+s'))).text;
+    const undo = async () => { await page.evaluate(() => document.activeElement?.blur()); await page.keyboard.press('Control+z'); };
+    const dimIn = (text) => {
+      const [name, block] = Object.entries(readDxf(text).blocks).find(([k]) => /^PD_DIM_/.test(k));
+      const tx = block.entities.find((e) => e.type === 'TEXT');
+      return { ...readDim(name, block), override: readOverride(block.entities), label: tx.r.v[tx.r.c.indexOf(1)] };
+    };
+    const lineIn = (text) => readDxf(text).entities.map(lineEnds).find((l) => l && Math.abs(l[1] - 150) < 1e-6 && Math.abs(l[3] - 150) < 1e-6 && Math.abs(l[0] - 150) < 1e-6);
+    const same = (a, b, why) => a.forEach((v, i) => assert.ok(Math.abs(v - b[i]) < 1e-6, `${why}: ${a} != ${b}`));
+    for (const tab of ['drawing', 'layout']) {
+      if (tab === 'layout') {
+        await freshLayoutWithPlate();
+        await typeCmd('line'); await typeCmd('150,150'); await typeCmd('300,150'); await page.keyboard.press('Escape');
+        await typeCmd('d'); await typeCmd('150,150'); await typeCmd('300,150'); await typeCmd('220,200'); await page.keyboard.press('Escape');
+      } else {
+        await closeTabs(/./);
+        const raw = newDoc(4);
+        addEntities(raw, dxfLine(150, 150, 300, 150));
+        Object.assign(raw, addDimension(raw, buildDim('aligned', { a: [150, 150], b: [300, 150], offset: 50, textH: 5 }, 1, 'PD_DIM_1', 2)));
+        await t('picker').setInputFiles({ name: 'drive-76a.dxf', mimeType: 'text/plain', buffer: Buffer.from(writeDxf(raw), 'latin1') });
+        await page.waitForFunction(() => document.querySelector('.tabs .dtab.on .tname').textContent === 'drive-76a.dxf');
+      }
+      await t('decimals').selectOption('2');
+      await page.locator('[data-tool=select]').click();
+      const edit = async (expected) => {
+        const p = await at(190, 200); await page.mouse.dblclick(p.x, p.y);
+        await t('text-editor').waitFor().catch((e) => { throw new Error(`${tab}, editing ${expected}: ${e.message}`); });
+        assert.equal(await t('text-editor').inputValue(), expected, tab + ': prefilled with the shown text');
+      };
+      const apply = async (text, expected = '150.00') => { await edit(expected); await t('text-editor').fill(text); await page.keyboard.press('Enter'); };
+      const start = await save(), history = await histLabels();
+      same(lineIn(start), [150, 150, 300, 150], tab + ' start'); assert.equal(dimIn(start).label, '150.00');
+      await apply('200');
+      const driven = await save();
+      same(lineIn(driven), [150, 150, 350, 150], tab + ': the second end moved'); assert.equal(dimIn(driven).label, '200.00', tab + ': the dimension reads it');
+      assert.equal(dimIn(driven).override, '', tab + ': the text stays measured'); same(dimIn(driven).params.b, [350, 150], tab + ' dim end');
+      assert.deepEqual((await histLabels()).slice(history.length), ['Dimension length'], tab + ': one step');
+      await shotBoth('todo76a-drive-' + tab);
+      await undo();
+      const back = await save();
+      same(lineIn(back), [150, 150, 300, 150], tab + ': Undo puts the line back'); assert.deepEqual(dimIn(back), dimIn(start), tab + ': and the dimension');
+      const undone = await histLabels();
+      await apply('-5');
+      assert.match(await prompt(), /Length must be more than 0/, tab);
+      same(lineIn(await save()), [150, 150, 300, 150], tab + ': -5 leaves the line'); assert.deepEqual(dimIn(await save()), dimIn(start));
+      await apply('150.00');
+      assert.deepEqual(await histLabels(), undone, tab + ': -5 and the shown number again are no step');
+      await edit('150.00'); await page.keyboard.press('End'); await page.keyboard.insertText(' TYP'); await page.keyboard.press('Enter');
+      let typ = await save();
+      assert.equal(dimIn(typ).override, '<> TYP'); assert.equal(dimIn(typ).label, '150.00 TYP'); same(lineIn(typ), [150, 150, 300, 150], tab + ': <> TYP is text');
+      await apply('250', '150.00 TYP');
+      typ = await save();
+      assert.equal(dimIn(typ).label, '250', tab + ': a number over an override is text again'); same(lineIn(typ), [150, 150, 300, 150], tab + ': the line stays');
+      await undo(); await undo();
+      assert.deepEqual(dimIn(await save()), dimIn(start));
+    }
   });
 
   await step('TODO 129b: a radius dimension follows its circle on Move (value and position), one Undo restores both, light and dark', async () => {

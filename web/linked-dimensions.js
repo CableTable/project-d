@@ -1,6 +1,7 @@
 // Exact matches (vertices; a circle's centre and radius; a line through an angle's vertex), inferred only for edits that keep the shape: grip drag, Move and Scale.
 import { flatten, pickIndex, mapply, mscale } from './drawing.js';
-import { dimOfEntity, buildDim, replaceDimension, DIM_LAYER } from './edit.js';
+import { dimOfEntity, buildDim, replaceDimension, lineOf, DIM_LAYER } from './edit.js';
+import { dragGrip } from './grips.js';
 
 const DEG = Math.PI / 180;
 /** Per entity (its index in `entities`): its vertices, arcs ({ c, r }) and straight pieces ([x1, y1, x2, y2]), in drawing order. */
@@ -150,4 +151,46 @@ export function followDimensions(raw, next, factor = 1) {
     if (built) result = { ...result, ...replaceDimension(result, built) };
   }
   return result;
+}
+
+/** TODO 76a: a typed length ("150", "150,5", "7.5\"" for an inch dimension) → the number, or null when the text is anything else. A sign is read, so "-5" can be refused. */
+export function typedLength(text, units = 'mm') {
+  const m = /^(-?(?:\d+[.,]?\d*|[.,]\d+))(")?$/.exec(String(text).trim());
+  return !m || (m[2] && units !== 'inch') ? null : parseFloat(m[1].replace(',', '.'));
+}
+
+/** TODO 76a: the one LINE whose two ends are the two points of the aligned dimension at entity `e` (our own PD_DIM only; none, or stacked duplicates → null).
+ * → { i, A (the line end at the dimension's first point), B (at its second), id (the grip of B: 'a' | 'b'), dim, m (the dimension's matrix) } */
+export function linkedLine(raw, e) {
+  const dim = dimOfEntity(raw, e), m = dim && dim.kind === 'aligned' && dimMatrix(raw, e);
+  if (!m) return null;
+  const p = mapply(m, ...dim.params.a), q = mapply(m, ...dim.params.b), ps = !!raw.entities[e].ps, hits = [];
+  raw.entities.forEach((ent, i) => {
+    const l = lineOf(ent);
+    if (!l || !!ent.ps !== ps) return;
+    const s = [l[0], l[1]], t = [l[2], l[3]];
+    if (fits(s, p) && fits(t, q)) hits.push({ i, A: s, B: t, id: 'b' });
+    else if (fits(t, p) && fits(s, q)) hits.push({ i, A: t, B: s, id: 'a' });
+  });
+  return hits.length === 1 ? { ...hits[0], dim, m } : null;
+}
+
+/** TODO 76a: the LINE of the aligned dimension at `e` with the end at the dimension's second point moved along the line until the dimension reads `shown` (shown units: inches for an inch dimension, times the factor otherwise).
+ * → { i, line (the new entity), built (the dimension rebuilt from it) } or null (no single LINE, shown not above 0, or no change). */
+export function driveLine(raw, e, shown, factor = 1) {
+  const hit = linkedLine(raw, e);
+  if (!hit) return null;
+  const len = shown * (hit.dim.params.units === 'inch' ? 25.4 : 1) / (factor || 1), { A, B } = hit, d = Math.hypot(B[0] - A[0], B[1] - A[1]);
+  if (!(len > 0) || !Number.isFinite(len)) return null;
+  const to = [A[0] + (B[0] - A[0]) / d * len, A[1] + (B[1] - A[1]) / d * len], line = dragGrip(raw.entities[hit.i], hit.id, to)?.ent;
+  const built = line && buildDim('aligned', { ...hit.dim.params, b: local(hit.m, to) }, factor, hit.dim.name, hit.dim.dp);
+  return built ? { i: hit.i, line, built } : null;
+}
+
+/** TODO 76a: `raw`'s { entities, blocks } after the dimension at `e` drives its LINE: the LINE moved, the dimension rebuilt from it directly, the other dimensions on the line followed. Null as driveLine. */
+export function driveDimension(raw, e, shown, factor = 1) {
+  const hit = driveLine(raw, e, shown, factor);
+  if (!hit) return null;
+  const moved = followDimensions(raw, { entities: raw.entities.map((x, i) => (i === hit.i ? hit.line : x)), blocks: raw.blocks }, factor);
+  return replaceDimension(moved, hit.built);       // directly: followDimensions skips a dimension whose moved end another line shares
 }
