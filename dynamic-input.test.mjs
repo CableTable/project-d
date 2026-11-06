@@ -1,7 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTool, toolType, toolHover, dynamicInput } from './web/draw.js';
-import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput, anchorOf, firstPoint, readOnlyLength, modifyPoints } from './web/dynamic-input.js';
+import { createTool, toolType, toolHover, toolPrompt, dynamicInput } from './web/draw.js';
+import { createInput, hasTyped, escapeInput, inputKey, pointInput, inputMode, toolPointInput, anchorOf, firstPoint, readOnlyLength, modifyPoints, promptKind } from './web/dynamic-input.js';
+
+test('TODO 106b: stage flags distinguish every number, option and point / object prompt', () => {
+  const check = (kind, states) => {
+    for (const [props, expected] of states) assert.equal(promptKind({ kind, ...props }), expected, `${kind} ${JSON.stringify(props)}`);
+  };
+  check('offset', [['distance', 'number'], ['erase', 'option'], ['layer', 'option'], ['obj', null], ['side', null]].map(([stage, mode]) => [{ stage }, mode]));
+  check('fillet', [[{ askR: true }, 'number'], [{ askTrim: true }, 'option'], [{ stage: 'obj' }, null], [{ stage: 'second' }, null], [{ stage: 'poly' }, null]]);
+  check('chamfer', ['d1', 'd2', 'length', 'angle', 'method', 'trim', null].map((ask) => [{ ask }, !ask ? null : ['method', 'trim'].includes(ask) ? 'option' : 'number']));
+  for (const kind of ['lengthen', 'divide', 'measurepoints']) {
+    check(kind, [[{ stage: 'obj' }, null], [{ stage: 'value' }, 'number'], [{ stage: 'value', p1: [1, 2] }, null], [{ stage: 'point' }, null]]);
+  }
+  for (const mode of ['Delta', 'Total', 'Percent', 'DeltaAngle', 'TotalAngle']) check('lengthen', [[{ stage: 'value', mode }, 'number']]);
+  check('array', ['pick', 'center', 'type', 'opts'].map((stage) => [{ stage }, ['type', 'opts'].includes(stage) ? 'option' : null]));
+  for (const key of ['cols', 'rows', 'dx', 'dy', 'items', 'fill', 'rotate']) check('array', [[{ stage: 'opts', ask: [key] }, key === 'rotate' ? 'option' : 'number']]);
+  check('rrect', [[{ stage: 'radius' }, 'number'], [{ stage: undefined }, null]]);
+  const rounded = createTool('rrect'); toolType(rounded, 'r'); assert.equal(toolPrompt(rounded).input, 'number');
+  check('text', [[{ stage: 'height' }, 'number'], [{ stage: 'insert' }, null]]);
+  check('mirror', ['pick', 'p1', 'p2', 'erase'].map((stage) => [{ stage }, stage === 'erase' ? 'option' : null]));
+  check('align', [[{ stage: 'scale' }, 'option'], [{ stage: 'd2' }, null]]);
+  check('copy', [[{ stage: 'mode' }, 'option'], [{ stage: 'p1' }, null]]);
+  for (const kind of ['trim', 'extend']) check(kind, [[{ askMode: true }, 'option'], [{ stage: 'cut' }, null]]);
+  for (const kind of ['rotate', 'scale']) check(kind, [[{ stage: 'pick' }, null], [{ stage: 'p1' }, null], [{ stage: 'p2' }, 'number'],
+    [{ ref: { step: 'ref', pts: [] } }, 'number'], [{ ref: { step: 'new', pts: [] } }, 'number'], [{ ref: { step: 'ref', pts: [[0, 0]] } }, null], [{ ref: { step: 'newpts', pts: [] } }, null]]);
+  for (const kind of ['break', 'join', 'reverse', 'step']) check(kind, [[{ stage: 'obj' }, null]]);
+});
 
 test('TODO 106a: every point prompt uses X / Y first, then polar from the previous point', () => {
   for (const kind of ['move', 'copy', 'stretch', 'mirror', 'text', 'leader', 'balloon', 'break', 'offset', 'lengthen', 'array', 'measurepoints']) {

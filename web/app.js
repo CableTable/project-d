@@ -1397,7 +1397,7 @@ function setTool(id) {
   if (state.draw && DR.toolBusy(state.draw) && drawId) drawApply(DR.toolFinish(state.draw));      // a line or polyline in progress ends (and keeps what it has)
   if (id === 'step' && !curLay()) { note('Step and repeat is on a layout tab: New layout, or Add to layout'); return; }
   state.tool = id;
-  state.text.cursorInput = null; state.text.hover = null;
+  state.text.cursorInput = null; state.text.hover = null; state.text.askHeight = false;
   state.pointLast = null;
   state.pointDoc = curDoc();
   for (const [k, b] of Object.entries(ui.toolBtns)) b.classList.toggle('on', k === id);
@@ -1520,6 +1520,8 @@ function buildCanvas() {
   ui.measText = h('span', { 'data-testid': 'meas-tag-text' });
   ui.measTag = h('div', { class: 'meas-tag', hidden: true, 'data-testid': 'meas-tag' }, ui.measText, ui.keepMeas);
   ui.dynamicTrack = h('div', { class: 'dynamic-track', hidden: true });
+  ui.dynamicPromptText = h('div', { class: 'dynamic-track', 'data-testid': 'dynamic-prompt-text' });
+  ui.dynamicPromptInput = h('input', { class: 'cursor-field active', readonly: true, tabindex: '-1', 'data-testid': 'dynamic-prompt-input' });
   ui.cursorFields = {};
   ui.dynamicFields = h('div', { class: 'cursor-fields' }, [['length', 'Length'], ['angle', 'Angle'], ['dx', 'Δx'], ['dy', 'Δy']].map(([key, label]) => {
     const field = ui.cursorFields[key] = h(key === 'length' || key === 'angle' ? 'input' : 'output', {
@@ -3923,7 +3925,7 @@ function objMenu(e) {
 
 /** The command bar (cmdui.js): the log the app writes to, the floating bar, the fade, the F2 history and the echo button. */
 function buildCommand() {
-  ui.cmdUI = buildCmdUI({ commands: () => ownCommands, tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: cmdEnter, runName: (name) => runCommand(ownCommands.find((x) => x.name === name)), canvas: () => ui.canvas, previewBounds, say: note });
+  ui.cmdUI = buildCmdUI({ commands: () => ownCommands, tab: () => (curLay() ? 'layout' : 'draw'), active: activeCmd, submit: (raw) => { cmdEnter(raw); paintOverlay(); }, runName: (name) => runCommand(ownCommands.find((x) => x.name === name)), canvas: () => ui.canvas, previewBounds, say: note });
   ui.hist = ui.cmdUI.hist; ui.prompt = ui.cmdUI.prompt; ui.cmd = ui.cmdUI.input;
   ui.modAsk = h('span', { hidden: true, class: 'modask' }, h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-yes', onclick: () => { if (modLive() || layModLive()) modAnswer(editable() || curDoc(), true); } }, 'Yes'), h('button', { class: 'btn sm', type: 'button', 'data-testid': 'mirror-no', onclick: () => { if (modLive() || layModLive()) modAnswer(editable() || curDoc(), false); } }, 'No'));
   ui.cmdUI.acts.append(ui.modAsk);
@@ -4899,7 +4901,7 @@ function renderCommand() {
     ui.prompt.textContent = gg.baseAsk ? 'Specify base point:' : gg.ref ? refPrompt({ ref: gg.ref, kind: M.toLowerCase() }) : gg.opt ? GR.optionPrompt(gg.ent, gg.opts[gg.opt]) : GR.isRectEdge(gg.ent, gg.id) && !gg.mode ? 'Drag or click the new edge position; Shift keeps proportions; Esc cancels:' : acad ? GM.prompt(M) :'Specify the new point (click, x,y, @dx,dy or a length; Esc cancels):';
     return;
   }
-  if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : 'Specify insertion point or [Height / Justify / Style]:'; return; }
+  if (state.tool === 'text' && ed) { ui.hist.textContent = textStatus() + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = textPrompt().prompt; return; }
   if (layModLive()) { const mp = modPrompt(curDoc()); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (modLive()) { modSync(ed); const mp = modPrompt(ed); ui.hist.textContent = mp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = mp.prompt; return; }
   if (drawLive()) { const dp = DR.toolPrompt(state.draw, curLayerName(state.drawDoc)); ui.hist.textContent = dp.status + (state.msg ? '   ' + state.msg : ''); ui.prompt.textContent = dp.prompt; return; }
@@ -6979,6 +6981,12 @@ function drawOvl(paint = false) {
   }
   const item = cmpEditingItem(d);
   if (tip && item && !state.grip && !state.text.drag) { tip.x += item.offset[0]; tip.y += item.offset[1]; }
+  const prompt = dynamicPrompt();
+  if (prompt && snapPointer) {
+    const [x, y] = sheetAt(snapPointer.clientX, snapPointer.clientY);
+    tip = { x, y, prompt };
+  }
+  if (!prompt) ui.dynamicPrompt = null;
   ui.ovl.replaceChildren(...out);
   ui.grips.replaceChildren(...grips);
   measTagPlace();
@@ -6995,8 +7003,16 @@ function drawOvl(paint = false) {
   t.classList.remove('segment-only');
   if (!tip) { t.hidden = true; return; }
   const r = canvasSize(), px = (tip.x - view.ox) * view.scale + 16, py = (H - tip.y - view.oy) * view.scale + 16;
-  t.classList.toggle('dynamic-input', !!tip.fields);
-  if (tip.fields) {
+  t.classList.toggle('dynamic-input', !!(tip.fields || tip.prompt));
+  if (tip.prompt) {
+    const p = tip.prompt;
+    if (ui.dynamicPrompt?.holder !== p.holder || ui.dynamicPrompt?.prompt !== p.prompt) ui.dynamicPromptInput.value = '';
+    ui.dynamicPrompt = p;
+    ui.dynamicPromptText.textContent = p.prompt;
+    ui.dynamicPromptInput.hidden = p.input !== 'number';
+    ui.dynamicPromptInput.setAttribute('aria-label', p.prompt);
+    if (t.firstChild !== ui.dynamicPromptText) t.replaceChildren(ui.dynamicPromptText, ui.dynamicPromptInput);
+  } else if (tip.fields) {
     if (t.firstChild !== ui.dynamicTrack) t.replaceChildren(ui.dynamicTrack, ui.dynamicFields);
     ui.dynamicTrack.textContent = tip.tracking || ''; ui.dynamicTrack.hidden = !tip.tracking;
     for (const [key, value] of Object.entries(tip.fields)) {
@@ -7069,6 +7085,7 @@ function drawKey(e, k) {
 /** Cursor fields use one tool of mm points (y up); object picks and options return no tool. */
 function cursorTool() {
   if (!state.dynamicInput) return null;
+  if (state.tool === 'text' && state.text.askHeight) return null;
   if (state.draw) return drawLive() ? state.draw : null;
   const m = state.mod;
   const points = modLive() && DI.modifyPoints(m, state.pointLast);
@@ -7150,12 +7167,35 @@ function cursorClick(d, p, shift) {
   cursorCommit(shift);
   return true;
 }
+/** Non-point prompts share the command bar's words, submission and validation. */
+function dynamicPrompt() {
+  if (!state.dynamicInput || state.grip || cursorDynamic()) return null;
+  const holder = drawLive() ? state.draw : modLive() ? state.mod : state.tool === 'text' && editable() && !textEditing() ? state.text : null;
+  if (!holder) return null;
+  const p = holder === state.draw ? DR.toolPrompt(holder) : holder === state.mod ? modPrompt(editable()) : textPrompt();
+  return p.input ? { ...p, holder } : null;
+}
+function dynamicPromptKey(e, p) {
+  const field = ui.dynamicPromptInput;
+  if (ui.dynamicPrompt?.holder !== p.holder || ui.dynamicPrompt?.prompt !== p.prompt) field.value = '';
+  ui.dynamicPrompt = p;
+  if (e.key === 'Enter') { const raw = field.value; field.value = ''; ui.cmdUI.go(raw); }
+  else if (e.key === 'Escape') { if (!field.value) return false; field.value = ''; }
+  else if (e.key === 'Backspace') { if (!field.value) return false; field.value = field.value.slice(0, -1); }
+  else if (/^[0-9.+-]$/.test(e.key)) field.value += e.key;
+  else if (/^[a-z,@#<]$/i.test(e.key)) { const seed = /^[a-z]$/i.test(e.key) ? e.key : field.value + e.key; field.value = ''; ui.cmdUI.open(seed); }
+  else return false;
+  paintOverlay(); renderCommand(); return true;
+}
 function cursorKey(e) {
   if (state.orthoAsk || state.attdispAsk || state.eatteditAsk) return;
-  if (!cursorDynamic() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
   if (document.querySelector('.pop-back, .pdlg-back, dialog[open], [data-testid=ctx-menu]')) return;
   const field = e.target.closest?.('input, textarea, select, [contenteditable=true]');
-  if (field && (field !== ui.cmd || ui.cmd.value)) return;
+  if (field && field !== ui.dynamicPromptInput && (field !== ui.cmd || ui.cmd.value)) return;
+  const prompt = dynamicPrompt();
+  if (prompt?.input === 'number' && dynamicPromptKey(e, prompt)) { e.preventDefault(); e.stopPropagation(); return; }
+  if (!cursorDynamic()) return;
   const input = cursorInput(), T = cursorTool();
   if (['Tab', 'Backspace'].includes(e.key) && !DI.hasTyped(input)) {
     const onCanvas = e.target === document.body || (ui.canvas.contains(e.target) && !field && !e.target.closest?.('button, [role=button], dialog, [role=dialog]'));
@@ -7337,26 +7377,26 @@ function modPrompt(d) {
   d = mdoc(d);
   if (d.lay) d = { sel: new Set(selIdxs()) };               // a layout: only how many are selected is read
 
-  const m = state.mod, n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
-  if (m.kind === 'divide' || m.kind === 'measurepoints') return { status: `Command: ${m.kind.toUpperCase()}`, prompt: pointsPrompt(m) };
-  if (m.kind === 'lengthen') return { status: 'Command: LENGTHEN', prompt: lengthenPrompt(m) };
-  if (m.kind === 'chamfer') return { status: 'Command: CHAMFER', prompt: chamferPrompt(m) };
+  const m = state.mod, input = DI.promptKind(m), n = m.kind === 'trim' || m.kind === 'extend' ? (m.all ? 'all' : m.edges.length) : m.kind === 'mirror' ? d.sel.size : 0;
+  if (m.kind === 'divide' || m.kind === 'measurepoints') return { status: `Command: ${m.kind.toUpperCase()}`, input, prompt: pointsPrompt(m) };
+  if (m.kind === 'lengthen') return { status: 'Command: LENGTHEN', input, prompt: lengthenPrompt(m) };
+  if (m.kind === 'chamfer') return { status: 'Command: CHAMFER', input, prompt: chamferPrompt(m) };
   if (m.kind === 'break' || m.kind === 'breakatpoint') return { status: `Command: ${m.kind.toUpperCase()}`, prompt: m.stage === 'obj' ? 'Select object:' : m.kind === 'breakatpoint' ? 'Specify break point:' : m.stage === 'first' ? 'Specify first break point:' : m.first ? 'Specify second break point:' : 'Specify second break point or [First point]:' };
   if (m.kind === 'join') return { status: `Command: JOIN   ${m.objs.length} selected`, prompt: m.stage === 'src' ? 'Select source object or multiple objects to join at once:' : `Select objects to join${m.objs[0]?.type === 'ARC' ? ' or [cLose]' : ''}:` };
   if (m.kind === 'reverse') return { status: `Command: REVERSE   ${m.objs.length} selected`, prompt: 'Select objects:' };
-  if (m.kind === 'align') return { status: `Command: ALIGN   ${m.sel?.size ?? d.sel.size} selected`, prompt: ALIGN_PROMPT[m.stage] };
-  if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
-  if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
-  if (['move', 'copy', 'stretch'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, prompt: movePrompt(m.kind, m.stage, copyMode, stretchDisplacement) };
+  if (m.kind === 'align') return { status: `Command: ALIGN   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: ALIGN_PROMPT[m.stage] };
+  if (m.kind === 'scale') return { status: `Command: SCALE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Base point:' : refPrompt(m) || `Scale factor: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (positive number or click):` };
+  if (m.kind === 'rotate') return { status: `Command: ROTATE   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Pivot:' : refPrompt(m) || `Angle: ${m.copy ? 'Copy on. ' : ''}[Copy / Reference / Esc] (degrees or click; Shift = 15°):` };
+  if (['move', 'copy', 'stretch'].includes(m.kind)) return { status: `Command: ${m.kind.toUpperCase()}   ${m.sel?.size ?? d.sel.size} selected`, input, prompt: movePrompt(m.kind, m.stage, copyMode, stretchDisplacement) };
   if (m.kind === 'array') return arrayPrompt(d, m);
-  if (m.kind === 'fillet') return { status: 'Command: FILLET', prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:`
+  if (m.kind === 'fillet') return { status: 'Command: FILLET', input, prompt: m.askR ? `Fillet radius <${mmText(state.filR)}>:`
     : m.askTrim ? `Enter Trim mode option [Trim/No trim] <${m.trim ? 'Trim' : 'No trim'}>:`
     : m.stage === 'poly' ? 'Select 2D polyline:'
     : m.stage === 'second' ? 'Select second object or shift-select to apply corner or [Radius]:'
     : 'Select first object or [Undo/Polyline/Radius/Trim/Multiple]:' };
-  if (m.kind === 'offset') return { status: `Command: OFFSET   ${m.through ? 'Through' : `Distance <${mmText(state.offDist)}> mm`}`, prompt: offsetPrompt(m) };
+  if (m.kind === 'offset') return { status: `Command: OFFSET   ${m.through ? 'Through' : `Distance <${mmText(state.offDist)}> mm`}`, input, prompt: offsetPrompt(m) };
   const ext = m.kind === 'extend', undoOpt = () => (trimUndoable(d, m) ? '/Undo' : '');
-  if ((m.kind === 'trim' || ext) && m.askMode) return { status: `Command: ${m.kind.toUpperCase()}   Mode: ${m.quick ? 'Quick' : 'Standard'}`, prompt: `Enter ${ext ? 'an extend' : 'a trim'} mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
+  if ((m.kind === 'trim' || ext) && m.askMode) return { status: `Command: ${m.kind.toUpperCase()}   Mode: ${m.quick ? 'Quick' : 'Standard'}`, input, prompt: `Enter ${ext ? 'an extend' : 'a trim'} mode option [Quick/Standard] <${m.quick ? 'Quick' : 'Standard'}>:` };
   if ((m.kind === 'trim' || ext) && m.quick) {
     const status = `Command: ${m.kind.toUpperCase()}   Mode: Quick`;
     if (m.fence) return { status, prompt: 'Specify next fence point or [Undo]:' };
@@ -7368,7 +7408,7 @@ function modPrompt(d) {
   if (ext) return { status: `Command: EXTEND   Boundary edges: ${n}`, prompt: m.stage === 'edges' ? 'Select boundary edges (click adds or takes out), Enter = all [mOde]:' : 'Click near the end of a line, arc, spline or open polyline to extend [mOde]. Enter or Esc ends:' };
   if (m.kind === 'trim') return { status: `Command: TRIM   Cutting edges: ${n}`, prompt: m.stage === 'edges' ? 'Select cutting edges (click adds or takes out), Enter = all [mOde]:' : 'Click the part to cut away [mOde]. Enter or Esc ends:' };
   const objs = m.objs.length;
-  return { status: `Command: MIRROR   ${m.stage === 'pick' ? `${n} selected` : `${objs} object${objs === 1 ? '' : 's'}`}`,
+  return { status: `Command: MIRROR   ${m.stage === 'pick' ? `${n} selected` : `${objs} object${objs === 1 ? '' : 's'}`}`, input,
     prompt: m.stage === 'pick' ? 'Select objects (click or drag a box), then Enter:' : m.stage === 'p1' ? 'Specify first point of mirror line:' : m.stage === 'p2' ? 'Specify second point of mirror line:' : 'Erase source objects? [Yes / No] <No>:' };
 }
 
@@ -7791,12 +7831,12 @@ const ARRAY_ASK = { cols: 'Enter the number of columns', rows: 'Enter the number
 function arrayPrompt(d, m) {
   const status = `Command: ARRAY   ${m.sel?.size ?? d.sel.size} selected`;
   if (m.stage === 'pick') return { status, prompt: 'Select objects (click or drag a box), then Enter:' };
-  if (m.stage === 'type') return { status, prompt: 'Enter array type [Rectangular/POlar] <Rectangular>:' };
+  if (m.stage === 'type') return { status, input: DI.promptKind(m), prompt: 'Enter array type [Rectangular/POlar] <Rectangular>:' };
   if (m.stage === 'center') return { status: 'Command: ARRAY   Polar', prompt: 'Specify center point of array (click or x,y):' };
   const c = m.cfg, polar = m.type === 'polar';
-  if (m.ask) return { status: `Command: ARRAY   ${polar ? 'Polar' : 'Rectangular'}`, prompt: `${ARRAY_ASK[m.ask[0]]} <${m.ask[0] === 'rotate' ? (c.rotate ? 'Yes' : 'No') : mmText(c[m.ask[0]])}>:` };
-  if (polar) return { status: `Command: ARRAY   Polar: ${c.items} items, fill ${mmText(c.fill)}°, rotate items ${c.rotate ? 'on' : 'off'}`, prompt: '[Items/Fill angle/ROTate items/eXit] <eXit>:' };
-  return { status: `Command: ARRAY   Rectangular: ${c.cols} columns × ${c.rows} rows, spacing ${mmText(c.dx)} × ${mmText(c.dy)} mm`, prompt: 'Enter an option [COUnt/Spacing/COLumns/Rows/Exit] <Exit>:' };
+  if (m.ask) return { status: `Command: ARRAY   ${polar ? 'Polar' : 'Rectangular'}`, input: DI.promptKind(m), prompt: `${ARRAY_ASK[m.ask[0]]} <${m.ask[0] === 'rotate' ? (c.rotate ? 'Yes' : 'No') : mmText(c[m.ask[0]])}>:` };
+  if (polar) return { status: `Command: ARRAY   Polar: ${c.items} items, fill ${mmText(c.fill)}°, rotate items ${c.rotate ? 'on' : 'off'}`, input: 'option', prompt: '[Items/Fill angle/ROTate items/eXit] <eXit>:' };
+  return { status: `Command: ARRAY   Rectangular: ${c.cols} columns × ${c.rows} rows, spacing ${mmText(c.dx)} × ${mmText(c.dy)} mm`, input: 'option', prompt: 'Enter an option [COUnt/Spacing/COLumns/Rows/Exit] <Exit>:' };
 }
 /** The preview of all the copies: the selection drawn once per offset (one matrix each), tinted. */
 function arrayPreview(d) {
@@ -9095,7 +9135,7 @@ function textCancel() {
 /** The text tool's click: on a text, change it; anywhere else, a new text there. */
 function textToolDown(e) {
   const d = drawTarget();
-  if (!d) return;
+  if (!d || state.text.askHeight) return;
   if (textEditing()) { textCommit(); return; }                      // clicking away only ends the one being typed
   if (cursorDynamic() && DI.hasTyped(cursorInput())) { state.text.hover = textPick(d, e.clientX, e.clientY); cursorCommit(); return; }
   const p = textPick(d, e.clientX, e.clientY), hit = d.lay ? -1 : hitAt(d, toDrawing(d, e.clientX, e.clientY));      // (a text object on a layout is not edited here)
@@ -9310,6 +9350,12 @@ function textTyped(raw) {
   const d = drawTarget();
   if (!d) return;
   const c = raw.trim().toLowerCase(), c0 = state.text.cfg;
+  if (state.text.askHeight) {
+    const why = c ? textHeightTyped(raw) : null;
+    if (why) note(why); else state.text.askHeight = false;
+    renderCommand(); paintOverlay(); return;
+  }
+  if (c === 'height' || c === 'h') { state.text.askHeight = true; state.text.cursorInput = null; renderCommand(); paintOverlay(); return; }
   if (!c) return;
   let m = /^(?:height|h)\s+(\S+)$/.exec(c);
   if (m) { const why = textHeightTyped(m[1]); if (why) note(why); return; }
@@ -9327,6 +9373,7 @@ function textTyped(raw) {
   note(`"${raw.trim()}" is not an option here. Click to place, or type x,y, Height 12, Left / Centre / Right, Style Mono, Bold`);
 }
 const textStatus = () => { const c = state.text.cfg, d = editable(); return `Command: TEXT   Height ${fmt(c.h)} · ${TX.FONTS.find((f) => f.id === c.font).label} · ${ALIGN_WORDS[c.ha]}${c.bold ? ' · Bold' : ''} · layer ${d && d.raw ? curLayerName(d) : '0'}`; };
+const textPrompt = () => ({ input: state.text.askHeight ? 'number' : null, prompt: textEditing() ? 'Type the text. Enter ends, Shift+Enter starts a new line:' : state.text.askHeight ? `Text height <${fmt(state.text.cfg.h)}>:` : 'Specify insertion point or [Height / Justify / Style]:' });
 
 // ---- polar and object-snap tracking (track.js; mock-up R7a, Option A) ----
 const TRK_SAVED = 'pd-track';
@@ -9341,6 +9388,7 @@ function loadTrack() {
 const saveTrack = () => { try { localStorage.setItem(TRK_SAVED, JSON.stringify({ polar: state.polar.on, inc: state.polar.inc, otrack: state.otrack })); } catch { /* ignore */ } };
 function chip(name, on) { const b = ui.tog[name]; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
 function dynamicInputSet(on) {
+  ui.dynamicPrompt = null; ui.dynamicPromptInput.value = '';
   for (const a of [state.draw, state.setlen, state.meas, state.dim, state.mod]) if (a) a.cursorInput = null;
   state.dynamicInput = on; chip('DYN', on); paintOverlay();
   note(on ? 'Dynamic input on' : 'Dynamic input off');
@@ -9935,7 +9983,7 @@ function startQuickSelect() {
 function editKey(e) {
   if (document.querySelector('[data-testid=pdf-dialog], [data-testid=qselect-dialog]')) return;       // a dialog's own handlers take every key, wherever focus is
   const inField = e.target?.closest?.('input, textarea, select');
-  if (['F3', 'F7', 'F8', 'F9', 'F12'].includes(e.key) && ((inField && e.target !== ui.cmd) || e.target?.isContentEditable)) return;
+  if (['F3', 'F7', 'F8', 'F9', 'F12'].includes(e.key) && ((inField && e.target !== ui.cmd && e.target !== ui.dynamicPromptInput) || e.target?.isContentEditable)) return;
   if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
     const chipName = { F3: 'SNAP', F7: 'GRID', F8: 'ORTHO' }[e.key];
     if (chipName) { e.preventDefault(); ui.tog[chipName].click(); return; }
@@ -9948,7 +9996,7 @@ function editKey(e) {
     if (state.eatteditAsk) { e.preventDefault(); state.eatteditAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.attdispAsk) { e.preventDefault(); state.attdispAsk = null; ui.cmdUI.escape(); renderCommand(); return; }
     if (state.orthoAsk) { e.preventDefault(); state.orthoAsk = false; ui.cmdUI.escape(); renderCommand(); return; }
-    if (e.target !== ui.cmd && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
+    if (e.target !== ui.cmd && e.target !== ui.dynamicPromptInput && e.target && e.target.closest && e.target.closest('input, textarea, select')) return;       // Esc in a field only cancels the typing (the command bar's own input handles its Esc)
     if (ui.preflight && !ui.preflight.hidden && !activeCmd() && !ui.cmdUI.isOpen()) { closePreflight(); e.preventDefault(); return; }
     const wasOn = !!activeCmd(), shut = ui.cmdUI.escape();                 // Esc shuts the bar (and the history); a command that is on is cancelled too
     if (shut === 'drawer' || (shut === 'bar' && !wasOn)) return;
@@ -9971,7 +10019,7 @@ function editKey(e) {
     else if (state.text.drag) { textDragEnd(true); note('Resize cancelled'); }
     else if (state.txoWait) { state.txoWait = false; note('Text to outlines cancelled'); }
     else if (modLive()) modEsc(d);
-    else if (state.tool === 'text' && d && !textEditing()) { if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
+    else if (state.tool === 'text' && d && !textEditing()) { if (state.text.askHeight) { state.text.askHeight = false; renderCommand(); paintOverlay(); } else if (d.sel.size) setSel(d, new Set()); else setTool('select'); }
     else if (drawLive()) { if (DR.toolBusy(state.draw) || state.draw.stage === 'radius') { state.msg = null; drawFinish(); } else setTool('select'); }
     else if (state.dimDrag) { state.dimDrag.cancelled = true; state.dimDrag = null; note('Move cancelled'); paintOverlay(); }
     else if (state.dim && state.dim.askText) { state.dim.askText = false; note(dimPrompt()); }

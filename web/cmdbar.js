@@ -164,7 +164,7 @@ export function parseOptions(prompt) {
 }
 
 /** The option a typed text picks: its key (the underlined letters) or the whole word, any case. → an option or null */
-export const optionNeedsValue = (word, label = '') => label !== 'CHAMFER' && /^(distance|steps|height|justify|style)$/i.test(word);
+export const optionNeedsValue = (word, label = '') => label !== 'CHAMFER' && !(label === 'TEXT' && /^height$/i.test(word)) && /^(distance|steps|height|justify|style)$/i.test(word);
 
 export function matchOption(options, text) {
   const t = String(text || '').trim().toLowerCase();

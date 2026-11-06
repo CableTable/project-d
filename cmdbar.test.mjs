@@ -245,10 +245,10 @@ test('history: filter, copy text, the last three fade', () => {
   assert.deepEqual(CB.fadeOf([]), []);
 });
 
-test('Chamfer Distance opens its own prompts; existing inline value options keep their behavior', () => {
+test('Chamfer Distance and Text Height open their own prompts; other inline value options stay', () => {
   assert.equal(CB.optionNeedsValue('Distance', 'CHAMFER'), false);
   assert.equal(CB.optionNeedsValue('Distance', 'CONTOUR'), true);
-  assert.equal(CB.optionNeedsValue('Height', 'TEXT'), true);
+  assert.equal(CB.optionNeedsValue('Height', 'TEXT'), false);
   assert.equal(CB.optionNeedsValue('Trim', 'CHAMFER'), false);
   assert.equal(CB.resolve('cha', 'draw').name, 'chamfer');
   assert.equal(CB.resolve('cha', 'layout').name, 'chamfer');

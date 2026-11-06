@@ -4,6 +4,20 @@ import { angleOf, dist, parseInput, typedPoint } from './draw.js';
 export const createInput = (first, mode = first ? 'xy' : 'polar') => ({ mode, prefix: '', values: ['', ''], locked: [false, false], active: 0 });
 export const hasTyped = (s) => !!(s.prefix || s.values.some(Boolean));
 
+// Explicit command stages, never inferred from the words displayed in a prompt.
+const PROMPTS = { offset: { distance: 'number', erase: 'option', layer: 'option' },
+  chamfer: { d1: 'number', d2: 'number', length: 'number', angle: 'number', method: 'option', trim: 'option' },
+  array: { type: 'option', opts: 'option' }, mirror: { erase: 'option' }, align: { scale: 'option' },
+  copy: { mode: 'option' }, rrect: { radius: 'number' }, text: { height: 'number' } };
+export function promptKind(m) {
+  if (m.kind === 'fillet') return m.askR ? 'number' : m.askTrim ? 'option' : null;
+  if (['lengthen', 'divide', 'measurepoints'].includes(m.kind)) return m.stage === 'value' && !m.p1 ? 'number' : null;
+  if (m.kind === 'array' && m.ask) return m.ask[0] === 'rotate' ? 'option' : 'number';
+  if (['trim', 'extend'].includes(m.kind)) return m.askMode ? 'option' : null;
+  if (['rotate', 'scale'].includes(m.kind)) return m.ref ? ['ref', 'new'].includes(m.ref.step) && !m.ref.pts.length ? 'number' : null : m.stage === 'p2' ? 'number' : null;
+  return PROMPTS[m.kind]?.[m.kind === 'chamfer' ? m.ask : m.stage] || null;
+}
+
 const rectangle = (T) => T.kind === 'rect' || T.kind === 'rrect';
 // Measure, Dimension, Set length and the Modify tools are shown by app.js as tools of mm points; Measure types only its first point, its second is a read-only length.
 // Shape dimensions keep their existing fields; every other point uses the same first / later rule.
